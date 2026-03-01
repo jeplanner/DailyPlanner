@@ -2608,6 +2608,7 @@ def get_daily_health():
             "id": h["id"],
             "name": h["name"],
             "unit": h["unit"],
+          
             "value": value
         })
 
@@ -2759,14 +2760,21 @@ def health_dashboard():
     completed = 0
 
     for h in habit_defs:
-        value = entry_map.get(h["id"], 0)
-        if value and float(value) > 0:
-            completed += 1
+        goal = float(h.get("goal") or 0)
+        value = float(entry_map.get(h["id"], 0) or 0)
+
+        if h.get("habit_type") == "boolean":
+            if value == 1:
+                completed += 1
+        else:
+            if goal > 0 and value >= goal:
+                completed += 1
 
         habit_list.append({
             "id": h["id"],
             "name": h["name"],
             "unit": h["unit"],
+            "goal": goal,   # ✅ ADD THIS
             "value": value
         })
 
