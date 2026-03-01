@@ -23,58 +23,6 @@
       <input type="date" id="health-date">
     </div>
 
-    <!-- ===== COMPACT SUMMARY ROW ===== -->
-    <div class="habit-summary">
-      <div class="habit-circle-wrapper">
-
-        <!-- Health Score -->
-        <div class="health-score-card">
-          <div class="health-score-ring">
-            <svg width="100" height="100">
-              <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
-              <circle id="scoreRing" cx="50" cy="50" r="40"
-                stroke="#22c55e" stroke-width="8"
-                fill="none"
-                stroke-linecap="round"
-                transform="rotate(-90 50 50)" />
-            </svg>
-            <div id="healthScoreNumber" class="score-number">0</div>
-          </div>
-          <div class="score-label">Health</div>
-        </div>
-
-        <!-- Habit Completion -->
-        <div class="habit-circle">
-          <svg width="100" height="100">
-            <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
-            <circle cx="50" cy="50" r="40"
-              stroke="#2563eb"
-              stroke-width="8"
-              fill="none"
-              stroke-dasharray="251"
-              stroke-dashoffset="{{ 251 - (habit_percent * 2.51) }}"
-              transform="rotate(-90 50 50)" />
-          </svg>
-          <div class="circle-text">{{ habit_percent }}%</div>
-        </div>
-
-        <!-- Weight Sparkline -->
-        <div class="weight-sparkline">
-          <canvas id="weightSparkline"></canvas>
-        </div>
-
-        <!-- Streak -->
-        <div class="streak-badge" id="streak-badge">
-          🔥 {{ health_streak }} day streak
-        </div>
-
-      </div>
-
-      <div class="weekly-line" id="weeklyAvg"></div>
-      <div id="bestHabit" class="best-habit"></div>
-    </div>
-
-
     <!-- ===== MAIN GRID ===== -->
     <div class="health-grid">
 
@@ -83,6 +31,7 @@
       <!-- Health Metrics Card -->
       <div class="health-card">
 
+        <!-- Header (ONLY title + save) -->
         <div class="metrics-header">
           <h4>Health Metrics</h4>
           <button id="saveBtn" class="icon-save" onclick="saveHealth()">
@@ -92,6 +41,57 @@
           </button>
         </div>
 
+        <!-- Summary moved OUTSIDE header -->
+        <div class="habit-summary">
+          <div class="habit-circle-wrapper">
+
+            <!-- Health Score -->
+            <div class="health-score-card">
+              <div class="health-score-ring">
+                <svg width="100" height="100">
+                  <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
+                  <circle id="scoreRing" cx="50" cy="50" r="40"
+                    stroke="#22c55e" stroke-width="8" fill="none"
+                    stroke-linecap="round"
+                    transform="rotate(-90 50 50)" />
+                </svg>
+                <div id="healthScoreNumber" class="score-number">0</div>
+              </div>
+              <div class="score-label">Health</div>
+            </div>
+
+            <!-- Habit Completion -->
+            <div class="habit-circle">
+              <svg width="100" height="100">
+                <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
+                <circle cx="50" cy="50" r="40"
+                  stroke="#2563eb"
+                  stroke-width="8"
+                  fill="none"
+                  stroke-dasharray="251"
+                  stroke-dashoffset="{{ 251 - (habit_percent * 2.51) }}"
+                  transform="rotate(-90 50 50)" />
+              </svg>
+              <div class="circle-text">{{ habit_percent }}%</div>
+            </div>
+
+            <!-- Weight Sparkline -->
+            <div class="weight-sparkline">
+              <canvas id="weightSparkline"></canvas>
+            </div>
+
+            <!-- Streak -->
+            <div class="streak-badge" id="streak-badge">
+              🔥 {{ health_streak }} day streak
+            </div>
+
+          </div>
+
+          <div class="weekly-line" id="weeklyAvg"></div>
+          <div id="bestHabit" class="best-habit"></div>
+        </div>
+
+        <!-- Weight Inputs -->
         <div class="health-metrics-row">
           <div>
             <label>Weight (kg)</label>
@@ -115,8 +115,7 @@
 
       </div>
 
-
-      <!-- Habits Card -->
+      <!-- ================= HABITS CARD ================= -->
       <div class="health-card">
 
         <div class="habits-header">
@@ -154,9 +153,11 @@
                 <button class="habit-plus"
                   onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
 
-                <button onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
+                <button
+                  onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
 
-                <button onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
+                <button
+                  onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
               </div>
 
             </div>
@@ -182,8 +183,7 @@
 
       </div>
 
-
-      <!-- Reflection Card -->
+      <!-- ================= REFLECTION CARD ================= -->
       <div class="health-card">
 
         <h4>Daily Reflection</h4>
@@ -202,7 +202,6 @@
         <textarea id="health-notes"></textarea>
 
       </div>
-
 
       <!-- ================= RIGHT COLUMN ================= -->
 
@@ -224,7 +223,6 @@
 
   </div>
 
-
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
@@ -232,7 +230,6 @@
 
   <div id="toast-container"></div>
   <div id="saveToast">Saved ✓</div>
-
 
   <!-- Habit Bottom Sheet (UNCHANGED) -->
   <div id="habitSheet" class="sheet-overlay">

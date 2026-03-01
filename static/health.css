@@ -424,3 +424,16 @@ textarea {
     flex-direction: column;
   }
 }
+.metrics-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  margin-bottom: 20px;
+}
+
+.metrics-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 500;
+}
