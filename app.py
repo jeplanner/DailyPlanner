@@ -2740,10 +2740,10 @@ def health_dashboard():
     # -----------------------
     # Load habits dynamically
     # -----------------------
-    habit_defs = get(
-        "habit_master",
-        params={"user_id": f"eq.{user_id}"}
-    )
+    habit_defs = get("habit_master", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false"
+    })
 
     habit_entries = get(
         "habit_entries",

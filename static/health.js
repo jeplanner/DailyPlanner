@@ -600,15 +600,54 @@ if (addBtn) {
 }
 }); // ✅ THIS WAS MISSING
 async function deleteHabit(id) {
-  if (!confirm("Delete this habit?")) return;
 
+  // Optimistically remove from UI immediately
+  const item = document.querySelector(`.habit-item[data-id="${id}"]`);
+  if (item) item.remove();
+
+  showUndoDeleteToast(id);
+
+  // Soft delete in backend
   await fetch("/api/habits/delete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ habit_id: id })
   });
+}
+function showUndoDeleteToast(id) {
 
-  location.reload();
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.innerHTML = `
+    Habit deleted
+    <button class="undo-btn">Undo</button>
+  `;
+
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add("show");
+  });
+
+  const timer = setTimeout(() => {
+    toast.remove();
+  }, 4000);
+
+  toast.querySelector(".undo-btn").onclick = async () => {
+    clearTimeout(timer);
+
+    await fetch("/api/habits/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ habit_id: id })
+    });
+
+    toast.remove();
+    loadHealth(document.getElementById("health-date").value);
+  };
 }
 async function showHabitChart(id) {
 
