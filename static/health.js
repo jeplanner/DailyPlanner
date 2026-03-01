@@ -154,18 +154,11 @@ function renderHabits(habits) {
   wireBooleanHabits();
 }
 function updateHabitCircle(percent) {
-  const circle = document.querySelector(".habit-circle circle:nth-child(2)");
-  const text = document.querySelector(".circle-text");
 
-  if (!circle) return;
+  const bar = document.getElementById("habitPercentBar");
+  const text = document.getElementById("habitPercentText");
 
-  const radius = 40;
-  const circumference = 2 * Math.PI * radius;
-
-  circle.style.strokeDasharray = circumference;
-  circle.style.strokeDashoffset =
-    circumference - (percent / 100) * circumference;
-
+  if (bar) bar.style.width = percent + "%";
   if (text) text.innerText = percent + "%";
 }
 function openHabitModal() {
@@ -904,20 +897,10 @@ function updateHealthScore(data) {
 function renderHealthScore(score) {
 
   const number = document.getElementById("healthScoreNumber");
-  const ring = document.getElementById("scoreRing");
+  const bar = document.getElementById("healthScoreBar");
 
-  if (!ring || !number) return;
-
-  number.innerText = score;
-
-  const radius = 50;
-  const circumference = 2 * Math.PI * radius;
-
-  ring.style.strokeDasharray = circumference;
-
-  ring.style.strokeDashoffset =
-    circumference - (score / 100) * circumference;
-
+  if (number) number.innerText = score;
+  if (bar) bar.style.width = score + "%";
 }
 async function loadAnalytics() {
   try {

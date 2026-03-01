@@ -43,52 +43,35 @@
 
         <!-- Summary moved OUTSIDE header -->
         <div class="habit-summary">
-          <div class="habit-circle-wrapper">
+          <div class="kpi-strip">
 
-            <!-- Health Score -->
-            <div class="health-score-card">
-              <div class="health-score-ring">
-                <svg width="100" height="100">
-                  <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
-                  <circle id="scoreRing" cx="50" cy="50" r="40"
-                    stroke="#22c55e" stroke-width="8" fill="none"
-                    stroke-linecap="round"
-                    transform="rotate(-90 50 50)" />
-                </svg>
-                <div id="healthScoreNumber" class="score-number">0</div>
+            <div class="kpi">
+              <div class="kpi-label">Health Score</div>
+              <div class="kpi-value" id="healthScoreNumber">0</div>
+              <div class="kpi-bar">
+                <div class="kpi-fill" id="healthScoreBar"></div>
               </div>
-              <div class="score-label">Health</div>
             </div>
 
-            <!-- Habit Completion -->
-            <div class="habit-circle">
-              <svg width="100" height="100">
-                <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
-                <circle cx="50" cy="50" r="40"
-                  stroke="#2563eb"
-                  stroke-width="8"
-                  fill="none"
-                  stroke-dasharray="251"
-                  stroke-dashoffset="{{ 251 - (habit_percent * 2.51) }}"
-                  transform="rotate(-90 50 50)" />
-              </svg>
-              <div class="circle-text">{{ habit_percent }}%</div>
+            <div class="kpi">
+              <div class="kpi-label">Habit Completion</div>
+              <div class="kpi-value" id="habitPercentText">0%</div>
+              <div class="kpi-bar">
+                <div class="kpi-fill blue" id="habitPercentBar"></div>
+              </div>
             </div>
 
-            <!-- Weight Sparkline -->
-            <div class="weight-sparkline">
-              <canvas id="weightSparkline"></canvas>
+            <div class="kpi">
+              <div class="kpi-label">7-Day Avg</div>
+              <div class="kpi-value" id="weeklyAvg">0%</div>
             </div>
 
-            <!-- Streak -->
-            <div class="streak-badge" id="streak-badge">
-              🔥 {{ health_streak }} day streak
+            <div class="kpi">
+              <div class="kpi-label">Streak</div>
+              <div class="kpi-value" id="streak-badge">0 days</div>
             </div>
 
           </div>
-
-          <div class="weekly-line" id="weeklyAvg"></div>
-          <div id="bestHabit" class="best-habit"></div>
         </div>
 
         <!-- Weight Inputs -->
@@ -129,18 +112,15 @@
 
           {% for habit in habit_list %}
 
-          <div class="habit-item"
-            data-id="{{ habit.id }}"
-            data-goal="{{ habit.goal }}">
+          <div class="habit-item" data-id="{{ habit.id }}" data-goal="{{ habit.goal }}">
 
             <div class="habit-header habit-tap">
 
               <div class="habit-drag">☰</div>
 
               <div>
-                <div class="habit-title"
-                    onclick="editHabit('{{ habit.id }}')">
-                    {{ habit.name }}
+                <div class="habit-title" onclick="editHabit('{{ habit.id }}')">
+                  {{ habit.name }}
                 </div>
                 <div class="habit-goal-display">
                   <span class="goal-text">
@@ -153,28 +133,20 @@
               </div>
 
               <div class="habit-actions">
-                <button class="habit-plus"
-                  onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
+                <button class="habit-plus" onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
 
-                <button
-                  onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
+                <button onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
 
-                <button
-                  onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
+                <button onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
               </div>
 
             </div>
 
-            <input type="number"
-              step="0.1"
-              value="{{ habit.value }}"
-              data-id="{{ habit.id }}"
-              class="habit-input"
+            <input type="number" step="0.1" value="{{ habit.value }}" data-id="{{ habit.id }}" class="habit-input"
               placeholder="Enter today’s value">
 
             <div class="habit-progress">
-              <div class="habit-progress-fill"
-                style="width: {{ habit.percent or 0 }}%">
+              <div class="habit-progress-fill" style="width: {{ habit.percent or 0 }}%">
               </div>
             </div>
 
@@ -282,4 +254,5 @@
   </div>
 
 </body>
+
 </html>
