@@ -1099,3 +1099,4 @@ async function addToGoogleCalendar(ev) {
     alert("Error connecting to Google.");
   }
 }
+

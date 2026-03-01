@@ -989,7 +989,16 @@ function openHabitSheet() {
 }
 
 function closeHabitSheet() {
-  document.getElementById("habitSheet").classList.remove("active");
+
+  const sheet = document.getElementById("habitSheet");
+
+  sheet.classList.remove("active");
+
+  document.getElementById("sheetHabitName").value = "";
+  document.getElementById("sheetHabitUnit").value = "";
+  document.getElementById("sheetHabitGoal").value = "";
+
+  delete sheet.dataset.editId;
 }
 
 document.querySelectorAll(".color-dot").forEach(dot => {
@@ -1031,47 +1040,7 @@ if (unitInput) {
   });
 }
 
-// 🔥 This must be OUTSIDE the if block
-async function submitHabitSheet() {
 
-  const nameEl = document.getElementById("sheetHabitName");
-  const unitEl = document.getElementById("sheetHabitUnit");
-  const goalEl = document.getElementById("sheetHabitGoal");
-
-  if (!nameEl || !unitEl || !goalEl) return;
-
-  const name = nameEl.value.trim();
-  const unit = unitEl.value.trim();
-  const goal = parseFloat(goalEl.value);
-
-  if (!name || !unit || !goal) {
-    showToast("All fields required", "error");
-    return;
-  }
-
-  const res = await fetch("/api/habits/add", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name,
-      unit,
-      goal,
-      emoji: selectedEmoji,
-      color: selectedColor
-    })
-  });
-
-  if (!res.ok) {
-    showToast("Failed to add habit", "error");
-    return;
-  }
-
-  const newHabit = await res.json();
-
-  appendHabitToDOM(newHabit);
-  closeHabitSheet();
-  showToast("Habit added", "success");
-}
 function calculateBMI() {
   const weight = parseFloat(document.getElementById("weight")?.value);
   const heightCm = parseFloat(document.getElementById("height")?.value);
@@ -1106,4 +1075,80 @@ function calculateBMI() {
   }
 
   bmiEl.innerText = `BMI: ${rounded} (${status})`;
+}
+async function editHabit(id) {
+
+  const res = await fetch(`/api/habits/${id}`);
+  const habit = await res.json();
+
+  document.getElementById("sheetHabitName").value = habit.name;
+  document.getElementById("sheetHabitUnit").value = habit.unit;
+  document.getElementById("sheetHabitGoal").value = habit.goal;
+
+  document.getElementById("habitSheet").classList.add("active");
+
+  // Store editing id
+  document.getElementById("habitSheet").dataset.editId = id;
+}
+async function submitHabitSheet() {
+
+  const sheet = document.getElementById("habitSheet");
+  const editId = sheet.dataset.editId;
+
+  const name = document.getElementById("sheetHabitName").value.trim();
+  const unit = document.getElementById("sheetHabitUnit").value.trim();
+  const goal = parseFloat(document.getElementById("sheetHabitGoal").value);
+
+  if (!name || !unit || !goal) {
+    showToast("All fields required", "error");
+    return;
+  }
+
+  const payload = {
+    name,
+    unit,
+    goal,
+    emoji: selectedEmoji,
+    color: selectedColor
+  };
+
+  try {
+
+    let res;
+
+    if (editId) {
+      // 🔥 EDIT MODE
+      res = await fetch(`/api/habits/${editId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      delete sheet.dataset.editId;
+      showToast("Habit updated", "success");
+
+    } else {
+      // 🔥 CREATE MODE
+      res = await fetch(`/api/habits/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      showToast("Habit added", "success");
+    }
+
+    if (!res.ok) {
+      showToast("Save failed", "error");
+      return;
+    }
+
+    closeHabitSheet();
+
+    // 🔥 Smooth refresh without reload
+    await loadHealth(document.getElementById("health-date").value);
+
+  } catch (err) {
+    showToast("Something went wrong", "error");
+  }
 }

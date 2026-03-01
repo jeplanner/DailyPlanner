@@ -138,7 +138,10 @@
               <div class="habit-drag">☰</div>
 
               <div>
-                <div class="habit-title">{{ habit.name }}</div>
+                <div class="habit-title"
+                    onclick="editHabit('{{ habit.id }}')">
+                    {{ habit.name }}
+                </div>
                 <div class="habit-goal-display">
                   <span class="goal-text">
                     🎯 {{ habit.goal }} {{ habit.unit }}
