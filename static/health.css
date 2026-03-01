@@ -29,7 +29,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .health-header h2 {
@@ -40,19 +40,17 @@ body {
 /* ===============================
    HABIT SUMMARY
 ================================= */
-
 .habit-summary {
-  display: grid;
-  grid-template-columns: auto auto auto auto;
+  display: flex;
   align-items: center;
-  gap: 24px;
-  justify-content: center;
-  margin-bottom: 24px;
+  gap: 32px;
+  margin: 12px 0 20px 0;
+  flex-wrap: wrap;
 }
 
 .habit-circle {
-  width: 110px;
-  height: 110px;
+  width: 90px;
+  height: 90px;
   position: relative;
 }
 
@@ -364,7 +362,6 @@ textarea {
 @media (min-width: 768px) {
   body { padding: 20px; }
   .health-grid { grid-template-columns: 1fr 1fr; }
-  .habit-summary { flex-direction: row; justify-content: center; }
 }
 
 @media (min-width: 1024px) {
