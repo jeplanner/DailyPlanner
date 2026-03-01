@@ -3911,7 +3911,25 @@ def habit_weekly(habit_id):
         data.append(date_map.get(day, 0))
 
     return jsonify(data)
+@app.route("/api/habits/<habit_id>", methods=["GET"])
+@login_required
+def get_habit(habit_id):
 
+    user_id = session["user_id"]
+
+    row = get(
+        "habit_master",
+        params={
+            "id": f"eq.{habit_id}",
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false"
+        }
+    )
+
+    if not row:
+        return jsonify({"error": "Habit not found"}), 404
+
+    return jsonify(row[0])
 # ENTR
 # Y POINT
 # ==========================================================
