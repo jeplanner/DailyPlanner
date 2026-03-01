@@ -25,38 +25,34 @@
 
     <!-- Habit Summary -->
     <div class="habit-summary">
-
       <div class="habit-circle-wrapper">
-        <div class="health-score-card">
 
+        <!-- Health Score -->
+        <div class="health-score-card">
           <div class="health-score-ring">
             <svg width="120" height="120">
               <circle cx="60" cy="60" r="50" stroke="#e5e7eb" stroke-width="10" fill="none" />
-
               <circle id="scoreRing" cx="60" cy="60" r="50" stroke="#22c55e" stroke-width="10" fill="none"
                 stroke-linecap="round" transform="rotate(-90 60 60)" />
             </svg>
-
             <div id="healthScoreNumber" class="score-number">0</div>
           </div>
-
           <div class="score-label">
             Daily Health Score
           </div>
-
         </div>
+
+        <!-- Habit Completion Circle -->
         <div class="habit-circle">
           <svg width="120" height="120">
             <circle cx="60" cy="60" r="50" stroke="#e5e7eb" stroke-width="10" fill="none" />
-
             <circle cx="60" cy="60" r="50" stroke="#2563eb" stroke-width="10" fill="none" stroke-dasharray="314"
               stroke-dashoffset="{{ 314 - (habit_percent * 3.14) }}" transform="rotate(-90 60 60)" />
           </svg>
-
           <div class="circle-text">{{ habit_percent }}%</div>
         </div>
 
-        <!-- NEW Sparkline -->
+        <!-- Weight Sparkline -->
         <div class="weight-sparkline">
           <canvas id="weightSparkline"></canvas>
         </div>
@@ -69,17 +65,17 @@
       <div class="streak-badge" id="streak-badge">
         🔥 {{ health_streak }} day streak
       </div>
-
     </div>
 
     <!-- Main Grid -->
     <div class="health-grid">
 
+      <!-- LEFT CARD -->
       <div class="health-card">
 
+        <!-- Header -->
         <div class="metrics-header">
           <h4>Health Metrics</h4>
-
           <button id="saveBtn" class="icon-save" onclick="saveHealth()">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
               <path d="M17 3H5a2 2 0 0 0-2 2v14l4-4h10a2 2 0 0 0 2-2V7l-2-4zM7 5h8v4H7V5z" />
@@ -87,13 +83,29 @@
           </button>
         </div>
 
+        <!-- Weight & Height -->
+        <div class="health-metrics-row">
+          <div>
+            <label>Weight (kg)</label>
+            <input type="number" step="0.1" id="weight" placeholder="Enter weight">
+          </div>
 
+          <div>
+            <label>Height (cm)</label>
+            <input type="number" step="0.1" id="height" placeholder="Enter height">
+          </div>
+          <div class="bmi-display">
+            <span id="bmiValue">BMI: --</span>
+          </div>
+          <div class="weight-delta" id="weightDelta"></div>
+        </div>
+
+        <!-- Weight Trend -->
         <h4>Weight Trend</h4>
         <canvas id="weightChart" height="80"></canvas>
 
-        <!-- Habit Create Box -->
+        <!-- Habit Create -->
         <div class="habit-create-box">
-
           <button class="fab-add" onclick="openHabitSheet()">+</button>
         </div>
 
@@ -104,25 +116,22 @@
 
           <div class="habit-item" data-id="{{ habit.id }}">
 
-            <div class="habit-header">
+            <div class="habit-header habit-tap">
+              <div class="habit-drag">☰</div>
 
               <div>
                 <div class="habit-title">{{ habit.name }}</div>
-
-                <div class="habit-sub">
+                <div class="habit-goal-display">
                   Goal: {{ habit.goal }} {{ habit.unit }}
                 </div>
               </div>
 
               <div class="habit-actions">
-                <button class="habit-plus" onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">
-                  +
-                </button>
-                <button onclick="event.stopPropagation(); toggleEdit('{{ habit.id }}')">✏️</button>
+                <button class="habit-plus" onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
+
                 <button onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
                 <button onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
               </div>
-
             </div>
 
             <input type="number" step="0.1" value="{{ habit.value }}" data-id="{{ habit.id }}" class="habit-input"
@@ -131,12 +140,6 @@
             <div class="habit-progress">
               <div class="habit-progress-fill" style="width: {{ habit.percent or 0 }}%">
               </div>
-            </div>
-
-            <div class="habit-edit-panel" id="edit-{{ habit.id }}">
-              <input value="{{ habit.name }}" class="habit-name-edit" data-id="{{ habit.id }}">
-              <input value="{{ habit.unit }}" class="habit-unit-edit" data-id="{{ habit.id }}">
-              <input value="{{ habit.goal }}" class="habit-goal-edit" data-id="{{ habit.id }}">
             </div>
 
           </div>
@@ -161,7 +164,7 @@
 
       </div>
 
-      <!-- Chart + Monthly Summary -->
+      <!-- RIGHT CARD -->
       <div class="health-card">
 
         <canvas id="healthChart"></canvas>
@@ -171,23 +174,24 @@
 
       </div>
 
-      <!-- Heatmap -->
+      <!-- HEATMAP -->
       <div class="health-card">
-
         <h4>📊 Activity Heatmap</h4>
         <div id="heatmap"></div>
-
       </div>
 
     </div>
 
   </div>
 
+  <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
   <script src="{{ url_for('static', filename='health.js') }}" defer></script>
+
   <div id="toast-container"></div>
   <div id="saveToast">Saved ✓</div>
+
   <!-- Habit Bottom Sheet -->
   <div id="habitSheet" class="sheet-overlay">
     <div class="sheet">
@@ -201,7 +205,6 @@
 
       <div class="sheet-body">
 
-        <!-- Emoji -->
         <div class="emoji-picker" id="emojiPicker">
           <span class="emoji">😀</span>
           <span class="emoji">💪</span>
@@ -216,15 +219,11 @@
         </div>
 
         <input type="text" id="sheetHabitName" placeholder="Habit name">
-
         <input type="text" id="sheetHabitUnit" placeholder="Unit (mins, steps, ml)">
-
         <input type="number" id="sheetHabitGoal" placeholder="Daily goal">
 
-        <!-- Smart Suggestions -->
         <div class="goal-suggestions" id="goalSuggestions"></div>
 
-        <!-- Color Picker -->
         <div class="color-picker">
           <div class="color-dot" data-color="#2563eb"></div>
           <div class="color-dot" data-color="#16a34a"></div>
@@ -240,6 +239,7 @@
       </div>
     </div>
   </div>
+
 </body>
 
 </html>

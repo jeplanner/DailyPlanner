@@ -7,11 +7,17 @@ async function loadHealth(date) {
   // ------------------------
   // Basic health fields
   // ------------------------
-  document.getElementById("weight").value = data.weight || "";
-  document.getElementById("height").value = data.height || "";
-  document.getElementById("energy").value = data.energy_level || 5;
-  document.getElementById("mood").value = data.mood || "😊 Happy";
-  document.getElementById("health-notes").value = data.notes || "";
+  const weightEl = document.getElementById("weight");
+  const heightEl = document.getElementById("height");
+  const energyEl = document.getElementById("energy");
+  const moodEl = document.getElementById("mood");
+  const notesEl = document.getElementById("health-notes");
+
+  if (weightEl) weightEl.value = data.weight || "";
+  if (heightEl) heightEl.value = data.height || "";
+  if (energyEl) energyEl.value = data.energy_level || 5;
+  if (moodEl) moodEl.value = data.mood || "😊 Happy";
+  if (notesEl) notesEl.value = data.notes || "";
 
   // ------------------------
   // Habits
@@ -22,6 +28,7 @@ async function loadHealth(date) {
 
   updateHabitCircle(data.habit_percent || 0);
   updateHealthScore(data);
+  calculateBMI();
 
   // ------------------------
   // Streak
@@ -36,6 +43,25 @@ async function loadHealth(date) {
   if (data.weight_trend) {
     renderWeightTrend(data.weight_trend);
     renderWeightSparkline(data.weight_trend);
+  }
+  if (data.weight_delta !== undefined) {
+    const deltaEl = document.getElementById("weightDelta");
+
+    if (!deltaEl) {
+      console.warn("weightDelta element missing");
+    } else {
+
+      if (data.weight_delta > 0) {
+        deltaEl.className = "weight-delta up";
+        deltaEl.innerText = `↑ ${data.weight_delta.toFixed(1)} kg`;
+      } else if (data.weight_delta < 0) {
+        deltaEl.className = "weight-delta down";
+        deltaEl.innerText = `↓ ${Math.abs(data.weight_delta)} kg from yesterday`;
+      } else {
+        deltaEl.className = "weight-delta";
+        deltaEl.innerText = `No change from yesterday`;
+      }
+    }
   }
   // ------------------------
   // Chart update
@@ -66,55 +92,56 @@ function renderHabits(habits) {
   habits.forEach(h => {
 
     const value = h.value ?? "";
-    const goal  = h.goal ?? 0;
-    const percent = goal > 0 ? Math.min(100, Math.round((value / goal) * 100)) : 0;
+    const goal = h.goal ?? 0;
+    const percent = goal > 0
+      ? Math.min(100, Math.round((value / goal) * 100))
+      : 0;
 
     container.innerHTML += `
       <div class="habit-item" data-id="${h.id}">
 
         <div class="habit-header habit-tap" data-id="${h.id}">
-        <div class="habit-drag">☰</div>
           <div>
             <div class="habit-title">${h.name}</div>
-            <div class="habit-sub">
-              Goal: ${goal} ${h.unit}
-            </div>
           </div>
 
           <div class="habit-actions">
-            <button onclick="toggleEdit('${h.id}')">✏️</button>
-            <button onclick="showHabitChart('${h.id}')">📈</button>
-            <button class="habit-delete-btn" onclick="deleteHabit('${h.id}')">
-              🗑
-            </button>
+            <button onclick="event.stopPropagation(); showHabitChart('${h.id}')">📈</button>
+            <button onclick="event.stopPropagation(); deleteHabit('${h.id}')">🗑</button>
           </div>
         </div>
 
-       <div class="habit-entry-block">
-          <div class="entry-label">
-            Today
-            <span class="goal-label">
-              (Goal: ${goal || "⚠ Set"} ${h.unit || ""})
-            </span>
-          </div>
+        <div class="habit-entry-block">
+          <div class="entry-label">Today</div>
 
-          <input type="number"
-                step="0.1"
-                value="${value}"
-                data-id="${h.id}"
-                class="habit-input"
-                placeholder="Enter value">
+          ${h.habit_type === "boolean"
+        ? `
+              <label class="switch">
+                <input type="checkbox"
+                       data-id="${h.id}"
+                       class="habit-boolean"
+                       ${value == 1 ? "checked" : ""}>
+                <span class="slider"></span>
+              </label>
+            `
+        : `
+              <input type="number"
+                     step="0.1"
+                     value="${value}"
+                     data-id="${h.id}"
+                     class="habit-input"
+                     placeholder="Enter value">
+            `
+      }
         </div>
-        <div class="habit-save-indicator"></div>
+
         <div class="habit-progress">
           <div class="habit-progress-fill"
                style="width: ${percent}%"></div>
         </div>
 
-        <div class="habit-edit-panel" id="edit-${h.id}">
-          <input value="${h.name}" class="habit-name-edit" data-id="${h.id}">
-          <input value="${h.unit}" class="habit-unit-edit" data-id="${h.id}">
-          <input value="${goal}" class="habit-goal-edit" data-id="${h.id}">
+        <div class="habit-goal-display">
+          Goal: ${goal} ${h.unit}
         </div>
 
       </div>
@@ -123,6 +150,7 @@ function renderHabits(habits) {
 
   wireHabitInputs();
   wireQuickTapHabits();
+  wireBooleanHabits();
 }
 function updateHabitCircle(percent) {
   const circle = document.querySelector(".habit-circle circle:nth-child(2)");
@@ -194,7 +222,10 @@ function wireQuickTapHabits() {
     if (header.dataset.tapbound) return;
     header.dataset.tapbound = "1";
 
-    header.addEventListener("click", async () => {
+    header.addEventListener("click", async (e) => {
+
+      // Ignore action button clicks
+      if (e.target.closest(".habit-actions")) return;
 
       const item = header.closest(".habit-item");
       const input = item.querySelector(".habit-input");
@@ -202,25 +233,17 @@ function wireQuickTapHabits() {
       if (!input) return;
 
       let current = parseFloat(input.value || 0);
-
-      // increment amount
       const step = parseFloat(input.step || 1);
 
       current = Math.round((current + step) * 100) / 100;
-
       input.value = current;
-
-      // trigger save
       input.dispatchEvent(new Event("input"));
 
-      // visual pulse
       item.classList.add("tap-flash");
       setTimeout(() => item.classList.remove("tap-flash"), 300);
-
     });
 
   });
-
 }
 function appendHabitToDOM(h) {
 
@@ -239,58 +262,41 @@ function appendHabitToDOM(h) {
 
   div.innerHTML = `
     <div class="habit-header habit-tap" data-id="${h.id}">
-      <div class="habit-drag">☰</div>
       <div>
         <div class="habit-title">${h.name}</div>
-        <div class="habit-sub">
-          ${goal > 0 ? `Goal: ${goal} ${h.unit}` : "⚠ Goal required"}
-        </div>
       </div>
 
       <div class="habit-actions">
-        <button onclick="toggleEdit('${h.id}')">✏️</button>
-        <button onclick="showHabitChart('${h.id}')">📈</button>
-        <button class="habit-delete-btn" onclick="deleteHabit('${h.id}')">
-          🗑
-        </button>
+        <button onclick="event.stopPropagation(); showHabitChart('${h.id}')">📈</button>
+        <button onclick="event.stopPropagation(); deleteHabit('${h.id}')">🗑</button>
       </div>
     </div>
 
-      <div class="habit-entry-block">
+    <div class="habit-entry-block">
       <div class="entry-label">Today</div>
 
       <input type="number"
-            step="0.1"
-            value="${value}"
-            data-id="${h.id}"
-            class="habit-input"
-            placeholder="Enter value">
+             step="0.1"
+             value="${value}"
+             data-id="${h.id}"
+             class="habit-input"
+             placeholder="Enter value">
     </div>
-    <div class="habit-save-indicator"></div>
+
     <div class="habit-progress">
       <div class="habit-progress-fill"
            style="width: ${percent}%"></div>
     </div>
 
-    <div class="habit-edit-panel" id="edit-${h.id}">
-      <input value="${h.name}" class="habit-name-edit" data-id="${h.id}">
-      <input value="${h.unit}" class="habit-unit-edit" data-id="${h.id}">
-      <input value="${goal}" class="habit-goal-edit" data-id="${h.id}">
+    <div class="habit-goal-display">
+      Goal: ${goal} ${h.unit}
     </div>
   `;
 
   container.appendChild(div);
 
-  // 🔥 Attach input listener
   wireHabitInputs();
   wireQuickTapHabits();
-  const goalInput = div.querySelector(".habit-goal-edit");
-
-  if(goalInput){
-      toggleEdit(h.id);
-      goalInput.focus();
-      goalInput.select();
-    }
 }
 async function saveHealth() {
 
@@ -310,12 +316,25 @@ async function saveHealth() {
 
   lastHealthPayload = payloadString;
 
-  await fetch("/api/v2/daily-health", {
+  const res = await fetch("/api/v2/daily-health", {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: { "Content-Type": "application/json" },
     body: payloadString
   });
 
+  if (!res.ok) {
+    showToast("Save failed", "error");
+    return;
+  }
+
+  updateHealthScore({
+    habit_percent: parseInt(document.querySelector(".circle-text")?.innerText) || 0,
+    energy_level: document.getElementById("energy").value,
+    mood: document.getElementById("mood").value,
+    streak: 0 // keep current, or store globally if you want
+  });
+
+  calculateBMI();
   showSaveToast();
 }
 function wireHabitInputs() {
@@ -338,7 +357,7 @@ function wireHabitInputs() {
 
         await fetch("/api/save-habit-value", {
           method: "POST",
-          headers: {"Content-Type": "application/json"},
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             habit_id: input.dataset.id,
             plan_date: date,
@@ -355,6 +374,36 @@ function wireHabitInputs() {
   });
 
 }
+function wireBooleanHabits() {
+
+  document.querySelectorAll(".habit-boolean").forEach(input => {
+
+    if (input.dataset.bound) return;
+    input.dataset.bound = "1";
+
+    input.addEventListener("change", async () => {
+
+      const date = document.getElementById("health-date").value;
+      const value = input.checked ? 1 : 0;
+
+      await fetch("/api/save-habit-value", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          habit_id: input.dataset.id,
+          plan_date: date,
+          value: value
+        })
+      });
+
+      showSaveToast();
+      recalcHabitPercent();
+    });
+
+  });
+
+}
+
 function recalcHabitPercent() {
 
   const items = document.querySelectorAll(".habit-item");
@@ -364,22 +413,30 @@ function recalcHabitPercent() {
 
   items.forEach(item => {
 
-    const valueInput = item.querySelector(".habit-input");
-    const goalInput  = item.querySelector(".habit-goal-edit");
+    const checkbox = item.querySelector(".habit-boolean");
+    const input = item.querySelector(".habit-input");
+    const goalText = item.querySelector(".habit-goal-display");
 
-    const value = parseFloat(valueInput?.value || 0);
-    const goal  = parseFloat(goalInput?.value || 0);
+    if (checkbox) {
+      if (checkbox.checked) completed++;
+      return;
+    }
 
-    if (goal > 0 && value >= goal) {
-      completed++;
+    if (input && goalText) {
+      const value = parseFloat(input.value || 0);
+      const match = goalText.innerText.match(/Goal:\s*([\d.]+)/);
+      const goal = match ? parseFloat(match[1]) : 0;
+
+      if (goal > 0 && value >= goal) completed++;
     }
 
   });
 
-  const percent = total ? Math.round((completed / total) * 100) : 0;
+  const percent = total
+    ? Math.round((completed / total) * 100)
+    : 0;
 
   updateHabitCircle(percent);
-
 }
 function showSavedFeedback() {
   const btn = document.getElementById("saveBtn");
@@ -398,8 +455,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const dateInput = document.getElementById("health-date");
   if (!dateInput) return;
-  
-  ["weight","height","mood","energy","health-notes"].forEach(id => {
+
+  ["weight", "height", "mood", "energy", "health-notes"].forEach(id => {
 
     const el = document.getElementById(id);
     if (!el || el.dataset.bound) return;
@@ -410,7 +467,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     el.addEventListener("blur", autoSaveHealth);
 
   });
-
+  ["weight", "height"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", calculateBMI);
+  });
   const today = new Date().toLocaleDateString("en-CA", {
     timeZone: "Asia/Kolkata"
   });
@@ -441,43 +501,41 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         div.style.background =
           data[day] > 75 ? "#16a34a" :
-          data[day] > 40 ? "#4ade80" :
-          data[day] > 10 ? "#86efac" :
-          "#e5e7eb";
+            data[day] > 40 ? "#4ade80" :
+              data[day] > 10 ? "#86efac" :
+                "#e5e7eb";
 
         container.appendChild(div);
       });
     });
-
   // 🔥 Enable Drag Reorder
   const container = document.getElementById("habitContainer");
 
-  if (container) {
+  if (container && typeof Sortable !== "undefined") {
     new Sortable(container, {
       animation: 150,
-      handle: ".habit-drag",  // 🔥 only drag via ☰
+      handle: ".habit-drag",
       onEnd: async function () {
 
         const items = document.querySelectorAll(".habit-item");
 
-        for (let i = 0; i < items.length; i++) {
-
-          const id = items[i].dataset.id;
-
-          await fetch("/api/habits/reorder", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({
-              habit_id: id,
-              position: i
+        await Promise.all(
+          Array.from(items).map((item, i) =>
+            fetch("/api/habits/reorder", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                habit_id: item.dataset.id,
+                position: i
+              })
             })
-          });
-        }
+          )
+        );
+
       }
     });
   }
-
-});
+}); // ✅ THIS WAS MISSING
 async function deleteHabit(id) {
   if (!confirm("Delete this habit?")) return;
 
@@ -489,85 +547,13 @@ async function deleteHabit(id) {
 
   location.reload();
 }
-let editTimeout;
-
-document.addEventListener("input", function (e) {
-
-  if (
-    e.target.classList.contains("habit-name-edit") ||
-    e.target.classList.contains("habit-unit-edit") ||
-    e.target.classList.contains("habit-goal-edit")
-  ) {
-
-    clearTimeout(editTimeout);
-
-    editTimeout = setTimeout(async () => {
-
-      const id = e.target.dataset.id;
-
-      const item = document.querySelector(`.habit-item[data-id="${id}"]`);
-      if (!item) return;
-
-      const nameInput = item.querySelector(".habit-name-edit");
-      const unitInput = item.querySelector(".habit-unit-edit");
-      const goalInput = item.querySelector(".habit-goal-edit");
-      const valueInput = item.querySelector(".habit-input");
-
-      const name = nameInput.value;
-      const unit = unitInput.value;
-      const goal = parseFloat(goalInput.value || 0);
-      const value = parseFloat(valueInput.value || 0);
-
-      // 🔥 Save to backend
-      await fetch("/api/habits/update", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          habit_id: id,
-          name,
-          unit,
-          goal
-        })
-      });
-
-      // 🔥 Update header immediately
-      const title = item.querySelector(".habit-title");
-      const sub = item.querySelector(".habit-sub");
-
-      if (title) title.innerText = name;
-      if (sub) sub.innerText = `Goal: ${goal} ${unit}`;
-
-      // 🔥 Update progress bar
-      const percent = goal > 0
-        ? Math.min(100, Math.round((value / goal) * 100))
-        : 0;
-
-      const fill = item.querySelector(".habit-progress-fill");
-      if (fill) fill.style.width = percent + "%";
-      // 🔥 Move focus to entry field after goal edit
-      if (e.target.classList.contains("habit-goal-edit")) {
-        if (valueInput) {
-          valueInput.focus();
-          valueInput.select();
-        }
-      }
-      // 🔥 Visual save glow
-      item.classList.add("saved");
-      setTimeout(() => {
-        item.classList.remove("saved");
-      }, 800);
-
-      recalcHabitPercent();
-
-    }, 600); // Save 600ms after typing stops
-  }
-});
 async function showHabitChart(id) {
 
   const res = await fetch(`/api/v2/habit-weekly/${id}`);
   const data = await res.json();
 
   const ctx = document.getElementById("healthChart");
+  if (!ctx) return;
 
   if (window.habitChartInstance) {
     window.habitChartInstance.destroy();
@@ -576,7 +562,7 @@ async function showHabitChart(id) {
   window.habitChartInstance = new Chart(ctx, {
     type: "line",
     data: {
-      labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+      labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
       datasets: [{
         label: "Weekly Progress",
         data: data,
@@ -621,7 +607,7 @@ function renderWeightTrend(data) {
     type: "line",
     data: {
       labels: data.map(d => d.date.slice(5)),
-    datasets: [{
+      datasets: [{
         data: data.map(d => d.weight ?? null),
         tension: 0.4,
         borderColor: "#2563eb",
@@ -677,7 +663,7 @@ function renderWeightSparkline(data) {
     }
   });
 }
-document.addEventListener("keydown", function(e){
+document.addEventListener("keydown", function (e) {
 
   if (e.target.classList.contains("habit-goal-edit") && e.key === "Enter") {
 
@@ -701,8 +687,9 @@ async function quickAdd(id) {
   const input = item.querySelector(".habit-input");
 
   let current = parseFloat(input.value || 0);
-  const unitInput = item.querySelector(".habit-unit-edit");
-  const unit = unitInput ? unitInput.value : "";
+  const goalText = item.querySelector(".habit-goal-display")?.innerText || "";
+  const unitMatch = goalText.match(/Goal:\s*[\d.]+\s*(.*)/);
+  const unit = unitMatch ? unitMatch[1] : "";
 
   const step = getStepFromUnit(unit);
 
@@ -738,9 +725,9 @@ function quickAdjust(id, direction) {
   if (!item) return;
 
   const input = item.querySelector(".habit-input");
-  const unitInput = item.querySelector(".habit-unit-edit");
-
-  const unit = unitInput ? unitInput.value : "";
+  const goalText = item.querySelector(".habit-goal-display")?.innerText || "";
+  const unitMatch = goalText.match(/Goal:\s*[\d.]+\s*(.*)/);
+  const unit = unitMatch ? unitMatch[1] : "";
 
   let current = parseFloat(input.value || 0);
 
@@ -770,96 +757,96 @@ function autoSaveHealth() {
   }, 1500); // save after user pauses 1.5s
 
 }
-function showToast(message,type="info"){
+function showToast(message, type = "info") {
 
   const container = document.getElementById("toast-container");
-  if(!container) return;
+  if (!container) return;
 
   const toast = document.createElement("div");
-  toast.className = `toast ${type}`;
+  toast.className = `toast ${type} `;
   toast.textContent = message;
 
   container.appendChild(toast);
 
-  requestAnimationFrame(()=>{
+  requestAnimationFrame(() => {
     toast.classList.add("show");
   });
 
-  setTimeout(()=>{
+  setTimeout(() => {
     toast.classList.remove("show");
 
-    setTimeout(()=>{
+    setTimeout(() => {
       toast.remove();
-    },300);
+    }, 300);
 
-  },2200);
+  }, 2200);
 }
-function showSaveToast(){
+function showSaveToast() {
 
   const toast = document.getElementById("saveToast");
-  if(!toast) return;
+  if (!toast) return;
 
   toast.classList.add("show");
 
   clearTimeout(toast.timer);
 
-  toast.timer = setTimeout(()=>{
+  toast.timer = setTimeout(() => {
     toast.classList.remove("show");
-  },1200);
+  }, 1200);
 
 }
 
-function updateHealthScore(data){
+function updateHealthScore(data) {
 
   const habits = data.habit_percent || 0;
   const energy = data.energy_level || 5;
-  const mood   = data.mood || "Neutral";
+  const mood = data.mood || "Neutral";
   const streak = data.streak || 0;
 
   const habitScore = habits * 0.5;
 
-  const energyScore = (energy/10)*15;
+  const energyScore = (energy / 10) * 15;
 
   const moodScore =
-      mood.includes("Happy") ? 10 :
+    mood.includes("Happy") ? 10 :
       mood.includes("Neutral") ? 6 :
-      3;
+        3;
 
-  const streakScore = Math.min(streak*1.5,15);
+  const streakScore = Math.min(streak * 1.5, 15);
 
   const weightScore = 10; // optional stability logic later
 
   const total =
-      habitScore +
-      energyScore +
-      moodScore +
-      streakScore +
-      weightScore;
+    habitScore +
+    energyScore +
+    moodScore +
+    streakScore +
+    weightScore;
 
   const score = Math.round(total);
 
   renderHealthScore(score);
 
 }
-function renderHealthScore(score){
+function renderHealthScore(score) {
 
   const number = document.getElementById("healthScoreNumber");
   const ring = document.getElementById("scoreRing");
 
-  if(!ring || !number) return;
+  if (!ring || !number) return;
 
   number.innerText = score;
 
   const radius = 50;
-  const circumference = 2*Math.PI*radius;
+  const circumference = 2 * Math.PI * radius;
 
   ring.style.strokeDasharray = circumference;
 
   ring.style.strokeDashoffset =
-        circumference - (score/100)*circumference;
+    circumference - (score / 100) * circumference;
 
 }
-async function loadAnalytics(){
+async function loadAnalytics() {
   try {
 
     const [weekly, month] = await Promise.all([
@@ -912,65 +899,118 @@ document.querySelectorAll(".emoji-picker .emoji").forEach(el => {
 
   });
 });
-document.querySelectorAll(".color-dot").forEach(dot=>{
+document.querySelectorAll(".color-dot").forEach(dot => {
   dot.style.background = dot.dataset.color;
 
-  dot.addEventListener("click", ()=>{
-    document.querySelectorAll(".color-dot").forEach(d=>d.classList.remove("active"));
+  dot.addEventListener("click", () => {
+    document.querySelectorAll(".color-dot").forEach(d => d.classList.remove("active"));
     dot.classList.add("active");
     selectedColor = dot.dataset.color;
   });
 });
+const unitInput = document.getElementById("sheetHabitUnit");
 
-document.getElementById("sheetHabitUnit").addEventListener("input", function(){
+if (unitInput) {
+  unitInput.addEventListener("input", function () {
 
-  const unit = this.value.toLowerCase();
-  const suggestions = document.getElementById("goalSuggestions");
+    const unit = this.value.toLowerCase();
+    const suggestions = document.getElementById("goalSuggestions");
+    if (!suggestions) return;
 
-  suggestions.innerHTML = "";
+    suggestions.innerHTML = "";
 
-  let values = [];
+    let values = [];
 
-  if(unit.includes("step")) values = [5000,8000,10000];
-  if(unit.includes("min")) values = [15,30,45];
-  if(unit.includes("ml")) values = [1500,2000,3000];
-  if(unit.includes("hr")) values = [1,2,3];
+    if (unit.includes("step")) values = [5000, 8000, 10000];
+    if (unit.includes("min")) values = [15, 30, 45];
+    if (unit.includes("ml")) values = [1500, 2000, 3000];
+    if (unit.includes("hr")) values = [1, 2, 3];
 
-  values.forEach(val=>{
-    const btn = document.createElement("button");
-    btn.innerText = val;
-    btn.onclick = ()=> {
-      document.getElementById("sheetHabitGoal").value = val;
-    };
-    suggestions.appendChild(btn);
+    values.forEach(val => {
+      const btn = document.createElement("button");
+      btn.innerText = val;
+      btn.onclick = () => {
+        const goalInput = document.getElementById("sheetHabitGoal");
+        if (goalInput) goalInput.value = val;
+      };
+      suggestions.appendChild(btn);
+    });
   });
-});
-async function submitHabitSheet(){
+}
 
-  const name = document.getElementById("sheetHabitName").value.trim();
-  const unit = document.getElementById("sheetHabitUnit").value.trim();
-  const goal = parseFloat(document.getElementById("sheetHabitGoal").value);
+// 🔥 This must be OUTSIDE the if block
+async function submitHabitSheet() {
 
-  if(!name || !unit || !goal){
-    showToast("All fields required","error");
+  const nameEl = document.getElementById("sheetHabitName");
+  const unitEl = document.getElementById("sheetHabitUnit");
+  const goalEl = document.getElementById("sheetHabitGoal");
+
+  if (!nameEl || !unitEl || !goalEl) return;
+
+  const name = nameEl.value.trim();
+  const unit = unitEl.value.trim();
+  const goal = parseFloat(goalEl.value);
+
+  if (!name || !unit || !goal) {
+    showToast("All fields required", "error");
     return;
   }
 
-  const res = await fetch("/api/habits/add",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
+  const res = await fetch("/api/habits/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name,
       unit,
       goal,
-      emoji:selectedEmoji,
-      color:selectedColor
+      emoji: selectedEmoji,
+      color: selectedColor
     })
   });
+
+  if (!res.ok) {
+    showToast("Failed to add habit", "error");
+    return;
+  }
 
   const newHabit = await res.json();
 
   appendHabitToDOM(newHabit);
   closeHabitSheet();
-  showToast("Habit added","success");
+  showToast("Habit added", "success");
+}
+function calculateBMI() {
+  const weight = parseFloat(document.getElementById("weight")?.value);
+  const heightCm = parseFloat(document.getElementById("height")?.value);
+  const bmiEl = document.getElementById("bmiValue");
+
+  if (!bmiEl) return;
+
+  if (!weight || !heightCm) {
+    bmiEl.innerText = "BMI: --";
+    bmiEl.style.color = "#6b7280";
+    return;
+  }
+
+  const heightM = heightCm / 100;
+  const bmi = weight / (heightM * heightM);
+  const rounded = bmi.toFixed(1);
+
+  let status = "";
+
+  if (bmi < 18.5) {
+    status = "Underweight";
+    bmiEl.style.color = "#f59e0b";
+  } else if (bmi < 25) {
+    status = "Normal";
+    bmiEl.style.color = "#16a34a";
+  } else if (bmi < 30) {
+    status = "Overweight";
+    bmiEl.style.color = "#f97316";
+  } else {
+    status = "Obese";
+    bmiEl.style.color = "#ef4444";
+  }
+
+  bmiEl.innerText = `BMI: ${rounded} (${status})`;
 }

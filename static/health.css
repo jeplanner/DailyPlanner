@@ -289,11 +289,11 @@ canvas {
 
 .habit-actions button {
   background: #f1f5f9;
-  border: none;
-  border-radius: 10px;
-  padding: 6px 8px;
-  font-size: 14px;
-  margin-left: 4px;
+}
+
+.habit-actions button:last-child {
+  color: #ef4444;
+  font-size: 16px;
 }
 
 .habit-input {
@@ -343,10 +343,18 @@ canvas {
   cursor: grabbing;
 }
 .metrics-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 5;
+  padding-bottom: 10px;
+}
+.metrics-header {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+.metrics-header h4 {
+  margin: 0;
 }
 
 .icon-save {
@@ -766,9 +774,6 @@ body.dark {
   color: #e5e7eb;
 }
 .fab-add {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
   width: 55px;
   height: 55px;
   border-radius: 50%;
@@ -776,7 +781,8 @@ body.dark {
   background: #2563eb;
   color: white;
   font-size: 28px;
-  box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+  cursor: pointer;
 }
 .habit-delete-btn {
   background: transparent;
@@ -798,4 +804,95 @@ body.dark {
 
 body.dark .habit-delete-btn {
   color: #f87171;
+}
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  background-color: #ccc;
+  border-radius: 24px;
+  inset: 0;
+  transition: 0.3s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+input:checked + .slider {
+  background-color: #16a34a;
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+.habit-goal-display {
+  margin-top: 8px;
+  font-size: 14px;
+  color: #6b7280;
+}
+.health-metrics-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.health-metrics-row > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.bmi-display {
+  margin-bottom: 18px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #2563eb;
+}.weight-delta {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.weight-delta.up {
+  color: #ef4444;
+}
+
+.weight-delta.down {
+  color: #16a34a;
+}
+@media (min-width: 1024px) {
+
+  .health-grid {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .health-card:nth-child(1) {
+    grid-column: span 2;
+  }
+
+  .habit-summary {
+    flex-direction: row;
+    justify-content: center;
+    gap: 40px;
+  }
 }
