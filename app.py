@@ -3911,25 +3911,56 @@ def habit_weekly(habit_id):
         data.append(date_map.get(day, 0))
 
     return jsonify(data)
-@app.route("/api/habits/<habit_id>", methods=["GET"])
+@app.route("/api/habits/<habit_id>", methods=["GET", "PUT"])
 @login_required
-def get_habit(habit_id):
+def habit_detail(habit_id):
 
     user_id = session["user_id"]
 
-    row = get(
-        "habit_master",
-        params={
-            "id": f"eq.{habit_id}",
-            "user_id": f"eq.{user_id}",
-            "is_deleted": "eq.false"
-        }
-    )
+    # ---------- GET ----------
+    if request.method == "GET":
 
-    if not row:
-        return jsonify({"error": "Habit not found"}), 404
+        row = get(
+            "habit_master",
+            params={
+                "id": f"eq.{habit_id}",
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false"
+            }
+        )
 
-    return jsonify(row[0])
+        if not row:
+            return jsonify({"error": "Habit not found"}), 404
+
+        return jsonify(row[0])
+
+    # ---------- PUT ----------
+    if request.method == "PUT":
+
+        data = request.get_json()
+
+        name = data.get("name")
+        unit = data.get("unit")
+        goal = data.get("goal")
+
+        if goal is None:
+            return jsonify({"error": "Goal required"}), 400
+
+        update(
+            "habit_master",
+            {
+                "name": name,
+                "unit": unit,
+                "goal": float(goal)
+            },
+            params={
+                "id": f"eq.{habit_id}",
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false"
+            }
+        )
+
+        return jsonify({"success": True})
 # ENTR
 # Y POINT
 # ==========================================================
