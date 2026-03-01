@@ -3956,15 +3956,15 @@ def habit_detail(habit_id):
 
         update(
             "habit_master",
-            {
-                "name": name,
-                "unit": unit,
-                "goal": float(goal)
-            },
             params={
                 "id": f"eq.{habit_id}",
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false"
+            },
+            json={
+                "name": name,
+                "unit": unit,
+                "goal": float(goal)
             }
         )
 
