@@ -114,7 +114,9 @@
 
           {% for habit in habit_list %}
 
-          <div class="habit-item" data-id="{{ habit.id }}">
+          <div class="habit-item"
+              data-id="${h.id}"
+              data-goal="${goal}">
 
             <div class="habit-header habit-tap">
               <div class="habit-drag">☰</div>
@@ -122,7 +124,10 @@
               <div>
                 <div class="habit-title">{{ habit.name }}</div>
                 <div class="habit-goal-display">
-                  Goal: {{ habit.goal }} {{ habit.unit }}
+                  <span class="goal-text">
+                    Goal: {{ habit.goal }} {{ habit.unit }}
+                  </span>
+                  <span class="goal-percent">{{ habit.percent or 0 }}%</span>
                 </div>
               </div>
 

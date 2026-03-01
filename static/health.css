@@ -63,7 +63,6 @@ body {
 .circle-text {
   position: absolute;
   top: 42%;
-  left: 0;
   width: 100%;
   text-align: center;
   font-size: 18px;
@@ -77,7 +76,7 @@ body {
 }
 
 /* ===============================
-   GRID — MOBILE DEFAULT 1 COLUMN
+   GRID
 ================================= */
 
 .health-grid {
@@ -110,7 +109,7 @@ textarea {
   border-radius: 12px;
   border: 1px solid #e2e8f0;
   margin-bottom: 14px;
-  font-size: 16px;   /* prevent mobile zoom */
+  font-size: 16px;
   background: #f9fafc;
 }
 
@@ -128,141 +127,13 @@ textarea {
 }
 
 /* ===============================
-   HABITS
+   HABIT ITEM
 ================================= */
-
-.habit-list {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
 
 .habit-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
-  background: #f9fafc;
-  border-radius: 12px;
-  border: 1px solid #e5e7eb;
-  font-size: 14px;
-}
-
-/* ===============================
-   SAVE BUTTON
-================================= */
-
-.health-card button {
-  width: 100%;
-  background: #2563eb;
-  color: white;
-  padding: 14px;
-  border-radius: 14px;
-  border: none;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.health-card button:active {
-  transform: scale(0.97);
-}
-
-/* ===============================
-   CHART FIX
-================================= */
-
-canvas {
-  width: 100% !important;
-  height: auto !important;
-}
-
-/* ===============================
-   DESKTOP ENHANCEMENT
-================================= */
-
-@media (min-width: 768px) {
-
-  body {
-    padding: 20px;
-  }
-
-  .health-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .habit-summary {
-    flex-direction: row;
-    justify-content: center;
-  }
-
-  .habit-list {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-.best-habit {
-  font-weight: 600;
-  color: #2563eb;
-  margin-top: 4px;
-}
-#heatmap {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 12px;
-  grid-template-rows: repeat(7, 12px);
-  gap: 4px;
-}
-
-.heat-cell {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-}
-.habit-circle-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.weekly-line {
-  font-size: 14px;
-  font-weight: 600;
-  color: #6b7280;
-}
-#monthlySummary p {
-  margin: 6px 0;
-  font-size: 14px;
-}
-.habit-edit-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.habit-edit-row button {
-  width: auto !important;
-  padding: 6px 10px;
-  font-size: 14px;
-  border-radius: 8px;
-}
-
-.habit-edit-row input {
-  flex: 1;
-  margin-bottom: 0;
-}
-
-#newHabitName,
-#newHabitUnit {
-  margin-top: 12px;
-}
-.habit-edit-row input {
-  min-width: 60px;
-}
-.add-habit-section {
-  margin-bottom: 18px;
-}
-.habit-item {
   background: #ffffff;
   border-radius: 18px;
   padding: 16px;
@@ -274,26 +145,12 @@ canvas {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .habit-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.habit-sub {
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.habit-actions button {
-  background: #f1f5f9;
-}
-
-.habit-actions button:last-child {
-  color: #ef4444;
-  font-size: 16px;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .habit-input {
@@ -304,52 +161,96 @@ canvas {
   border-radius: 14px;
 }
 
+/* ===============================
+   GOAL DISPLAY
+================================= */
+
+.habit-goal-display {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.goal-text {
+  color: #2563eb;
+}
+
+.goal-percent {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+}
+
+/* ===============================
+   HABIT PROGRESS
+================================= */
+
 .habit-progress {
-  height: 6px;
+  height: 8px;
   background: #e5e7eb;
-  border-radius: 6px;
-  margin-top: 8px;
+  border-radius: 999px;
+  margin-top: 12px;
   overflow: hidden;
 }
 
 .habit-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #2563eb, #16a34a);
-  transition: width 0.3s ease;
-}
-.habit-edit-panel {
-  border-top: 1px solid #e5e7eb;
-  margin-top: 16px;
-  padding-top: 14px;
-}
-.habit-edit-panel input {
-  font-size: 14px;
-  font-weight: 500;
-  background: #eef2f7;
-  border: 1px solid #e2e8f0;
-}
-.habit-item.completed {
-  box-shadow: 0 0 0 2px #16a34a inset;
-  background: #f0fdf4;
-}
-.habit-drag {
-  cursor: grab;
-  font-size: 16px;
-  padding: 6px;
-  color: #9ca3af;
+  width: 0%;
+  background: linear-gradient(90deg, #2563eb, #3b82f6);
+  border-radius: 999px;
+  transition: width 0.4s ease, background 0.3s ease, box-shadow 0.3s ease;
 }
 
-.habit-drag:active {
-  cursor: grabbing;
+.habit-progress-fill.completed {
+  background: linear-gradient(90deg, #16a34a, #22c55e);
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.6);
+  animation: completePulse 0.4s ease;
 }
+
+@keyframes completePulse {
+  0% { transform: scaleY(1); }
+  50% { transform: scaleY(1.2); }
+  100% { transform: scaleY(1); }
+}
+
+.habit-item.completed {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  box-shadow: 0 6px 18px rgba(34, 197, 94, 0.15);
+}
+
+.habit-item.completed .habit-title {
+  color: #16a34a;
+}
+
+/* ===============================
+   ACTION BUTTONS
+================================= */
+
+.habit-actions button {
+  background: #f1f5f9;
+}
+
+.habit-actions button:last-child {
+  color: #ef4444;
+  font-size: 16px;
+}
+
+/* ===============================
+   METRICS HEADER (Sticky Save)
+================================= */
+
 .metrics-header {
   position: sticky;
   top: 0;
   background: white;
   z-index: 5;
   padding-bottom: 10px;
-}
-.metrics-header {
   box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
 
@@ -357,500 +258,10 @@ canvas {
   margin: 0;
 }
 
-.icon-save {
-  background: #f1f5f9;
-  border: none;
-  border-radius: 10px;
-  padding: 8px;
-  cursor: pointer;
-  color: #2563eb;
-  transition: all 0.2s ease;
-}
+/* ===============================
+   BMI + WEIGHT DELTA
+================================= */
 
-.icon-save:hover {
-  background: #e2e8f0;
-}
-
-.icon-save.saving {
-  color: #f59e0b;
-}
-
-.icon-save.saved {
-  color: #16a34a;
-}
-.habit-save-indicator {
-  font-size: 12px;
-  color: #16a34a;
-  margin-top: 4px;
-  opacity: 0;
-  transition: opacity 0.25s ease;
-}
-
-.habit-save-indicator.show {
-  opacity: 1;
-}
-.habit-entry-block {
-  margin-top: 8px;
-}
-
-.entry-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #2563eb;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-.habit-sub {
-  font-size: 12px;
-  color: #94a3b8;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-}
-.habit-item.saved {
-  box-shadow: 0 0 0 2px #16a34a inset;
-  background: #f0fdf4;
-}
-.weight-sparkline {
-  width: 120px;
-  height: 40px;
-  margin-top: 10px;
-}
-.habit-tap {
-  cursor: pointer;
-}
-
-.tap-flash {
-  background: #ecfdf5;
-  transition: background 0.3s;
-}
-.habit-create-box{
-  border:2px dashed #d1d5db;
-  padding:20px;
-  border-radius:14px;
-  background:#f9fafb;
-  margin-bottom:20px;
-}
-
-.habit-create-box h4{
-  margin-bottom:10px;
-  font-weight:600;
-}
-
-.habit-create-box input{
-  width:100%;
-  padding:10px;
-  margin-bottom:10px;
-}
-
-.habit-create-box button{
-  width:100%;
-}
-.habit-plus{
-  width:28px;
-  height:28px;
-  border-radius:6px;
-  border:none;
-  background:#2563eb;
-  color:white;
-  font-weight:600;
-  cursor:pointer;
-}
-
-.habit-plus:hover{
-  background:#1d4ed8;
-}
-.habit-plus,
-.habit-minus{
-  width:26px;
-  height:26px;
-  border:none;
-  border-radius:6px;
-  background:#2563eb;
-  color:white;
-  font-weight:bold;
-  cursor:pointer;
-}
-
-.habit-minus{
-  background:#64748b;
-}
-
-.habit-plus:hover{
-  background:#1d4ed8;
-}
-
-.habit-minus:hover{
-  background:#475569;
-}
-.goal-label{
-  font-size:12px;
-  color:#64748b;
-  margin-left:6px;
-}
-#toast-container{
-  position: fixed;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 9999;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.toast{
-  min-width: 200px;
-  max-width: 320px;
-  padding: 12px 18px;
-  border-radius: 14px;
-  font-size: 14px;
-  backdrop-filter: blur(10px);
-  background: rgba(30,30,30,0.85);
-  color: white;
-  text-align: center;
-  box-shadow: 0 8px 25px rgba(0,0,0,0.25);
-
-  opacity: 0;
-  transform: translateY(20px) scale(.95);
-  transition: all .35s ease;
-}
-
-.toast.show{
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.toast.success{
-  background: rgba(22,163,74,0.9);
-}
-
-.toast.error{
-  background: rgba(220,38,38,0.9);
-}
-#saveToast{
-  position: fixed;
-  bottom: 25px;
-  left: 50%;
-  transform: translateX(-50%) translateY(10px);
-  background: rgba(22,163,74,0.9);
-  color: white;
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 500;
-  opacity: 0;
-  pointer-events: none;
-  transition: all 0.25s ease;
-  z-index: 9999;
-}
-
-#saveToast.show{
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-.health-score-card{
-  background:white;
-  padding:18px;
-  border-radius:18px;
-  text-align:center;
-  box-shadow:0 10px 30px rgba(0,0,0,0.05);
-  margin-bottom:16px;
-}
-
-.health-score-ring{
-  position:relative;
-  width:120px;
-  height:120px;
-  margin:auto;
-}
-
-.score-number{
-  position:absolute;
-  top:50%;
-  left:50%;
-  transform:translate(-50%,-50%);
-  font-size:28px;
-  font-weight:700;
-  color:#111;
-}
-
-.score-label{
-  margin-top:10px;
-  font-size:14px;
-  color:#6b7280;
-}
-/* ========================= */
-/* Habit Modal */
-/* ========================= */
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: 0.25s ease;
-  z-index: 999;
-}
-
-.modal-overlay.active {
-  opacity: 1;
-  pointer-events: all;
-}
-
-.modal-card {
-  background: white;
-  width: 400px;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.15);
-  transform: translateY(15px);
-  transition: 0.25s ease;
-}
-
-.modal-overlay.active .modal-card {
-  transform: translateY(0);
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.modal-header h3 {
-  margin: 0;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-}
-
-.modal-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 15px;
-}
-
-.modal-body input {
-  padding: 8px;
-  border-radius: 8px;
-  border: 1px solid #ddd;
-}
-
-.modal-footer {
-  margin-top: 18px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.btn-primary {
-  background: #2563eb;
-  color: white;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.btn-secondary {
-  background: #e5e7eb;
-  border: none;
-  padding: 8px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-/* ========================= */
-/* Bottom Sheet */
-/* ========================= */
-
-.sheet-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.4);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: 0.3s ease;
-  z-index: 1000;
-}
-
-.sheet-overlay.active {
-  opacity: 1;
-  pointer-events: all;
-}
-
-.sheet {
-  width: 100%;
-  max-width: 500px;
-  background: var(--card-bg, #fff);
-  border-radius: 20px 20px 0 0;
-  padding: 16px;
-  transform: translateY(100%);
-  transition: 0.3s ease;
-}
-
-.sheet-overlay.active .sheet {
-  transform: translateY(0);
-}
-
-.sheet-handle {
-  width: 40px;
-  height: 4px;
-  background: #ccc;
-  border-radius: 10px;
-  margin: 0 auto 10px;
-}
-
-.sheet-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.sheet-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.sheet-body input {
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid #ddd;
-  background: var(--input-bg, #fff);
-}
-
-.emoji-picker {
-  display: flex;
-  gap: 10px;
-  font-size: 22px;
-  cursor: pointer;
-}
-
-.color-picker {
-  display: flex;
-  gap: 10px;
-}
-
-.color-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  cursor: pointer;
-  border: 2px solid transparent;
-}
-
-.color-dot.active {
-  border: 2px solid black;
-}
-
-.sheet-submit {
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: 12px;
-  border: none;
-  background: #2563eb;
-  color: white;
-  font-weight: 600;
-}
-
-/* Dark Mode */
-body.dark {
-  --card-bg: #1f2937;
-  --input-bg: #111827;
-  color: #e5e7eb;
-}
-.fab-add {
-  width: 55px;
-  height: 55px;
-  border-radius: 50%;
-  border: none;
-  background: #2563eb;
-  color: white;
-  font-size: 28px;
-  box-shadow: 0 8px 20px rgba(0,0,0,0.15);
-  cursor: pointer;
-}
-.habit-delete-btn {
-  background: transparent;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: #ef4444;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-
-.habit-delete-btn:hover {
-  transform: scale(1.15);
-  opacity: 0.8;
-}
-
-body.dark .habit-delete-btn {
-  color: #f87171;
-}
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 44px;
-  height: 24px;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.slider {
-  position: absolute;
-  cursor: pointer;
-  background-color: #ccc;
-  border-radius: 24px;
-  inset: 0;
-  transition: 0.3s;
-}
-
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background: white;
-  border-radius: 50%;
-  transition: 0.3s;
-}
-
-input:checked + .slider {
-  background-color: #16a34a;
-}
-
-input:checked + .slider:before {
-  transform: translateX(20px);
-}
-.habit-goal-display {
-  margin-top: 8px;
-  font-size: 14px;
-  color: #6b7280;
-}
 .health-metrics-row {
   display: flex;
   gap: 16px;
@@ -862,12 +273,15 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
 }
+
 .bmi-display {
   margin-bottom: 18px;
   font-weight: 600;
   font-size: 14px;
   color: #2563eb;
-}.weight-delta {
+}
+
+.weight-delta {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 12px;
@@ -880,19 +294,63 @@ input:checked + .slider:before {
 .weight-delta.down {
   color: #16a34a;
 }
+
+/* ===============================
+   TOASTS
+================================= */
+
+#toast-container {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.toast {
+  min-width: 200px;
+  max-width: 320px;
+  padding: 12px 18px;
+  border-radius: 14px;
+  font-size: 14px;
+  backdrop-filter: blur(10px);
+  background: rgba(30,30,30,0.85);
+  color: white;
+  text-align: center;
+  box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+  opacity: 0;
+  transform: translateY(20px) scale(.95);
+  transition: all .35s ease;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.toast.success {
+  background: rgba(22,163,74,0.9);
+}
+
+.toast.error {
+  background: rgba(220,38,38,0.9);
+}
+
+/* ===============================
+   DESKTOP ENHANCEMENT
+================================= */
+
+@media (min-width: 768px) {
+  body { padding: 20px; }
+  .health-grid { grid-template-columns: 1fr 1fr; }
+  .habit-summary { flex-direction: row; justify-content: center; }
+}
+
 @media (min-width: 1024px) {
-
-  .health-grid {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-
-  .health-card:nth-child(1) {
-    grid-column: span 2;
-  }
-
-  .habit-summary {
-    flex-direction: row;
-    justify-content: center;
-    gap: 40px;
-  }
+  .health-grid { grid-template-columns: 1fr 1fr 1fr; }
+  .health-card:nth-child(1) { grid-column: span 2; }
+  .habit-summary { gap: 40px; }
 }

@@ -98,7 +98,7 @@ function renderHabits(habits) {
       : 0;
 
     container.innerHTML += `
-      <div class="habit-item" data-id="${h.id}">
+      <div class="habit-item" data-id="${h.id}" data-goal="${goal}">
 
         <div class="habit-header habit-tap" data-id="${h.id}">
           <div>
@@ -141,7 +141,8 @@ function renderHabits(habits) {
         </div>
 
         <div class="habit-goal-display">
-          Goal: ${goal} ${h.unit}
+          <span class="goal-text">Goal: ${goal} ${h.unit}</span>
+          <span class="goal-percent">${percent}%</span>
         </div>
 
       </div>
@@ -259,6 +260,7 @@ function appendHabitToDOM(h) {
   const div = document.createElement("div");
   div.className = "habit-item";
   div.dataset.id = h.id;
+  div.dataset.goal = goal; // ✅ MUST BE HERE
 
   div.innerHTML = `
     <div class="habit-header habit-tap" data-id="${h.id}">
@@ -289,8 +291,10 @@ function appendHabitToDOM(h) {
     </div>
 
     <div class="habit-goal-display">
-      Goal: ${goal} ${h.unit}
+      <span class="goal-text">Goal: ${goal} ${h.unit}</span>
+      <span class="goal-percent">${percent}%</span>
     </div>
+   
   `;
 
   container.appendChild(div);
@@ -364,8 +368,33 @@ function wireHabitInputs() {
             value: value
           })
         });
+
         showSaveToast();
         recalcHabitPercent();
+
+        // 🔥 Update progress visually
+        const item = input.closest(".habit-item");
+        if (!item) return;
+
+        const goal = parseFloat(item.dataset.goal) || 0;
+        const percentEl = item.querySelector(".goal-percent");
+        const bar = item.querySelector(".habit-progress-fill");
+
+        const percent = goal > 0
+          ? Math.min(100, Math.round((value / goal) * 100))
+          : 0;
+
+        if (percentEl) {
+          percentEl.innerText = percent + "%";
+        }
+
+        if (bar) {
+          bar.style.width = percent + "%";
+          bar.classList.toggle("completed", percent >= 100);
+        }
+
+        // 🔥 Subtle card glow
+        item.classList.toggle("completed", percent >= 100);
 
       }, 500);
 
@@ -398,6 +427,24 @@ function wireBooleanHabits() {
 
       showSaveToast();
       recalcHabitPercent();
+
+      // 🔥 Update progress visually
+      const item = input.closest(".habit-item");
+      if (!item) return;
+
+      const bar = item.querySelector(".habit-progress-fill");
+      const percentEl = item.querySelector(".goal-percent");
+      const percent = input.checked ? 100 : 0;
+
+      if (percentEl) percentEl.innerText = percent + "%";
+
+      if (bar) {
+        bar.style.width = percent + "%";
+        bar.classList.toggle("completed", percent >= 100);
+      }
+
+      item.classList.toggle("completed", percent >= 100);
+
     });
 
   });
@@ -424,8 +471,7 @@ function recalcHabitPercent() {
 
     if (input && goalText) {
       const value = parseFloat(input.value || 0);
-      const match = goalText.innerText.match(/Goal:\s*([\d.]+)/);
-      const goal = match ? parseFloat(match[1]) : 0;
+      const goal = parseFloat(item.dataset.goal) || 0;
 
       if (goal > 0 && value >= goal) completed++;
     }
@@ -535,6 +581,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
+  document.querySelectorAll(".emoji-picker .emoji").forEach(el => {
+  el.addEventListener("click", () => {
+
+    selectedEmoji = el.textContent;
+
+    document.getElementById("sheetHabitName").value =
+      selectedEmoji + " ";
+
+  });
+});
 }); // ✅ THIS WAS MISSING
 async function deleteHabit(id) {
   if (!confirm("Delete this habit?")) return;
@@ -889,16 +945,7 @@ function openHabitSheet() {
 function closeHabitSheet() {
   document.getElementById("habitSheet").classList.remove("active");
 }
-document.querySelectorAll(".emoji-picker .emoji").forEach(el => {
-  el.addEventListener("click", () => {
 
-    selectedEmoji = el.textContent;
-
-    document.getElementById("sheetHabitName").value =
-      selectedEmoji + " ";
-
-  });
-});
 document.querySelectorAll(".color-dot").forEach(dot => {
   dot.style.background = dot.dataset.color;
 
