@@ -197,7 +197,10 @@ async function submitHabitModal() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, unit, goal })
   });
-
+  if (res.status === 409) {
+    showToast("Habit already exists", "error");
+    return;
+  }
   if (!res.ok) {
     showToast("Failed to add habit", "error");
     return;

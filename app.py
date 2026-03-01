@@ -3798,6 +3798,8 @@ def heatmap():
         heat[day] = percent
 
     return jsonify(heat)       
+from requests.exceptions import HTTPError
+
 @app.route("/api/habits/add", methods=["POST"])
 @login_required
 def add_habit():
@@ -3805,41 +3807,41 @@ def add_habit():
     data = request.get_json()
 
     name = (data.get("name") or "").strip().upper()
-    unit = (data.get("unit") or "").strip().upper() 
+    unit = (data.get("unit") or "").strip().upper()
+    goal = float(data.get("goal") or 0)
+
+    if not name or not unit or not goal:
+        return jsonify({"error": "All fields required"}), 400
 
     try:
-        goal = float(data.get("goal") or 0)
-    except:
-        goal = 0
+        inserted = post(
+            "habit_master",
+            {
+                "user_id": user_id,
+                "name": name,
+                "unit": unit,
+                "goal": goal,
+                "position": 9999,
+                "is_deleted": False
+            },
+            prefer="return=representation"
+        )
 
-    if not name or not unit:
-        return jsonify({"error": "Name and unit required"}), 400
+        habit = inserted[0]
 
-    inserted = post(
-        "habit_master",
-        {
-            "user_id": user_id,
-            "name": name,
-            "unit": unit,
-            "goal": goal,
-            "position": 9999,
-            "is_deleted": False
-        },
-        prefer="return=representation"
-    )
+        return jsonify({
+            "id": habit["id"],
+            "name": habit["name"],
+            "unit": habit["unit"],
+            "goal": habit["goal"],
+            "value": 0
+        })
 
-    if not inserted:
-        return jsonify({"error": "Insert failed"}), 500
+    except HTTPError as e:
+        if e.response.status_code == 409:
+            return jsonify({"error": "Habit already exists"}), 409
 
-    habit = inserted[0]
-
-    return jsonify({
-        "id": habit["id"],
-        "name": habit["name"],
-        "unit": habit["unit"],
-        "goal": habit.get("goal", 0),
-        "value": 0
-    })
+        raise
     
 @app.route("/api/habits/delete", methods=["POST"])
 @login_required

@@ -23,31 +23,37 @@
       <input type="date" id="health-date">
     </div>
 
-    <!-- Habit Summary -->
+    <!-- ===== COMPACT SUMMARY ROW ===== -->
     <div class="habit-summary">
       <div class="habit-circle-wrapper">
 
         <!-- Health Score -->
         <div class="health-score-card">
           <div class="health-score-ring">
-            <svg width="120" height="120">
-              <circle cx="60" cy="60" r="50" stroke="#e5e7eb" stroke-width="10" fill="none" />
-              <circle id="scoreRing" cx="60" cy="60" r="50" stroke="#22c55e" stroke-width="10" fill="none"
-                stroke-linecap="round" transform="rotate(-90 60 60)" />
+            <svg width="100" height="100">
+              <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
+              <circle id="scoreRing" cx="50" cy="50" r="40"
+                stroke="#22c55e" stroke-width="8"
+                fill="none"
+                stroke-linecap="round"
+                transform="rotate(-90 50 50)" />
             </svg>
             <div id="healthScoreNumber" class="score-number">0</div>
           </div>
-          <div class="score-label">
-            Daily Health Score
-          </div>
+          <div class="score-label">Health</div>
         </div>
 
-        <!-- Habit Completion Circle -->
+        <!-- Habit Completion -->
         <div class="habit-circle">
-          <svg width="120" height="120">
-            <circle cx="60" cy="60" r="50" stroke="#e5e7eb" stroke-width="10" fill="none" />
-            <circle cx="60" cy="60" r="50" stroke="#2563eb" stroke-width="10" fill="none" stroke-dasharray="314"
-              stroke-dashoffset="{{ 314 - (habit_percent * 3.14) }}" transform="rotate(-90 60 60)" />
+          <svg width="100" height="100">
+            <circle cx="50" cy="50" r="40" stroke="#e5e7eb" stroke-width="8" fill="none" />
+            <circle cx="50" cy="50" r="40"
+              stroke="#2563eb"
+              stroke-width="8"
+              fill="none"
+              stroke-dasharray="251"
+              stroke-dashoffset="{{ 251 - (habit_percent * 2.51) }}"
+              transform="rotate(-90 50 50)" />
           </svg>
           <div class="circle-text">{{ habit_percent }}%</div>
         </div>
@@ -57,23 +63,26 @@
           <canvas id="weightSparkline"></canvas>
         </div>
 
-        <div class="weekly-line" id="weeklyAvg"></div>
-        <div id="bestHabit" class="best-habit"></div>
+        <!-- Streak -->
+        <div class="streak-badge" id="streak-badge">
+          🔥 {{ health_streak }} day streak
+        </div>
 
       </div>
 
-      <div class="streak-badge" id="streak-badge">
-        🔥 {{ health_streak }} day streak
-      </div>
+      <div class="weekly-line" id="weeklyAvg"></div>
+      <div id="bestHabit" class="best-habit"></div>
     </div>
 
-    <!-- Main Grid -->
+
+    <!-- ===== MAIN GRID ===== -->
     <div class="health-grid">
 
-      <!-- LEFT CARD -->
+      <!-- ================= LEFT COLUMN ================= -->
+
+      <!-- Health Metrics Card -->
       <div class="health-card">
 
-        <!-- Header -->
         <div class="metrics-header">
           <h4>Health Metrics</h4>
           <button id="saveBtn" class="icon-save" onclick="saveHealth()">
@@ -83,7 +92,6 @@
           </button>
         </div>
 
-        <!-- Weight & Height -->
         <div class="health-metrics-row">
           <div>
             <label>Weight (kg)</label>
@@ -94,56 +102,75 @@
             <label>Height (cm)</label>
             <input type="number" step="0.1" id="height" placeholder="Enter height">
           </div>
+
           <div class="bmi-display">
             <span id="bmiValue">BMI: --</span>
           </div>
+
           <div class="weight-delta" id="weightDelta"></div>
         </div>
 
-        <!-- Weight Trend -->
         <h4>Weight Trend</h4>
         <canvas id="weightChart" height="80"></canvas>
 
-        <!-- Habit Create -->
-        <div class="habit-create-box">
-          <button class="fab-add" onclick="openHabitSheet()">+</button>
+      </div>
+
+
+      <!-- Habits Card -->
+      <div class="health-card">
+
+        <div class="habits-header">
+          <h4>Habits</h4>
+          <button id="addHabitBtn" class="btn-add-habit">
+            + Add Habit
+          </button>
         </div>
 
-        <!-- Habit List -->
         <div id="habitContainer" class="sortable-habits">
 
           {% for habit in habit_list %}
 
           <div class="habit-item"
-              data-id="${h.id}"
-              data-goal="${goal}">
+            data-id="{{ habit.id }}"
+            data-goal="{{ habit.goal }}">
 
             <div class="habit-header habit-tap">
+
               <div class="habit-drag">☰</div>
 
               <div>
                 <div class="habit-title">{{ habit.name }}</div>
                 <div class="habit-goal-display">
                   <span class="goal-text">
-                    Goal: {{ habit.goal }} {{ habit.unit }}
+                    🎯 {{ habit.goal }} {{ habit.unit }}
                   </span>
-                  <span class="goal-percent">{{ habit.percent or 0 }}%</span>
+                  <span class="goal-percent">
+                    {{ habit.percent or 0 }}%
+                  </span>
                 </div>
               </div>
 
               <div class="habit-actions">
-                <button class="habit-plus" onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
+                <button class="habit-plus"
+                  onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
 
                 <button onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
+
                 <button onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
               </div>
+
             </div>
 
-            <input type="number" step="0.1" value="{{ habit.value }}" data-id="{{ habit.id }}" class="habit-input"
+            <input type="number"
+              step="0.1"
+              value="{{ habit.value }}"
+              data-id="{{ habit.id }}"
+              class="habit-input"
               placeholder="Enter today’s value">
 
             <div class="habit-progress">
-              <div class="habit-progress-fill" style="width: {{ habit.percent or 0 }}%">
+              <div class="habit-progress-fill"
+                style="width: {{ habit.percent or 0 }}%">
               </div>
             </div>
 
@@ -153,7 +180,14 @@
 
         </div>
 
-        <!-- Mood / Energy / Notes -->
+      </div>
+
+
+      <!-- Reflection Card -->
+      <div class="health-card">
+
+        <h4>Daily Reflection</h4>
+
         <label>Mood</label>
         <select id="mood">
           <option>😊 Happy</option>
@@ -169,17 +203,18 @@
 
       </div>
 
-      <!-- RIGHT CARD -->
-      <div class="health-card">
 
+      <!-- ================= RIGHT COLUMN ================= -->
+
+      <!-- Analytics Card -->
+      <div class="health-card">
         <canvas id="healthChart"></canvas>
 
         <h4>📅 Monthly Summary</h4>
         <div id="monthlySummary"></div>
-
       </div>
 
-      <!-- HEATMAP -->
+      <!-- Heatmap Card -->
       <div class="health-card">
         <h4>📊 Activity Heatmap</h4>
         <div id="heatmap"></div>
@@ -189,6 +224,7 @@
 
   </div>
 
+
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
@@ -197,10 +233,10 @@
   <div id="toast-container"></div>
   <div id="saveToast">Saved ✓</div>
 
-  <!-- Habit Bottom Sheet -->
+
+  <!-- Habit Bottom Sheet (UNCHANGED) -->
   <div id="habitSheet" class="sheet-overlay">
     <div class="sheet">
-
       <div class="sheet-handle"></div>
 
       <div class="sheet-header">
@@ -246,5 +282,4 @@
   </div>
 
 </body>
-
 </html>
