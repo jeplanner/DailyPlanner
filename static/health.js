@@ -106,6 +106,7 @@ function renderHabits(habits) {
           </div>
 
           <div class="habit-actions">
+            <button onclick="event.stopPropagation(); editHabit('${h.id}')">✏️</button>
             <button onclick="event.stopPropagation(); showHabitChart('${h.id}')">📈</button>
             <button onclick="event.stopPropagation(); deleteHabit('${h.id}')">🗑</button>
           </div>
@@ -150,7 +151,6 @@ function renderHabits(habits) {
   });
 
   wireHabitInputs();
-  wireQuickTapHabits();
   wireBooleanHabits();
 }
 function updateHabitCircle(percent) {
@@ -219,36 +219,7 @@ async function submitHabitModal() {
 
   closeHabitModal();
 }
-function wireQuickTapHabits() {
 
-  document.querySelectorAll(".habit-tap").forEach(header => {
-
-    if (header.dataset.tapbound) return;
-    header.dataset.tapbound = "1";
-
-    header.addEventListener("click", async (e) => {
-
-      // Ignore action button clicks
-      if (e.target.closest(".habit-actions")) return;
-
-      const item = header.closest(".habit-item");
-      const input = item.querySelector(".habit-input");
-
-      if (!input) return;
-
-      let current = parseFloat(input.value || 0);
-      const step = parseFloat(input.step || 1);
-
-      current = Math.round((current + step) * 100) / 100;
-      input.value = current;
-      input.dispatchEvent(new Event("input"));
-
-      item.classList.add("tap-flash");
-      setTimeout(() => item.classList.remove("tap-flash"), 300);
-    });
-
-  });
-}
 function appendHabitToDOM(h) {
 
   const container = document.getElementById("habitContainer");
@@ -303,7 +274,7 @@ function appendHabitToDOM(h) {
   container.appendChild(div);
 
   wireHabitInputs();
-  wireQuickTapHabits();
+
 }
 async function saveHealth() {
 
@@ -585,19 +556,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
   document.querySelectorAll(".emoji-picker .emoji").forEach(el => {
-  el.addEventListener("click", () => {
+    el.addEventListener("click", () => {
 
-    selectedEmoji = el.textContent;
+      selectedEmoji = el.textContent;
 
-    document.getElementById("sheetHabitName").value =
-      selectedEmoji + " ";
+      document.getElementById("sheetHabitName").value =
+        selectedEmoji + " ";
 
+    });
   });
-});
-const addBtn = document.getElementById("addHabitBtn");
-if (addBtn) {
-  addBtn.addEventListener("click", openHabitSheet);
-}
+  const addBtn = document.getElementById("addHabitBtn");
+  if (addBtn) {
+    addBtn.addEventListener("click", openHabitSheet);
+  }
 }); // ✅ THIS WAS MISSING
 async function deleteHabit(id) {
 
@@ -998,6 +969,9 @@ function closeHabitSheet() {
   document.getElementById("sheetHabitUnit").value = "";
   document.getElementById("sheetHabitGoal").value = "";
 
+  sheet.querySelector(".sheet-header h3").innerText = "New Habit";
+  sheet.querySelector(".sheet-submit").innerText = "Add Habit";
+
   delete sheet.dataset.editId;
 }
 
@@ -1079,16 +1053,25 @@ function calculateBMI() {
 async function editHabit(id) {
 
   const res = await fetch(`/api/habits/${id}`);
+  if (!res.ok) {
+    showToast("Failed to load habit", "error");
+    return;
+  }
+
   const habit = await res.json();
+
+  const sheet = document.getElementById("habitSheet");
 
   document.getElementById("sheetHabitName").value = habit.name;
   document.getElementById("sheetHabitUnit").value = habit.unit;
   document.getElementById("sheetHabitGoal").value = habit.goal;
 
-  document.getElementById("habitSheet").classList.add("active");
+  sheet.dataset.editId = id;
 
-  // Store editing id
-  document.getElementById("habitSheet").dataset.editId = id;
+  sheet.querySelector(".sheet-header h3").innerText = "Edit Habit";
+  sheet.querySelector(".sheet-submit").innerText = "Save Changes";
+
+  sheet.classList.add("active");
 }
 async function submitHabitSheet() {
 
@@ -1112,43 +1095,33 @@ async function submitHabitSheet() {
     color: selectedColor
   };
 
-  try {
+  let res;
 
-    let res;
+  if (editId) {
+    res = await fetch(`/api/habits/${editId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
 
-    if (editId) {
-      // 🔥 EDIT MODE
-      res = await fetch(`/api/habits/${editId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+    delete sheet.dataset.editId;
+    showToast("Habit updated", "success");
 
-      delete sheet.dataset.editId;
-      showToast("Habit updated", "success");
+  } else {
+    res = await fetch(`/api/habits/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
 
-    } else {
-      // 🔥 CREATE MODE
-      res = await fetch(`/api/habits/add`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      showToast("Habit added", "success");
-    }
-
-    if (!res.ok) {
-      showToast("Save failed", "error");
-      return;
-    }
-
-    closeHabitSheet();
-
-    // 🔥 Smooth refresh without reload
-    await loadHealth(document.getElementById("health-date").value);
-
-  } catch (err) {
-    showToast("Something went wrong", "error");
+    showToast("Habit added", "success");
   }
+
+  if (!res.ok) {
+    showToast("Save failed", "error");
+    return;
+  }
+
+  closeHabitSheet();
+  await loadHealth(document.getElementById("health-date").value);
 }
