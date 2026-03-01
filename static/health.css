@@ -17,7 +17,7 @@ body {
 
 .health-container {
   width: 100%;
-  max-width: 720px;
+  max-width: 1220px;
   margin: 0 auto;
 }
 
@@ -42,11 +42,12 @@ body {
 ================================= */
 
 .habit-summary {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: auto auto auto auto;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 24px;
+  justify-content: center;
+  margin-bottom: 24px;
 }
 
 .habit-circle {
@@ -152,6 +153,7 @@ textarea {
 .habit-title {
   font-size: 18px;
   font-weight: 700;
+  
 }
 
 .habit-input {
@@ -366,7 +368,62 @@ textarea {
 }
 
 @media (min-width: 1024px) {
-  .health-grid { grid-template-columns: 1fr 1fr 1fr; }
-  .health-card:nth-child(1) { grid-column: span 2; }
-  .habit-summary { gap: 40px; }
+  .health-grid {
+    grid-template-columns: 2fr 1fr;
+  }
+}
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  justify-content: center;
+  align-items: flex-end;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+}
+
+.sheet-overlay.active {
+  display: flex;
+}
+
+.sheet {
+  width: 100%;
+  max-width: 520px;
+  background: white;
+  border-radius: 20px 20px 0 0;
+  padding: 20px;
+  animation: slideUp .25s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.habit-entry-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 10px 0;
+}
+
+.entry-label {
+  font-size: 13px;
+  color: #6b7280;
+}
+#heatmap {
+  display: grid;
+  grid-template-columns: repeat(30, 8px);
+  gap: 4px;
+}
+
+.heat-cell {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+@media (max-width: 640px) {
+  .health-metrics-row {
+    flex-direction: column;
+  }
 }

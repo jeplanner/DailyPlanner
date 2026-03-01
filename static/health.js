@@ -159,7 +159,7 @@ function updateHabitCircle(percent) {
 
   if (!circle) return;
 
-  const radius = 50;
+  const radius = 40;
   const circumference = 2 * Math.PI * radius;
 
   circle.style.strokeDasharray = circumference;
@@ -594,6 +594,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   });
 });
+const addBtn = document.getElementById("addHabitBtn");
+if (addBtn) {
+  addBtn.addEventListener("click", openHabitSheet);
+}
 }); // ✅ THIS WAS MISSING
 async function deleteHabit(id) {
   if (!confirm("Delete this habit?")) return;
