@@ -629,11 +629,15 @@ async function deleteHabit(id) {
   showUndoDeleteToast(id);
 
   // Soft delete in backend
-  await fetch("/api/habits/delete", {
+  const res = await fetch("/api/habits/delete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ habit_id: id })
   });
+    if (!res.ok) {
+    showToast("Delete failed", "error");
+    await loadHealth(currentDate);
+  }
 }
 function showUndoDeleteToast(id) {
 
@@ -995,9 +999,7 @@ async function loadAnalytics() {
 let selectedEmoji = "";
 let selectedColor = "#2563eb";
 
-function openHabitSheet() {
-  document.getElementById("habitSheet").classList.add("active");
-}
+
 
 function closeHabitSheet() {
 
@@ -1171,4 +1173,9 @@ function openHabitSheet() {
   document.getElementById("sheetHabitStartDate").value = today;
 
   document.getElementById("habitSheet").classList.add("active");
+
 }
+dateInput.addEventListener("change", async () => {
+  await loadHealth(dateInput.value);
+  await loadAnalytics();
+});
