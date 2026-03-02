@@ -159,6 +159,7 @@ def smart_add():
 
 
 @planner_bp.route("/smart/preview", methods=["POST"])
+@login_required
 def smart_preview():
     data = request.get_json(force=True)
 
