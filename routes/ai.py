@@ -6,7 +6,13 @@ ai_bp = Blueprint("ai", __name__)
 @ai_bp.post("/ai/reflection-summary")
 @login_required
 def reflection_summary():
-    reflection_text = request.json.get("reflection", "")
+    data = request.get_json(silent=True) or {}
+    reflection_text = data.get("reflection", "").strip()
+
+    if not reflection_text:
+        return jsonify({"summary": ""})
+
+    reflection_text = reflection_text[:4000]
 
     prompt = f"""
     Summarize this daily reflection.
@@ -20,18 +26,23 @@ def reflection_summary():
     {reflection_text}
     """
 
-    summary = call_gemini(prompt)
+    try:
+        summary = call_gemini(prompt)
+    except Exception:
+        return jsonify({"error": "AI unavailable"}), 503
 
     return jsonify({"summary": summary})
 
 @ai_bp.post("/ai/generate-day-plan")
 @login_required
 def generate_day_plan():
-    ##user_id = session["user_id"]
+    user_id = session["user_id"]
     plan_date = request.json.get("date")
 
-    # Get today's slots
+    user_id = session["user_id"]
+
     slots = get("daily_slots", {
+        "user_id": f"eq.{user_id}",
         "plan_date": f"eq.{plan_date}",
         "select": "slot,plan,priority,category,tags",
         "order": "slot.asc"

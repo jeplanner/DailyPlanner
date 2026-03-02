@@ -124,7 +124,6 @@ def catch_all_errors(e):
     return "Internal Server Error", 500
 
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-secret")
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 # ==========================================================
 # Log in codestarts here
 # ==========================================================

@@ -1,10 +1,11 @@
 import calendar
 from datetime import date, datetime, timedelta
+import os
 
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from requests import post
 import pytz
-from app import APP_PASSWORD
+
 from config import DEFAULT_STATUS, HABIT_ICONS, HABIT_LIST, IST, MIN_HEALTH_HABITS, QUADRANT_MAP, STATUSES, TOTAL_SLOTS
 import logger
 from services.login_service import login_required
@@ -21,6 +22,7 @@ from utils.slots import current_slot, slot_label
 from utils.smartplanner import parse_smart_sentence
 
 planner_bp = Blueprint("planner", __name__)
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 @planner_bp.route("/", methods=["GET", "POST"])
 @login_required
 def planner():
