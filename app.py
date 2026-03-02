@@ -2,7 +2,11 @@
 print("STEP 1: app.py import started")
 from re import search
 from warnings import filters
-from flask import Flask, request, redirect, url_for, render_template_string, session,jsonify,render_template,abort
+from flask import (
+    Flask, request, redirect, url_for,
+    render_template, render_template_string,
+    session, jsonify, abort
+)
 import os
 from datetime import date, datetime, timedelta
 import calendar
@@ -53,18 +57,16 @@ from utils.planner_parser import parse_planner_input
 from utils.slots import current_slot,slot_label
 import traceback
 from services.ai_service  import call_gemini
-from flask import jsonify
 import requests
-from flask import request, jsonify
 from bs4 import BeautifulSoup
 from utils.dates import safe_date_from_string
 import bleach
-from flask import session, redirect, url_for, request, jsonify
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from datetime import datetime
 import pytz
+from requests.exceptions import HTTPError
 print("STEP 2: imports completed")
 
 app = Flask(__name__)
@@ -91,7 +93,7 @@ def login():
     if request.method == "POST":
         if request.form.get("password") == APP_PASSWORD:
             session["authenticated"] = True
-            session["user_id"] = "VenghateshS" 
+            user_id = session["user_id"]
             return redirect(url_for("planner"))
         return render_template_string(LOGIN_TEMPLATE, error="Invalid password")
 
@@ -657,7 +659,7 @@ def summary():
 def promoteuntimed():
     data = request.get_json()
 
-    user_id = "VenghateshS"
+    user_id = session["user_id"]
     plan_date = date.fromisoformat(data["plan_date"])
     plan_date_str = plan_date.isoformat()
     task_id = data["id"]
@@ -838,7 +840,7 @@ def smart_preview():
 def schedule_untimed():
     data = request.get_json()
 
-    user_id = "VenghateshS"
+    user_id = session["user_id"]
     plan_date = date.fromisoformat(data["plan_date"])
     plan_date_str = plan_date.isoformat()
 
@@ -1013,7 +1015,7 @@ def get_slot():
 
 @app.route("/projects/tasks/send-to-eisenhower11", methods=["POST"])
 @login_required
-def send_project_task_to_eisenhower11():
+def send_project_task_to_eisenhower11():    
     data = request.get_json() or {}
 
     task_id = data.get("task_id")
@@ -1613,6 +1615,7 @@ def update_project_task_date():
     logger.info(f"👉 task_id={task_id}, new_date={due_date}")
     return jsonify({"status": "ok"})
 @app.route("/projects/tasks/<task_id>/update", methods=["POST"])
+@login_required
 def update_task(task_id):
     data = request.json or {}
 
@@ -1912,6 +1915,7 @@ def insert_many(table, rows, prefer="return=representation"):
 
 
 @app.route("/projects/tasks/bulk-add", methods=["POST"])
+@login_required
 def bulk_add_tasks():
     data = request.json or {}
 
@@ -2181,7 +2185,7 @@ def planner_v2():
     return render_template("planner_v2.html")
 @app.route("/api/v2/events")
 def list_events():
-    user_id = "VenghateshS"
+    user_id = session["user_id"]
     plan_date = request.args.get("date")
 
     events = get(
@@ -2269,10 +2273,11 @@ def create_event():
 
 
 @app.route("/api/v2/events/<event_id>", methods=["PUT"])
+@login_required
 def update_event(event_id):
     from flask import jsonify
 
-    user_id = "VenghateshS"
+    user_id = session["user_id"]
     data = request.json
     force = data.get("force", False)
 
@@ -2311,7 +2316,7 @@ def update_event(event_id):
             google_id = row[0]["google_event_id"]
 
             # 🔥 Load user Google credentials from DB
-            user_id = "VenghateshS"
+            user_id = session["user_id"]
 
             rows = get(
                 "user_google_tokens",
@@ -2363,6 +2368,7 @@ def update_event(event_id):
     return jsonify({"success": True})
 
 @app.route("/api/v2/events/<event_id>", methods=["DELETE"])
+@login_required
 def delete_event(event_id):
     update(
         "daily_events",
@@ -2378,7 +2384,7 @@ def delete_event(event_id):
         try:
             google_id = row[0]["google_event_id"]
 
-            user_id = "VenghateshS"
+            user_id = session["user_id"]
 
             rows = get(
                 "user_google_tokens",
@@ -2409,7 +2415,7 @@ def delete_event(event_id):
     return {"ok": True}
 @app.route("/api/v2/project-tasks")
 def get_project_tasks():
-    user_id = "VenghateshS"
+    user_id = session["user_id"]
     date = request.args.get("date")
 
     if not date:
@@ -2601,7 +2607,7 @@ def get_daily_health():
 
     for h in habit_defs:
 
-        goal = float(h.get("goal") or 0)
+        goal = get_goal_for_date(h["id"], plan_date)
         value = float(entry_map.get(h["id"], 0) or 0)
 
         # Correct completion logic
@@ -2764,7 +2770,7 @@ def health_dashboard():
     completed = 0
 
     for h in habit_defs:
-        goal = float(h.get("goal") or 0)
+        goal = get_goal_for_date(h["id"], plan_date)
         value = float(entry_map.get(h["id"], 0) or 0)
 
         if h.get("habit_type") == "boolean":
@@ -3599,6 +3605,7 @@ def insert_google_event(event_row):
     ).execute()
 
     return created.get("id")
+
 @app.route("/api/v2/weekly-health")
 @login_required
 def weekly_health():
@@ -3620,12 +3627,28 @@ def weekly_health():
         {
             "user_id": f"eq.{user_id}",
             "is_deleted": "is.false",
-             "start_date":  f"gte.{start.isoformat()}"
+             "start_date": f"lte.{today.isoformat()}"
         }
     )
 
     total = len(habit_defs)
+    goal_rows = get(
+        "habit_goal_history",
+        params={
+            "habit_id": f"in.({','.join([h['id'] for h in habit_defs])})",
+            "effective_from": f"lte.{today.isoformat()}"
+        }
+    )
+    goal_history_map = {}
 
+    for row in goal_rows:
+        hid = row["habit_id"]
+        goal_history_map.setdefault(hid, []).append(row)
+
+    for hid in goal_history_map:
+        goal_history_map[hid].sort(
+            key=lambda x: x["effective_from"]
+        )
     date_map = {}
     for r in rows:
         date_map.setdefault(r["plan_date"], []).append(r)
@@ -3637,14 +3660,14 @@ def weekly_health():
         entries = date_map.get(day, [])
 
         completed = 0
-
+        habit_map = {h["id"]: h for h in habit_defs}
         for e in entries:
-            habit_map = {h["id"]: h for h in habit_defs}
+            
             habit = habit_map.get(e["habit_id"])
             if not habit:
                 continue
 
-            goal = float(habit.get("goal") or 0)
+            goal = resolve_goal(habit["id"], day)
             value = float(e.get("value") or 0)
 
             if goal > 0 and value >= goal:
@@ -3711,7 +3734,7 @@ def monthly_summary():
         {
             "user_id": f"eq.{user_id}",
             "is_deleted": "is.false",
-            "start_date":f"gte.{start.isoformat()}"
+            "start_date": f"lte.{today.isoformat()}"
         }
     )
 
@@ -3739,7 +3762,7 @@ def monthly_summary():
             if not habit:
                 continue
 
-            goal = float(habit.get("goal") or 0)
+            goal = get_goal_for_date(habit["id"], day)
             value = float(e.get("value") or 0)
 
             if goal > 0 and value >= goal:
@@ -3781,7 +3804,7 @@ def heatmap():
         {
             "user_id": f"eq.{user_id}",
             "is_deleted": "is.false",
-            "start_date": f"gte.{start.isoformat()}"
+            "start_date": f"lte.{today.isoformat()}"
         }
     )
     total = len(habit_defs)
@@ -3813,7 +3836,7 @@ def heatmap():
         heat[day] = percent
 
     return jsonify(heat)       
-from requests.exceptions import HTTPError
+
 
 @app.route("/api/habits/add", methods=["POST"])
 @login_required
@@ -3844,7 +3867,11 @@ def add_habit():
         )
 
         habit = inserted[0]
-
+        post("habit_goal_history", {
+            "habit_id": habit["id"],
+            "goal": goal,
+            "effective_from": start_date
+        })
         return jsonify({
             "id": habit["id"],
             "name": habit["name"],
@@ -3878,15 +3905,11 @@ def delete_habit():
 def update_habit():
     data = request.get_json()
 
-    update(
-        "habit_master",
-        params={"id": f"eq.{data['habit_id']}"},
-        json={
-            "name": data.get("name"),
-            "unit": data.get("unit"),
-            "goal": data.get("goal")
-        }
-    )
+    post("habit_goal_history", {
+    "habit_id": data["habit_id"],
+    "goal": data["goal"],
+    "effective_from": data.get("effective_from") or date.today().isoformat()
+    })
 
     return jsonify({"success": True})
 
@@ -3915,7 +3938,7 @@ def habit_weekly(habit_id):
         params={
             "user_id": f"eq.{user_id}",
             "habit_id": f"eq.{habit_id}",
-            "plan_date": f"gte.{start.isoformat()}"
+            "plan_date": f"lte.{start.isoformat()}"
         }
     )
 
@@ -3977,6 +4000,22 @@ def habit_detail(habit_id):
         )
 
         return jsonify({"success": True})
+
+def get_goal_for_date(habit_id, plan_date):
+
+    rows = get(
+        "habit_goal_history",
+        params={
+            "habit_id": f"eq.{habit_id}",
+            "effective_from": f"lte.{plan_date}",
+            "order": "effective_from.desc",
+            "limit": 1
+        }
+    )
+
+    if rows:
+        return float(rows[0]["goal"])
+    return 0
 # ENTR
 # Y POINT
 # ==========================================================
