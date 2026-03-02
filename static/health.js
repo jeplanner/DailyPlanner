@@ -127,7 +127,7 @@ function renderHabits(habits) {
             `
         : `
               <input type="number"
-                     step="0.1"
+                     step="1"
                      value="${value}"
                      data-id="${h.id}"
                      class="habit-input"
@@ -245,7 +245,7 @@ function appendHabitToDOM(h) {
       <div class="entry-label">Today</div>
 
       <input type="number"
-             step="0.1"
+             step="1"
              value="${value}"
              data-id="${h.id}"
              class="habit-input"
