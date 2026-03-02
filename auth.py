@@ -5,7 +5,7 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get("authenticated"):
-            return redirect(url_for("login"))
+            return redirect(url_for("planner.login"))
         return fn(*args, **kwargs)
 
     return wrapper
