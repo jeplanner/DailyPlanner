@@ -1,5 +1,4 @@
 import json
-
 from flask import Blueprint, jsonify, render_template, request, session
 import requests
 from bs4 import BeautifulSoup

@@ -1,5 +1,12 @@
 
-@app.route("/notes/scribble", methods=["GET"])
+from flask import Blueprint, abort, jsonify, render_template, request, session
+
+from auth import login_required
+from routes.projects import get_one
+from supabase_client import get, post, update
+
+notes_bp = Blueprint("notes", __name__)
+@notes_bp.route("/notes/scribble", methods=["GET"])
 @login_required
 def scribble_list():
     q = (request.args.get("q") or "").strip()
@@ -22,10 +29,10 @@ def scribble_list():
     )
 
 
-@app.route("/notes/scribble/new")
+@notes_bp.route("/notes/scribble/new")
 def scribble_new():
     return render_template("scribble_edit.html", note=None)
-@app.route("/notes/scribble/<note_id>")
+@notes_bp.route("/notes/scribble/<note_id>")
 def scribble_edit(note_id):
     note = get_one("scribble_notes", params={"id": f"eq.{note_id}"})
     
@@ -34,7 +41,7 @@ def scribble_edit(note_id):
     return render_template("scribble_edit.html", note=note)
     
    
-@app.route("/notes/scribble/save", methods=["POST"])
+@notes_bp.route("/notes/scribble/save", methods=["POST"])
 @login_required
 def save_scribble():
     data = request.get_json() or {}

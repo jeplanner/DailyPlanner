@@ -1,5 +1,14 @@
 
-@app.route("/api/habits/add", methods=["POST"])
+from datetime import date, timedelta
+
+from flask import Blueprint, jsonify, request, session
+from requests.exceptions import HTTPError
+
+from auth import login_required
+from supabase_client import get, post, update
+
+habits_bp = Blueprint("habits", __name__)
+@habits_bp.route("/api/habits/add", methods=["POST"])
 @login_required
 def add_habit():
     user_id = session["user_id"]
@@ -46,8 +55,7 @@ def add_habit():
             return jsonify({"error": "Habit already exists"}), 409
 
         raise
-    
-@app.route("/api/habits/delete", methods=["POST"])
+@habits_bp.route("/api/habits/delete", methods=["POST"])
 @login_required
 def delete_habit():
     data = request.get_json()
@@ -55,26 +63,42 @@ def delete_habit():
 
     update(
         "habit_master",
-        params={"id": f"eq.{habit_id}"},
+        params={
+            "id": f"eq.{habit_id}",
+            "user_id": f"eq.{session['user_id']}"
+        },
         json={"is_deleted": True}
     )
 
     return jsonify({"success": True})
-
-@app.route("/api/habits/update", methods=["POST"])
+@habits_bp.route("/api/habits/update", methods=["POST"])
 @login_required
 def update_habit():
     data = request.get_json()
+    user_id = session["user_id"]
+
+    # Validate ownership
+    habit = get(
+        "habit_master",
+        {
+            "id": f"eq.{data['habit_id']}",
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false"
+        }
+    )
+
+    if not habit:
+        return jsonify({"error": "Habit not found"}), 404
 
     post("habit_goal_history", {
-    "habit_id": data["habit_id"],
-    "goal": data["goal"],
-    "effective_from": data.get("effective_from") or date.today().isoformat()
+        "habit_id": data["habit_id"],
+        "goal": float(data["goal"]),
+        "effective_from": data.get("effective_from") or date.today().isoformat()
     })
 
     return jsonify({"success": True})
 
-@app.route("/api/habits/reorder", methods=["POST"])
+@habits_bp.route("/api/habits/reorder", methods=["POST"])
 @login_required
 def reorder_habit():
     data = request.get_json()
@@ -87,7 +111,7 @@ def reorder_habit():
 
     return jsonify({"success": True})
 
-@app.route("/api/v2/habit-weekly/<habit_id>")
+@habits_bp.route("/api/v2/habit-weekly/<habit_id>")
 @login_required
 def habit_weekly(habit_id):
     user_id = session["user_id"]
@@ -99,7 +123,7 @@ def habit_weekly(habit_id):
         params={
             "user_id": f"eq.{user_id}",
             "habit_id": f"eq.{habit_id}",
-            "plan_date": f"lte.{start.isoformat()}"
+            "plan_date": f"gte.{start.isoformat()}"
         }
     )
 
@@ -111,7 +135,7 @@ def habit_weekly(habit_id):
         data.append(date_map.get(day, 0))
 
     return jsonify(data)
-@app.route("/api/habits/<habit_id>", methods=["GET", "PUT"])
+@habits_bp.route("/api/habits/<habit_id>", methods=["GET", "PUT"])
 @login_required
 def habit_detail(habit_id):
 

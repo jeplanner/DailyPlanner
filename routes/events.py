@@ -80,8 +80,8 @@ def create_event():
             if google_id:
                 update(
                     "daily_events",
-                    params={"id": f"eq.{created_row['id']}"},
-                    json={"google_event_id": google_id}
+                    params={"id": f"eq.{created_row['id']}","user_id": f"eq.{session['user_id']}"},
+                    json={"google_event_id": google_id} 
                 )
         except Exception as e:
             print("Google sync failed:", e)
@@ -232,6 +232,7 @@ def delete_event(event_id):
     return {"ok": True}
 
 @events_bp.post("/api/v2/smart-create")
+@login_required
 def smart_create():
     data = request.json or {}
 
@@ -279,6 +280,7 @@ def smart_create():
         "failed": failed
     })
 @events_bp.route('/google-login')
+@login_required
 def google_login():
     flow = Flow.from_client_config(
     {
@@ -290,7 +292,7 @@ def google_login():
         }
     },
     scopes=SCOPES,
-    redirect_uri=url_for('oauth2callback', _external=True)
+    redirect_uri=url_for('events.oauth2callback', _external=True)
     )
 
     authorization_url, state = flow.authorization_url(
@@ -326,7 +328,7 @@ def oauth2callback():
         },
         scopes=SCOPES,
         state=session["state"],
-        redirect_uri=url_for("oauth2callback", _external=True)
+        redirect_uri=url_for("events.oauth2callback", _external=True)
     )
 
     flow.fetch_token(authorization_response=request.url)
