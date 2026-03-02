@@ -3605,7 +3605,6 @@ def insert_google_event(event_row):
     ).execute()
 
     return created.get("id")
-
 @app.route("/api/v2/weekly-health")
 @login_required
 def weekly_health():
@@ -3614,45 +3613,83 @@ def weekly_health():
     today = datetime.now(IST).date()
     start = today - timedelta(days=6)
 
+    # ----------------------------------
+    # Load habit entries (last 7 days)
+    # ----------------------------------
     rows = get(
         "habit_entries",
         {
             "user_id": f"eq.{user_id}",
-            "plan_date": f"gte.{start.isoformat()}"
+            "plan_date": f"gte.{start.isoformat()}",
+            "plan_date": f"lte.{today.isoformat()}"
         }
-    )
+    ) or []
 
+    # ----------------------------------
+    # Load active habits
+    # ----------------------------------
     habit_defs = get(
         "habit_master",
         {
             "user_id": f"eq.{user_id}",
             "is_deleted": "is.false",
-             "start_date": f"lte.{today.isoformat()}"
+            "start_date": f"lte.{today.isoformat()}"
         }
-    )
+    ) or []
 
     total = len(habit_defs)
-    goal_rows = get(
-        "habit_goal_history",
-        params={
-            "habit_id": f"in.({','.join([h['id'] for h in habit_defs])})",
-            "effective_from": f"lte.{today.isoformat()}"
-        }
-    )
+
+    # ----------------------------------
+    # Load goal history (single query)
+    # ----------------------------------
+    if habit_defs:
+        habit_ids = ",".join([h["id"] for h in habit_defs])
+
+        goal_rows = get(
+            "habit_goal_history",
+            {
+                "habit_id": f"in.({habit_ids})",
+                "effective_from": f"lte.{today.isoformat()}",
+                "order": "effective_from.asc"
+            }
+        ) or []
+    else:
+        goal_rows = []
+
+    # ----------------------------------
+    # Build goal history map
+    # ----------------------------------
     goal_history_map = {}
 
     for row in goal_rows:
         hid = row["habit_id"]
         goal_history_map.setdefault(hid, []).append(row)
 
-    for hid in goal_history_map:
-        goal_history_map[hid].sort(
-            key=lambda x: x["effective_from"]
-        )
+    # ----------------------------------
+    # Helper: resolve goal for date
+    # ----------------------------------
+    def resolve_goal_local(habit_id, day):
+        history = goal_history_map.get(habit_id, [])
+        goal = 0
+        for row in history:
+            if row["effective_from"] <= day:
+                goal = float(row["goal"])
+            else:
+                break
+        return goal
+
+    # ----------------------------------
+    # Build entry map by date
+    # ----------------------------------
     date_map = {}
     for r in rows:
         date_map.setdefault(r["plan_date"], []).append(r)
 
+    habit_map = {h["id"]: h for h in habit_defs}
+
+    # ----------------------------------
+    # Compute daily percentages
+    # ----------------------------------
     percentages = []
 
     for i in range(7):
@@ -3660,14 +3697,13 @@ def weekly_health():
         entries = date_map.get(day, [])
 
         completed = 0
-        habit_map = {h["id"]: h for h in habit_defs}
+
         for e in entries:
-            
             habit = habit_map.get(e["habit_id"])
             if not habit:
                 continue
 
-            goal = resolve_goal(habit["id"], day)
+            goal = resolve_goal_local(habit["id"], day)
             value = float(e.get("value") or 0)
 
             if goal > 0 and value >= goal:
@@ -3676,18 +3712,30 @@ def weekly_health():
         percent = round((completed / total) * 100) if total else 0
         percentages.append(percent)
 
+    # ----------------------------------
+    # Weekly average
+    # ----------------------------------
     avg = round(sum(percentages) / len(percentages)) if percentages else 0
 
-    # Best habit
+    # ----------------------------------
+    # Best habit (by total value)
+    # ----------------------------------
     habit_totals = {}
-    for r in rows:
-        habit_totals[r["habit_id"]] = habit_totals.get(r["habit_id"], 0) + float(r["value"] or 0)
 
-    best_habit_id = max(habit_totals, key=habit_totals.get) if habit_totals else None
+    for r in rows:
+        habit_totals[r["habit_id"]] = (
+            habit_totals.get(r["habit_id"], 0)
+            + float(r.get("value") or 0)
+        )
+
+    best_habit_id = (
+        max(habit_totals, key=habit_totals.get)
+        if habit_totals else None
+    )
 
     best_name = None
     if best_habit_id:
-        best = next((h for h in habit_defs if h["id"] == best_habit_id), None)
+        best = habit_map.get(best_habit_id)
         if best:
             best_name = best["name"]
 
@@ -3696,7 +3744,6 @@ def weekly_health():
         "weekly_avg": avg,
         "best_habit": best_name
     })
-
 
 @app.route("/api/v2/monthly-summary")
 @login_required
