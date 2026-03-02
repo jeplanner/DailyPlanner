@@ -87,7 +87,6 @@ function renderHabits(habits) {
   const container = document.getElementById("habitContainer");
   if (!container) return;
 
-  // Build once → assign once (better performance)
   let html = "";
 
   habits.forEach(h => {
@@ -100,7 +99,7 @@ function renderHabits(habits) {
       : 0;
 
     // -------------------------
-    // Status Logic (moved inside loop)
+    // Status Logic
     // -------------------------
     let statusSVG = "";
     let statusClass = "";
@@ -118,7 +117,7 @@ function renderHabits(habits) {
                 stroke-linejoin="round"/>
         </svg>
       `;
-    } 
+    }
     else if (value > 0) {
       statusClass = "status-progress";
       statusSVG = `
@@ -131,7 +130,7 @@ function renderHabits(habits) {
                 stroke-linecap="round"/>
         </svg>
       `;
-    } 
+    }
     else {
       statusClass = "status-empty";
       statusSVG = `
@@ -144,9 +143,6 @@ function renderHabits(habits) {
       `;
     }
 
-    // -------------------------
-    // Boolean or numeric input
-    // -------------------------
     const inputHTML = h.habit_type === "boolean"
       ? `
         <label class="switch">
@@ -169,12 +165,19 @@ function renderHabits(habits) {
     html += `
       <div class="habit-item ${statusClass}"
            data-id="${h.id}"
-           data-goal="${goal}">
+           data-goal="${goal}"
+           data-unit="${h.unit}">
 
         <div class="habit-header habit-tap" data-id="${h.id}">
-          <div class="habit-title">
-            ${h.name}
-            ${statusSVG}
+          <div>
+            <div class="habit-title">
+              ${h.name}
+              ${statusSVG}
+            </div>
+
+            <div class="goal-under-title">
+              Goal: ${goal} ${h.unit}
+            </div>
           </div>
 
           <div class="habit-actions">
@@ -194,19 +197,15 @@ function renderHabits(habits) {
                style="width: ${percent}%"></div>
         </div>
 
-        <div class="habit-goal-display">
-          <span class="goal-text">Goal: ${goal} ${h.unit}</span>
-          <span class="goal-percent">${percent}%</span>
+        <div class="goal-percent-row">
+          ${percent}%
         </div>
-
       </div>
     `;
   });
 
-  // Single DOM update
   container.innerHTML = html;
 
-  // Rebind events (unchanged behavior)
   wireHabitInputs();
   wireBooleanHabits();
 }
@@ -269,30 +268,39 @@ async function submitHabitModal() {
 
   closeHabitModal();
 }
-
 function appendHabitToDOM(h) {
 
   const container = document.getElementById("habitContainer");
   if (!container) return;
 
-  const goal = h.goal ?? 0;
-  const value = h.value ?? "";
+  const goal = parseFloat(h.goal || 0);
+  const value = parseFloat(h.value || 0);
+
   const percent = goal > 0
     ? Math.min(100, Math.round((value / goal) * 100))
     : 0;
 
   const div = document.createElement("div");
+
   div.className = "habit-item";
   div.dataset.id = h.id;
-  div.dataset.goal = goal; // ✅ MUST BE HERE
+  div.dataset.goal = goal;
+  div.dataset.unit = h.unit;
 
   div.innerHTML = `
     <div class="habit-header habit-tap" data-id="${h.id}">
       <div>
-        <div class="habit-title">${h.name}</div>
+        <div class="habit-title">
+          ${h.name}
+        </div>
+
+        <div class="goal-under-title">
+          Goal: ${goal} ${h.unit}
+        </div>
       </div>
 
       <div class="habit-actions">
+        <button onclick="event.stopPropagation(); editHabit('${h.id}')">✏️</button>
         <button onclick="event.stopPropagation(); showHabitChart('${h.id}')">📈</button>
         <button onclick="event.stopPropagation(); deleteHabit('${h.id}')">🗑</button>
       </div>
@@ -300,7 +308,6 @@ function appendHabitToDOM(h) {
 
     <div class="habit-entry-block">
       <div class="entry-label">Today</div>
-
       <input type="number"
              step="1"
              value="${value}"
@@ -310,21 +317,18 @@ function appendHabitToDOM(h) {
     </div>
 
     <div class="habit-progress">
-      <div class="habit-progress-fill"
+      <div class="habit-progress-fill ${percent >= 100 ? "completed" : ""}"
            style="width: ${percent}%"></div>
     </div>
 
-    <div class="habit-goal-display">
-      <span class="goal-text">Goal: ${goal} ${h.unit}</span>
-      <span class="goal-percent">${percent}%</span>
+    <div class="goal-percent-row">
+      ${percent}%
     </div>
-   
   `;
 
   container.appendChild(div);
 
   wireHabitInputs();
-
 }
 async function saveHealth() {
 
@@ -419,6 +423,7 @@ function wireHabitInputs() {
 
         // 🔥 Subtle card glow
         item.classList.toggle("completed", percent >= 100);
+        updateHabitStatus(item, value, goal);
 
       }, 500);
 
@@ -451,7 +456,7 @@ function wireBooleanHabits() {
 
       showSaveToast();
       recalcHabitPercent();
-
+     
       // 🔥 Update progress visually
       const item = input.closest(".habit-item");
       if (!item) return;
@@ -468,7 +473,7 @@ function wireBooleanHabits() {
       }
 
       item.classList.toggle("completed", percent >= 100);
-
+      updateHabitStatus(item, value, 1);
     });
 
   });
@@ -486,14 +491,13 @@ function recalcHabitPercent() {
 
     const checkbox = item.querySelector(".habit-boolean");
     const input = item.querySelector(".habit-input");
-    const goalText = item.querySelector(".habit-goal-display");
 
     if (checkbox) {
       if (checkbox.checked) completed++;
       return;
     }
 
-    if (input && goalText) {
+    if (input) {
       const value = parseFloat(input.value || 0);
       const goal = parseFloat(item.dataset.goal) || 0;
 
@@ -552,8 +556,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   dateInput.addEventListener("change", async () => {
     await loadHealth(dateInput.value);
+    await loadAnalytics();
   });
-
   // 🔥 Load heatmap once
   fetch("/api/v2/heatmap")
     .then(res => res.json())
@@ -634,9 +638,9 @@ async function deleteHabit(id) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ habit_id: id })
   });
-    if (!res.ok) {
+  if (!res.ok) {
     showToast("Delete failed", "error");
-    await loadHealth(currentDate);
+    await loadHealth(document.getElementById("health-date").value);
   }
 }
 function showUndoDeleteToast(id) {
@@ -805,32 +809,29 @@ document.addEventListener("keydown", function (e) {
   }
 
 });
-
 async function quickAdd(id) {
 
   const item = document.querySelector(`.habit-item[data-id="${id}"]`);
   if (!item) return;
 
   const input = item.querySelector(".habit-input");
+  if (!input) return;
 
   let current = parseFloat(input.value || 0);
-  const goalText = item.querySelector(".habit-goal-display")?.innerText || "";
-  const unitMatch = goalText.match(/Goal:\s*[\d.]+\s*(.*)/);
-  const unit = unitMatch ? unitMatch[1] : "";
 
+  const unit = item.dataset.unit || "";
   const step = getStepFromUnit(unit);
 
   current = Math.round((current + step) * 100) / 100;
 
   input.value = current;
 
-  // trigger autosave
+  // Trigger autosave
   input.dispatchEvent(new Event("input"));
 
-  // visual feedback
+  // Visual feedback
   item.classList.add("tap-flash");
   setTimeout(() => item.classList.remove("tap-flash"), 300);
-
 }
 function getStepFromUnit(unit) {
 
@@ -852,12 +853,11 @@ function quickAdjust(id, direction) {
   if (!item) return;
 
   const input = item.querySelector(".habit-input");
-  const goalText = item.querySelector(".habit-goal-display")?.innerText || "";
-  const unitMatch = goalText.match(/Goal:\s*[\d.]+\s*(.*)/);
-  const unit = unitMatch ? unitMatch[1] : "";
+  if (!input) return;
 
   let current = parseFloat(input.value || 0);
 
+  const unit = item.dataset.unit || "";
   const step = getStepFromUnit(unit);
 
   current = Math.round((current + step * direction) * 100) / 100;
@@ -866,10 +866,10 @@ function quickAdjust(id, direction) {
 
   input.value = current;
 
-  // trigger autosave
+  // Trigger autosave
   input.dispatchEvent(new Event("input"));
 
-  // visual feedback
+  // Visual feedback
   item.classList.add("tap-flash");
   setTimeout(() => item.classList.remove("tap-flash"), 250);
 }
@@ -1175,7 +1175,63 @@ function openHabitSheet() {
   document.getElementById("habitSheet").classList.add("active");
 
 }
-dateInput.addEventListener("change", async () => {
-  await loadHealth(dateInput.value);
-  await loadAnalytics();
-});
+
+
+function updateHabitStatus(item, value, goal) {
+
+  const title = item.querySelector(".habit-title");
+  if (!title) return;
+
+  let statusSVG = "";
+  let statusClass = "";
+
+  if (goal > 0 && value >= goal) {
+    statusClass = "status-complete";
+    statusSVG = `
+      <svg viewBox="0 0 24 24" class="status-icon">
+        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
+        <path d="M8 12l3 3 5-6"
+              stroke="currentColor"
+              stroke-width="2.5"
+              fill="none"
+              stroke-linecap="round"
+              stroke-linejoin="round"/>
+      </svg>
+    `;
+  } 
+  else if (value > 0) {
+    statusClass = "status-progress";
+    statusSVG = `
+      <svg viewBox="0 0 24 24" class="status-icon">
+        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
+        <path d="M12 7v6l4 2"
+              stroke="currentColor"
+              stroke-width="2.5"
+              fill="none"
+              stroke-linecap="round"/>
+      </svg>
+    `;
+  } 
+  else {
+    statusClass = "status-empty";
+    statusSVG = `
+      <svg viewBox="0 0 24 24" class="status-icon">
+        <circle cx="12" cy="12" r="10"
+                stroke="currentColor"
+                stroke-width="2"
+                fill="none"/>
+      </svg>
+    `;
+  }
+
+  // remove old icon
+  const oldIcon = title.querySelector(".status-icon");
+  if (oldIcon) oldIcon.remove();
+
+  // append new icon
+  title.insertAdjacentHTML("beforeend", statusSVG);
+
+  // update class
+  item.classList.remove("status-complete", "status-progress", "status-empty");
+  item.classList.add(statusClass);
+}

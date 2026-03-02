@@ -118,6 +118,7 @@ textarea:focus {
   outline: none;
   border-color: #2563eb;
   background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.2);
 }
 
 textarea {
@@ -148,11 +149,7 @@ textarea {
   margin-bottom: 8px;
 }
 
-.habit-title {
-  font-size: 18px;
-  font-weight: 700;
-  
-}
+
 
 .habit-input {
   font-size: 20px;
@@ -162,30 +159,6 @@ textarea {
   border-radius: 14px;
 }
 
-/* ===============================
-   GOAL DISPLAY
-================================= */
-
-.habit-goal-display {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-.goal-text {
-  color: #2563eb;
-}
-
-.goal-percent {
-  font-size: 13px;
-  font-weight: 700;
-  color: #111827;
-}
 
 /* ===============================
    HABIT PROGRESS
@@ -255,7 +228,7 @@ textarea {
   position: sticky;
   top: 0;
   background: white;
-  z-index: 5;
+  z-index: 10;
   padding-bottom: 10px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
@@ -327,8 +300,9 @@ textarea {
   padding: 12px 18px;
   border-radius: 14px;
   font-size: 14px;
-  backdrop-filter: blur(10px);
-  background: rgba(30,30,30,0.85);
+ background: rgba(30,30,30,0.85);
+ backdrop-filter: blur(10px);
+ -webkit-backdrop-filter: blur(10px);
   color: white;
   text-align: center;
   box-shadow: 0 8px 25px rgba(0,0,0,0.25);
@@ -343,9 +317,11 @@ textarea {
 }
 
 
-.habit-item:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+@media (hover: hover) {
+  .habit-item:hover {
+     transform: translateY(-2px);
+     box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+  }
 }
 .toast.success {
   background: rgba(22,163,74,0.9);
@@ -489,6 +465,8 @@ textarea {
 ================================= */
 
 .habit-title {
+  font-size: 18px;
+  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -522,4 +500,17 @@ textarea {
 
 .status-complete .status-icon {
   transform: scale(1.05);
+}
+.goal-under-title {
+  font-size: 13px;
+  color: #2563eb;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.goal-percent-row {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 6px;
 }
