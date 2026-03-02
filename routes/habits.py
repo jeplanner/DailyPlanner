@@ -1,0 +1,179 @@
+
+@app.route("/api/habits/add", methods=["POST"])
+@login_required
+def add_habit():
+    user_id = session["user_id"]
+    data = request.get_json()
+
+    name = (data.get("name") or "").strip().upper()
+    unit = (data.get("unit") or "").strip().upper()
+    goal = float(data.get("goal") or 0)
+    start_date = data.get("start_date") or date.today().isoformat()
+    if not name or not unit or not goal:
+        return jsonify({"error": "All fields required"}), 400
+
+    try:
+        inserted = post(
+            "habit_master",
+            {
+                "user_id": user_id,
+                "name": name,
+                "unit": unit,
+                "goal": goal,
+                "position": 9999,
+                "is_deleted": False,
+                "start_date":start_date
+            },
+            prefer="return=representation"
+        )
+
+        habit = inserted[0]
+        post("habit_goal_history", {
+            "habit_id": habit["id"],
+            "goal": goal,
+            "effective_from": start_date
+        })
+        return jsonify({
+            "id": habit["id"],
+            "name": habit["name"],
+            "unit": habit["unit"],
+            "goal": habit["goal"],
+            "value": 0
+        })
+
+    except HTTPError as e:
+        if e.response.status_code == 409:
+            return jsonify({"error": "Habit already exists"}), 409
+
+        raise
+    
+@app.route("/api/habits/delete", methods=["POST"])
+@login_required
+def delete_habit():
+    data = request.get_json()
+    habit_id = data.get("habit_id")
+
+    update(
+        "habit_master",
+        params={"id": f"eq.{habit_id}"},
+        json={"is_deleted": True}
+    )
+
+    return jsonify({"success": True})
+
+@app.route("/api/habits/update", methods=["POST"])
+@login_required
+def update_habit():
+    data = request.get_json()
+
+    post("habit_goal_history", {
+    "habit_id": data["habit_id"],
+    "goal": data["goal"],
+    "effective_from": data.get("effective_from") or date.today().isoformat()
+    })
+
+    return jsonify({"success": True})
+
+@app.route("/api/habits/reorder", methods=["POST"])
+@login_required
+def reorder_habit():
+    data = request.get_json()
+
+    update(
+        "habit_master",
+        params={"id": f"eq.{data['habit_id']}"},
+        json={"position": data["position"]}
+    )
+
+    return jsonify({"success": True})
+
+@app.route("/api/v2/habit-weekly/<habit_id>")
+@login_required
+def habit_weekly(habit_id):
+    user_id = session["user_id"]
+    today = date.today()
+    start = today - timedelta(days=6)
+
+    rows = get(
+        "habit_entries",
+        params={
+            "user_id": f"eq.{user_id}",
+            "habit_id": f"eq.{habit_id}",
+            "plan_date": f"lte.{start.isoformat()}"
+        }
+    )
+
+    date_map = {r["plan_date"]: float(r["value"] or 0) for r in rows}
+
+    data = []
+    for i in range(7):
+        day = (start + timedelta(days=i)).isoformat()
+        data.append(date_map.get(day, 0))
+
+    return jsonify(data)
+@app.route("/api/habits/<habit_id>", methods=["GET", "PUT"])
+@login_required
+def habit_detail(habit_id):
+
+    user_id = session["user_id"]
+
+    # ---------- GET ----------
+    if request.method == "GET":
+
+        row = get(
+            "habit_master",
+            params={
+                "id": f"eq.{habit_id}",
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false"
+            }
+        )
+
+        if not row:
+            return jsonify({"error": "Habit not found"}), 404
+
+        return jsonify(row[0])
+
+    # ---------- PUT ----------
+    if request.method == "PUT":
+
+        data = request.get_json()
+
+        name = data.get("name")
+        unit = data.get("unit")
+        goal = data.get("goal")
+
+        if goal is None:
+            return jsonify({"error": "Goal required"}), 400
+
+        update(
+            "habit_master",
+            params={
+                "id": f"eq.{habit_id}",
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false"
+            },
+            json={
+                "name": name,
+                "unit": unit,
+                "goal": float(goal)
+            }
+        )
+
+        return jsonify({"success": True})
+
+def get_goal_for_date(habit_id, plan_date):
+
+    rows = get(
+        "habit_goal_history",
+        params={
+            "habit_id": f"eq.{habit_id}",
+            "effective_from": f"lte.{plan_date}",
+            "order": "effective_from.desc",
+            "limit": 1
+        }
+    )
+
+    if rows:
+        return float(rows[0]["goal"])
+    return 0
