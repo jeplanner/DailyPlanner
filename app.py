@@ -2578,7 +2578,8 @@ def get_daily_health():
     # ---------------------
     habit_defs = get(
         "habit_master",
-        params={"user_id": f"eq.{user_id}","is_deleted": "is.false", "order": "position.asc"},
+        params={"user_id": f"eq.{user_id}","is_deleted": "is.false",
+                 "start_date": f"lte.{plan_date}","order": "position.asc"},
         
     )
 
@@ -3610,7 +3611,7 @@ def weekly_health():
         "habit_entries",
         {
             "user_id": f"eq.{user_id}",
-            "plan_date": f"gte.{start.isoformat()}",
+            "plan_date": f"gte.{start.isoformat()}"
         }
     )
 
@@ -3618,7 +3619,8 @@ def weekly_health():
         "habit_master",
         {
             "user_id": f"eq.{user_id}",
-            "is_deleted": "is.false"
+            "is_deleted": "is.false",
+             "start_date":  f"gte.{start.isoformat()}"
         }
     )
 
@@ -3708,7 +3710,8 @@ def monthly_summary():
         "habit_master",
         {
             "user_id": f"eq.{user_id}",
-            "is_deleted": "is.false"
+            "is_deleted": "is.false",
+            "start_date":f"gte.{start.isoformat()}"
         }
     )
 
@@ -3777,7 +3780,8 @@ def heatmap():
         "habit_master",
         {
             "user_id": f"eq.{user_id}",
-            "is_deleted": "is.false"
+            "is_deleted": "is.false",
+            "start_date": f"gte.{start.isoformat()}"
         }
     )
     total = len(habit_defs)
@@ -3820,7 +3824,7 @@ def add_habit():
     name = (data.get("name") or "").strip().upper()
     unit = (data.get("unit") or "").strip().upper()
     goal = float(data.get("goal") or 0)
-
+    start_date = data.get("start_date") or date.today().isoformat()
     if not name or not unit or not goal:
         return jsonify({"error": "All fields required"}), 400
 
@@ -3833,7 +3837,8 @@ def add_habit():
                 "unit": unit,
                 "goal": goal,
                 "position": 9999,
-                "is_deleted": False
+                "is_deleted": False,
+                "start_date":start_date
             },
             prefer="return=representation"
         )

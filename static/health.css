@@ -484,3 +484,42 @@ textarea {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+/* ===============================
+   HABIT STATUS ICON
+================================= */
+
+.habit-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.habit-status {
+  display: flex;
+  align-items: center;
+}
+
+.status-icon {
+  width: 22px;
+  height: 22px;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+/* States */
+
+.status-complete {
+  color: #16a34a;
+}
+
+.status-progress {
+  color: #f59e0b;
+}
+
+.status-empty {
+  color: #9ca3af;
+}
+
+.status-complete .status-icon {
+  transform: scale(1.05);
+}

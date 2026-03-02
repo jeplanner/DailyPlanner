@@ -119,8 +119,11 @@
               <div class="habit-drag">☰</div>
 
               <div>
-                <div class="habit-title" onclick="editHabit('{{ habit.id }}')">
-                  {{ habit.name }}
+                <div class="habit-title">
+                  ${h.name}
+                  <span class="habit-status ${statusClass}">
+                    ${statusSVG}
+                  </span>
                 </div>
                 <div class="habit-goal-display">
                   <span class="goal-text">
@@ -234,7 +237,8 @@
         <input type="text" id="sheetHabitName" placeholder="Habit name">
         <input type="text" id="sheetHabitUnit" placeholder="Unit (mins, steps, ml)">
         <input type="number" id="sheetHabitGoal" placeholder="Daily goal">
-
+        <label>Start Date</label>
+        <input type="date" id="sheetHabitStartDate">
         <div class="goal-suggestions" id="goalSuggestions"></div>
 
         <div class="color-picker">

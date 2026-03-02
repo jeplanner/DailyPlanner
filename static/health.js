@@ -86,7 +86,41 @@ function renderHabits(habits) {
 
   const container = document.getElementById("habitContainer");
   if (!container) return;
+  const value = parseFloat(h.value || 0);
+  const goal = parseFloat(h.goal || 0);
 
+  let statusSVG = "";
+  let statusClass = "";
+
+  if (goal > 0 && value >= goal) {
+    statusClass = "status-complete";
+    statusSVG = `
+      <svg viewBox="0 0 24 24" class="status-icon">
+        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
+        <path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="2.5"
+              fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `;
+  } 
+  else if (value > 0) {
+    statusClass = "status-progress";
+    statusSVG = `
+      <svg viewBox="0 0 24 24" class="status-icon">
+        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
+        <path d="M12 7v6l4 2" stroke="currentColor" stroke-width="2.5"
+              fill="none" stroke-linecap="round"/>
+      </svg>
+    `;
+  } 
+  else {
+    statusClass = "status-empty";
+    statusSVG = `
+      <svg viewBox="0 0 24 24" class="status-icon">
+        <circle cx="12" cy="12" r="10" stroke="currentColor"
+                stroke-width="2" fill="none"/>
+      </svg>
+    `;
+  }
   container.innerHTML = "";
 
   habits.forEach(h => {
@@ -1060,7 +1094,7 @@ async function submitHabitSheet() {
 
   const sheet = document.getElementById("habitSheet");
   const editId = sheet.dataset.editId;
-
+  const startDate = document.getElementById("sheetHabitStartDate").value;
   const name = document.getElementById("sheetHabitName").value.trim();
   const unit = document.getElementById("sheetHabitUnit").value.trim();
   const goal = parseFloat(document.getElementById("sheetHabitGoal").value);
@@ -1075,7 +1109,8 @@ async function submitHabitSheet() {
     unit,
     goal,
     emoji: selectedEmoji,
-    color: selectedColor
+    color: selectedColor,
+    start_date: startDate
   };
 
   let res;
@@ -1107,4 +1142,10 @@ async function submitHabitSheet() {
 
   closeHabitSheet();
   await loadHealth(document.getElementById("health-date").value);
+}
+function openHabitSheet() {
+  const today = new Date().toISOString().split("T")[0];
+  document.getElementById("sheetHabitStartDate").value = today;
+
+  document.getElementById("habitSheet").classList.add("active");
 }
