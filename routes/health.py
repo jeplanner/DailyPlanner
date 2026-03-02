@@ -1,10 +1,11 @@
 from flask import Blueprint, jsonify, render_template, request, session
 from datetime import date, datetime, timedelta
+from auth import login_required
 from config import IST
 from routes.habits import get_goal_for_date
 from supabase_client import get, post
 from services.planner_service import compute_health_streak
-from app import login_required
+
 
 
 health_bp = Blueprint("health", __name__)
