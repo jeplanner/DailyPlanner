@@ -86,57 +86,95 @@ function renderHabits(habits) {
 
   const container = document.getElementById("habitContainer");
   if (!container) return;
-  const value = parseFloat(h.value || 0);
-  const goal = parseFloat(h.goal || 0);
 
-  let statusSVG = "";
-  let statusClass = "";
-
-  if (goal > 0 && value >= goal) {
-    statusClass = "status-complete";
-    statusSVG = `
-      <svg viewBox="0 0 24 24" class="status-icon">
-        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
-        <path d="M8 12l3 3 5-6" stroke="currentColor" stroke-width="2.5"
-              fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    `;
-  } 
-  else if (value > 0) {
-    statusClass = "status-progress";
-    statusSVG = `
-      <svg viewBox="0 0 24 24" class="status-icon">
-        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
-        <path d="M12 7v6l4 2" stroke="currentColor" stroke-width="2.5"
-              fill="none" stroke-linecap="round"/>
-      </svg>
-    `;
-  } 
-  else {
-    statusClass = "status-empty";
-    statusSVG = `
-      <svg viewBox="0 0 24 24" class="status-icon">
-        <circle cx="12" cy="12" r="10" stroke="currentColor"
-                stroke-width="2" fill="none"/>
-      </svg>
-    `;
-  }
-  container.innerHTML = "";
+  // Build once → assign once (better performance)
+  let html = "";
 
   habits.forEach(h => {
 
-    const value = h.value ?? "";
-    const goal = h.goal ?? 0;
+    const value = parseFloat(h.value || 0);
+    const goal = parseFloat(h.goal || 0);
+
     const percent = goal > 0
       ? Math.min(100, Math.round((value / goal) * 100))
       : 0;
 
-    container.innerHTML += `
-      <div class="habit-item" data-id="${h.id}" data-goal="${goal}">
+    // -------------------------
+    // Status Logic (moved inside loop)
+    // -------------------------
+    let statusSVG = "";
+    let statusClass = "";
+
+    if (goal > 0 && value >= goal) {
+      statusClass = "status-complete";
+      statusSVG = `
+        <svg viewBox="0 0 24 24" class="status-icon">
+          <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
+          <path d="M8 12l3 3 5-6"
+                stroke="currentColor"
+                stroke-width="2.5"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"/>
+        </svg>
+      `;
+    } 
+    else if (value > 0) {
+      statusClass = "status-progress";
+      statusSVG = `
+        <svg viewBox="0 0 24 24" class="status-icon">
+          <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
+          <path d="M12 7v6l4 2"
+                stroke="currentColor"
+                stroke-width="2.5"
+                fill="none"
+                stroke-linecap="round"/>
+        </svg>
+      `;
+    } 
+    else {
+      statusClass = "status-empty";
+      statusSVG = `
+        <svg viewBox="0 0 24 24" class="status-icon">
+          <circle cx="12" cy="12" r="10"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  fill="none"/>
+        </svg>
+      `;
+    }
+
+    // -------------------------
+    // Boolean or numeric input
+    // -------------------------
+    const inputHTML = h.habit_type === "boolean"
+      ? `
+        <label class="switch">
+          <input type="checkbox"
+                 data-id="${h.id}"
+                 class="habit-boolean"
+                 ${value == 1 ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+      `
+      : `
+        <input type="number"
+               step="1"
+               value="${value}"
+               data-id="${h.id}"
+               class="habit-input"
+               placeholder="Enter value">
+      `;
+
+    html += `
+      <div class="habit-item ${statusClass}"
+           data-id="${h.id}"
+           data-goal="${goal}">
 
         <div class="habit-header habit-tap" data-id="${h.id}">
-          <div>
-            <div class="habit-title">${h.name}</div>
+          <div class="habit-title">
+            ${h.name}
+            ${statusSVG}
           </div>
 
           <div class="habit-actions">
@@ -148,30 +186,11 @@ function renderHabits(habits) {
 
         <div class="habit-entry-block">
           <div class="entry-label">Today</div>
-
-          ${h.habit_type === "boolean"
-        ? `
-              <label class="switch">
-                <input type="checkbox"
-                       data-id="${h.id}"
-                       class="habit-boolean"
-                       ${value == 1 ? "checked" : ""}>
-                <span class="slider"></span>
-              </label>
-            `
-        : `
-              <input type="number"
-                     step="1"
-                     value="${value}"
-                     data-id="${h.id}"
-                     class="habit-input"
-                     placeholder="Enter value">
-            `
-      }
+          ${inputHTML}
         </div>
 
         <div class="habit-progress">
-          <div class="habit-progress-fill"
+          <div class="habit-progress-fill ${percent >= 100 ? "completed" : ""}"
                style="width: ${percent}%"></div>
         </div>
 
@@ -184,6 +203,10 @@ function renderHabits(habits) {
     `;
   });
 
+  // Single DOM update
+  container.innerHTML = html;
+
+  // Rebind events (unchanged behavior)
   wireHabitInputs();
   wireBooleanHabits();
 }
