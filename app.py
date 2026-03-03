@@ -2,37 +2,26 @@ from flask import Flask
 import os
 from logger import setup_logger
 from werkzeug.exceptions import HTTPException
-
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 def create_app():
     app = Flask(__name__)
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-    # ----------------------------
-    # Core Configuration
-    # ----------------------------
-    app.secret_key = os.environ.get(
-        "FLASK_SECRET_KEY",
-        "change-this-secret"
+
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=1,
+        x_proto=1,
+        x_host=1,
+        x_port=1
     )
+
+    app.secret_key = os.environ["FLASK_SECRET_KEY"]
+
     app.config.update(
-        SESSION_COOKIE_SECURE=True,      # Required for HTTPS
-        SESSION_COOKIE_SAMESITE="Lax",   # Safe default
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="None",
     )
-    logger = setup_logger()
-
-    # --------------------------------
-    # Global Error Handler
-    # --------------------------------
-    @app.errorhandler(Exception)
-    def catch_all_errors(e):
-        if isinstance(e, HTTPException):
-            return e
-
-        print("🔥 GLOBAL EXCEPTION CAUGHT 🔥")
-        logger.exception("UNHANDLED EXCEPTION")
-        return "Internal Server Error", 500
-
     # --------------------------------
     # Register Blueprints
     # --------------------------------

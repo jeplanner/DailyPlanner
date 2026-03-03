@@ -598,6 +598,7 @@ def build_google_datetime(plan_date, time_str):
 def login():
     if request.method == "POST":
         if request.form.get("password") == APP_PASSWORD:
+            session.clear()
             session["user_id"] = "local_user"
             return redirect(url_for("planner.planner"))
 
