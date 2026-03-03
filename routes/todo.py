@@ -6,12 +6,12 @@ from flask import Blueprint, jsonify, redirect, render_template_string, request,
 
 from auth import login_required
 from config import IST
-import logger
 from services.eisenhower_service import autosave_task, copy_open_tasks_from_previous_day, enable_travel_mode
 from services.task_service import update_task_occurrence
 from supabase_client import get, post, update
 from templates.todo import TODO_TEMPLATE
-
+import logging
+logger = logging.getLogger(__name__)
 
 todo_bp = Blueprint("todo", __name__)
 
