@@ -54,10 +54,15 @@ def create_app():
     # --------------------------------
     if os.environ.get("FLASK_ENV") == "development":
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        import traceback
+        print("🔥 UNHANDLED EXCEPTION")
+        traceback.print_exc()
+        raise e
     return app
 
-
+   
 
 
 
