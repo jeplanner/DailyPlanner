@@ -200,7 +200,7 @@ def add_project_task(project_id):
     text = request.form["task_text"].strip()
 
     if not text:
-        return redirect(url_for("project_tasks", project_id=project_id))
+        return redirect(url_for("projects.project_tasks", project_id=project_id))
 
     max_order = get_max_order_index(project_id)
     order_index = (max_order or 0) + 1   # ✅ append to end
@@ -215,7 +215,7 @@ def add_project_task(project_id):
         },
     )
 
-    return redirect(url_for("project_tasks", project_id=project_id))
+    return redirect(url_for("projects.project_tasks", project_id=project_id))
 
 
 @projects_bp.route("/projects/tasks/send-to-eisenhower", methods=["POST"])

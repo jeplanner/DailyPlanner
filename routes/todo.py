@@ -135,7 +135,7 @@ def copy_prev_todo():
     copied = copy_open_tasks_from_previous_day(plan_date)
     logger.info(f"Copied {copied} Eisenhower tasks from previous day")
 
-    return redirect(url_for("todo", year=plan_date.year, month=plan_date.month, day=plan_date.day, copied=1))
+    return redirect(url_for("todo.todo", year=plan_date.year, month=plan_date.month, day=plan_date.day, copied=1))
 @todo_bp.route("/todo/move", methods=["POST"])
 @login_required
 def move_eisenhower_task():
@@ -164,7 +164,7 @@ def travel_mode():
     added = enable_travel_mode(plan_date)
     logger.info(f"Travel Mode enabled: {added} tasks added")
 
-    return redirect(url_for("todo", year=plan_date.year, month=plan_date.month, day=plan_date.day, travel=1))
+    return redirect(url_for("todo.todo", year=plan_date.year, month=plan_date.month, day=plan_date.day, travel=1))
 
 @todo_bp.route("/todo/autosave", methods=["POST"])
 @login_required
