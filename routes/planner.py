@@ -600,6 +600,8 @@ def login():
         if request.form.get("password") == APP_PASSWORD:
             session.clear()
             session["user_id"] = "local_user"
+            user_id = session.get("user_id")
+            print("USER ID:", user_id)
             return redirect(url_for("planner.planner"))
 
         return render_template_string(LOGIN_TEMPLATE, error="Invalid password")
