@@ -600,6 +600,7 @@ def login():
         if request.form.get("password") == APP_PASSWORD:
             session.clear()
             session["user_id"] = "local_user"
+            session["authenticated"] = True
             user_id = session.get("user_id")
             print("USER ID:", user_id)
             return redirect(url_for("planner.planner"))
