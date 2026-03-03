@@ -598,13 +598,12 @@ def build_google_datetime(plan_date, time_str):
 def login():
     if request.method == "POST":
         if request.form.get("password") == APP_PASSWORD:
-            session["authenticated"] = True
-            ##user_id = session["user_id"]
+            session["user_id"] = "local_user"
             return redirect(url_for("planner.planner"))
+
         return render_template_string(LOGIN_TEMPLATE, error="Invalid password")
 
     return render_template_string(LOGIN_TEMPLATE)
-
 
 @planner_bp.route("/logout")
 def logout():

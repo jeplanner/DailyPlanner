@@ -4,8 +4,7 @@ from functools import wraps
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not session.get("authenticated"):
+        if "user_id" not in session:
             return redirect(url_for("planner.login"))
         return fn(*args, **kwargs)
-
     return wrapper
