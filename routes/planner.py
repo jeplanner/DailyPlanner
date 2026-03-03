@@ -599,7 +599,7 @@ def login():
     if request.method == "POST":
         if request.form.get("password") == APP_PASSWORD:
             session["authenticated"] = True
-           ## user_id = session["user_id"]
+            ##user_id = session["user_id"]
             return redirect(url_for("planner.planner"))
         return render_template_string(LOGIN_TEMPLATE, error="Invalid password")
 

@@ -14,7 +14,10 @@ def create_app():
         "FLASK_SECRET_KEY",
         "change-this-secret"
     )
-
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,      # Required for HTTPS
+        SESSION_COOKIE_SAMESITE="Lax",   # Safe default
+    )
     logger = setup_logger()
 
     # --------------------------------
