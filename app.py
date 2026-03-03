@@ -1,6 +1,7 @@
 from flask import Flask
 import os
 from logger import setup_logger
+from werkzeug.exceptions import HTTPException
 
 
 def create_app():
@@ -21,6 +22,9 @@ def create_app():
     # --------------------------------
     @app.errorhandler(Exception)
     def catch_all_errors(e):
+        if isinstance(e, HTTPException):
+            return e
+
         print("🔥 GLOBAL EXCEPTION CAUGHT 🔥")
         logger.exception("UNHANDLED EXCEPTION")
         return "Internal Server Error", 500
@@ -39,6 +43,7 @@ def create_app():
     from routes.timeline import timeline_bp
     from routes.notes import notes_bp
     from routes.system import system_bp
+
     app.register_blueprint(system_bp)
     app.register_blueprint(planner_bp)
     app.register_blueprint(todo_bp)
@@ -58,18 +63,6 @@ def create_app():
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
     return app
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
