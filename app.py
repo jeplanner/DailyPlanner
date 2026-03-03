@@ -38,7 +38,8 @@ def create_app():
     from routes.events import events_bp
     from routes.timeline import timeline_bp
     from routes.notes import notes_bp
-
+    from routes.system import system_bp
+    app.register_blueprint(system_bp)
     app.register_blueprint(planner_bp)
     app.register_blueprint(todo_bp)
     app.register_blueprint(projects_bp)
