@@ -378,7 +378,7 @@ document.addEventListener("click", async (e) => {
     });
 
     if (!res.ok) throw new Error("Save failed");
-
+    location.reload();   // ✅ this fixes Later → Today move
     // ✅ Success feedback
     btn.textContent = "Saved ✓";
 
