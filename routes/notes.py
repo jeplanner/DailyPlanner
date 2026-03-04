@@ -35,18 +35,24 @@ def scribble_list():
 def scribble_new():
     return render_template("scribble_edit.html", note=None)
 @notes_bp.route("/notes/scribble/<note_id>")
+@login_required
 def scribble_edit(note_id):
-    note = get_one("scribble_notes",  params={
-        "id": f"eq.{note_id}",
-        "user_id": f"eq.{session['user_id']}"
-    })
-    
+
+    note = get_one(
+        "scribble_notes",
+        params={
+            "id": f"eq.{note_id}",
+            "user_id": f"eq.{session['user_id']}"
+        }
+    )
+
     if not note:
         abort(404)
+
     return render_template(
-    "scribble_edit.html",
-    note={"id": None, "title": "", "content": ""}
-)
+        "scribble_edit.html",
+        note=note
+    )
     
    
 @notes_bp.route("/notes/scribble/save", methods=["POST"])
@@ -89,18 +95,7 @@ def save_scribble():
         "id": note_id
     })
     
-@notes_bp.route("/notes/scribble/delete", methods=["POST"])
-@login_required
-def delete_project_notes():
-    data = request.get_json()
 
-    update(
-        "project_notes",
-        params={"project_id": f"eq.{data['project_id']}"},
-        json={"notes": None}
-    )
-
-    return {"status": "ok"}
 @notes_bp.route("/notes/scribble/<note_id>/delete", methods=["POST"])
 @login_required
 def delete_scribble(note_id):
@@ -109,10 +104,9 @@ def delete_scribble(note_id):
         "scribble_notes",
         params={
             "id": f"eq.{note_id}",
-            "user_id": f"eq.{session["user_id"]}"
+            "user_id": f"eq.{session['user_id']}"
         },
         json={"is_deleted": True}
     )
 
     return jsonify({"status": "ok"})
-
