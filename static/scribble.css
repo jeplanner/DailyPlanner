@@ -239,3 +239,22 @@ button:hover {
 .hidden {
   display: none;
 }
+.editor-top {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.delete-note {
+  border:none;
+  background:#fff5f5;
+  color:#c0392b;
+  padding:6px 10px;
+  border-radius:6px;
+  cursor:pointer;
+  font-size:14px;
+}
+
+.delete-note:hover {
+  background:#ffe3e3;
+}

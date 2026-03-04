@@ -14,8 +14,14 @@
 <body>
 
   <div class="scribble-editor">
-    <div class="meta">
-      <a href="{{ url_for('notes.scribble_list') }}">← Back to notes</a>
+    <div class="meta editor-top">
+      <a href="{{ url_for('notes.scribble_list') }}">← Back</a>
+
+      {% if note and note.id %}
+      <button class="delete-note" onclick="deleteNote()">
+        🗑 Delete
+      </button>
+      {% endif %}
     </div>
 
     <h1>
@@ -98,7 +104,20 @@
       if (noteId === null) return; // ❌ don't autosave on new note
       markDirty();
     });
+async function deleteNote() {
 
+  if (!noteId) return;
+
+  const ok = confirm("Delete this note?");
+
+  if (!ok) return;
+
+  await fetch(`/notes/scribble/${noteId}/delete`, {
+    method: "POST"
+  });
+
+  window.location.href = "/notes/scribble";
+}
 async function saveNote() {
   // 🚫 Prevent autosave creating new notes repeatedly
   if (noteId === null && !titleEl.value.trim() && !contentEl.value.trim()) {
