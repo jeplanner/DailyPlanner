@@ -49,7 +49,7 @@
   </div>
 
   <script>
-    const noteId = {{ note.id|tojson if note else "null" }};
+    let noteId = {{ note.id|tojson if note else "null" }};
     let saveTimer = null;
     let dirty = false;
 
