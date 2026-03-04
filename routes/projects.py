@@ -966,3 +966,16 @@ def get_latest_scribble(user_id):
     return rows[0] if rows else None
 
 
+@projects_bp.route("/projects/list")
+@login_required
+def list_projects():
+
+    projects = get(
+        "projects",
+        params={
+            "user_id": f"eq.{session['user_id']}",
+            "order": "name.asc"
+        }
+    )
+
+    return jsonify(projects or [])

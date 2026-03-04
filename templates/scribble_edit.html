@@ -40,7 +40,7 @@
       id="content"
       placeholder="Start writing…"
     >{{ note.content if note else '' }}</textarea>
-
+    <div id="note-task-suggestions"></div>
     <!-- Save status -->
     <div id="status" class="meta"></div>
 
@@ -48,7 +48,29 @@
     <button onclick="saveNote()">Save</button>
   </div>
 
+<div id="projectPicker" class="modal hidden">
+  <div class="modal-content">
+
+    <h3>Add task to project</h3>
+
+    <select id="projectSelect"></select>
+
+    <div class="modal-actions">
+      <button onclick="confirmAddTasks()">Add</button>
+      <button onclick="closeProjectPicker()">Cancel</button>
+    </div>
+
+  </div>
+</div>
+<div id="textToolbar" class="text-toolbar hidden">
+  <button onclick="wrapSelection('**','**')"><b>B</b></button>
+  <button onclick="insertChecklist()">☑</button>
+  <button onclick="convertSelectionToTask()">➕ Task</button>
+  <button onclick="copySelection()">📋</button>
+</div>
+
   <script>
+    let savingIndicatorTimer = null;
     let noteId = {{ note.id|tojson if note else "null" }};
     let saveTimer = null;
     let dirty = false;
@@ -59,21 +81,23 @@
 
     function markDirty() {
       dirty = true;
-      statusEl.textContent = "Unsaved changes…";
+      savingIndicatorTimer = setTimeout(() => {
+        statusEl.textContent = "Saving…";
+      }, 200);
 
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(saveNote, 800);
     }
 
- titleEl.addEventListener("input", () => {
-  if (noteId === null) return; // ❌ don't autosave on new note
-  markDirty();
-});
+    titleEl.addEventListener("input", () => {
+      if (noteId === null) return; // ❌ don't autosave on new note
+      markDirty();
+    });
 
-contentEl.addEventListener("input", () => {
-  if (noteId === null) return; // ❌ don't autosave on new note
-  markDirty();
-});
+    contentEl.addEventListener("input", () => {
+      if (noteId === null) return; // ❌ don't autosave on new note
+      markDirty();
+    });
 
 async function saveNote() {
   // 🚫 Prevent autosave creating new notes repeatedly
@@ -107,14 +131,235 @@ async function saveNote() {
     }
 
     dirty = false;
+    clearTimeout(savingIndicatorTimer);
     statusEl.textContent = "Saved ✓";
   } catch (e) {
     console.error(e);
     statusEl.textContent = "Error saving";
   }
 }
+const notesBox = document.getElementById("content");
+const suggestionBox = document.getElementById("note-task-suggestions");
 
-  </script>
+if (notesBox) {
 
+  notesBox.addEventListener("input", () => {
+
+  renderChecklistPreview();
+
+});
+
+}
+function removeTaskLine(text) {
+
+  const lines = contentEl.value.split("\n");
+
+  contentEl.value = lines
+    .filter(line => !line.includes(text))
+    .join("\n");
+
+  renderChecklistPreview();
+}
+
+function renderChecklistPreview() {
+
+  const lines = contentEl.value.split("\n");
+
+  suggestionBox.innerHTML = "";
+
+  lines.forEach((line, i) => {
+
+    const match = line.match(/^- \[( |x)\] (.*)/i);
+    if (!match) return;
+
+    const checked = match[1].toLowerCase() === "x";
+    const text = match[2];
+
+    const row = document.createElement("div");
+    row.className = "note-task-row";
+
+    row.innerHTML = `
+      <input type="checkbox" ${checked ? "checked" : ""}>
+      <span>${text}</span>
+      <button>+</button>
+    `;
+
+    row.querySelector("input").onclick = () =>
+      toggleChecklist(i, checked);
+
+    row.querySelector("button").onclick = () =>
+      openProjectPicker(text);
+
+    suggestionBox.appendChild(row);
+
+  });
+
+}
+function toggleChecklist(lineIndex, checked) {
+
+  const lines = contentEl.value.split("\n");
+
+  lines[lineIndex] = lines[lineIndex]
+    .replace(checked ? "[x]" : "[ ]", checked ? "[ ]" : "[x]");
+
+  contentEl.value = lines.join("\n");
+
+  renderChecklistPreview();
+}
+function insertAtCursor(field, value) {
+
+  const start = field.selectionStart;
+  const end = field.selectionEnd;
+
+  field.value =
+    field.value.substring(0, start) +
+    value +
+    field.value.substring(end);
+
+  field.selectionStart = field.selectionEnd =
+    start + value.length;
+}
+notesBox.addEventListener("keydown", e => {
+
+  if (e.key !== "Enter") return;
+
+  const cursor = notesBox.selectionStart;
+  const textBefore = notesBox.value.slice(0, cursor);
+  const currentLine = textBefore.split("\n").pop();
+
+  if (currentLine.startsWith("- [ ]") || currentLine.startsWith("- [x]")) {
+    e.preventDefault();
+    insertAtCursor(notesBox, "\n- [ ] ");
+    return;
+  }
+
+  if (currentLine.startsWith("- ") && !currentLine.startsWith("- [")) {
+
+    e.preventDefault();
+
+    const text = currentLine.replace("- ", "");
+
+    insertAtCursor(notesBox, `\n- [ ] ${text}`);
+
+  }
+
+});
+function insertChecklist() {
+  insertAtCursor(contentEl, "- [ ] ");
+}
+document.addEventListener("scroll", () => {
+  if (toolbar) toolbar.classList.add("hidden");
+});
+
+let pendingTasks = [];
+
+async function openProjectPicker(taskText) {
+
+  pendingTasks = [taskText];
+
+  const modal = document.getElementById("projectPicker");
+  const select = document.getElementById("projectSelect");
+
+  const res = await fetch("/projects/list");
+  const projects = await res.json();
+
+  select.innerHTML = projects
+    .map(p => `<option value="${p.project_id}">${p.name}</option>`)
+    .join("");
+
+  modal.classList.remove("hidden");
+}
+
+async function confirmAddTasks() {
+
+  const projectId =
+    document.getElementById("projectSelect").value;
+
+  for (const task of pendingTasks) {
+
+    await fetch(`/projects/${projectId}/tasks/add`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_text: task
+      })
+    });
+     removeTaskLine(task);
+     statusEl.textContent = "Task added ✓";
+  }
+ 
+  closeProjectPicker();
+}
+
+function closeProjectPicker() {
+
+  document
+    .getElementById("projectPicker")
+    .classList.add("hidden");
+
+  pendingTasks = [];
+}
+const toolbar = document.getElementById("textToolbar");
+
+contentEl.addEventListener("mouseup", showToolbar);
+contentEl.addEventListener("keyup", showToolbar);
+
+function showToolbar() {
+
+  const selection = window.getSelection().toString();
+
+  if (!selection) {
+    toolbar.classList.add("hidden");
+    return;
+  }
+
+  const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
+
+  toolbar.style.top = window.scrollY + rect.top - 40 + "px";
+  toolbar.style.left = rect.left + rect.width / 2 + "px";
+
+  toolbar.classList.remove("hidden");
+}
+function wrapSelection(prefix, suffix) {
+
+  const start = contentEl.selectionStart;
+  const end = contentEl.selectionEnd;
+
+  const text = contentEl.value;
+
+  const selected = text.substring(start, end);
+
+  contentEl.value =
+    text.substring(0, start) +
+    prefix + selected + suffix +
+    text.substring(end);
+
+}
+function convertSelectionToTask() {
+
+  const selected =
+    contentEl.value.substring(
+      contentEl.selectionStart,
+      contentEl.selectionEnd
+    );
+
+  if (!selected) return;
+
+  openProjectPicker(selected);
+
+}
+function copySelection() {
+
+  const selected =
+    contentEl.value.substring(
+      contentEl.selectionStart,
+      contentEl.selectionEnd
+    );
+
+  navigator.clipboard.writeText(selected);
+
+}
+renderChecklistPreview();
+</script>
 </body>
 </html>

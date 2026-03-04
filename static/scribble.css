@@ -187,3 +187,55 @@ button:hover {
     font-size: 1.4rem;
   }
 }
+#note-task-suggestions {
+  margin-top: 10px;
+}
+
+.note-task-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #f9fafb;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.note-task-row button {
+  border: none;
+  background: #2563eb;
+  color: white;
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
+.text-toolbar {
+  position: absolute;
+  background: #111827;
+  color: white;
+  padding: 6px 8px;
+  border-radius: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 1000;
+  font-size: 14px;
+}
+
+.text-toolbar button {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+.text-toolbar button:hover {
+  background: rgba(255,255,255,0.15);
+  border-radius: 4px;
+}
+
+.hidden {
+  display: none;
+}
