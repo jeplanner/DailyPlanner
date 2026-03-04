@@ -60,9 +60,9 @@
     <h3>Add task to project</h3>
 
     <select id="projectSelect"></select>
-
+    <div id="taskPreview"></div>
     <div class="modal-actions">
-      <button onclick="confirmAddTasks()">Add</button>
+      <button onclick="confirmAddTasks()">Add Task</button>
       <button onclick="closeProjectPicker()">Cancel</button>
     </div>
 
@@ -278,6 +278,7 @@ async function openProjectPicker(taskText) {
 
   const modal = document.getElementById("projectPicker");
   const select = document.getElementById("projectSelect");
+  document.getElementById("taskPreview").textContent = taskText;
 
   const res = await fetch("/projects/list");
   const projects = await res.json();
@@ -305,6 +306,7 @@ async function confirmAddTasks() {
     });
      removeTaskLine(task);
      statusEl.textContent = "Task added ✓";
+     setTimeout(() => statusEl.textContent = "", 2000);
   }
  
   closeProjectPicker();
