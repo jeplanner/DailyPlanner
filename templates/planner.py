@@ -60,7 +60,7 @@ PLANNER_TEMPLATE = """
     <input type="hidden" name="month" value="{{ month }}">
     <input type="hidden" name="day" value="{{ selected_day }}">
 
-<button id="generatePlanBtn" data-date="{{ selected_date }}">
+<button type="button" id="generatePlanBtn" data-date="{{ selected_date }}">
   Generate AI Plan
 </button>
 
@@ -113,7 +113,10 @@ PLANNER_TEMPLATE = """
       <div class="day-grid-wrapper">
         <div class="day-grid">
           {% for slot in plans %}
-            <div class="time-row {% if now_slot and slot == now_slot %}now-slot{% endif %}">
+           <div
+                class="time-row {% if now_slot and slot == now_slot %}now-slot{% endif %}"
+                data-slot="{{ slot }}"
+              >
               <div class="time-column">
                 <input
                   type="checkbox"

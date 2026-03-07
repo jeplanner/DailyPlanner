@@ -504,3 +504,111 @@ function jumpToDate() {
   window.location.href =
     `/?year=${year}&month=${month}&day=${day}`;
 }
+/* =========================================================
+   DRAG TO CREATE EVENT
+========================================================= */
+
+let dragStartSlot = null;
+let dragEndSlot = null;
+let isDragging = false;
+
+document.querySelectorAll(".time-row").forEach(row => {
+
+  row.addEventListener("mousedown", () => {
+
+    dragStartSlot = Number(row.dataset.slot);
+    dragEndSlot = dragStartSlot;
+    isDragging = true;
+
+    highlightSlots();
+
+  });
+
+  row.addEventListener("mouseenter", () => {
+
+    if (!isDragging) return;
+
+    dragEndSlot = Number(row.dataset.slot);
+    highlightSlots();
+
+  });
+
+});
+
+document.addEventListener("mouseup", () => {
+
+  if (!isDragging) return;
+
+  isDragging = false;
+
+  const start = Math.min(dragStartSlot, dragEndSlot);
+  const end = Math.max(dragStartSlot, dragEndSlot);
+
+  clearSlotHighlight();
+
+  openCreateEvent(start, end);
+
+});
+
+
+function highlightSlots() {
+
+  clearSlotHighlight();
+
+  const start = Math.min(dragStartSlot, dragEndSlot);
+  const end = Math.max(dragStartSlot, dragEndSlot);
+
+  document.querySelectorAll(".time-row").forEach(row => {
+
+    const slot = Number(row.dataset.slot);
+
+    if (slot >= start && slot <= end) {
+      row.classList.add("slot-preview");
+    }
+
+  });
+
+}
+
+function clearSlotHighlight() {
+
+  document
+    .querySelectorAll(".slot-preview")
+    .forEach(el => el.classList.remove("slot-preview"));
+
+}
+
+function openCreateEvent(startSlot, endSlot) {
+
+  const modal = document.getElementById("modal");
+  const content = document.getElementById("modal-content");
+
+  content.innerHTML = `
+    <h3>Create Event</h3>
+
+    <textarea id="editText"
+      placeholder="Event description"
+      style="width:100%;min-height:120px"></textarea>
+
+    <br><br>
+
+    <button onclick="closeModal()">Cancel</button>
+    <button onclick="saveEvent(${startSlot}, ${endSlot})">Save</button>
+  `;
+
+  modal.style.display = "flex";
+
+}
+document.querySelectorAll(".time-row").forEach(row => {
+
+  row.addEventListener("click", e => {
+
+    if (isDragging) return;
+
+    const slot = Number(row.dataset.slot);
+
+    openCreateEvent(slot, slot);
+
+  });
+
+});
