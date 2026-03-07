@@ -19,8 +19,9 @@ from utils.slots import slot_label
 logger = logging.getLogger(__name__)
 
 def fetch_daily_slots(plan_date):
-
+    
     user_id = session["user_id"]
+    logger.info(f"FETCH DAILY SLOTS → user={user_id} date={plan_date}")
     # ensure correct format
     if hasattr(plan_date, "strftime"):
         plan_date = plan_date.strftime("%Y-%m-%d")
@@ -123,7 +124,7 @@ def load_day(plan_date, tag=None):
 
 
 def save_day(plan_date, form):
-    user_id="VenghateshS"
+    user_id=session["user_id"]
     payload = []
     auto_untimed = []
     existing_meta = {}
@@ -401,7 +402,7 @@ def save_day(plan_date, form):
 
             payload.append(
                 {
-                    "user_id":f"eq.{user_id}",
+                    "user_id":user_id,
                     "plan_date": str(plan_date),
                     "slot": slot,
                     "plan": plan,
@@ -499,7 +500,7 @@ def save_day(plan_date, form):
 
     if clean_payload:
         post(
-            "daily_slots?on_conflict=plan_date,slot",
+            "daily_slots?on_conflict=user_id,plan_date,slot",
             clean_payload,
             prefer="resolution=merge-duplicates",
         )
