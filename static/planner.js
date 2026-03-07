@@ -154,9 +154,10 @@ function getISTDate() {
    EVENT EDITING
 ========================================================= */
 
-
-
 function saveEvent(startSlot, endSlot) {
+
+  const text = document.getElementById("editText")?.value || "";
+
   fetch("/slot/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -164,9 +165,10 @@ function saveEvent(startSlot, endSlot) {
       plan_date: PLAN_DATE,
       start_slot: startSlot,
       end_slot: endSlot,
-      text: document.getElementById("editText").value
+      text: text
     })
   }).then(() => location.reload());
+
 }
 
 /* =========================================================
