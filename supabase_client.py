@@ -51,6 +51,8 @@ def post(path, data, prefer="return=representation"):
 
     # ✅ Always return inserted rows by default
     if prefer:
+        if "return=" not in prefer:
+            prefer = f"{prefer},return=representation"
         headers["Prefer"] = prefer
 
     # 🔒 SAFETY: strip eq. from POST payload
