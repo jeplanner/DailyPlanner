@@ -261,6 +261,11 @@ def get_slot():
         },
     )
     return jsonify({"text": row[0]["plan"] if row else ""})
+def slot_to_time(slot):
+    minutes = slot * 30
+    h = minutes // 60
+    m = minutes % 60
+    return f"{h:02d}:{m:02d}"
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
 def update_slot():
@@ -274,6 +279,9 @@ def update_slot():
     end = int(data["end_slot"])
     text = data["text"]
     user_id = session["user_id"]
+    # 🛑 If dropped in same slot, do nothing
+    if old_start == start and old_end == end:
+        return ("", 204)
     logger.debug(
     "DRAG MOVE user=%s old=%s-%s new=%s-%s text=%s",
     user_id, old_start, old_end, start, end, text
@@ -300,11 +308,16 @@ def update_slot():
     # 2️⃣ Write new slots
     rows = []
     for slot in range(start, end + 1):
-        rows.append({
+       start_time = slot_to_time(slot)
+       end_time = slot_to_time(slot + 1)
+
+       rows.append({
             "user_id": user_id,
             "plan_date": plan_date,
             "slot": slot,
             "plan": text,
+            "start_time": start_time,
+            "end_time": end_time,
         })
 
     post(
