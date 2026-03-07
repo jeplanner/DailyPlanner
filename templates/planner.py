@@ -20,7 +20,7 @@ PLANNER_TEMPLATE = """
 
 
 <body  data-plan-date="{{ plan_date }}">
-
+<div id="planner-root">
 <div class="container">
   <div class="nav-icons">  {% include "_top_nav.html" %}  </div>
   <!-- ================= TIMELINE HEADER ================= -->
@@ -44,7 +44,7 @@ PLANNER_TEMPLATE = """
 
     <div class="day-timeline">
       {% for d in timeline_days %}
-        <a href="/?year={{ d.year }}&month={{ d.month }}&day={{ d.day }}"
+        <a href="/?year={{y}}&month={{m}}&day={{d}}" class="day-link">
            class="day-item {% if d == selected_date %}active{% endif %} {% if d == today %}today{% endif %}">
           <div class="dow">{{ d.strftime("%a") }}</div>
           <div class="num">{{ d.day }}</div>
@@ -203,7 +203,7 @@ PLANNER_TEMPLATE = """
  <div id="summary-content"></div>
 </div>
 
- 
+</div>
   <!-- ================= IST TIME HELPERS ================= -->
   <script>
 

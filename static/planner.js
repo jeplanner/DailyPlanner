@@ -3,7 +3,7 @@ const USE_TIMELINE_VIEW = false; // Set to true to enable timeline view
 const summaryModal = document.getElementById("summary-modal");
 const summaryContent = document.getElementById("summary-content");
 let dragGhost = null;
-const PLAN_DATE =
+let PLAN_DATE =
   document.body.dataset.planDate ||
   new Date().toISOString().slice(0,10);
 
@@ -486,6 +486,12 @@ if (btn) {
     document.getElementById("aiPlanOutput").innerText = data.result;
   });
 }
+function loadPlannerForDate(date) {
+  PLAN_DATE = date;
+  loadTasks();
+  loadHealth();
+  renderPlanner();
+}
 function jumpToDate() {
 
   const monthInput = document.getElementById("jump-month");
@@ -497,10 +503,13 @@ function jumpToDate() {
   }
 
   const [year, month] = monthInput.value.split("-");
-  const day = parseInt(dayInput.value);
+  const day = dayInput.value.padStart(2,"0");
 
-  window.location.href =
-    `/?year=${year}&month=${month}&day=${day}`;
+  const newDate = `${year}-${month}-${day}`;
+
+  window.location.replace(
+  `/?year=${year}&month=${month}&day=${day}`
+  );
 }
 /* =========================================================
    DRAG TO CREATE EVENT
@@ -779,5 +788,48 @@ document.addEventListener("mouseup", () => {
   resizingEvent = null;
 
   document.body.style.userSelect = "";
+
+});
+document.addEventListener("DOMContentLoaded", () => {
+  prefetchAdjacentDays();
+});
+
+function prefetchAdjacentDays() {
+  const d = new Date(PLAN_DATE);
+
+  const prev = new Date(d);
+  prev.setDate(d.getDate() - 1);
+
+  const next = new Date(d);
+  next.setDate(d.getDate() + 1);
+
+  [prev, next].forEach(date => {
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    const day = date.getDate();
+
+    const link = document.createElement("link");
+    link.rel = "prefetch";
+    link.href = `/?year=${y}&month=${m}&day=${day}`;
+
+    document.head.appendChild(link);
+  });
+}
+document.addEventListener("click", async e => {
+
+  const link = e.target.closest(".day-link");
+  if (!link) return;
+
+  e.preventDefault();
+
+  const res = await fetch(link.href);
+  const html = await res.text();
+
+  const doc = new DOMParser().parseFromString(html,"text/html");
+
+  document.querySelector("#planner-root").innerHTML =
+    doc.querySelector("#planner-root").innerHTML;
+
+  history.pushState({}, "", link.href);
 
 });
