@@ -281,19 +281,21 @@ def update_slot():
     
 
     # 1️⃣ Clear previous slots (single query)
-    update(
-        "daily_slots",
-        params={
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
-            "slot": f"gte.{old_start}",
-        },
-        json={
-            "plan": None,
-            "start_time": None,
-            "end_time": None,
-        },
-    )
+    for slot in range(old_start, old_end + 1):
+        update(
+            "daily_slots",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date}",
+                "slot": f"eq.{slot}",
+            },
+            json={
+                "plan": None,
+                "start_time": None,
+                "end_time": None,
+            },
+        )
+        
 
     # 2️⃣ Write new slots
     rows = []
