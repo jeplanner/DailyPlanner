@@ -268,30 +268,28 @@ def update_slot():
     data = request.get_json()
 
     plan_date = data["plan_date"]
+    old_start = int(data["old_start"])
+    old_end = int(data["old_end"])
     start = int(data["start_slot"])
     end = int(data["end_slot"])
     text = data["text"]
 
     user_id = session["user_id"]
 
-    # ------------------------------------
-    # 1️⃣ Clear old slots for this event
-    # ------------------------------------
-    update(
-        "daily_slots",
-        params={
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
-            "plan": f"eq.{text}"
-        },
-        json={"plan": None}
-    )
+    # 1️⃣ Clear previous slots
+    for slot in range(old_start, old_end + 1):
+        update(
+            "daily_slots",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date}",
+                "slot": f"eq.{slot}",
+            },
+            json={"plan": None},
+        )
 
-    # ------------------------------------
     # 2️⃣ Write new slots
-    # ------------------------------------
     for slot in range(start, end + 1):
-
         update(
             "daily_slots",
             params={

@@ -154,23 +154,43 @@ function getISTDate() {
    EVENT EDITING
 ========================================================= */
 
-function saveEvent(startSlot, endSlot) {
+function saveEvent(oldStart, oldEnd, newStart, newEnd) {
 
-  const text = document.getElementById("editText")?.value || "";
+  const text = document.getElementById("editText")?.value || draggingEvent?.innerText;
 
   fetch("/slot/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       plan_date: PLAN_DATE,
-      start_slot: startSlot,
-      end_slot: endSlot,
+      old_start: oldStart,
+      old_end: oldEnd,
+      start_slot: newStart,
+      end_slot: newEnd,
       text: text
     })
-  }).then(() => location.reload());
+  });
+
+  // ----------------------------
+  // Instant UI update (no reload)
+  // ----------------------------
+
+  const block = draggingEvent;
+
+  if (!block) return;
+
+  const slotHeight = parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--slot-height")
+  );
+
+  block.style.top = `${(newStart - 1) * slotHeight}px`;
+  block.style.height = `${(newEnd - newStart + 1) * slotHeight}px`;
+
+  block.dataset.start = newStart;
+  block.dataset.end = newEnd;
 
 }
-
 /* =========================================================
    DAY STRIP AUTO-SCROLL
 ========================================================= */
@@ -456,7 +476,7 @@ function editEvent(startSlot, endSlot) {
         <br><br>
 
         <button onclick="closeModal()">Cancel</button>
-        <button onclick="saveEvent(${startSlot}, ${endSlot})">Save</button>
+        <button onclick="saveEvent(${startSlot}, ${endSlot}, ${startSlot}, ${endSlot})">Save</button>
       `;
 
       if (modal) modal.style.display = "flex";
@@ -662,7 +682,6 @@ function clearSlotHighlight() {
     .forEach(el => el.classList.remove("slot-preview"));
 
 }
-
 function openCreateEvent(startSlot, endSlot) {
 
   const modal = document.getElementById("modal");
@@ -678,7 +697,7 @@ function openCreateEvent(startSlot, endSlot) {
     <br><br>
 
     <button onclick="closeModal()">Cancel</button>
-    <button onclick="saveEvent(${startSlot}, ${endSlot})">Save</button>
+    <button onclick="saveEvent(${startSlot}, ${endSlot}, ${startSlot}, ${endSlot})">Save</button>
   `;
 
   modal.style.display = "flex";
@@ -746,7 +765,7 @@ document.addEventListener("mouseup", e => {
   draggingEvent.style.opacity = "";
   document.body.style.userSelect = "";
 
-    saveEvent(newStart, newEnd);
+    saveEvent(start,end,newStart, newEnd);
     if (dragGhost) {
     dragGhost.remove();
     dragGhost = null;
@@ -815,11 +834,11 @@ document.addEventListener("mouseup", () => {
 
   const height = resizingEvent.offsetHeight;
 
-  const slots = Math.round(height / slotHeight);
+  const slots = Math.floor(y / slotHeight);
 
   const newEnd = start + slots - 1;
 
-  saveEvent(start, newEnd);
+  saveEvent(start,start,start, newEnd);
 
   resizingEvent = null;
 
