@@ -38,7 +38,7 @@ def reflection_summary():
 
 groq = OpenAI(
     api_key=os.environ["GROQ_API_KEY"],
-    base_url="https://api.groq.com/openai/v1/chat/completions"
+    base_url="https://api.groq.com/openai/v1"
 )
 
 def call_groq(prompt):
