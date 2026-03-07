@@ -42,14 +42,16 @@ PLANNER_TEMPLATE = """
       <button type="button" onclick="jumpToDate()">Go</button>
     </div>
 
-    <div class="day-timeline">
-      {% for d in timeline_days %}
-        <a href="/?year={{y}}&month={{m}}&day={{d}}" class="day-link">
-           class="day-item {% if d == selected_date %}active{% endif %} {% if d == today %}today{% endif %}">
-          <div class="dow">{{ d.strftime("%a") }}</div>
-          <div class="num">{{ d.day }}</div>
-        </a>
-      {% endfor %}
+  <div class="day-timeline">
+    {% for d in timeline_days %}
+    <a href="/?year={{ d.year }}&month={{ d.month }}&day={{ d.day }}"
+      class="day-link day-item
+      {% if d.date() == selected_date.date() %}active{% endif %}
+      {% if d.date() == today.date() %}today{% endif %}">
+      <div class="dow">{{ d.strftime("%a") }}</div>
+      <div class="num">{{ d.day }}</div>
+    </a>
+    {% endfor %}
     </div>
 
   </div>
@@ -103,7 +105,6 @@ PLANNER_TEMPLATE = """
     </div>
     <h3>📅 Day Schedule</h3>
 
-<div id="planner-root">
   <!-- ===== NEW TIMELINE UI ===== -->
   <div id="timeline-root" style="display:none;"></div>
   <!-- ===== OLD GRID UI (unchanged) ===== -->
@@ -202,8 +203,8 @@ PLANNER_TEMPLATE = """
 <div id="summary-modal" style="display:none">
  <div id="summary-content"></div>
 </div>
-
 </div>
+
   <!-- ================= IST TIME HELPERS ================= -->
   <script>
 

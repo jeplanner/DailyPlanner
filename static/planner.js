@@ -120,7 +120,13 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 
+function toggleCheckin() {
+  const modal = document.getElementById("summary-modal");
+  if (!modal) return;
 
+  modal.style.display =
+    modal.style.display === "flex" ? "none" : "flex";
+}
 
 /* =========================================================
    SUBTASK TOGGLE
