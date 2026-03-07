@@ -384,7 +384,7 @@ def save_todo(plan_date, form):
 
 def copy_open_tasks_from_previous_day(plan_date):
     prev_date = plan_date - timedelta(days=1)
-
+    user_id=session[user_id]
     prev_rows = (
         get(
             "todo_matrix",
@@ -404,6 +404,7 @@ def copy_open_tasks_from_previous_day(plan_date):
         get(
             "todo_matrix",
             params={
+                "user_id":f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "select": "quadrant,task_text,position",
                 "is_deleted": "eq.false",
@@ -447,6 +448,7 @@ def copy_open_tasks_from_previous_day(plan_date):
                 "position": next_pos,
                 "category": r.get("category") or "General",
                 "subcategory": r.get("subcategory") or "General",
+                "user_id":user_id
             }
         )
 
@@ -464,11 +466,12 @@ def enable_travel_mode(plan_date):
     Insert Travel Mode tasks for the day.
     Idempotent: inserts only missing tasks.
     """
-
+    user_id=session["user_id"]
     existing = (
         get(
             "todo_matrix",
             params={
+                "user_id":f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "is_deleted": "eq.false",
                 "select": "quadrant,task_text",
@@ -486,6 +489,7 @@ def enable_travel_mode(plan_date):
         get(
             "todo_matrix",
             params={
+                "user_id":f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "is_deleted": "eq.false",
                 "select": "quadrant,position",
@@ -519,6 +523,7 @@ def enable_travel_mode(plan_date):
                 "is_done": False,
                 "is_deleted": False,
                 "position": pos,
+                "user_id" :user_id
             }
         )
 
@@ -532,6 +537,7 @@ def autosave_task(plan_date, task_id, quadrant, text=None, is_done=False, projec
     # -------------------------
     # NEW TASK → INSERT (Eisenhower direct entry)
     # -------------------------
+    user_id=session["user_id"]
     if task_id.startswith("new_"):
         if not text:
             return {"id": task_id}
@@ -546,6 +552,7 @@ def autosave_task(plan_date, task_id, quadrant, text=None, is_done=False, projec
                 "is_deleted": False,
                 "position": 999,
                 "project_id": project_id,
+                "user_id":user_id
             }],
             prefer="return=representation"
         ) or []
@@ -561,6 +568,7 @@ def autosave_task(plan_date, task_id, quadrant, text=None, is_done=False, projec
     # -------------------------
     update(
         "todo_matrix",
+        "user_id":f"eq.{user_id}",
         params={"id": f"eq.{task_id}"},
         json={"is_done": is_done},
     )
@@ -572,6 +580,7 @@ def autosave_task(plan_date, task_id, quadrant, text=None, is_done=False, projec
         rows = get(
             "todo_matrix",
             params={
+                "user_id":f"eq.{user_id}",
                 "id": f"eq.{task_id}",
                 "select": "source_task_id, recurring_instance_id",
             },
@@ -587,7 +596,7 @@ def autosave_task(plan_date, task_id, quadrant, text=None, is_done=False, projec
         if source_id and not recurring_instance_id:
             update(
                 "project_tasks",
-                params={"task_id": f"eq.{source_id}"},
+                params={"task_id": f"eq.{source_id}","user_id":f"eq.{user_id}"},
                 json={"status": "done"},
             )
 

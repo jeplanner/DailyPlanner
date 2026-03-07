@@ -455,7 +455,7 @@ def schedule_untimed():
         slot = start_slot + i
         if 1 <= slot <= TOTAL_SLOTS:
             payload.append({
-                "user_id": f"eq.{user_id}",
+                "user_id": user_id,
                 "plan_date": plan_date_str,
                 "slot": slot,
                 "plan": text,

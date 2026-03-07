@@ -400,6 +400,7 @@ def save_day(plan_date, form):
 
             payload.append(
                 {
+                    "user_id":f"eq.{user_id}",
                     "plan_date": str(plan_date),
                     "slot": slot,
                     "plan": plan,
