@@ -46,8 +46,8 @@ PLANNER_TEMPLATE = """
     {% for d in timeline_days %}
     <a href="/?year={{ d.year }}&month={{ d.month }}&day={{ d.day }}"
       class="day-link day-item
-      {% if d.date() == selected_date.date() %}active{% endif %}
-      {% if d.date() == today.date() %}today{% endif %}">
+      {% if d == selected_date.date() %}active{% endif %}
+      {% if d == today.date() %}today{% endif %}">
       <div class="dow">{{ d.strftime("%a") }}</div>
       <div class="num">{{ d.day }}</div>
     </a>
