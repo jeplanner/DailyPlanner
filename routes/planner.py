@@ -264,7 +264,7 @@ def get_slot():
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
 def update_slot():
-
+ 
     data = request.get_json()
 
     plan_date = data["plan_date"]
@@ -273,32 +273,43 @@ def update_slot():
     start = int(data["start_slot"])
     end = int(data["end_slot"])
     text = data["text"]
-
     user_id = session["user_id"]
+    logger.debug(
+    "DRAG MOVE user=%s old=%s-%s new=%s-%s text=%s",
+    user_id, old_start, old_end, start, end, text
+    )
+    
 
-    # 1️⃣ Clear previous slots
-    for slot in range(old_start, old_end + 1):
-        update(
-            "daily_slots",
-            params={
-                "user_id": f"eq.{user_id}",
-                "plan_date": f"eq.{plan_date}",
-                "slot": f"eq.{slot}",
-            },
-            json={"plan": None},
-        )
+    # 1️⃣ Clear previous slots (single query)
+    update(
+        "daily_slots",
+        params={
+            "user_id": f"eq.{user_id}",
+            "plan_date": f"eq.{plan_date}",
+            "slot": f"gte.{old_start}",
+        },
+        json={
+            "plan": None,
+            "start_time": None,
+            "end_time": None,
+        },
+    )
 
     # 2️⃣ Write new slots
+    rows = []
     for slot in range(start, end + 1):
-        update(
-            "daily_slots",
-            params={
-                "user_id": f"eq.{user_id}",
-                "plan_date": f"eq.{plan_date}",
-                "slot": f"eq.{slot}",
-            },
-            json={"plan": text},
-        )
+        rows.append({
+            "user_id": user_id,
+            "plan_date": plan_date,
+            "slot": slot,
+            "plan": text,
+        })
+
+    post(
+        "daily_slots?on_conflict=user_id,plan_date,slot",
+        rows,
+        prefer="resolution=merge-duplicates"
+    )
 
     return ("", 204)
 
