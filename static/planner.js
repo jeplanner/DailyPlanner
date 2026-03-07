@@ -11,6 +11,12 @@ function initDragSystem() {
 
   document.querySelectorAll(".event-block").forEach(block => {
 
+    let pressTimer = null;
+
+    /* ================================
+       DESKTOP DRAG
+    ================================= */
+
     block.addEventListener("mousedown", e => {
 
       if (e.target.classList.contains("resize-handle")) return;
@@ -32,6 +38,44 @@ function initDragSystem() {
 
       document.body.style.userSelect = "none";
 
+    });
+
+    /* ================================
+       DESKTOP EDIT (DOUBLE CLICK)
+    ================================= */
+
+    block.addEventListener("dblclick", () => {
+
+      const start = Number(block.dataset.start);
+      const end = Number(block.dataset.end);
+
+      editEvent(start, end);
+
+    });
+
+    /* ================================
+       MOBILE LONG PRESS EDIT
+    ================================= */
+
+    block.addEventListener("touchstart", () => {
+
+      pressTimer = setTimeout(() => {
+
+        const start = Number(block.dataset.start);
+        const end = Number(block.dataset.end);
+
+        editEvent(start, end);
+
+      }, 600); // 600ms long press
+
+    });
+
+    block.addEventListener("touchend", () => {
+      clearTimeout(pressTimer);
+    });
+
+    block.addEventListener("touchmove", () => {
+      clearTimeout(pressTimer);
     });
 
   });
@@ -453,9 +497,27 @@ function renderTaskCard(task) {
 
   return div;
 }
+function timeToSlot(time){
+
+  const [h,m] = time.split(":").map(Number);
+
+  return Math.floor((h*60 + m) / 30) + 1;
+
+}
 /* =========================================================
    EVENT EDITING
 ========================================================= */
+function saveFromModal(oldStart, oldEnd){
+
+  const startTime = document.getElementById("editStart").value;
+  const endTime = document.getElementById("editEnd").value;
+
+  const newStart = timeToSlot(startTime);
+  const newEnd = timeToSlot(endTime) - 1;
+
+  saveEvent(oldStart, oldEnd, newStart, newEnd);
+
+}
 
 function editEvent(startSlot, endSlot) {
 
@@ -471,17 +533,36 @@ function editEvent(startSlot, endSlot) {
         .replace(/</g,"&lt;")
         .replace(/>/g,"&gt;");
 
+      const category = data.category || "";
+      const priority = data.priority || "";
+
       content.innerHTML = `
-        <h3>✏️ Edit Event</h3>
+    <h3>✏️ Edit Event</h3>
 
-        <textarea id="editText" style="width:100%;min-height:140px;">${text}</textarea>
+    <label>Start Time</label>
+    <input type="time" id="editStart" value="${data.start_time || ""}">
 
-        <br><br>
+    <label>End Time</label>
+    <input type="time" id="editEnd" value="${data.end_time || ""}">
 
-        <button onclick="closeModal()">Cancel</button>
-        <button onclick="saveEvent(${startSlot}, ${endSlot}, ${startSlot}, ${endSlot})">Save</button>
-      `;
+    <label>Description</label>
+    <textarea id="editText" style="width:100%;min-height:120px;">${text}</textarea>
 
+    <label>Category</label>
+    <input id="editCategory" value="${data.category || ""}">
+
+    <label>Priority</label>
+    <select id="editPriority">
+      <option ${data.priority==="Low"?"selected":""}>Low</option>
+      <option ${data.priority==="Medium"?"selected":""}>Medium</option>
+      <option ${data.priority==="High"?"selected":""}>High</option>
+    </select>
+
+    <br><br>
+
+    <button onclick="closeModal()">Cancel</button>
+    <button onclick="saveFromModal(${startSlot},${endSlot})">Save</button>
+    `;
       if (modal) modal.style.display = "flex";
     })
     .catch(err => {
