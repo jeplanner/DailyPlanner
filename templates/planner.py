@@ -206,7 +206,6 @@ PLANNER_TEMPLATE = """
  
   <!-- ================= IST TIME HELPERS ================= -->
   <script>
-    const PLAN_DATE = "{{ plan_date.isoformat() }}";
 
     /* Single source of truth for IST */
     function istNow() {

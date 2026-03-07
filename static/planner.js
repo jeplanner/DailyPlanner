@@ -4,7 +4,6 @@ const summaryModal = document.getElementById("summary-modal");
 const summaryContent = document.getElementById("summary-content");
 let dragGhost = null;
 const PLAN_DATE =
-  window.PLAN_DATE ||
   document.body.dataset.planDate ||
   new Date().toISOString().slice(0,10);
 
