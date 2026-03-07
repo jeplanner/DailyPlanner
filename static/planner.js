@@ -499,13 +499,19 @@ document.addEventListener("click", async (e) => {
   btn.disabled = false;
 });
 function streamText(el, text, speed = 20) {
+
   el.innerText = "";
+  el.classList.add("streaming");
 
   const words = text.split(" ");
   let i = 0;
 
   function next() {
-    if (i >= words.length) return;
+
+    if (i >= words.length) {
+      el.classList.remove("streaming");
+      return;
+    }
 
     el.innerText += (i === 0 ? "" : " ") + words[i];
     i++;
