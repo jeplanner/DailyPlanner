@@ -568,8 +568,7 @@ def autosave_task(plan_date, task_id, quadrant, text=None, is_done=False, projec
     # -------------------------
     update(
         "todo_matrix",
-        "user_id":f"eq.{user_id}",
-        params={"id": f"eq.{task_id}"},
+        params={"id": f"eq.{task_id}","user_id":f"eq.{user_id}"},
         json={"is_done": is_done},
     )
 

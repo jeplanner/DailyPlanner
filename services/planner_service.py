@@ -378,6 +378,7 @@ def save_day(plan_date, form):
                             "priority": s["priority"],
                             "category": s["category"],
                             "tags": s["tags"],
+                            "user_id":user_id
                         }
                     )
 
