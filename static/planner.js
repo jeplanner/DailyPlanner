@@ -677,3 +677,73 @@ document.addEventListener("mouseup", e => {
   draggingEvent = null;
 
 });
+/* =========================================================
+   RESIZE EVENT
+========================================================= */
+
+let resizingEvent = null;
+
+document.querySelectorAll(".resize-handle").forEach(handle => {
+
+  handle.addEventListener("mousedown", e => {
+
+    e.stopPropagation();
+
+    resizingEvent = handle.parentElement;
+
+    document.body.style.userSelect = "none";
+
+  });
+
+});
+
+document.addEventListener("mousemove", e => {
+
+  if (!resizingEvent) return;
+
+  const container = document.querySelector(".day-grid");
+  const rect = container.getBoundingClientRect();
+
+  const slotHeight = parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--slot-height")
+  );
+
+  const y = e.clientY - rect.top;
+
+  const start = Number(resizingEvent.dataset.start);
+
+  let newEnd = Math.round(y / slotHeight) + 1;
+
+  if (newEnd <= start) newEnd = start + 1;
+
+  const newHeight = (newEnd - start + 1) * slotHeight;
+
+  resizingEvent.style.height = `${newHeight}px`;
+
+});
+
+document.addEventListener("mouseup", () => {
+
+  if (!resizingEvent) return;
+
+  const slotHeight = parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--slot-height")
+  );
+
+  const start = Number(resizingEvent.dataset.start);
+
+  const height = resizingEvent.offsetHeight;
+
+  const slots = Math.round(height / slotHeight);
+
+  const newEnd = start + slots - 1;
+
+  saveEvent(start, newEnd);
+
+  resizingEvent = null;
+
+  document.body.style.userSelect = "";
+
+});
