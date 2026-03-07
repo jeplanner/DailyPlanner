@@ -478,7 +478,12 @@ document.addEventListener("click", async (e) => {
   if (!btn) return;
 
   const selectedDate = btn.dataset.date;
-  
+  const output = document.getElementById("aiPlanOutput");
+
+  output.innerHTML = "⏳ Generating AI plan...";
+
+  btn.disabled = true;
+
   const res = await fetch("/ai/generate-day-plan", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -489,10 +494,27 @@ document.addEventListener("click", async (e) => {
 
   const data = await res.json();
 
-  document.getElementById("aiPlanOutput").innerText = data.result;
+ streamText(output, data.result);
 
+  btn.disabled = false;
 });
+function streamText(el, text, speed = 20) {
+  el.innerText = "";
 
+  const words = text.split(" ");
+  let i = 0;
+
+  function next() {
+    if (i >= words.length) return;
+
+    el.innerText += (i === 0 ? "" : " ") + words[i];
+    i++;
+
+    setTimeout(next, speed);
+  }
+
+  next();
+}
 function loadPlannerForDate(date) {
   PLAN_DATE = date;
   loadTasks();

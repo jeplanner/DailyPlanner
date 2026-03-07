@@ -49,19 +49,29 @@ def generate_day_plan():
     })
 
     prompt = f"""
-    You are a productivity AI assistant.
+        You are an elite productivity planner.
 
-    Here is today's schedule:
-    {slots}
+        The user maintains a 30-minute slot based daily planner.
 
-    Generate:
-    1. A prioritized plan
-    2. Suggested focus blocks
-    3. Risk areas
-    4. Time optimization suggestions
+        Each slot represents a time block.
 
-    Keep it structured and concise.
-    """
+        Today's scheduled tasks:
+
+        {slots}
+
+        Your job:
+
+        1. Identify the most important tasks today.
+        2. Suggest 2–3 focused work blocks.
+        3. Identify schedule risks or inefficiencies.
+        4. Suggest 2 improvements for productivity.
+
+        Rules:
+        - Do NOT invent tasks.
+        - Only analyze the given schedule.
+        - Keep the answer short and practical.
+        - Maximum 120 words.
+        """
 
     ai_output = call_gemini(prompt)
 

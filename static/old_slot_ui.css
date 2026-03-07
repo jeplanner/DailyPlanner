@@ -468,3 +468,17 @@ body {
   background: rgba(0,120,255,0.15);
   z-index: 999;
 }
+#aiPlanOutput {
+  margin-top: 10px;
+  padding: 10px;
+  background: #f7f7f7;
+  border-radius: 6px;
+}
+#aiPlanOutput::after {
+  content: "▌";
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
