@@ -101,6 +101,7 @@ def generate_day_plan():
     try:
         ai_output = call_gemini(prompt)
         print("AI USED: GEMINI")
+        provider="Gemini"
 
     except Exception as e:
 
@@ -109,11 +110,12 @@ def generate_day_plan():
         try:
             ai_output = call_groq(prompt)
             print("AI USED: GROQ")
+            provider="Groq"
 
         except Exception as e2:
 
             print("Groq also failed", e2)
-
+            provider="None"
             ai_output = "⚠️ AI service temporarily unavailable. Please try again."
 
     return jsonify({
