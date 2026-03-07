@@ -459,18 +459,21 @@ function confirmSchedule(taskId) {
     })
   }).then(() => window.location.reload());
 }
-document.getElementById("generatePlanBtn")
-  .addEventListener("click", async () => {
+const btn = document.getElementById("generatePlanBtn");
 
-    const res = await fetch("/ai/generate-day-plan", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        date: "{{ selected_date }}"
-      })
-    });
+btn.addEventListener("click", async () => {
 
-    const data = await res.json();
+  const selectedDate = btn.dataset.date;
 
-    document.getElementById("aiPlanOutput").innerText = data.result;
+  const res = await fetch("/ai/generate-day-plan", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      date: selectedDate
+    })
+  });
+
+  const data = await res.json();
+
+  document.getElementById("aiPlanOutput").innerText = data.result;
 });

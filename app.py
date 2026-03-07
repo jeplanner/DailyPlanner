@@ -3,7 +3,7 @@ import os
 from logger import setup_logger
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
-
+logger=setup_logger()
 def create_app():
     app = Flask(__name__)
 

@@ -7,7 +7,7 @@ from requests import post
 import pytz
 
 from config import DEFAULT_STATUS, HABIT_ICONS, HABIT_LIST, IST, MIN_HEALTH_HABITS, QUADRANT_MAP, STATUSES, TOTAL_SLOTS
-import logger
+from logger import setup_logger
 from services.login_service import login_required
 from services.planner_service import compute_health_streak, ensure_daily_habits_row, fetch_daily_slots, generate_weekly_insight, get_daily_summary, get_weekly_summary, group_slots_into_blocks, is_health_day, load_day, save_day
 from services.recurring_service import materialize_recurring_slots
@@ -23,6 +23,7 @@ from utils.smartplanner import parse_smart_sentence
 
 planner_bp = Blueprint("planner", __name__)
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
+logger = setup_logger()
 @planner_bp.route("/", methods=["GET", "POST"])
 @login_required
 def planner():

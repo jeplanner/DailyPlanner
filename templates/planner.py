@@ -60,7 +60,9 @@ PLANNER_TEMPLATE = """
     <input type="hidden" name="month" value="{{ month }}">
     <input type="hidden" name="day" value="{{ selected_day }}">
 
-<button id="generatePlanBtn">Generate My Day Plan</button>
+<button id="generatePlanBtn" data-date="{{ selected_date }}">
+  Generate AI Plan
+</button>
 
 <div id="aiPlanOutput"></div>
 <h3>🧠 Smart Planner Input</h3>
