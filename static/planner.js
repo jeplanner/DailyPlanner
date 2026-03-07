@@ -612,3 +612,68 @@ document.querySelectorAll(".time-row").forEach(row => {
   });
 
 });
+/* =========================================================
+   DRAG EVENT TO MOVE
+========================================================= */
+
+let draggingEvent = null;
+let dragOffsetY = 0;
+
+document.querySelectorAll(".event-block").forEach(block => {
+
+  block.addEventListener("mousedown", e => {
+
+    draggingEvent = block;
+
+    const rect = block.getBoundingClientRect();
+    dragOffsetY = e.clientY - rect.top;
+
+    block.style.opacity = "0.6";
+
+    document.body.style.userSelect = "none";
+
+  });
+
+});
+
+document.addEventListener("mousemove", e => {
+
+  if (!draggingEvent) return;
+
+  const container = document.querySelector(".day-grid");
+  const rect = container.getBoundingClientRect();
+
+  const y = e.clientY - rect.top - dragOffsetY;
+
+  draggingEvent.style.top = `${y}px`;
+
+});
+
+document.addEventListener("mouseup", e => {
+
+  if (!draggingEvent) return;
+
+  const slotHeight = parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--slot-height")
+  );
+
+  const top = draggingEvent.offsetTop;
+
+  const newStart = Math.round(top / slotHeight) + 1;
+
+  const start = Number(draggingEvent.dataset.start);
+  const end = Number(draggingEvent.dataset.end);
+
+  const duration = end - start;
+
+  const newEnd = newStart + duration;
+
+  draggingEvent.style.opacity = "";
+  document.body.style.userSelect = "";
+
+  saveEvent(newStart, newEnd);
+
+  draggingEvent = null;
+
+});
