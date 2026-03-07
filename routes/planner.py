@@ -199,10 +199,11 @@ def smart_preview():
 @login_required
 def toggle_slot_status():
     data = request.get_json()
-
+    user_id = session["user_id"]
     update(
         "daily_slots",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{data['plan_date']}",
             "slot": f"eq.{data['slot']}",
         },
@@ -221,7 +222,7 @@ def untimed_slot_preview():
     slot_count = int(data["slot_count"])
 
     preview = []
-
+    user_id = session["user_id"]
     for i in range(slot_count):
         slot = start_slot + i
         if not (1 <= slot <= TOTAL_SLOTS):
@@ -230,6 +231,7 @@ def untimed_slot_preview():
         row = get(
             "daily_slots",
             params={
+                "user_id": f"eq.{user_id}",
                 "plan_date":f"eq.{plan_date.isoformat()}",
                 "slot": f"eq.{slot}",
                 "select": "slot,plan",
@@ -248,10 +250,11 @@ def untimed_slot_preview():
 def get_slot():
     plan_date = request.args["date"]
     slot = int(request.args["slot"])
-
+    user_id = session["user_id"]
     row = get(
         "daily_slots",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
             "slot": f"eq.{slot}",
             "select": "plan",
@@ -267,11 +270,12 @@ def update_slot():
     start = int(data["start_slot"])
     end = int(data["end_slot"])
     text = data["text"]
-
+    user_id = session["user_id"]
     for slot in range(start, end + 1):
         update(
             "daily_slots",
             params={
+                "user_id": f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "slot": f"eq.{slot}",
             },
@@ -431,6 +435,7 @@ def schedule_untimed():
         slot = start_slot + i
         if 1 <= slot <= TOTAL_SLOTS:
             payload.append({
+                "user_id": f"eq.{user_id}",
                 "plan_date": plan_date_str,
                 "slot": slot,
                 "plan": text,
@@ -530,9 +535,11 @@ def get_plan_for_slot(plan_date, slot):
     return None
 
 def load_slot_timeline(plan_date):
+    user_id = session["user_id"]
     return get(
         "daily_slots",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date.isoformat()}",
             "select": "slot,plan,status",
             "order": "slot.asc"

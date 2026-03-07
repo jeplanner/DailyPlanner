@@ -1,6 +1,8 @@
 import json
 import re
 from datetime import datetime,date
+
+from flask import session
 from config import MONTHLY_RE,STARTING_RE,EVERY_DAY_RE,EVERY_WEEKDAY_RE,INTERVAL_RE,WEEKDAYS
 from config import (
     TOTAL_SLOTS,
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def fetch_daily_slots(plan_date):
 
-
+    user_id = session["user_id"]
     # ensure correct format
     if hasattr(plan_date, "strftime"):
         plan_date = plan_date.strftime("%Y-%m-%d")
@@ -26,6 +28,7 @@ def fetch_daily_slots(plan_date):
     rows = get(
         "daily_slots",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
             "select": "plan,start_time,end_time,slot",
             "order": "slot.asc",
@@ -57,7 +60,7 @@ def load_day(plan_date, tag=None):
     habits = set()
     reflection = ""
     untimed_tasks = []  
-    user_id ="VenghateshS"
+    user_id =session["user_id"]
     meta = get(
         "daily_meta",
         params={
@@ -77,6 +80,7 @@ def load_day(plan_date, tag=None):
         get(
             "daily_slots",
             params={
+                "user_id": f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "select": "slot,plan,status,priority,category,tags",
             },
@@ -483,6 +487,7 @@ def save_day(plan_date, form):
          # 🔥 ADD THESE
         "start_time",
         "end_time",
+        "user_id",
     }
 
     clean_payload = [
@@ -505,6 +510,7 @@ def get_daily_summary(plan_date):
     # ----------------------------
     # Load day meta (habits + reflection)
     # ----------------------------
+    user_id=session["user_id"]
     meta_rows = get(
         "daily_meta",
         params={
@@ -527,6 +533,7 @@ def get_daily_summary(plan_date):
     rows = get(
         "daily_slots",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
             "select": "slot,plan",
             "order": "slot.asc",

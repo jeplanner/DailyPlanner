@@ -38,6 +38,7 @@ def materialize_recurring_tasks(plan_date,user_):
         get(
             "recurring_tasks",
             params={
+                "user_id": f"eq.{user_}",
                 "is_active": "eq.true",
                 "start_date": f"lte.{plan_date}",
                 "select": "id,quadrant,task_text,category,subcategory,recurrence,days_of_week,day_of_month,end_date",
@@ -51,6 +52,7 @@ def materialize_recurring_tasks(plan_date,user_):
     existing = get(
         "todo_matrix",
         params={
+            "user_id": f"eq.{user_}",
             "plan_date": f"eq.{plan_date}",
             "is_deleted": "eq.false",  # 👈 REQUIRED
             "select": "recurring_id",
@@ -63,6 +65,7 @@ def materialize_recurring_tasks(plan_date,user_):
     max_row = get(
         "todo_matrix",
         params={
+            "user_id": f"eq.{user_}",
             "plan_date": f"eq.{plan_date}",
             "is_deleted": "eq.false",
             "select": "position",
@@ -104,6 +107,7 @@ def materialize_recurring_tasks(plan_date,user_):
 
         payload.append(
             {
+                "user_id": user_,
                 "plan_date": str(plan_date),
                 "task_date": str(plan_date),
                 "quadrant": r["quadrant"],
@@ -140,6 +144,7 @@ def materialize_recurring_slots(plan_date, user_id):
             slot = rule["start_slot"] + i
             if 1 <= slot <= TOTAL_SLOTS:
                 payload.append({
+                    "user_id": user_id,
                     "plan_date": str(plan_date),
                     "slot": slot,
                     "plan": rule["title"],
@@ -148,7 +153,7 @@ def materialize_recurring_slots(plan_date, user_id):
 
     if payload:
         post(
-            "daily_slots?on_conflict=plan_date,slot",
+            "daily_slots?on_conflict=user_id,plan_date,slot",
             payload,
             prefer="resolution=ignore-duplicates",
         )
