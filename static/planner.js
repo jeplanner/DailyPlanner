@@ -2,7 +2,10 @@
 const USE_TIMELINE_VIEW = false; // Set to true to enable timeline view
 const summaryModal = document.getElementById("summary-modal");
 const summaryContent = document.getElementById("summary-content");
-
+const PLAN_DATE =
+  window.PLAN_DATE ||
+  document.body.dataset.planDate ||
+  new Date().toISOString().slice(0,10);
 
 /* =========================================================
    CLOCK (IST)
@@ -271,15 +274,20 @@ document.addEventListener("change", async (e) => {
   const slot = e.target.dataset.slot;
   const checked = e.target.checked;
 
-  await fetch("/slot/toggle-status", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      plan_date: document.body.dataset.planDate,
-      slot: slot,
-      status: checked ? "done" : "open"
-    })
-  });
+  try {
+    await fetch("/slot/toggle-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_date: document.body.dataset.planDate,
+        slot: slot,
+        status: checked ? "done" : "open"
+      })
+    });
+  } catch (err) {
+    console.error(err);
+    e.target.checked = !checked;
+  }
 });
 function getHourLabel(timeStr) {
   const [h, m] = timeStr.split(":").map(Number);
@@ -336,7 +344,7 @@ function renderTaskCard(task) {
     <div class="task-main">
       <input type="checkbox" class="task-check" />
       <div class="task-content">
-        <div class="task-title">${task.task_text}</div>
+        <div class="task-title">${task.text}</div>
         ${duration ? `<div class="task-meta">${duration}</div>` : ""}
       </div>
     </div>
@@ -349,44 +357,43 @@ function renderTaskCard(task) {
 ========================================================= */
 
 function editEvent(startSlot, endSlot) {
+
   const modal = document.getElementById("modal");
   const content = document.getElementById("modal-content");
 
   fetch(`/slot/get?date=${PLAN_DATE}&slot=${startSlot}`)
     .then(r => r.json())
     .then(data => {
+
+      const text = (data.text || "")
+        .replace(/&/g,"&amp;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;");
+
       content.innerHTML = `
         <h3>✏️ Edit Event</h3>
-        <textarea id="editText" style="width:100%;min-height:140px;">
-          ${(data.text || "").replace(/</g, "&lt;")}
-        </textarea>
+
+        <textarea id="editText" style="width:100%;min-height:140px;">${text}</textarea>
+
         <br><br>
-        <button onclick="document.getElementById('modal').style.display='none'">
-          Cancel
-        </button>
-        <button onclick="saveEvent(${startSlot}, ${endSlot})">
-          Save
-        </button>
+
+        <button onclick="closeModal()">Cancel</button>
+        <button onclick="saveEvent(${startSlot}, ${endSlot})">Save</button>
       `;
-      modal.style.display = "flex";
+
+      if (modal) modal.style.display = "flex";
     })
     .catch(err => {
       console.error("Edit fetch failed:", err);
     });
 }
 
-function saveEvent(startSlot, endSlot) {
-  fetch("/slot/update", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      plan_date: PLAN_DATE,
-      start_slot: startSlot,
-      end_slot: endSlot,
-      text: document.getElementById("editText").value
-    })
-  }).then(() => location.reload());
+function closeModal() {
+  const modal = document.getElementById("modal");
+  if (modal) modal.style.display = "none";
 }
+
+
 
 function renderDailySummaryTable() {
   const rows = [];
@@ -461,19 +468,39 @@ function confirmSchedule(taskId) {
 }
 const btn = document.getElementById("generatePlanBtn");
 
-btn.addEventListener("click", async () => {
+if (btn) {
+  btn.addEventListener("click", async () => {
 
-  const selectedDate = btn.dataset.date;
+    const selectedDate = btn.dataset.date;
 
-  const res = await fetch("/ai/generate-day-plan", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      date: selectedDate
-    })
+    const res = await fetch("/ai/generate-day-plan", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        date: selectedDate
+      })
+    });
+
+    const data = await res.json();
+
+    document.getElementById("aiPlanOutput").innerText = data.result;
   });
+}
+function jumpToDate() {
 
-  const data = await res.json();
+  const dateInput = document.getElementById("datePicker");
 
-  document.getElementById("aiPlanOutput").innerText = data.result;
-});
+  if (!dateInput || !dateInput.value) {
+    alert("Please select a date");
+    return;
+  }
+
+  const selectedDate = new Date(dateInput.value);
+
+  const year = selectedDate.getFullYear();
+  const month = selectedDate.getMonth() + 1;
+  const day = selectedDate.getDate();
+
+  window.location.href =
+    `/?year=${year}&month=${month}&day=${day}`;
+}
