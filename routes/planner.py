@@ -623,15 +623,20 @@ def build_google_datetime(plan_date, time_str):
 @planner_bp.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if request.form.get("password") == APP_PASSWORD:
+
+        username = request.form.get("username", "").strip().lower()
+        password = request.form.get("password")
+
+        if password == APP_PASSWORD and username:
             session.clear()
-            session["user_id"] = "local_user"
+            session["user_id"] = username
             session["authenticated"] = True
-            user_id = session.get("user_id")
-            print("USER ID:", user_id)
+
+            print("USER ID:", username)
+
             return redirect(url_for("planner.planner"))
 
-        return render_template_string(LOGIN_TEMPLATE, error="Invalid password")
+        return render_template_string(LOGIN_TEMPLATE, error="Invalid login")
 
     return render_template_string(LOGIN_TEMPLATE)
 

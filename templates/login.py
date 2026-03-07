@@ -46,6 +46,7 @@ LOGIN_TEMPLATE = """
 <body>
   <form method="post" class="login-box">
     <h3>🔒 Login</h3>
+    <input name="username" placeholder="Username" required>
     <input type="password" name="password" placeholder="Password" autofocus>
     <button type="submit">Continue</button>
     {% if error %}
