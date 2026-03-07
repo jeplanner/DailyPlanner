@@ -488,18 +488,16 @@ if (btn) {
 }
 function jumpToDate() {
 
-  const dateInput = document.getElementById("datePicker");
+  const monthInput = document.getElementById("jump-month");
+  const dayInput = document.getElementById("jump-day");
 
-  if (!dateInput || !dateInput.value) {
+  if (!monthInput.value || !dayInput.value) {
     alert("Please select a date");
     return;
   }
 
-  const selectedDate = new Date(dateInput.value);
-
-  const year = selectedDate.getFullYear();
-  const month = selectedDate.getMonth() + 1;
-  const day = selectedDate.getDate();
+  const [year, month] = monthInput.value.split("-");
+  const day = parseInt(dayInput.value);
 
   window.location.href =
     `/?year=${year}&month=${month}&day=${day}`;
