@@ -99,24 +99,31 @@ def generate_day_plan():
         """
 
     try:
-        ai_output = call_gemini(prompt)
-        print("AI USED: GEMINI")
-        provider="Gemini"
+      ai_output = call_gemini(prompt)
+
+    # Detect Gemini overload response
+      if not ai_output or "busy" in ai_output.lower():
+        raise RuntimeError("Gemini overloaded")
+
+      print("AI USED: GEMINI")
+      provider = "Gemini"
 
     except Exception as e:
 
-        print("Gemini failed → switching to Groq", e)
+     print("Gemini failed → switching to Groq", e)
 
-        try:
-            ai_output = call_groq(prompt)
-            print("AI USED: GROQ")
-            provider="Groq"
+    try:
+        ai_output = call_groq(prompt)
+        print("AI USED: GROQ")
+        provider = "Groq"
+        if not ai_output or "busy" in ai_output.lower():
+            raise RuntimeError("Gemini overloaded")
+    except Exception as e2:
 
-        except Exception as e2:
+        print("Groq also failed", e2)
+        provider = "None"
 
-            print("Groq also failed", e2)
-            provider="None"
-            ai_output = "⚠️ AI service temporarily unavailable. Please try again."
+        ai_output = "⚠️ AI service temporarily unavailable. Please try again."
 
     return jsonify({
     "result": ai_output,
