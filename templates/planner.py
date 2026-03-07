@@ -55,6 +55,19 @@ PLANNER_TEMPLATE = """
 </div>
 
   </div>
+  <div class="ai-plan-box">
+
+  <button
+    type="button"
+    id="generatePlanBtn"
+    data-date="{{ selected_date.strftime('%Y-%m-%d') }}"
+  >
+    🧠 Generate AI Plan
+  </button>
+
+  <div id="aiPlanOutput"></div>
+
+</div>
   <!-- =============== END TIMELINE HEADER =============== -->
 
   <form method="post" id="planner-form">
@@ -62,11 +75,7 @@ PLANNER_TEMPLATE = """
     <input type="hidden" name="month" value="{{ month }}">
     <input type="hidden" name="day" value="{{ selected_day }}">
 
-<div id="aiPlanOutput" style="white-space:pre-wrap;"></div>
-  Generate AI Plan
-</button>
 
-<div id="aiPlanOutput"></div>
 <h3>🧠 Smart Planner Input</h3>
 
 <textarea
