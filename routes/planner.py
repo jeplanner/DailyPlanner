@@ -261,17 +261,37 @@ def get_slot():
         },
     )
     return jsonify({"text": row[0]["plan"] if row else ""})
-
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
 def update_slot():
+
     data = request.get_json()
+
     plan_date = data["plan_date"]
     start = int(data["start_slot"])
     end = int(data["end_slot"])
     text = data["text"]
+
     user_id = session["user_id"]
+
+    # ------------------------------------
+    # 1️⃣ Clear old slots for this event
+    # ------------------------------------
+    update(
+        "daily_slots",
+        params={
+            "user_id": f"eq.{user_id}",
+            "plan_date": f"eq.{plan_date}",
+            "plan": f"eq.{text}"
+        },
+        json={"plan": None}
+    )
+
+    # ------------------------------------
+    # 2️⃣ Write new slots
+    # ------------------------------------
     for slot in range(start, end + 1):
+
         update(
             "daily_slots",
             params={
