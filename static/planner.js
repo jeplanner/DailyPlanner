@@ -156,7 +156,10 @@ function getISTDate() {
 
 function saveEvent(oldStart, oldEnd, newStart, newEnd) {
 
-  const text = document.getElementById("editText")?.value || draggingEvent?.innerText;
+  const text =
+  document.getElementById("editText")?.value ||
+  draggingEvent?.innerText?.trim() ||
+  "";
 
   fetch("/slot/update", {
     method: "POST",

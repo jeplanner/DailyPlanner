@@ -660,7 +660,7 @@ function closeModal() {
 async function saveEvent() {
   const start = document.getElementById("start-time").value;
   const duration = document.getElementById("duration").value;
-
+  
   const payload = {
     plan_date: currentDate,
     start_time: start,
