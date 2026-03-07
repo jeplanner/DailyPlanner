@@ -7,6 +7,73 @@ let PLAN_DATE =
   document.body.dataset.planDate ||
   new Date().toISOString().slice(0,10);
 
+function initDragSystem() {
+
+  document.querySelectorAll(".event-block").forEach(block => {
+
+    block.addEventListener("mousedown", e => {
+
+      if (e.target.classList.contains("resize-handle")) return;
+
+      draggingEvent = block;
+
+      const rect = block.getBoundingClientRect();
+      dragOffsetY = e.clientY - rect.top;
+
+      dragGhost = block.cloneNode(true);
+      dragGhost.classList.add("event-ghost");
+
+      dragGhost.style.width = rect.width + "px";
+      dragGhost.style.height = rect.height + "px";
+
+      block.parentElement.appendChild(dragGhost);
+
+      block.style.opacity = "0.3";
+
+      document.body.style.userSelect = "none";
+
+    });
+
+  });
+
+}
+
+function initSlotDrag() {
+
+  document.querySelectorAll(".time-row").forEach(row => {
+
+    row.addEventListener("mousedown", () => {
+
+      dragStartSlot = Number(row.dataset.slot);
+      dragEndSlot = dragStartSlot;
+      isDragging = true;
+
+      highlightSlots();
+
+    });
+
+    row.addEventListener("mouseenter", () => {
+
+      if (!isDragging) return;
+
+      dragEndSlot = Number(row.dataset.slot);
+      highlightSlots();
+
+    });
+
+    row.addEventListener("click", e => {
+
+      if (isDragging) return;
+
+      const slot = Number(row.dataset.slot);
+      openCreateEvent(slot, slot);
+
+    });
+
+  });
+
+}
+
 /* =========================================================
    CLOCK (IST)
 ========================================================= */
@@ -108,6 +175,9 @@ function saveEvent(startSlot, endSlot) {
 
 
 document.addEventListener("DOMContentLoaded", () => {
+  prefetchAdjacentDays();
+  initDragSystem();   // 🔴 ADD THIS
+  initSlotDrag();
   if (USE_TIMELINE_VIEW) {
     document.body.classList.add("timeline-mode");
 
@@ -546,36 +616,7 @@ function jumpToDate() {
   `/?year=${year}&month=${month}&day=${day}`
   );
 }
-/* =========================================================
-   DRAG TO CREATE EVENT
-========================================================= */
 
-let dragStartSlot = null;
-let dragEndSlot = null;
-let isDragging = false;
-
-document.querySelectorAll(".time-row").forEach(row => {
-
-  row.addEventListener("mousedown", () => {
-
-    dragStartSlot = Number(row.dataset.slot);
-    dragEndSlot = dragStartSlot;
-    isDragging = true;
-
-    highlightSlots();
-
-  });
-
-  row.addEventListener("mouseenter", () => {
-
-    if (!isDragging) return;
-
-    dragEndSlot = Number(row.dataset.slot);
-    highlightSlots();
-
-  });
-
-});
 
 document.addEventListener("mouseup", () => {
 
@@ -641,19 +682,7 @@ function openCreateEvent(startSlot, endSlot) {
   modal.style.display = "flex";
 
 }
-document.querySelectorAll(".time-row").forEach(row => {
 
-  row.addEventListener("click", e => {
-
-    if (isDragging) return;
-
-    const slot = Number(row.dataset.slot);
-
-    openCreateEvent(slot, slot);
-
-  });
-
-});
 /* =========================================================
    DRAG EVENT TO MOVE
 ========================================================= */
@@ -669,36 +698,6 @@ document.querySelectorAll(".time-row").forEach(row => {
 let draggingEvent = null;
 let dragOffsetY = 0;
 
-if (window.matchMedia("(pointer:fine)").matches) {
-
-  document.querySelectorAll(".event-block").forEach(block => {
-
-    block.addEventListener("mousedown", e => {
-
-      if (e.target.classList.contains("resize-handle")) return;
-
-      draggingEvent = block;
-
-      const rect = block.getBoundingClientRect();
-      dragOffsetY = e.clientY - rect.top;
-
-      dragGhost = block.cloneNode(true);
-      dragGhost.classList.add("event-ghost");
-
-      dragGhost.style.width = rect.width + "px";
-      dragGhost.style.height = rect.height + "px";
-
-      block.parentElement.appendChild(dragGhost);
-
-      block.style.opacity = "0.3";
-
-      document.body.style.userSelect = "none";
-
-    });
-
-  });
-
-}
 
 document.addEventListener("mousemove", e => {
 
@@ -825,9 +824,7 @@ document.addEventListener("mouseup", () => {
   document.body.style.userSelect = "";
 
 });
-document.addEventListener("DOMContentLoaded", () => {
-  prefetchAdjacentDays();
-});
+
 
 function prefetchAdjacentDays() {
   const d = new Date(PLAN_DATE);
@@ -863,7 +860,10 @@ document.addEventListener("click", async e => {
   const doc = new DOMParser().parseFromString(html,"text/html");
 
   document.querySelector("#planner-root").innerHTML =
-    doc.querySelector("#planner-root").innerHTML;
+  doc.querySelector("#planner-root").innerHTML;
+
+  initDragSystem();   // 🔴 REATTACH DRAG EVENTS
+  initSlotDrag();
 
   history.pushState({}, "", link.href);
 
