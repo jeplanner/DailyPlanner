@@ -15,7 +15,7 @@ def call_gemini(prompt, retries=3):
     }
 
     for attempt in range(retries):
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload,timeout=15)
 
         if response.status_code == 200:
             data = response.json()

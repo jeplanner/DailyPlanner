@@ -2,6 +2,8 @@ from flask import Blueprint, jsonify, request, session
 from services.ai_service import call_gemini
 from services.login_service import login_required
 from supabase_client import get
+from openai import OpenAI
+import os
 ai_bp = Blueprint("ai", __name__)
 @ai_bp.post("/ai/reflection-summary")
 @login_required
@@ -33,13 +35,33 @@ def reflection_summary():
 
     return jsonify({"summary": summary})
 
+
+groq = OpenAI(
+    api_key=os.environ["GROQ_API_KEY"],
+    base_url="https://api.groq.com/openai/v1/chat/completions"
+)
+
+def call_groq(prompt):
+
+    resp = groq.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[
+            {"role": "system", "content": "You are a productivity assistant."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.4
+    )
+
+    return resp.choices[0].message.content
+
 @ai_bp.post("/ai/generate-day-plan")
 @login_required
 def generate_day_plan():
+
     user_id = session["user_id"]
     plan_date = request.json.get("date")
+
     print("AI PLAN REQUEST", plan_date)
-    user_id = session["user_id"]
 
     slots = get("daily_slots", {
         "user_id": f"eq.{user_id}",
@@ -47,7 +69,10 @@ def generate_day_plan():
         "select": "slot,plan,priority,category,tags",
         "order": "slot.asc"
     })
-
+    schedule = "\n".join(
+    f"Slot {s['slot']}: {s.get('plan','')}"
+    for s in slots if s.get("plan")
+    )
     prompt = f"""
         You are an elite productivity planner.
 
@@ -57,7 +82,7 @@ def generate_day_plan():
 
         Today's scheduled tasks:
 
-        {slots}
+        {schedule}
 
         Your job:
 
@@ -73,9 +98,28 @@ def generate_day_plan():
         - Maximum 120 words.
         """
 
-    ai_output = call_gemini(prompt)
+    try:
+        ai_output = call_gemini(prompt)
+        print("AI USED: GEMINI")
 
-    return jsonify({"result": ai_output})
+    except Exception as e:
+
+        print("Gemini failed → switching to Groq", e)
+
+        try:
+            ai_output = call_groq(prompt)
+            print("AI USED: GROQ")
+
+        except Exception as e2:
+
+            print("Groq also failed", e2)
+
+            ai_output = "⚠️ AI service temporarily unavailable. Please try again."
+
+    return jsonify({
+    "result": ai_output,
+    "provider": provider
+})
 
 @ai_bp.post("/ai/assistant")
 @login_required
