@@ -278,6 +278,8 @@ def update_slot():
     start = int(data["start_slot"])
     end = int(data["end_slot"])
     text = data["text"]
+    priority=data["priority"]
+    category=data["category"]
     user_id = session["user_id"]
     # 🛑 If dropped in same slot, do nothing
     if old_start == start and old_end == end:
@@ -318,6 +320,8 @@ def update_slot():
             "plan": text,
             "start_time": start_time,
             "end_time": end_time,
+            "priority":priority,
+            "category":category
         })
 
     post(
