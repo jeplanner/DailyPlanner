@@ -42,17 +42,17 @@ PLANNER_TEMPLATE = """
       <button type="button" onclick="jumpToDate()">Go</button>
     </div>
 
-  <div class="day-timeline">
-    {% for d in timeline_days %}
-    <a href="/?year={{ d.year }}&month={{ d.month }}&day={{ d.day }}"
-      class="day-link day-item
-      {% if d == selected_date.date() %}active{% endif %}
-      {% if d == today.date() %}today{% endif %}">
-      <div class="dow">{{ d.strftime("%a") }}</div>
-      <div class="num">{{ d.day }}</div>
-    </a>
-    {% endfor %}
-    </div>
+<div class="day-timeline">
+{% for d in timeline_days %}
+<a href="/?year={{ d.year }}&month={{ d.month }}&day={{ d.day }}"
+   class="day-link day-item
+   {% if d == selected_date %}active{% endif %}
+   {% if d == today %}today{% endif %}">
+  <div class="dow">{{ d.strftime("%a") }}</div>
+  <div class="num">{{ d.day }}</div>
+</a>
+{% endfor %}
+</div>
 
   </div>
   <!-- =============== END TIMELINE HEADER =============== -->
