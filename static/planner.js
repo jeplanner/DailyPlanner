@@ -472,26 +472,27 @@ function confirmSchedule(taskId) {
     })
   }).then(() => window.location.reload());
 }
-const btn = document.getElementById("generatePlanBtn");
+document.addEventListener("click", async (e) => {
 
-if (btn) {
-  btn.addEventListener("click", async () => {
+  const btn = e.target.closest("#generatePlanBtn");
+  if (!btn) return;
 
-    const selectedDate = btn.dataset.date;
-
-    const res = await fetch("/ai/generate-day-plan", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        date: selectedDate
-      })
-    });
-
-    const data = await res.json();
-
-    document.getElementById("aiPlanOutput").innerText = data.result;
+  const selectedDate = btn.dataset.date;
+  
+  const res = await fetch("/ai/generate-day-plan", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      date: selectedDate
+    })
   });
-}
+
+  const data = await res.json();
+
+  document.getElementById("aiPlanOutput").innerText = data.result;
+
+});
+
 function loadPlannerForDate(date) {
   PLAN_DATE = date;
   loadTasks();

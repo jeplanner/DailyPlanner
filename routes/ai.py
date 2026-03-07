@@ -38,7 +38,7 @@ def reflection_summary():
 def generate_day_plan():
     user_id = session["user_id"]
     plan_date = request.json.get("date")
-
+    print("AI PLAN REQUEST", plan_date)
     user_id = session["user_id"]
 
     slots = get("daily_slots", {
