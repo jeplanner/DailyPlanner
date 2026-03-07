@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 import os
 
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
-from requests import post
+from supabase_client import post
 import pytz
 
 from config import DEFAULT_STATUS, HABIT_ICONS, HABIT_LIST, IST, MIN_HEALTH_HABITS, QUADRANT_MAP, STATUSES, TOTAL_SLOTS
