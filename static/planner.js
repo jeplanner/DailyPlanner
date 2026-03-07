@@ -617,32 +617,47 @@ document.querySelectorAll(".time-row").forEach(row => {
    DRAG EVENT TO MOVE
 ========================================================= */
 
+
+/* =========================================================
+   DRAG EVENT TO MOVE
+========================================================= */
+/* =========================================================
+   DRAG EVENT TO MOVE
+========================================================= */
+
 let draggingEvent = null;
 let dragOffsetY = 0;
 
-block.addEventListener("mousedown", e => {
+if (window.matchMedia("(pointer:fine)").matches) {
 
-  if (e.target.classList.contains("resize-handle")) return;
+  document.querySelectorAll(".event-block").forEach(block => {
 
-  draggingEvent = block;
+    block.addEventListener("mousedown", e => {
 
-  const rect = block.getBoundingClientRect();
+      if (e.target.classList.contains("resize-handle")) return;
 
-  dragOffsetY = e.clientY - rect.top;
+      draggingEvent = block;
 
-  dragGhost = block.cloneNode(true);
-  dragGhost.classList.add("event-ghost");
+      const rect = block.getBoundingClientRect();
+      dragOffsetY = e.clientY - rect.top;
 
-  dragGhost.style.width = rect.width + "px";
-  dragGhost.style.height = rect.height + "px";
+      dragGhost = block.cloneNode(true);
+      dragGhost.classList.add("event-ghost");
 
-  block.parentElement.appendChild(dragGhost);
+      dragGhost.style.width = rect.width + "px";
+      dragGhost.style.height = rect.height + "px";
 
-  block.style.opacity = "0.3";
+      block.parentElement.appendChild(dragGhost);
 
-  document.body.style.userSelect = "none";
+      block.style.opacity = "0.3";
 
-});
+      document.body.style.userSelect = "none";
+
+    });
+
+  });
+
+}
 
 document.addEventListener("mousemove", e => {
 
@@ -675,7 +690,7 @@ document.addEventListener("mouseup", e => {
       .getPropertyValue("--slot-height")
   );
 
-  const top = draggingEvent.offsetTop;
+  const top = dragGhost ? dragGhost.offsetTop : draggingEvent.offsetTop;
 
   const newStart = Math.round(top / slotHeight) + 1;
 
