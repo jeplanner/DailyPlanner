@@ -2,6 +2,7 @@
 const USE_TIMELINE_VIEW = false; // Set to true to enable timeline view
 const summaryModal = document.getElementById("summary-modal");
 const summaryContent = document.getElementById("summary-content");
+let dragGhost = null;
 const PLAN_DATE =
   window.PLAN_DATE ||
   document.body.dataset.planDate ||
@@ -619,20 +620,27 @@ document.querySelectorAll(".time-row").forEach(row => {
 let draggingEvent = null;
 let dragOffsetY = 0;
 
-document.querySelectorAll(".event-block").forEach(block => {
+block.addEventListener("mousedown", e => {
 
-  block.addEventListener("mousedown", e => {
+  if (e.target.classList.contains("resize-handle")) return;
 
-    draggingEvent = block;
+  draggingEvent = block;
 
-    const rect = block.getBoundingClientRect();
-    dragOffsetY = e.clientY - rect.top;
+  const rect = block.getBoundingClientRect();
 
-    block.style.opacity = "0.6";
+  dragOffsetY = e.clientY - rect.top;
 
-    document.body.style.userSelect = "none";
+  dragGhost = block.cloneNode(true);
+  dragGhost.classList.add("event-ghost");
 
-  });
+  dragGhost.style.width = rect.width + "px";
+  dragGhost.style.height = rect.height + "px";
+
+  block.parentElement.appendChild(dragGhost);
+
+  block.style.opacity = "0.3";
+
+  document.body.style.userSelect = "none";
 
 });
 
@@ -645,7 +653,16 @@ document.addEventListener("mousemove", e => {
 
   const y = e.clientY - rect.top - dragOffsetY;
 
-  draggingEvent.style.top = `${y}px`;
+  const slotHeight = parseFloat(
+  getComputedStyle(document.documentElement)
+    .getPropertyValue("--slot-height")
+);
+
+const snappedSlot = Math.round(y / slotHeight);
+
+if (dragGhost) {
+  dragGhost.style.top = `${snappedSlot * slotHeight}px`;
+}
 
 });
 
@@ -672,8 +689,13 @@ document.addEventListener("mouseup", e => {
   draggingEvent.style.opacity = "";
   document.body.style.userSelect = "";
 
-  saveEvent(newStart, newEnd);
+    saveEvent(newStart, newEnd);
+    if (dragGhost) {
+    dragGhost.remove();
+    dragGhost = null;
+  }
 
+draggingEvent.style.opacity = "";
   draggingEvent = null;
 
 });
@@ -699,7 +721,7 @@ document.querySelectorAll(".resize-handle").forEach(handle => {
 
 document.addEventListener("mousemove", e => {
 
-  if (!resizingEvent) return;
+  if (!resizingEvent || draggingEvent) return;
 
   const container = document.querySelector(".day-grid");
   const rect = container.getBoundingClientRect();

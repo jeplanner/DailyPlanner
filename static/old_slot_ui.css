@@ -460,3 +460,11 @@ body {
 .resize-handle:hover {
   background: rgba(0,0,0,0.35);
 }
+.event-ghost {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.45;
+  border: 2px dashed #0078ff;
+  background: rgba(0,120,255,0.15);
+  z-index: 999;
+}
