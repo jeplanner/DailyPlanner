@@ -204,7 +204,8 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd) {
   document.getElementById("editText")?.value ||
   draggingEvent?.innerText?.trim() ||
   "";
-
+  const category = draggingEvent?.dataset?.category || "Office";
+  const priority = draggingEvent?.dataset?.priority || "Medium";
   fetch("/slot/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -214,6 +215,8 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd) {
       old_end: oldEnd,
       start_slot: newStart,
       end_slot: newEnd,
+      category:category,
+      priority: priority,
       text: text
     })
   });
@@ -236,6 +239,8 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd) {
 
   block.dataset.start = newStart;
   block.dataset.end = newEnd;
+  block.dataset.category = category;
+  block.dataset.priority = priority;
 
 }
 /* =========================================================

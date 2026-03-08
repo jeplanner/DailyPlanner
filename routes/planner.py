@@ -278,8 +278,8 @@ def update_slot():
     start = int(data["start_slot"])
     end = int(data["end_slot"])
     text = data["text"]
-    priority=data["priority"]
-    category=data["category"]
+    priority = data.get("priority", "Medium")
+    category=data.get("category","Office")
     user_id = session["user_id"]
     # 🛑 If dropped in same slot, do nothing
     if old_start == start and old_end == end:
