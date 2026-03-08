@@ -143,24 +143,22 @@ PLANNER_TEMPLATE = """
       </div>
 <div class="events-layer">
   {% for block in blocks %}
-  <div
-    class="event-block"
-    data-start="{{ block.start_slot }}"
-    data-end="{{ block.end_slot }}"
-    data-category="{{ block.category }}"
-    data-priority="{{ block.priority }}"
-    onclick="editEvent({{ block.start_slot }}, {{ block.end_slot }})"
-    ondblclick="openEditModal(this)"
-    style="
-      top: calc({{ block.start_slot - 1 }} * var(--slot-height));
-      height: calc({{ block.end_slot - block.start_slot + 1 }} * var(--slot-height));
-    "
-  >
-    {% if block.recurring_id %}🔁 {% endif %}
-    {{ block.text }}
-
-    <div class="resize-handle"></div>
-  </div>
+ <div
+  class="event-block"
+  data-start="{{ block.start_slot }}"
+  data-end="{{ block.end_slot }}"
+  data-category="{{ block.category }}"
+  data-priority="{{ block.priority }}"
+  ondblclick="editEvent({{ block.start_slot }}, {{ block.end_slot }})"
+  style="
+    top: calc({{ block.start_slot - 1 }} * var(--slot-height));
+    height: calc({{ block.end_slot - block.start_slot + 1 }} * var(--slot-height));
+  "
+>
+  {% if block.recurring_id %}🔁 {% endif %}
+  {{ block.text }}
+  <div class="resize-handle"></div>
+</div>
   {% endfor %}
 </div>
 

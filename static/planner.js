@@ -3,6 +3,11 @@ const USE_TIMELINE_VIEW = false; // Set to true to enable timeline view
 const summaryModal = document.getElementById("summary-modal");
 const summaryContent = document.getElementById("summary-content");
 let dragGhost = null;
+let draggingEvent = null;
+let dragOffsetY = 0;
+let isDragging = false;
+let dragStartSlot = null;
+let dragEndSlot = null;
 let PLAN_DATE =
   document.body.dataset.planDate ||
   new Date().toISOString().slice(0,10);
@@ -813,8 +818,7 @@ function openCreateEvent(startSlot, endSlot) {
    DRAG EVENT TO MOVE
 ========================================================= */
 
-let draggingEvent = null;
-let dragOffsetY = 0;
+
 
 
 document.addEventListener("mousemove", e => {
