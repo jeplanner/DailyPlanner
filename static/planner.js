@@ -18,7 +18,7 @@ function initDragSystem() {
     ================================= */
 
     block.addEventListener("mousedown", e => {
-
+      if (e.detail === 2) return; // prevent drag on double click
       if (e.target.classList.contains("resize-handle")) return;
 
       draggingEvent = block;
@@ -198,14 +198,21 @@ function getISTDate() {
    EVENT EDITING
 ========================================================= */
 
-function saveEvent(oldStart, oldEnd, newStart, newEnd) {
+function saveEvent(oldStart, oldEnd, newStart, newEnd, newDate = PLAN_DATE) {
 
   const text =
   document.getElementById("editText")?.value ||
   draggingEvent?.innerText?.trim() ||
   "";
-  const category = draggingEvent?.dataset?.category || "Office";
-  const priority = draggingEvent?.dataset?.priority || "Medium";
+  const category =
+  document.getElementById("editCategory")?.value ||
+  draggingEvent?.dataset?.category ||
+  "Office";
+
+  const priority =
+    document.getElementById("editPriority")?.value ||
+    draggingEvent?.dataset?.priority ||
+    "Medium";
   fetch("/slot/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -516,14 +523,14 @@ function saveFromModal(oldStart, oldEnd){
 
   const startTime = document.getElementById("editStart").value;
   const endTime = document.getElementById("editEnd").value;
+  const newDate = document.getElementById("editDate").value;
 
   const newStart = timeToSlot(startTime);
   const newEnd = timeToSlot(endTime) - 1;
 
-  saveEvent(oldStart, oldEnd, newStart, newEnd);
+  saveEvent(oldStart, oldEnd, newStart, newEnd, newDate);
 
 }
-
 function editEvent(startSlot, endSlot) {
 
   const modal = document.getElementById("modal");
@@ -543,7 +550,8 @@ function editEvent(startSlot, endSlot) {
 
       content.innerHTML = `
     <h3>✏️ Edit Event</h3>
-
+    <label>Date</label>
+    <input type="date" id="editDate" value="${PLAN_DATE}">
     <label>Start Time</label>
     <input type="time" id="editStart" value="${data.start_time || ""}">
 
@@ -978,3 +986,20 @@ document.addEventListener("click", async e => {
   history.pushState({}, "", link.href);
 
 });
+function openEditModal(el) {
+
+  const start = el.dataset.start;
+  const end = el.dataset.end;
+  const category = el.dataset.category;
+  const priority = el.dataset.priority;
+  const text = el.innerText.trim();
+
+  document.getElementById("editText").value = text;
+  document.getElementById("editCategory").value = category;
+  document.getElementById("editPriority").value = priority;
+
+  window.editStart = start;
+  window.editEnd = end;
+
+  document.getElementById("edit-modal").style.display = "block";
+}

@@ -280,6 +280,7 @@ def update_slot():
     text = data["text"]
     priority = data.get("priority", "Medium")
     category=data.get("category","Office")
+    new_date = data.get("new_date", data["plan_date"])
     user_id = session["user_id"]
     # 🛑 If dropped in same slot, do nothing
     if old_start == start and old_end == end:
@@ -296,7 +297,7 @@ def update_slot():
             "daily_slots",
             params={
                 "user_id": f"eq.{user_id}",
-                "plan_date": f"eq.{plan_date}",
+                "plan_date": f"eq.{new_date}",
                 "slot": f"eq.{slot}",
             },
             json={

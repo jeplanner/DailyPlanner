@@ -150,6 +150,7 @@ PLANNER_TEMPLATE = """
     data-category="{{ block.category }}"
     data-priority="{{ block.priority }}"
     onclick="editEvent({{ block.start_slot }}, {{ block.end_slot }})"
+    ondblclick="openEditModal(this)"
     style="
       top: calc({{ block.start_slot - 1 }} * var(--slot-height));
       height: calc({{ block.end_slot - block.start_slot + 1 }} * var(--slot-height));
