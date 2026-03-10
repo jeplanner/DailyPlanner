@@ -29,6 +29,7 @@ SUMMARY_TEMPLATE = """
   .summary-table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
   }
 
   .summary-table th {
@@ -45,14 +46,16 @@ SUMMARY_TEMPLATE = """
     border-top: 1px solid #eef2f7;
     vertical-align: top;
     font-size: 15px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
 
-.summary-table td.time {
-  width: 110px;
-  font-weight: 700;
-  color: #2563eb;
-  white-space: nowrap;
-}
+  .summary-table td.time {
+    width: 110px;
+    font-weight: 700;
+    color: #2563eb;
+    white-space: nowrap;
+  }
 
   .summary-table tr:hover {
     background: #f8fafc;
@@ -75,36 +78,100 @@ SUMMARY_TEMPLATE = """
   .muted {
     color: #9ca3af;
   }
-  
-/* ---------- MOBILE FIX ---------- */
 
-@media (max-width: 600px){
+  /* ---------- NAV ---------- */
 
-  body{
-    padding:12px;
+  .nav-icons{
+    margin-bottom:12px;
   }
 
-  .summary-title{
-    font-size:18px;
+  /* ---------- STATS ---------- */
+
+  .stats{
+    display:flex;
+    gap:12px;
+    margin-bottom:18px;
   }
 
-  .summary-table td.time{
-    width:90px;
+  .stat-card{
+    flex:1;
+    background:#ffffff;
+    border-radius:16px;
+    padding:16px;
+    text-align:center;
+    box-shadow:0 10px 24px rgba(0,0,0,0.06);
+  }
+
+  .stat-value{
+    font-size:26px;
+    font-weight:800;
+    color:#2563eb;
+  }
+
+  .stat-label{
     font-size:13px;
+    color:#6b7280;
+    margin-top:4px;
   }
 
-  .summary-table td{
-    font-size:14px;
-    padding:10px 8px;
+  .streak{
+    display:flex;
+    gap:8px;
   }
 
-}
-.summary-table td{
-  word-break: break-word;
-}
-.nav-icons{
-  margin-bottom:12px;
-}
+  .streak .day{
+    width:24px;
+    height:24px;
+    border-radius:6px;
+    background:#e5e7eb;
+  }
+
+  .streak .day.on{
+    background:#22c55e;
+  }
+
+  /* ---------- MOBILE FIX ---------- */
+
+  @media (max-width: 600px){
+
+    body{
+      padding:12px;
+    }
+
+    .summary-title{
+      font-size:18px;
+    }
+
+    .summary-table{
+      font-size:14px;
+    }
+
+    .summary-table td{
+      padding:10px 8px;
+      font-size:14px;
+    }
+
+    .summary-table td.time{
+      width:90px;
+      font-size:13px;
+    }
+
+    /* stack stat cards for small screens */
+    .stats{
+      flex-direction:column;
+      gap:10px;
+    }
+
+    .stat-card{
+      padding:14px;
+    }
+
+    input[type="week"]{
+      width:100%;
+      box-sizing:border-box;
+    }
+
+  }
 
 </style>
 
@@ -160,6 +227,7 @@ SUMMARY_TEMPLATE = """
 {% else %}
 
 <div class="nav-icons">  {% include "_top_nav.html" %}  </div>
+
 <form method="get" style="margin-bottom:16px;">
   <input type="hidden" name="view" value="weekly">
 
@@ -185,7 +253,6 @@ SUMMARY_TEMPLATE = """
   </span>
 </h2>
 
-<!-- STATS -->
 <div class="stats">
   <div class="stat-card">
     <div class="stat-value">{{ data.focused_hours }}</div>
@@ -201,7 +268,6 @@ SUMMARY_TEMPLATE = """
   </div>
 </div>
 
-<!-- INSIGHTS -->
 <div class="section card">
   <h4>🧠 Weekly Insights</h4>
   <ul>
@@ -209,7 +275,9 @@ SUMMARY_TEMPLATE = """
       <li>{{ i }}</li>
     {% endfor %}
   </ul>
+
   <h4>🔥 Habit Streak</h4>
+
   <div class="streak">
     {% for i in range(7) %}
       <div class="day {{ 'on' if i < data.habit_days else '' }}"></div>
@@ -217,9 +285,9 @@ SUMMARY_TEMPLATE = """
   </div>
 </div>
 
-<!-- REFLECTION SYNTHESIS -->
 <div class="section card">
   <h4>✍️ Reflection Highlights</h4>
+
   {% if data.reflections %}
     <ul>
       {% for r in data.reflections %}
@@ -231,10 +299,10 @@ SUMMARY_TEMPLATE = """
   {% endif %}
 </div>
 
-<!-- DAILY BREAKDOWN -->
 {% for day, tasks in data.days.items() %}
   <div class="section card">
     <h4>{{ day }}</h4>
+
     <table class="summary-table">
       <tbody>
         {% for t in tasks %}
@@ -245,12 +313,9 @@ SUMMARY_TEMPLATE = """
         {% endfor %}
       </tbody>
     </table>
+
   </div>
 {% endfor %}
 
 {% endif %}
-
-
 """
-
-
