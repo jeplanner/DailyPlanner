@@ -47,12 +47,12 @@ SUMMARY_TEMPLATE = """
     font-size: 15px;
   }
 
-  .summary-table td.time {
-    width: 190px;
-    font-weight: 700;
-    color: #2563eb;
-    white-space: nowrap;
-  }
+.summary-table td.time {
+  width: 110px;
+  font-weight: 700;
+  color: #2563eb;
+  white-space: nowrap;
+}
 
   .summary-table tr:hover {
     background: #f8fafc;
@@ -76,7 +76,35 @@ SUMMARY_TEMPLATE = """
     color: #9ca3af;
   }
   
+/* ---------- MOBILE FIX ---------- */
 
+@media (max-width: 600px){
+
+  body{
+    padding:12px;
+  }
+
+  .summary-title{
+    font-size:18px;
+  }
+
+  .summary-table td.time{
+    width:90px;
+    font-size:13px;
+  }
+
+  .summary-table td{
+    font-size:14px;
+    padding:10px 8px;
+  }
+
+}
+.summary-table td{
+  word-break: break-word;
+}
+.nav-icons{
+  margin-bottom:12px;
+}
 
 </style>
 
