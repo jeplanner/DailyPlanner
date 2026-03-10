@@ -209,6 +209,11 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, newDate = PLAN_DATE) {
   document.getElementById("editText")?.value ||
   draggingEvent?.innerText?.trim() ||
   "";
+  const clean = text.replace(
+  /^\d{1,2}([:.]\d{2})?\s*-\s*\d{1,2}([:.]\d{2})?\s*/,
+  ""
+);
+  block.innerText = clean;
   const category =
   document.getElementById("editCategory")?.value ||
   draggingEvent?.dataset?.category ||
@@ -229,7 +234,7 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, newDate = PLAN_DATE) {
       end_slot: newEnd,
       category:category,
       priority: priority,
-      text: text
+      text: clean
     })
   });
 

@@ -297,7 +297,7 @@ def update_slot():
             "daily_slots",
             params={
                 "user_id": f"eq.{user_id}",
-                "plan_date": f"eq.{new_date}",
+                "plan_date": f"eq.{plan_date}",
                 "slot": f"eq.{slot}",
             },
             json={
