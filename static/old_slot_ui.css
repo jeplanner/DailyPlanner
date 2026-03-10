@@ -309,9 +309,7 @@ body {
 
 .top-context {
   display: flex;
-  flex-direction: column;
-  align-items: center;   /* center children horizontally */
-  gap: 6px;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
@@ -324,8 +322,6 @@ body {
 /* ICON NAV — THIS IS THE IMPORTANT PART */
 .nav-icons {
   display: flex;
-  justify-content: center;   /* ⬅️ centers icons */
-  align-items: center;
   gap: 14px;
 }
 
