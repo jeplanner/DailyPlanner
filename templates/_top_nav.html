@@ -1,185 +1,227 @@
 <!-- ======================================================
      GLOBAL TOP NAV / CONTEXT HEADER (PLANNER ICON SYSTEM v2)
 ====================================================== -->
+<!-- ======================================================
+     GLOBAL TOP NAV / CONTEXT HEADER
+     Notion-Style Sidebar Navigation (Enhanced)
+====================================================== -->
 
 <script src="https://unpkg.com/feather-icons"></script>
 
 <style>
-.top-context { margin-bottom: 12px; }
 
-/* DATE / TIME */
+/* ===== HEADER ===== */
 
-.date-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  font-size: 14px;
-  color: #374151;
-  margin-bottom: 10px;
+.top-context{
+  margin-bottom:12px;
+  display:flex;
+  align-items:center;
+  gap:12px;
 }
 
-.date-row .time {
-  font-weight: 600;
-  color: #2563eb;
+.hamburger{
+  font-size:22px;
+  cursor:pointer;
+  border:none;
+  background:none;
 }
 
-/* NAV ICON GRID */
+/* DATE ROW */
 
-.nav-icons {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+.date-row{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  font-size:14px;
+  color:#374151;
 }
 
-.nav-icons a {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-decoration: none;
-  color: #374151;
-  font-size: 12px;
-  font-weight: 500;
-  width: 72px;
-  padding: 6px 4px;
-  border-radius: 12px;
-  transition: all .15s ease;
+.date-row .time{
+  font-weight:600;
+  color:#2563eb;
 }
 
-.nav-icons a:hover {
-  background: #f3f4f6;
-  color: #2563eb;
-  transform: translateY(-1px);
+/* ===== SIDEBAR ===== */
+
+.sidebar{
+  position:fixed;
+  top:0;
+  left:-270px;
+  width:270px;
+  height:100%;
+  background:#ffffff;
+  box-shadow:4px 0 18px rgba(0,0,0,.12);
+  padding:20px 16px;
+  transition:left .25s ease;
+  z-index:1100;
+  overflow-y:auto;
 }
 
-.nav-icons svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 2;
-  margin-bottom: 4px;
+.sidebar.open{
+  left:0;
 }
 
-/* TEXT LINKS */
+/* HEADER */
 
-.nav-links {
-  display: flex;
-  gap: 16px;
-  margin: 6px 0;
-  font-size: 14px;
+.sidebar-title{
+  font-size:18px;
+  font-weight:600;
+  margin-bottom:18px;
 }
 
-.nav-links a {
-  text-decoration: none;
-  color: #374151;
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
+/* NAV LINKS */
+
+.sidebar-nav{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
 }
 
-.nav-links a:hover { text-decoration: underline; }
+.sidebar-nav a{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  text-decoration:none;
+  color:#374151;
+  font-size:14px;
+  padding:8px 10px;
+  border-radius:8px;
+}
+
+.sidebar-nav a:hover{
+  background:#f3f4f6;
+}
+
+.sidebar-nav svg{
+  width:18px;
+  height:18px;
+}
+
+/* ACTIVE PAGE */
+
+.sidebar-nav a.active{
+  background:#2563eb;
+  color:white;
+}
+
+.sidebar-nav a.active svg{
+  stroke:white;
+}
+
+/* DIVIDER */
+
+.sidebar hr{
+  border:none;
+  border-top:1px solid #e5e7eb;
+  margin:14px 0;
+}
+
+/* OVERLAY */
+
+.overlay{
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background:rgba(0,0,0,.25);
+  backdrop-filter:blur(2px);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .2s ease;
+  z-index:1050;
+}
+
+.overlay.show{
+  opacity:1;
+  pointer-events:auto;
+}
 
 /* SECTION TITLE */
 
-.section-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #111827;
-  margin-top: 4px;
-}
-.nav-icons a.active {
-  background: #2563eb;
-  color: #ffffff;
-}
-
-.nav-icons a.active svg {
-  stroke: #ffffff;
+.section-title{
+  font-size:15px;
+  font-weight:600;
+  color:#111827;
+  margin-top:6px;
 }
 
 </style>
 
 
-<div class="top-context">
+<!-- ===== OVERLAY ===== -->
 
-  <!-- DATE + TIME -->
-  <div class="date-row">
-    <span id="live-date"></span>
-    <span class="time" id="live-time"></span>
+<div id="overlay" class="overlay" onclick="closeSidebar()"></div>
+
+
+<!-- ===== SIDEBAR ===== -->
+
+<div id="sidebar" class="sidebar">
+
+  <div class="sidebar-title">
+    Planner
   </div>
 
-  <!-- NAVIGATION -->
+  <div class="sidebar-nav">
 
-  <div class="nav-icons">
-    
     <a href="/" title="Planner">
       <i data-feather="home"></i>
-      <span>Planner</span>
+      Planner
     </a>
-      <!-- DAILY SLOT TIMELINE 
-    <a href="/timeline/day" title="Daily Slot Timeline">
-      <i data-feather="clock"></i>
-      <span>Slots</span>
-    </a>
-  -->
-    <a href="/health">🧘 Health</a>
 
-    <!-- TIME-BASED PLANNER (V2) -->
-    <a href="/planner-v2"
-      title="Time-Based Planner"
-      class="{% if request.path == '/planner-v2' %}active{% endif %}">
-      <i data-feather="layout"></i>
-      <span>Time</span>
+    <a href="/health">
+      🧘 Health
     </a>
+
+    <a href="/planner-v2"
+       title="Time-Based Planner"
+       class="{% if request.path == '/planner-v2' %}active{% endif %}">
+      <i data-feather="layout"></i>
+      Time
+    </a>
+
     <a href="/todo" title="Matrix">
       <i data-feather="target"></i>
-      <span>Matrix</span>
+      Matrix
     </a>
 
     <a href="/projects" title="Projects">
       <i data-feather="briefcase"></i>
-      <span>Projects</span>
+      Projects
     </a>
 
-    <!-- PROJECT TIMELINE -->
     <a href="/projects/timeline" title="Project Timeline">
       <i data-feather="git-branch"></i>
-      <span>Timeline</span>
+      Timeline
     </a>
 
-  
+    <hr>
 
-
-
-    <!-- DAILY SUMMARY -->
     <a href="/summary?view=daily" title="Daily Summary">
       <i data-feather="calendar"></i>
-      <span>Daily</span>
+      Daily
     </a>
 
-    <!-- WEEKLY SUMMARY -->
     <a href="/summary?view=weekly" title="Weekly Review">
       <i data-feather="bar-chart-2"></i>
-      <span>Weekly</span>
+      Weekly
     </a>
 
     {% if project is defined %}
 
-      <a href="/projects/{{ project.project_id }}/gantt" title="Gantt">
-        <i data-feather="bar-chart"></i>
-        <span>Gantt</span>
-      </a>
+    <a href="/projects/{{ project.project_id }}/gantt" title="Gantt">
+      <i data-feather="bar-chart"></i>
+      Gantt
+    </a>
 
-      <a href="/projects/{{ project.project_id }}/tasks" title="Project Planner">
-        <i data-feather="trello"></i>
-        <span>Planner</span>
-      </a>
+    <a href="/projects/{{ project.project_id }}/tasks" title="Project Planner">
+      <i data-feather="trello"></i>
+      Planner
+    </a>
 
     {% endif %}
 
-  </div>
-
-  <!-- KNOWLEDGE LINKS -->
-
-  <div class="nav-links">
+    <hr>
 
     <a href="/notes/scribble">
       <i data-feather="edit-3"></i>
@@ -191,38 +233,93 @@
       References
     </a>
 
-  </div>
-  <a href="/logout">🚪 Logout</a>
-  <div class="section-title">
-    {{ section_title }}
+    <hr>
+
+    <a href="/logout">
+      🚪 Logout
+    </a>
+
   </div>
 
 </div>
 
+
+<!-- ===== HEADER ===== -->
+
+<div class="top-context">
+
+  <button class="hamburger" onclick="toggleSidebar()">☰</button>
+
+  <div class="date-row">
+    <span id="live-date"></span>
+    <span class="time" id="live-time"></span>
+  </div>
+
+</div>
+
+
+<div class="section-title">
+  {{ section_title }}
+</div>
+
+
 <script>
-function updateDateTime() {
+
+/* SIDEBAR CONTROL */
+
+function toggleSidebar(){
+
+  const sidebar = document.getElementById("sidebar")
+  const overlay = document.getElementById("overlay")
+
+  sidebar.classList.toggle("open")
+  overlay.classList.toggle("show")
+}
+
+function closeSidebar(){
+
+  document.getElementById("sidebar").classList.remove("open")
+  document.getElementById("overlay").classList.remove("show")
+}
+
+/* ESC CLOSE */
+
+document.addEventListener("keydown",function(e){
+
+  if(e.key === "Escape"){
+    closeSidebar()
+  }
+
+})
+
+/* DATE + TIME */
+
+function updateDateTime(){
+
   const now = new Date(
     new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})
-  );
+  )
 
   document.getElementById("live-date").textContent =
-    now.toLocaleDateString("en-GB", {
+    now.toLocaleDateString("en-GB",{
       day:"2-digit",
       month:"short",
       year:"numeric"
-    });
+    })
 
   document.getElementById("live-time").textContent =
-    now.toLocaleTimeString("en-IN", {
+    now.toLocaleTimeString("en-IN",{
       hour:"2-digit",
       minute:"2-digit",
       second:"2-digit"
-    }) + " IST";
+    }) + " IST"
 }
 
-updateDateTime();
-setInterval(updateDateTime, 1000);
+updateDateTime()
+setInterval(updateDateTime,1000)
 
-/* IMPORTANT — this must run */
-feather.replace();
+/* FEATHER ICONS */
+
+feather.replace()
+
 </script>
