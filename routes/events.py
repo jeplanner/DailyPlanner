@@ -3,11 +3,10 @@ from datetime import datetime
 import os
 
 from flask import Blueprint, Request, jsonify, redirect, request, session, url_for
-from requests import post
+from supabase_client import get, post, update
 
 from routes.planner import build_google_datetime, get_conflicts
 from services.login_service import login_required
-from supabase_client import get, update
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
