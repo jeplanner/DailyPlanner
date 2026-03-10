@@ -11,19 +11,34 @@
 <style>
 
 /* ===== HEADER ===== */
-
 .top-context{
   margin-bottom:12px;
   display:flex;
   align-items:center;
   gap:12px;
+  justify-content:flex-start;
+}
+.date-row{
+  border-left:1px solid #e5e7eb;
+  padding-left:12px;
 }
 
 .hamburger{
-  font-size:22px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:18px;
   cursor:pointer;
   border:none;
   background:none;
+  color:#111827;
+  font-weight:500;
+  padding:4px 8px;
+  border-radius:6px;
+}
+
+.hamburger:hover{
+  background:#f3f4f6;
 }
 
 /* DATE ROW */
@@ -248,7 +263,9 @@
 
 <div class="top-context">
 
-  <button class="hamburger" onclick="toggleSidebar()">☰</button>
+  <button class="hamburger" onclick="toggleSidebar()">
+  ☰ <span>Menu</span>
+</button>
 
   <div class="date-row">
     <span id="live-date"></span>
