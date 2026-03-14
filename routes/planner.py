@@ -343,7 +343,7 @@ def update_slot():
     return ("", 204)
 @planner_bp.route("/slot/updateold", methods=["POST"])
 @login_required
-def update_slot():
+def update_slotold():
  
     data = request.get_json()
 
