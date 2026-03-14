@@ -278,24 +278,34 @@ def slot_to_time(slot):
     h = minutes // 60
     m = minutes % 60
     return f"{h:02d}:{m:02d}"
+
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
 def update_slot():
 
     data = request.get_json()
 
+    # -----------------------------------------------------
+    # 1️⃣ Parse input safely
+    # -----------------------------------------------------
     plan_date = data["plan_date"]
+
     old_start = int(data["old_start"])
     old_end = int(data["old_end"])
+
     start = int(data["start_slot"])
     end = int(data["end_slot"])
-    text = data["text"]
+
+    text = (data.get("text") or "").strip()
 
     priority = data.get("priority", "Medium")
     category = data.get("category", "Office")
 
     user_id = session["user_id"]
 
+    # -----------------------------------------------------
+    # 2️⃣ No-op protection
+    # -----------------------------------------------------
     if old_start == start and old_end == end:
         return ("", 204)
 
@@ -304,29 +314,30 @@ def update_slot():
         user_id, old_start, old_end, start, end, text
     )
 
-    # =====================================================
-    # 1️⃣ CLEAR OLD SLOTS (single query)
-    # =====================================================
+    # -----------------------------------------------------
+    # 3️⃣ Clear previous slots
+    # (explicit slot clearing — reliable with Supabase)
+    # -----------------------------------------------------
+    for slot in range(old_start, old_end + 1):
 
-    update(
-    "daily_slots",
-    params={
-        "user_id": f"eq.{user_id}",
-        "plan_date": f"eq.{plan_date}",
-        "and": f"(slot.gte.{old_start},slot.lte.{old_end})",
-    },
-    json={
-        "plan": None,
-        "start_time": None,
-        "end_time": None,
-        "status": DEFAULT_STATUS
-    },
-)
+        update(
+            "daily_slots",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date}",
+                "slot": f"eq.{slot}",
+            },
+            json={
+                "plan": None,
+                "start_time": None,
+                "end_time": None,
+                "status": DEFAULT_STATUS,
+            },
+        )
 
-    # =====================================================
-    # 2️⃣ WRITE NEW SLOTS (single UPSERT)
-    # =====================================================
-
+    # -----------------------------------------------------
+    # 4️⃣ Build new slot rows
+    # -----------------------------------------------------
     rows = []
 
     for slot in range(start, end + 1):
@@ -343,80 +354,19 @@ def update_slot():
             "end_time": end_time,
             "priority": priority,
             "category": category,
-            "status": DEFAULT_STATUS
+            "status": DEFAULT_STATUS,
         })
 
-    post(
-        "daily_slots?on_conflict=user_id,plan_date,slot",
-        rows,
-        prefer="resolution=merge-duplicates"
-    )
+    # -----------------------------------------------------
+    # 5️⃣ UPSERT new slots (single query)
+    # -----------------------------------------------------
+    if rows:
 
-    return ("", 204)
-@planner_bp.route("/slot/updateold", methods=["POST"])
-@login_required
-def update_slotold():
- 
-    data = request.get_json()
-
-    plan_date = data["plan_date"]
-    old_start = int(data["old_start"])
-    old_end = int(data["old_end"])
-    start = int(data["start_slot"])
-    end = int(data["end_slot"])
-    text = data["text"]
-    priority = data.get("priority", "Medium")
-    category=data.get("category","Office")
-    new_date = data.get("new_date", data["plan_date"])
-    user_id = session["user_id"]
-    # 🛑 If dropped in same slot, do nothing
-    if old_start == start and old_end == end:
-        return ("", 204)
-    logger.debug(
-    "DRAG MOVE user=%s old=%s-%s new=%s-%s text=%s",
-    user_id, old_start, old_end, start, end, text
-    )
-    
-
-    # 1️⃣ Clear previous slots (single query)
-    for slot in range(old_start, old_end + 1):
-        update(
-            "daily_slots",
-            params={
-                "user_id": f"eq.{user_id}",
-                "plan_date": f"eq.{plan_date}",
-                "slot": f"eq.{slot}",
-            },
-            json={
-                "plan": None,
-                "start_time": None,
-                "end_time": None,
-            },
+        post(
+            "daily_slots?on_conflict=user_id,plan_date,slot",
+            rows,
+            prefer="resolution=merge-duplicates"
         )
-        
-
-    # 2️⃣ Write new slots
-    rows = []
-    for slot in range(start, end + 1):
-       start_time = slot_to_time(slot)
-       end_time = slot_to_time(slot + 1)
-
-       rows.append({
-            "user_id": user_id,
-            "plan_date": plan_date,
-            "slot": slot,
-            "plan": text,
-            "start_time": start_time,
-            "end_time": end_time,
-            "priority":priority,
-            "category":category
-        })
-
-    post(
-        "daily_slots?on_conflict=user_id,plan_date,slot",
-        rows,
-        prefer="resolution=merge-duplicates"
-    )
 
     return ("", 204)
 
