@@ -130,7 +130,9 @@ body {
   position: absolute;
   left: calc(var(--time-column-width) + 12px);
   right: 12px;
-
+  touch-action: none;
+  cursor: grab;
+  will-change: top, height;
   background: linear-gradient(
     180deg,
     var(--event-bg) 0%,
@@ -160,7 +162,9 @@ body {
 .event-block::first-line {
   font-weight: 600;
 }
-
+.event-block:active {
+  cursor: grabbing;
+}
 /* =========================================================
    TASK LIST (UNTIMED)
 ========================================================= */
@@ -448,7 +452,7 @@ body {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 6px;
+  height: 10px;
   cursor: ns-resize;
   background: rgba(0,0,0,0.2);
 }
