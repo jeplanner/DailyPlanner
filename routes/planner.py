@@ -6,10 +6,10 @@ from flask import Blueprint, jsonify, redirect, render_template, render_template
 from supabase_client import post
 import pytz
 
-from config import DEFAULT_STATUS, HABIT_ICONS, HABIT_LIST, IST, MIN_HEALTH_HABITS, QUADRANT_MAP, STATUSES, TOTAL_SLOTS
+from config import DEFAULT_STATUS, IST,  QUADRANT_MAP, STATUSES, TOTAL_SLOTS
 from logger import setup_logger
 from services.login_service import login_required
-from services.planner_service import compute_health_streak, ensure_daily_habits_row, fetch_daily_slots, generate_weekly_insight, get_daily_summary, get_weekly_summary, group_slots_into_blocks, is_health_day, load_day, save_day
+from services.planner_service import  generate_weekly_insight, get_daily_summary, get_weekly_summary, group_slots_into_blocks, is_health_day, load_day, load_slots_cached, save_day
 from services.recurring_service import materialize_recurring_slots
 from services.untimed_service import remove_untimed_task
 from supabase_client import get, update
@@ -66,15 +66,18 @@ def planner():
             url_for("planner.planner", year=plan_date.year, month=plan_date.month, day=plan_date.day, saved=1)
         )
     materialize_recurring_slots(plan_date, user_id)
-    ensure_daily_habits_row(user_id, plan_date)
+    # ensure_daily_habits_row(user_id, plan_date)
   
-    plans, habits, reflection,untimed_tasks= load_day(plan_date)
- 
-    daily_slots = fetch_daily_slots(plan_date)
+    #plans, habits, reflection,untimed_tasks= load_day(plan_date)
+    #plans= load_day(plan_date)
+    
+    #daily_slots = fetch_daily_slots(plan_date)
+    #blocks = group_slots_into_blocks(plans)
+    slots, slot_map = load_slots_cached(plan_date)
+    plans = build_slot_blocks(slots)
     blocks = group_slots_into_blocks(plans)
-
-
-
+    daily_slots = slots
+   
     days = [
         date(year, month, d) for d in range(1, calendar.monthrange(year, month)[1] + 1)
     ]
@@ -84,12 +87,12 @@ def planner():
         for slot in range(1, TOTAL_SLOTS + 1)
     }
    
-    health_streak = compute_health_streak(user_id, plan_date)
+   # health_streak = compute_health_streak(user_id, plan_date)
 
-    streak_active_today = is_health_day(set(habits))
+   # streak_active_today = is_health_day(set(habits))
     selected_date = date(year, month, day)
     today = date.today()
-    # ✅ ADD THIS HERE
+    #✅ ADD THIS HERE
     timeline_days = [
         selected_date + timedelta(days=i)
         for i in range(-6, 7)
@@ -114,16 +117,16 @@ def planner():
         reminder_links=reminder_links,
         now_slot=current_slot() if plan_date == today else None,
         saved=request.args.get("saved"),
-        habits=habits,
-        reflection=reflection,
-        habit_list=HABIT_LIST,
-        habit_icons=HABIT_ICONS,
+     #   habits=habits,
+      #  reflection=reflection,
+       # habit_list=HABIT_LIST,
+        #habit_icons=HABIT_ICONS,
         calendar=calendar,
-        untimed_tasks=untimed_tasks,
+        #untimed_tasks=untimed_tasks,
         plan_date=plan_date,
-        health_streak=health_streak,
-        streak_active_today=streak_active_today,
-        min_health_habits=MIN_HEALTH_HABITS,
+        #health_streak=health_streak,
+        #streak_active_today=streak_active_today,
+        #min_health_habits=MIN_HEALTH_HABITS,
         blocks=blocks,
         today_display=formatted_date,
         prev_month=prev_month,

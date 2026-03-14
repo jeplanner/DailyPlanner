@@ -53,29 +53,42 @@ def fetch_daily_slots(plan_date):
 # ==========================================================
 # DATA ACCESS – DAILY PLANNER
 # ==========================================================
+def load_slots_cached(plan_date):
+    slots = get(
+        "daily_slots",
+        params={
+            "user_id": f"eq.{session['user_id']}",
+            "plan_date": f"eq.{plan_date.isoformat()}",
+            "select": "slot,plan,status,start_time,end_time,priority,category",
+            "order": "slot.asc"
+        }
+    ) or []
 
+    slot_map = {r["slot"]: r for r in slots}
+
+    return slots, slot_map
 def load_day(plan_date, tag=None):
     plans = {
         i: {"plan": "", "status": DEFAULT_STATUS} for i in range(1, TOTAL_SLOTS + 1)
     }
-    habits = set()
-    reflection = ""
-    untimed_tasks = []  
+    #  habits = set()
+    #  reflection = ""
+    # untimed_tasks = []  
     user_id =session["user_id"]
-    meta = get(
-        "daily_meta",
-        params={
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
-            "select": "habits,reflection,untimed_tasks",
-        },
-    )
+    #meta = get(
+     #   "daily_meta",
+      #  params={
+       #     "user_id": f"eq.{user_id}",
+        #    "plan_date": f"eq.{plan_date}",
+         #   "select": "habits,reflection,untimed_tasks",
+        #},
+    #)
 
-    if meta:
-        row = meta[0]
-        habits = set(row.get("habits") or [])
-        reflection = row.get("reflection") or ""
-        untimed_tasks = row.get("untimed_tasks") or []
+    #if meta:
+     #   row = meta[0]
+      #  habits = set(row.get("habits") or [])
+       # reflection = row.get("reflection") or ""
+        #untimed_tasks = row.get("untimed_tasks") or []
 
     rows = (
         get(
@@ -119,26 +132,26 @@ def load_day(plan_date, tag=None):
         }
 
 
-    return plans, habits, reflection,untimed_tasks
+    return plans
 
 
 
 def save_day(plan_date, form):
     user_id=session["user_id"]
     payload = []
-    auto_untimed = []
-    existing_meta = {}
-    meta_rows = get(
-        "daily_meta",
-        params={
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
-            "select": "habits,reflection,untimed_tasks",
-        },
-    )
+    #auto_untimed = []
+   # existing_meta = {}
+   # meta_rows = get(
+   #     "daily_meta",
+     #   params={
+      #      "user_id": f"eq.{user_id}",
+       #     "plan_date": f"eq.{plan_date}",
+     #       "select": "habits,reflection,untimed_tasks",
+      #  },
+  #  )
 
-    if meta_rows:   
-        existing_meta = meta_rows[0]
+   # if meta_rows:   
+   #     existing_meta = meta_rows[0]
 
     # Track slots already filled by smart parsing
     smart_block = form.get("smart_plan", "").strip()
@@ -251,13 +264,12 @@ def save_day(plan_date, form):
             # CASE 2: No time and no quadrant → skip
             # -------------------------------------------------
             # CASE 2: No time and no quadrant → append to untimed tasks
-            if not has_time and not quadrant_match:
-              auto_untimed.append({
-                    "id": f"u_{int(datetime.now().timestamp() * 1000)}_{len(auto_untimed)}",
-                    "text": line
-                })
-              logger.info(f"Smart planner → untimed task: {line}")
-              continue
+          #  if not has_time and not quadrant_match:
+           #   auto_untimed.append({
+           #         "id": f"u_{int(datetime.now().timestamp() * 1000)}_{len(auto_untimed)}",
+           #         "text": line
+           #     })
+           #   continue
             
             try:
                 parsed = parse_planner_input(line, plan_date)
@@ -412,65 +424,62 @@ def save_day(plan_date, form):
 
   
 
-    untimed_raw = form.get("untimed_tasks", "")
+   # untimed_raw = form.get("untimed_tasks", "")
 
-    # 🔒 normalize untimed_raw to string
-    if isinstance(untimed_raw, list):
-        untimed_raw = "\n".join(untimed_raw)
-    elif untimed_raw is None:
-        untimed_raw = ""
+   # # 🔒 normalize untimed_raw to string
+   # if isinstance(untimed_raw, list):
+   #     untimed_raw = "\n".join(untimed_raw)
+  #  elif untimed_raw is None:
+   #     untimed_raw = ""
 
-    untimed_raw = untimed_raw.strip()
+   # untimed_raw = untimed_raw.strip()
 
-    new_untimed = []
+    #new_untimed = []
 
-    if untimed_raw:
-        new_untimed = [
-            {
-                "id": f"u_{int(datetime.now().timestamp() * 1000)}_{i}",
-                "text": line.strip()
-            }
-            for i, line in enumerate(untimed_raw.splitlines())
-            if line.strip()
-        ]
+   # if untimed_raw:
+    #    new_untimed = [
+         #   {
+          #      "id": f"u_{int(datetime.now().timestamp() * 1000)}_{i}",
+           #     "text": line.strip()
+          #  }
+         #   for i, line in enumerate(untimed_raw.splitlines())
+         #   if line.strip()
+       # ]
 
-    merged = {}
+   # merged = {}
 
     # Existing untimed tasks from DB
-    existing_untimed = existing_meta.get("untimed_tasks", [])
-    if isinstance(existing_untimed, list):
-        for t in existing_untimed:
-            merged[t["id"]] = t
-
-    # Auto-detected untimed (smart planner)
-    for t in auto_untimed:
-        merged[t["id"]] = t
+   # existing_untimed = existing_meta.get("untimed_tasks", [])
+   # if isinstance(existing_untimed, list):
+   #     for t in existing_untimed:
+    ##  for t in auto_untimed:
+   #     merged[t["id"]] = t
 
     # Manually entered untimed
-    for t in new_untimed:
-        merged[t["id"]] = t
+   # for t in new_untimed:
+      #  merged[t["id"]] = t
 
     # 🔒 Support both request.form and dict inputs
-    if hasattr(form, "getlist"):
-        habits = form.getlist("habits")
-    else:
-        habits = form.get("habits", []) or []
+   # if hasattr(form, "getlist"):
+   #     habits = form.getlist("habits")
+   # else:
+    #    habits = form.get("habits", []) or []
 
-    if habits is None:
-        habits = existing_meta.get("habits", [])
+  #  if habits is None:
+   #     habits = existing_meta.get("habits", [])
    
-    update(
-    "daily_meta",
-    params={
-        "user_id": f"eq.{user_id}",
-        "plan_date": f"eq.{plan_date}",
-    },
-    json={
-        "habits": habits,
-        "reflection": form.get("reflection", "").strip(),
-        "untimed_tasks": list(merged.values()),
-    },
-)
+  #  update(
+   # "daily_meta",
+   # params={
+  #      "user_id": f"eq.{user_id}",
+   #     "plan_date": f"eq.{plan_date}",
+   # },
+  #  json={
+  #      "habits": habits,
+   #     "reflection": form.get("reflection", "").strip(),
+   #     "untimed_tasks": list(merged.values()),
+   # },
+#)
 
 
 
