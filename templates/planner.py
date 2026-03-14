@@ -172,24 +172,6 @@ PLANNER_TEMPLATE = """
       {% endfor %}
     </div>
 
-    <div class="card habits-card">
-      <strong>Daily Habits</strong>
-      <div class="habits">
-        {% for habit in habit_list %}
-          <label class="habit-item">
-            <input type="checkbox" name="habits" value="{{ habit }}"
-                   {% if habit in habits %}checked{% endif %}>
-            {{ habit }}
-          </label>
-        {% endfor %}
-      </div>
-    </div>
-
-    <div class="card reflection-card">
-      <strong>Daily Reflection</strong>
-      <textarea name="reflection" rows="4">{{ reflection }}</textarea>
-    </div>
-
   </form>
 </div>
 
