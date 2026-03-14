@@ -800,9 +800,12 @@ def parse_recurrence_block(text, default_date):
 def group_slots_into_blocks(plans):
     blocks = []
     current = None
+
     logger.debug("PLANS SAMPLE: %s", list(plans.items())[:10])
+
     for slot in sorted(plans.keys()):
         plan = (plans[slot].get("plan") or "").strip()
+
         if not plan:
             current = None
             continue
@@ -813,6 +816,7 @@ def group_slots_into_blocks(plans):
             and slot == current["end_slot"] + 1
         ):
             current["end_slot"] = slot
+
         else:
             current = {
                 "text": plan,
@@ -820,7 +824,10 @@ def group_slots_into_blocks(plans):
                 "end_slot": slot,
                 "status": plans[slot].get("status"),
                 "recurring_id": plans[slot].get("recurring_id"),
+                "category": plans[slot].get("category"),
+                "priority": plans[slot].get("priority"),
             }
+
             blocks.append(current)
 
     return blocks
