@@ -19,14 +19,13 @@ from utils.slots import slot_label
 logger = logging.getLogger(__name__)
 
 def fetch_daily_slots(plan_date):
-    
+
     user_id = session["user_id"]
-    logger.info(f"FETCH DAILY SLOTS → user={user_id} date={plan_date}")
-    # ensure correct format
+
     if hasattr(plan_date, "strftime"):
         plan_date = plan_date.strftime("%Y-%m-%d")
 
-    r = get(
+    rows = get(
         "daily_slots",
         params={
             "user_id": f"eq.{user_id}",
@@ -36,20 +35,41 @@ def fetch_daily_slots(plan_date):
         },
     )
 
-    if not r :
+    if not rows:
         return []
 
-    return [
-    {
-        "plan": r["plan"],
-        "status": r.get("status"),
-        "start_time": r["start_time"],
-        "end_time": r["end_time"],
-        "slot": r["slot"],
-        "priority": r.get("priority"),
-        "category": r.get("category"),
-    }
-]
+    result = []
+
+    for r in rows:
+
+        # handle list rows
+        if isinstance(r, list):
+            plan, start_time, status, end_time, slot, *rest = r
+            priority = rest[0] if len(rest) > 0 else None
+            category = rest[1] if len(rest) > 1 else None
+
+        # handle dict rows
+        else:
+            plan = r.get("plan")
+            start_time = r.get("start_time")
+            status = r.get("status")
+            end_time = r.get("end_time")
+            slot = r.get("slot")
+            priority = r.get("priority")
+            category = r.get("category")
+
+        if plan and slot is not None:
+            result.append({
+                "plan": plan,
+                "start_time": start_time,
+                "end_time": end_time,
+                "status": status,
+                "slot": slot,
+                "priority": priority,
+                "category": category
+            })
+    logger.debug("FETCH RAW ROW SAMPLE → %s", rows[:2])
+    return result
 
 # ==========================================================
 # DATA ACCESS – DAILY PLANNER
