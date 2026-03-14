@@ -26,29 +26,30 @@ def fetch_daily_slots(plan_date):
     if hasattr(plan_date, "strftime"):
         plan_date = plan_date.strftime("%Y-%m-%d")
 
-    rows = get(
+    r = get(
         "daily_slots",
         params={
             "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
-            "select": "plan,start_time,status,end_time,slot",
+            "select": "plan,start_time,status,end_time,slot,priority,category",
             "order": "slot.asc",
         },
     )
 
-    if not rows :
+    if not r :
         return []
 
     return [
-        {
-            "text": r["plan"],
-            "start_time": r["start_time"],
-            "end_time": r["end_time"],
-            "slot": r["slot"],
-        }
-        for r in rows
-        if r.get("plan") and r.get("slot") is not None
-    ]
+    {
+        "plan": r["plan"],
+        "status": r.get("status"),
+        "start_time": r["start_time"],
+        "end_time": r["end_time"],
+        "slot": r["slot"],
+        "priority": r.get("priority"),
+        "category": r.get("category"),
+    }
+]
 
 # ==========================================================
 # DATA ACCESS – DAILY PLANNER
