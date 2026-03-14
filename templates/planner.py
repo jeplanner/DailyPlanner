@@ -101,7 +101,7 @@ PLANNER_TEMPLATE = """
 </div>
 
 
-
+<!--
     <h3>🗒 Tasks (No Time Yet)</h3>
     <div id ="untimed-list">
     {% for t in untimed_tasks %}
@@ -113,7 +113,7 @@ PLANNER_TEMPLATE = """
     {% endfor %}
     </div>
     <h3>📅 Day Schedule</h3>
-
+-->
   <!-- ===== NEW TIMELINE UI ===== -->
   <div id="timeline-root" style="display:none;"></div>
   <!-- ===== OLD GRID UI (unchanged) ===== -->
