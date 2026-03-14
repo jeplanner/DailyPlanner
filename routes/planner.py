@@ -269,6 +269,81 @@ def slot_to_time(slot):
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
 def update_slot():
+
+    data = request.get_json()
+
+    plan_date = data["plan_date"]
+    old_start = int(data["old_start"])
+    old_end = int(data["old_end"])
+    start = int(data["start_slot"])
+    end = int(data["end_slot"])
+    text = data["text"]
+
+    priority = data.get("priority", "Medium")
+    category = data.get("category", "Office")
+
+    user_id = session["user_id"]
+
+    if old_start == start and old_end == end:
+        return ("", 204)
+
+    logger.debug(
+        "DRAG MOVE user=%s old=%s-%s new=%s-%s text=%s",
+        user_id, old_start, old_end, start, end, text
+    )
+
+    # =====================================================
+    # 1️⃣ CLEAR OLD SLOTS (single query)
+    # =====================================================
+
+    update(
+        "daily_slots",
+        params={
+            "user_id": f"eq.{user_id}",
+            "plan_date": f"eq.{plan_date}",
+            "slot": f"gte.{old_start},lte.{old_end}",
+        },
+        json={
+            "plan": None,
+            "start_time": None,
+            "end_time": None,
+            "status": DEFAULT_STATUS
+        },
+    )
+
+    # =====================================================
+    # 2️⃣ WRITE NEW SLOTS (single UPSERT)
+    # =====================================================
+
+    rows = []
+
+    for slot in range(start, end + 1):
+
+        start_time = slot_to_time(slot)
+        end_time = slot_to_time(slot + 1)
+
+        rows.append({
+            "user_id": user_id,
+            "plan_date": plan_date,
+            "slot": slot,
+            "plan": text,
+            "start_time": start_time,
+            "end_time": end_time,
+            "priority": priority,
+            "category": category,
+            "status": DEFAULT_STATUS
+        })
+
+    post(
+        "daily_slots?on_conflict=user_id,plan_date,slot",
+        rows,
+        prefer="resolution=merge-duplicates"
+    )
+
+    return ("", 204)
+@planner_bp.route("/slot/updateold", methods=["POST"])
+@login_required
+def update_slot():
  
     data = request.get_json()
 
