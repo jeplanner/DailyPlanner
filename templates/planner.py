@@ -122,7 +122,7 @@ PLANNER_TEMPLATE = """
 
       <div class="day-grid-wrapper">
         <div class="day-grid">
-          {% for slot in plans %}
+          {% for slot in plans|sort %}
            <div
                 class="time-row {% if now_slot and slot == now_slot %}now-slot{% endif %}"
                 data-slot="{{ slot }}"
@@ -167,7 +167,7 @@ PLANNER_TEMPLATE = """
   </div>
 
     <div style="display:none">
-      {% for slot in plans %}
+      {% for slot in plans|sort %}
         <textarea name="plan_{{slot}}">{{ plans[slot].plan }}</textarea>
       {% endfor %}
     </div>
