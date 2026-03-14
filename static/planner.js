@@ -346,6 +346,127 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd) {
   });
 
 }
+/* =========================================================
+   SMART PLANNER
+========================================================= */
+
+function handleSmartSave(e) {
+
+  e?.preventDefault?.();
+
+  const form = document.getElementById("planner-form");
+
+  let text = document
+    .querySelector('textarea[name="smart_plan"]')
+    .value
+    .trim();
+
+  text = normalizeSmartTime(text);
+
+  if (!text) {
+    form.submit();
+    return;
+  }
+
+  const timeRange = parseTimeRange(text);
+
+  if (!timeRange) {
+    smartAdd(text);
+    return;
+  }
+
+  fetch("/smart/preview", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      text
+    })
+  })
+  .then(r => r.json())
+  .then(result => {
+
+    if (!result.conflicts || !result.conflicts.length) {
+      smartAdd(text);
+      return;
+    }
+
+    openSmartPreview(result);
+
+  });
+
+}
+
+function smartAdd(text){
+
+  return fetch("/smart/add",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      text
+    })
+  }).then(()=>{
+
+    window.location.reload();
+
+  });
+
+}
+
+function openSmartPreview(result){
+
+  const modal = document.getElementById("modal");
+  const content = document.getElementById("modal-content");
+
+  const html = result.conflicts.map(c=>`
+    <div style="margin-bottom:10px">
+      <strong>${c.time}</strong>
+      <pre>${c.existing}</pre>
+      <hr>
+      <pre>${c.incoming}</pre>
+    </div>
+  `).join("");
+
+  content.innerHTML = `
+    <h3>⚠ Slot conflicts</h3>
+    ${html}
+    <button onclick="modal.style.display='none'">Cancel</button>
+    <button onclick="smartAdd(document.querySelector('textarea[name=smart_plan]').value)">
+      Overwrite & Save
+    </button>
+  `;
+
+  modal.style.display = "flex";
+
+}
+
+function normalizeSmartTime(line){
+  return line.trim().replace(/\s+/g," ");
+}
+
+function parseTimeRange(text){
+
+  const m = text.match(
+    /(\\d{1,2})(?:[.:](\\d{2}))?\\s*-\\s*(\\d{1,2})(?:[.:](\\d{2}))?/
+  );
+
+  if (!m) return null;
+
+  const sh = parseInt(m[1],10);
+  const sm = parseInt(m[2] || "0",10);
+  const eh = parseInt(m[3],10);
+  const em = parseInt(m[4] || "0",10);
+
+  if (sh > 23 || eh > 23 || sm > 59 || em > 59)
+    return null;
+
+  return {
+    startMinutes: sh*60 + sm,
+    endMinutes: eh*60 + em
+  };
+
+}
 
 /* =========================================================
    SAVE FROM MODAL
