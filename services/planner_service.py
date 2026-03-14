@@ -31,7 +31,7 @@ def fetch_daily_slots(plan_date):
         params={
             "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
-            "select": "plan,start_time,end_time,slot",
+            "select": "plan,start_time,status,end_time,slot",
             "order": "slot.asc",
         },
     )
