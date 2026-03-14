@@ -74,9 +74,17 @@ def planner():
     #daily_slots = fetch_daily_slots(plan_date)
     #blocks = group_slots_into_blocks(plans)
     daily_slots = fetch_daily_slots(plan_date)
-    plans = {i: {"plan": None} for i in range(1, TOTAL_SLOTS + 1)}
+    plans = {
+    i: {
+        "plan": None,
+        "start_time": None,
+        "end_time": None
+    }
+      for i in range(1, TOTAL_SLOTS + 1)
+    }
+
     for row in daily_slots:
-     plans[row["slot"]] = row
+      plans[row["slot"]].update(row)
     blocks = group_slots_into_blocks(plans)
    # daily_slots = slots
    
