@@ -149,6 +149,7 @@ PLANNER_TEMPLATE = """
   data-end="{{ block.end_slot }}"
   data-category="{{ block.category }}"
   data-priority="{{ block.priority }}"
+  data-text="{{ block.text }}"
   ondblclick="editEvent({{ block.start_slot }}, {{ block.end_slot }})"
   style="
     top: calc({{ block.start_slot - 1 }} * var(--slot-height));

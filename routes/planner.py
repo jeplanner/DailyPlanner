@@ -309,19 +309,19 @@ def update_slot():
     # =====================================================
 
     update(
-        "daily_slots",
-        params={
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
-            "slot": f"gte.{old_start},lte.{old_end}",
-        },
-        json={
-            "plan": None,
-            "start_time": None,
-            "end_time": None,
-            "status": DEFAULT_STATUS
-        },
-    )
+    "daily_slots",
+    params={
+        "user_id": f"eq.{user_id}",
+        "plan_date": f"eq.{plan_date}",
+        "and": f"(slot.gte.{old_start},slot.lte.{old_end})",
+    },
+    json={
+        "plan": None,
+        "start_time": None,
+        "end_time": None,
+        "status": DEFAULT_STATUS
+    },
+)
 
     # =====================================================
     # 2️⃣ WRITE NEW SLOTS (single UPSERT)

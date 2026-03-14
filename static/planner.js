@@ -92,7 +92,7 @@ function initDragResize() {
 
         const newEnd = newStart + duration;
 
-        saveEvent(startSlot, endSlot, newStart, newEnd);
+        saveEvent(startSlot, endSlot, newStart, newEnd,block);
 
         document.removeEventListener("pointermove", move);
         document.removeEventListener("pointerup", up);
@@ -147,7 +147,7 @@ function initDragResize() {
 
           const newEnd = startSlot + slots - 1;
 
-          saveEvent(startSlot, endSlot, startSlot, newEnd);
+          saveEvent(startSlot, endSlot, startSlot, newEnd,block);
 
           document.removeEventListener("pointermove", move);
           document.removeEventListener("pointerup", up);
@@ -327,10 +327,13 @@ function closeModal() {
    SAVE EVENT
 ========================================================= */
 
-function saveEvent(oldStart, oldEnd, newStart, newEnd) {
+function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
 
   const text =
-    document.getElementById("editText")?.value || "";
+    document.getElementById("editText")?.value ||
+    block?.dataset.text ||
+    block?.textContent.trim() ||
+    "";
 
   fetch("/slot/update", {
     method: "POST",
