@@ -1,91 +1,177 @@
+/* =========================================================
+   GLOBAL STATE
+========================================================= */
 
-const USE_TIMELINE_VIEW = false; // Set to true to enable timeline view
+const USE_TIMELINE_VIEW = false;
+
 const summaryModal = document.getElementById("summary-modal");
 const summaryContent = document.getElementById("summary-content");
-let dragGhost = null;
-let draggingEvent = null;
-let dragOffsetY = 0;
-let isDragging = false;
-let dragStartSlot = null;
-let dragEndSlot = null;
+
 let PLAN_DATE =
   document.body.dataset.planDate ||
-  new Date().toISOString().slice(0,10);
+  new Date().toISOString().slice(0, 10);
 
-function initDragSystem() {
+/* =========================================================
+   CLOCK (IST)
+========================================================= */
+
+function updateClock() {
+  const el = document.getElementById("clock");
+  if (!el) return;
+
+  const ist = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+  );
+
+  el.textContent = ist.toLocaleTimeString();
+}
+
+setInterval(updateClock, 1000);
+updateClock();
+
+/* =========================================================
+   CLEAN DRAG + RESIZE SYSTEM
+========================================================= */
+
+function initDragResize() {
+
+  const slotHeight = parseFloat(
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--slot-height")
+  );
 
   document.querySelectorAll(".event-block").forEach(block => {
 
-    let pressTimer = null;
+    const resizeHandle = block.querySelector(".resize-handle");
 
-    /* ================================
-       DESKTOP DRAG
-    ================================= */
+    /* ---------- DRAG ---------- */
 
-    block.addEventListener("mousedown", e => {
-      if (e.detail === 2) return; // prevent drag on double click
-      if (e.target.classList.contains("resize-handle")) return;
+    block.addEventListener("pointerdown", e => {
 
-      draggingEvent = block;
+      if (e.target === resizeHandle) return;
 
-      const rect = block.getBoundingClientRect();
-      dragOffsetY = e.clientY - rect.top;
+      block.setPointerCapture(e.pointerId);
 
-      dragGhost = block.cloneNode(true);
-      dragGhost.classList.add("event-ghost");
+      const startY = e.clientY;
+      const startTop = block.offsetTop;
 
-      dragGhost.style.width = rect.width + "px";
-      dragGhost.style.height = rect.height + "px";
+      const startSlot = Number(block.dataset.start);
+      const endSlot = Number(block.dataset.end);
 
-      block.parentElement.appendChild(dragGhost);
+      const duration = endSlot - startSlot;
 
-      block.style.opacity = "0.3";
+      let longPressTimer = setTimeout(() => {
+        editEvent(startSlot, endSlot);
+      }, 600);
 
-      document.body.style.userSelect = "none";
+      function move(ev) {
+
+        clearTimeout(longPressTimer);
+
+        const delta = ev.clientY - startY;
+
+        let newTop = startTop + delta;
+
+        if (newTop < 0) newTop = 0;
+
+        const snappedSlot = Math.round(newTop / slotHeight) + 1;
+
+        block.style.top =
+          `${(snappedSlot - 1) * slotHeight}px`;
+
+      }
+
+      function up(ev) {
+
+        clearTimeout(longPressTimer);
+
+        block.releasePointerCapture(ev.pointerId);
+
+        const newStart =
+          Math.round(block.offsetTop / slotHeight) + 1;
+
+        const newEnd = newStart + duration;
+
+        saveEvent(startSlot, endSlot, newStart, newEnd);
+
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+
+      }
+
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
 
     });
 
-    /* ================================
-       DESKTOP EDIT (DOUBLE CLICK)
-    ================================= */
+    /* ---------- RESIZE ---------- */
 
-    block.addEventListener("dblclick", () => {
+    if (resizeHandle) {
 
-      const start = Number(block.dataset.start);
-      const end = Number(block.dataset.end);
+      resizeHandle.addEventListener("pointerdown", e => {
 
-      editEvent(start, end);
+        e.stopPropagation();
 
-    });
+        block.setPointerCapture(e.pointerId);
 
-    /* ================================
-       MOBILE LONG PRESS EDIT
-    ================================= */
+        const startY = e.clientY;
 
-    block.addEventListener("touchstart", () => {
+        const startSlot = Number(block.dataset.start);
+        const endSlot = Number(block.dataset.end);
 
-      pressTimer = setTimeout(() => {
+        function move(ev) {
 
-        const start = Number(block.dataset.start);
-        const end = Number(block.dataset.end);
+          const delta = ev.clientY - startY;
 
-        editEvent(start, end);
+          const slotsMoved = Math.round(delta / slotHeight);
 
-      }, 600); // 600ms long press
+          let newEnd = endSlot + slotsMoved;
 
-    });
+          if (newEnd <= startSlot)
+            newEnd = startSlot + 1;
 
-    block.addEventListener("touchend", () => {
-      clearTimeout(pressTimer);
-    });
+          const newHeight =
+            (newEnd - startSlot + 1) * slotHeight;
 
-    block.addEventListener("touchmove", () => {
-      clearTimeout(pressTimer);
-    });
+          block.style.height = `${newHeight}px`;
+
+        }
+
+        function up(ev) {
+
+          block.releasePointerCapture(ev.pointerId);
+
+          const height = block.offsetHeight;
+
+          const slots = Math.round(height / slotHeight);
+
+          const newEnd = startSlot + slots - 1;
+
+          saveEvent(startSlot, endSlot, startSlot, newEnd);
+
+          document.removeEventListener("pointermove", move);
+          document.removeEventListener("pointerup", up);
+
+        }
+
+        document.addEventListener("pointermove", move);
+        document.addEventListener("pointerup", up);
+
+      });
+
+    }
 
   });
 
 }
+
+/* =========================================================
+   SLOT DRAG CREATE
+========================================================= */
+
+let dragStartSlot = null;
+let dragEndSlot = null;
+let isDragging = false;
 
 function initSlotDrag() {
 
@@ -106,15 +192,17 @@ function initSlotDrag() {
       if (!isDragging) return;
 
       dragEndSlot = Number(row.dataset.slot);
+
       highlightSlots();
 
     });
 
-    row.addEventListener("click", e => {
+    row.addEventListener("click", () => {
 
       if (isDragging) return;
 
       const slot = Number(row.dataset.slot);
+
       openCreateEvent(slot, slot);
 
     });
@@ -122,630 +210,6 @@ function initSlotDrag() {
   });
 
 }
-
-/* =========================================================
-   CLOCK (IST)
-========================================================= */
-function updateClock() {
-  const el = document.getElementById("clock");
-  if (!el) return;
-
-  const ist = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-  );
-  el.textContent = ist.toLocaleTimeString();
-}
-setInterval(updateClock, 1000);
-updateClock();
-
-/* =========================================================
-   MOBILE PULL-DOWN TO CLOSE SUMMARY
-========================================================= */
-let touchStartY = null;
-let isAtTop = false;
-
-if (summaryModal && summaryContent) {
-  summaryModal.addEventListener("touchstart", e => {
-    if (e.touches.length !== 1) return;
-    touchStartY = e.touches[0].clientY;
-    isAtTop = summaryContent.scrollTop === 0;
-  });
-
-  summaryModal.addEventListener("touchmove", e => {
-    if (!touchStartY || !isAtTop) return;
-    const deltaY = e.touches[0].clientY - touchStartY;
-    if (deltaY > 80) {
-      closeSummary();
-      touchStartY = null;
-    }
-  });
-
-  summaryModal.addEventListener("touchend", () => {
-    touchStartY = null;
-  });
-}
-
-
-
-/* =========================================================
-   ESC KEY
-========================================================= */
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape") {
-    const modal = document.getElementById("summary-modal");
-    if (modal && modal.style.display === "flex") {
-      closeSummary();
-    }
-  }
-});
-
-/* =========================================================
-   HABITS / REFLECTION SYNC
-========================================================= */
-function syncHabit(cb) {
-  const main = document.querySelector(
-    `input[name="habits"][value="${cb.dataset.habit}"]`
-  );
-  if (main) main.checked = cb.checked;
-}
-
-function syncReflection(el) {
-  const main = document.querySelector('textarea[name="reflection"]');
-  if (main) main.value = el.value;
-}
-function getISTDate() {
-  return new Date().toLocaleDateString("en-CA", {
-    timeZone: "Asia/Kolkata"
-  });
-}
-
-/* =========================================================
-   EVENT EDITING
-========================================================= */
-
-function saveEvent(oldStart, oldEnd, newStart, newEnd, newDate = PLAN_DATE) {
-
-  const text =
-  document.getElementById("editText")?.value ||
-  draggingEvent?.innerText?.trim() ||
-  "";
-  const clean = text.replace(
-  /^\d{1,2}([:.]\d{2})?\s*-\s*\d{1,2}([:.]\d{2})?\s*/,
-  ""
-);
-  block.innerText = clean;
-  const category =
-  document.getElementById("editCategory")?.value ||
-  draggingEvent?.dataset?.category ||
-  "Office";
-
-  const priority =
-    document.getElementById("editPriority")?.value ||
-    draggingEvent?.dataset?.priority ||
-    "Medium";
-  fetch("/slot/update", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      plan_date: PLAN_DATE,
-      old_start: oldStart,
-      old_end: oldEnd,
-      start_slot: newStart,
-      end_slot: newEnd,
-      category:category,
-      priority: priority,
-      text: clean
-    })
-  });
-
-  // ----------------------------
-  // Instant UI update (no reload)
-  // ----------------------------
-
-  const block = draggingEvent;
-
-  if (!block) return;
-
-  const slotHeight = parseFloat(
-    getComputedStyle(document.documentElement)
-      .getPropertyValue("--slot-height")
-  );
-
-  block.style.top = `${(newStart - 1) * slotHeight}px`;
-  block.style.height = `${(newEnd - newStart + 1) * slotHeight}px`;
-
-  block.dataset.start = newStart;
-  block.dataset.end = newEnd;
-  block.dataset.category = category;
-  block.dataset.priority = priority;
-
-}
-/* =========================================================
-   DAY STRIP AUTO-SCROLL
-========================================================= */
-
-
-document.addEventListener("DOMContentLoaded", () => {
-  prefetchAdjacentDays();
-  initDragSystem();   // 🔴 ADD THIS
-  initSlotDrag();
-  if (USE_TIMELINE_VIEW) {
-    document.body.classList.add("timeline-mode");
-
-    const root = document.getElementById("timeline-root");
-    if (root) {
-      renderTimeline(window.TIMELINE_TASKS || [], root);
-      renderTimeGutter();
-    }
-  }
-});
-
-
-function toggleCheckin() {
-  const modal = document.getElementById("summary-modal");
-  if (!modal) return;
-
-  modal.style.display =
-    modal.style.display === "flex" ? "none" : "flex";
-}
-
-/* =========================================================
-   SUBTASK TOGGLE
-========================================================= */
-function toggleSubtask(id, isDone) {
-  fetch("/subtask/toggle", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, is_done: isDone })
-  });
-}
-
-window.addEventListener("focusin", () =>
-  document.body.classList.add("keyboard-open")
-);
-
-window.addEventListener("focusout", () =>
-  document.body.classList.remove("keyboard-open")
-);
-
-function handleSmartSave(e) {
-  e?.preventDefault?.();
-
-  const form = document.getElementById("planner-form");
-  let text = document
-  .querySelector('textarea[name="smart_plan"]')
-  .value
-  .trim();
-
-  text = normalizeSmartTime(text);
-
-  if (!text) {
-    form.submit();
-    return;
-  }
-
-  const timeRange = parseTimeRange(text);
-
-  // No time detected → safe submit
-  if (!timeRange) {
-    smartAdd(text);
-    return;
-  }
-
-  // Ask backend to preview slot conflicts
-  fetch("/smart/preview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      plan_date: PLAN_DATE,
-      text
-    })
-  })
-    .then(r => r.json())
-    .then(result => {
-      if (!result.conflicts || !result.conflicts.length) {
-        smartAdd(text);
-        return;
-      }
-
-      openSmartPreview(result);
-    });
-}
-function smartAdd(text) {
-  return fetch("/smart/add", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      plan_date: PLAN_DATE,
-      text: text
-    })
-  }).then(() => {
-    window.location.reload();
-  });
-}
-
-function openSmartPreview(result) {
-  const modal = document.getElementById("modal");
-  const content = document.getElementById("modal-content");
-
-  const html = result.conflicts.map(c => `
-    <div style="margin-bottom:10px">
-      <strong>${c.time}</strong>
-      <pre>${c.existing}</pre>
-      <hr>
-      <pre>${c.incoming}</pre>
-    </div>
-  `).join("");
-
-  content.innerHTML = `
-    <h3>⚠️ Slot conflicts</h3>
-    ${html}
-    <button onclick="modal.style.display='none'">Cancel</button>
-    <button onclick="smartAdd(document.querySelector('textarea[name=smart_plan]').value)">
-        Overwrite & Save
-    </button>
-
-  `;
-
-  modal.style.display = "flex";
-}
-function normalizeSmartTime(line) {
-  // Only normalize whitespace, do NOT infer time
-  return line.trim().replace(/\s+/g, " ");
-}
-
-function parseTimeRange(text) {
-  // Matches: 9-10 | 9.30-10.30 | 9:30-10:30
-  const m = text.match(
-    /(\d{1,2})(?:[.:](\d{2}))?\s*-\s*(\d{1,2})(?:[.:](\d{2}))?/
-  );
-
-  if (!m) return null;
-
-  const sh = parseInt(m[1], 10);
-  const sm = parseInt(m[2] || "0", 10);
-  const eh = parseInt(m[3], 10);
-  const em = parseInt(m[4] || "0", 10);
-
-  if (
-    sh > 23 || eh > 23 ||
-    sm > 59 || em > 59
-  ) return null;
-
-  return {
-    startMinutes: sh * 60 + sm,
-    endMinutes: eh * 60 + em
-  };
-}
-function parseTimeToMinutes(timeStr) {
-  // supports: 2.15, 2:15, 14.15, 14:15
-  const [h, m = "00"] = timeStr.replace(".", ":").split(":");
-  return parseInt(h, 10) * 60 + parseInt(m, 10);
-}
-
-function minutesToTime(mins) {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return `${h}:${m.toString().padStart(2, "0")}`;
-}
-function snapDown(mins) {
-  return Math.floor(mins / 30) * 30;
-}
-
-function snapUp(mins) {
-  return Math.ceil(mins / 30) * 30;
-}
-document.addEventListener("change", async (e) => {
-  if (!e.target.classList.contains("slot-checkbox")) return;
-
-  const slot = e.target.dataset.slot;
-  const checked = e.target.checked;
-
-  try {
-    await fetch("/slot/toggle-status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        plan_date: document.body.dataset.planDate,
-        slot: slot,
-        status: checked ? "done" : "open"
-      })
-    });
-  } catch (err) {
-    console.error(err);
-    e.target.checked = !checked;
-  }
-});
-function getHourLabel(timeStr) {
-  const [h, m] = timeStr.split(":").map(Number);
-  const hour12 = h % 12 || 12;
-  const ampm = h >= 12 ? "PM" : "AM";
-  return `${hour12} ${ampm}`;
-}
-
-function calculateDuration(start, end) {
-  if (!end) return "";
-  const [sh, sm] = start.split(":").map(Number);
-  const [eh, em] = end.split(":").map(Number);
-  const mins = (eh * 60 + em) - (sh * 60 + sm);
-  const hrs = mins / 60;
-  return hrs % 1 === 0 ? `${hrs} hr` : `${hrs.toFixed(1)} hrs`;
-}
-function renderTimeline(tasks, root) {
-  if (!root) return;
-
-  root.innerHTML = "";
-  root.id = "timeline"; // optional, for CSS
-
-  if (!Array.isArray(tasks) || tasks.length === 0) {
-    root.innerHTML = "<div style='opacity:.6'>No scheduled tasks</div>";
-    return;
-  }
-
-  // Normalize + filter
-  const normalized = tasks
-    .filter(t => t.start_time) // timeline needs time
-    .map(t => ({
-      ...t,
-      text: t.text || t.plan || ""
-    }))
-    .sort((a, b) => a.start_time.localeCompare(b.start_time));
-
-  let lastHour = null;
-
-  normalized.forEach(task => {
-    const hour = task.start_time.split(":")[0];
-    root.appendChild(renderTaskCard(task));
-  });
-}
-
-
-
-function renderTaskCard(task) {
-  const div = document.createElement("div");
-  div.className = "task-card";
-
-  const duration = calculateDuration(task.start_time, task.end_time);
-
-  div.innerHTML = `
-    <div class="task-main">
-      <input type="checkbox" class="task-check" />
-      <div class="task-content">
-        <div class="task-title">${task.text}</div>
-        ${duration ? `<div class="task-meta">${duration}</div>` : ""}
-      </div>
-    </div>
-  `;
-
-  return div;
-}
-function timeToSlot(time){
-
-  const [h,m] = time.split(":").map(Number);
-
-  return Math.floor((h*60 + m) / 30) + 1;
-
-}
-/* =========================================================
-   EVENT EDITING
-========================================================= */
-function saveFromModal(oldStart, oldEnd){
-
-  const startTime = document.getElementById("editStart").value;
-  const endTime = document.getElementById("editEnd").value;
-  const newDate = document.getElementById("editDate").value;
-
-  const newStart = timeToSlot(startTime);
-  const newEnd = timeToSlot(endTime) - 1;
-
-  saveEvent(oldStart, oldEnd, newStart, newEnd, newDate);
-
-}
-function editEvent(startSlot, endSlot) {
-
-  const modal = document.getElementById("modal");
-  const content = document.getElementById("modal-content");
-
-  fetch(`/slot/get?date=${PLAN_DATE}&slot=${startSlot}`)
-    .then(r => r.json())
-    .then(data => {
-
-      const text = (data.text || "")
-        .replace(/&/g,"&amp;")
-        .replace(/</g,"&lt;")
-        .replace(/>/g,"&gt;");
-
-      const category = data.category || "";
-      const priority = data.priority || "";
-
-      content.innerHTML = `
-    <h3>✏️ Edit Event</h3>
-    <label>Date</label>
-    <input type="date" id="editDate" value="${PLAN_DATE}">
-    <label>Start Time</label>
-    <input type="time" id="editStart" value="${data.start_time || ""}">
-
-    <label>End Time</label>
-    <input type="time" id="editEnd" value="${data.end_time || ""}">
-
-    <label>Description</label>
-    <textarea id="editText" style="width:100%;min-height:120px;">${text}</textarea>
-
-    <label>Category</label>
-    <input id="editCategory" value="${data.category || ""}">
-
-    <label>Priority</label>
-    <select id="editPriority">
-      <option ${data.priority==="Low"?"selected":""}>Low</option>
-      <option ${data.priority==="Medium"?"selected":""}>Medium</option>
-      <option ${data.priority==="High"?"selected":""}>High</option>
-    </select>
-
-    <br><br>
-
-    <button onclick="closeModal()">Cancel</button>
-    <button onclick="saveFromModal(${startSlot},${endSlot})">Save</button>
-    `;
-      if (modal) modal.style.display = "flex";
-    })
-    .catch(err => {
-      console.error("Edit fetch failed:", err);
-    });
-}
-
-function closeModal() {
-  const modal = document.getElementById("modal");
-  if (modal) modal.style.display = "none";
-}
-
-
-
-function renderDailySummaryTable() {
-  const rows = [];
-
-  document.querySelectorAll(".time-row").forEach(row => {
-    const label = row.querySelector(".time-column")?.innerText?.trim();
-    const checkbox = row.querySelector(".slot-checkbox");
-    if (!label || !checkbox) return;
-
-    rows.push({
-      time: label,
-      done: checkbox.checked
-    });
-  });
-
-  return `
-    <table style="width:100%; border-collapse:collapse">
-      <tr>
-        <th align="left">Time</th>
-        <th align="left">Status</th>
-      </tr>
-      ${rows.map(r => `
-        <tr>
-          <td>${r.time}</td>
-          <td>${r.done ? "✅ Done" : "⬜ Open"}</td>
-        </tr>
-      `).join("")}
-    </table>
-  `;
-}
-
-function promoteUntimed(btn) {
-  const id = btn.dataset.id;
-
-  fetch("/task/promote", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id,
-      plan_date: document.body.dataset.planDate
-    })
-  }).then(() => window.location.reload());
-}
-function scheduleUntimed(taskId) {
-  const modal = document.getElementById("modal");
-  const content = document.getElementById("modal-content");
-
-  content.innerHTML = `
-    <h3>🕒 Schedule task</h3>
-    <p>Select a start slot:</p>
-    <input type="number" id="schedule-slot" min="1" max="48" value="1">
-    <br><br>
-    <button onclick="modal.style.display='none'">Cancel</button>
-    <button onclick="confirmSchedule('${taskId}')">Schedule</button>
-  `;
-
-  modal.style.display = "flex";
-}
-
-function confirmSchedule(taskId) {
-  const slot = document.getElementById("schedule-slot").value;
-
-  fetch("/task/schedule", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id: taskId,
-      plan_date: document.body.dataset.planDate,
-      slot: Number(slot)
-    })
-  }).then(() => window.location.reload());
-}
-document.addEventListener("click", async (e) => {
-
-  const btn = e.target.closest("#generatePlanBtn");
-  if (!btn) return;
-
-  const selectedDate = btn.dataset.date;
-  const output = document.getElementById("aiPlanOutput");
-
-  output.innerHTML = "⏳ Generating AI plan...";
-
-  btn.disabled = true;
-
-  const res = await fetch("/ai/generate-day-plan", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      date: selectedDate
-    })
-  });
-
-  const data = await res.json();
-
- streamText(output, data.result);
-
-  btn.disabled = false;
-});
-function streamText(el, text, speed = 20) {
-
-  el.innerText = "";
-  el.classList.add("streaming");
-
-  const words = text.split(" ");
-  let i = 0;
-
-  function next() {
-
-    if (i >= words.length) {
-      el.classList.remove("streaming");
-      return;
-    }
-
-    el.innerText += (i === 0 ? "" : " ") + words[i];
-    i++;
-
-    setTimeout(next, speed);
-  }
-
-  next();
-}
-function loadPlannerForDate(date) {
-  PLAN_DATE = date;
-  loadTasks();
-  loadHealth();
-  renderPlanner();
-}
-function jumpToDate() {
-
-  const monthInput = document.getElementById("jump-month");
-  const dayInput = document.getElementById("jump-day");
-
-  if (!monthInput.value || !dayInput.value) {
-    alert("Please select a date");
-    return;
-  }
-
-  const [year, month] = monthInput.value.split("-");
-  const day = dayInput.value.padStart(2,"0");
-
-  const newDate = `${year}-${month}-${day}`;
-
-  window.location.replace(
-  `/?year=${year}&month=${month}&day=${day}`
-  );
-}
-
 
 document.addEventListener("mouseup", () => {
 
@@ -762,7 +226,6 @@ document.addEventListener("mouseup", () => {
 
 });
 
-
 function highlightSlots() {
 
   clearSlotHighlight();
@@ -774,9 +237,8 @@ function highlightSlots() {
 
     const slot = Number(row.dataset.slot);
 
-    if (slot >= start && slot <= end) {
+    if (slot >= start && slot <= end)
       row.classList.add("slot-preview");
-    }
 
   });
 
@@ -789,6 +251,11 @@ function clearSlotHighlight() {
     .forEach(el => el.classList.remove("slot-preview"));
 
 }
+
+/* =========================================================
+   EVENT CREATION
+========================================================= */
+
 function openCreateEvent(startSlot, endSlot) {
 
   const modal = document.getElementById("modal");
@@ -804,7 +271,9 @@ function openCreateEvent(startSlot, endSlot) {
     <br><br>
 
     <button onclick="closeModal()">Cancel</button>
-    <button onclick="saveEvent(${startSlot}, ${endSlot}, ${startSlot}, ${endSlot})">Save</button>
+    <button onclick="saveEvent(${startSlot}, ${endSlot}, ${startSlot}, ${endSlot})">
+      Save
+    </button>
   `;
 
   modal.style.display = "flex";
@@ -812,203 +281,185 @@ function openCreateEvent(startSlot, endSlot) {
 }
 
 /* =========================================================
-   DRAG EVENT TO MOVE
+   EDIT EVENT
 ========================================================= */
 
+function editEvent(startSlot, endSlot) {
 
-/* =========================================================
-   DRAG EVENT TO MOVE
-========================================================= */
-/* =========================================================
-   DRAG EVENT TO MOVE
-========================================================= */
+  const modal = document.getElementById("modal");
+  const content = document.getElementById("modal-content");
 
+  fetch(`/slot/get?date=${PLAN_DATE}&slot=${startSlot}`)
+    .then(r => r.json())
+    .then(data => {
 
+      content.innerHTML = `
+        <h3>Edit Event</h3>
 
+        <textarea id="editText"
+        style="width:100%;min-height:120px;">
+${data.text || ""}
+        </textarea>
 
-document.addEventListener("mousemove", e => {
+        <br><br>
 
-  if (!draggingEvent) return;
+        <button onclick="closeModal()">Cancel</button>
+        <button onclick="saveFromModal(${startSlot},${endSlot})">
+        Save
+        </button>
+      `;
 
-  const container = document.querySelector(".day-grid");
-  const rect = container.getBoundingClientRect();
+      modal.style.display = "flex";
 
-  const y = e.clientY - rect.top - dragOffsetY;
+    });
 
-  const slotHeight = parseFloat(
-  getComputedStyle(document.documentElement)
-    .getPropertyValue("--slot-height")
-);
-
-const snappedSlot = Math.round(y / slotHeight);
-
-if (dragGhost) {
-  dragGhost.style.top = `${snappedSlot * slotHeight}px`;
 }
 
-});
+function closeModal() {
 
-document.addEventListener("mouseup", e => {
+  const modal = document.getElementById("modal");
 
-  if (!draggingEvent) return;
+  modal.style.display = "none";
 
-  const slotHeight = parseFloat(
-    getComputedStyle(document.documentElement)
-      .getPropertyValue("--slot-height")
-  );
+}
 
-  const top = dragGhost ? dragGhost.offsetTop : draggingEvent.offsetTop;
-
-  const newStart = Math.round(top / slotHeight) + 1;
-
-  const start = Number(draggingEvent.dataset.start);
-  const end = Number(draggingEvent.dataset.end);
-
-  const duration = end - start;
-
-  const newEnd = newStart + duration;
-
-  draggingEvent.style.opacity = "";
-  document.body.style.userSelect = "";
-
-    saveEvent(start,end,newStart, newEnd);
-    if (dragGhost) {
-    dragGhost.remove();
-    dragGhost = null;
-  }
-
-draggingEvent.style.opacity = "";
-  draggingEvent = null;
-
-});
 /* =========================================================
-   RESIZE EVENT
+   SAVE EVENT
 ========================================================= */
 
-let resizingEvent = null;
+function saveEvent(oldStart, oldEnd, newStart, newEnd) {
 
-document.querySelectorAll(".resize-handle").forEach(handle => {
+  const text =
+    document.getElementById("editText")?.value || "";
 
-  handle.addEventListener("mousedown", e => {
+  fetch("/slot/update", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      old_start: oldStart,
+      old_end: oldEnd,
+      start_slot: newStart,
+      end_slot: newEnd,
+      text: text
+    })
+  });
 
-    e.stopPropagation();
+}
 
-    resizingEvent = handle.parentElement;
+/* =========================================================
+   SAVE FROM MODAL
+========================================================= */
 
-    document.body.style.userSelect = "none";
+function saveFromModal(oldStart, oldEnd){
 
+  const startTime = document.getElementById("editStart")?.value;
+  const endTime = document.getElementById("editEnd")?.value;
+
+  if(!startTime || !endTime) return;
+
+  const newStart = timeToSlot(startTime);
+  const newEnd = timeToSlot(endTime) - 1;
+
+  saveEvent(oldStart, oldEnd, newStart, newEnd);
+
+}
+
+/* =========================================================
+   SLOT CHECKBOX STATUS
+========================================================= */
+
+document.addEventListener("change", async (e) => {
+
+  if (!e.target.classList.contains("slot-checkbox"))
+    return;
+
+  const slot = e.target.dataset.slot;
+  const checked = e.target.checked;
+
+  await fetch("/slot/toggle-status",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      slot,
+      status: checked ? "done":"open"
+    })
   });
 
 });
 
-document.addEventListener("mousemove", e => {
+/* =========================================================
+   CHECKIN MODAL
+========================================================= */
 
-  if (!resizingEvent || draggingEvent) return;
+function toggleCheckin(){
 
-  const container = document.querySelector(".day-grid");
-  const rect = container.getBoundingClientRect();
+  const modal = document.getElementById("summary-modal");
 
-  const slotHeight = parseFloat(
-    getComputedStyle(document.documentElement)
-      .getPropertyValue("--slot-height")
+  modal.style.display =
+    modal.style.display === "flex"
+      ? "none"
+      : "flex";
+
+}
+
+/* =========================================================
+   DATE NAVIGATION
+========================================================= */
+
+function jumpToDate(){
+
+  const monthInput = document.getElementById("jump-month");
+  const dayInput = document.getElementById("jump-day");
+
+  if(!monthInput.value || !dayInput.value)
+    return alert("Select date");
+
+  const [year,month] = monthInput.value.split("-");
+  const day = dayInput.value.padStart(2,"0");
+
+  window.location.replace(
+    `/?year=${year}&month=${month}&day=${day}`
   );
 
-  const y = e.clientY - rect.top;
+}
 
-  const start = Number(resizingEvent.dataset.start);
+/* =========================================================
+   PREFETCH ADJACENT DAYS
+========================================================= */
 
-  let newEnd = Math.round(y / slotHeight) + 1;
+function prefetchAdjacentDays(){
 
-  if (newEnd <= start) newEnd = start + 1;
-
-  const newHeight = (newEnd - start + 1) * slotHeight;
-
-  resizingEvent.style.height = `${newHeight}px`;
-
-});
-
-document.addEventListener("mouseup", () => {
-
-  if (!resizingEvent) return;
-
-  const slotHeight = parseFloat(
-    getComputedStyle(document.documentElement)
-      .getPropertyValue("--slot-height")
-  );
-
-  const start = Number(resizingEvent.dataset.start);
-
-  const height = resizingEvent.offsetHeight;
-
-  const slots = Math.floor(y / slotHeight);
-
-  const newEnd = start + slots - 1;
-
-  saveEvent(start,start,start, newEnd);
-
-  resizingEvent = null;
-
-  document.body.style.userSelect = "";
-
-});
-
-
-function prefetchAdjacentDays() {
   const d = new Date(PLAN_DATE);
 
-  const prev = new Date(d);
-  prev.setDate(d.getDate() - 1);
+  [-1,1].forEach(offset=>{
 
-  const next = new Date(d);
-  next.setDate(d.getDate() + 1);
-
-  [prev, next].forEach(date => {
-    const y = date.getFullYear();
-    const m = date.getMonth() + 1;
-    const day = date.getDate();
+    const date = new Date(d);
+    date.setDate(d.getDate()+offset);
 
     const link = document.createElement("link");
-    link.rel = "prefetch";
-    link.href = `/?year=${y}&month=${m}&day=${day}`;
+
+    link.rel="prefetch";
+
+    link.href =
+      `/?year=${date.getFullYear()}&month=${date.getMonth()+1}&day=${date.getDate()}`;
 
     document.head.appendChild(link);
+
   });
+
 }
-document.addEventListener("click", async e => {
 
-  const link = e.target.closest(".day-link");
-  if (!link) return;
+/* =========================================================
+   INIT
+========================================================= */
 
-  e.preventDefault();
+document.addEventListener("DOMContentLoaded",()=>{
 
-  const res = await fetch(link.href);
-  const html = await res.text();
+  prefetchAdjacentDays();
 
-  const doc = new DOMParser().parseFromString(html,"text/html");
-
-  document.querySelector("#planner-root").innerHTML =
-  doc.querySelector("#planner-root").innerHTML;
-
-  initDragSystem();   // 🔴 REATTACH DRAG EVENTS
+  initDragResize();
   initSlotDrag();
 
-  history.pushState({}, "", link.href);
-
 });
-function openEditModal(el) {
-
-  const start = el.dataset.start;
-  const end = el.dataset.end;
-  const category = el.dataset.category;
-  const priority = el.dataset.priority;
-  const text = el.innerText.trim();
-
-  document.getElementById("editText").value = text;
-  document.getElementById("editCategory").value = category;
-  document.getElementById("editPriority").value = priority;
-
-  window.editStart = start;
-  window.editEnd = end;
-
-  document.getElementById("edit-modal").style.display = "block";
-}
