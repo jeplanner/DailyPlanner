@@ -402,7 +402,7 @@ def save_day(plan_date, form):
                         {
                             "plan_date": str(task_date),
                             "slot": s["slot"],
-                            "plan": s["task"],
+                            "plan": parsed["title"],
 
                             # 🔥 ADD THESE TWO LINES
                             "start_time": s["start"].strftime("%H:%M"),
