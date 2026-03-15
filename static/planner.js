@@ -464,8 +464,11 @@ function openSmartPreview(result){
 
 }
 
-function normalizeSmartTime(line){
-  return line.trim().replace(/\s+/g," ");
+function normalizeSmartTime(text){
+  return text
+    .split("\n")
+    .map(l => l.trim().replace(/[ \t]+/g," "))
+    .join("\n");
 }
 
 function parseTimeRange(text){
