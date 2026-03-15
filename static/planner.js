@@ -326,30 +326,7 @@ function closeModal() {
 /* =========================================================
    SAVE EVENT
 ========================================================= */
-
 function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
-
-  const text =
-    document.getElementById("editText")?.value ||
-    block?.dataset.text ||
-    block?.textContent.trim() ||
-    "";
-
-  fetch("/slot/update", {
-  method: "POST",
-  headers: {"Content-Type":"application/json"},
-  body: JSON.stringify({
-    plan_date: PLAN_DATE,
-    old_start: oldStart,
-    old_end: oldEnd,
-    start_slot: newStart,
-    end_slot: newEnd,
-    text: text
-  })
-  })
-  .then(r=>{
-    if(!r.ok) throw new Error("Save failed");
-    function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
 
   const text =
     document.getElementById("editText")?.value ||
@@ -369,10 +346,11 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
       text: text
     })
   })
-  .then(r=>{
+  .then(r => {
     if(!r.ok) throw new Error("Save failed");
 
     if(block){
+
       block.dataset.start = newStart;
       block.dataset.end = newEnd;
 
@@ -383,6 +361,7 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
 
       block.style.top = `${(newStart - 1) * slotHeight}px`;
       block.style.height = `${(newEnd - newStart + 1) * slotHeight}px`;
+
     }
   })
   .catch(err=>{
