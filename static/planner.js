@@ -293,21 +293,53 @@ function editEvent(startSlot, endSlot) {
     .then(r => r.json())
     .then(data => {
 
-      content.innerHTML = `
+    content.innerHTML = `
         <h3>Edit Event</h3>
 
-        <textarea id="editText"
-        style="width:100%;min-height:120px;">
-${data.text || ""}
+        <label>Event</label>
+        <textarea id="editText" style="width:100%;min-height:80px;">
+        ${data.text || ""}
         </textarea>
 
         <br><br>
 
+        <label>Start Time</label>
+        <input type="time" id="editStart"
+              value="${data.start_time || ""}">
+
+        <label>End Time</label>
+        <input type="time" id="editEnd"
+              value="${data.end_time || ""}">
+
+        <br><br>
+
+        <label>Priority</label>
+        <select id="editPriority">
+          <option value="Low" ${data.priority=="Low"?"selected":""}>Low</option>
+          <option value="Medium" ${data.priority=="Medium"?"selected":""}>Medium</option>
+          <option value="High" ${data.priority=="High"?"selected":""}>High</option>
+        </select>
+
+        <br><br>
+
+        <label>Category</label>
+        <input type="text" id="editCategory"
+              value="${data.category || ""}">
+
+        <br><br>
+
+        <label>Tags</label>
+        <input type="text" id="editTags"
+              placeholder="comma separated tags">
+
+        <br><br>
+
         <button onclick="closeModal()">Cancel</button>
+
         <button onclick="saveFromModal(${startSlot},${endSlot})">
         Save
         </button>
-      `;
+        `;
 
       modal.style.display = "flex";
 
@@ -497,18 +529,36 @@ function parseTimeRange(text){
 /* =========================================================
    SAVE FROM MODAL
 ========================================================= */
-
 function saveFromModal(oldStart, oldEnd){
 
-  const startTime = document.getElementById("editStart")?.value;
-  const endTime = document.getElementById("editEnd")?.value;
+  const text = document.getElementById("editText").value;
 
-  if(!startTime || !endTime) return;
+  const startTime = document.getElementById("editStart").value;
+  const endTime = document.getElementById("editEnd").value;
+
+  const priority = document.getElementById("editPriority").value;
+  const category = document.getElementById("editCategory").value;
+  const tags = document.getElementById("editTags")?.value || "";
 
   const newStart = timeToSlot(startTime);
   const newEnd = timeToSlot(endTime) - 1;
 
-  saveEvent(oldStart, oldEnd, newStart, newEnd);
+  fetch("/slot/update",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      old_start: oldStart,
+      old_end: oldEnd,
+      start_slot: newStart,
+      end_slot: newEnd,
+      text,
+      priority,
+      category,
+      tags
+    })
+  })
+  .then(()=>location.reload());
 
 }
 
