@@ -150,12 +150,18 @@ PLANNER_TEMPLATE = """
   data-category="{{ block.category }}"
   data-priority="{{ block.priority }}"
   data-text="{{ block.text }}"
-  ondblclick="editEvent({{ block.start_slot }}, {{ block.end_slot }})"
   style="
     top: calc({{ block.start_slot - 1 }} * var(--slot-height));
     height: calc({{ block.end_slot - block.start_slot + 1 }} * var(--slot-height));
   "
 >
+<button
+  class="edit-btn"
+  data-start="{{ block.start_slot }}"
+  data-end="{{ block.end_slot }}"
+>
+✏️
+</button>
   {% if block.recurring_id %}🔁 {% endif %}
   {{ block.text }}
   <div class="resize-handle"></div>

@@ -610,3 +610,16 @@ document.addEventListener("DOMContentLoaded",()=>{
   initSlotDrag();
 
 });
+
+document.addEventListener("click", function(e){
+
+  if(!e.target.classList.contains("edit-btn")) return;
+
+  e.stopPropagation();
+
+  const startSlot = Number(e.target.dataset.start);
+  const endSlot = Number(e.target.dataset.end);
+
+  editEvent(startSlot,endSlot);
+
+});

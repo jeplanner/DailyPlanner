@@ -534,12 +534,14 @@
   border: 1px solid #fed7aa;
   white-space: nowrap;
 }
-.edit-btn {
-  background: transparent;
-  border: none;
-  font-size: 16px;
-  cursor: pointer;
-  opacity: 0.6;
+.edit-btn{
+  position:absolute;
+  right:4px;
+  top:2px;
+  border:none;
+  background:transparent;
+  cursor:pointer;
+  font-size:14px;
 }
 
 .edit-btn:hover {
