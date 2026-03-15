@@ -201,7 +201,7 @@ def get_goal_for_date(habit_id, plan_date):
         params={
             "habit_id": f"eq.{habit_id}",
             "effective_from": f"lte.{plan_date}",
-            "order": "effective_from.desc",
+            "order": "effective_from.desc,created_at.desc",
             "limit": 1
         }
     )
