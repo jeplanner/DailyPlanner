@@ -2,7 +2,7 @@
 from datetime import datetime
 import os
 
-from flask import Blueprint, Request, jsonify, redirect, request, session, url_for
+from flask import Blueprint,  jsonify, redirect, request, session, url_for
 from supabase_client import get, post, update
 
 from routes.planner import build_google_datetime, get_conflicts
@@ -10,6 +10,7 @@ from services.login_service import login_required
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 from utils.dates import safe_date_from_string
 from utils.planner_parser import parse_planner_input
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
@@ -91,7 +92,6 @@ def create_event():
 @events_bp.route("/api/v2/events/<event_id>", methods=["PUT"])
 @login_required
 def update_event(event_id):
-    from flask import jsonify
 
     user_id = session["user_id"]
     data = request.json
@@ -152,6 +152,7 @@ def update_event(event_id):
                 )
 
                 if credentials.expired and credentials.refresh_token:
+                    print("Google Credentials Expired")
                     credentials.refresh(Request())
 
                     update(
@@ -178,7 +179,7 @@ def update_event(event_id):
                         }
                     }
                 ).execute()
-
+                print("Google event successfuly created")
         except Exception as e:
             print("Google update failed:", e)
     return jsonify({"success": True})
