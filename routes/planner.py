@@ -313,7 +313,7 @@ def clean_plan_text(text: str) -> str:
 def update_slot():
 
     data = request.get_json()
-
+    print("UPDATE REQUEST:", data)
     plan_date = data["plan_date"]
 
     old_start = int(data["old_start"])
