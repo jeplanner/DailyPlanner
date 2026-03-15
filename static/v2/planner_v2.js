@@ -31,7 +31,16 @@ function toTime(mins) {
 function calculateEndTime(start, duration) {
   return toTime(minutes(start) + parseInt(duration));
 }
+function normalizeDuration(mins) {
 
+  const allowed = [15, 30, 45, 60, 90, 120];
+
+  for (let d of allowed) {
+    if (mins <= d) return d;
+  }
+
+  return 120;
+}
 /* =========================
    LOAD DATA
 ========================= */
@@ -1176,6 +1185,6 @@ function endCreateEvent(e) {
   openCreateModal();
 
   document.getElementById("start-time").value = start;
-  document.getElementById("duration").value = duration;
+  document.getElementById("duration").value = normalizeDuration(duration);
 }
 
