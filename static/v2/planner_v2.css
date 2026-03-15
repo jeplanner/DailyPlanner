@@ -33,11 +33,11 @@ body {
 #timeline {
   flex: 1;
   position: relative;
-  min-height: 100vh;
+  height: calc(24 * var(--hour-height));
   padding-left: 40px;
   touch-action: pan-y;
+  overflow:visible;
 }
-
 /* ============================= */
 /* Navigation Icons */
 /* ============================= */
