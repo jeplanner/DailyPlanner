@@ -51,6 +51,7 @@ body {
 
 .day-grid-wrapper {
   position: relative;
+  touch-action: pan-y;
 }
 
 /* =========================================================
@@ -130,7 +131,8 @@ body {
   position: absolute;
   left: calc(var(--time-column-width) + 12px);
   right: 12px;
-  touch-action: none;
+  .event-block{
+  touch-action: pan-y;
   cursor: grab;
   will-change: top, height;
   background: linear-gradient(
