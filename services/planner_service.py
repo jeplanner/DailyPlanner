@@ -221,7 +221,12 @@ def save_day(plan_date, form):
             m = re.match(r"^(\d{1,2})(?:\s+)(.+)$", line)
             if m:
                 line = f"{m.group(2)} @{m.group(1)}"
-
+            m = re.match(r"^(\d{1,2})\s*-\s*(\d{1,2})\.(\d{2})\s+(.+)$", line)
+            #Case 1a: "9-9.30 task" -> task from 9:00 to 9:30"
+            if m:
+                start = f"{m.group(1)}:00"
+                end = f"{m.group(2)}:{m.group(3)}"
+                line = f"{m.group(4)} from {start} to {end}"
             # Case 2: "9-10 task" → "task from 9 to 10"
             m = re.match(r"^(\d{1,2})\s*-\s*(\d{1,2})\s+(.+)$", line)
             if m:
