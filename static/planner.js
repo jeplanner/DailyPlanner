@@ -47,10 +47,12 @@ function initDragResize() {
     /* ---------- DRAG ---------- */
 
     block.addEventListener("pointerdown", e => {
-
+      
       if (e.target === resizeHandle) return;
 
       block.setPointerCapture(e.pointerId);
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
 
       const startY = e.clientY;
       const startTop = block.offsetTop;
@@ -113,7 +115,7 @@ function initDragResize() {
       document.removeEventListener("pointerup", up);
 
     }
-
+});  // ← CLOSE pointerdown
     /* ---------- RESIZE ---------- */
 
     if (resizeHandle) {
