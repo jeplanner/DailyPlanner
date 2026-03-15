@@ -74,7 +74,7 @@ function initDragResize() {
 
         if (newTop < 0) newTop = 0;
 
-        const snappedSlot = Math.round(newTop / slotHeight) + 1;
+        const snappedSlot = Math.floor(newTop / slotHeight) + 1;
 
         block.style.top =
           `${(snappedSlot - 1) * slotHeight}px`;
@@ -88,7 +88,7 @@ function initDragResize() {
         block.releasePointerCapture(ev.pointerId);
 
         const newStart =
-          Math.round(block.offsetTop / slotHeight) + 1;
+          Math.floor(block.offsetTop / slotHeight) + 1;
 
         const newEnd = newStart + duration;
 
@@ -123,7 +123,7 @@ function initDragResize() {
 
           const delta = ev.clientY - startY;
 
-          const slotsMoved = Math.round(delta / slotHeight);
+          const slotsMoved = Math.floor(delta / slotHeight);
 
           let newEnd = endSlot + slotsMoved;
 
@@ -143,7 +143,7 @@ function initDragResize() {
 
           const height = block.offsetHeight;
 
-          const slots = Math.round(height / slotHeight);
+          const slots = Math.floor(height / slotHeight);
 
           const newEnd = startSlot + slots - 1;
 
@@ -349,7 +349,41 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
   })
   .then(r=>{
     if(!r.ok) throw new Error("Save failed");
-    location.reload();
+    function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
+
+  const text =
+    document.getElementById("editText")?.value ||
+    block?.dataset.text ||
+    block?.textContent.trim() ||
+    "";
+
+  fetch("/slot/update", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      old_start: oldStart,
+      old_end: oldEnd,
+      start_slot: newStart,
+      end_slot: newEnd,
+      text: text
+    })
+  })
+  .then(r=>{
+    if(!r.ok) throw new Error("Save failed");
+
+    if(block){
+      block.dataset.start = newStart;
+      block.dataset.end = newEnd;
+
+      const slotHeight = parseFloat(
+        getComputedStyle(document.documentElement)
+        .getPropertyValue("--slot-height")
+      );
+
+      block.style.top = `${(newStart - 1) * slotHeight}px`;
+      block.style.height = `${(newEnd - newStart + 1) * slotHeight}px`;
+    }
   })
   .catch(err=>{
     console.error(err);
