@@ -127,8 +127,8 @@ function initDragResize() {
 
           let newEnd = endSlot + slotsMoved;
 
-          if (newEnd <= startSlot)
-            newEnd = startSlot + 1;
+          if (newEnd < startSlot)
+            newEnd = startSlot ;
 
           const newHeight =
             (newEnd - startSlot + 1) * slotHeight;
