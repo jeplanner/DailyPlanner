@@ -10,7 +10,7 @@ from config import (
     HEALTH_HABITS,
     MIN_HEALTH_HABITS,
 )
-from routes.planner import clean_plan_text
+
 from utils.slots import generate_half_hour_slots
 import logging
 from supabase_client import get, post, update
@@ -157,6 +157,19 @@ def load_day(plan_date, tag=None):
     return plans
 
 
+def clean_plan_text(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # remove patterns like "from 9 to 10"
+    text = re.sub(r"\s*from\s+\d+.*$", "", text, flags=re.IGNORECASE)
+
+    # remove patterns like "9:00 - 10:00"
+    text = re.sub(r"\s*\d{1,2}(:\d{2})?\s*[-–]\s*\d{1,2}(:\d{2})?", "", text)
+
+    return text.strip()
 
 def save_day(plan_date, form):
     user_id=session["user_id"]
