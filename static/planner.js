@@ -523,6 +523,13 @@ function parseTimeRange(text){
   };
 
 }
+function timeToSlot(time){
+
+  const [h, m] = time.split(":").map(Number);
+
+  return h * 2 + (m >= 30 ? 2 : 1);
+
+}
 
 /* =========================================================
    SAVE FROM MODAL
