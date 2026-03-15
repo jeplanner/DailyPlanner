@@ -89,7 +89,7 @@ def update_habit():
 
     if not habit:
         return jsonify({"error": "Habit not found"}), 404
-
+    
     post("habit_goal_history", {
         "habit_id": data["habit_id"],
         "goal": float(data["goal"]),

@@ -1135,7 +1135,7 @@ async function submitHabitSheet() {
     goal,
     emoji: selectedEmoji,
     color: selectedColor,
-    start_date: startDate
+    effective_from: startDate
   };
 
   let res;
