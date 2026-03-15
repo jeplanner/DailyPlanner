@@ -301,15 +301,27 @@ function editEvent(startSlot, endSlot) {
 
         <br><br>
 
-        <label>Start Time</label>
-        <input type="time" id="editStart"
-              value="${data.start_time || ""}">
+      <label>Start Time</label>
+      <input type="time" id="editStart"
+            value="${data.start_time || ""}"
+            onchange="updateEndTime()">
 
-        <label>End Time</label>
-        <input type="time" id="editEnd"
-              value="${data.end_time || ""}">
+      <br><br>
 
-        <br><br>
+    <label>Duration</label>
+    <select id="editDuration" onchange="updateEndTime()">
+      <option value="30">30 mins</option>
+      <option value="60">1 hour</option>
+      <option value="90">1.5 hours</option>
+      <option value="120">2 hours</option>
+      <option value="150">2.5 hours</option>
+      <option value="180">3 hours</option>
+    </select>
+
+    <br><br>
+
+    <label>End Time</label>
+    <input type="time" id="editEnd" disabled>
 
         <label>Priority</label>
         <select id="editPriority">
