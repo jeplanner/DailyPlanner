@@ -207,21 +207,33 @@ function render() {
     if (ev.type === "project") div.classList.add("project-event");
     div.classList.add(`p-${ev.priority || "medium"}`);
 
-    div.innerHTML = `
-       <div class="event-line">
+   div.innerHTML = `
+      <div class="event-actions">
+
+    <div class="event-line">
+      <span class="event-title-text">
         ${ev.task_text || ev.title}
-        <span class="event-time-inline">
-          (${formatTime(ev.start_time).replace(":", ".")} - ${formatTime(ev.end_time).replace(":", ".")})
-        </span>
+      </span>
 
-
-        </div>
-
-      <div class="event-description">
-        ${ev.description || ""}
+      <span class="event-time-inline">
+        (${formatTime(ev.start_time).replace(":", ".")} - ${formatTime(ev.end_time).replace(":", ".")})
+      </span>
       </div>
-    `;
 
+        <button class="gcal-btn">📅</button>
+
+      </div>
+
+    <div class="event-description">
+      ${ev.description || ""}
+    </div>
+    `;
+    const gbtn = div.querySelector(".gcal-btn");
+
+    gbtn.addEventListener("click", (e) => {
+      e.stopPropagation(); // prevents modal
+      addToGoogleCalendar(ev);
+    });
   
     div.addEventListener("click", (e) => {
       if (e.target.classList.contains("resize-handle")) return;
