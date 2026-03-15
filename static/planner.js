@@ -251,7 +251,30 @@ function clearSlotHighlight() {
     .forEach(el => el.classList.remove("slot-preview"));
 
 }
+function updateEndTime(){
 
+  const start = document.getElementById("editStart").value;
+  const duration = Number(
+    document.getElementById("editDuration").value
+  );
+
+  if(!start) return;
+
+  const [h,m] = start.split(":").map(Number);
+
+  let total = h*60 + m + duration;
+
+  const endH = Math.floor(total/60);
+  const endM = total % 60;
+
+  const endTime =
+    String(endH).padStart(2,"0") +
+    ":" +
+    String(endM).padStart(2,"0");
+
+  document.getElementById("editEnd").value = endTime;
+
+}
 /* =========================================================
    EVENT CREATION
 ========================================================= */
@@ -354,7 +377,25 @@ function editEvent(startSlot, endSlot) {
       modal.style.display = "flex";
 
     });
+    setTimeout(()=>{
 
+  const start = "${data.start_time || ""}";
+  const end = "${data.end_time || ""}";
+
+  if(start && end){
+
+    const [sh,sm] = start.split(":").map(Number);
+    const [eh,em] = end.split(":").map(Number);
+
+    const duration =
+      (eh*60 + em) - (sh*60 + sm);
+
+    document.getElementById("editDuration").value = duration;
+
+    updateEndTime();
+  }
+
+    },0);
 }
 
 function closeModal() {
