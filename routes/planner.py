@@ -319,7 +319,7 @@ def update_slot():
     old_start = int(data["old_start"])
     old_end = int(data["old_end"])
 
-    new_start = int(data["start_slot"])
+    #new_start = int(data["start_slot"])
 
     text = clean_plan_text((data.get("text")))
     # remove any "from X to Y" or time pattern
@@ -332,14 +332,14 @@ def update_slot():
     # -----------------------------------------------------
     # 1️⃣ Calculate duration safely
     # -----------------------------------------------------
-    duration = old_end - old_start
-    new_end = new_start + duration
+    new_start = int(data["start_slot"])
+    new_end = int(data["end_slot"])
 
     # -----------------------------------------------------
     # 2️⃣ No-op protection
     # -----------------------------------------------------
-    if old_start == new_start:
-        return ("", 204)
+    if old_start == new_start and old_end == new_end:
+     return ("", 204)
 
     logger.debug(
         "DRAG MOVE user=%s old=%s-%s new=%s-%s",
