@@ -281,20 +281,32 @@ def slot_to_time(slot):
     minutes = base_minutes % 60
 
     return f"{hours:02}:{minutes:02}"
-
+import re
 
 def clean_plan_text(text: str) -> str:
+
     if not text:
         return ""
 
     text = text.strip()
 
-    # remove patterns like "from 9 to 10"
-    text = re.sub(r"\s*from\s+\d+.*$", "", text, flags=re.IGNORECASE)
+    # Remove "from X to Y"
+    text = re.sub(
+        r"\s*from\s+\d{1,2}(:\d{2})?\s*(am|pm)?\s+to\s+\d{1,2}(:\d{2})?\s*(am|pm)?",
+        "",
+        text,
+        flags=re.I,
+    )
 
-    # remove patterns like "9:00 - 10:00"
-    text = re.sub(r"\s*\d{1,2}(:\d{2})?\s*[-–]\s*\d{1,2}(:\d{2})?", "", text)
+    # Remove "@9", "@9:30"
+    text = re.sub(
+        r"\s*@\s*\d{1,2}(:\d{2})?\s*(am|pm)?",
+        "",
+        text,
+        flags=re.I,
+    )
 
+    # Remove trailing spaces
     return text.strip()
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
