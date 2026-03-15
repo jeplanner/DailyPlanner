@@ -59,16 +59,20 @@ function initDragResize() {
       const endSlot = Number(block.dataset.end);
 
       const duration = endSlot - startSlot;
-
+      let isLongPress = false;
       let longPressTimer = setTimeout(() => {
+        isLongPress = true;
         editEvent(startSlot, endSlot);
       }, 600);
 
       function move(ev) {
 
-        clearTimeout(longPressTimer);
-
         const delta = ev.clientY - startY;
+
+        // cancel long press only if user actually drags
+        if (Math.abs(delta) > 5) {
+          clearTimeout(longPressTimer);
+        }
 
         let newTop = startTop + delta;
 
@@ -76,14 +80,14 @@ function initDragResize() {
 
         const snappedSlot = Math.floor(newTop / slotHeight) + 1;
 
-        block.style.top =
-          `${(snappedSlot - 1) * slotHeight}px`;
-
+        block.style.top = `${(snappedSlot - 1) * slotHeight}px`;
       }
-
       function up(ev) {
 
-        clearTimeout(longPressTimer);
+        if (isLongPress) {
+          clearTimeout(longPressTimer);
+          return;
+        }
 
         block.releasePointerCapture(ev.pointerId);
 
