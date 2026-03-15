@@ -48,7 +48,7 @@ function initDragResize() {
 
     block.addEventListener("pointerdown", e => {
 
-      if (e.target === resizeHandle) return;
+      if (e.target.closest(".resize-handle, .edit-btn")) return;
 
       block.setPointerCapture(e.pointerId);
 
@@ -613,12 +613,15 @@ document.addEventListener("DOMContentLoaded",()=>{
 
 document.addEventListener("click", function(e){
 
-  if(!e.target.classList.contains("edit-btn")) return;
+  const btn = e.target.closest(".edit-btn");
+  if(!btn) return;
 
   e.stopPropagation();
 
-  const startSlot = Number(e.target.dataset.start);
-  const endSlot = Number(e.target.dataset.end);
+  const block = btn.closest(".event-block");
+
+  const startSlot = Number(block.dataset.start);
+  const endSlot = Number(block.dataset.end);
 
   editEvent(startSlot,endSlot);
 
