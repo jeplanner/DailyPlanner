@@ -6,7 +6,9 @@ let selected = null;
 let currentDate = new Date().toISOString().split("T")[0];
 let draggedTask = null;
 let snapLine = null;
-
+let creatingEvent = false;
+let createStartY = 0;
+let ghostEvent = null;
 /* =========================
    TIME HELPERS
 ========================= */
@@ -1098,5 +1100,82 @@ async function addToGoogleCalendar(ev) {
     console.error(err);
     alert("Error connecting to Google.");
   }
+}
+timeline.addEventListener("pointerdown", startCreateEvent);
+function startCreateEvent(e) {
+
+  // ignore if touching an existing event
+  if (e.target.closest(".event")) return;
+
+  creatingEvent = true;
+  createStartY = e.clientY;
+
+  const rect = timeline.getBoundingClientRect();
+  const y = createStartY - rect.top;
+
+  const minutesFromTop = (y / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+
+  const top = (snapped / 60) * HOUR_HEIGHT;
+
+  ghostEvent = document.createElement("div");
+  ghostEvent.className = "event ghost-event";
+  ghostEvent.style.top = top + "px";
+  ghostEvent.style.height = "5px";
+
+  timeline.appendChild(ghostEvent);
+
+  document.addEventListener("pointermove", moveCreateEvent);
+  document.addEventListener("pointerup", endCreateEvent);
+}
+function moveCreateEvent(e) {
+
+  if (!creatingEvent || !ghostEvent) return;
+
+  const rect = timeline.getBoundingClientRect();
+
+  const startY = createStartY - rect.top;
+  const currentY = e.clientY - rect.top;
+
+  const delta = currentY - startY;
+
+  if (delta < 0) return;
+
+  const minutes = (delta / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutes / SNAP) * SNAP;
+
+  const height = (snapped / 60) * HOUR_HEIGHT;
+
+  ghostEvent.style.height = height + "px";
+}
+function endCreateEvent(e) {
+
+  if (!creatingEvent) return;
+
+  const rect = timeline.getBoundingClientRect();
+
+  const startY = createStartY - rect.top;
+  const endY = e.clientY - rect.top;
+
+  const startMinutes = Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+  const endMinutes = Math.round(((endY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+
+  if (ghostEvent) ghostEvent.remove();
+
+  creatingEvent = false;
+  ghostEvent = null;
+
+  document.removeEventListener("pointermove", moveCreateEvent);
+  document.removeEventListener("pointerup", endCreateEvent);
+
+  if (endMinutes <= startMinutes) return;
+
+  const start = toTime(startMinutes);
+  const duration = endMinutes - startMinutes;
+
+  openCreateModal();
+
+  document.getElementById("start-time").value = start;
+  document.getElementById("duration").value = duration;
 }
 

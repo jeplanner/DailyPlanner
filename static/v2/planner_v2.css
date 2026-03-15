@@ -35,6 +35,7 @@ body {
   position: relative;
   min-height: 100vh;
   padding-left: 40px;
+  touch-action: pan-y;
 }
 
 /* ============================= */
@@ -604,4 +605,13 @@ body {
   font-size: 13px;
   opacity: .6;
   margin-bottom: 10px;
+}
+.ghost-event {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  background: rgba(33,150,243,0.25);
+  border: 2px dashed #2196f3;
+  border-radius: 6px;
+  pointer-events: none;
 }
