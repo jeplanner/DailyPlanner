@@ -10,6 +10,7 @@ from config import (
     HEALTH_HABITS,
     MIN_HEALTH_HABITS,
 )
+from routes.planner import clean_plan_text
 from utils.slots import generate_half_hour_slots
 import logging
 from supabase_client import get, post, update
@@ -259,13 +260,13 @@ def save_day(plan_date, form):
                         )
 
                         next_pos = max_pos[0]["position"] + 1 if max_pos else 0
-
+                        cleanedtext=clean_plan_text(line)
                         post(
                             "todo_matrix",
                             {
                                 "plan_date": str(plan_date),
                                 "quadrant": quadrant,
-                                "task_text": parsed["title"],
+                                "task_text": cleanedtext,
                                 "is_done": False,
                                 "is_deleted": False,
                                 "position": next_pos,
@@ -328,13 +329,13 @@ def save_day(plan_date, form):
                         )
 
                       next_pos = max_pos[0]["position"] + 1 if max_pos else 0
-
+                      cleanedtext=clean_plan_text(line)
                       post(
                             "todo_matrix",
                             {
                                 "plan_date": str(task_date),
                                 "quadrant": quadrant,
-                                "task_text": parsed["title"],
+                                "task_text": cleanedtext,
                                 "task_date": str(task_date),   # ✅ retain date
                                 "task_time": task_time,        # ✅ retain time
                                 "is_done": False,

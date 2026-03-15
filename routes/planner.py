@@ -1,7 +1,7 @@
 import calendar
 from datetime import date, datetime, timedelta
 import os
-
+import re
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from supabase_client import post
 import pytz
@@ -282,6 +282,20 @@ def slot_to_time(slot):
 
     return f"{hours:02}:{minutes:02}"
 
+
+def clean_plan_text(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # remove patterns like "from 9 to 10"
+    text = re.sub(r"\s*from\s+\d+.*$", "", text, flags=re.IGNORECASE)
+
+    # remove patterns like "9:00 - 10:00"
+    text = re.sub(r"\s*\d{1,2}(:\d{2})?\s*[-–]\s*\d{1,2}(:\d{2})?", "", text)
+
+    return text.strip()
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
 def update_slot():
@@ -295,8 +309,9 @@ def update_slot():
 
     new_start = int(data["start_slot"])
 
-    text = (data.get("text") or "").strip()
-
+    text = clean_plan_text((data.get("text")))
+    # remove any "from X to Y" or time pattern
+    text = re.sub(r"\s*from.*$", "", text, flags=re.IGNORECASE).strip()
     priority = data.get("priority", "Medium")
     category = data.get("category", "Office")
 
