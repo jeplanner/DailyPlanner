@@ -293,7 +293,6 @@ function openCreateEvent(startSlot, endSlot) {
 /* =========================================================
    EDIT EVENT
 ========================================================= */
-
 function editEvent(startSlot, endSlot) {
 
   const modal = document.getElementById("modal");
@@ -306,17 +305,35 @@ function editEvent(startSlot, endSlot) {
       content.innerHTML = `
         <h3>Edit Event</h3>
 
-        <textarea id="editText"
-        style="width:100%;min-height:120px;">
-${data.text || ""}
-        </textarea>
+        <label>Event</label>
+        <textarea id="editText" style="width:100%;min-height:80px;">${data.text || ""}</textarea>
+
+        <br><br>
+
+        <label>Start</label>
+        <input type="time" id="editStart" value="${data.start_time || ""}">
+
+        <label>End</label>
+        <input type="time" id="editEnd" value="${data.end_time || ""}">
+
+        <br><br>
+
+        <label>Priority</label>
+        <select id="editPriority">
+          <option ${data.priority=="Low"?"selected":""}>Low</option>
+          <option ${data.priority=="Medium"?"selected":""}>Medium</option>
+          <option ${data.priority=="High"?"selected":""}>High</option>
+        </select>
+
+        <br><br>
+
+        <label>Category</label>
+        <input type="text" id="editCategory" value="${data.category || "Office"}">
 
         <br><br>
 
         <button onclick="closeModal()">Cancel</button>
-        <button onclick="saveFromModal(${startSlot},${endSlot})">
-        Save
-        </button>
+        <button onclick="saveFromModal(${startSlot},${endSlot})">Save</button>
       `;
 
       modal.style.display = "flex";
@@ -503,25 +520,44 @@ function parseTimeRange(text){
   };
 
 }
+function timeToSlot(time){
 
+  const [h,m] = time.split(":").map(Number);
+
+  return h*2 + (m>=30 ? 2 : 1);
+
+}
 /* =========================================================
    SAVE FROM MODAL
 ========================================================= */
-
 function saveFromModal(oldStart, oldEnd){
 
-  const startTime = document.getElementById("editStart")?.value;
-  const endTime = document.getElementById("editEnd")?.value;
-
-  if(!startTime || !endTime) return;
+  const text = document.getElementById("editText").value;
+  const startTime = document.getElementById("editStart").value;
+  const endTime = document.getElementById("editEnd").value;
+  const priority = document.getElementById("editPriority").value;
+  const category = document.getElementById("editCategory").value;
 
   const newStart = timeToSlot(startTime);
   const newEnd = timeToSlot(endTime) - 1;
 
-  saveEvent(oldStart, oldEnd, newStart, newEnd);
+  fetch("/slot/update", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      old_start: oldStart,
+      old_end: oldEnd,
+      start_slot: newStart,
+      end_slot: newEnd,
+      text,
+      priority,
+      category
+    })
+  })
+  .then(()=>location.reload());
 
 }
-
 /* =========================================================
    SLOT CHECKBOX STATUS
 ========================================================= */
