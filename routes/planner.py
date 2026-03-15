@@ -274,10 +274,13 @@ def get_slot():
     )
     return jsonify({"text": row[0]["plan"] if row else ""})
 def slot_to_time(slot):
-    minutes = slot * 30
-    h = minutes // 60
-    m = minutes % 60
-    return f"{h:02d}:{m:02d}"
+
+    base_minutes = (slot - 1) * 30
+
+    hours = base_minutes // 60
+    minutes = base_minutes % 60
+
+    return f"{hours:02}:{minutes:02}"
 
 @planner_bp.route("/slot/update", methods=["POST"])
 @login_required
