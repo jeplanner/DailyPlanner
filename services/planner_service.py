@@ -188,6 +188,7 @@ def clean_plan_text(text: str) -> str:
 def save_day(plan_date, form):
     user_id=session["user_id"]
     payload = []
+    print("Hey i am getting called...")
     #auto_untimed = []
    # existing_meta = {}
    # meta_rows = get(
@@ -211,6 +212,7 @@ def save_day(plan_date, form):
     # -------------------------------------------------
     if smart_block:
         for line in smart_block.splitlines():
+            
             # -------------------------------------------------
             # Normalize leading time formats
             # -------------------------------------------------
@@ -233,6 +235,7 @@ def save_day(plan_date, form):
                 line = f"{m.group(5)} from {start} to {end}"
 
             line = line.strip()
+          
             if not line:
                 continue
             has_time = re.search(

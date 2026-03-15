@@ -281,7 +281,7 @@ def slot_to_time(slot):
     minutes = base_minutes % 60
 
     return f"{hours:02}:{minutes:02}"
-import re
+
 
 def clean_plan_text(text: str) -> str:
 
