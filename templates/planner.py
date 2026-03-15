@@ -159,6 +159,7 @@ PLANNER_TEMPLATE = """
   class="edit-btn"
   data-start="{{ block.start_slot }}"
   data-end="{{ block.end_slot }}"
+  type="button" 
 >
 ✏️
 </button>
