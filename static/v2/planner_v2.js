@@ -232,6 +232,7 @@ function render() {
 
     gbtn.addEventListener("click", (e) => {
       e.stopPropagation(); // prevents modal
+      addToGoogleCalendar(ev);
     });
   
     div.addEventListener("click", (e) => {
@@ -1164,3 +1165,25 @@ function endCreateEvent(e) {
   document.getElementById("duration").value = normalizeDuration(duration);
 }
 
+async function addToGoogleCalendar(ev) {
+
+  const title = encodeURIComponent(ev.title || ev.task_text || "");
+  const description = encodeURIComponent(ev.description || "");
+
+  const date = currentDate.replaceAll("-", "");
+
+  const start = ev.start_time.replace(":", "") + "00";
+  const end = ev.end_time.replace(":", "") + "00";
+
+  const reminder = ev.reminder_minutes || 10;
+
+  const url =
+    `https://calendar.google.com/calendar/render?action=TEMPLATE` +
+    `&text=${title}` +
+    `&details=${description}` +
+    `&dates=${date}T${start}/${date}T${end}` +
+    `&trp=true` +
+    `&reminder=${reminder}`;
+
+  window.open(url, "_blank");
+}
