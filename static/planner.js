@@ -306,7 +306,6 @@ function openCreateEvent(startSlot, endSlot) {
 /* =========================================================
    EDIT EVENT
 ========================================================= */
-
 function editEvent(startSlot, endSlot) {
 
   const modal = document.getElementById("modal");
@@ -316,35 +315,37 @@ function editEvent(startSlot, endSlot) {
     .then(r => r.json())
     .then(data => {
 
-    content.innerHTML = `
+      content.innerHTML = `
         <h3>Edit Event</h3>
 
         <label>Event</label>
-       <textarea id="editText" style="width:100%;min-height:80px;">${data.plan || ""}</textarea>
+        <textarea id="editText" style="width:100%;min-height:80px;">${data.plan || ""}</textarea>
 
         <br><br>
 
-      <label>Start Time</label>
-      <input type="time" id="editStart"
-            value="${data.start_time || ""}"
-            onchange="updateEndTime()">
+        <label>Start Time</label>
+        <input type="time" id="editStart"
+               value="${data.start_time || ""}"
+               onchange="updateEndTime()">
 
-      <br><br>
+        <br><br>
 
-    <label>Duration</label>
-    <select id="editDuration" onchange="updateEndTime()">
-      <option value="30">30 mins</option>
-      <option value="60">1 hour</option>
-      <option value="90">1.5 hours</option>
-      <option value="120">2 hours</option>
-      <option value="150">2.5 hours</option>
-      <option value="180">3 hours</option>
-    </select>
+        <label>Duration</label>
+        <select id="editDuration" onchange="updateEndTime()">
+          <option value="30">30 mins</option>
+          <option value="60">1 hour</option>
+          <option value="90">1.5 hours</option>
+          <option value="120">2 hours</option>
+          <option value="150">2.5 hours</option>
+          <option value="180">3 hours</option>
+        </select>
 
-    <br><br>
+        <br><br>
 
-    <label>End Time</label>
-    <input type="time" id="editEnd" disabled>
+        <label>End Time</label>
+        <input type="time" id="editEnd" disabled>
+
+        <br><br>
 
         <label>Priority</label>
         <select id="editPriority">
@@ -357,45 +358,46 @@ function editEvent(startSlot, endSlot) {
 
         <label>Category</label>
         <input type="text" id="editCategory"
-              value="${data.category || ""}">
+               value="${data.category || ""}">
 
         <br><br>
 
         <label>Tags</label>
         <input type="text" id="editTags"
-              placeholder="comma separated tags">
+               placeholder="comma separated tags">
 
         <br><br>
 
         <button onclick="closeModal()">Cancel</button>
-
-        <button onclick="saveFromModal(${startSlot},${endSlot})">
-        Save
-        </button>
-        `;
+        <button onclick="saveFromModal(${startSlot},${endSlot})">Save</button>
+      `;
 
       modal.style.display = "flex";
 
+      /* ---- AUTO CALCULATE DURATION FOR EXISTING EVENTS ---- */
+
+      const start = data.start_time;
+      const end = data.end_time;
+
+      if(start && end){
+
+        const [sh,sm] = start.split(":").map(Number);
+        const [eh,em] = end.split(":").map(Number);
+
+        const duration =
+          (eh*60 + em) - (sh*60 + sm);
+
+        const durationEl = document.getElementById("editDuration");
+
+        if(durationEl){
+          durationEl.value = duration;
+        }
+
+        updateEndTime();
+      }
+
     });
-    setTimeout(()=>{
 
-  const start = "${data.start_time || ""}";
-  const end = "${data.end_time || ""}";
-
-  if(start && end){
-
-    const [sh,sm] = start.split(":").map(Number);
-    const [eh,em] = end.split(":").map(Number);
-
-    const duration =
-      (eh*60 + em) - (sh*60 + sm);
-
-    document.getElementById("editDuration").value = duration;
-
-    updateEndTime();
-  }
-
-    },0);
 }
 
 function closeModal() {
