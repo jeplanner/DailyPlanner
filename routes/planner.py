@@ -285,16 +285,12 @@ def update_slot():
 
     data = request.get_json()
 
-    # -----------------------------------------------------
-    # 1️⃣ Parse input safely
-    # -----------------------------------------------------
     plan_date = data["plan_date"]
 
     old_start = int(data["old_start"])
     old_end = int(data["old_end"])
 
-    start = int(data["start_slot"])
-    end = int(data["end_slot"])
+    new_start = int(data["start_slot"])
 
     text = (data.get("text") or "").strip()
 
@@ -304,19 +300,24 @@ def update_slot():
     user_id = session["user_id"]
 
     # -----------------------------------------------------
+    # 1️⃣ Calculate duration safely
+    # -----------------------------------------------------
+    duration = old_end - old_start
+    new_end = new_start + duration
+
+    # -----------------------------------------------------
     # 2️⃣ No-op protection
     # -----------------------------------------------------
-    if old_start == start and old_end == end:
+    if old_start == new_start:
         return ("", 204)
 
     logger.debug(
-        "DRAG MOVE user=%s old=%s-%s new=%s-%s text=%s",
-        user_id, old_start, old_end, start, end, text
+        "DRAG MOVE user=%s old=%s-%s new=%s-%s",
+        user_id, old_start, old_end, new_start, new_end
     )
 
     # -----------------------------------------------------
-    # 3️⃣ Clear previous slots
-    # (explicit slot clearing — reliable with Supabase)
+    # 3️⃣ Clear original slots
     # -----------------------------------------------------
     for slot in range(old_start, old_end + 1):
 
@@ -336,29 +337,26 @@ def update_slot():
         )
 
     # -----------------------------------------------------
-    # 4️⃣ Build new slot rows
+    # 4️⃣ Build new slots
     # -----------------------------------------------------
     rows = []
 
-    for slot in range(start, end + 1):
-
-        start_time = slot_to_time(slot)
-        end_time = slot_to_time(slot + 1)
+    for slot in range(new_start, new_end + 1):
 
         rows.append({
             "user_id": user_id,
             "plan_date": plan_date,
             "slot": slot,
-            "plan": text,
-            "start_time": start_time,
-            "end_time": end_time,
+            "plan": text,   # do NOT store time inside text
+            "start_time": slot_to_time(slot),
+            "end_time": slot_to_time(slot + 1),
             "priority": priority,
             "category": category,
             "status": DEFAULT_STATUS,
         })
 
     # -----------------------------------------------------
-    # 5️⃣ UPSERT new slots (single query)
+    # 5️⃣ Single UPSERT (atomic)
     # -----------------------------------------------------
     if rows:
 
@@ -369,7 +367,6 @@ def update_slot():
         )
 
     return ("", 204)
-
 
 @planner_bp.route("/untimed/promote", methods=["POST"])
 @login_required
