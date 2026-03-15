@@ -269,7 +269,7 @@ def get_slot():
             "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
             "slot": f"eq.{slot}",
-            "select": "plan",
+            "select":"plan,start_time,end_time,priority,category"
         },
     )
     return jsonify({"text": row[0]["plan"] if row else ""})

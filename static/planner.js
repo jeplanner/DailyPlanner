@@ -532,16 +532,13 @@ function parseTimeRange(text){
 function saveFromModal(oldStart, oldEnd){
 
   const text = document.getElementById("editText").value;
-
   const startTime = document.getElementById("editStart").value;
   const endTime = document.getElementById("editEnd").value;
-
   const priority = document.getElementById("editPriority").value;
   const category = document.getElementById("editCategory").value;
-  const tags = document.getElementById("editTags")?.value || "";
 
-  const newStart = timeToSlot(startTime);
-  const newEnd = timeToSlot(endTime) - 1;
+  const newStart = startTime ? timeToSlot(startTime) : oldStart;
+  const newEnd = endTime ? timeToSlot(endTime) - 1 : oldEnd;
 
   fetch("/slot/update",{
     method:"POST",
@@ -554,8 +551,7 @@ function saveFromModal(oldStart, oldEnd){
       end_slot: newEnd,
       text,
       priority,
-      category,
-      tags
+      category
     })
   })
   .then(()=>location.reload());
