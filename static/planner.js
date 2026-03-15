@@ -66,15 +66,18 @@ function initDragResize() {
 
       function move(ev) {
 
-        clearTimeout(longPressTimer);
-
         const delta = ev.clientY - startY;
+
+        // only cancel long press if user actually drags
+        if (Math.abs(delta) > 5) {
+          clearTimeout(longPressTimer);
+        }
 
         let newTop = startTop + delta;
 
         if (newTop < 0) newTop = 0;
 
-        const snappedSlot = Math.round(newTop / slotHeight) + 1;
+        const snappedSlot = Math.floor(newTop / slotHeight) + 1;
 
         block.style.top =
           `${(snappedSlot - 1) * slotHeight}px`;
@@ -88,11 +91,15 @@ function initDragResize() {
         block.releasePointerCapture(ev.pointerId);
 
         const newStart =
-          Math.round(block.offsetTop / slotHeight) + 1;
+        Math.floor(block.offsetTop / slotHeight) + 1;
 
         const newEnd = newStart + duration;
 
-        saveEvent(startSlot, endSlot, newStart, newEnd,block);
+        saveEvent(startSlot, endSlot, newStart, newEnd, block);
+
+        // update dataset so next drag works
+        block.dataset.start = newStart;
+        block.dataset.end = newEnd;
 
         document.removeEventListener("pointermove", move);
         document.removeEventListener("pointerup", up);
@@ -143,7 +150,7 @@ function initDragResize() {
 
           const height = block.offsetHeight;
 
-          const slots = Math.round(height / slotHeight);
+          const slots = Math.floor(height / slotHeight);
 
           const newEnd = startSlot + slots - 1;
 
@@ -346,9 +353,35 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
       end_slot: newEnd,
       text: text
     })
+  })
+  .then(r => {
+    if (!r.ok) throw new Error("Save failed");
+
+    // update UI locally
+    if (block) {
+
+      block.dataset.start = newStart;
+      block.dataset.end = newEnd;
+      block.dataset.text = text;
+
+      const slotHeight = parseFloat(
+        getComputedStyle(document.documentElement)
+        .getPropertyValue("--slot-height")
+      );
+
+      block.style.top = `${(newStart - 1) * slotHeight}px`;
+      block.style.height =
+        `${(newEnd - newStart + 1) * slotHeight}px`;
+    }
+
+  })
+  .catch(err => {
+    console.error(err);
+    alert("Failed to save event");
   });
 
 }
+
 /* =========================================================
    SMART PLANNER
 ========================================================= */
