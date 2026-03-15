@@ -216,7 +216,15 @@ def save_day(plan_date, form):
             # -------------------------------------------------
             # Normalize leading time formats
             # -------------------------------------------------
+            m = re.match(r"^(\d{1,2})(?:[.:](\d{2}))?\s*-\s*(\d{1,2})(?:[.:](\d{2}))?\s+(.+)$", line)
+            if m:
+                sh = m.group(1)
+                sm = m.group(2) or "00"
+                eh = m.group(3)
+                em = m.group(4) or "00"
+                task = m.group(5)
 
+                line = f"{task} from {sh}:{sm} to {eh}:{em}"
             # Case 1: "9 task" → "task @9"
             m = re.match(r"^(\d{1,2})(?:\s+)(.+)$", line)
             if m:
