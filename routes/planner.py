@@ -256,23 +256,25 @@ def untimed_slot_preview():
         })
 
     return preview, 200
-
 @planner_bp.route("/slot/get")
 @login_required
 def get_slot():
+
     plan_date = request.args["date"]
     slot = int(request.args["slot"])
     user_id = session["user_id"]
+
     row = get(
         "daily_slots",
         params={
             "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
             "slot": f"eq.{slot}",
-            "select":"plan,start_time,end_time,priority,category"
+            "select": "plan,start_time,end_time,priority,category"
         },
     )
-    return jsonify({"text": row[0]["plan"] if row else ""})
+
+    return jsonify(row[0] if row else {})
 def slot_to_time(slot):
 
     base_minutes = (slot - 1) * 30
