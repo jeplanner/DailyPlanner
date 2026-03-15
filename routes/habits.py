@@ -183,7 +183,15 @@ def habit_detail(habit_id):
                 "goal": float(goal)
             }
         )
-
+           # 🔴 INSERT GOAL HISTORY
+        post(
+            "habit_goal_history",
+            {
+                "habit_id": habit_id,
+                "goal": float(goal),
+                "effective_from": date.today().isoformat()
+            }
+        )
         return jsonify({"success": True})
 
 def get_goal_for_date(habit_id, plan_date):
