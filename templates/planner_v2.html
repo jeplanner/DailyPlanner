@@ -111,31 +111,27 @@
       <textarea id="event-desc" placeholder="Optional notes..."></textarea>
     </div>
   </div>
+<div class="form-group">
+  <label>Reminder</label>
+  <div class="reminder-row">
+    <select id="reminder-select" onchange="handleReminderSelect()">
+      <option value="0">No reminder</option>
+      <option value="5">5 mins before</option>
+      <option value="10">10 mins before</option>
+      <option value="15">15 mins before</option>
+      <option value="30">30 mins before</option>
+      <option value="60">1 hour before</option>
+      <option value="custom">Custom</option>
+    </select>
 
-   <div class="form-group">
-    <label>Reminder</label>
-    <div class="reminder-row">
-      ...
-    </div>
+    <input
+      type="number"
+      id="custom-reminder"
+      placeholder="Minutes"
+      min="1"
+      style="display:none;">
   </div>
-    <div class="reminder-row">
-      <select id="reminder-select" onchange="handleReminderSelect()">
-        <option value="0">No reminder</option>
-        <option value="5">5 mins before</option>
-        <option value="10">10 mins before</option>
-        <option value="15">15 mins before</option>
-        <option value="30">30 mins before</option>
-        <option value="60">1 hour before</option>
-        <option value="custom">Custom</option>
-      </select>
-
-      <input type="number"
-             id="custom-reminder"
-             placeholder="Minutes"
-             min="1"
-             style="display:none;">
-    </div>
-
+</div>
     <!-- Actions -->
     <div class="modal-actions modern-actions">
       <button class="primary-btn" onclick="saveEvent()">Save</button>
@@ -145,82 +141,88 @@
   </div>
 </div>
 
-<div id="task-card-modal" class="hidden" >
+
+ <div id="task-card-modal" class="hidden">
   <div class="task-card">
 
     <h2>Project Task</h2>
 
-    <label>Title</label>
-    <input id="task-title">
+    <div class="task-grid">
 
-    <label>Description</label>
-    <textarea id="task-description"></textarea>
+      <div class="full">
+        <label>Title</label>
+        <input id="task-title">
+      </div>
 
-    <label>Status</label>
-    <select id="task-status">
-      <option value="open">Open</option>
-      <option value="in_progress">In Progress</option>
-      <option value="done">Done</option>
-    </select>
+      <div class="full">
+        <label>Description</label>
+        <textarea id="task-description"></textarea>
+      </div>
 
-    <label>Priority</label>
-    <select id="task-priority">
-      <option value="low">Low</option>
-      <option value="medium">Medium</option>
-      <option value="high">High</option>
-    </select>
+      <div>
+        <label>Status</label>
+        <select id="task-status">
+          <option value="open">Open</option>
+          <option value="in_progress">In Progress</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
 
-    <label>Planned Hours</label>
-<div class="number-control" data-target="task-planned-hours" data-step="0.5">
-  <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
-  <input id="task-planned-hours"
-         type="number"
-         min="0"
-         max="100"
-         step="0.5"
-         value="0"
-         oninput="validateTaskNumber(this)">
-  <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
-</div>
+      <div>
+        <label>Priority</label>
+        <select id="task-priority">
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
 
-<label>Actual Hours</label>
-<div class="number-control" data-target="task-actual-hours" data-step="0.5">
-  <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
-  <input id="task-actual-hours"
-         type="number"
-         min="0"
-         max="100"
-         step="0.5"
-         value="0"
-         oninput="validateTaskNumber(this)">
-  <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
-</div>
+      <div>
+        <label>Planned Hours</label>
+        <div class="number-control" data-target="task-planned-hours" data-step="0.5">
+          <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
+          <input id="task-planned-hours" type="number" step="0.5" value="0">
+          <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
+        </div>
+      </div>
 
-<label>Duration (days)</label>
-<div class="number-control" data-target="task-duration" data-step="1">
-  <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
-  <input id="task-duration"
-         type="number"
-         min="0"
-         max="100"
-         step="1"
-         value="0"
-         oninput="validateTaskNumber(this)">
-  <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
-</div>
+      <div>
+        <label>Actual Hours</label>
+        <div class="number-control" data-target="task-actual-hours" data-step="0.5">
+          <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
+          <input id="task-actual-hours" type="number" step="0.5" value="0">
+          <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
+        </div>
+      </div>
 
-    <label>Due Date</label>
-    <input id="task-due-date" type="date">
+      <div>
+        <label>Duration (days)</label>
+        <div class="number-control" data-target="task-duration" data-step="1">
+          <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
+          <input id="task-duration" type="number" step="1" value="0">
+          <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
+        </div>
+      </div>
 
-    <label>Start Time</label>
-    <input id="task-start-time" type="time">
+      <div>
+        <label>Due Date</label>
+        <input id="task-due-date" type="date">
+      </div>
+
+      <div>
+        <label>Start Time</label>
+        <input id="task-start-time" type="time">
+      </div>
+
+    </div>
 
     <div class="task-card-actions">
       <button class="primary-btn" onclick="saveTaskCard()">Save</button>
       <button class="secondary-btn" onclick="closeTaskCard()">Cancel</button>
     </div>
 
-  </div>
+
+</div>
 </div>
 
 

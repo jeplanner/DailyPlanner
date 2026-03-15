@@ -332,8 +332,34 @@ body {
   overflow-y: auto;
   border-radius: 20px;
   box-shadow: 0 25px 60px rgba(0,0,0,0.25);
+  padding: 20px;
+}
+.task-card input,
+.task-card textarea,
+.task-card select {
+
+  width: 100%;
+  padding: 9px 10px;
+
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+
+  background: #fafafa;
 }
 
+.task-card textarea {
+  min-height: 70px;
+}
+.task-card label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+.task-card h2{
+  margin-bottom:18px;
+  font-size:20px;
+  font-weight:700;
+}
 @media (max-width: 640px) {
 
   #task-card-modal {
@@ -444,7 +470,20 @@ body {
   justify-content: space-between;
   align-items: center;
 }
+/* =============================
+   Task Modal Grid Layout
+============================= */
 
+.task-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 20px;
+  margin-top: 10px;
+}
+
+.task-grid .full {
+  grid-column: 1 / -1;
+}
 .gcal-btn {
   background: transparent;
   border: none;
