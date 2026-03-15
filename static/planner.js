@@ -297,9 +297,7 @@ function editEvent(startSlot, endSlot) {
         <h3>Edit Event</h3>
 
         <label>Event</label>
-        <textarea id="editText" style="width:100%;min-height:80px;">
-        ${data.text || ""}
-        </textarea>
+       <textarea id="editText" style="width:100%;min-height:80px;">${data.plan || ""}</textarea>
 
         <br><br>
 
