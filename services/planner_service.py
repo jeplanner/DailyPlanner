@@ -413,7 +413,7 @@ def save_day(plan_date, form):
                             "recurring_slots",
                             {
                                 "user_id": user_id,
-                                "title": parsed["title"],
+                                "title": clean_plan_text(parsed["title"]),
                                 "start_slot": first_slot,
                                 "slot_count": slot_count,
                                 "recurrence_type": recurrence["type"],
@@ -433,7 +433,7 @@ def save_day(plan_date, form):
                         {
                             "plan_date": str(task_date),
                             "slot": s["slot"],
-                            "plan": parsed["title"],
+                            "plan": clean_plan_text(parsed["title"]),
 
                             # 🔥 ADD THESE TWO LINES
                             "start_time": s["start"].strftime("%H:%M"),

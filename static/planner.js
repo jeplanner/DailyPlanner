@@ -336,18 +336,25 @@ function saveEvent(oldStart, oldEnd, newStart, newEnd, block=null) {
     "";
 
   fetch("/slot/update", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({
-      plan_date: PLAN_DATE,
-      old_start: oldStart,
-      old_end: oldEnd,
-      start_slot: newStart,
-      end_slot: newEnd,
-      text: text
-    })
+  method: "POST",
+  headers: {"Content-Type":"application/json"},
+  body: JSON.stringify({
+    plan_date: PLAN_DATE,
+    old_start: oldStart,
+    old_end: oldEnd,
+    start_slot: newStart,
+    end_slot: newEnd,
+    text: text
+  })
+  })
+  .then(r=>{
+    if(!r.ok) throw new Error("Save failed");
+    location.reload();
+  })
+  .catch(err=>{
+    console.error(err);
+    alert("Failed to update event");
   });
-
 }
 /* =========================================================
    SMART PLANNER
