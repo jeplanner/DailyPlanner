@@ -126,20 +126,40 @@ body {
   right: 0;
   pointer-events: none;
 }
-
 .event-block {
   position: absolute;
   left: calc(var(--time-column-width) + 12px);
   right: 12px;
-  .event-block{
+
   touch-action: pan-y;
   cursor: grab;
   will-change: top, height;
+
   background: linear-gradient(
     180deg,
     var(--event-bg) 0%,
     var(--event-bg-strong) 100%
   );
+
+  border-left: 4px solid var(--event-border);
+  border-radius: 12px;
+  padding: 10px 14px;
+
+  font-size: 14px;
+  line-height: 1.4;
+  color: #0f172a;
+
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.04),
+    0 6px 14px rgba(37,99,235,0.12);
+
+  box-sizing: border-box;
+  white-space: normal;
+  word-break: break-word;
+
+  min-height: var(--slot-height);
+  pointer-events: auto;
+}
 
   border-left: 4px solid var(--event-border);
   border-radius: 12px;
