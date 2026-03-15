@@ -60,16 +60,27 @@ function initDragResize() {
 
       const duration = endSlot - startSlot;
       let isLongPress = false;
-      let longPressTimer = setTimeout(() => {
-        isLongPress = true;
-        editEvent(startSlot, endSlot);
-      }, 600);
 
-      function move(ev) {
+      let longPressTimer = setTimeout(() => {
+
+      isLongPress = true;
+
+      // stop drag listeners
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+
+      block.releasePointerCapture(e.pointerId);
+
+      editEvent(startSlot, endSlot);
+
+    }, 500);
+
+     function move(ev) {
+
+        if (isLongPress) return;
 
         const delta = ev.clientY - startY;
 
-        // cancel long press only if user actually drags
         if (Math.abs(delta) > 5) {
           clearTimeout(longPressTimer);
         }
@@ -81,32 +92,27 @@ function initDragResize() {
         const snappedSlot = Math.floor(newTop / slotHeight) + 1;
 
         block.style.top = `${(snappedSlot - 1) * slotHeight}px`;
-      }
-      function up(ev) {
-
-        if (isLongPress) {
-          clearTimeout(longPressTimer);
-          return;
-        }
-
-        block.releasePointerCapture(ev.pointerId);
-
-        const newStart =
-          Math.floor(block.offsetTop / slotHeight) + 1;
-
-        const newEnd = newStart + duration;
-
-        saveEvent(startSlot, endSlot, newStart, newEnd,block);
-
-        document.removeEventListener("pointermove", move);
-        document.removeEventListener("pointerup", up);
 
       }
+    function up(ev) {
 
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", up);
+      clearTimeout(longPressTimer);
 
-    });
+      if (isLongPress) return;
+
+      block.releasePointerCapture(ev.pointerId);
+
+      const newStart =
+        Math.floor(block.offsetTop / slotHeight) + 1;
+
+      const newEnd = newStart + duration;
+
+      saveEvent(startSlot, endSlot, newStart, newEnd, block);
+
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+
+    }
 
     /* ---------- RESIZE ---------- */
 
