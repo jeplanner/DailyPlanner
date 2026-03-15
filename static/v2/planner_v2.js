@@ -232,7 +232,6 @@ function render() {
 
     gbtn.addEventListener("click", (e) => {
       e.stopPropagation(); // prevents modal
-      addToGoogleCalendar(ev);
     });
   
     div.addEventListener("click", (e) => {
@@ -1086,42 +1085,7 @@ async function runSmartPlanner() {
 
   loadEvents();
 }
-async function addToGoogleCalendar(ev) {
 
-  try {
-
-    const payload = {
-      title: ev.title || ev.task_text,
-      description: ev.description || "",
-      plan_date: currentDate,
-      start_time: ev.start_time,
-      end_time: ev.end_time
-    };
-
-    const res = await fetch("/add-to-calendar", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (res.redirected) {
-      window.location.href = res.url;  // 🔐 OAuth redirect
-      return;
-    }
-
-    const data = await res.json();
-
-    if (data.status === "success") {
-      alert("Added to Google Calendar ✅");
-    } else {
-      alert("Failed to add event.");
-    }
-
-  } catch (err) {
-    console.error(err);
-    alert("Error connecting to Google.");
-  }
-}
 timeline.addEventListener("pointerdown", startCreateEvent);
 function startCreateEvent(e) {
 
