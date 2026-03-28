@@ -167,7 +167,30 @@ body.menu-open{
   color:#111827;
   margin-top:6px;
 }
+.planner-toggle{
+  display:flex;
+  gap:6px;
+  margin-bottom:14px;
+  background:#eef2f7;
+  padding:4px;
+  border-radius:10px;
+  width:fit-content;
+}
 
+.toggle-btn{
+  text-decoration:none;
+  font-size:13px;
+  font-weight:600;
+  padding:6px 10px;
+  border-radius:8px;
+  color:#6b7280;
+}
+
+.toggle-btn.active{
+  background:#ffffff;
+  color:#2563eb;
+  box-shadow:0 2px 6px rgba(0,0,0,0.08);
+}
 </style>
 
 
@@ -228,7 +251,40 @@ body.menu-open{
       <i data-feather="bar-chart-2"></i>
       Weekly
     </a>
+    <div style="padding:10px 16px;">
 
+  <div class="planner-toggle">
+
+    <!-- SLOT MODE -->
+    <a href="
+      ?view={{ view }}
+      {% if view == 'weekly' %}
+        &week={{ selected_week }}
+      {% else %}
+        &date={{ date }}
+      {% endif %}
+      &mode=slots"
+      
+      class="toggle-btn {{ 'active' if request.args.get('mode', 'slots') == 'slots' else '' }}">
+      Slot Planner
+    </a>
+
+    <!-- V2 MODE -->
+    <a href="
+      ?view={{ view }}
+      {% if view == 'weekly' %}
+        &week={{ selected_week }}
+      {% else %}
+        &date={{ date }}
+      {% endif %}
+      &mode=v2"
+      
+      class="toggle-btn {{ 'active' if request.args.get('mode') == 'v2' else '' }}">
+      Planner V2
+    </a>
+
+    </div>
+  </div>
     {% if project is defined %}
 
     <a href="/projects/{{ project.project_id }}/gantt" title="Gantt">

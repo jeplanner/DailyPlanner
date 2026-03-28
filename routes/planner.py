@@ -576,11 +576,16 @@ def schedule_untimed():
 
     return ("", 204)
 
-
 @planner_bp.route("/summary")
 @login_required
 def summary():
     view = request.args.get("view", "daily")
+
+    # -------------------------
+    # ✅ Planner Mode (NEW)
+    # -------------------------
+    planner_mode = request.args.get("mode", "slots")  
+    # options: "slots" | "v2"
 
     # -------------------------
     # DAILY DATE PARAM
@@ -610,7 +615,8 @@ def summary():
 
         end = start + timedelta(days=6)
 
-        data = get_weekly_summary(start, end)
+        # ✅ pass planner_mode
+        data = get_weekly_summary(start, end, planner_mode)
         insights = generate_weekly_insight(data)
 
         return render_template_string(
@@ -618,21 +624,23 @@ def summary():
             view="weekly",
             data=data,
             start=start,
-            end=end,  # ✅ FIXED (was plan_date)
+            end=end,
             insights=insights,
-            selected_week=start.strftime("%G-W%V"),  # for picker value
+            selected_week=start.strftime("%G-W%V"),
+            request=request   # ✅ REQUIRED
         )
 
     # =========================
     # DAILY VIEW
     # =========================
-    data = get_daily_summary(plan_date)
+    data = get_daily_summary(plan_date, planner_mode)  # ✅ pass flag
 
     return render_template_string(
         SUMMARY_TEMPLATE,
         view="daily",
         data=data,
         date=plan_date,
+        request=request   # ✅ REQUIRED
     )
 def get_plans_for_date(plan_date):
     return [

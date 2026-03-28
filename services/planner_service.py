@@ -582,31 +582,7 @@ def save_day(plan_date, form):
 
 
 SLOT_LABELS = {i: slot_label(i) for i in range(1, TOTAL_SLOTS + 1)}
-
-def get_daily_summary(plan_date):
-    # ----------------------------
-    # Load day meta (habits + reflection)
-    # ----------------------------
-    user_id=session["user_id"]
-    meta_rows = get(
-        "daily_meta",
-        params={
-            "plan_date": f"eq.{plan_date}",
-            "select": "habits,reflection",
-        },
-    ) or []
-
-    habits = []
-    reflection = ""
-
-    if meta_rows:
-        row = meta_rows[0]
-        habits = row.get("habits") or []
-        reflection = row.get("reflection") or ""
-
-    # ----------------------------
-    # Load slot-based tasks
-    # ----------------------------
+def load_tasks_from_slots(user_id, plan_date):
     rows = get(
         "daily_slots",
         params={
@@ -624,15 +600,10 @@ def get_daily_summary(plan_date):
         slot = r.get("slot")
         text = (r.get("plan") or "").strip()
 
-        if not text:
+        if not text or slot not in SLOT_LABELS:
             current = None
             continue
 
-        if not isinstance(slot, int) or slot not in SLOT_LABELS:
-            current = None
-            continue
-
-        # Start new block
         if (
             current is None
             or current["text"] != text
@@ -645,74 +616,186 @@ def get_daily_summary(plan_date):
             }
             tasks.append(current)
         else:
-            # Extend existing block
             current["end_slot"] = slot
 
-    # ----------------------------
-    # Add labels
-    # ----------------------------
+    # add labels
     for t in tasks:
-        start = t["start_slot"]
-        end = t["end_slot"]
+        start = SLOT_LABELS[t["start_slot"]].split("–")[0].strip()
+        end = SLOT_LABELS[t["end_slot"]].split("–")[-1].strip()
 
-        start_label = SLOT_LABELS[start]
-        end_label = SLOT_LABELS[end]
+        t["time_label"] = f"{start} – {end}"
 
-        # Extract ONLY the end time from the end slot label
-        # "01:30 AM – 02:00 AM" → "02:00 AM"
-        end_time = end_label.split("–")[-1].strip()
+    return tasks
+def load_tasks_from_events(user_id, plan_date):
+    rows = get(
+        "planner_events",
+        params={
+            "user_id": f"eq.{user_id}",
+            "plan_date": f"eq.{plan_date}",
+            "select": "start_time,end_time,text,status",
+            "order": "start_time.asc",
+        },
+    ) or []
 
-        t["time_label"] = f"{start_label.split('–')[0].strip()} – {end_time}"
+    tasks = []
 
+    for r in rows:
+        start = r.get("start_time")
+        end = r.get("end_time")
+        text = (r.get("text") or "").strip()
+
+        if not start or not end or not text:
+            continue
+
+        tasks.append({
+            "time_label": f"{start} – {end}",
+            "text": text,
+            "done": r.get("status") == "done"
+        })
+
+    return tasks
+def get_daily_summary(plan_date, planner_mode="slots"):
+    user_id = session["user_id"]
+
+    meta_rows = get(
+        "daily_meta",
+        params={
+            "user_id": f"eq.{user_id}",  # ✅ FIX
+            "plan_date": f"eq.{plan_date}",
+            "select": "habits,reflection",
+        },
+    ) or []
+
+    habits = []
+    reflection = ""
+
+    if meta_rows:
+        habits = meta_rows[0].get("habits") or []
+        reflection = meta_rows[0].get("reflection") or ""
+
+    # 🔁 SWITCH
+    if planner_mode == "v2":
+        tasks = load_tasks_from_events(user_id, plan_date)
+
+        # ✅ fallback safety
+        if not tasks:
+            tasks = load_tasks_from_slots(user_id, plan_date)
+    else:
+        tasks = load_tasks_from_slots(user_id, plan_date)
 
     return {
         "tasks": tasks,
         "habits": habits,
         "reflection": reflection,
     }
-def get_weekly_summary(start_date, end_date):
-    slots = get(
-        "daily_slots",
-        params={
-            "plan_date": f"gte.{start_date}",
-            "and": f"(plan_date.lte.{end_date})",
-            "select": "plan_date,slot,plan,status",
-            "order": "plan_date.asc,slot.asc",
-        },
-    ) or []
+def get_weekly_summary(start_date, end_date, planner_mode="slots"):
+    user_id = session["user_id"]
 
+    # ----------------------------
+    # LOAD DATA
+    # ----------------------------
+    if planner_mode == "v2":
+        rows = get(
+            "planner_events",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"gte.{start_date}",
+                "and": f"(plan_date.lte.{end_date})",
+                "select": "plan_date,start_time,end_time,text,status",
+                "order": "plan_date.asc,start_time.asc",
+            },
+        ) or []
+    else:
+        rows = get(
+            "daily_slots",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"gte.{start_date}",
+                "and": f"(plan_date.lte.{end_date})",
+                "select": "plan_date,slot,plan,status",
+                "order": "plan_date.asc,slot.asc",
+            },
+        ) or []
+
+    # ----------------------------
+    # META (FIX: add user_id)
+    # ----------------------------
     meta = get(
         "daily_meta",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"gte.{start_date}",
             "and": f"(plan_date.lte.{end_date})",
             "select": "plan_date,habits,reflection",
         },
     ) or []
 
+    # ----------------------------
+    # PROCESS
+    # ----------------------------
     days = {}
-    focused_slots = 0
-    completed_slots = 0
+    total_minutes = 0
+    completed_minutes = 0
 
-    for r in slots:
-        text = (r.get("plan") or "").strip()
-        slot = r.get("slot")
+    for r in rows:
+
         date = r.get("plan_date")
 
-        if not text or slot not in SLOT_LABELS:
-            continue
+        # =========================
+        # V2 (EVENT-BASED)
+        # =========================
+        if planner_mode == "v2":
+            text = (r.get("text") or "").strip()
+            start = r.get("start_time")
+            end = r.get("end_time")
 
-        days.setdefault(date, []).append({
-            "slot": slot,
-            "label": SLOT_LABELS[slot],
-            "text": text,
-            "done": r.get("status") == "done",
-        })
+            if not text or not start or not end:
+                continue
 
-        focused_slots += 1
-        if r.get("status") == "done":
-            completed_slots += 1
+            label = f"{start} – {end}"
 
+            # ⏱️ duration calc
+            try:
+                sh, sm = map(int, start.split(":"))
+                eh, em = map(int, end.split(":"))
+                duration = (eh * 60 + em) - (sh * 60 + sm)
+            except:
+                duration = 0
+
+            days.setdefault(date, []).append({
+                "label": label,
+                "text": text,
+                "done": r.get("status") == "done",
+            })
+
+            total_minutes += duration
+            if r.get("status") == "done":
+                completed_minutes += duration
+
+        # =========================
+        # V1 (SLOT-BASED)
+        # =========================
+        else:
+            text = (r.get("plan") or "").strip()
+            slot = r.get("slot")
+
+            if not text or slot not in SLOT_LABELS:
+                continue
+
+            days.setdefault(date, []).append({
+                "slot": slot,
+                "label": SLOT_LABELS[slot],
+                "text": text,
+                "done": r.get("status") == "done",
+            })
+
+            total_minutes += 30
+            if r.get("status") == "done":
+                completed_minutes += 30
+
+    # ----------------------------
+    # META PROCESSING
+    # ----------------------------
     habit_days = 0
     reflections = []
 
@@ -722,11 +805,20 @@ def get_weekly_summary(start_date, end_date):
         if m.get("reflection"):
             reflections.append(m["reflection"])
 
+    # ----------------------------
+    # FINAL METRICS
+    # ----------------------------
+    focused_hours = round(total_minutes / 60, 1)
+
+    completion_rate = (
+        round((completed_minutes / total_minutes) * 100, 1)
+        if total_minutes else 0
+    )
+
     return {
         "days": days,
-        "focused_hours": round(focused_slots * 0.5, 1),
-        "completion_rate": round((completed_slots / focused_slots) * 100, 1)
-                            if focused_slots else 0,
+        "focused_hours": focused_hours,
+        "completion_rate": completion_rate,
         "habit_days": habit_days,
         "reflections": reflections,
     }
