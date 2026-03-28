@@ -1,4 +1,8 @@
 SUMMARY_TEMPLATE = """
+ <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planner</title>
+</head>  
 <style>
   body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
