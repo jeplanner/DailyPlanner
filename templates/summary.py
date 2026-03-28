@@ -165,6 +165,7 @@ SUMMARY_TEMPLATE = """
 
     .card{
       padding:12px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.04);
     }
 
     .planner-toggle{
@@ -190,11 +191,10 @@ SUMMARY_TEMPLATE = """
     }
 
     .summary-table tr {
-      margin-bottom: 12px;
-      padding: 10px;
-      border-radius: 12px;
-      background: #ffffff;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.04);
+      margin-bottom: 8px;
+      padding: 0;
+      background: transparent;
+      box-shadow: none;
     }
 
     .summary-table td {
@@ -204,16 +204,42 @@ SUMMARY_TEMPLATE = """
     }
 
     .summary-table td.time {
-      width: auto;
-      font-size: 13px;
-      margin-bottom: 4px;
-    }
-
+        display:none;
+      }
     .stats{
       flex-direction:column;
     }
+  .task-card{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    padding:12px;
+    border-radius:12px;
+    background:#f9fafb;
   }
 
+    .task-time{
+      font-size:12px;
+      font-weight:600;
+      color:#2563eb;
+    }
+
+    .task-text{
+      font-size:15px;
+      font-weight:500;
+      color:#111827;
+    }
+
+    .task-card:active{
+      background:#f1f5f9;
+      transform:scale(0.98);
+    }
+  }
+.empty-state{
+  font-size:14px;
+  color:#9ca3af;
+  padding:6px 0;
+}
 </style>
 
 <div class="nav-icons">
@@ -253,9 +279,13 @@ SUMMARY_TEMPLATE = """
     </thead>
     <tbody>
       {% for t in data.tasks %}
-        <tr>
-          <td class="time">{{ t.time_label }}</td>
-          <td>{{ t.text }}</td>
+       <tr class="task-row">
+          <td colspan="2">
+            <div class="task-card">
+              <div class="task-time">🕒 {{ t.time_label }}</div>
+              <div class="task-text">📌 {{ t.text }}</div>
+            </div>
+          </td>
         </tr>
       {% else %}
         <tr>
@@ -271,7 +301,9 @@ SUMMARY_TEMPLATE = """
   {% if data.habits %}
     {{ data.habits | join(", ") }}
   {% else %}
-    <div class="muted">—</div>
+    <div class="empty-state">
+      No habits logged today
+    </div>
   {% endif %}
 </div>
 
@@ -280,7 +312,9 @@ SUMMARY_TEMPLATE = """
   {% if data.reflection %}
     {{ data.reflection }}
   {% else %}
-    <div class="muted">—</div>
+  <div class="empty-state">
+    No habits logged today
+  </div>
   {% endif %}
 </div>
 
