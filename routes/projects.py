@@ -815,7 +815,6 @@ def get_single_project_task(task_id):
     )
 
     return jsonify(task[0] if task else {})
-
 @projects_bp.route("/api/v2/project-tasks/<task_id>", methods=["PUT"])
 def update_project_task(task_id):
 
@@ -842,18 +841,35 @@ def update_project_task(task_id):
         if k in allowed_fields
     }
 
-    # ✅ CRITICAL: normalize ALL empty strings
-    for k, v in update_payload.items():
-        if v == "":
-            update_payload[k] = None
+    # ✅ normalize empty strings safely
+    update_payload = {
+        k: (None if isinstance(v, str) and v.strip() == "" else v)
+        for k, v in update_payload.items()
+    }
 
-    # ✅ optional: numeric cleanup
+    # ✅ normalize numeric fields
     for field in ["planned_hours", "actual_hours", "duration_days"]:
-        if field in update_payload and update_payload[field] is not None:
+        if field in update_payload:
+            val = update_payload[field]
+
+            if val is None:
+                continue
+
             try:
-                update_payload[field] = float(update_payload[field])
+                update_payload[field] = int(float(val))
             except:
                 update_payload[field] = None
+
+    # ✅ normalize date/time fields
+    for field in ["due_date", "start_time"]:
+        if field in update_payload:
+            val = update_payload[field]
+
+            if val is None:
+                continue
+
+            val = str(val).strip()
+            update_payload[field] = val if val else None
 
     if not update_payload:
         return jsonify({"error": "No valid fields to update"}), 400
