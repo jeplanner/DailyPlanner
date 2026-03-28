@@ -642,7 +642,7 @@ def load_tasks_from_events(user_id, plan_date):
     for r in rows:
         start = r.get("start_time")
         end = r.get("end_time")
-        text = (r.get("text") or "").strip()
+        text = (r.get("title") or "").strip()
 
         if not start or not end or not text:
             continue
@@ -695,13 +695,13 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
     # LOAD DATA
     # ----------------------------
     if planner_mode == "v2":
-        rows = get(
+        rows =rows = get(
             "daily_events",
             params={
                 "user_id": f"eq.{user_id}",
-                "plan_date": f"gte.{start_date}",
-                "and": f"(plan_date.lte.{end_date})",
-                "select": "plan_date,start_time,end_time,text,status",
+                "is_deleted": "eq.false",
+                "and": f"(plan_date.gte.{start_date},plan_date.lte.{end_date})",
+                "select": "plan_date,start_time,end_time,title,status",
                 "order": "plan_date.asc,start_time.asc",
             },
         ) or []
@@ -745,7 +745,7 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
         # V2 (EVENT-BASED)
         # =========================
         if planner_mode == "v2":
-            text = (r.get("text") or "").strip()
+            text = (r.get("title") or "").strip()
             start = r.get("start_time")
             end = r.get("end_time")
 
