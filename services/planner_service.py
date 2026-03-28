@@ -628,7 +628,7 @@ def load_tasks_from_slots(user_id, plan_date):
     return tasks
 def load_tasks_from_events(user_id, plan_date):
     rows = get(
-        "planner_events",
+        "daily_events",
         params={
             "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date}",
@@ -696,7 +696,7 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
     # ----------------------------
     if planner_mode == "v2":
         rows = get(
-            "planner_events",
+            "daily_events",
             params={
                 "user_id": f"eq.{user_id}",
                 "plan_date": f"gte.{start_date}",
