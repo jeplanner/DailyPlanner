@@ -842,19 +842,23 @@ def update_project_task(task_id):
         if k in allowed_fields
     }
 
-    # normalize empty start_time
-    if "start_time" in update_payload and update_payload["start_time"] == "":
-        update_payload["start_time"] = None
-    # normalize empty fields
+    # ✅ CRITICAL: normalize ALL empty strings
+    for k, v in update_payload.items():
+        if v == "":
+            update_payload[k] = None
 
+    # ✅ optional: numeric cleanup
+    for field in ["planned_hours", "actual_hours", "duration_days"]:
+        if field in update_payload and update_payload[field] is not None:
+            try:
+                update_payload[field] = float(update_payload[field])
+            except:
+                update_payload[field] = None
 
-    if "due_date" in update_payload and update_payload["due_date"] == "":
-        update_payload["due_date"] = None   # ✅ FIX
-    # 🚨 prevent silent failures
     if not update_payload:
         return jsonify({"error": "No valid fields to update"}), 400
 
-    print("TASK UPDATE PAYLOAD:", update_payload)
+    print("FINAL PAYLOAD:", update_payload)
 
     update(
         "project_tasks",
