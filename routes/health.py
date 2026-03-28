@@ -102,8 +102,18 @@ def health_dashboard():
     user_id = session["user_id"]
     plan_date_str = request.args.get("date")
 
-    plan_date = date.fromisoformat(plan_date_str) if plan_date_str else datetime.now(IST).date()
-    plan_date_str = plan_date.isoformat()
+    if plan_date_str:
+        plan_date_str = plan_date_str.strip()
+
+    if plan_date_str:
+        try:
+            plan_date = date.fromisoformat(plan_date_str)
+        except Exception:
+            plan_date = datetime.now(IST).date()
+    else:
+        plan_date = datetime.now(IST).date()
+        plan_date = date.fromisoformat(plan_date_str) if plan_date_str else datetime.now(IST).date()
+        plan_date_str = plan_date.isoformat()
 
     # Daily health
     health_rows = get(
