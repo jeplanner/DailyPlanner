@@ -818,23 +818,23 @@ def get_single_project_task(task_id):
 
 @projects_bp.route("/api/v2/project-tasks/<task_id>", methods=["PUT"])
 def update_project_task(task_id):
-    data = request.json
+
+    data = request.get_json(silent=True) or {}
 
     allowed_fields = {
-    "task_text",
-    "notes",
-    "status",
-    "priority",
-    "planned_hours",
-    "actual_hours",
-    "duration_days",
-    "due_date",
-    "start_time",
-    "notes",
-    "recurrence",
-    "recurrence_type",
-    "recurrence_interval",
-    "recurrence_end"
+        "task_text",
+        "notes",
+        "status",
+        "priority",
+        "planned_hours",
+        "actual_hours",
+        "duration_days",
+        "due_date",
+        "start_time",
+        "recurrence",
+        "recurrence_type",
+        "recurrence_interval",
+        "recurrence_end"
     }
 
     update_payload = {
@@ -842,15 +842,21 @@ def update_project_task(task_id):
         if k in allowed_fields
     }
 
+    # normalize empty start_time
     if "start_time" in update_payload and update_payload["start_time"] == "":
-     update_payload["start_time"] = None
+        update_payload["start_time"] = None
+
+    # 🚨 prevent silent failures
+    if not update_payload:
+        return jsonify({"error": "No valid fields to update"}), 400
+
+    print("TASK UPDATE PAYLOAD:", update_payload)
 
     update(
-    "project_tasks",
-    params={"task_id": f"eq.{task_id}"},
-    json=update_payload
-)
-
+        "project_tasks",
+        params={"task_id": f"eq.{task_id}"},
+        json=update_payload
+    )
 
     return jsonify({"success": True})
 
