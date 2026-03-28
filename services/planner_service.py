@@ -628,13 +628,14 @@ def load_tasks_from_slots(user_id, plan_date):
     return tasks
 def load_tasks_from_events(user_id, plan_date):
     rows = get(
-        "daily_events",
-        params={
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
-            "select": "start_time,end_time,text,status",
-            "order": "start_time.asc",
-        },
+    "daily_events",
+    params={
+        "user_id": f"eq.{user_id}",
+        "plan_date": f"eq.{plan_date}",
+        "is_deleted": "eq.false",
+        "select": "start_time,end_time,title,description,status",
+        "order": "start_time.asc",
+    },
     ) or []
 
     tasks = []
@@ -642,8 +643,9 @@ def load_tasks_from_events(user_id, plan_date):
     for r in rows:
         start = r.get("start_time")
         end = r.get("end_time")
-        text = (r.get("title") or "").strip()
-
+        title = (r.get("title") or "").strip()
+        desc = (r.get("description") or "").strip()
+        text = f"{title} — {desc}" if desc else title
         if not start or not end or not text:
             continue
 
@@ -745,7 +747,9 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
         # V2 (EVENT-BASED)
         # =========================
         if planner_mode == "v2":
-            text = (r.get("title") or "").strip()
+            title = (r.get("title") or "").strip()
+            desc = (r.get("description") or "").strip()
+            text = f"{title} — {desc}" if desc else title
             start = r.get("start_time")
             end = r.get("end_time")
 
