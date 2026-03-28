@@ -24,12 +24,40 @@ SUMMARY_TEMPLATE = """
     box-shadow: 0 10px 24px rgba(0,0,0,0.06);
   }
 
+  /* ---------- TOGGLE ---------- */
+
+  .planner-toggle{
+    display:flex;
+    gap:6px;
+    margin-bottom:14px;
+    background:#eef2f7;
+    padding:4px;
+    border-radius:10px;
+    width:fit-content;
+  }
+
+  .toggle-btn{
+    text-decoration:none;
+    font-size:13px;
+    font-weight:600;
+    padding:6px 10px;
+    border-radius:8px;
+    color:#6b7280;
+    transition:all 0.2s ease;
+  }
+
+  .toggle-btn.active{
+    background:#ffffff;
+    color:#2563eb;
+    box-shadow:0 2px 6px rgba(0,0,0,0.08);
+  }
+
   /* ---------- TABLE ---------- */
 
   .summary-table {
     width: 100%;
     border-collapse: collapse;
-    table-layout: auto; /* FIXED */
+    table-layout: auto;
   }
 
   .summary-table th {
@@ -66,7 +94,7 @@ SUMMARY_TEMPLATE = """
     padding: 12px 0;
   }
 
-  /* ---------- TEXT SECTIONS ---------- */
+  /* ---------- TEXT ---------- */
 
   .section h4 {
     margin: 0 0 8px;
@@ -76,12 +104,6 @@ SUMMARY_TEMPLATE = """
 
   .muted {
     color: #9ca3af;
-  }
-
-  /* ---------- NAV ---------- */
-
-  .nav-icons{
-    margin-bottom:12px;
   }
 
   /* ---------- STATS ---------- */
@@ -129,7 +151,7 @@ SUMMARY_TEMPLATE = """
     background:#22c55e;
   }
 
-  /* ---------- MOBILE FIX ---------- */
+  /* ---------- MOBILE ---------- */
 
   @media (max-width: 600px){
 
@@ -145,7 +167,15 @@ SUMMARY_TEMPLATE = """
       padding:12px;
     }
 
-    /* STACK TABLE INTO MOBILE CARDS */
+    .planner-toggle{
+      width:100%;
+    }
+
+    .toggle-btn{
+      flex:1;
+      text-align:center;
+    }
+
     .summary-table,
     .summary-table thead,
     .summary-table tbody,
@@ -176,35 +206,42 @@ SUMMARY_TEMPLATE = """
     .summary-table td.time {
       width: auto;
       font-size: 13px;
-      font-weight: 600;
-      color: #2563eb;
       margin-bottom: 4px;
     }
 
-    /* stack stat cards */
     .stats{
       flex-direction:column;
-      gap:10px;
-    }
-
-    .stat-card{
-      padding:14px;
-    }
-
-    input[type="week"]{
-      width:100%;
-      box-sizing:border-box;
     }
   }
 
 </style>
 
+<div class="nav-icons">
+  {% include "_top_nav.html" %}
+</div>
+
+<!-- ================= TOGGLE ================= -->
+
+<div class="planner-toggle">
+
+  <a href="?view={{ view }}{% if view == 'weekly' %}&week={{ selected_week }}{% else %}&date={{ date }}{% endif %}&mode=slots"
+     class="toggle-btn {{ 'active' if request.args.get('mode', 'slots') == 'slots' else '' }}">
+    Slot Planner
+  </a>
+
+  <a href="?view={{ view }}{% if view == 'weekly' %}&week={{ selected_week }}{% else %}&date={{ date }}{% endif %}&mode=v2"
+     class="toggle-btn {{ 'active' if request.args.get('mode') == 'v2' else '' }}">
+    Planner V2
+  </a>
+
+</div>
+
+<!-- ================= DAILY ================= -->
+
 {% if view == "daily" %}
 
-<div class="nav-icons">  {% include "_top_nav.html" %}  </div>
-
 <h2 class="summary-title">
-  📊 Daily Summary – {{ date.strftime("%d %b %Y") if date else date }}
+  📊 Daily Summary – {{ date.strftime("%d %b %Y") if date else "" }}
 </h2>
 
 <div class="section card">
@@ -223,7 +260,7 @@ SUMMARY_TEMPLATE = """
         </tr>
       {% else %}
         <tr>
-          <td colspan="2" class="empty">No tasks scheduled for this day</td>
+          <td colspan="2" class="empty">No tasks scheduled</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -248,12 +285,13 @@ SUMMARY_TEMPLATE = """
   {% endif %}
 </div>
 
-{% else %}
+<!-- ================= WEEKLY ================= -->
 
-<div class="nav-icons">  {% include "_top_nav.html" %}  </div>
+{% else %}
 
 <form method="get" style="margin-bottom:16px;">
   <input type="hidden" name="view" value="weekly">
+  <input type="hidden" name="mode" value="{{ request.args.get('mode','slots') }}">
 
   <label style="font-size:14px;font-weight:600;">📆 Select Week</label><br>
 
@@ -261,13 +299,7 @@ SUMMARY_TEMPLATE = """
          name="week"
          value="{{ selected_week }}"
          onchange="this.form.submit()"
-         style="
-           margin-top:6px;
-           padding:8px 10px;
-           border-radius:10px;
-           border:1px solid #e5e7eb;
-           font-size:14px;
-         ">
+         style="margin-top:6px;padding:8px;border-radius:10px;border:1px solid #e5e7eb;">
 </form>
 
 <h2 class="summary-title">
@@ -301,7 +333,6 @@ SUMMARY_TEMPLATE = """
   </ul>
 
   <h4>🔥 Habit Streak</h4>
-
   <div class="streak">
     {% for i in range(7) %}
       <div class="day {{ 'on' if i < data.habit_days else '' }}"></div>
@@ -330,14 +361,13 @@ SUMMARY_TEMPLATE = """
     <table class="summary-table">
       <tbody>
         {% for t in tasks %}
-          <tr class="{{ 'done' if t.done }}">
+          <tr>
             <td class="time">{{ t.label }}</td>
             <td>{{ t.text }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
-
   </div>
 {% endfor %}
 
