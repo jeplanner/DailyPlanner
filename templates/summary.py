@@ -29,7 +29,7 @@ SUMMARY_TEMPLATE = """
   .summary-table {
     width: 100%;
     border-collapse: collapse;
-    table-layout: fixed;
+    table-layout: auto; /* FIXED */
   }
 
   .summary-table th {
@@ -51,7 +51,6 @@ SUMMARY_TEMPLATE = """
   }
 
   .summary-table td.time {
-    width: 110px;
     font-weight: 700;
     color: #2563eb;
     white-space: nowrap;
@@ -135,28 +134,54 @@ SUMMARY_TEMPLATE = """
   @media (max-width: 600px){
 
     body{
-      padding:12px;
+      padding:10px;
     }
 
     .summary-title{
       font-size:18px;
     }
 
-    .summary-table{
-      font-size:14px;
+    .card{
+      padding:12px;
     }
 
-    .summary-table td{
-      padding:10px 8px;
-      font-size:14px;
+    /* STACK TABLE INTO MOBILE CARDS */
+    .summary-table,
+    .summary-table thead,
+    .summary-table tbody,
+    .summary-table tr,
+    .summary-table td {
+      display: block;
+      width: 100%;
     }
 
-    .summary-table td.time{
-      width:90px;
-      font-size:13px;
+    .summary-table thead {
+      display: none;
     }
 
-    /* stack stat cards for small screens */
+    .summary-table tr {
+      margin-bottom: 12px;
+      padding: 10px;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.04);
+    }
+
+    .summary-table td {
+      border: none;
+      padding: 6px 0;
+      font-size: 14px;
+    }
+
+    .summary-table td.time {
+      width: auto;
+      font-size: 13px;
+      font-weight: 600;
+      color: #2563eb;
+      margin-bottom: 4px;
+    }
+
+    /* stack stat cards */
     .stats{
       flex-direction:column;
       gap:10px;
@@ -170,7 +195,6 @@ SUMMARY_TEMPLATE = """
       width:100%;
       box-sizing:border-box;
     }
-
   }
 
 </style>
