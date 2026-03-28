@@ -221,7 +221,6 @@ SUMMARY_TEMPLATE = """
 </div>
 
 <!-- ================= TOGGLE ================= -->
-
 <div class="planner-toggle">
 
   <a href="?view={{ view }}{% if view == 'weekly' %}&week={{ selected_week }}{% else %}&date={{ date }}{% endif %}&mode=slots"

@@ -592,6 +592,7 @@ def summary():
     # -------------------------
     date_str = request.args.get("date")
     if date_str:
+        date_str = date_str.strip()   # ✅ ADD THIS
         plan_date = date.fromisoformat(date_str)
     else:
         plan_date = datetime.now(IST).date()
