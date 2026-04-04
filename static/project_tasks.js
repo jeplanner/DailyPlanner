@@ -872,6 +872,10 @@ function eliminateTask() {
 /* ---------------------------------------------------------
    CSV Import
    --------------------------------------------------------- */
+function exportCSV() {
+  window.location.href = `/projects/${PROJECT_ID}/export-csv`;
+}
+
 let _importRows = [];
 
 function openImportModal() {

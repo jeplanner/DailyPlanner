@@ -661,6 +661,95 @@ def bulk_add_tasks():
         "status": "ok",
         "count": len(rows)
     })
+@projects_bp.route("/projects/<project_id>/export-csv")
+@login_required
+def export_csv(project_id):
+    """Export all tasks and subtasks as CSV."""
+    from flask import Response
+    import csv
+    import io
+
+    user_id = session["user_id"]
+
+    # Verify project ownership
+    proj = get("projects", params={
+        "project_id": f"eq.{project_id}", "user_id": f"eq.{user_id}",
+        "select": "name"
+    })
+    if not proj:
+        return "Project not found", 404
+
+    project_name = proj[0]["name"]
+
+    # Fetch tasks
+    tasks = get("project_tasks", params={
+        "project_id": f"eq.{project_id}",
+        "is_eliminated": "eq.false",
+        "select": "task_id,task_text,status,priority,start_date,due_date,due_time,"
+                  "duration_days,planned_hours,actual_hours,delegated_to,notes,"
+                  "is_pinned,is_recurring,recurrence_type",
+        "order": "order_index.asc",
+    }) or []
+
+    # Batch-fetch subtasks
+    task_ids = [t["task_id"] for t in tasks]
+    subtask_map = {}
+    if task_ids:
+        ids_str = ",".join(str(tid) for tid in task_ids)
+        subtasks = get("project_subtasks", params={
+            "parent_task_id": f"in.({ids_str})",
+            "select": "parent_task_id,title,is_done",
+            "order": "created_at.asc",
+        }) or []
+        for st in subtasks:
+            subtask_map.setdefault(st["parent_task_id"], []).append(st)
+
+    # Build CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "task", "parent", "status", "priority", "start_date", "due_date",
+        "due_time", "duration", "planned_hours", "actual_hours",
+        "delegated_to", "is_pinned", "recurring", "notes"
+    ])
+
+    for t in tasks:
+        writer.writerow([
+            t.get("task_text", ""),
+            "",  # no parent — it's a task
+            t.get("status", ""),
+            t.get("priority", ""),
+            t.get("start_date", ""),
+            t.get("due_date", ""),
+            t.get("due_time", ""),
+            t.get("duration_days", ""),
+            t.get("planned_hours", ""),
+            t.get("actual_hours", ""),
+            t.get("delegated_to", ""),
+            "yes" if t.get("is_pinned") else "",
+            t.get("recurrence_type", "") if t.get("is_recurring") else "",
+            t.get("notes", ""),
+        ])
+
+        # Write subtasks for this task
+        for st in subtask_map.get(t["task_id"], []):
+            writer.writerow([
+                st.get("title", ""),
+                t.get("task_text", ""),  # parent = task name
+                "done" if st.get("is_done") else "open",
+                "", "", "", "", "", "", "", "", "", "", "",
+            ])
+
+    csv_data = output.getvalue()
+    safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in project_name)
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_tasks.csv"'}
+    )
+
+
 @projects_bp.route("/projects/tasks/import-csv", methods=["POST"])
 @login_required
 def import_csv():
