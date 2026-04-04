@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>{{ "Weekly Review" if view == "weekly" else "Daily Summary" }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='summary.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="summary-app">
+
+  <!-- ═══════════ HEADER ═══════════ -->
+  <header class="sum-header">
+    <div class="sum-header-left">
+      <div class="view-tabs">
+        <a href="/summary?view=daily" class="vtab {{ 'active' if view == 'daily' }}">Daily</a>
+        <a href="/summary?view=weekly" class="vtab {{ 'active' if view == 'weekly' }}">Weekly</a>
+      </div>
+    </div>
+
+    <div class="sum-header-right">
+      {% if view == "daily" %}
+        <div class="date-nav">
+          <a href="/summary?view=daily&date={{ prev_date }}" class="nav-arrow"><i data-feather="chevron-left"></i></a>
+          <input type="date" class="date-pick" value="{{ date.isoformat() }}"
+                 onchange="location.href='/summary?view=daily&date='+this.value">
+          <a href="/summary?view=daily&date={{ next_date }}" class="nav-arrow"><i data-feather="chevron-right"></i></a>
+        </div>
+      {% else %}
+        <div class="date-nav">
+          <a href="/summary?view=weekly&week={{ prev_week }}" class="nav-arrow"><i data-feather="chevron-left"></i></a>
+          <input type="week" class="date-pick" value="{{ selected_week }}"
+                 onchange="location.href='/summary?view=weekly&week='+this.value">
+          <a href="/summary?view=weekly&week={{ next_week }}" class="nav-arrow"><i data-feather="chevron-right"></i></a>
+        </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <!-- ═══════════ DAILY VIEW ═══════════ -->
+  {% if view == "daily" %}
+
+  <h1 class="sum-title">{{ date.strftime("%A, %B %d") }}</h1>
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon-wrap blue"><i data-feather="check-circle"></i></div>
+      <div class="stat-num">{{ data.tasks|selectattr('done')|list|length }}</div>
+      <div class="stat-label">Completed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon-wrap purple"><i data-feather="list"></i></div>
+      <div class="stat-num">{{ data.tasks|length }}</div>
+      <div class="stat-label">Total Tasks</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon-wrap green"><i data-feather="zap"></i></div>
+      <div class="stat-num">{{ data.habits|length }}</div>
+      <div class="stat-label">Habits Done</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon-wrap amber"><i data-feather="clock"></i></div>
+      <div class="stat-num">{{ "%.1f"|format(data.tasks|length * 0.5) }}h</div>
+      <div class="stat-label">Planned</div>
+    </div>
+  </div>
+
+  <!-- Two Column Layout -->
+  <div class="sum-grid">
+    <!-- Timeline -->
+    <div class="sum-card">
+      <h3 class="card-title"><i data-feather="calendar" class="card-icon"></i> Schedule</h3>
+      {% if data.tasks %}
+      <div class="timeline-list">
+        {% for t in data.tasks %}
+        <div class="tl-item {{ 'tl-done' if t.done }}">
+          <div class="tl-time">{{ t.time_label }}</div>
+          <div class="tl-dot {{ 'tl-dot-done' if t.done }}"></div>
+          <div class="tl-text">{{ t.text }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty-msg">No events scheduled for this day.</div>
+      {% endif %}
+    </div>
+
+    <!-- Right column -->
+    <div class="sum-right">
+      <!-- Habits -->
+      <div class="sum-card">
+        <h3 class="card-title"><i data-feather="heart" class="card-icon"></i> Habits</h3>
+        {% if data.habits %}
+        <div class="habit-chips">
+          {% for h in data.habits %}
+          <span class="habit-chip">{{ h }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-msg">No habits logged.</div>
+        {% endif %}
+      </div>
+
+      <!-- Reflection -->
+      <div class="sum-card">
+        <h3 class="card-title"><i data-feather="edit-3" class="card-icon"></i> Reflection</h3>
+        {% if data.reflection %}
+        <p class="reflection-text">{{ data.reflection }}</p>
+        {% else %}
+        <div class="empty-msg">No reflection written.</div>
+        {% endif %}
+      </div>
+
+      <!-- AI Recap -->
+      <div class="sum-card ai-card">
+        <h3 class="card-title"><i data-feather="cpu" class="card-icon"></i> AI Day Recap</h3>
+        <div id="ai-recap" class="ai-content">
+          <button class="ai-btn" onclick="generateDailyRecap('{{ date.isoformat() }}')">
+            <i data-feather="zap" style="width:14px;height:14px"></i> Generate Recap
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ WEEKLY VIEW ═══════════ -->
+  {% else %}
+
+  <h1 class="sum-title">Week of {{ start.strftime("%b %d") }} – {{ end.strftime("%b %d, %Y") }}</h1>
+
+  <!-- KPI Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon-wrap blue"><i data-feather="clock"></i></div>
+      <div class="stat-num">{{ data.focused_hours }}h</div>
+      <div class="stat-label">Focus Hours</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon-wrap green"><i data-feather="trending-up"></i></div>
+      <div class="stat-num">{{ data.completion_rate }}%</div>
+      <div class="stat-label">Completion</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon-wrap purple"><i data-feather="heart"></i></div>
+      <div class="stat-num">{{ data.habit_days }}/7</div>
+      <div class="stat-label">Habit Days</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon-wrap amber"><i data-feather="calendar"></i></div>
+      <div class="stat-num">{{ data.days|length }}</div>
+      <div class="stat-label">Active Days</div>
+    </div>
+  </div>
+
+  <!-- Charts Row -->
+  <div class="charts-row">
+    <div class="sum-card chart-card">
+      <h3 class="card-title"><i data-feather="bar-chart-2" class="card-icon"></i> Daily Activity</h3>
+      <canvas id="activityChart" height="200"></canvas>
+    </div>
+    <div class="sum-card chart-card">
+      <h3 class="card-title"><i data-feather="pie-chart" class="card-icon"></i> Completion</h3>
+      <canvas id="completionChart" height="200"></canvas>
+    </div>
+  </div>
+
+  <!-- Insights + Reflections -->
+  <div class="sum-grid">
+    <div class="sum-card">
+      <h3 class="card-title"><i data-feather="zap" class="card-icon"></i> Insights</h3>
+      <div class="insights-list">
+        {% for insight in insights %}
+        <div class="insight-item">{{ insight }}</div>
+        {% endfor %}
+      </div>
+
+      <!-- Streak Viz -->
+      <div class="streak-row">
+        <span class="streak-label">Habit Streak</span>
+        <div class="streak-dots">
+          {% set days_list = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}
+          {% for i in range(7) %}
+          <div class="streak-day">
+            <div class="streak-dot {{ 'on' if i < data.habit_days else 'off' }}"></div>
+            <span class="streak-dayname">{{ days_list[i] }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="sum-right">
+      <!-- Reflections -->
+      <div class="sum-card">
+        <h3 class="card-title"><i data-feather="edit-3" class="card-icon"></i> Reflections</h3>
+        {% if data.reflections %}
+        <ul class="reflection-list">
+          {% for r in data.reflections %}
+          <li>{{ r }}</li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty-msg">No reflections this week.</div>
+        {% endif %}
+      </div>
+
+      <!-- AI Weekly Recap -->
+      <div class="sum-card ai-card">
+        <h3 class="card-title"><i data-feather="cpu" class="card-icon"></i> AI Weekly Recap</h3>
+        <div id="ai-recap" class="ai-content">
+          <button class="ai-btn" onclick="generateWeeklyRecap()">
+            <i data-feather="zap" style="width:14px;height:14px"></i> Generate Recap
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day-by-Day Breakdown -->
+  <div class="sum-card" style="margin-top:16px;">
+    <h3 class="card-title"><i data-feather="layers" class="card-icon"></i> Day-by-Day</h3>
+    <div class="day-accordion">
+      {% for day_date, tasks in data.days.items() %}
+      <details class="day-section" {% if loop.first %}open{% endif %}>
+        <summary class="day-header">
+          <span class="day-name">{{ day_date }}</span>
+          <span class="day-count">{{ tasks|length }} tasks</span>
+        </summary>
+        <div class="day-tasks">
+          {% for t in tasks %}
+          <div class="day-task {{ 'task-done' if t.done }}">
+            <span class="dt-time">{{ t.label }}</span>
+            <span class="dt-text">{{ t.text }}</span>
+            {% if t.done %}<i data-feather="check" class="dt-check"></i>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% endif %}
+
+</div>
+
+<!-- Pass data to JS for charts -->
+<script>
+  const VIEW = "{{ view }}";
+  {% if view == "weekly" %}
+  const WEEKLY_DATA = {
+    days: {{ data.days | tojson }},
+    focused_hours: {{ data.focused_hours }},
+    completion_rate: {{ data.completion_rate }},
+    habit_days: {{ data.habit_days }}
+  };
+  {% endif %}
+  {% if view == "daily" %}
+  const DAILY_DATE = "{{ date.isoformat() }}";
+  const DAILY_TASKS = {{ data.tasks | tojson }};
+  {% endif %}
+</script>
+<script src="{{ url_for('static', filename='summary.js') }}"></script>
+<script>if(window.feather)feather.replace();</script>
+</body>
+</html>

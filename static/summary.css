@@ -1,0 +1,188 @@
+/* ═══════════════════════════════════════════════════
+   SUMMARY — SaaS Productivity Dashboard
+   ═══════════════════════════════════════════════════ */
+
+:root {
+  --sm-bg: #f7f8fa; --sm-surface: #fff; --sm-text: #1a1a2e;
+  --sm-text2: #6b7280; --sm-text3: #9ca3af; --sm-border: #e5e7eb;
+  --sm-primary: #2563eb; --sm-primary-light: #eff6ff;
+  --sm-success: #10b981; --sm-purple: #7c3aed; --sm-amber: #f59e0b;
+  --sm-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+html.dark {
+  --sm-bg: #0f172a; --sm-surface: #1e293b; --sm-text: #f1f5f9;
+  --sm-text2: #94a3b8; --sm-text3: #64748b; --sm-border: #334155;
+  --sm-primary-light: #1e3a5f; --sm-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:var(--sm-text); min-height:100vh; }
+.hidden { display:none!important; }
+
+.summary-app { max-width:960px; margin:0 auto; padding:16px 20px 48px; }
+
+/* ═══════════ HEADER ═══════════ */
+.sum-header {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:16px; gap:12px; flex-wrap:wrap;
+}
+.view-tabs { display:flex; border:1px solid var(--sm-border); border-radius:8px; overflow:hidden; }
+.vtab {
+  padding:7px 20px; font-size:13px; font-weight:600; font-family:inherit;
+  text-decoration:none; color:var(--sm-text2); background:var(--sm-surface);
+  border-right:1px solid var(--sm-border); transition:all 0.15s;
+}
+.vtab:last-child { border-right:none; }
+.vtab:hover { background:var(--sm-border); }
+.vtab.active { background:var(--sm-primary); color:#fff; }
+
+.date-nav { display:flex; align-items:center; gap:4px; }
+.nav-arrow {
+  width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+  border-radius:50%; color:var(--sm-text2); text-decoration:none; transition:background 0.15s;
+}
+.nav-arrow:hover { background:var(--sm-border); }
+.nav-arrow svg { width:18px; height:18px; }
+.date-pick {
+  border:1px solid var(--sm-border); border-radius:6px; padding:5px 10px;
+  font-size:13px; font-family:inherit; background:var(--sm-surface); color:var(--sm-text);
+  outline:none; cursor:pointer;
+}
+
+.sum-title { font-size:22px; font-weight:800; margin-bottom:16px; }
+
+/* ═══════════ STATS ROW ═══════════ */
+.stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
+.stat-card {
+  background:var(--sm-surface); border-radius:14px; padding:16px;
+  box-shadow:var(--sm-shadow); display:flex; flex-direction:column; align-items:center; gap:4px;
+}
+.stat-icon-wrap {
+  width:36px; height:36px; border-radius:10px; display:flex;
+  align-items:center; justify-content:center; margin-bottom:2px;
+}
+.stat-icon-wrap svg { width:18px; height:18px; }
+.stat-icon-wrap.blue { background:#dbeafe; color:#2563eb; }
+.stat-icon-wrap.green { background:#d1fae5; color:#059669; }
+.stat-icon-wrap.purple { background:#ede9fe; color:#7c3aed; }
+.stat-icon-wrap.amber { background:#fef3c7; color:#d97706; }
+.stat-num { font-size:24px; font-weight:800; }
+.stat-label { font-size:11px; font-weight:500; color:var(--sm-text3); text-transform:uppercase; letter-spacing:0.3px; }
+
+/* ═══════════ CARDS ═══════════ */
+.sum-card {
+  background:var(--sm-surface); border-radius:14px; padding:20px;
+  box-shadow:var(--sm-shadow); border:1px solid var(--sm-border);
+}
+.card-title {
+  font-size:14px; font-weight:700; color:var(--sm-text2); margin-bottom:14px;
+  display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:0.3px;
+}
+.card-icon { width:16px; height:16px; }
+
+.sum-grid { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; }
+.sum-right { display:flex; flex-direction:column; gap:16px; }
+
+/* ═══════════ TIMELINE LIST ═══════════ */
+.timeline-list { display:flex; flex-direction:column; gap:0; }
+.tl-item {
+  display:flex; align-items:flex-start; gap:12px; padding:10px 0;
+  border-bottom:1px solid var(--sm-border);
+}
+.tl-item:last-child { border-bottom:none; }
+.tl-time { font-size:12px; font-weight:600; color:var(--sm-primary); min-width:100px; padding-top:2px; }
+.tl-dot {
+  width:10px; height:10px; border-radius:50%; border:2px solid var(--sm-border);
+  flex-shrink:0; margin-top:4px;
+}
+.tl-dot-done { background:var(--sm-success); border-color:var(--sm-success); }
+.tl-text { font-size:14px; color:var(--sm-text); flex:1; }
+.tl-done .tl-text { text-decoration:line-through; color:var(--sm-text3); }
+.tl-done .tl-time { color:var(--sm-text3); }
+
+/* ═══════════ HABITS ═══════════ */
+.habit-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.habit-chip {
+  padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600;
+  background:var(--sm-primary-light); color:var(--sm-primary);
+}
+
+/* ═══════════ REFLECTION ═══════════ */
+.reflection-text { font-size:14px; line-height:1.6; color:var(--sm-text); white-space:pre-wrap; }
+.reflection-list { padding-left:18px; font-size:14px; line-height:1.7; color:var(--sm-text); }
+.reflection-list li { margin-bottom:8px; }
+
+/* ═══════════ AI CARD ═══════════ */
+.ai-card { border:1px dashed var(--sm-primary); background:var(--sm-primary-light); }
+html.dark .ai-card { border-color:var(--sm-border); }
+.ai-content { min-height:40px; }
+.ai-btn {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:8px 16px; background:var(--sm-primary); color:#fff;
+  border:none; border-radius:8px; font-size:13px; font-weight:600;
+  font-family:inherit; cursor:pointer; transition:opacity 0.15s;
+}
+.ai-btn:hover { opacity:0.9; }
+.ai-text { font-size:14px; line-height:1.6; white-space:pre-wrap; }
+
+/* ═══════════ CHARTS ═══════════ */
+.charts-row { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:20px; }
+.chart-card canvas { width:100%!important; max-height:200px; }
+
+/* ═══════════ INSIGHTS ═══════════ */
+.insights-list { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+.insight-item {
+  padding:10px 14px; border-radius:8px; font-size:14px;
+  background:var(--sm-bg); border-left:3px solid var(--sm-primary);
+}
+
+/* ═══════════ STREAK ═══════════ */
+.streak-row {
+  display:flex; align-items:center; gap:12px; padding-top:14px;
+  border-top:1px solid var(--sm-border); margin-top:8px;
+}
+.streak-label { font-size:12px; font-weight:600; color:var(--sm-text2); white-space:nowrap; }
+.streak-dots { display:flex; gap:8px; flex:1; }
+.streak-day { display:flex; flex-direction:column; align-items:center; gap:4px; }
+.streak-dot {
+  width:20px; height:20px; border-radius:50%;
+}
+.streak-dot.on { background:var(--sm-success); }
+.streak-dot.off { background:var(--sm-border); }
+.streak-dayname { font-size:9px; font-weight:600; color:var(--sm-text3); text-transform:uppercase; }
+
+/* ═══════════ DAY ACCORDION ═══════════ */
+.day-accordion { display:flex; flex-direction:column; gap:0; }
+.day-section { border-bottom:1px solid var(--sm-border); }
+.day-section:last-child { border-bottom:none; }
+.day-header {
+  padding:12px 0; cursor:pointer; display:flex; align-items:center; justify-content:space-between;
+  font-size:14px; font-weight:600; list-style:none;
+}
+.day-header::-webkit-details-marker { display:none; }
+.day-name { color:var(--sm-text); }
+.day-count { font-size:12px; color:var(--sm-text3); font-weight:500; }
+.day-tasks { padding:0 0 12px; }
+.day-task {
+  display:flex; align-items:center; gap:10px; padding:6px 0; font-size:13px;
+}
+.dt-time { font-size:12px; color:var(--sm-primary); font-weight:500; min-width:90px; }
+.dt-text { flex:1; color:var(--sm-text); }
+.task-done .dt-text { text-decoration:line-through; color:var(--sm-text3); }
+.dt-check { width:14px; height:14px; color:var(--sm-success); }
+
+/* ═══════════ EMPTY ═══════════ */
+.empty-msg { font-size:13px; color:var(--sm-text3); text-align:center; padding:16px 0; }
+
+/* ═══════════ RESPONSIVE ═══════════ */
+@media (max-width:768px) {
+  .stats-row { grid-template-columns:1fr 1fr; }
+  .sum-grid { grid-template-columns:1fr; }
+  .charts-row { grid-template-columns:1fr; }
+  .tl-time { min-width:80px; font-size:11px; }
+  .stat-num { font-size:20px; }
+}
+@media (max-width:480px) {
+  .summary-app { padding:12px; }
+  .sum-title { font-size:18px; }
+  .view-tabs .vtab { padding:6px 14px; font-size:12px; }
+}

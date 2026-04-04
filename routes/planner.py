@@ -13,7 +13,6 @@ from services.recurring_service import materialize_recurring_slots
 from services.untimed_service import remove_untimed_task
 from supabase_client import get, update
 from templates.planner import PLANNER_TEMPLATE
-from templates.summary import SUMMARY_TEMPLATE
 from utils.calender_links import google_calendar_link
 from utils.dates import safe_date
 from utils.slots import current_slot, slot_label
@@ -626,28 +625,38 @@ def summary():
         data = get_weekly_summary(start, end, planner_mode)
         insights = generate_weekly_insight(data)
 
-        return render_template_string(
-            SUMMARY_TEMPLATE,
+        # Compute prev/next week for navigation
+        prev_week = (start - timedelta(days=7)).strftime("%G-W%V")
+        next_week = (start + timedelta(days=7)).strftime("%G-W%V")
+
+        return render_template(
+            "summary.html",
             view="weekly",
             data=data,
             start=start,
             end=end,
             insights=insights,
             selected_week=start.strftime("%G-W%V"),
-            request=request   # ✅ REQUIRED
+            prev_week=prev_week,
+            next_week=next_week,
         )
 
     # =========================
     # DAILY VIEW
     # =========================
-    data = get_daily_summary(plan_date, planner_mode)  # ✅ pass flag
+    data = get_daily_summary(plan_date, planner_mode)
 
-    return render_template_string(
-        SUMMARY_TEMPLATE,
+    # Compute prev/next date for navigation
+    prev_date = (plan_date - timedelta(days=1)).isoformat()
+    next_date = (plan_date + timedelta(days=1)).isoformat()
+
+    return render_template(
+        "summary.html",
         view="daily",
         data=data,
         date=plan_date,
-        request=request   # ✅ REQUIRED
+        prev_date=prev_date,
+        next_date=next_date,
     )
 def get_plans_for_date(plan_date):
     return [
