@@ -1,9 +1,12 @@
+import logging
 from flask import Blueprint, jsonify, request, session
 from services.ai_service import call_gemini
 from services.login_service import login_required
 from supabase_client import get
 from openai import OpenAI
 import os
+
+logger = logging.getLogger("daily_plan")
 ai_bp = Blueprint("ai", __name__)
 @ai_bp.post("/ai/reflection-summary")
 @login_required
@@ -37,7 +40,7 @@ def reflection_summary():
 
 
 groq = OpenAI(
-    api_key=os.environ["GROQ_API_KEY"],
+    api_key=os.environ.get("GROQ_API_KEY", ""),
     base_url="https://api.groq.com/openai/v1"
 )
 
@@ -61,7 +64,7 @@ def generate_day_plan():
     user_id = session["user_id"]
     plan_date = request.json.get("date")
 
-    print("AI PLAN REQUEST", plan_date)
+    logger.debug("AI PLAN REQUEST date=%s", plan_date)
 
     slots = get("daily_slots", {
         "user_id": f"eq.{user_id}",
@@ -99,31 +102,21 @@ def generate_day_plan():
         """
 
     try:
-      ai_output = call_gemini(prompt)
-
-    # Detect Gemini overload response
-      if not ai_output or "busy" in ai_output.lower():
-        raise RuntimeError("Gemini overloaded")
-
-      print("AI USED: GEMINI")
-      provider = "Gemini"
-
-    except Exception as e:
-
-     print("Gemini failed → switching to Groq", e)
-
-    try:
-        ai_output = call_groq(prompt)
-        print("AI USED: GROQ")
-        provider = "Groq"
+        ai_output = call_gemini(prompt)
         if not ai_output or "busy" in ai_output.lower():
             raise RuntimeError("Gemini overloaded")
-    except Exception as e2:
-
-        print("Groq also failed", e2)
-        provider = "None"
-
-        ai_output = "⚠️ AI service temporarily unavailable. Please try again."
+        provider = "Gemini"
+    except Exception as e:
+        logger.warning("Gemini failed, switching to Groq: %s", e)
+        try:
+            ai_output = call_groq(prompt)
+            provider = "Groq"
+            if not ai_output or "busy" in ai_output.lower():
+                raise RuntimeError("Groq overloaded")
+        except Exception as e2:
+            logger.error("Groq also failed: %s", e2)
+            provider = "None"
+            ai_output = "⚠️ AI service temporarily unavailable. Please try again."
 
     return jsonify({
     "result": ai_output,

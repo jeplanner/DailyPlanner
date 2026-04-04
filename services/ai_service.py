@@ -1,13 +1,14 @@
 
 import time
+import logging
 import requests
 import os
 
 def call_gemini(prompt, retries=3):
     API_KEY = os.getenv("GOOGLE_API_KEY")
-    model = "gemini-3-flash-preview"
+    model = "gemini-2.0-flash"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={API_KEY}"
 
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -26,7 +27,7 @@ def call_gemini(prompt, retries=3):
             time.sleep(2 * (attempt + 1))
             continue
 
-        print("Gemini error:", response.text)
+        logging.getLogger("daily_plan").error("Gemini error %s: %s", response.status_code, response.text)
         break
 
     return "AI service is busy. Please try again in a few seconds."

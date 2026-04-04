@@ -16,6 +16,7 @@ from utils.planner_parser import parse_planner_input
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
 events_bp = Blueprint("events", __name__)
 @events_bp.route("/api/v2/events")
+@login_required
 def list_events():
     user_id = session["user_id"]
     plan_date = request.args.get("date")

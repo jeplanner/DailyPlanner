@@ -1,25 +1,28 @@
-from db import get_db
+import logging
+from datetime import datetime, timezone
+from supabase_client import get, update
+
+logger = logging.getLogger("daily_plan")
+
 
 def check_reminders():
-    conn = get_db()
-    cur = conn.cursor()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
-    cur.execute("""
-        select id, url
-        from inbox_links
-        where reminder_at <= now()
-        and reminder_at is not null
-    """)
+    rows = get("inbox_links", params={
+        "reminder_at": f"lte.{now_iso}",
+        "reminder_at": "not.is.null",
+        "select": "id,url,title",
+    }) or []
 
-    rows = cur.fetchall()
+    for row in rows:
+        logger.info("REMINDER due: %s — %s", row.get("id"), row.get("url"))
+        try:
+            update(
+                "inbox_links",
+                params={"id": f"eq.{row['id']}"},
+                json={"reminder_at": None},
+            )
+        except Exception as e:
+            logger.error("Failed to clear reminder for %s: %s", row.get("id"), e)
 
-    for r in rows:
-        print("REMINDER:", r[1])
-
-        cur.execute("""
-            update inbox_links
-            set reminder_at=null
-            where id=%s
-        """, (r[0],))
-
-    conn.commit()
+    return len(rows)

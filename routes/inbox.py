@@ -1,90 +1,77 @@
-from flask import Blueprint, request, jsonify
-from db import get_db
-from services.inbox_service import detect_type, fetch_title, generate_summary
 import uuid
+from flask import Blueprint, request, jsonify, session
+from supabase_client import get, post, update
+from services.login_service import login_required
+from services.inbox_service import detect_type, fetch_title, generate_summary
 
 inbox_bp = Blueprint("inbox_bp", __name__)
 
 
-# ---------------- CREATE ----------------
 @inbox_bp.route("/api/inbox", methods=["POST"])
+@login_required
 def create_inbox():
     data = request.get_json() or {}
+    user_id = session["user_id"]
 
-    user_id = data.get("user_id", "demo")
-    url = data.get("url")
-    description = data.get("description", "")
-
+    url = data.get("url", "").strip()
     if not url:
         return jsonify({"error": "url required"}), 400
 
+    description = data.get("description", "")
     title = fetch_title(url)
     content_type = detect_type(url)
     summary = generate_summary(description)
 
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
-        insert into inbox_links
-        (id, user_id, url, title, description, content_type)
-        values (%s,%s,%s,%s,%s,%s)
-    """, (
-        str(uuid.uuid4()),
-        user_id,
-        url,
-        title,
-        description,
-        content_type
-    ))
-
-    conn.commit()
+    post("inbox_links", {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "url": url,
+        "title": title,
+        "description": summary,
+        "content_type": content_type,
+    })
 
     return jsonify({"success": True})
 
 
-# ---------------- LIST ----------------
 @inbox_bp.route("/api/inbox", methods=["GET"])
+@login_required
 def get_inbox():
-    user_id = request.args.get("user_id", "demo")
+    user_id = session["user_id"]
 
-    conn = get_db()
-    cur = conn.cursor()
+    rows = get("inbox_links", params={
+        "user_id": f"eq.{user_id}",
+        "order": "created_at.desc",
+        "select": "id,url,title,description,content_type,is_favorite",
+    }) or []
 
-    cur.execute("""
-        select id, url, title, description, content_type, is_favorite
-        from inbox_links
-        where user_id=%s
-        order by created_at desc
-    """, (user_id,))
-
-    rows = cur.fetchall()
-
-    return jsonify([
-        {
-            "id": r[0],
-            "url": r[1],
-            "title": r[2],
-            "description": r[3],
-            "type": r[4],
-            "favorite": r[5]
-        }
-        for r in rows
-    ])
+    return jsonify(rows)
 
 
-# ---------------- FAVORITE ----------------
-@inbox_bp.route("/api/inbox/<id>/favorite", methods=["POST"])
-def favorite(id):
-    conn = get_db()
-    cur = conn.cursor()
+@inbox_bp.route("/api/inbox/<item_id>/favorite", methods=["POST"])
+@login_required
+def favorite(item_id):
+    user_id = session["user_id"]
 
-    cur.execute("""
-        update inbox_links
-        set is_favorite = not is_favorite
-        where id=%s
-    """, (id,))
+    rows = get("inbox_links", params={
+        "id": f"eq.{item_id}",
+        "user_id": f"eq.{user_id}",
+        "select": "id,is_favorite",
+    }) or []
 
-    conn.commit()
+    if not rows:
+        return jsonify({"error": "not found"}), 404
 
+    current = rows[0].get("is_favorite", False)
+    update("inbox_links", params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"}, json={"is_favorite": not current})
+
+    return jsonify({"success": True})
+
+
+@inbox_bp.route("/api/inbox/<item_id>", methods=["DELETE"])
+@login_required
+def delete_inbox(item_id):
+    user_id = session["user_id"]
+    from supabase_client import delete
+    delete("inbox_links", params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"})
     return jsonify({"success": True})

@@ -1,13 +1,13 @@
 
+import os
 import requests
 import logging
-SUPABASE_URL = "https://gidpxopleslvmrrycood.supabase.co"
-SUPABASE_KEY = "sb_publishable_jv6-xI--WU4Tsm2Sq8wRYg_9Vf85OOi"
-print("SUPABASE_URL =", SUPABASE_URL)
-print("SUPABASE_KEY present =", bool(SUPABASE_KEY))
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Supabase env vars not set")
+    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY environment variables must be set")
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
