@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Payments & Bills</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+:root{
+  --py-bg:#f7f8fa;--py-surface:#fff;--py-text:#1a1a2e;--py-text2:#6b7280;
+  --py-text3:#9ca3af;--py-border:#e5e7eb;--py-primary:#2563eb;
+  --py-primary-light:#eff6ff;--py-success:#10b981;--py-warning:#f59e0b;
+  --py-danger:#ef4444;--py-shadow:0 1px 3px rgba(0,0,0,0.06);
+}
+html.dark{
+  --py-bg:#0f172a;--py-surface:#1e293b;--py-text:#f1f5f9;--py-text2:#94a3b8;
+  --py-text3:#64748b;--py-border:#334155;--py-primary-light:#1e3a5f;
+  --py-shadow:0 1px 3px rgba(0,0,0,0.2);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--py-bg);color:var(--py-text);min-height:100vh;}
+.hidden{display:none!important;}
+.pay-app{max-width:1000px;margin:0 auto;padding:16px 20px 48px;}
+
+/* Header */
+.pay-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;}
+.pay-header h1{font-size:22px;font-weight:800;}
+.pay-header-btns{display:flex;gap:6px;}
+
+/* Overview Cards */
+.overview-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;}
+.ov-card{background:var(--py-surface);border-radius:12px;padding:16px;box-shadow:var(--py-shadow);display:flex;flex-direction:column;gap:4px;}
+.ov-label{font-size:11px;font-weight:600;color:var(--py-text3);text-transform:uppercase;letter-spacing:0.3px;}
+.ov-value{font-size:24px;font-weight:800;}
+.ov-value.danger{color:var(--py-danger);}
+.ov-value.warning{color:var(--py-warning);}
+.ov-value.success{color:var(--py-success);}
+
+/* Property Tabs */
+.prop-tabs{display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;padding-bottom:4px;flex-wrap:wrap;}
+.prop-tab{
+  padding:6px 16px;border-radius:20px;border:1px solid var(--py-border);
+  background:var(--py-surface);font-size:13px;font-weight:500;font-family:inherit;
+  color:var(--py-text2);cursor:pointer;transition:all 0.15s;white-space:nowrap;
+}
+.prop-tab:hover{border-color:var(--py-primary);color:var(--py-primary);}
+.prop-tab.active{background:var(--py-primary);color:#fff;border-color:var(--py-primary);}
+.prop-tab.add-tab{border-style:dashed;color:var(--py-text3);}
+.prop-tab.add-tab:hover{color:var(--py-primary);border-color:var(--py-primary);}
+
+/* Category Sections */
+.cat-section{margin-bottom:20px;}
+.cat-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:4px 0;}
+.cat-icon{font-size:18px;}
+.cat-name{font-size:14px;font-weight:700;color:var(--py-text);}
+.cat-count{font-size:11px;color:var(--py-text3);font-weight:500;}
+
+/* Bill Cards */
+.bill-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;}
+.bill-card{
+  background:var(--py-surface);border:1px solid var(--py-border);border-radius:12px;
+  padding:14px 16px;box-shadow:var(--py-shadow);transition:all 0.15s;cursor:pointer;
+  display:flex;flex-direction:column;gap:8px;
+}
+.bill-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.08);transform:translateY(-1px);}
+.bill-card.inactive{opacity:0.5;}
+
+.bill-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
+.bill-provider{font-size:15px;font-weight:700;}
+.bill-amount{font-size:18px;font-weight:800;color:var(--py-primary);white-space:nowrap;}
+
+.bill-details{display:flex;flex-wrap:wrap;gap:6px;font-size:12px;}
+.bill-tag{padding:2px 8px;border-radius:6px;font-weight:500;}
+.bill-tag.cycle{background:#ede9fe;color:#6d28d9;}
+.bill-tag.due{background:#fef3c7;color:#92400e;}
+.bill-tag.autopay{background:#d1fae5;color:#065f46;}
+.bill-tag.method{background:var(--py-primary-light);color:var(--py-primary);}
+
+.bill-meta{font-size:12px;color:var(--py-text3);display:flex;flex-direction:column;gap:2px;}
+.bill-acct{font-family:monospace;letter-spacing:0.5px;}
+
+.bill-actions{display:flex;gap:4px;margin-top:auto;padding-top:6px;border-top:1px solid var(--py-border);}
+.bill-action{
+  padding:4px 10px;border:1px solid var(--py-border);border-radius:6px;
+  font-size:11px;font-weight:500;font-family:inherit;background:var(--py-surface);
+  color:var(--py-text2);cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:4px;
+}
+.bill-action:hover{border-color:var(--py-primary);color:var(--py-primary);}
+.bill-action.danger:hover{border-color:var(--py-danger);color:var(--py-danger);}
+.bill-action svg{width:12px;height:12px;}
+
+/* Alerts */
+.alert-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.alert-chip{
+  display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;
+  font-size:12px;font-weight:600;
+}
+.alert-chip.overdue{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;}
+.alert-chip.upcoming{background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;}
+.modal-card{
+  background:var(--py-surface);border-radius:16px;padding:24px;width:520px;
+  max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.2);
+  animation:slideUp 0.2s ease;
+}
+@keyframes slideUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.modal-header h3{font-size:18px;font-weight:700;}
+.modal-close{width:36px;height:36px;border:none;background:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--py-text3);}
+.modal-close:hover{background:var(--py-border);}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+.form-row.full{grid-template-columns:1fr;}
+.form-group{display:flex;flex-direction:column;gap:4px;}
+.form-group label{font-size:11px;font-weight:600;color:var(--py-text3);text-transform:uppercase;letter-spacing:0.3px;}
+.form-input{
+  padding:8px 10px;border:1px solid var(--py-border);border-radius:6px;font-size:14px;
+  font-family:inherit;background:var(--py-bg);color:var(--py-text);outline:none;width:100%;
+}
+.form-input:focus{border-color:var(--py-primary);box-shadow:0 0 0 2px rgba(37,99,235,0.12);}
+.form-check{display:flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;cursor:pointer;}
+.form-check input{accent-color:var(--py-success);}
+.modal-actions{display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--py-border);}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:6px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;transition:all 0.15s;}
+.btn:active{transform:scale(0.97);}
+.btn-primary{background:var(--py-primary);color:#fff;}
+.btn-primary:hover{opacity:0.9;}
+.btn-danger{background:var(--py-danger);color:#fff;}
+.btn-ghost{background:transparent;color:var(--py-text2);}
+.btn-ghost:hover{background:var(--py-border);color:var(--py-text);}
+
+/* History Modal */
+.history-list{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;}
+.history-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--py-border);font-size:13px;}
+.history-date{font-weight:600;min-width:90px;color:var(--py-text);}
+.history-amount{font-weight:700;color:var(--py-primary);min-width:80px;}
+.history-ref{color:var(--py-text3);flex:1;}
+
+.empty-state{text-align:center;padding:48px 16px;color:var(--py-text3);font-size:14px;}
+
+@media(max-width:640px){
+  .bill-grid{grid-template-columns:1fr;}
+  .form-row{grid-template-columns:1fr;}
+  .overview-row{grid-template-columns:1fr 1fr;}
+  .bill-amount{font-size:16px;}
+}
+</style>
+</head>
+<body>
+
+{% include "_top_nav.html" %}
+
+<div class="pay-app">
+
+  <div class="pay-header">
+    <h1>Payments & Bills</h1>
+    <div class="pay-header-btns">
+      <button class="btn btn-primary" onclick="openBillModal()">
+        <i data-feather="plus" style="width:16px;height:16px"></i> Add Bill
+      </button>
+    </div>
+  </div>
+
+  <!-- Overview -->
+  <div class="overview-row" id="overview-row">
+    <div class="ov-card"><span class="ov-label">Monthly Total</span><span class="ov-value" id="ov-monthly">—</span></div>
+    <div class="ov-card"><span class="ov-label">Active Bills</span><span class="ov-value" id="ov-active">0</span></div>
+    <div class="ov-card"><span class="ov-label">Upcoming (7d)</span><span class="ov-value warning" id="ov-upcoming">0</span></div>
+    <div class="ov-card"><span class="ov-label">Overdue</span><span class="ov-value danger" id="ov-overdue">0</span></div>
+  </div>
+
+  <!-- Alerts -->
+  <div class="alert-row" id="alert-row"></div>
+
+  <!-- Property Tabs -->
+  <div class="prop-tabs" id="prop-tabs"></div>
+
+  <!-- Bills grouped by category -->
+  <div id="bills-container"></div>
+
+</div>
+
+<!-- ═══════════ ADD/EDIT BILL MODAL ═══════════ -->
+<div id="bill-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="bill-modal-title">Add Bill</h3>
+      <button class="modal-close" onclick="closeBillModal()"><i data-feather="x"></i></button>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Property *</label>
+        <select id="bill-property" class="form-input"></select>
+      </div>
+      <div class="form-group">
+        <label>Category *</label>
+        <select id="bill-category" class="form-input">
+          <option value="Broadband">Broadband / Internet</option>
+          <option value="Electricity">Electricity</option>
+          <option value="Water">Water</option>
+          <option value="Gas">Gas / LPG</option>
+          <option value="Phone">Phone / Mobile</option>
+          <option value="DTH">DTH / Cable TV</option>
+          <option value="Insurance">Insurance</option>
+          <option value="Rent">Rent</option>
+          <option value="Maintenance">Maintenance / Society</option>
+          <option value="Tax">Property Tax</option>
+          <option value="Subscription">Subscription</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Provider *</label>
+        <input type="text" id="bill-provider" class="form-input" placeholder="e.g., Airtel, BESCOM, Jio">
+      </div>
+      <div class="form-group">
+        <label>Account / Consumer No.</label>
+        <input type="text" id="bill-account" class="form-input" placeholder="e.g., 1234567890">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Amount</label>
+        <input type="number" id="bill-amount" class="form-input" step="0.01" placeholder="Monthly amount">
+      </div>
+      <div class="form-group">
+        <label>Billing Cycle</label>
+        <select id="bill-cycle" class="form-input">
+          <option value="monthly">Monthly</option>
+          <option value="quarterly">Quarterly</option>
+          <option value="half-yearly">Half-Yearly</option>
+          <option value="yearly">Yearly</option>
+          <option value="prepaid">Prepaid / As-needed</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Due Day of Month</label>
+        <input type="number" id="bill-due-day" class="form-input" min="1" max="31" placeholder="e.g., 15">
+      </div>
+      <div class="form-group">
+        <label>Payment Method</label>
+        <input type="text" id="bill-method" class="form-input" placeholder="e.g., HDFC autopay, GPay">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Customer ID</label>
+        <input type="text" id="bill-customer-id" class="form-input" placeholder="Login ID / Customer ID">
+      </div>
+      <div class="form-group">
+        <label>Portal URL</label>
+        <input type="url" id="bill-portal" class="form-input" placeholder="https://portal.provider.com">
+      </div>
+    </div>
+
+    <div class="form-row full">
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea id="bill-notes" class="form-input" rows="2" placeholder="Connection speed, plan details, etc."></textarea>
+      </div>
+    </div>
+
+    <label class="form-check">
+      <input type="checkbox" id="bill-autopay"> Auto-pay enabled
+    </label>
+
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="saveBill()">Save</button>
+      <button class="btn btn-ghost" onclick="closeBillModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ ADD PROPERTY MODAL ═══════════ -->
+<div id="prop-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="width:380px;">
+    <div class="modal-header">
+      <h3>Add Property</h3>
+      <button class="modal-close" onclick="closePropModal()"><i data-feather="x"></i></button>
+    </div>
+    <div class="form-row full">
+      <div class="form-group">
+        <label>Name *</label>
+        <input type="text" id="prop-name" class="form-input" placeholder="e.g., Home, Parents' House, Office">
+      </div>
+    </div>
+    <div class="form-row full">
+      <div class="form-group">
+        <label>Address</label>
+        <input type="text" id="prop-address" class="form-input" placeholder="Optional address or description">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="saveProperty()">Add Property</button>
+      <button class="btn btn-ghost" onclick="closePropModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ PAYMENT HISTORY MODAL ═══════════ -->
+<div id="history-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="history-title">Payment History</h3>
+      <button class="modal-close" onclick="closeHistoryModal()"><i data-feather="x"></i></button>
+    </div>
+    <div class="history-list" id="history-list"></div>
+    <hr style="margin:12px 0;border:none;border-top:1px solid var(--py-border);">
+    <h4 style="font-size:13px;font-weight:600;color:var(--py-text2);margin-bottom:8px;">Log Payment</h4>
+    <div class="form-row">
+      <div class="form-group"><label>Date</label><input type="date" id="hist-date" class="form-input"></div>
+      <div class="form-group"><label>Amount</label><input type="number" id="hist-amount" class="form-input" step="0.01"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Method</label><input type="text" id="hist-method" class="form-input" placeholder="GPay, Bank transfer"></div>
+      <div class="form-group"><label>Reference</label><input type="text" id="hist-ref" class="form-input" placeholder="Transaction ID"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="logPayment()">Log Payment</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const CATEGORIES = {
+  'Broadband':'wifi','Electricity':'zap','Water':'droplet','Gas':'flame',
+  'Phone':'phone','DTH':'tv','Insurance':'shield','Rent':'home',
+  'Maintenance':'tool','Tax':'file-text','Subscription':'star','Other':'more-horizontal'
+};
+
+let properties = [];
+let bills = [];
+let currentPropId = 'all';
+let editingBillId = null;
+let historyBillId = null;
+
+/* ── Init ── */
+async function init() {
+  await loadProperties();
+  await loadBills();
+  loadSummary();
+  feather.replace();
+}
+
+/* ── Properties ── */
+async function loadProperties() {
+  const res = await fetch("/api/payments/properties");
+  properties = await res.json();
+  renderPropTabs();
+}
+
+function renderPropTabs() {
+  const c = document.getElementById("prop-tabs");
+  let html = `<button class="prop-tab ${currentPropId==='all'?'active':''}" onclick="selectProp('all')">All Properties</button>`;
+  properties.forEach(p => {
+    html += `<button class="prop-tab ${currentPropId===p.id?'active':''}" onclick="selectProp('${p.id}')">${esc(p.name)}</button>`;
+  });
+  html += `<button class="prop-tab add-tab" onclick="openPropModal()">+ Add Property</button>`;
+  c.innerHTML = html;
+}
+
+function selectProp(id) {
+  currentPropId = id;
+  renderPropTabs();
+  renderBills();
+}
+
+function openPropModal() { document.getElementById("prop-modal").classList.remove("hidden"); document.getElementById("prop-name").focus(); }
+function closePropModal() { document.getElementById("prop-modal").classList.add("hidden"); }
+
+async function saveProperty() {
+  const name = document.getElementById("prop-name").value.trim();
+  const address = document.getElementById("prop-address").value.trim();
+  if (!name) { showToast("Name required","error"); return; }
+  await fetch("/api/payments/properties",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,address})});
+  document.getElementById("prop-name").value="";
+  document.getElementById("prop-address").value="";
+  closePropModal();
+  await loadProperties();
+  showToast("Property added","success");
+}
+
+/* ── Bills ── */
+async function loadBills() {
+  const params = currentPropId !== 'all' ? `?property_id=${currentPropId}` : '';
+  const res = await fetch(`/api/payments/bills${params}`);
+  bills = await res.json();
+  renderBills();
+}
+
+function renderBills() {
+  const c = document.getElementById("bills-container");
+  let filtered = currentPropId === 'all' ? bills : bills.filter(b => b.property_id === currentPropId);
+
+  if (!filtered.length) {
+    c.innerHTML = '<div class="empty-state">No bills yet. Add your first bill to start tracking payments.</div>';
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  filtered.forEach(b => {
+    const cat = b.category || "Other";
+    (groups[cat] = groups[cat] || []).push(b);
+  });
+
+  let html = '';
+  Object.keys(groups).sort().forEach(cat => {
+    const icon = CATEGORIES[cat] || 'file';
+    const items = groups[cat];
+    html += `<div class="cat-section">
+      <div class="cat-header">
+        <i data-feather="${icon}" class="cat-icon" style="width:18px;height:18px"></i>
+        <span class="cat-name">${esc(cat)}</span>
+        <span class="cat-count">${items.length}</span>
+      </div>
+      <div class="bill-grid">`;
+
+    items.forEach(b => {
+      const propName = properties.find(p=>p.id===b.property_id)?.name || '';
+      html += renderBillCard(b, propName);
+    });
+
+    html += `</div></div>`;
+  });
+
+  c.innerHTML = html;
+  feather.replace();
+}
+
+function renderBillCard(b, propName) {
+  const amt = b.amount ? `₹${Number(b.amount).toLocaleString('en-IN')}` : '—';
+  return `
+  <div class="bill-card ${b.status==='inactive'?'inactive':''}" data-id="${b.id}">
+    <div class="bill-top">
+      <div>
+        <div class="bill-provider">${esc(b.provider)}</div>
+        ${propName ? `<div style="font-size:11px;color:var(--py-text3)">${esc(propName)}</div>` : ''}
+      </div>
+      <div class="bill-amount">${amt}</div>
+    </div>
+    <div class="bill-details">
+      <span class="bill-tag cycle">${esc(b.billing_cycle||'monthly')}</span>
+      ${b.due_day?`<span class="bill-tag due">Due: ${b.due_day}th</span>`:''}
+      ${b.auto_pay?`<span class="bill-tag autopay">Auto-pay</span>`:''}
+      ${b.payment_method?`<span class="bill-tag method">${esc(b.payment_method)}</span>`:''}
+    </div>
+    <div class="bill-meta">
+      ${b.account_number?`<span>Account: <span class="bill-acct">${esc(b.account_number)}</span></span>`:''}
+      ${b.customer_id?`<span>Customer ID: ${esc(b.customer_id)}</span>`:''}
+      ${b.notes?`<span>${esc(b.notes)}</span>`:''}
+    </div>
+    <div class="bill-actions">
+      ${b.portal_url?`<a href="${esc(b.portal_url)}" target="_blank" class="bill-action" onclick="event.stopPropagation()"><i data-feather="external-link"></i> Portal</a>`:''}
+      <button class="bill-action" onclick="event.stopPropagation();openHistory('${b.id}','${esc(b.provider)}')"><i data-feather="clock"></i> History</button>
+      <button class="bill-action" onclick="event.stopPropagation();editBill('${b.id}')"><i data-feather="edit-2"></i> Edit</button>
+      <button class="bill-action danger" onclick="event.stopPropagation();deleteBill('${b.id}')"><i data-feather="trash-2"></i></button>
+    </div>
+  </div>`;
+}
+
+/* ── Bill Modal ── */
+function openBillModal() {
+  editingBillId = null;
+  document.getElementById("bill-modal-title").textContent = "Add Bill";
+  // Populate property dropdown
+  const sel = document.getElementById("bill-property");
+  sel.innerHTML = properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  if (currentPropId !== 'all') sel.value = currentPropId;
+  // Clear fields
+  ["bill-provider","bill-account","bill-amount","bill-due-day","bill-method","bill-customer-id","bill-portal","bill-notes"].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  document.getElementById("bill-cycle").value="monthly";
+  document.getElementById("bill-category").value="Broadband";
+  document.getElementById("bill-autopay").checked=false;
+  document.getElementById("bill-modal").classList.remove("hidden");
+  feather.replace();
+}
+
+function editBill(id) {
+  const b = bills.find(x=>x.id===id);
+  if(!b)return;
+  editingBillId = id;
+  document.getElementById("bill-modal-title").textContent = "Edit Bill";
+  const sel = document.getElementById("bill-property");
+  sel.innerHTML = properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  sel.value = b.property_id||'';
+  document.getElementById("bill-category").value = b.category||'Broadband';
+  document.getElementById("bill-provider").value = b.provider||'';
+  document.getElementById("bill-account").value = b.account_number||'';
+  document.getElementById("bill-amount").value = b.amount||'';
+  document.getElementById("bill-cycle").value = b.billing_cycle||'monthly';
+  document.getElementById("bill-due-day").value = b.due_day||'';
+  document.getElementById("bill-method").value = b.payment_method||'';
+  document.getElementById("bill-customer-id").value = b.customer_id||'';
+  document.getElementById("bill-portal").value = b.portal_url||'';
+  document.getElementById("bill-notes").value = b.notes||'';
+  document.getElementById("bill-autopay").checked = !!b.auto_pay;
+  document.getElementById("bill-modal").classList.remove("hidden");
+  feather.replace();
+}
+
+function closeBillModal() { document.getElementById("bill-modal").classList.add("hidden"); }
+
+async function saveBill() {
+  const payload = {
+    property_id: document.getElementById("bill-property").value,
+    category: document.getElementById("bill-category").value,
+    provider: document.getElementById("bill-provider").value.trim(),
+    account_number: document.getElementById("bill-account").value.trim(),
+    amount: document.getElementById("bill-amount").value||null,
+    billing_cycle: document.getElementById("bill-cycle").value,
+    due_day: document.getElementById("bill-due-day").value||null,
+    payment_method: document.getElementById("bill-method").value.trim(),
+    customer_id: document.getElementById("bill-customer-id").value.trim(),
+    portal_url: document.getElementById("bill-portal").value.trim(),
+    notes: document.getElementById("bill-notes").value.trim(),
+    auto_pay: document.getElementById("bill-autopay").checked,
+  };
+  if(!payload.provider){showToast("Provider is required","error");return;}
+
+  const url = editingBillId ? `/api/payments/bills/${editingBillId}` : '/api/payments/bills';
+  const method = editingBillId ? 'PUT' : 'POST';
+  await fetch(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  closeBillModal();
+  await loadBills();
+  loadSummary();
+  showToast(editingBillId?"Bill updated":"Bill added","success");
+}
+
+function deleteBill(id) {
+  const b = bills.find(x=>x.id===id);
+  bills = bills.filter(x=>x.id!==id);
+  renderBills();
+  // Undo pattern
+  let deleted=false;
+  const timer=setTimeout(async()=>{
+    await fetch(`/api/payments/bills/${id}`,{method:'DELETE'});
+    deleted=true;loadSummary();
+  },4000);
+  showUndoToast(`${b?.provider||'Bill'} deleted`,()=>{
+    clearTimeout(timer);
+    if(!deleted&&b){bills.push(b);renderBills();showToast("Restored","success");}
+  });
+}
+
+function showUndoToast(msg,onUndo){
+  const old=document.getElementById("undo-toast");if(old)old.remove();
+  const t=document.createElement("div");t.id="undo-toast";
+  Object.assign(t.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,0.9)",color:"#fff",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,0.25)"});
+  t.innerHTML=`<span>${msg}</span><button style="background:none;border:1px solid rgba(255,255,255,0.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>`;
+  t.querySelector("button").onclick=()=>{onUndo();t.remove();};
+  document.body.appendChild(t);
+  setTimeout(()=>{if(t.parentNode)t.remove();},4500);
+}
+
+/* ── Payment History ── */
+function openHistory(billId,provider) {
+  historyBillId=billId;
+  document.getElementById("history-title").textContent=`${provider} — Payment History`;
+  document.getElementById("hist-date").value=new Date().toISOString().split('T')[0];
+  const b=bills.find(x=>x.id===billId);
+  document.getElementById("hist-amount").value=b?.amount||'';
+  document.getElementById("hist-method").value=b?.payment_method||'';
+  document.getElementById("hist-ref").value='';
+  loadHistory(billId);
+  document.getElementById("history-modal").classList.remove("hidden");
+}
+function closeHistoryModal(){document.getElementById("history-modal").classList.add("hidden");}
+
+async function loadHistory(billId) {
+  const res=await fetch(`/api/payments/history/${billId}`);
+  const items=await res.json();
+  const c=document.getElementById("history-list");
+  if(!items.length){c.innerHTML='<div style="color:var(--py-text3);font-size:13px;padding:12px 0;">No payments logged yet.</div>';return;}
+  c.innerHTML=items.map(h=>`
+    <div class="history-item">
+      <span class="history-date">${h.paid_date||''}</span>
+      <span class="history-amount">₹${Number(h.amount||0).toLocaleString('en-IN')}</span>
+      <span class="history-ref">${esc(h.method||'')} ${h.reference?'· '+esc(h.reference):''}</span>
+    </div>
+  `).join('');
+}
+
+async function logPayment() {
+  if(!historyBillId)return;
+  const payload={
+    bill_id:historyBillId,
+    paid_date:document.getElementById("hist-date").value,
+    amount:document.getElementById("hist-amount").value||null,
+    method:document.getElementById("hist-method").value.trim(),
+    reference:document.getElementById("hist-ref").value.trim(),
+  };
+  await fetch("/api/payments/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  loadHistory(historyBillId);
+  showToast("Payment logged","success");
+}
+
+/* ── Summary ── */
+async function loadSummary() {
+  try{
+    const res=await fetch("/api/payments/summary");
+    const d=await res.json();
+    document.getElementById("ov-monthly").textContent=`₹${Number(d.total_monthly||0).toLocaleString('en-IN')}`;
+    document.getElementById("ov-active").textContent=d.active_bills||0;
+    document.getElementById("ov-upcoming").textContent=d.upcoming?.length||0;
+    document.getElementById("ov-overdue").textContent=d.overdue?.length||0;
+    // Alerts
+    const alertRow=document.getElementById("alert-row");
+    let alerts='';
+    (d.overdue||[]).forEach(a=>{alerts+=`<span class="alert-chip overdue">⚠ ${esc(a.provider)} overdue (${Math.abs(a.days_until)}d)</span>`;});
+    (d.upcoming||[]).forEach(a=>{alerts+=`<span class="alert-chip upcoming">⏰ ${esc(a.provider)} due in ${a.days_until}d</span>`;});
+    alertRow.innerHTML=alerts;
+  }catch(e){console.warn("Summary load failed",e);}
+}
+
+function esc(s){const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;}
+
+init();
+</script>
+</body>
+</html>
