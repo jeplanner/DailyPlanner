@@ -217,13 +217,29 @@ def todo_autosave():
     data = request.get_json(force=True)
     logger.info("AUTOSAVE DATA: %s", data)
 
-    # 🛑 HARD GUARD — ignore anything not from Eisenhower
-    if "id" not in data or "plan_date" not in data or "quadrant" not in data:
+    if "plan_date" not in data or "quadrant" not in data:
         return jsonify({"ignored": True})
+
+    # NEW task (no id) — insert directly
+    if "id" not in data:
+        user_id = session["user_id"]
+        text = (data.get("task_text") or "").strip()
+        if not text:
+            return jsonify({"ignored": True})
+
+        rows = post("todo_matrix", {
+            "user_id": user_id,
+            "plan_date": data["plan_date"],
+            "quadrant": data["quadrant"],
+            "task_text": text,
+            "is_done": bool(data.get("is_done", False)),
+            "is_deleted": False,
+        })
+        return jsonify({"status": "ok", "id": rows[0]["id"] if rows else None})
 
     task_id = data["id"]
 
-    # 🔹 FULL EISENHOWER AUTOSAVE
+    # 🔹 EXISTING task — full autosave
     result = autosave_task(
         plan_date=data["plan_date"],
         task_id=task_id,
