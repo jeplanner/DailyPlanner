@@ -88,28 +88,85 @@ def todo():
                 "source": "event",
             })
 
-    # 5️⃣ Fetch project tasks with quadrant set, due today or earlier
+    # 5️⃣ Fetch project tasks with quadrant set
+    # Include: non-recurring tasks due on/before selected date, OR any recurring task
     proj_tasks_q = get("project_tasks", params={
         "user_id": f"eq.{user_id}",
         "is_eliminated": "eq.false",
         "quadrant": "neq.",
-        "or": f"(due_date.is.null,due_date.lte.{plan_date.isoformat()})",
-        "select": "task_id,task_text,quadrant,status,priority,project_id",
-        "limit": 100,
+        "select": "task_id,task_text,quadrant,status,priority,project_id,"
+                  "due_date,is_recurring,recurrence_type,recurrence_days",
+        "limit": 200,
     }) or []
 
+    target_weekday = plan_date.weekday()
+
     for t in proj_tasks_q:
-        if t.get("quadrant"):
-            tasks.append({
-                "id": f"pt-{t['task_id']}",
-                "task_text": f"📋 {t['task_text']}",
-                "quadrant": t["quadrant"],
-                "is_done": t.get("status") == "done",
-                "project_id": t.get("project_id"),
-                "project_name": project_map.get(t.get("project_id")),
-                "source_task_id": None,
-                "source": "project",
-            })
+        if not t.get("quadrant"):
+            continue
+
+        # Skip completed tasks (unless we want to show them)
+        if t.get("status") == "done":
+            continue
+
+        is_recurring = t.get("is_recurring")
+        due_date_str = t.get("due_date")
+
+        # Determine if this task applies to the selected date
+        applies = False
+
+        if is_recurring:
+            # Recurring task — check if it matches the selected date
+            rec_type = t.get("recurrence_type")
+            if rec_type == "daily":
+                applies = True
+            elif rec_type == "weekly":
+                days = t.get("recurrence_days") or []
+                if target_weekday in days:
+                    applies = True
+            elif rec_type == "monthly":
+                # Show on same day of month as due_date if set, else every day
+                if due_date_str:
+                    try:
+                        dd = date.fromisoformat(due_date_str)
+                        if plan_date.day == dd.day:
+                            applies = True
+                    except (ValueError, TypeError):
+                        pass
+            else:
+                applies = True  # Unknown recurrence — show it
+        else:
+            # Non-recurring — show if due on or before selected date
+            if not due_date_str:
+                # No due date → show today only
+                if plan_date == date.today():
+                    applies = True
+            else:
+                try:
+                    dd = date.fromisoformat(due_date_str)
+                    if dd <= plan_date:
+                        applies = True
+                except (ValueError, TypeError):
+                    pass
+
+        if not applies:
+            continue
+
+        recur_badge = ""
+        if is_recurring:
+            icons = {"daily": "🔁", "weekly": "🔁", "monthly": "🔁"}
+            recur_badge = icons.get(t.get("recurrence_type"), "🔁") + " "
+
+        tasks.append({
+            "id": f"pt-{t['task_id']}",
+            "task_text": f"📋 {recur_badge}{t['task_text']}",
+            "quadrant": t["quadrant"],
+            "is_done": t.get("status") == "done",
+            "project_id": t.get("project_id"),
+            "project_name": project_map.get(t.get("project_id")),
+            "source_task_id": None,
+            "source": "project",
+        })
 
     # 4️⃣ Build Eisenhower view (NO due-date logic here)
     todo = build_eisenhower_view(tasks, plan_date)
