@@ -562,41 +562,50 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .group-row { display: block; }
   .group-row td { display: block; padding: 8px 4px; border-radius: 8px; }
 
-  /* Convert each task row to a card */
+  /* Convert each task row to a single-line card */
   .task-row {
-    display: flex; flex-wrap: wrap; align-items: center;
-    gap: 8px; padding: 12px;
-    background: var(--pt-surface); border-radius: 12px;
+    display: flex; flex-wrap: nowrap; align-items: center;
+    gap: 6px; padding: 10px 12px;
+    background: var(--pt-surface); border-radius: 10px;
     border: 1px solid var(--pt-border); box-shadow: var(--pt-shadow);
   }
   .task-row td { display: contents; border: none; padding: 0; }
 
   /* Hide columns not needed on mobile */
-  .col-start, .col-dur, .col-progress, .col-actions .gcal-btn { display: none; }
+  .col-start, .col-dur, .col-progress { display: none; }
 
-  /* Layout within mobile card */
-  .col-check { order: 1; }
-  .col-prio { order: 2; }
-  .col-name {
-    order: 3; flex: 1; min-width: 0;
+  /* All items in ONE row: check | prio | name... | status | due | actions */
+  .col-check { order: 1; flex-shrink: 0; }
+  .col-prio { order: 2; flex-shrink: 0; }
+  .col-name { order: 3; flex: 1; min-width: 0; overflow: hidden; }
+  .col-status { order: 4; flex-shrink: 0; width: auto; }
+  .col-due { order: 5; flex-shrink: 0; width: auto; }
+  .col-actions { order: 6; flex-shrink: 0; width: auto; }
+
+  /* Task name truncates to fit single line */
+  .task-name-cell { flex-wrap: nowrap; }
+  .task-text {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 13px; display: block;
   }
-  .col-actions { order: 4; }
-  .col-status { order: 5; }
-  .col-due { order: 6; }
 
-  /* Status + Due on second row */
-  .col-status, .col-due {
-    width: auto;
-  }
+  /* Compact status/due/actions */
+  .status-select { font-size: 10px; padding: 2px 4px; }
+  .due-cell { flex-direction: column; gap: 0; align-items: flex-end; }
+  .cell-date { width: 90px; font-size: 10px; }
+  .due-label { font-size: 9px; }
 
-  .task-name-cell { flex-wrap: wrap; }
-  .task-text { white-space: normal; word-break: break-word; font-size: 14px; }
+  .row-action-btn { width: 28px; height: 28px; }
+  .col-actions .gcal-btn { display: none; }
 
-  .status-select { font-size: 12px; }
-  .due-cell { flex-direction: row; gap: 4px; align-items: center; }
-  .cell-date { width: 100px; font-size: 11px; }
+  /* Subtask badge + expand stay inline */
+  .subtask-badge { font-size: 9px; padding: 0 4px; }
+  .subtask-expand-btn { width: 16px; height: 16px; }
+  .recur-badge, .delegate-badge { display: none; }
 
-  .row-action-btn { width: 32px; height: 32px; }
+  /* Inline subtasks full width below */
+  .inline-subtasks { padding-left: 20px; }
+  .inline-subtask { font-size: 12px; }
 
   /* Overdue card highlight */
   .task-row.overdue { border-left: 3px solid var(--pt-danger); }
