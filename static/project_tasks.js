@@ -1,788 +1,771 @@
 /* =========================================================
-   PROJECT TASKS — SINGLE ENTRY FILE
+   PROJECT TASKS  --  Microsoft Project-style task planner
    ========================================================= */
 
-/* -------------------------
-   Utilities
-------------------------- */
-function $(id) { return document.getElementById(id); }
+/* ---------------------------------------------------------
+   Helpers
+   --------------------------------------------------------- */
+const _q  = (sel, ctx = document) => ctx.querySelector(sel);
+const _qa = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
+const _id = id => document.getElementById(id);
 
-function showProjectToast(message, type = "info", duration = 2500) {
-  const container = $("project-toast-container");
-  if (!container) return;
-  const toast = document.createElement("div");
-  toast.className = `proj-toast proj-toast-${type}`;
-  toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => toast.classList.add("show"), 10);
-  setTimeout(() => {
-    toast.classList.remove("show");
-    setTimeout(() => toast.remove(), 300);
-  }, duration);
-}
-
-/* -------------------------
-   Sorting
-------------------------- */
-function initSort() {
-  const sortSelect = $("sortSelect");
-  if (!sortSelect) return;
-
-  sortSelect.addEventListener("change", async e => {
-    await fetch(`/projects/${sortSelect.dataset.projectId}/set-sort`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sort: e.target.value })
-    });
-    location.reload();
+function _post(url, body) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 
-/* -------------------------
-   Drag & Drop Reorder
-------------------------- */
-let draggedId = null;
-
-window.dragStart = e => {
-  draggedId = e.target.closest(".task")?.dataset.id || null;
-};
-
-window.dragOver = e => e.preventDefault();
-
-window.dropTask = e => {
-  e.preventDefault();
-  const target = e.target.closest(".task");
-  if (!draggedId || !target) return;
-
-  const targetId = target.dataset.id;
-  if (draggedId === targetId) return;
-
-  fetch("/projects/tasks/reorder", {
-    method: "POST",
+function _put(url, body) {
+  return fetch(url, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dragged_id: draggedId, target_id: targetId })
-  })
-    .then(r => {
-      if (r.ok) location.reload();
-      else showProjectToast("Reorder failed", "error");
-    })
-    .catch(console.error);
-};
-
-/* -------------------------
-   Task Expand / Collapse
-------------------------- */
-window.toggleTask = taskId => {
-  const el = $(`task-${taskId}`);
-  if (el) el.classList.toggle("open");
-};
-
-/* -------------------------
-   Pin Task
-------------------------- */
-window.togglePin = btn => {
-  const task = btn.closest(".task");
-  if (!task) return;
-
-  const isPinned = task.dataset.pinned === "1";
-
-  fetch("/projects/tasks/pin", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: task.dataset.id, is_pinned: !isPinned })
-  }).then(() => {
-    task.dataset.pinned = isPinned ? "0" : "1";
-    btn.classList.toggle("pinned", !isPinned);
-  }).catch(console.error);
-};
-
-/* -------------------------
-   Status Update (no full reload)
-------------------------- */
-window.updateStatus = (taskId, status, date = null) => {
-  const task = $(`task-${taskId}`);
-  if (!task) return;
-
-  const prev = task.dataset.status;
-  task.dataset.status = status;
-
-  // Update checkbox state immediately
-  const checkbox = task.querySelector('input[type="checkbox"]');
-  if (checkbox) checkbox.checked = status === "done";
-
-  fetch("/projects/tasks/status", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, status, date })
-  })
-    .then(r => {
-      if (!r.ok) throw new Error();
-      // If hide_completed is active and task is now done, fade it out
-      const hideCompleted = new URL(window.location.href).searchParams.get("hide_completed") === "1";
-      if (hideCompleted && status === "done") {
-        task.style.transition = "opacity 0.4s, transform 0.4s";
-        task.style.opacity = "0";
-        task.style.transform = "translateX(20px)";
-        setTimeout(() => task.remove(), 420);
-        return;
-      }
-      showProjectToast(status === "done" ? "Marked complete ✓" : "Status updated", "success", 1500);
-    })
-    .catch(() => {
-      task.dataset.status = prev;
-      if (checkbox) checkbox.checked = prev === "done";
-      showProjectToast("Failed to update status", "error");
-    });
-};
-
-/* -------------------------
-   Priority Cycle
-------------------------- */
-window.cyclePriority = async (e, taskId) => {
-  const task = document.querySelector(`.task[data-id="${taskId}"]`);
-  if (!task) return;
-  const icon = task.querySelector(".priority-icon");
-  const order = ["low", "medium", "high"];
-  const current = icon?.dataset.priority || "medium";
-  const next = order[(order.indexOf(current) + 1) % order.length];
-  if (icon) icon.dataset.priority = next;
-
-  try {
-    await fetch("/projects/tasks/update-priority", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_id: taskId, priority: next })
-    });
-    showProjectToast(`Priority → ${next}`, "success", 1500);
-  } catch (err) {
-    console.error(err);
-  }
-};
-
-/* -------------------------
-   Planned / Actual / Due Time
-------------------------- */
-window.updatePlanned = function (taskId, value) {
-  fetch("/projects/tasks/update-planned", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, planned_hours: parseFloat(value) || 0 })
-  }).catch(console.error);
-};
-
-window.updateActual = function (taskId, value) {
-  fetch("/projects/tasks/update-actual", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, actual_hours: parseFloat(value) || 0 })
-  }).catch(console.error);
-};
-
-window.updateDueTime = function (taskId, value) {
-  fetch("/projects/tasks/update-time", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: taskId, due_time: value || null })
-  }).catch(console.error);
-};
-
-/* -------------------------
-   Eisenhower Modal
-------------------------- */
-let eisenhowerTaskId = null;
-
-window.openEisenhower = function (taskId) {
-  eisenhowerTaskId = taskId;
-  const taskEl = document.querySelector(`.task[data-id="${taskId}"]`);
-  const name = taskEl?.querySelector(".task-title")?.textContent.trim() || "";
-  const nameEl = $("eisenhower-task-name");
-  if (nameEl) nameEl.textContent = name;
-  $("eisenhower-modal")?.classList.remove("hidden");
-};
-
-window.closeEisenhowerModal = function () {
-  $("eisenhower-modal")?.classList.add("hidden");
-  eisenhowerTaskId = null;
-};
-
-window.handleEisenhowerOverlay = function (e) {
-  if (e.target === $("eisenhower-modal")) closeEisenhowerModal();
-};
-
-window.submitEisenhower = async function (quadrant) {
-  if (!eisenhowerTaskId) return;
-  const today = new Date().toLocaleDateString("en-CA");
-  closeEisenhowerModal();
-
-  try {
-    const r = await fetch("/projects/tasks/send-to-eisenhower", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_id: eisenhowerTaskId, plan_date: today, quadrant })
-    });
-    const data = await r.json();
-    if (data.status === "ok") {
-      showProjectToast("Sent to Eisenhower ✓", "success");
-      const btn = $(`send-${eisenhowerTaskId}`);
-      if (btn) btn.classList.add("sent");
-    } else if (data.status === "already-sent") {
-      showProjectToast("Already in Eisenhower", "info");
-    }
-  } catch {
-    showProjectToast("Failed to send", "error");
-  }
-  eisenhowerTaskId = null;
-};
-
-/* -------------------------
-   Filters
-------------------------- */
-function toggleHideCompleted(checked) {
-  const url = new URL(window.location.href);
-  url.searchParams.set("hide_completed", checked ? "1" : "0");
-  window.location.href = url.toString();
-}
-
-function toggleFilter(key, checked) {
-  const url = new URL(window.location.href);
-  url.searchParams.set(key, checked ? "1" : "0");
-  window.location.href = url.toString();
-}
-
-/* -------------------------
-   Due Badge Formatting
-------------------------- */
-function formatDueBadges() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  document.querySelectorAll(".due-badge").forEach(badge => {
-    const dueStr = badge.dataset.due;
-    if (!dueStr) return;
-
-    // Parse without timezone shift
-    const [y, m, d] = dueStr.split("-").map(Number);
-    const due = new Date(y, m - 1, d);
-    const diff = Math.round((due - today) / 86400000);
-    badge.classList.remove("today", "soon", "overdue");
-
-    if (diff === 0) {
-      badge.textContent = "⏰ Today";
-      badge.classList.add("today");
-    } else if (diff === 1) {
-      badge.textContent = "⏰ Tomorrow";
-      badge.classList.add("soon");
-    } else if (diff > 1) {
-      badge.textContent = `⏰ In ${diff} days`;
-      badge.classList.add("soon");
-    } else {
-      badge.textContent = `⚠ ${Math.abs(diff)} days overdue`;
-      badge.classList.add("overdue");
-    }
+    body: JSON.stringify(body),
   });
 }
 
-/* -------------------------
-   Project Health
-------------------------- */
-function calculateProjectHealth() {
-  const tasks = document.querySelectorAll(".task");
-  if (!tasks.length) return;
+/* Currently open task id in the bottom sheet */
+let _sheetTaskId = null;
 
-  let total = 0, done = 0, progress = 0, overdue = 0;
-  let planned = 0, actual = 0;
-  const today = new Date().toISOString().slice(0, 10);
+/* Scheduled reminder timeouts (keyed by taskId) */
+const _reminders = {};
 
-  tasks.forEach(t => {
-    total++;
-    if (t.dataset.status === "done") done++;
-    if (t.dataset.status === "in_progress") progress++;
+/* Selected priority in the add-task picker */
+let _addPriority = "medium";
 
-    const due = t.querySelector(".due-date")?.textContent;
-    if (due && due < today && t.dataset.status !== "done") overdue++;
+/* ---------------------------------------------------------
+   Priority Picker
+   --------------------------------------------------------- */
+function initPrioPicker() {
+  const picker = _id("prio-picker");
+  if (!picker) return;
 
-    planned += parseFloat(t.querySelector('[onchange*="updatePlanned"]')?.value || 0);
-    actual  += parseFloat(t.querySelector('[onchange*="updateActual"]')?.value || 0);
+  _qa(".pp-btn", picker).forEach(btn => {
+    btn.addEventListener("click", () => {
+      _qa(".pp-btn", picker).forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      _addPriority = btn.dataset.p;
+    });
   });
-
-  const completion = total ? (done / total) * 100 : 0;
-  const accuracy   = planned
-    ? Math.max(0, 100 - Math.abs(actual - planned) / planned * 100)
-    : 100;
-
-  const score =
-    completion * 0.35 +
-    accuracy   * 0.25 +
-    (100 - (overdue / total) * 100) * 0.25 +
-    Math.min(100, (progress / total) * 100) * 0.15;
-
-  if ($("health-score"))      $("health-score").textContent      = Math.round(score);
-  if ($("metric-complete"))   $("metric-complete").textContent   = Math.round(completion) + "%";
-  if ($("metric-overdue"))    $("metric-overdue").textContent    = overdue;
-  if ($("metric-accuracy"))   $("metric-accuracy").textContent   = Math.round(accuracy) + "%";
-  if ($("metric-progress"))   $("metric-progress").textContent   = progress;
 }
 
-/* -------------------------
-   Notes → Bulk Tasks
-------------------------- */
-function extractTasksFromNotes(text) {
-  return text
-    .split("\n")
-    .map(l => l.trim())
-    .filter(Boolean)
-    .map(l => l.replace(/^[-•]\s*/, ""));
+/* ---------------------------------------------------------
+   Add Task
+   --------------------------------------------------------- */
+function initAddTask() {
+  const input = _id("add-task-input");
+  const btn   = _id("add-task-btn");
+  if (!input) return;
+
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); addTask(); }
+  });
+  if (btn) btn.addEventListener("click", addTask);
 }
 
-/* -------------------------
-   Inline Edit (title)
-------------------------- */
-window.enableEdit = function (el, taskId) {
-  if (!el || !taskId) return;
-
-  el.contentEditable = "true";
-  el.focus();
-  document.execCommand("selectAll", false, null);
-  document.getSelection()?.collapseToEnd();
-
-  el.onblur   = () => saveEdit(el, taskId);
-  el.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } };
-};
-
-function saveEdit(el, taskId) {
-  el.contentEditable = "false";
-  const text = el.textContent.trim();
+async function addTask() {
+  const input = _id("add-task-input");
+  const dateInput = _id("add-task-date");
+  const text = (input?.value || "").trim();
   if (!text) return;
 
-  fetch(`/projects/tasks/${taskId}/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_text: text })
-  })
-    .then(r => { if (r.ok) showProjectToast("Saved ✓", "success", 1500); })
-    .catch(console.error);
+  try {
+    const res = await _post(`/projects/${PROJECT_ID}/tasks/add-ajax`, {
+      task_text: text,
+      priority: _addPriority,
+      start_date: dateInput?.value || "",
+    });
+
+    if (!res.ok) throw new Error("Add failed");
+
+    input.value = "";
+    showToast("Task added", "success");
+    location.reload();
+  } catch (err) {
+    console.error(err);
+    showToast("Failed to add task", "error");
+  }
 }
 
-/* -------------------------
-   Delegation
-------------------------- */
-window.updateDelegation = function (taskId, value) {
-  if (!taskId) return;
-  fetch("/projects/tasks/update-delegation", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: taskId, delegated_to: value || null })
-  }).catch(console.error);
-};
+/* ---------------------------------------------------------
+   Toggle Task Done (checkbox)
+   --------------------------------------------------------- */
+function toggleTaskDone(checkbox, taskId, date) {
+  const status = checkbox.checked ? "done" : "open";
+  const row = checkbox.closest(".task-row");
 
-/* -------------------------
-   Planning (start date + duration)
-------------------------- */
-window.updatePlanning = function (taskId) {
-  if (!taskId) return;
-
-  const taskEl = $(`task-${taskId}`);
-  if (!taskEl) return;
-
-  const startInput    = taskEl.querySelector(".start-date");
-  const durationInput = taskEl.querySelector(".duration-days");
-  if (!startInput || !durationInput) return;
-
-  fetch("/projects/tasks/update-planning", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      task_id: taskId,
-      start_date: startInput.value,
-      duration_days: durationInput.value
-    })
-  })
-    .then(r => r.json())
-    .then(res => {
-      if (res?.due_date) {
-        const dueBadge = taskEl.querySelector(".due-badge");
-        if (dueBadge) dueBadge.dataset.due = res.due_date;
-        formatDueBadges();
-      }
-      calculateProjectHealth();
-    })
-    .catch(console.error);
-};
-
-/* -------------------------
-   Eliminate Task
-------------------------- */
-window.eliminateTask = function (taskId) {
-  if (!taskId) return;
-  if (!window.confirm("Delete this task? This cannot be undone.")) return;
-
-  fetch("/projects/tasks/eliminate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: taskId, reason: null })
-  })
+  _post("/projects/tasks/status", { task_id: taskId, status, date })
     .then(r => {
-      if (!r.ok) throw new Error("Eliminate failed");
-      location.reload();
-    })
-    .catch(() => showProjectToast("Failed to delete task", "error"));
-};
+      if (!r.ok) throw new Error();
 
-/* -------------------------
-   Save Task (full card)
-------------------------- */
-function serializeTask(taskEl) {
-  return {
-    task_text:     taskEl.querySelector(".task-title")?.textContent.trim() || null,
-    priority:      taskEl.querySelector(".priority-icon")?.dataset.priority || null,
-    status:        taskEl.dataset.status || null,
-    start_date:    taskEl.querySelector(".start-date")?.value || null,
-    duration_days: taskEl.querySelector(".duration-days")?.value || 0,
-    planned_hours: taskEl.querySelector('[onchange*="updatePlanned"]')?.value || 0,
-    actual_hours:  taskEl.querySelector('[onchange*="updateActual"]')?.value || 0,
-    due_time:      taskEl.querySelector('select[onchange*="updateDueTime"]')?.value || null,
-    delegated_to:  taskEl.querySelector('input[maxlength="25"]')?.value || null
-  };
+      if (row) {
+        row.classList.toggle("done", status === "done");
+        row.dataset.status = status;
+        // update the status select in the same row
+        const sel = _q(".status-select", row);
+        if (sel) sel.value = status;
+      }
+
+      // If hide-done filter is active, fade out
+      const hiding = new URL(location.href).searchParams.get("hide_completed") === "1";
+      if (hiding && status === "done" && row) {
+        row.style.transition = "opacity .4s, transform .4s";
+        row.style.opacity = "0";
+        row.style.transform = "translateX(20px)";
+        setTimeout(() => row.remove(), 420);
+      }
+
+      updateProjectStats();
+      showToast(status === "done" ? "Marked complete" : "Reopened", "success");
+    })
+    .catch(() => {
+      checkbox.checked = !checkbox.checked;
+      showToast("Failed to update status", "error");
+    });
 }
 
-document.addEventListener("click", async e => {
-  const btn = e.target.closest(".save-task-btn");
-  if (!btn) return;
+/* ---------------------------------------------------------
+   Status Select
+   --------------------------------------------------------- */
+function updateStatus(taskId, value, date) {
+  const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
 
-  const taskEl = btn.closest(".task");
-  if (!taskEl) return;
+  _post("/projects/tasks/status", { task_id: taskId, status: value, date })
+    .then(r => {
+      if (!r.ok) throw new Error();
+      if (row) {
+        const isDone = value === "done";
+        row.classList.toggle("done", isDone);
+        row.dataset.status = value;
+        const cb = _q(".task-check", row);
+        if (cb) cb.checked = isDone;
+        // Update select styling
+        const sel = _q(".status-select", row);
+        if (sel) {
+          sel.className = "status-select status-" + value;
+        }
+      }
+      updateProjectStats();
+      showToast("Status updated", "success");
+    })
+    .catch(() => showToast("Status update failed", "error"));
+}
 
-  const taskId = taskEl.dataset.id;
-  if (!taskId) return;
+/* ---------------------------------------------------------
+   Generic Field Update (inline editing in table)
+   --------------------------------------------------------- */
+function updateField(taskId, field, value) {
+  // Planning fields (start_date, duration_days) need the planning endpoint
+  if (field === "start_date" || field === "duration_days") {
+    const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+    const startInput = _q('input[type="date"].cell-date', _q(".col-start", row));
+    const durInput   = _q('input[type="number"].cell-num', _q(".col-dur", row));
 
-  const payload = serializeTask(taskEl);
-  if (!payload.task_text) {
-    showProjectToast("Task text cannot be empty", "error");
+    _post("/projects/tasks/update-planning", {
+      task_id: taskId,
+      start_date: startInput?.value || "",
+      duration_days: durInput?.value || 1,
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.due_date && row) {
+          const dueInput = _q(".col-due input.cell-date", row);
+          if (dueInput) dueInput.value = data.due_date;
+          updateDueLabel(row, data.due_date);
+        }
+        updateProjectStats();
+      })
+      .catch(console.error);
     return;
   }
 
-  btn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = "Saving…";
-
-  try {
-    const res = await fetch(`/projects/tasks/${taskId}/update`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error("Save failed");
-    showProjectToast("Saved ✓", "success", 1500);
-    location.reload();
-  } catch (err) {
-    console.error(err);
-    showProjectToast("Save failed. Try again.", "error");
-    btn.textContent = originalText;
-    btn.disabled = false;
+  // Due date has its own endpoint
+  if (field === "due_date") {
+    _post("/projects/tasks/update-date", { task_id: taskId, due_date: value })
+      .then(() => {
+        const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+        if (row) updateDueLabel(row, value);
+        updateProjectStats();
+      })
+      .catch(console.error);
+    return;
   }
-});
 
-/* -------------------------
-   Recurrence
-------------------------- */
-async function updateRecurrence(taskId, type) {
-  const taskEl = $(`task-${taskId}`);
-  if (!taskEl) return;
+  // All other fields
+  _post(`/projects/tasks/${taskId}/update`, { [field]: value })
+    .catch(console.error);
+}
 
-  await fetch(`/projects/tasks/${taskId}/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ is_recurring: type !== "none", recurrence_type: type })
+/* Helper: refresh the due-label text in a row */
+function updateDueLabel(row, dueDateStr) {
+  const label = _q(".due-label", row);
+  if (!dueDateStr) {
+    if (label) label.textContent = "";
+    row.classList.remove("overdue");
+    return;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [y, m, d] = dueDateStr.split("-").map(Number);
+  const due = new Date(y, m - 1, d);
+  const diff = Math.round((due - today) / 86400000);
+
+  if (!label) return;
+  label.classList.remove("overdue-label");
+  row.classList.remove("overdue");
+
+  if (diff < 0) {
+    label.textContent = `${Math.abs(diff)}d overdue`;
+    label.classList.add("overdue-label");
+    row.classList.add("overdue");
+  } else if (diff === 0) {
+    label.textContent = "Today";
+  } else if (diff === 1) {
+    label.textContent = "Tomorrow";
+  } else {
+    label.textContent = `In ${diff}d`;
+  }
+}
+
+/* ---------------------------------------------------------
+   Priority Cycling  (dot click in table)
+   --------------------------------------------------------- */
+const PRIO_ORDER = ["high", "medium", "low"];
+
+function cyclePriority(taskId, el) {
+  const current = el.className.replace("prio-dot prio-", "").trim();
+  const idx = PRIO_ORDER.indexOf(current);
+  const next = PRIO_ORDER[(idx + 1) % PRIO_ORDER.length];
+
+  el.className = `prio-dot prio-${next}`;
+  el.title = next;
+
+  const row = el.closest(".task-row");
+  if (row) row.dataset.priority = next;
+
+  _post("/projects/tasks/update-priority", { task_id: taskId, priority: next })
+    .then(() => showToast(`Priority: ${next}`, "success"))
+    .catch(() => showToast("Priority update failed", "error"));
+}
+
+/* ---------------------------------------------------------
+   Group Toggle  (collapse/expand)
+   --------------------------------------------------------- */
+function toggleGroup(el) {
+  el.classList.toggle("collapsed");
+  const row = el.closest(".group-row");
+  if (!row) return;
+
+  const groupName = row.dataset.group;
+  const collapsed = el.classList.contains("collapsed");
+
+  _qa(`.task-row[data-group="${groupName}"]`).forEach(tr => {
+    tr.classList.toggle("hidden-group", collapsed);
   });
 
-  const weeklyBox = taskEl.querySelector(".recurrence-days");
-  if (weeklyBox) weeklyBox.style.display = type === "weekly" ? "flex" : "none";
-
-  const badge = taskEl.querySelector(".recurrence-badge");
-  if (type === "none") {
-    if (badge) badge.remove();
-  } else {
-    if (!badge) {
-      const newBadge = document.createElement("span");
-      newBadge.className = "recurrence-badge";
-      taskEl.querySelector(".task-text")?.appendChild(newBadge);
-    }
-    const finalBadge = taskEl.querySelector(".recurrence-badge");
-    if (finalBadge) finalBadge.textContent = `🔁 ${type}`;
+  // Rotate chevron
+  const chevron = _q(".group-chevron", el);
+  if (chevron) {
+    chevron.style.transform = collapsed ? "rotate(-90deg)" : "";
   }
 }
 
-function updateRecurrenceDays(taskId) {
-  const box = $(`task-${taskId}`);
-  if (!box) return;
-  const days = [...box.querySelectorAll(".recurrence-days input:checked")]
-    .map(cb => parseInt(cb.value));
+/* ---------------------------------------------------------
+   View Switching  (table / board)
+   --------------------------------------------------------- */
+function setTaskView(view) {
+  const tableView = _id("table-view");
+  const boardView = _id("board-view");
+  if (!tableView || !boardView) return;
 
-  fetch(`/projects/tasks/${taskId}/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ recurrence_days: days })
-  }).catch(console.error);
+  tableView.classList.toggle("hidden", view !== "table");
+  boardView.classList.toggle("hidden", view !== "board");
+
+  _qa(".vt-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.view === view);
+  });
+
+  if (view === "board") populateBoard();
 }
 
-function toggleAutoAdvance(taskId, enabled) {
-  fetch(`/projects/tasks/${taskId}/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ auto_advance: enabled })
-  }).catch(console.error);
+/* ---------------------------------------------------------
+   Board View (Kanban)
+   --------------------------------------------------------- */
+function populateBoard() {
+  // Clear columns
+  ["backlog", "open", "in_progress", "done"].forEach(status => {
+    const col = _id(`board-${status}`);
+    if (col) col.innerHTML = "";
+  });
+
+  _qa(".task-row").forEach(row => {
+    const status = row.dataset.status || "open";
+    const col = _id(`board-${status}`);
+    if (!col) return;
+
+    const id   = row.dataset.id;
+    const text = _q(".task-text", row)?.textContent.trim() || "";
+    const prio = row.dataset.priority || "medium";
+    const dueInput = _q(".col-due input.cell-date", row);
+    const due  = dueInput?.value || "";
+
+    const card = document.createElement("div");
+    card.className = `board-card prio-border-${prio}`;
+    card.dataset.id = id;
+    card.onclick = () => openTaskDetail(id);
+
+    card.innerHTML = `
+      <div class="board-card-title">${_escHtml(text)}</div>
+      ${due ? `<div class="board-card-due">${due}</div>` : ""}
+    `;
+    col.appendChild(card);
+  });
 }
 
-/* -------------------------
-   Task Action Sheet (long-press)
-------------------------- */
-let currentSheetTask = {};
+function _escHtml(str) {
+  const el = document.createElement("span");
+  el.textContent = str;
+  return el.innerHTML;
+}
 
-function openTaskSheet(task) {
-  currentSheetTask = task;
-  const titleEl = $("sheet-title");
-  const toggleEl = $("autoAdvanceToggle");
-  if (titleEl) titleEl.textContent = task.text;
-  if (toggleEl) toggleEl.checked = !!task.autoAdvance;
-  $("task-action-sheet")?.classList.remove("hidden");
+/* ---------------------------------------------------------
+   Filters
+   --------------------------------------------------------- */
+function initFilters() {
+  const hideDone = _id("filter-hide-done");
+  const overdue  = _id("filter-overdue");
+
+  if (hideDone) {
+    hideDone.addEventListener("change", () => {
+      const url = new URL(location.href);
+      url.searchParams.set("hide_completed", hideDone.checked ? "1" : "0");
+      location.href = url.toString();
+    });
+  }
+
+  if (overdue) {
+    overdue.addEventListener("change", () => {
+      const url = new URL(location.href);
+      url.searchParams.set("overdue_only", overdue.checked ? "1" : "0");
+      location.href = url.toString();
+    });
+  }
+}
+
+/* ---------------------------------------------------------
+   Sort
+   --------------------------------------------------------- */
+function initSort() {
+  const sel = _id("sort-select");
+  if (!sel) return;
+
+  sel.addEventListener("change", async () => {
+    await _post(`/projects/${PROJECT_ID}/set-sort`, { sort: sel.value });
+    const url = new URL(location.href);
+    url.searchParams.set("sort", sel.value);
+    location.href = url.toString();
+  });
+}
+
+/* ---------------------------------------------------------
+   Project Stats
+   --------------------------------------------------------- */
+function updateProjectStats() {
+  const rows    = _qa(".task-row");
+  const total   = rows.length;
+  const done    = rows.filter(r => r.classList.contains("done")).length;
+  const overdue = rows.filter(r => r.classList.contains("overdue")).length;
+
+  const elTotal   = _id("stat-total");
+  const elDone    = _id("stat-done");
+  const elOverdue = _id("stat-overdue");
+  const elFill    = _id("proj-progress-fill");
+
+  if (elTotal)   elTotal.textContent   = `${total} task${total !== 1 ? "s" : ""}`;
+  if (elDone)    elDone.textContent    = `${done} done`;
+  if (elOverdue) elOverdue.textContent = `${overdue} overdue`;
+
+  if (elFill) {
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    elFill.style.width = pct + "%";
+  }
+}
+
+/* ---------------------------------------------------------
+   Task Detail Bottom Sheet
+   --------------------------------------------------------- */
+async function openTaskDetail(taskId) {
+  _sheetTaskId = taskId;
+
+  try {
+    const res = await fetch(`/api/v2/project-tasks/${taskId}`);
+    if (!res.ok) throw new Error();
+    const t = await res.json();
+
+    // Populate fields
+    _val("sheet-name",      t.task_text || "");
+    _val("sheet-status",    t.status || "open");
+    _val("sheet-priority",  t.priority || "medium");
+    _val("sheet-start",     t.start_date || "");
+    _val("sheet-due",       t.due_date || "");
+    _val("sheet-duration",  t.duration_days || "");
+    _val("sheet-due-time",  t.due_time || "");
+    _val("sheet-planned",   t.planned_hours || "");
+    _val("sheet-actual",    t.actual_hours || "");
+    _val("sheet-delegate",  t.delegated_to || "");
+    _val("sheet-notes",     t.notes || "");
+    _val("sheet-reminder",  "");
+
+    // Recurrence
+    const recType = t.is_recurring ? (t.recurrence_type || "daily") : "none";
+    _val("sheet-recurrence", recType);
+    onRecurrenceChange();
+
+    // Populate day chips for weekly
+    if (recType === "weekly" && Array.isArray(t.recurrence_days)) {
+      _qa("#recurrence-days .day-chip").forEach(chip => {
+        chip.classList.toggle("active", t.recurrence_days.includes(parseInt(chip.dataset.day)));
+      });
+    }
+
+    // Load subtasks
+    loadSubtasks(taskId);
+
+    // Store task id on sheet
+    const sheet = _id("task-sheet");
+    if (sheet) {
+      sheet.dataset.taskId = taskId;
+      sheet.classList.remove("hidden");
+    }
+
+    feather.replace();
+  } catch (err) {
+    console.error(err);
+    showToast("Failed to load task details", "error");
+  }
+}
+
+function _val(id, value) {
+  const el = _id(id);
+  if (el) el.value = value;
 }
 
 function closeTaskSheet() {
-  $("task-action-sheet")?.classList.add("hidden");
-  currentSheetTask = {};
+  const sheet = _id("task-sheet");
+  if (sheet) sheet.classList.add("hidden");
+  _sheetTaskId = null;
 }
 
-function sheetCompleteToday() {
-  fetch("/projects/tasks/status", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      task_id: currentSheetTask.taskId,
-      status: "done",
-      date: currentSheetTask.date
+async function saveTaskSheet() {
+  if (!_sheetTaskId) return;
+
+  const name     = _id("sheet-name")?.value.trim();
+  const status   = _id("sheet-status")?.value;
+  const priority = _id("sheet-priority")?.value;
+  const start    = _id("sheet-start")?.value || null;
+  const due      = _id("sheet-due")?.value || null;
+  const duration = _id("sheet-duration")?.value || null;
+  const planned  = _id("sheet-planned")?.value || null;
+  const actual   = _id("sheet-actual")?.value || null;
+  const delegate = _id("sheet-delegate")?.value || null;
+  const notes    = _id("sheet-notes")?.value || null;
+  const dueTime  = _id("sheet-due-time")?.value || null;
+
+  if (!name) {
+    showToast("Task name cannot be empty", "error");
+    return;
+  }
+
+  try {
+    // Main fields via PUT
+    const putRes = await _put(`/api/v2/project-tasks/${_sheetTaskId}`, {
+      task_text: name,
+      status,
+      priority,
+      due_date: due,
+      duration_days: duration,
+      planned_hours: planned,
+      actual_hours: actual,
+      notes,
+    });
+    if (!putRes.ok) throw new Error();
+
+    // Additional fields via PATCH endpoint
+    const recurrence = _id("sheet-recurrence")?.value || "none";
+    const isRecurring = recurrence !== "none";
+    const recurrenceDays = isRecurring && recurrence === "weekly"
+      ? _qa("#recurrence-days .day-chip.active").map(c => parseInt(c.dataset.day))
+      : [];
+
+    await _post(`/projects/tasks/${_sheetTaskId}/update`, {
+      start_date: start,
+      due_time: dueTime,
+      delegated_to: delegate,
+      is_recurring: isRecurring,
+      recurrence_type: isRecurring ? recurrence : null,
+      recurrence_days: recurrenceDays.length ? recurrenceDays : null,
+    });
+
+    // Schedule reminder if set
+    const reminderMin = _id("sheet-reminder")?.value;
+    if (reminderMin !== "" && due && dueTime) {
+      scheduleReminder(_sheetTaskId, name, due, dueTime, parseInt(reminderMin));
+    }
+
+    closeTaskSheet();
+    showToast("Task saved", "success");
+    location.reload();
+  } catch (err) {
+    console.error(err);
+    showToast("Failed to save task", "error");
+  }
+}
+
+/* ---------------------------------------------------------
+   Google Calendar Integration
+   --------------------------------------------------------- */
+function addTaskToGCal(taskId) {
+  const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+  if (!row) return;
+
+  const title   = _q(".task-text", row)?.textContent.trim() || "Task";
+  const dueInput = _q(".col-due input.cell-date", row);
+  const dueDate = dueInput?.value || "";
+
+  _openGCalUrl(title, dueDate, "", "");
+}
+
+function addSheetTaskToGCal() {
+  const title   = _id("sheet-name")?.value.trim() || "Task";
+  const dueDate = _id("sheet-due")?.value || "";
+  const dueTime = _id("sheet-due-time")?.value || "";
+  const notes   = _id("sheet-notes")?.value || "";
+
+  _openGCalUrl(title, dueDate, dueTime, notes);
+}
+
+function _openGCalUrl(title, dueDate, dueTime, notes) {
+  if (!dueDate) {
+    showToast("Set a due date first", "error");
+    return;
+  }
+
+  const dateClean = dueDate.replace(/-/g, "");
+  let startStr, endStr;
+
+  if (dueTime) {
+    const timeClean = dueTime.replace(/:/g, "") + "00";
+    startStr = `${dateClean}T${timeClean}`;
+    // Default 1-hour event
+    const startDt = new Date(`${dueDate}T${dueTime}`);
+    const endDt   = new Date(startDt.getTime() + 3600000);
+    const pad2 = n => String(n).padStart(2, "0");
+    endStr = `${endDt.getFullYear()}${pad2(endDt.getMonth()+1)}${pad2(endDt.getDate())}` +
+             `T${pad2(endDt.getHours())}${pad2(endDt.getMinutes())}00`;
+  } else {
+    // All-day event
+    startStr = dateClean;
+    const next = new Date(`${dueDate}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    const pad2 = n => String(n).padStart(2, "0");
+    endStr = `${next.getFullYear()}${pad2(next.getMonth()+1)}${pad2(next.getDate())}`;
+  }
+
+  const url = `https://calendar.google.com/calendar/r/eventedit?` +
+    `text=${encodeURIComponent(title)}` +
+    `&dates=${startStr}/${endStr}` +
+    (notes ? `&details=${encodeURIComponent(notes)}` : "");
+
+  window.open(url, "_blank");
+}
+
+/* ---------------------------------------------------------
+   Browser Notification Reminders
+   --------------------------------------------------------- */
+function scheduleReminder(taskId, title, dueDate, dueTime, reminderMinutes) {
+  if (!dueDate || !dueTime) return;
+
+  // Clear existing reminder for this task
+  if (_reminders[taskId]) {
+    clearTimeout(_reminders[taskId]);
+    delete _reminders[taskId];
+  }
+
+  const dueMs = new Date(`${dueDate}T${dueTime}`).getTime();
+  const reminderMs = dueMs - (reminderMinutes * 60 * 1000);
+  const now = Date.now();
+
+  if (reminderMs <= now) return; // already passed
+
+  // Request permission
+  if (Notification.permission === "default") {
+    Notification.requestPermission();
+  }
+
+  _reminders[taskId] = setTimeout(() => {
+    if (Notification.permission === "granted") {
+      new Notification("Task Reminder", {
+        body: title,
+        icon: "/static/favicon.png",
+      });
+    }
+    delete _reminders[taskId];
+  }, reminderMs - now);
+}
+
+function schedulePageReminders() {
+  if (!("Notification" in window)) return;
+
+  _qa(".task-row").forEach(row => {
+    const id = row.dataset.id;
+    const dueInput = _q(".col-due input.cell-date", row);
+    const dueDate = dueInput?.value || "";
+    if (dueDate !== TODAY) return;
+
+    const title = _q(".task-text", row)?.textContent.trim() || "";
+    // Default: remind 15 min before noon if no due time
+    scheduleReminder(id, title, dueDate, "12:00", 15);
+  });
+}
+
+/* ---------------------------------------------------------
+   Subtasks
+   --------------------------------------------------------- */
+async function loadSubtasks(taskId) {
+  const list = _id("subtask-list");
+  if (!list) return;
+  list.innerHTML = "";
+
+  try {
+    // Fetch subtasks -- they may be embedded in task data or need separate call
+    // The GET endpoint returns the task row; subtasks need a separate fetch
+    const res = await fetch(`/api/v2/project-tasks/${taskId}`);
+    if (!res.ok) return;
+    const task = await res.json();
+
+    // If subtasks are embedded in the task response
+    const subtasks = task.subtasks || [];
+    subtasks.forEach(st => _renderSubtask(list, st));
+  } catch (e) {
+    // Subtasks may not be available -- show empty list
+    console.debug("No subtasks loaded", e);
+  }
+}
+
+function _renderSubtask(container, st) {
+  const item = document.createElement("label");
+  item.className = "subtask-item";
+  item.innerHTML = `
+    <input type="checkbox" ${st.is_done ? "checked" : ""}
+           onchange="toggleSubtask('${st.id}', this.checked)">
+    <span class="${st.is_done ? "st-done" : ""}">${_escHtml(st.title)}</span>
+  `;
+  container.appendChild(item);
+}
+
+async function addSubtask() {
+  const input = _id("subtask-input");
+  const title = (input?.value || "").trim();
+  if (!title || !_sheetTaskId) return;
+
+  try {
+    await _post("/subtask/add", {
+      project_id: PROJECT_ID,
+      task_id: _sheetTaskId,
+      title,
+    });
+
+    // Append optimistically
+    const list = _id("subtask-list");
+    if (list) {
+      _renderSubtask(list, { id: "temp-" + Date.now(), title, is_done: false });
+    }
+    input.value = "";
+  } catch {
+    showToast("Failed to add subtask", "error");
+  }
+}
+
+function toggleSubtask(id, isDone) {
+  _post("/subtask/toggle", { id, is_done: isDone }).catch(console.error);
+}
+
+/* ---------------------------------------------------------
+   Recurrence Change
+   --------------------------------------------------------- */
+function onRecurrenceChange() {
+  const sel = _id("sheet-recurrence");
+  const daysEl = _id("recurrence-days");
+  if (!sel || !daysEl) return;
+
+  daysEl.classList.toggle("hidden", sel.value !== "weekly");
+
+  // Bind day chip toggles
+  _qa(".day-chip", daysEl).forEach(chip => {
+    chip.onclick = () => chip.classList.toggle("active");
+  });
+}
+
+/* ---------------------------------------------------------
+   Pin Task (from sheet)
+   --------------------------------------------------------- */
+function pinTask() {
+  if (!_sheetTaskId) return;
+
+  const row = document.querySelector(`.task-row[data-id="${_sheetTaskId}"]`);
+  const isPinned = row?.dataset.pinned === "1";
+
+  _post("/projects/tasks/pin", { task_id: _sheetTaskId, is_pinned: !isPinned })
+    .then(r => {
+      if (!r.ok) throw new Error();
+      if (row) row.dataset.pinned = isPinned ? "0" : "1";
+      showToast(isPinned ? "Unpinned" : "Pinned", "success");
     })
-  })
-    .then(() => { closeTaskSheet(); location.reload(); })
-    .catch(() => showProjectToast("Failed to complete task", "error"));
+    .catch(() => showToast("Failed to update pin", "error"));
 }
 
-function sheetEditAll() {
-  closeTaskSheet();
-  const taskEl = $(`task-${currentSheetTask.taskId}`);
-  if (!taskEl) return;
-  const titleEl = taskEl.querySelector(".task-title");
-  if (titleEl) window.enableEdit(titleEl, currentSheetTask.taskId);
+/* ---------------------------------------------------------
+   Eliminate Task (from sheet)
+   --------------------------------------------------------- */
+function eliminateTask() {
+  if (!_sheetTaskId) return;
+  if (!confirm("Delete this task? This cannot be undone.")) return;
+
+  _post("/projects/tasks/eliminate", { id: _sheetTaskId })
+    .then(r => {
+      if (!r.ok) throw new Error();
+      closeTaskSheet();
+      showToast("Task deleted", "success");
+      location.reload();
+    })
+    .catch(() => showToast("Failed to delete task", "error"));
 }
 
-function sheetToggleAutoAdvance(enabled) {
-  fetch(`/projects/tasks/${currentSheetTask.taskId}/update`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ auto_advance: enabled })
-  }).catch(console.error);
+/* ---------------------------------------------------------
+   Click-outside to close sheet
+   --------------------------------------------------------- */
+function onSheetOverlayClick(e) {
+  if (e.target.id === "task-sheet") {
+    closeTaskSheet();
+  }
 }
 
-function attachLongPress(el, onLongPress) {
-  let timer = null;
-  let moved = false;
-
-  el.addEventListener("mousedown", e => {
-    if (e.button !== 0) return;
-    moved = false;
-    timer = setTimeout(() => { if (!moved) onLongPress(e); }, 500);
-  });
-  el.addEventListener("mousemove",  () => { moved = true; clearTimeout(timer); });
-  el.addEventListener("mouseup",    () => clearTimeout(timer));
-  el.addEventListener("mouseleave", () => clearTimeout(timer));
-
-  el.addEventListener("touchstart", () => { timer = setTimeout(onLongPress, 500); },
-    { passive: true });
-  el.addEventListener("touchend", () => clearTimeout(timer));
-
-  el.addEventListener("contextmenu", e => { e.preventDefault(); onLongPress(e); });
-}
-
-/* -------------------------
-   Notes panel toggle
-------------------------- */
-function toggleNotesPanel() {
-  const panel  = $("notesPanel");
-  const chevron = $("notesChevron");
-  if (!panel) return;
-  const open = panel.classList.toggle("collapsed");
-  // collapsed means hidden; toggle returns true when class was added (i.e. now collapsed)
-  if (chevron) chevron.textContent = open ? "▶" : "▼";
-}
-window.toggleNotesPanel = toggleNotesPanel;
-
-/* -------------------------
-   Touch drag-to-reorder
-------------------------- */
-function attachTouchReorder(taskEl) {
-  const handle = taskEl.querySelector(".drag-handle");
-  if (!handle) return;
-
-  let clone = null;
-  let dragging = false;
-  let startY, startX;
-
-  handle.addEventListener("touchstart", e => {
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-    dragging = false;
-  }, { passive: true });
-
-  handle.addEventListener("touchmove", e => {
-    const dy = Math.abs(e.touches[0].clientY - startY);
-    const dx = Math.abs(e.touches[0].clientX - startX);
-
-    if (!dragging && (dy > 8 || dx > 8)) {
-      dragging = true;
-      draggedId = taskEl.dataset.id;
-
-      // Ghost clone that follows the finger
-      clone = taskEl.cloneNode(true);
-      const rect = taskEl.getBoundingClientRect();
-      clone.style.cssText = `
-        position: fixed;
-        left: ${rect.left}px; width: ${rect.width}px;
-        opacity: 0.85; pointer-events: none; z-index: 9999;
-        transform: scale(1.02) rotate(1deg);
-        box-shadow: 0 10px 28px rgba(0,0,0,.22);
-        border-radius: 14px;
-      `;
-      document.body.appendChild(clone);
-      taskEl.style.opacity = "0.3";
-    }
-
-    if (!dragging) return;
-    e.preventDefault();
-
-    const y = e.touches[0].clientY;
-    clone.style.top = (y - 30) + "px";
-
-    // Highlight potential drop target
-    document.querySelectorAll(".task.drag-over").forEach(t => t.classList.remove("drag-over"));
-    const el = document.elementFromPoint(e.touches[0].clientX, y);
-    const target = el?.closest(".task");
-    if (target && target !== taskEl) target.classList.add("drag-over");
-  }, { passive: false });
-
-  handle.addEventListener("touchend", async e => {
-    if (clone) { clone.remove(); clone = null; }
-    taskEl.style.opacity = "";
-    document.querySelectorAll(".task.drag-over").forEach(t => t.classList.remove("drag-over"));
-
-    if (!dragging) { dragging = false; return; }
-    dragging = false;
-
-    const x = e.changedTouches[0].clientX;
-    const y = e.changedTouches[0].clientY;
-    const el = document.elementFromPoint(x, y);
-    const targetTask = el?.closest(".task");
-
-    if (!targetTask || targetTask === taskEl || !draggedId) {
-      draggedId = null; return;
-    }
-
-    const targetId = targetTask.dataset.id;
-    try {
-      const r = await fetch("/projects/tasks/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dragged_id: draggedId, target_id: targetId })
-      });
-      if (r.ok) location.reload();
-      else showProjectToast("Can only reorder within the same group", "error");
-    } catch {
-      showProjectToast("Reorder failed", "error");
-    }
-    draggedId = null;
-  });
-}
-
-/* -------------------------
-   Number controls
-------------------------- */
-function attachScrollNumbers() {
-  document.querySelectorAll(".scroll-number").forEach(el => {
-    el.addEventListener("wheel", function (e) {
-      e.preventDefault();
-      let value = parseInt(this.value || 0);
-      value += e.deltaY < 0 ? 1 : -1;
-      value = Math.min(100, Math.max(0, value));
-      this.value = value;
-      this.dispatchEvent(new Event("change"));
-    }, { passive: false });
-  });
-}
-
-window.adjustInlineNumber = function (btn, direction, type, taskId, date = null) {
-  const wrapper = btn.closest(".number-control");
-  const input   = wrapper.querySelector("input");
-  const step    = parseFloat(wrapper.dataset.step || 1);
-  let value     = parseFloat(input.value || 0) + direction * step;
-  value = Math.min(100, Math.max(0, value));
-  input.value = value;
-
-  if (type === "planned") updatePlanned(taskId, value);
-  if (type === "actual")  updateActual(taskId, value);
-  if (type === "duration") updatePlanning(taskId, date);
-};
-
-window.validateInlineNumber = function (input) {
-  let value = parseFloat(input.value);
-  if (isNaN(value)) value = 0;
-  input.value = Math.min(100, Math.max(0, value));
-};
-
-document.addEventListener("wheel", e => {
-  const wrapper = e.target.closest(".inline-number");
-  if (!wrapper) return;
-  e.preventDefault();
-  const input = wrapper.querySelector("input");
-  const step  = parseFloat(wrapper.dataset.step || 1);
-  let value   = parseFloat(input.value || 0);
-  value += e.deltaY < 0 ? step : -step;
-  input.value = Math.min(100, Math.max(0, value));
-}, { passive: false });
-
-/* -------------------------
-   Single DOMContentLoaded init
-------------------------- */
+/* ---------------------------------------------------------
+   DOMContentLoaded
+   --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
+  initPrioPicker();
+  initAddTask();
+  initFilters();
   initSort();
-  formatDueBadges();
-  calculateProjectHealth();
-  attachScrollNumbers();
+  updateProjectStats();
+  schedulePageReminders();
 
-  // Bulk add from notes
-  $("addTasksFromNotes")?.addEventListener("click", async () => {
-    const notes = $("projectNotes");
-    const tasks = extractTasksFromNotes(notes.value);
-    if (!tasks.length) { showProjectToast("No tasks found in notes", "error"); return; }
+  // Close sheet on overlay click
+  const sheet = _id("task-sheet");
+  if (sheet) sheet.addEventListener("click", onSheetOverlayClick);
 
-    const res = await fetch("/projects/tasks/bulk-add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_id: notes.dataset.projectId, tasks })
-    });
-    if (res.ok) location.reload();
-    else showProjectToast("Bulk add failed", "error");
-  });
-
-  // Long-press on task rows → action sheet
-  document.querySelectorAll(".task").forEach(el => {
-    attachLongPress(el, () => {
-      openTaskSheet({
-        taskId: el.dataset.id,
-        date: el.dataset.date,
-        text: el.querySelector(".task-title")?.innerText || "",
-        autoAdvance: el.dataset.autoAdvance === "true"
-      });
-    });
-
-    // Touch drag-to-reorder (mobile)
-    attachTouchReorder(el);
-  });
+  feather.replace();
 });

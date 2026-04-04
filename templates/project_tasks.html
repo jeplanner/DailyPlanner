@@ -1,200 +1,411 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ project.name }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='project_tasks.css') }}">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>{{ project.name }} — Tasks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='project_tasks.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 </head>
 <body>
 
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-<div class="container">
+<div class="proj-app">
 
-  <!-- ── Page Header ── -->
-  <div class="page-header">
-    <div class="header-left">
-      <a href="/projects" class="back-link">← Projects</a>
+  <!-- ═══════════ HEADER ═══════════ -->
+  <header class="proj-header">
+    <div class="proj-header-left">
+      <a href="/projects" class="back-btn"><i data-feather="arrow-left"></i></a>
       <div>
-        <h2 class="project-title">{{ project.name }}</h2>
+        <h1 class="proj-name">{{ project.name }}</h1>
         {% if project.description %}
-          <p class="project-subtitle">{{ project.description }}</p>
+          <p class="proj-desc">{{ project.description }}</p>
         {% endif %}
       </div>
     </div>
-    <div class="header-actions">
-      <a href="/projects/{{ project.project_id }}/gantt"
-         class="header-link-btn" title="View Gantt chart">📊 Gantt</a>
-      <a href="/projects/timeline?project={{ project.project_id }}"
-         class="header-link-btn" title="View timeline">📅 Timeline</a>
+    <div class="proj-header-right">
+      <a href="/projects/{{ project.project_id }}/gantt" class="header-action" title="Gantt chart">
+        <i data-feather="bar-chart-2"></i><span>Gantt</span>
+      </a>
+      <a href="/projects/timeline?project={{ project.project_id }}" class="header-action" title="Timeline">
+        <i data-feather="git-branch"></i><span>Timeline</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- ═══════════ PROGRESS BAR ═══════════ -->
+  <div class="proj-progress-row">
+    <div class="proj-progress-bar">
+      <div class="proj-progress-fill" id="proj-progress-fill"></div>
+    </div>
+    <div class="proj-stats">
+      <span id="stat-total">0 tasks</span>
+      <span class="stat-sep">·</span>
+      <span id="stat-done" class="stat-done">0 done</span>
+      <span class="stat-sep">·</span>
+      <span id="stat-overdue" class="stat-overdue">0 overdue</span>
     </div>
   </div>
 
-  <!-- ── Add Task ── -->
-  <div class="add-box">
-    <div class="add-priority-row" id="addPriorityPicker">
-      <button type="button" class="prio-btn" data-priority="high" title="High">🔴</button>
-      <button type="button" class="prio-btn active" data-priority="medium" title="Medium">🟡</button>
-      <button type="button" class="prio-btn" data-priority="low" title="Low">🟢</button>
-    </div>
-    <input
-      id="addTaskInput"
-      data-project-id="{{ project.project_id }}"
-      placeholder="Add a task… (Enter to add)"
-      autocomplete="off"
-    >
-    <button type="button" class="date-toggle-btn" id="addDateToggle" title="Set start date">📅</button>
-    <input type="date" id="addTaskDate" class="add-date-input hidden" value="{{ selected_date }}">
-    <button type="button" class="add-btn" id="addTaskBtn">Add</button>
-  </div>
-
-  <!-- ── Controls: filters + sort + panel toggles ── -->
-  <div class="controls-row">
-    <label class="filter-chip">
-      <input type="checkbox" id="hideClosed"
-             {% if hide_completed %}checked{% endif %}
-             onchange="toggleHideCompleted(this.checked)">
-      Hide done
-    </label>
-    <label class="filter-chip">
-      <input type="checkbox" id="showOverdueOnly"
-             {% if overdue_only %}checked{% endif %}
-             onchange="toggleFilter('overdue_only', this.checked)">
-      Overdue only
-    </label>
-    <div class="sort-inline">
-      <label for="sortSelect">Sort</label>
-      <select id="sortSelect" data-project-id="{{ project.project_id }}">
-        <option value="smart"    {% if sort=='smart'    %}selected{% endif %}>Smart</option>
-        <option value="due"      {% if sort=='due'      %}selected{% endif %}>Due date</option>
-        <option value="priority" {% if sort=='priority' %}selected{% endif %}>Priority</option>
-        <option value="created"  {% if sort=='created'  %}selected{% endif %}>Created</option>
-      </select>
-    </div>
-    <button type="button" class="ctrl-toggle-btn" id="healthToggleBtn"
-            onclick="toggleHealthWidget()">📊 Health</button>
-    <button type="button" class="ctrl-toggle-btn" id="notesToggleBtn"
-            onclick="toggleNotesPanel()">📝 Notes</button>
-  </div>
-
-  <!-- ── Health Widget (hidden by default) ── -->
-  <div id="project-health" class="project-health hidden">
-    <div class="health-score">
-      <div class="score-value" id="health-score">—</div>
-      <div class="score-label">Health · {{ project.name }}</div>
-    </div>
-    <div class="health-metrics">
-      <div><strong id="metric-complete">—</strong><span>Complete</span></div>
-      <div><strong id="metric-overdue">—</strong><span>Overdue</span></div>
-      <div><strong id="metric-accuracy">—</strong><span>Accuracy</span></div>
-      <div><strong id="metric-progress">—</strong><span>In Progress</span></div>
-    </div>
-  </div>
-
-  <!-- ── Notes + Voice panel (hidden by default) ── -->
-  <div id="notesPanel" class="notes-panel collapsed">
-    <div class="voice-box">
-      <button type="button" class="voice-btn"
-              onclick="toggleVoice('projectNotes', 'voiceStatus')">
-        🎙 Dictate tasks
-      </button>
-      <div id="voiceStatus" class="voice-status">Tap mic and start speaking</div>
-    </div>
-    <div class="project-notes">
-      <textarea id="projectNotes"
-                data-project-id="{{ project.project_id }}"
-                placeholder="• Capture thoughts here…"
-                rows="5"></textarea>
-      <div style="margin-top:8px; text-align:right;">
-        <button id="addTasksFromNotes" class="add-btn">➕ Add as Tasks</button>
+  <!-- ═══════════ TOOLBAR ═══════════ -->
+  <div class="proj-toolbar">
+    <div class="toolbar-left">
+      <div class="view-toggle">
+        <button class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="Table view">
+          <i data-feather="list"></i>
+        </button>
+        <button class="vt-btn" data-view="board" onclick="setTaskView('board')" title="Board view">
+          <i data-feather="columns"></i>
+        </button>
       </div>
-    </div>
-  </div>
 
-  <!-- ── Task Groups ── -->
-  {% for group, tasks in grouped_tasks.items() %}
-    <div class="task-group">
-      <div class="group-header" onclick="toggleGroup(this)">
-        <span class="group-name">{{ group }}</span>
-        <span class="group-count">{{ tasks|length }}</span>
-        <span class="group-chevron">▾</span>
-      </div>
-      <div class="task-group-body">
-        {% if tasks %}
-          {% for task in tasks %}
-            {% include "_project_task_card.html" %}
-          {% endfor %}
-        {% else %}
-          <div class="empty-group">No tasks</div>
-        {% endif %}
-      </div>
-    </div>
-  {% endfor %}
-
-</div><!-- /.container -->
-
-<!-- Task Action Sheet (long-press) -->
-<div id="task-action-sheet" class="action-sheet hidden">
-  <div class="action-sheet-inner">
-    <div id="sheet-title" class="sheet-title"></div>
-    <div class="sheet-row">
-      <label class="sheet-toggle">
-        <span>Auto-advance</span>
-        <input type="checkbox" id="autoAdvanceToggle"
-               onchange="sheetToggleAutoAdvance(this.checked)">
+      <label class="filter-pill">
+        <input type="checkbox" id="filter-hide-done" {{ 'checked' if hide_completed }}>
+        <span>Hide done</span>
+      </label>
+      <label class="filter-pill">
+        <input type="checkbox" id="filter-overdue" {{ 'checked' if overdue_only }}>
+        <span>Overdue only</span>
       </label>
     </div>
-    <button class="sheet-btn primary" onclick="sheetCompleteToday()">✅ Complete Today</button>
-    <button class="sheet-btn" onclick="sheetEditAll()">✏️ Edit Title</button>
-    <button class="sheet-btn danger" onclick="closeTaskSheet()">Cancel</button>
+
+    <div class="toolbar-right">
+      <select class="sort-select" id="sort-select" title="Sort order">
+        <option value="smart" {{ 'selected' if sort=='smart' }}>Smart</option>
+        <option value="due" {{ 'selected' if sort=='due' }}>Due date</option>
+        <option value="priority" {{ 'selected' if sort=='priority' }}>Priority</option>
+        <option value="created" {{ 'selected' if sort=='created' }}>Created</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- ═══════════ ADD TASK ═══════════ -->
+  <div class="add-task-row">
+    <div class="prio-picker" id="prio-picker">
+      <button class="pp-btn" data-p="high" title="High">
+        <span class="pp-dot pp-high"></span>
+      </button>
+      <button class="pp-btn active" data-p="medium" title="Medium">
+        <span class="pp-dot pp-med"></span>
+      </button>
+      <button class="pp-btn" data-p="low" title="Low">
+        <span class="pp-dot pp-low"></span>
+      </button>
+    </div>
+    <input type="text" id="add-task-input" class="add-task-input"
+           data-project-id="{{ project.project_id }}"
+           placeholder="Add a task…" autocomplete="off">
+    <input type="date" id="add-task-date" class="add-task-date" value="{{ selected_date }}">
+    <button class="add-task-btn" id="add-task-btn" title="Add task">
+      <i data-feather="plus"></i>
+    </button>
+  </div>
+
+  <!-- ═══════════ TABLE VIEW ═══════════ -->
+  <div class="task-table-wrap" id="table-view">
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th class="col-check"></th>
+          <th class="col-prio"></th>
+          <th class="col-name">Task Name</th>
+          <th class="col-status">Status</th>
+          <th class="col-start">Start</th>
+          <th class="col-dur">Duration</th>
+          <th class="col-due">Due</th>
+          <th class="col-progress">Progress</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody id="task-tbody">
+        {% for group_name, group_tasks in grouped_tasks.items() %}
+          {% if group_tasks %}
+          <tr class="group-row" data-group="{{ group_name }}">
+            <td colspan="9">
+              <div class="group-toggle" onclick="toggleGroup(this)">
+                <i data-feather="chevron-down" class="group-chevron"></i>
+                <span class="group-label">{{ group_name }}</span>
+                <span class="group-count">{{ group_tasks|length }}</span>
+              </div>
+            </td>
+          </tr>
+          {% for t in group_tasks %}
+          <tr class="task-row {{ 'done' if t.done }} {{ 'overdue' if t.due_label and 'overdue' in t.due_label }}"
+              data-id="{{ t.task_id }}"
+              data-status="{{ t.status }}"
+              data-priority="{{ t.priority }}"
+              data-pinned="{{ t.is_pinned|int }}"
+              data-group="{{ group_name }}">
+
+            <!-- Checkbox -->
+            <td class="col-check">
+              <input type="checkbox" class="task-check"
+                     {{ 'checked' if t.done }}
+                     onchange="toggleTaskDone(this, '{{ t.task_id }}', '{{ t.occurrence_date }}')">
+            </td>
+
+            <!-- Priority dot -->
+            <td class="col-prio">
+              <span class="prio-dot prio-{{ t.priority }}"
+                    onclick="cyclePriority('{{ t.task_id }}', this)"
+                    title="{{ t.priority }}"></span>
+            </td>
+
+            <!-- Task name (click to expand) -->
+            <td class="col-name">
+              <div class="task-name-cell">
+                {% if t.is_pinned %}<i data-feather="bookmark" class="pin-icon"></i>{% endif %}
+                <span class="task-text" onclick="openTaskDetail('{{ t.task_id }}')">{{ t.task_text }}</span>
+                {% if t.recurrence_badge %}
+                  <span class="recur-badge">{{ t.recurrence_badge }}</span>
+                {% endif %}
+                {% if t.delegated_to %}
+                  <span class="delegate-badge">→ {{ t.delegated_to }}</span>
+                {% endif %}
+              </div>
+            </td>
+
+            <!-- Status -->
+            <td class="col-status">
+              <select class="status-select status-{{ t.status }}"
+                      onchange="updateStatus('{{ t.task_id }}', this.value, '{{ t.occurrence_date }}')">
+                <option value="backlog" {{ 'selected' if t.status=='backlog' }}>Backlog</option>
+                <option value="open" {{ 'selected' if t.status=='open' }}>Open</option>
+                <option value="in_progress" {{ 'selected' if t.status=='in_progress' }}>In Progress</option>
+                <option value="done" {{ 'selected' if t.status=='done' }}>Done</option>
+              </select>
+            </td>
+
+            <!-- Start -->
+            <td class="col-start">
+              <input type="date" class="cell-date" value="{{ t.start_date or '' }}"
+                     onchange="updateField('{{ t.task_id }}', 'start_date', this.value)">
+            </td>
+
+            <!-- Duration -->
+            <td class="col-dur">
+              <input type="number" class="cell-num" value="{{ t.duration_days }}" min="0"
+                     onchange="updateField('{{ t.task_id }}', 'duration_days', this.value)">
+            </td>
+
+            <!-- Due -->
+            <td class="col-due">
+              <div class="due-cell">
+                <input type="date" class="cell-date" value="{{ t.due_date or '' }}"
+                       onchange="updateField('{{ t.task_id }}', 'due_date', this.value)">
+                {% if t.due_label %}
+                  <span class="due-label {{ 'overdue-label' if 'overdue' in t.due_label }}">{{ t.due_label }}</span>
+                {% endif %}
+              </div>
+            </td>
+
+            <!-- Progress bar -->
+            <td class="col-progress">
+              {% set pct = ((t.actual_hours / t.planned_hours * 100)|round|int) if t.planned_hours > 0 else 0 %}
+              <div class="mini-progress" title="{{ pct }}%">
+                <div class="mini-progress-fill" style="width:{{ [pct, 100]|min }}%"></div>
+              </div>
+              <span class="progress-text">{{ pct }}%</span>
+            </td>
+
+            <!-- Actions -->
+            <td class="col-actions">
+              <button class="row-action-btn" onclick="openTaskDetail('{{ t.task_id }}')" title="Details">
+                <i data-feather="more-horizontal"></i>
+              </button>
+              <button class="row-action-btn gcal-btn" onclick="addTaskToGCal('{{ t.task_id }}')" title="Add to Google Calendar">
+                <i data-feather="calendar"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ═══════════ BOARD VIEW (Kanban) ═══════════ -->
+  <div class="board-view hidden" id="board-view">
+    <div class="board-col" data-status="backlog">
+      <div class="board-col-header">Backlog</div>
+      <div class="board-col-body" id="board-backlog"></div>
+    </div>
+    <div class="board-col" data-status="open">
+      <div class="board-col-header">Open</div>
+      <div class="board-col-body" id="board-open"></div>
+    </div>
+    <div class="board-col" data-status="in_progress">
+      <div class="board-col-header">In Progress</div>
+      <div class="board-col-body" id="board-in_progress"></div>
+    </div>
+    <div class="board-col" data-status="done">
+      <div class="board-col-header">Done</div>
+      <div class="board-col-body" id="board-done"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════ TASK DETAIL BOTTOM SHEET ═══════════ -->
+<div id="task-sheet" class="sheet-overlay hidden">
+  <div class="sheet-card">
+    <div class="sheet-header">
+      <h3 id="sheet-task-title">Task Details</h3>
+      <button class="sheet-close" onclick="closeTaskSheet()"><i data-feather="x"></i></button>
+    </div>
+
+    <div class="sheet-body">
+      <!-- Title -->
+      <div class="sheet-field full">
+        <label>Task Name</label>
+        <input type="text" id="sheet-name" class="form-input">
+      </div>
+
+      <!-- Row: Status + Priority -->
+      <div class="sheet-row">
+        <div class="sheet-field">
+          <label>Status</label>
+          <select id="sheet-status" class="form-input">
+            <option value="backlog">Backlog</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+        <div class="sheet-field">
+          <label>Priority</label>
+          <select id="sheet-priority" class="form-input">
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Row: Start + Due -->
+      <div class="sheet-row">
+        <div class="sheet-field">
+          <label>Start Date</label>
+          <input type="date" id="sheet-start" class="form-input">
+        </div>
+        <div class="sheet-field">
+          <label>Due Date</label>
+          <input type="date" id="sheet-due" class="form-input">
+        </div>
+      </div>
+
+      <!-- Row: Duration + Due Time -->
+      <div class="sheet-row">
+        <div class="sheet-field">
+          <label>Duration (days)</label>
+          <input type="number" id="sheet-duration" class="form-input" min="0">
+        </div>
+        <div class="sheet-field">
+          <label>Due Time</label>
+          <input type="time" id="sheet-due-time" class="form-input">
+        </div>
+      </div>
+
+      <!-- Row: Planned + Actual Hours -->
+      <div class="sheet-row">
+        <div class="sheet-field">
+          <label>Planned Hours</label>
+          <input type="number" id="sheet-planned" class="form-input" step="0.5" min="0">
+        </div>
+        <div class="sheet-field">
+          <label>Actual Hours</label>
+          <input type="number" id="sheet-actual" class="form-input" step="0.5" min="0">
+        </div>
+      </div>
+
+      <!-- Delegate -->
+      <div class="sheet-field full">
+        <label>Delegate To</label>
+        <input type="text" id="sheet-delegate" class="form-input" placeholder="Person name" maxlength="25">
+      </div>
+
+      <!-- Notes -->
+      <div class="sheet-field full">
+        <label>Notes</label>
+        <textarea id="sheet-notes" class="form-input" rows="3" placeholder="Add notes…"></textarea>
+      </div>
+
+      <!-- Reminder -->
+      <div class="sheet-field full">
+        <label>Reminder</label>
+        <select id="sheet-reminder" class="form-input">
+          <option value="">No reminder</option>
+          <option value="0">At due time</option>
+          <option value="5">5 min before</option>
+          <option value="15">15 min before</option>
+          <option value="30">30 min before</option>
+          <option value="60">1 hour before</option>
+        </select>
+      </div>
+
+      <!-- Recurrence -->
+      <div class="sheet-field full">
+        <label>Repeat</label>
+        <select id="sheet-recurrence" class="form-input" onchange="onRecurrenceChange()">
+          <option value="none">Never</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+          <option value="monthly">Monthly</option>
+        </select>
+        <div id="recurrence-days" class="recur-days hidden">
+          <button class="day-chip" data-day="0">S</button>
+          <button class="day-chip" data-day="1">M</button>
+          <button class="day-chip" data-day="2">T</button>
+          <button class="day-chip" data-day="3">W</button>
+          <button class="day-chip" data-day="4">T</button>
+          <button class="day-chip" data-day="5">F</button>
+          <button class="day-chip" data-day="6">S</button>
+        </div>
+      </div>
+
+      <!-- Subtasks -->
+      <div class="sheet-field full">
+        <label>Subtasks</label>
+        <div id="subtask-list"></div>
+        <div class="add-subtask-row">
+          <input type="text" id="subtask-input" class="form-input" placeholder="Add subtask…">
+          <button class="btn btn-sm btn-primary" onclick="addSubtask()">
+            <i data-feather="plus" style="width:14px;height:14px"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn btn-primary" onclick="saveTaskSheet()">
+        <i data-feather="check" style="width:16px;height:16px"></i> Save
+      </button>
+      <button class="btn btn-ghost gcal-sheet-btn" onclick="addSheetTaskToGCal()">
+        <i data-feather="calendar" style="width:16px;height:16px"></i> Calendar
+      </button>
+      <button class="btn btn-ghost" onclick="pinTask()">
+        <i data-feather="bookmark" style="width:16px;height:16px"></i> Pin
+      </button>
+      <button class="btn btn-danger" onclick="eliminateTask()" style="margin-left:auto;">
+        <i data-feather="trash-2" style="width:16px;height:16px"></i>
+      </button>
+    </div>
   </div>
 </div>
 
-<div id="project-toast-container"></div>
-
-<!-- Eisenhower Quadrant Modal -->
-<div id="eisenhower-modal" class="modal hidden" onclick="handleEisenhowerOverlay(event)">
-  <div class="modal-content eisenhower-modal-content">
-    <div class="eisenhower-header">
-      <h3>Send to Eisenhower</h3>
-      <button class="modal-close" onclick="closeEisenhowerModal()">✕</button>
-    </div>
-    <p class="eisenhower-task-name" id="eisenhower-task-name"></p>
-    <div class="quadrant-grid">
-      <button class="quadrant-btn q-do"        onclick="submitEisenhower('do')">
-        <span class="q-emoji">🔥</span>
-        <span class="q-label">Do</span>
-        <span class="q-desc">Urgent + Important</span>
-      </button>
-      <button class="quadrant-btn q-decide"    onclick="submitEisenhower('decide')">
-        <span class="q-emoji">🗓</span>
-        <span class="q-label">Decide</span>
-        <span class="q-desc">Important, not urgent</span>
-      </button>
-      <button class="quadrant-btn q-delegate"  onclick="submitEisenhower('delegate')">
-        <span class="q-emoji">🤝</span>
-        <span class="q-label">Delegate</span>
-        <span class="q-desc">Urgent, not important</span>
-      </button>
-      <button class="quadrant-btn q-eliminate" onclick="submitEisenhower('eliminate')">
-        <span class="q-emoji">🗑</span>
-        <span class="q-label">Eliminate</span>
-        <span class="q-desc">Neither</span>
-      </button>
-    </div>
-    <button class="sheet-btn" onclick="closeEisenhowerModal()" style="margin-top:8px;">Cancel</button>
-  </div>
-</div>
-
-<script src="{{ url_for('static', filename='project_tasks.js') }}" defer></script>
-<script src="{{ url_for('static', filename='voice.js') }}"></script>
 <script>
-  document.addEventListener("DOMContentLoaded", () => {
-    if (typeof initVoiceDictation === "function") {
-      initVoiceDictation("projectNotes", "voiceStatus");
-    }
-  });
+  const PROJECT_ID = "{{ project.project_id }}";
+  const TODAY = "{{ today }}";
 </script>
-
+<script src="{{ url_for('static', filename='project_tasks.js') }}"></script>
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
 </body>
 </html>
