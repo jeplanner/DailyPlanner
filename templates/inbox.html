@@ -380,12 +380,60 @@ async function toggleFav(id) {
   renderCards();
 }
 
-async function deleteItem(id) {
-  if (!confirm("Delete this link?")) return;
-  await fetch(`/api/inbox/${id}`, { method: "DELETE" });
+let _undoTimer = null;
+let _deletedItem = null;
+
+function deleteItem(id) {
+  // Remove from UI immediately (optimistic)
+  _deletedItem = allItems.find(x => x.id === id);
   allItems = allItems.filter(x => x.id !== id);
   renderCards();
-  showToast("Deleted", "success");
+
+  // Show undo toast
+  showUndoToast("Link deleted", () => undoDelete(id));
+
+  // Actually delete after 4 seconds (gives time to undo)
+  clearTimeout(_undoTimer);
+  _undoTimer = setTimeout(async () => {
+    await fetch(`/api/inbox/${id}`, { method: "DELETE" });
+    _deletedItem = null;
+  }, 4000);
+}
+
+function undoDelete(id) {
+  clearTimeout(_undoTimer);
+  if (_deletedItem) {
+    allItems.unshift(_deletedItem);
+    _deletedItem = null;
+    renderCards();
+    showToast("Restored", "success");
+  }
+}
+
+function showUndoToast(message, onUndo) {
+  // Remove any existing undo toast
+  const old = document.getElementById("undo-toast");
+  if (old) old.remove();
+
+  const toast = document.createElement("div");
+  toast.id = "undo-toast";
+  Object.assign(toast.style, {
+    position: "fixed", bottom: "24px", left: "50%", transform: "translateX(-50%)",
+    background: "rgba(30,30,30,0.9)", color: "#fff", padding: "10px 16px",
+    borderRadius: "10px", fontSize: "14px", fontFamily: "'Inter',system-ui,sans-serif",
+    display: "flex", alignItems: "center", gap: "12px", zIndex: "9999",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.25)", backdropFilter: "blur(8px)",
+  });
+  toast.innerHTML = `
+    <span>${message}</span>
+    <button style="background:none;border:1px solid rgba(255,255,255,0.4);color:#fff;
+      padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;
+      font-family:inherit;cursor:pointer;" onclick="document.getElementById('undo-toast').remove()">Undo</button>
+  `;
+  toast.querySelector("button").addEventListener("click", onUndo);
+  document.body.appendChild(toast);
+
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 4500);
 }
 
 /* ── Helpers ── */
