@@ -367,6 +367,32 @@ def update_prices():
 # TRANSACTIONS (buy/sell/dividend log for XIRR)
 # ═══════════════════════════════════════════════════
 
+@portfolio_bp.route("/api/portfolio/transactions/latest", methods=["GET"])
+@login_required
+def latest_transactions():
+    """Return the most recent transaction per holding for the current user."""
+    user_id = session["user_id"]
+
+    txns = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "order": "txn_date.desc",
+    }) or []
+
+    # Keep only the first (latest) per holding_id
+    result = {}
+    for t in txns:
+        hid = t.get("holding_id")
+        if hid and hid not in result:
+            result[hid] = {
+                "txn_type": t.get("txn_type"),
+                "txn_date": t.get("txn_date"),
+                "amount": t.get("amount"),
+                "quantity": t.get("quantity"),
+            }
+
+    return jsonify(result)
+
+
 @portfolio_bp.route("/api/portfolio/transactions/<holding_id>", methods=["GET"])
 @login_required
 def list_transactions(holding_id):
