@@ -873,6 +873,51 @@ function eliminateTask() {
 /* ---------------------------------------------------------
    CSV Import
    --------------------------------------------------------- */
+/* ---------------------------------------------------------
+   Bulk Add + Voice
+   --------------------------------------------------------- */
+function toggleBulkPanel() {
+  const panel = _id("bulk-panel");
+  if (!panel) return;
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+  if (panel.style.display === "block") {
+    _id("bulk-textarea")?.focus();
+  }
+}
+
+async function bulkAddTasks() {
+  const textarea = _id("bulk-textarea");
+  const text = (textarea?.value || "").trim();
+  if (!text) { showToast("Enter tasks first", "error"); return; }
+
+  // Split by newlines, clean bullet markers
+  const lines = text.split("\n")
+    .map(l => l.trim().replace(/^[-•*]\s*/, "").trim())
+    .filter(l => l.length > 0);
+
+  if (!lines.length) { showToast("No valid tasks found", "error"); return; }
+
+  try {
+    const res = await fetch("/projects/tasks/bulk-add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, tasks: lines }),
+    });
+
+    if (!res.ok) throw new Error();
+    const d = await res.json();
+
+    textarea.value = "";
+    showToast(`Added ${d.count} tasks`, "success");
+    setTimeout(() => location.reload(), 500);
+  } catch {
+    showToast("Bulk add failed", "error");
+  }
+}
+
+/* ---------------------------------------------------------
+   CSV Export / Import
+   --------------------------------------------------------- */
 function exportCSV() {
   window.location.href = `/projects/${PROJECT_ID}/export-csv`;
 }
