@@ -42,7 +42,6 @@ async function loadHealth(date) {
   // ------------------------
   if (data.weight_trend) {
     renderWeightTrend(data.weight_trend);
-    renderWeightSparkline(data.weight_trend);
   }
   if (data.weight_delta !== undefined) {
     const deltaEl = document.getElementById("weightDelta");
@@ -556,7 +555,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   dateInput.addEventListener("change", async () => {
     await loadHealth(dateInput.value);
-    await loadAnalytics();
   });
   // 🔥 Load heatmap once
   fetch("/api/v2/heatmap")
@@ -611,19 +609,51 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   document.querySelectorAll(".emoji-picker .emoji").forEach(el => {
     el.addEventListener("click", () => {
-
       selectedEmoji = el.textContent;
-
-      document.getElementById("sheetHabitName").value =
-        selectedEmoji + " ";
-
+      document.getElementById("sheetHabitName").value = selectedEmoji + " ";
     });
   });
+
   const addBtn = document.getElementById("addHabitBtn");
   if (addBtn) {
     addBtn.addEventListener("click", openHabitSheet);
   }
-}); // ✅ THIS WAS MISSING
+
+  // Color picker for habit sheet
+  document.querySelectorAll(".color-dot").forEach(dot => {
+    dot.style.background = dot.dataset.color;
+    dot.addEventListener("click", () => {
+      document.querySelectorAll(".color-dot").forEach(d => d.classList.remove("active"));
+      dot.classList.add("active");
+      selectedColor = dot.dataset.color;
+    });
+  });
+
+  // Unit input suggestions
+  const unitInput = document.getElementById("sheetHabitUnit");
+  if (unitInput) {
+    unitInput.addEventListener("input", function () {
+      const unit = this.value.toLowerCase();
+      const suggestions = document.getElementById("goalSuggestions");
+      if (!suggestions) return;
+      suggestions.innerHTML = "";
+      let values = [];
+      if (unit.includes("step")) values = [5000, 8000, 10000];
+      if (unit.includes("min")) values = [15, 30, 45];
+      if (unit.includes("ml")) values = [1500, 2000, 3000];
+      if (unit.includes("hr")) values = [1, 2, 3];
+      values.forEach(val => {
+        const btn = document.createElement("button");
+        btn.innerText = val;
+        btn.onclick = () => {
+          const goalInput = document.getElementById("sheetHabitGoal");
+          if (goalInput) goalInput.value = val;
+        };
+        suggestions.appendChild(btn);
+      });
+    });
+  }
+});
 async function deleteHabit(id) {
 
   // Optimistically remove from UI immediately
@@ -1015,45 +1045,6 @@ function closeHabitSheet() {
   sheet.querySelector(".sheet-submit").innerText = "Add Habit";
 
   delete sheet.dataset.editId;
-}
-
-document.querySelectorAll(".color-dot").forEach(dot => {
-  dot.style.background = dot.dataset.color;
-
-  dot.addEventListener("click", () => {
-    document.querySelectorAll(".color-dot").forEach(d => d.classList.remove("active"));
-    dot.classList.add("active");
-    selectedColor = dot.dataset.color;
-  });
-});
-const unitInput = document.getElementById("sheetHabitUnit");
-
-if (unitInput) {
-  unitInput.addEventListener("input", function () {
-
-    const unit = this.value.toLowerCase();
-    const suggestions = document.getElementById("goalSuggestions");
-    if (!suggestions) return;
-
-    suggestions.innerHTML = "";
-
-    let values = [];
-
-    if (unit.includes("step")) values = [5000, 8000, 10000];
-    if (unit.includes("min")) values = [15, 30, 45];
-    if (unit.includes("ml")) values = [1500, 2000, 3000];
-    if (unit.includes("hr")) values = [1, 2, 3];
-
-    values.forEach(val => {
-      const btn = document.createElement("button");
-      btn.innerText = val;
-      btn.onclick = () => {
-        const goalInput = document.getElementById("sheetHabitGoal");
-        if (goalInput) goalInput.value = val;
-      };
-      suggestions.appendChild(btn);
-    });
-  });
 }
 
 

@@ -2,13 +2,33 @@ from flask import Blueprint, jsonify, render_template, request, session
 from datetime import date, datetime, timedelta
 from auth import login_required
 from config import IST
-from routes.habits import get_goal_for_date
 from supabase_client import get, post
 from services.planner_service import compute_health_streak
 
 
 
 health_bp = Blueprint("health", __name__)
+
+
+def get_goals_batch(habit_ids, plan_date):
+    """Fetch the effective goal for each habit in one query instead of N queries."""
+    if not habit_ids:
+        return {}
+    ids_str = ",".join(str(h) for h in habit_ids)
+    rows = get(
+        "habit_goal_history",
+        {
+            "habit_id": f"in.({ids_str})",
+            "effective_from": f"lte.{plan_date}",
+            "order": "effective_from.desc,created_at.desc",
+        }
+    ) or []
+    goals = {}
+    for row in rows:
+        hid = row["habit_id"]
+        if hid not in goals:  # first row per habit = most recent (desc order)
+            goals[hid] = float(row["goal"])
+    return goals
 
 
 # ==========================================================
@@ -44,6 +64,10 @@ def weekly_health():
 
     total = len(habit_defs)
     habit_map = {h["id"]: h for h in habit_defs}
+    habit_ids = list(habit_map.keys())
+
+    # Batch-fetch goals for all habits up to today (covers the whole week)
+    goals_map = get_goals_batch(habit_ids, today.isoformat())
 
     # Build date map
     date_map = {}
@@ -59,11 +83,10 @@ def weekly_health():
         completed = 0
 
         for e in entries:
-            habit = habit_map.get(e["habit_id"])
-            if not habit:
+            if e["habit_id"] not in habit_map:
                 continue
 
-            goal = get_goal_for_date(habit["id"], day)
+            goal = goals_map.get(e["habit_id"], 0)
             value = float(e.get("value") or 0)
 
             if goal > 0 and value >= goal:
@@ -99,86 +122,9 @@ def weekly_health():
 @health_bp.route("/health")
 @login_required
 def health_dashboard():
-    user_id = session["user_id"]
-    plan_date_str = request.args.get("date")
-
-    if plan_date_str:
-        plan_date_str = plan_date_str.strip()
-
-    if plan_date_str:
-        try:
-            plan_date = date.fromisoformat(plan_date_str)
-        except Exception:
-            plan_date = datetime.now(IST).date()
-    else:
-        plan_date = datetime.now(IST).date()
-        plan_date = date.fromisoformat(plan_date_str) if plan_date_str else datetime.now(IST).date()
-        plan_date_str = plan_date.isoformat()
-
-    # Daily health
-    health_rows = get(
-        "daily_health",
-        {
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date_str}"
-        }
-    )
-    health = health_rows[0] if health_rows else {}
-
-    # Habits
-    habit_defs = get(
-        "habit_master",
-        {
-            "user_id": f"eq.{user_id}",
-            "is_deleted": "is.false",
-            "start_date": f"lte.{plan_date_str}"
-        }
-    ) or []
-
-    habit_entries = get(
-        "habit_entries",
-        {
-            "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date_str}"
-        }
-    ) or []
-
-    entry_map = {h["habit_id"]: h["value"] for h in habit_entries}
-
-    habit_list = []
-    completed = 0
-
-    for h in habit_defs:
-        goal = get_goal_for_date(h["id"], plan_date_str)
-        value = float(entry_map.get(h["id"], 0) or 0)
-
-        if h.get("habit_type") == "boolean":
-            if value == 1:
-                completed += 1
-        else:
-            if goal > 0 and value >= goal:
-                completed += 1
-
-        habit_list.append({
-            "id": h["id"],
-            "name": h["name"],
-            "unit": h["unit"],
-            "goal": goal,
-            "value": value
-        })
-
-    total = len(habit_defs)
-    habit_percent = round((completed / total) * 100) if total else 0
-    health_streak = compute_health_streak(user_id, plan_date)
-
-    return render_template(
-        "health_dashboard.html",
-        plan_date=plan_date,
-        health=health,
-        habit_list=habit_list,
-        habit_percent=habit_percent,
-        health_streak=health_streak
-    )
+    # Habits and health data are loaded by JS via /api/v2/daily-health.
+    # Only the page shell is rendered here.
+    return render_template("health_dashboard.html")
 
 
 # ==========================================================
@@ -253,11 +199,14 @@ def get_daily_health():
 
     entry_map = {h["habit_id"]: h["value"] for h in habit_entries}
 
+    habit_ids = [h["id"] for h in habit_defs]
+    goals_map = get_goals_batch(habit_ids, plan_date)
+
     habit_list = []
     completed = 0
 
     for h in habit_defs:
-        goal = get_goal_for_date(h["id"], plan_date)
+        goal = goals_map.get(h["id"], 0)
         value = float(entry_map.get(h["id"], 0) or 0)
 
         if goal > 0 and value >= goal:
@@ -267,6 +216,7 @@ def get_daily_health():
             "id": h["id"],
             "name": h["name"],
             "unit": h["unit"],
+            "habit_type": h.get("habit_type"),
             "goal": goal,
             "value": value
         })

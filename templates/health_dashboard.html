@@ -110,52 +110,7 @@
 
         <div id="habitContainer" class="sortable-habits">
 
-          {% for habit in habit_list %}
-
-          <div class="habit-item" data-id="{{ habit.id }}" data-goal="{{ habit.goal }}">
-
-            <div class="habit-header habit-tap">
-
-              <div class="habit-drag">☰</div>
-
-              <div>
-                <div class="habit-title">
-                  ${h.name}
-                  <span class="habit-status ${statusClass}">
-                    ${statusSVG}
-                  </span>
-                </div>
-                <div class="habit-goal-display">
-                  <span class="goal-text">
-                    🎯 {{ habit.goal }} {{ habit.unit }}
-                  </span>
-                  <span class="goal-percent">
-                    {{ habit.percent or 0 }}%
-                  </span>
-                </div>
-              </div>
-
-              <div class="habit-actions">
-                <button class="habit-plus" onclick="event.stopPropagation(); quickAdd('{{ habit.id }}')">+</button>
-
-                <button onclick="event.stopPropagation(); showHabitChart('{{ habit.id }}')">📈</button>
-
-                <button onclick="event.stopPropagation(); deleteHabit('{{ habit.id }}')">🗑</button>
-              </div>
-
-            </div>
-
-            <input type="number" step="0.1" value="{{ habit.value }}" data-id="{{ habit.id }}" class="habit-input"
-              placeholder="Enter today’s value">
-
-            <div class="habit-progress">
-              <div class="habit-progress-fill" style="width: {{ habit.percent or 0 }}%">
-              </div>
-            </div>
-
-          </div>
-
-          {% endfor %}
+          <!-- Habits rendered by health.js via /api/v2/daily-health -->
 
         </div>
 
