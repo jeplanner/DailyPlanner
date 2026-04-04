@@ -36,7 +36,7 @@ def create_app():
     from routes.timeline import timeline_bp
     from routes.notes import notes_bp
     from routes.system import system_bp
-
+    from routes.inbox import inbox_bp
     app.register_blueprint(system_bp)
     app.register_blueprint(planner_bp)
     app.register_blueprint(todo_bp)
@@ -48,6 +48,7 @@ def create_app():
     app.register_blueprint(events_bp)
     app.register_blueprint(timeline_bp)
     app.register_blueprint(notes_bp)
+    app.register_blueprint(inbox_bp)
 
     # --------------------------------
     # OAuth dev override (SAFE)
