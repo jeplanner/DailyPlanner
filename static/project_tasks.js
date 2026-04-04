@@ -721,13 +721,25 @@ async function addSubtask() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_id: PROJECT_ID, task_id: _sheetTaskId, title }),
     });
-    const st = await res.json();
 
+    if (res.status === 409) {
+      showToast("Subtask with this title already exists", "error");
+      return;
+    }
+    if (!res.ok) throw new Error();
+
+    const st = await res.json();
     const list = _id("subtask-list");
     if (list) {
       _renderSubtask(list, { id: st.id || Date.now(), title: st.title || title, is_done: false });
     }
     input.value = "";
+
+    // Update subtask count
+    const countEl = _id("subtask-count");
+    if (countEl && list) {
+      countEl.textContent = list.children.length;
+    }
   } catch {
     showToast("Failed to add subtask", "error");
   }

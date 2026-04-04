@@ -851,18 +851,30 @@ def list_subtasks(task_id):
 @login_required
 def add_subtask():
     data = request.get_json()
+    title = (data.get("title") or "").strip()
 
-    rows = post(
-        "project_subtasks",
-        {
-            "project_id": data["project_id"],
-            "parent_task_id": data["task_id"],
-            "title": data["title"],
-        },
-    )
-    if rows:
-        return jsonify(rows[0])
-    return jsonify({"id": None, "title": data["title"], "is_done": False})
+    if not title:
+        return jsonify({"error": "Subtask title required"}), 400
+
+    try:
+        rows = post(
+            "project_subtasks",
+            {
+                "project_id": data["project_id"],
+                "parent_task_id": data["task_id"],
+                "title": title,
+                "is_done": False,
+            },
+        )
+        if rows:
+            return jsonify(rows[0])
+    except Exception as e:
+        # 409 = unique constraint conflict — subtask with same title exists
+        if "409" in str(e):
+            return jsonify({"error": "A subtask with this title already exists"}), 409
+        raise
+
+    return jsonify({"id": None, "title": title, "is_done": False})
 
 @projects_bp.route("/subtask/toggle", methods=["POST"])
 @login_required
