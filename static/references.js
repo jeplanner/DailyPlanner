@@ -38,6 +38,33 @@
     return d.innerHTML;
   }
 
+  const CATEGORY_COLORS = {
+    "AI / ML":       "#7c3aed",
+    "Programming":   "#2563eb",
+    "Technology":    "#0891b2",
+    "Finance":       "#16a34a",
+    "Health":        "#dc2626",
+    "Learning":      "#d97706",
+    "Tech News":     "#0284c7",
+    "Design":        "#db2777",
+    "Productivity":  "#7c3aed",
+    "Entertainment": "#ea580c",
+    "Science":       "#059669",
+    "Business":      "#4338ca",
+    "Shopping":      "#be185d",
+    "Other":         "#6b7280",
+  };
+
+  function categoryColor(cat, alpha) {
+    const hex = CATEGORY_COLORS[cat] || "#6b7280";
+    if (!alpha) return hex;
+    // convert hex to rgba
+    const r = parseInt(hex.slice(1,3),16);
+    const g = parseInt(hex.slice(3,5),16);
+    const b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
   function safeHref(url) {
     try {
       const u = new URL(url);
@@ -216,29 +243,58 @@
       item.className = "ref-item";
       item.dataset.id = ref.id;
 
-      // Header row: title + delete button
+      // Set category accent color via CSS custom property
+      if (ref.category) {
+        item.style.setProperty("--cat-color", categoryColor(ref.category));
+      }
+
+      // ── Top row: favicon + title + delete ──
       const header = document.createElement("div");
       header.className = "ref-item-header";
 
-      const h4 = document.createElement("h4");
-      const a  = document.createElement("a");
+      // Favicon
+      const favicon = document.createElement("img");
+      favicon.className = "ref-favicon";
+      try {
+        const domain = new URL(ref.url).hostname;
+        favicon.src   = `https://www.google.com/s2/favicons?sz=32&domain=${domain}`;
+      } catch (_) {
+        favicon.src = "";
+      }
+      favicon.onerror = () => { favicon.style.display = "none"; };
+      favicon.width  = 16;
+      favicon.height = 16;
+
+      const titleBlock = document.createElement("div");
+      titleBlock.className = "ref-title-block";
+
+      const a = document.createElement("a");
       a.href        = safeHref(ref.url);
       a.target      = "_blank";
       a.rel         = "noopener noreferrer";
+      a.className   = "ref-title-link";
       a.textContent = ref.title || ref.url;
-      h4.appendChild(a);
+
+      const domainSpan = document.createElement("span");
+      domainSpan.className = "ref-domain";
+      try { domainSpan.textContent = new URL(ref.url).hostname.replace("www.", ""); }
+      catch (_) { domainSpan.textContent = ""; }
+
+      titleBlock.appendChild(a);
+      titleBlock.appendChild(domainSpan);
 
       const delBtn = document.createElement("button");
-      delBtn.className = "btn-delete";
-      delBtn.title     = "Delete";
+      delBtn.className   = "btn-delete";
+      delBtn.title       = "Delete";
       delBtn.textContent = "🗑";
       delBtn.addEventListener("click", () => deleteReference(ref.id, item));
 
-      header.appendChild(h4);
+      header.appendChild(favicon);
+      header.appendChild(titleBlock);
       header.appendChild(delBtn);
       item.appendChild(header);
 
-      // Description — stored as bleach-sanitized HTML, safe to render
+      // ── Description ──
       if (ref.description) {
         const descDiv = document.createElement("div");
         descDiv.className = "ref-content";
@@ -246,30 +302,36 @@
         item.appendChild(descDiv);
       }
 
-      // Meta row: tags + category
-      const meta = document.createElement("div");
-      meta.className = "ref-meta";
+      // ── Footer: tags + category ──
+      const footer = document.createElement("div");
+      footer.className = "ref-footer";
 
+      const tagsWrap = document.createElement("div");
+      tagsWrap.className = "ref-tags";
       (ref.tags || []).forEach(tag => {
         const span = document.createElement("span");
         span.className   = "tag";
-        span.textContent = tag;
+        span.textContent = "#" + tag;
         span.title       = `Filter by "${tag}"`;
         span.addEventListener("click", () => {
           if (!state.selectedTags.includes(tag)) state.selectedTags.push(tag);
           resetAndReload();
         });
-        meta.appendChild(span);
+        tagsWrap.appendChild(span);
       });
+
+      footer.appendChild(tagsWrap);
 
       if (ref.category) {
         const cat = document.createElement("span");
-        cat.className   = "category";
+        cat.className = "category-pill";
         cat.textContent = ref.category;
-        meta.appendChild(cat);
+        cat.style.background = categoryColor(ref.category, 0.12);
+        cat.style.color      = categoryColor(ref.category);
+        footer.appendChild(cat);
       }
 
-      item.appendChild(meta);
+      item.appendChild(footer);
       container.appendChild(item);
       state.totalRendered++;
     });

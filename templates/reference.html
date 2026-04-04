@@ -35,38 +35,7 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════
-       2. FILTER BAR
-  ════════════════════════════════════════════════ -->
-  <div class="filter-bar">
-    <input type="text" id="searchInput" placeholder="🔍 Search references…">
-    <select id="categoryFilter">
-      <option value="">All Categories</option>
-      {% for cat in categories %}
-        <option value="{{ cat }}">{{ cat }}</option>
-      {% endfor %}
-    </select>
-    <select id="sortSelect">
-      <option value="created_at_desc">Newest first</option>
-      <option value="created_at_asc">Oldest first</option>
-      <option value="title_asc">Title A–Z</option>
-    </select>
-    <button id="resetFilterBtn" class="btn-outline">Clear</button>
-    <button id="tagCloudToggle" class="btn-outline">🏷 Tags</button>
-  </div>
-
-  <!-- Tag cloud (collapsed by default) -->
-  <div id="tagCloud" class="tag-cloud tag-cloud-hidden"></div>
-
-  <!-- Result count -->
-  <div id="resultCount" class="result-count"></div>
-
-  <!-- ═══════════════════════════════════════════════
-       3. REFERENCE LIST
-  ════════════════════════════════════════════════ -->
-  <div id="referenceList" class="reference-list"></div>
-
-  <!-- ═══════════════════════════════════════════════
-       4. ADD REFERENCE (collapsible)
+       2. ADD REFERENCE (collapsible) — above filter
   ════════════════════════════════════════════════ -->
   <div class="add-toggle-row">
     <button id="addToggleBtn" class="btn-add-toggle" onclick="toggleAddPanel()">
@@ -125,6 +94,37 @@
     </div>
 
   </div>
+
+  <!-- ═══════════════════════════════════════════════
+       3. FILTER BAR
+  ════════════════════════════════════════════════ -->
+  <div class="filter-bar">
+    <input type="text" id="searchInput" placeholder="🔍 Search references…">
+    <select id="categoryFilter">
+      <option value="">All Categories</option>
+      {% for cat in categories %}
+        <option value="{{ cat }}">{{ cat }}</option>
+      {% endfor %}
+    </select>
+    <select id="sortSelect">
+      <option value="created_at_desc">Newest first</option>
+      <option value="created_at_asc">Oldest first</option>
+      <option value="title_asc">Title A–Z</option>
+    </select>
+    <button id="resetFilterBtn" class="btn-outline">Clear</button>
+    <button id="tagCloudToggle" class="btn-outline">🏷 Tags</button>
+  </div>
+
+  <!-- Tag cloud (collapsed by default) -->
+  <div id="tagCloud" class="tag-cloud tag-cloud-hidden"></div>
+
+  <!-- Result count -->
+  <div id="resultCount" class="result-count"></div>
+
+  <!-- ═══════════════════════════════════════════════
+       4. REFERENCE LIST
+  ════════════════════════════════════════════════ -->
+  <div id="referenceList" class="reference-list"></div>
 
 </div>
 
