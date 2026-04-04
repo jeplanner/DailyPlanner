@@ -77,6 +77,9 @@
     </div>
 
     <div class="toolbar-right">
+      <button class="import-btn" onclick="openImportModal()" title="Import CSV">
+        <i data-feather="upload" style="width:14px;height:14px"></i> Import
+      </button>
       <select class="sort-select" id="sort-select" title="Sort order">
         <option value="smart" {{ 'selected' if sort=='smart' }}>Smart</option>
         <option value="due" {{ 'selected' if sort=='due' }}>Due date</option>
@@ -459,6 +462,51 @@
     <span class="panel-saved-indicator" id="saved-indicator"></span>
   </div>
 </aside>
+
+<!-- ═══════════ CSV IMPORT MODAL ═══════════ -->
+<div id="import-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal-card" style="width:580px;">
+    <div class="modal-header">
+      <h3>Import Tasks from CSV</h3>
+      <button class="modal-close" onclick="closeImportModal()"><i data-feather="x"></i></button>
+    </div>
+
+    <div style="margin-bottom:14px;">
+      <p style="font-size:13px;color:var(--pt-text2);margin-bottom:10px;">
+        Upload a CSV file with tasks and subtasks. Download the template for the expected format.
+      </p>
+      <button class="btn btn-ghost" onclick="downloadTemplate()" style="font-size:12px;">
+        <i data-feather="download" style="width:14px;height:14px"></i> Download Template
+      </button>
+    </div>
+
+    <div class="import-drop-zone" id="drop-zone"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleFileDrop(event)">
+      <i data-feather="upload-cloud" style="width:32px;height:32px;color:var(--pt-text3)"></i>
+      <p style="font-size:13px;color:var(--pt-text2);margin-top:8px;">
+        Drag & drop CSV file here, or
+      </p>
+      <label class="btn btn-primary" style="margin-top:8px;cursor:pointer;font-size:13px;">
+        Browse File
+        <input type="file" id="csv-file" accept=".csv" onchange="handleFileSelect(event)" style="display:none;">
+      </label>
+    </div>
+
+    <div id="import-preview" style="display:none;margin-top:14px;">
+      <h4 style="font-size:13px;font-weight:600;margin-bottom:8px;">Preview</h4>
+      <div id="preview-stats" style="font-size:12px;color:var(--pt-text2);margin-bottom:8px;"></div>
+      <div id="preview-table" style="max-height:250px;overflow-y:auto;border:1px solid var(--pt-border);border-radius:8px;"></div>
+      <div class="modal-actions" style="margin-top:12px;">
+        <button class="btn btn-primary" onclick="executeImport()">
+          <i data-feather="check" style="width:16px;height:16px"></i> Import
+        </button>
+        <button class="btn btn-ghost" onclick="closeImportModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
   const PROJECT_ID = "{{ project.project_id }}";

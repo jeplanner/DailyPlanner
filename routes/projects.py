@@ -661,6 +661,84 @@ def bulk_add_tasks():
         "status": "ok",
         "count": len(rows)
     })
+@projects_bp.route("/projects/tasks/import-csv", methods=["POST"])
+@login_required
+def import_csv():
+    """Import tasks and subtasks from parsed CSV data (sent as JSON from client)."""
+    data = request.get_json() or {}
+    project_id = data.get("project_id")
+    rows = data.get("rows", [])
+
+    if not project_id or not rows:
+        return jsonify({"error": "project_id and rows required"}), 400
+
+    user_id = session["user_id"]
+    max_order = get_max_order_index(project_id) or 0
+
+    created_tasks = 0
+    created_subtasks = 0
+
+    # First pass: create all tasks
+    task_map = {}  # row_index -> task_id
+    for idx, row in enumerate(rows):
+        task_text = (row.get("task") or "").strip()
+        if not task_text:
+            continue
+
+        # Skip if this is a subtask row (has parent)
+        if row.get("parent"):
+            continue
+
+        result = post("project_tasks", {
+            "project_id": project_id,
+            "user_id": user_id,
+            "task_text": task_text,
+            "status": row.get("status", "open"),
+            "priority": row.get("priority", "medium"),
+            "start_date": row.get("start_date") or date.today().isoformat(),
+            "due_date": row.get("due_date") or None,
+            "duration_days": int(row["duration"]) if row.get("duration") else 0,
+            "planned_hours": float(row["planned_hours"]) if row.get("planned_hours") else None,
+            "notes": row.get("notes") or None,
+            "order_index": max_order + idx + 1,
+            "priority_rank": PRIORITY_MAP.get(row.get("priority", "medium"), 2),
+        })
+
+        if result:
+            task_id = result[0].get("task_id")
+            task_map[task_text] = task_id
+            created_tasks += 1
+
+    # Second pass: create subtasks
+    for row in rows:
+        parent_name = (row.get("parent") or "").strip()
+        subtask_text = (row.get("task") or "").strip()
+
+        if not parent_name or not subtask_text:
+            continue
+
+        parent_task_id = task_map.get(parent_name)
+        if not parent_task_id:
+            continue
+
+        try:
+            post("project_subtasks", {
+                "project_id": project_id,
+                "parent_task_id": parent_task_id,
+                "title": subtask_text,
+                "is_done": False,
+            })
+            created_subtasks += 1
+        except Exception:
+            pass  # Skip FK failures
+
+    return jsonify({
+        "status": "ok",
+        "tasks_created": created_tasks,
+        "subtasks_created": created_subtasks,
+    })
+
+
 @projects_bp.route("/projects/tasks/pin", methods=["POST"])
 @login_required
 def toggle_pin():

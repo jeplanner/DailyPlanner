@@ -114,10 +114,29 @@ body {
 }
 .filter-pill input { display: none; }
 
+.import-btn {
+  display: flex; align-items: center; gap: 4px;
+  padding: 5px 12px; border: 1px solid var(--pt-border); border-radius: 6px;
+  font-size: 12px; font-weight: 500; font-family: inherit;
+  background: var(--pt-surface); color: var(--pt-text2); cursor: pointer;
+  transition: all 0.15s;
+}
+.import-btn:hover { border-color: var(--pt-primary); color: var(--pt-primary); }
+
 .sort-select {
   padding: 5px 10px; border: 1px solid var(--pt-border); border-radius: 6px;
   font-size: 12px; font-family: inherit; background: var(--pt-surface);
   color: var(--pt-text); cursor: pointer; outline: none;
+}
+
+/* Import drop zone */
+.import-drop-zone {
+  border: 2px dashed var(--pt-border); border-radius: 12px;
+  padding: 32px 16px; text-align: center;
+  transition: all 0.2s; background: var(--pt-bg);
+}
+.import-drop-zone.dragover {
+  border-color: var(--pt-primary); background: var(--pt-primary-light);
 }
 
 /* ═══════════ ADD TASK ═══════════ */

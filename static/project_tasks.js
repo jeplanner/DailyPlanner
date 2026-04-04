@@ -870,6 +870,170 @@ function eliminateTask() {
 }
 
 /* ---------------------------------------------------------
+   CSV Import
+   --------------------------------------------------------- */
+let _importRows = [];
+
+function openImportModal() {
+  _importRows = [];
+  _id("import-preview").style.display = "none";
+  _id("csv-file").value = "";
+  _id("drop-zone")?.classList.remove("dragover");
+  _id("import-modal").classList.remove("hidden");
+  if (typeof feather !== "undefined") feather.replace();
+}
+
+function closeImportModal() {
+  _id("import-modal").classList.add("hidden");
+}
+
+function downloadTemplate() {
+  const header = "task,parent,priority,status,start_date,due_date,duration,planned_hours,notes";
+  const example = [
+    '"Design homepage",,high,open,2026-04-10,2026-04-15,5,8,"Main landing page"',
+    '"Create mockup","Design homepage",medium,open,,,,2,"Figma mockup"',
+    '"Get feedback","Design homepage",low,open,,,,1,""',
+    '"Build API",,medium,open,2026-04-12,2026-04-20,8,16,"REST endpoints"',
+    '"Auth endpoints","Build API",high,open,,,,4,""',
+    '"Database schema","Build API",high,open,,,,3,""',
+  ];
+  const csv = header + "\n" + example.join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "task_import_template.csv";
+  a.click();
+}
+
+function handleFileDrop(e) {
+  e.preventDefault();
+  _id("drop-zone")?.classList.remove("dragover");
+  const file = e.dataTransfer.files[0];
+  if (file) parseCSVFile(file);
+}
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) parseCSVFile(file);
+}
+
+function parseCSVFile(file) {
+  if (!file.name.endsWith(".csv")) {
+    showToast("Please upload a .csv file", "error");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+    if (lines.length < 2) {
+      showToast("CSV file is empty or has no data rows", "error");
+      return;
+    }
+
+    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
+    const taskIdx = headers.indexOf("task");
+    if (taskIdx === -1) {
+      showToast('CSV must have a "task" column', "error");
+      return;
+    }
+
+    _importRows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i]);
+      if (!cols[taskIdx]?.trim()) continue;
+
+      const row = {};
+      headers.forEach((h, idx) => {
+        row[h] = (cols[idx] || "").trim();
+      });
+      _importRows.push(row);
+    }
+
+    showImportPreview();
+  };
+  reader.readAsText(file);
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuotes = !inQuotes; }
+    } else if (ch === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function showImportPreview() {
+  const tasks = _importRows.filter(r => !r.parent);
+  const subtasks = _importRows.filter(r => r.parent);
+
+  _id("preview-stats").textContent =
+    `${tasks.length} task${tasks.length !== 1 ? "s" : ""}, ${subtasks.length} subtask${subtasks.length !== 1 ? "s" : ""}`;
+
+  let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+  html += '<thead><tr style="background:var(--pt-bg);">';
+  html += '<th style="padding:6px 8px;text-align:left;font-weight:600;color:var(--pt-text3);">Task</th>';
+  html += '<th style="padding:6px 8px;text-align:left;">Parent</th>';
+  html += '<th style="padding:6px 8px;text-align:left;">Priority</th>';
+  html += '<th style="padding:6px 8px;text-align:left;">Due</th>';
+  html += '</tr></thead><tbody>';
+
+  _importRows.forEach(r => {
+    const isSubtask = !!r.parent;
+    html += `<tr style="border-bottom:1px solid var(--pt-border-light);">
+      <td style="padding:5px 8px;${isSubtask ? 'padding-left:24px;color:var(--pt-text2);' : 'font-weight:500;'}">
+        ${isSubtask ? '↳ ' : ''}${_escHtml(r.task)}
+      </td>
+      <td style="padding:5px 8px;color:var(--pt-text3);font-size:11px;">${_escHtml(r.parent || '')}</td>
+      <td style="padding:5px 8px;">${r.priority || 'medium'}</td>
+      <td style="padding:5px 8px;font-size:11px;">${r.due_date || ''}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  _id("preview-table").innerHTML = html;
+  _id("import-preview").style.display = "block";
+}
+
+async function executeImport() {
+  if (!_importRows.length) return;
+
+  try {
+    const res = await fetch("/projects/tasks/import-csv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, rows: _importRows }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Import failed", "error");
+      return;
+    }
+
+    const result = await res.json();
+    closeImportModal();
+    showToast(`Imported ${result.tasks_created} tasks, ${result.subtasks_created} subtasks`, "success");
+    setTimeout(() => location.reload(), 500);
+  } catch {
+    showToast("Import failed", "error");
+  }
+}
+
+/* ---------------------------------------------------------
    DOMContentLoaded
    --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
