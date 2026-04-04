@@ -753,6 +753,43 @@ body {
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.15);
 }
 
+/* Duration row — presets + label */
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.duration-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gcal-primary);
+  min-width: 60px;
+}
+.duration-presets {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.dur-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--gcal-border);
+  border-radius: 6px;
+  background: var(--gcal-bg);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--gcal-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.dur-btn:hover { border-color: var(--gcal-primary); color: var(--gcal-primary); }
+.dur-btn.active {
+  background: var(--gcal-primary);
+  color: #fff;
+  border-color: var(--gcal-primary);
+}
+
 .end-preview {
   font-size: 12px;
   color: var(--gcal-text-secondary);

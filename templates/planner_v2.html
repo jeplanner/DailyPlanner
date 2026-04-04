@@ -118,22 +118,15 @@
       </div>
     </div>
 
-    <!-- Time controls -->
+    <!-- Time controls — Google Calendar style: Start + End + Duration display -->
     <div class="modal-time-row">
       <div class="form-group">
         <label>Start</label>
         <input type="time" id="start-time" step="300" class="form-input">
       </div>
       <div class="form-group">
-        <label>Duration</label>
-        <select id="duration" class="form-input">
-          <option value="15">15 min</option>
-          <option value="30" selected>30 min</option>
-          <option value="45">45 min</option>
-          <option value="60">1 hour</option>
-          <option value="90">1.5 hours</option>
-          <option value="120">2 hours</option>
-        </select>
+        <label>End</label>
+        <input type="time" id="end-time" step="300" class="form-input">
       </div>
       <div class="form-group">
         <label>Priority</label>
@@ -145,7 +138,23 @@
       </div>
     </div>
 
-    <div id="end-display" class="end-preview"></div>
+    <!-- Duration display + quick presets -->
+    <div class="duration-row">
+      <span class="duration-label" id="duration-label">30 min</span>
+      <div class="duration-presets">
+        <button type="button" class="dur-btn" onclick="setDuration(15)">15m</button>
+        <button type="button" class="dur-btn active" onclick="setDuration(30)">30m</button>
+        <button type="button" class="dur-btn" onclick="setDuration(60)">1h</button>
+        <button type="button" class="dur-btn" onclick="setDuration(120)">2h</button>
+        <button type="button" class="dur-btn" onclick="setDuration(180)">3h</button>
+        <button type="button" class="dur-btn" onclick="setDuration(240)">4h</button>
+        <button type="button" class="dur-btn" onclick="setDuration(480)">8h</button>
+      </div>
+    </div>
+    <!-- Hidden select kept for backward compat with saveEvent -->
+    <select id="duration" class="form-input" style="display:none">
+      <option value="30" selected>30</option>
+    </select>
 
     <div class="form-group">
       <label>Title</label>

@@ -710,13 +710,13 @@ function deleteFromPopover() {
    12. EVENT MODAL (create / edit)
    ══════════════════════════════════════════════════════════════ */
 
-function openCreateModal(prefillDate) {
+function openCreateModal(prefillDate, prefillStart, prefillEnd) {
   hideConflict();
   selected = null;
 
   document.getElementById("modal-title").textContent = "New Event";
-  document.getElementById("start-time").value = "";
-  document.getElementById("duration").value = "30";
+  document.getElementById("start-time").value = prefillStart || "";
+  document.getElementById("end-time").value = prefillEnd || (prefillStart ? toTime(minutes(prefillStart) + 30) : "");
   document.getElementById("event-priority").value = "medium";
   document.getElementById("event-title").value = "";
   document.getElementById("event-desc").value = "";
@@ -733,10 +733,11 @@ function openCreateModal(prefillDate) {
   if (delBtn) delBtn.style.display = "none";
 
   document.getElementById("modal").classList.remove("hidden");
-  updateEndPreview();
+  updateDurationLabel();
 
   setTimeout(() => {
-    document.getElementById("start-time").focus();
+    const focus = prefillStart ? document.getElementById("event-title") : document.getElementById("start-time");
+    focus?.focus();
   }, 50);
 }
 
@@ -745,12 +746,8 @@ function openModal(ev) {
   selected = ev;
 
   document.getElementById("modal-title").textContent = "Edit Event";
-  document.getElementById("start-time").value = ev.start_time || "";
-
-  const duration = (ev.end_time && ev.start_time)
-    ? minutes(ev.end_time) - minutes(ev.start_time)
-    : 30;
-  document.getElementById("duration").value = normalizeDuration(duration);
+  document.getElementById("start-time").value = formatTime(ev.start_time) || "";
+  document.getElementById("end-time").value = formatTime(ev.end_time) || "";
   document.getElementById("event-priority").value = ev.priority || "medium";
   document.getElementById("event-title").value = ev.task_text || ev.title || "";
   document.getElementById("event-desc").value = ev.description || "";
@@ -778,7 +775,7 @@ function openModal(ev) {
   if (delBtn) delBtn.style.display = "";
 
   document.getElementById("modal").classList.remove("hidden");
-  updateEndPreview();
+  updateDurationLabel();
 
   if (window.feather) feather.replace();
 }
@@ -788,13 +785,66 @@ function closeModal() {
   selected = null;
 }
 
-function updateEndPreview() {
+function updateEndFromStart() {
+  // When start changes, move end to keep same duration
   const start = document.getElementById("start-time").value;
-  const duration = document.getElementById("duration").value;
-  const el = document.getElementById("end-display");
-  if (!el) return;
-  el.textContent = start ? `Ends at ${formatTime12(calculateEndTime(start, duration))}` : "";
+  const end = document.getElementById("end-time").value;
+  if (!start) return;
+
+  const startMin = minutes(start);
+  const endMin = end ? minutes(end) : startMin + 30;
+  let dur = endMin - startMin;
+  if (dur <= 0) dur = 30; // If end is before start, default 30min
+
+  document.getElementById("end-time").value = toTime(startMin + dur);
+  updateDurationLabel();
 }
+
+function updateDurationFromEnd() {
+  // When end changes, update duration label
+  updateDurationLabel();
+}
+
+function updateDurationLabel() {
+  const start = document.getElementById("start-time").value;
+  const end = document.getElementById("end-time").value;
+  const label = document.getElementById("duration-label");
+  if (!start || !end || !label) return;
+
+  const dur = minutes(end) - minutes(start);
+  if (dur <= 0) { label.textContent = "Invalid"; return; }
+
+  // Format nicely
+  if (dur < 60) {
+    label.textContent = dur + " min";
+  } else {
+    const h = Math.floor(dur / 60);
+    const m = dur % 60;
+    label.textContent = m ? `${h}h ${m}m` : `${h} hour${h > 1 ? "s" : ""}`;
+  }
+
+  // Update hidden duration select for backward compat
+  document.getElementById("duration").value = dur;
+
+  // Highlight matching preset button
+  document.querySelectorAll(".dur-btn").forEach(btn => {
+    const val = parseInt(btn.getAttribute("onclick").match(/\d+/)?.[0] || 0);
+    btn.classList.toggle("active", val === dur);
+  });
+}
+
+function setDuration(mins) {
+  const start = document.getElementById("start-time").value;
+  if (!start) {
+    showToast("Set a start time first", "error");
+    return;
+  }
+  document.getElementById("end-time").value = toTime(minutes(start) + mins);
+  updateDurationLabel();
+}
+
+// Legacy compat
+function updateEndPreview() { updateDurationLabel(); }
 
 function handleReminderSelect() {
   const select = document.getElementById("reminder-select");
@@ -813,17 +863,21 @@ function getReminderMinutes() {
 
 async function saveEvent() {
   const start = document.getElementById("start-time").value;
-  const duration = document.getElementById("duration").value;
+  const end = document.getElementById("end-time").value;
 
   if (!start) {
     showToast("Please enter a start time", "error");
+    return;
+  }
+  if (!end || minutes(end) <= minutes(start)) {
+    showToast("End time must be after start time", "error");
     return;
   }
 
   const payload = {
     plan_date: (selected && (selected.plan_date || selected._date)) || currentDate,
     start_time: start,
-    end_time: calculateEndTime(start, duration),
+    end_time: end,
     title: document.getElementById("event-title").value,
     description: document.getElementById("event-desc").value,
     priority: document.getElementById("event-priority").value,
@@ -1261,20 +1315,13 @@ function onCreatePointerUp(e) {
 
   if (endMinutes <= startMinutes) return;
 
-  const start = toTime(startMinutes);
-  const duration = endMinutes - startMinutes;
+  const startTime = toTime(startMinutes);
+  const endTime = toTime(endMinutes);
 
   // Set currentDate to the column's date for new event creation
-  const prevDate = currentDate;
   currentDate = createColDate;
 
-  openCreateModal();
-  document.getElementById("start-time").value = start;
-  document.getElementById("duration").value = normalizeDuration(duration);
-  updateEndPreview();
-
-  // Restore currentDate if needed (the save uses currentDate)
-  // Actually, we want the event on the column date, so keep it
+  openCreateModal(createColDate, startTime, endTime);
 }
 
 function cancelCreate() {
@@ -1624,9 +1671,9 @@ document.addEventListener("DOMContentLoaded", () => {
   buildGrid();
   loadAllEvents();
 
-  // Bind modal form listeners
-  document.getElementById("start-time")?.addEventListener("change", updateEndPreview);
-  document.getElementById("duration")?.addEventListener("change", updateEndPreview);
+  // Bind modal form listeners — start/end time sync
+  document.getElementById("start-time")?.addEventListener("change", updateEndFromStart);
+  document.getElementById("end-time")?.addEventListener("change", updateDurationFromEnd);
   document.getElementById("reminder-select")?.addEventListener("change", handleReminderSelect);
 
   // Auto-scroll to current time (or 7 AM if not today)
