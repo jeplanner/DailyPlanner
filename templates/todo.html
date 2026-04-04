@@ -94,6 +94,12 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-move-select{padding:2px 4px;border:1px solid var(--em-border);border-radius:4px;font-size:10px;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;}
 
 .em-empty{text-align:center;padding:20px 8px;color:var(--em-text3);font-size:13px;}
+
+.em-quick-extra{display:flex;gap:8px;margin-top:-12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;padding:8px 12px;background:var(--em-surface);border:1px solid var(--em-border);border-radius:8px;}
+.em-extra-row{display:flex;align-items:center;gap:6px;}
+.em-extra-row label{font-size:11px;font-weight:600;color:var(--em-text3);white-space:nowrap;}
+.em-extra-input{padding:5px 8px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
+.em-extra-input:focus{border-color:var(--q-schedule);}
 </style>
 </head>
 <body>
@@ -136,7 +142,30 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
       <option value="delegate">🟡 Delegate</option>
       <option value="eliminate">⚪ Eliminate</option>
     </select>
+    <select id="quick-project" class="em-quad-select" style="max-width:140px;">
+      <option value="">No project</option>
+      {% for p in projects %}
+      <option value="{{ p.project_id }}">{{ p.name }}</option>
+      {% endfor %}
+    </select>
     <button class="em-add-btn" onclick="quickAdd()">Add</button>
+  </div>
+  <!-- Context fields that show based on quadrant -->
+  <div id="quick-extra" class="em-quick-extra" style="display:none;">
+    <div id="extra-do" style="display:none;" class="em-extra-row">
+      <label>Time</label>
+      <input type="time" id="quick-do-time" class="em-extra-input" step="300">
+    </div>
+    <div id="extra-schedule" style="display:none;" class="em-extra-row">
+      <label>Due Date</label>
+      <input type="date" id="quick-due" class="em-extra-input">
+    </div>
+    <div id="extra-delegate" style="display:none;" class="em-extra-row">
+      <label>Delegate To</label>
+      <input type="text" id="quick-delegate" class="em-extra-input" placeholder="Person name" maxlength="25">
+      <label style="margin-left:10px;">Due Date</label>
+      <input type="date" id="quick-delegate-due" class="em-extra-input">
+    </div>
   </div>
 
   <!-- Matrix Grid -->
@@ -245,12 +274,68 @@ function moveQuadrant(taskId, newQ) {
   }).catch(console.error);
 }
 
+function onQuadrantChange() {
+  const q = document.getElementById("quick-quad").value;
+  const extra = document.getElementById("quick-extra");
+  const doRow = document.getElementById("extra-do");
+  const scheduleRow = document.getElementById("extra-schedule");
+  const delegateRow = document.getElementById("extra-delegate");
+
+  doRow.style.display = "none";
+  scheduleRow.style.display = "none";
+  delegateRow.style.display = "none";
+  extra.style.display = "none";
+
+  if (q === "do") {
+    doRow.style.display = "flex";
+    extra.style.display = "flex";
+  } else if (q === "schedule") {
+    scheduleRow.style.display = "flex";
+    extra.style.display = "flex";
+    const tmr = new Date(PLAN_DATE);
+    tmr.setDate(tmr.getDate() + 1);
+    document.getElementById("quick-due").value = tmr.toISOString().split("T")[0];
+  } else if (q === "delegate") {
+    delegateRow.style.display = "flex";
+    extra.style.display = "flex";
+    document.getElementById("quick-delegate").value = "";
+    document.getElementById("quick-delegate-due").value = "";
+  }
+}
+
+document.getElementById("quick-quad")?.addEventListener("change", onQuadrantChange);
+
 function quickAdd() {
   const input = document.getElementById("quick-task");
   const text = input.value.trim();
   if (!text) return;
 
   const quadrant = document.getElementById("quick-quad").value;
+  const projectId = document.getElementById("quick-project").value || null;
+
+  // Determine dates/time/delegate based on quadrant
+  let dueDate = PLAN_DATE;
+  let taskTime = null;
+  let delegatedTo = null;
+
+  if (quadrant === "do") {
+    taskTime = document.getElementById("quick-do-time").value || null;
+  } else if (quadrant === "schedule") {
+    dueDate = document.getElementById("quick-due").value || null;
+    if (!dueDate) {
+      showToast("Please select a due date for scheduled tasks", "error");
+      return;
+    }
+  } else if (quadrant === "delegate") {
+    delegatedTo = document.getElementById("quick-delegate").value.trim() || null;
+    dueDate = document.getElementById("quick-delegate-due").value || null;
+    if (!delegatedTo) {
+      showToast("Please enter who to delegate to", "error");
+      return;
+    }
+  } else if (quadrant === "eliminate") {
+    dueDate = null;
+  }
 
   fetch("/todo/autosave", {
     method: "POST",
@@ -259,6 +344,10 @@ function quickAdd() {
       plan_date: PLAN_DATE,
       task_text: text,
       quadrant: quadrant,
+      project_id: projectId,
+      due_date: dueDate,
+      task_time: taskTime,
+      delegated_to: delegatedTo,
       is_done: false
     })
   }).then(() => {

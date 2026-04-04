@@ -123,6 +123,7 @@ def todo():
         month=month,
         today=today,
         quadrant_counts=quadrant_counts,
+        projects=projects,
     )
 
 
@@ -227,14 +228,59 @@ def todo_autosave():
         if not text:
             return jsonify({"ignored": True})
 
-        rows = post("todo_matrix", {
+        project_id = data.get("project_id") or None
+        source_task_id = None
+
+        quadrant = data["quadrant"]
+        due_date = data.get("due_date") or data["plan_date"]
+        task_time = data.get("task_time") or None
+        delegated_to = data.get("delegated_to") or None
+
+        # Quadrant-specific date logic
+        if quadrant == "eliminate":
+            due_date = None
+
+        # If project selected, also create a project_tasks row
+        if project_id:
+            try:
+                pt_rows = post("project_tasks", {
+                    "project_id": project_id,
+                    "user_id": user_id,
+                    "task_text": text,
+                    "status": "open",
+                    "priority": "medium",
+                    "priority_rank": 2,
+                    "start_date": data["plan_date"],
+                    "due_date": due_date,
+                    "due_time": task_time,
+                    "delegated_to": delegated_to,
+                    "quadrant": quadrant,
+                    "order_index": 0,
+                })
+                if pt_rows:
+                    source_task_id = pt_rows[0].get("task_id")
+            except Exception as e:
+                logger.warning("Failed to create project task from Eisenhower: %s", e)
+
+        row_data = {
             "user_id": user_id,
             "plan_date": data["plan_date"],
-            "quadrant": data["quadrant"],
+            "quadrant": quadrant,
             "task_text": text,
             "is_done": bool(data.get("is_done", False)),
             "is_deleted": False,
-        })
+            "task_date": due_date,
+        }
+        if task_time:
+            row_data["task_time"] = task_time
+        if project_id:
+            row_data["project_id"] = project_id
+        if delegated_to:
+            row_data["delegated_to"] = delegated_to
+        if source_task_id:
+            row_data["source_task_id"] = source_task_id
+
+        rows = post("todo_matrix", row_data)
         return jsonify({"status": "ok", "id": rows[0]["id"] if rows else None})
 
     task_id = data["id"]
