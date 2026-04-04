@@ -165,12 +165,12 @@ def project_tasks(project_id):
             "delegated_to": t.get("delegated_to"),
             "elimination_reason": t.get("elimination_reason"),
             "project_name": project["name"],
+            "priority": t.get("priority", "medium"),
             "urgency": None,
             "priority_rank": PRIORITY_MAP.get(t.get("priority"), 2),
             "is_pinned": t.get("is_pinned", False),
-             "planned_hours": t.get("planned_hours", 0),
-             "actual_hours": t.get("actual_hours", 0),
-               # 🔥 ADD THESE
+            "planned_hours": t.get("planned_hours", 0),
+            "actual_hours": t.get("actual_hours", 0),
             "is_recurring": t.get("is_recurring", False),
             "recurrence_type": t.get("recurrence_type", "none"),
             "recurrence_days": t.get("recurrence_days"),
@@ -178,7 +178,12 @@ def project_tasks(project_id):
             "recurrence_end": t.get("recurrence_end"),
             "auto_advance": t.get("auto_advance", True),
             "recurrence_badge": build_recurrence_badge(t),
-
+            # used by task card for date-aware actions (e.g. recurring completion)
+            "occurrence_date": due or date.today().isoformat(),
+            # Eisenhower fields (safe defaults — full feature requires eisenhower query)
+            "eisenhower_sent": False,
+            "missed_eisenhower": False,
+            "eisenhower_plan_date": None,
         })
 
     grouped_tasks = group_tasks_smart(tasks)
@@ -188,6 +193,7 @@ def project_tasks(project_id):
         project=project,
         grouped_tasks=grouped_tasks,
         today=today.isoformat(),
+        selected_date=today.isoformat(),
         sort=sort,
         hide_completed=hide_completed,
         overdue_only=overdue_only,
@@ -197,21 +203,24 @@ def project_tasks(project_id):
 @projects_bp.route("/projects/<project_id>/tasks/add", methods=["POST"])
 @login_required
 def add_project_task(project_id):
-    text = request.form["task_text"].strip()
+    text = request.form.get("task_text", "").strip()
+    start_date = request.form.get("start_date") or date.today().isoformat()
 
     if not text:
         return redirect(url_for("projects.project_tasks", project_id=project_id))
 
     max_order = get_max_order_index(project_id)
-    order_index = (max_order or 0) + 1   # ✅ append to end
+    order_index = (max_order or 0) + 1
 
     post(
         "project_tasks",
         {
             "project_id": project_id,
+            "user_id": session["user_id"],
             "task_text": text,
             "status": "backlog",
-            "order_index": order_index,   # ✅ THIS LINE
+            "start_date": start_date,
+            "order_index": order_index,
         },
     )
 
@@ -366,33 +375,8 @@ def unsend_task_from_eisenhower():
     )
 
     return jsonify({"status": "ok"})
-def build_timeline_blocks(tasks, zoom="day"):
-    blocks = {}
 
-    for t in tasks:
-        d = t.get("due_date") or t.get("start_date")
-        if not d:
-            continue
 
-        if isinstance(d, str):
-            d = date.fromisoformat(d)
-
-        if zoom == "week":
-            label = f"Week {d.isocalendar()[1]} — {d.strftime('%b %Y')}"
-            key = f"{d.isocalendar()[0]}-{d.isocalendar()[1]}"
-        else:
-            label = d.strftime("%d %b %Y")
-            key = d.isoformat()
-
-        blocks.setdefault(key, {
-            "label": label,
-            "date": d.isoformat(),
-            "tasks": []
-        })["tasks"].append(t)
-
-    return sorted(blocks.values(), key=lambda x: x["date"])
-
-    
 
 @projects_bp.route("/projects/tasks/update-date", methods=["POST"])
 @login_required
@@ -966,36 +950,6 @@ def insert_many(table, rows, prefer="return=representation"):
 
 
 
-def get_one(table, params=None):
-    params = params or {}
-    params = dict(params)
-    params["limit"] = 1
-
-    rows = get(table, params=params)
-    return rows[0] if rows else None
-
-def get_all(table, params=None, order=None):
-    """
-    Fetch multiple rows.
-    Returns list (possibly empty).
-    """
-    params = params or {}
-
-    if order:
-        params = dict(params)  # avoid mutating caller dict
-        params["order"] = order
-
-    return get(table, params=params) or []
-def get_latest_scribble(user_id):
-    rows = get(
-        "scribble_notes",
-        params={
-            "user_id": f"eq.{user_id}",
-            "order": "updated_at.desc",
-            "limit": 1
-        }
-    )
-    return rows[0] if rows else None
 
 
 @projects_bp.route("/projects/list")

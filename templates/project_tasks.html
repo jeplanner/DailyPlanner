@@ -62,7 +62,6 @@
   </label>
 </div>
 
-  </div>
 <!-- Voice Dictation -->
 <div class="voice-box">
   <button
@@ -114,10 +113,10 @@
     <select
       id="sortSelect"
       data-project-id="{{ project.project_id }}">
-      <option value="smart">Smart</option>
-      <option value="due">Due</option>
-      <option value="priority">Priority</option>
-      <option value="created">Created</option>
+      <option value="smart"    {% if sort == 'smart'    %}selected{% endif %}>Smart</option>
+      <option value="due"      {% if sort == 'due'      %}selected{% endif %}>Due</option>
+      <option value="priority" {% if sort == 'priority' %}selected{% endif %}>Priority</option>
+      <option value="created"  {% if sort == 'created'  %}selected{% endif %}>Created</option>
     </select>
 
     <!-- Task Groups -->
@@ -140,7 +139,26 @@
       </div>
     {% endfor %}
 
+  </div><!-- /.container -->
+
+<!-- Task Action Sheet (bottom sheet for long-press) -->
+<div id="task-action-sheet" class="action-sheet hidden">
+  <div class="action-sheet-inner">
+    <div id="sheet-title" class="sheet-title"></div>
+    <div class="sheet-row">
+      <label class="sheet-toggle">
+        <span>Auto-advance</span>
+        <input type="checkbox" id="autoAdvanceToggle"
+               onchange="sheetToggleAutoAdvance(this.checked)">
+      </label>
+    </div>
+    <button class="sheet-btn primary" onclick="sheetCompleteToday()">✅ Complete Today</button>
+    <button class="sheet-btn" onclick="sheetEditAll()">✏️ Edit Task</button>
+    <button class="sheet-btn danger" onclick="closeTaskSheet()">Cancel</button>
   </div>
+</div>
+
+<div id="project-toast-container"></div>
 
   <!-- ✅ ONE JS ENTRY POINT -->
   <script
