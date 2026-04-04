@@ -790,6 +790,33 @@ body {
   border-color: var(--gcal-primary);
 }
 
+/* Quadrant Picker */
+.quadrant-picker {
+  display: flex; gap: 4px; flex-wrap: wrap;
+}
+.quad-btn {
+  padding: 4px 10px; border: 1px solid var(--gcal-border); border-radius: 6px;
+  font-size: 11px; font-weight: 600; font-family: inherit; background: var(--gcal-bg);
+  color: var(--gcal-text-secondary); cursor: pointer; transition: all 0.15s;
+}
+.quad-btn:hover { border-color: var(--gcal-primary); }
+.quad-btn.active { border-width: 2px; }
+.quad-btn.active.q-do { border-color: #dc2626; background: #fef2f2; color: #dc2626; }
+.quad-btn.active.q-schedule { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
+.quad-btn.active.q-delegate { border-color: #d97706; background: #fffbeb; color: #d97706; }
+.quad-btn.active.q-eliminate { border-color: #6b7280; background: #f3f4f6; color: #6b7280; }
+.quad-btn.active[data-q=""] { border-color: var(--gcal-primary); background: var(--gcal-surface); }
+
+/* Quadrant badge on event chips */
+.chip-quadrant {
+  font-size: 8px; font-weight: 700; padding: 0 4px; border-radius: 3px;
+  text-transform: uppercase; letter-spacing: 0.3px; display: inline-block;
+}
+.chip-quadrant.cq-do { background: #fef2f2; color: #dc2626; }
+.chip-quadrant.cq-schedule { background: #eff6ff; color: #2563eb; }
+.chip-quadrant.cq-delegate { background: #fffbeb; color: #d97706; }
+.chip-quadrant.cq-eliminate { background: #f3f4f6; color: #6b7280; }
+
 .end-preview {
   font-size: 12px;
   color: var(--gcal-text-secondary);

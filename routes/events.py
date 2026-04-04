@@ -66,7 +66,8 @@ def create_event():
     "end_time": data["end_time"],
     "title": data["title"],
     "description": data.get("description", ""),
-    "priority": data.get("priority", "medium")
+    "priority": data.get("priority", "medium"),
+    "quadrant": data.get("quadrant") or None,
     })
     created_row = response1[0] if response1 else None
     if created_row:
@@ -125,6 +126,8 @@ def update_event(event_id):
         payload["description"] = data.get("description", "")
     if data.get("priority"):
         payload["priority"] = data["priority"]
+    if "quadrant" in data:
+        payload["quadrant"] = data.get("quadrant") or None
 
     update(
         "daily_events",

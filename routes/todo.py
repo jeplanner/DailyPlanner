@@ -23,7 +23,6 @@ todo_bp = Blueprint("todo", __name__)
 def todo():
     expire_old_eisenhower_tasks(session["user_id"])
 
-    # 📅 Selected day (default = today)
     year = int(request.args.get("year", date.today().year))
     month = int(request.args.get("month", date.today().month))
     day = int(request.args.get("day", date.today().day))
@@ -32,7 +31,7 @@ def todo():
 
     user_id = session["user_id"]
 
-    # 1️⃣ Fetch ONLY Eisenhower tasks for this date
+    # 1️⃣ Fetch standalone Eisenhower tasks
     raw_tasks = get(
         "todo_matrix",
         params={
@@ -42,25 +41,68 @@ def todo():
         }
     )
 
-    # 2️⃣ Fetch projects (for labels / linking only)
+    # 2️⃣ Fetch projects for labeling
     projects = get("projects", params={"user_id": f"eq.{user_id}"})
-    project_map = {
-        p["project_id"]: p["name"]
-        for p in projects
-    }
+    project_map = {p["project_id"]: p["name"] for p in projects}
 
-    # 3️⃣ Normalize Eisenhower tasks
+    # 3️⃣ Normalize standalone tasks
     tasks = []
     for t in raw_tasks:
         tasks.append({
             "id": t["id"],
             "task_text": t["task_text"],
-            "quadrant": t["quadrant"],          # already explicit
+            "quadrant": t["quadrant"],
             "is_done": t.get("is_done", False),
             "project_id": t.get("project_id"),
             "project_name": project_map.get(t.get("project_id")),
             "source_task_id": t.get("source_task_id"),
+            "source": "matrix",
         })
+
+    # 4️⃣ Fetch planner events with quadrant set for this date
+    events_with_q = get("daily_events", params={
+        "user_id": f"eq.{user_id}",
+        "plan_date": f"eq.{plan_date.isoformat()}",
+        "is_deleted": "eq.false",
+        "quadrant": "neq.",
+        "select": "id,title,quadrant,status,start_time,end_time",
+    }) or []
+
+    for e in events_with_q:
+        if e.get("quadrant"):
+            tasks.append({
+                "id": f"ev-{e['id']}",
+                "task_text": f"📅 {e.get('start_time','')[:5]} {e['title']}",
+                "quadrant": e["quadrant"],
+                "is_done": e.get("status") == "done",
+                "project_id": None,
+                "project_name": None,
+                "source_task_id": None,
+                "source": "event",
+            })
+
+    # 5️⃣ Fetch project tasks with quadrant set, due today or earlier
+    proj_tasks_q = get("project_tasks", params={
+        "user_id": f"eq.{user_id}",
+        "is_eliminated": "eq.false",
+        "quadrant": "neq.",
+        "or": f"(due_date.is.null,due_date.lte.{plan_date.isoformat()})",
+        "select": "task_id,task_text,quadrant,status,priority,project_id",
+        "limit": 100,
+    }) or []
+
+    for t in proj_tasks_q:
+        if t.get("quadrant"):
+            tasks.append({
+                "id": f"pt-{t['task_id']}",
+                "task_text": f"📋 {t['task_text']}",
+                "quadrant": t["quadrant"],
+                "is_done": t.get("status") == "done",
+                "project_id": t.get("project_id"),
+                "project_name": project_map.get(t.get("project_id")),
+                "source_task_id": None,
+                "source": "project",
+            })
 
     # 4️⃣ Build Eisenhower view (NO due-date logic here)
     todo = build_eisenhower_view(tasks, plan_date)

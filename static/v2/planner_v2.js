@@ -396,12 +396,13 @@ function renderAllColumns() {
       const timeStr = formatTime(ev.start_time);
       const title = ev.task_text || ev.title || "";
       const isSmall = ev.height < 36;
+      const qBadge = ev.quadrant ? `<span class="chip-quadrant cq-${ev.quadrant}">${ev.quadrant}</span>` : "";
 
       if (isSmall) {
-        chip.innerHTML = `<span class="chip-title">${timeStr} ${title}</span>`;
+        chip.innerHTML = `<span class="chip-title">${qBadge} ${timeStr} ${title}</span>`;
       } else {
         chip.innerHTML = `
-          <div class="chip-time">${timeStr}</div>
+          <div class="chip-time">${timeStr} ${qBadge}</div>
           <div class="chip-title">${title}</div>
         `;
       }
@@ -728,6 +729,10 @@ function openCreateModal(prefillDate, prefillStart, prefillEnd) {
   custom.value = "";
   custom.style.display = "none";
 
+  // Reset quadrant
+  document.querySelectorAll(".quad-btn").forEach(b => b.classList.remove("active"));
+  document.querySelector('.quad-btn[data-q=""]')?.classList.add("active");
+
   // Hide delete button for new events
   const delBtn = document.getElementById("delete-btn");
   if (delBtn) delBtn.style.display = "none";
@@ -769,6 +774,12 @@ function openModal(ev) {
       custom.style.display = "block";
     }
   }
+
+  // Set quadrant
+  document.querySelectorAll(".quad-btn").forEach(b => b.classList.remove("active"));
+  const qVal = ev.quadrant || "";
+  const qBtn = document.querySelector(`.quad-btn[data-q="${qVal}"]`);
+  if (qBtn) qBtn.classList.add("active");
 
   // Show delete button for existing events
   const delBtn = document.getElementById("delete-btn");
@@ -846,6 +857,16 @@ function setDuration(mins) {
 // Legacy compat
 function updateEndPreview() { updateDurationLabel(); }
 
+function pickQuadrant(btn) {
+  document.querySelectorAll(".quad-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+}
+
+function getSelectedQuadrant() {
+  const active = document.querySelector(".quad-btn.active");
+  return active ? active.dataset.q || null : null;
+}
+
 function handleReminderSelect() {
   const select = document.getElementById("reminder-select");
   const custom = document.getElementById("custom-reminder");
@@ -881,6 +902,7 @@ async function saveEvent() {
     title: document.getElementById("event-title").value,
     description: document.getElementById("event-desc").value,
     priority: document.getElementById("event-priority").value,
+    quadrant: getSelectedQuadrant(),
     reminder_minutes: getReminderMinutes()
   };
 

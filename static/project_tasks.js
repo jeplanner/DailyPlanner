@@ -417,6 +417,7 @@ async function openTaskDetail(taskId) {
     _val("sheet-delegate",  t.delegated_to || "");
     _val("sheet-notes",     t.notes || "");
     _val("sheet-reminder",  "");
+    _val("sheet-quadrant",  t.quadrant || "");
 
     // Hours progress bar
     updateHoursProgress();

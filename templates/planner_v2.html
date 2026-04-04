@@ -162,6 +162,17 @@
     </div>
 
     <div class="form-group">
+      <label>Eisenhower Quadrant</label>
+      <div class="quadrant-picker" id="quadrant-picker">
+        <button type="button" class="quad-btn" data-q="" onclick="pickQuadrant(this)" title="None">—</button>
+        <button type="button" class="quad-btn q-do" data-q="do" onclick="pickQuadrant(this)" title="Urgent + Important">🔴 Do</button>
+        <button type="button" class="quad-btn q-schedule" data-q="schedule" onclick="pickQuadrant(this)" title="Important, not urgent">🔵 Schedule</button>
+        <button type="button" class="quad-btn q-delegate" data-q="delegate" onclick="pickQuadrant(this)" title="Urgent, not important">🟡 Delegate</button>
+        <button type="button" class="quad-btn q-eliminate" data-q="eliminate" onclick="pickQuadrant(this)" title="Neither">⚪ Eliminate</button>
+      </div>
+    </div>
+
+    <div class="form-group">
       <label>Description</label>
       <textarea id="event-desc" class="form-input" rows="2" placeholder="Add description"></textarea>
     </div>

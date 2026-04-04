@@ -382,6 +382,7 @@ def update_task(task_id):
         "recurrence_interval",
         "recurrence_end",
         "auto_advance",
+        "quadrant",
     ]
 
     for field in allowed_fields:

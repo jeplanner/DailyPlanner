@@ -349,6 +349,17 @@
                  onchange="autoSaveField('due_time', this.value)">
         </div>
         <div class="field-row">
+          <label>Eisenhower</label>
+          <select id="sheet-quadrant" class="panel-input"
+                  onchange="autoSaveField('quadrant', this.value)">
+            <option value="">None</option>
+            <option value="do">🔴 Do (Urgent + Important)</option>
+            <option value="schedule">🔵 Schedule (Important)</option>
+            <option value="delegate">🟡 Delegate (Urgent)</option>
+            <option value="eliminate">⚪ Eliminate</option>
+          </select>
+        </div>
+        <div class="field-row">
           <label>Reminder</label>
           <select id="sheet-reminder" class="panel-input"
                   onchange="autoSaveField('reminder', this.value)">
