@@ -11,6 +11,6 @@ def apply_security_headers(app):
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: https://www.google.com; "
-            "connect-src 'self' https://unpkg.com;"
+            "connect-src 'self' https://unpkg.com https://query1.finance.yahoo.com https://api.mfapi.in;"
         )
         return response

@@ -74,6 +74,7 @@ def add_holding():
         "broker": (data.get("broker") or "").strip() or None,
         "notes": (data.get("notes") or "").strip() or None,
         "sector": (data.get("sector") or "").strip() or None,
+        "held_by": (data.get("held_by") or "").strip() or None,
         # FD / Bond / PPF specific fields
         "institution": (data.get("institution") or "").strip() or None,
         "interest_rate": float(data["interest_rate"]) if data.get("interest_rate") else None,
@@ -96,7 +97,7 @@ def update_holding(hid):
     allowed = [
         "name", "symbol", "asset_type", "exchange", "quantity", "avg_price",
         "current_price", "currency", "folio_number", "broker", "notes", "sector",
-        "institution", "interest_rate", "maturity_date", "start_date", "account_ref",
+        "held_by", "institution", "interest_rate", "maturity_date", "start_date", "account_ref",
     ]
     payload = {f: data[f] for f in allowed if f in data}
     if not payload:
@@ -162,6 +163,178 @@ def import_holdings():
             logger.warning("Import row failed: %s", str(e))
 
     return jsonify({"status": "ok", "imported": created})
+
+
+# ═══════════════════════════════════════════════════
+# SYMBOL SEARCH + LIVE PRICE APIs (no API key needed)
+# ═══════════════════════════════════════════════════
+
+import requests as http_requests
+
+@portfolio_bp.route("/api/portfolio/search-stock")
+@login_required
+def search_stock():
+    """Search Yahoo Finance for stock ticker by name. Returns top matches."""
+    q = request.args.get("q", "").strip()
+    if not q or len(q) < 2:
+        return jsonify([])
+
+    try:
+        r = http_requests.get(
+            "https://query1.finance.yahoo.com/v1/finance/search",
+            params={"q": q, "quotesCount": 8, "newsCount": 0},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json()
+            results = []
+            for item in data.get("quotes", []):
+                results.append({
+                    "symbol": item.get("symbol", ""),
+                    "name": item.get("shortname") or item.get("longname", ""),
+                    "exchange": item.get("exchange", ""),
+                    "type": item.get("quoteType", ""),
+                })
+            return jsonify(results)
+    except Exception as e:
+        logger.warning("Yahoo search failed: %s", e)
+
+    return jsonify([])
+
+
+@portfolio_bp.route("/api/portfolio/search-mf")
+@login_required
+def search_mf():
+    """Search AMFI for mutual fund schemes by name."""
+    q = request.args.get("q", "").strip().lower()
+    if not q or len(q) < 3:
+        return jsonify([])
+
+    try:
+        r = http_requests.get(
+            f"https://api.mfapi.in/mf/search?q={q}",
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json()
+            # Returns list of {schemeCode, schemeName}
+            results = [
+                {"symbol": str(item.get("schemeCode", "")),
+                 "name": item.get("schemeName", "")}
+                for item in (data if isinstance(data, list) else [])[:10]
+            ]
+            return jsonify(results)
+    except Exception as e:
+        logger.warning("AMFI search failed: %s", e)
+
+    return jsonify([])
+
+
+@portfolio_bp.route("/api/portfolio/quote/<symbol>")
+@login_required
+def get_quote(symbol):
+    """Fetch live price from Yahoo Finance for a single symbol."""
+    try:
+        r = http_requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"interval": "1d", "range": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json()
+            meta = data.get("chart", {}).get("result", [{}])[0].get("meta", {})
+            return jsonify({
+                "symbol": symbol,
+                "price": meta.get("regularMarketPrice"),
+                "prev_close": meta.get("previousClose"),
+                "currency": meta.get("currency", "INR"),
+                "name": meta.get("shortName", ""),
+            })
+    except Exception as e:
+        logger.warning("Yahoo quote failed for %s: %s", symbol, e)
+
+    return jsonify({"symbol": symbol, "price": None})
+
+
+@portfolio_bp.route("/api/portfolio/mf-nav/<scheme_code>")
+@login_required
+def get_mf_nav(scheme_code):
+    """Fetch latest NAV from AMFI for a mutual fund scheme code."""
+    try:
+        r = http_requests.get(
+            f"https://api.mfapi.in/mf/{scheme_code}/latest",
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json()
+            nav_data = data.get("data", [{}])
+            if nav_data:
+                return jsonify({
+                    "scheme_code": scheme_code,
+                    "nav": float(nav_data[0].get("nav", 0)),
+                    "date": nav_data[0].get("date", ""),
+                    "name": data.get("meta", {}).get("scheme_name", ""),
+                })
+    except Exception as e:
+        logger.warning("AMFI NAV failed for %s: %s", scheme_code, e)
+
+    return jsonify({"scheme_code": scheme_code, "nav": None})
+
+
+@portfolio_bp.route("/api/portfolio/refresh-prices", methods=["POST"])
+@login_required
+def refresh_all_prices():
+    """Fetch live prices for ALL holdings and update DB."""
+    user_id = session["user_id"]
+    holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+    }) or []
+
+    decrypt_rows(holdings, ENCRYPTED_FIELDS)
+
+    updated = 0
+    for h in holdings:
+        symbol = h.get("symbol")
+        asset_type = h.get("asset_type", "stock")
+        if not symbol:
+            continue
+
+        price = None
+        try:
+            if asset_type == "mf":
+                # AMFI NAV
+                r = http_requests.get(f"https://api.mfapi.in/mf/{symbol}/latest", timeout=5)
+                if r.ok:
+                    nav_data = r.json().get("data", [{}])
+                    if nav_data:
+                        price = float(nav_data[0].get("nav", 0))
+            else:
+                # Yahoo Finance
+                yf_symbol = symbol
+                if asset_type in ("stock", "etf") and not any(s in symbol for s in [".NS", ".BO", "."]):
+                    yf_symbol = f"{symbol}.NS"  # Default to NSE
+
+                r = http_requests.get(
+                    f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_symbol}",
+                    params={"interval": "1d", "range": "1d"},
+                    headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=5,
+                )
+                if r.ok:
+                    meta = r.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+                    price = meta.get("regularMarketPrice")
+
+            if price and price > 0:
+                update("portfolio_holdings",
+                       params={"id": f"eq.{h['id']}", "user_id": f"eq.{user_id}"},
+                       json={"current_price": float(price)})
+                updated += 1
+        except Exception as e:
+            logger.warning("Price refresh failed for %s: %s", symbol, e)
+
+    return jsonify({"status": "ok", "updated": updated, "total": len(holdings)})
 
 
 # ═══════════════════════════════════════════════════

@@ -64,6 +64,15 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 .row-btn:hover{background:var(--pf-border);color:var(--pf-text);}
 .row-btn.del:hover{color:var(--pf-danger);}
 
+/* Suggest dropdown */
+.suggest-list{position:absolute;top:100%;left:0;right:0;background:var(--pf-surface);border:1px solid var(--pf-border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.15);z-index:100;max-height:220px;overflow-y:auto;margin-top:2px;}
+.suggest-item{padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--pf-border);display:flex;justify-content:space-between;align-items:center;}
+.suggest-item:hover{background:var(--pf-primary-light);}
+.suggest-item:last-child{border-bottom:none;}
+.suggest-name{font-weight:500;}
+.suggest-symbol{font-size:11px;color:var(--pf-text3);font-family:monospace;}
+.suggest-exchange{font-size:10px;color:var(--pf-text3);}
+
 .empty{text-align:center;padding:48px 16px;color:var(--pf-text3);font-size:14px;}
 
 /* Modal */
@@ -104,7 +113,8 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
   <div class="pf-header">
     <h1>Portfolio</h1>
     <div class="pf-header-btns">
-      <button class="btn btn-ghost btn-sm" onclick="openImport()"><i data-feather="upload" style="width:14px;height:14px"></i> Import CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="refreshAllPrices()" id="refresh-btn"><i data-feather="refresh-cw" style="width:14px;height:14px"></i> Refresh Prices</button>
+      <button class="btn btn-ghost btn-sm" onclick="openImport()"><i data-feather="upload" style="width:14px;height:14px"></i> Import</button>
       <button class="btn btn-primary btn-sm" onclick="openAdd()"><i data-feather="plus" style="width:14px;height:14px"></i> Add</button>
     </div>
   </div>
@@ -131,6 +141,15 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <button class="type-tab" onclick="filterType('cash',this)">Cash</button>
   </div>
 
+  <!-- Owner Filter -->
+  <div class="type-tabs" style="margin-bottom:14px;">
+    <button class="type-tab active" onclick="filterOwner('all',this)">All Members</button>
+    <button class="type-tab" onclick="filterOwner('Venghatesh',this)">Venghatesh</button>
+    <button class="type-tab" onclick="filterOwner('Chitra',this)">Chitra</button>
+    <button class="type-tab" onclick="filterOwner('Shreya',this)">Shreya</button>
+    <button class="type-tab" onclick="filterOwner('Sethu',this)">Sethu</button>
+  </div>
+
   <!-- Holdings Table -->
   <div class="pf-table-wrap">
     <table class="pf-table">
@@ -144,6 +163,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
           <th class="num">Invested</th>
           <th class="num">Current</th>
           <th class="num">P&L</th>
+          <th class="hide-m">Last Txn</th>
           <th></th>
         </tr>
       </thead>
@@ -157,8 +177,13 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
   <div class="modal-card">
     <div class="modal-hdr"><h3 id="add-title">Add Holding</h3><button class="modal-x" onclick="closeAdd()"><i data-feather="x"></i></button></div>
     <div class="fr">
-      <div class="fg"><label>Name *</label><input type="text" id="h-name" class="fi" placeholder="Reliance Industries, HDFC Mid Cap"></div>
-      <div class="fg"><label>Symbol / Code</label><input type="text" id="h-symbol" class="fi" placeholder="RELIANCE, 120505"></div>
+      <div class="fg" style="position:relative;">
+        <label>Name *</label>
+        <input type="text" id="h-name" class="fi" placeholder="Start typing to search…"
+               oninput="searchSymbol(this.value)" autocomplete="off">
+        <div id="suggest-list" class="suggest-list" style="display:none;"></div>
+      </div>
+      <div class="fg"><label>Symbol / Code</label><input type="text" id="h-symbol" class="fi" placeholder="Auto-filled or manual"></div>
     </div>
     <div class="fr">
       <div class="fg"><label>Type</label>
@@ -208,7 +233,17 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
       </div>
     </div>
     <div class="fr">
+      <div class="fg"><label>Held By</label>
+        <select id="h-owner" class="fi">
+          <option value="Venghatesh">Venghatesh</option>
+          <option value="Chitra">Chitra</option>
+          <option value="Shreya">Shreya</option>
+          <option value="Sethu">Sethu</option>
+        </select>
+      </div>
       <div class="fg"><label>Broker / Platform</label><input type="text" id="h-broker" class="fi" placeholder="ICICI Direct, Zerodha" value="ICICI Direct"></div>
+    </div>
+    <div class="fr">
       <div class="fg"><label>Sector / Category</label><input type="text" id="h-sector" class="fi" placeholder="IT, Banking, Pharma, Govt"></div>
     </div>
     <div class="fr full"><div class="fg"><label>Notes</label><textarea id="h-notes" class="fi" rows="2" placeholder="Optional notes"></textarea></div></div>
@@ -235,14 +270,14 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
           <option value="dividend">Dividend</option>
         </select>
       </div>
-      <div class="fg"><label>Date</label><input type="date" id="tx-date" class="fi"></div>
+      <div class="fg"><label>Date</label><input type="date" id="tx-date" class="fi" onchange="autoFetchTxnPrice()"></div>
     </div>
     <div class="fr">
-      <div class="fg"><label>Quantity</label><input type="number" id="tx-qty" class="fi" step="0.001" min="0"></div>
-      <div class="fg"><label>Price / NAV</label><input type="number" id="tx-price" class="fi" step="0.01" min="0"></div>
+      <div class="fg"><label>Quantity</label><input type="number" id="tx-qty" class="fi" step="0.001" min="0" oninput="autoCalcAmount()"></div>
+      <div class="fg"><label>Price / NAV <span id="tx-price-status" style="font-size:9px;color:var(--pf-success);font-weight:400;"></span></label><input type="number" id="tx-price" class="fi" step="0.01" min="0" oninput="autoCalcAmount()"></div>
     </div>
     <div class="fr">
-      <div class="fg"><label>Total Amount</label><input type="number" id="tx-amount" class="fi" step="0.01" placeholder="Auto-calculated"></div>
+      <div class="fg"><label>Total Amount</label><input type="number" id="tx-amount" class="fi" step="0.01" placeholder="Auto-calculated" readonly style="background:var(--pf-border);"></div>
       <div class="fg"><label>Notes</label><input type="text" id="tx-notes" class="fi" placeholder="Optional"></div>
     </div>
     <div class="modal-foot"><button class="btn btn-primary" onclick="saveTxn()">Add Transaction</button></div>
@@ -290,7 +325,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 </div>
 
 <script>
-let holdings=[], editId=null, importRows=[], curType='all';
+let holdings=[], editId=null, importRows=[], curType='all', curOwner='all';
 const INR=v=>v!=null?'₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:2}):'—';
 const esc=s=>{const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;};
 
@@ -300,6 +335,16 @@ async function init(){await loadHoldings();loadSummary();loadPortfolioXirr();fea
 async function loadHoldings(){
   const r=await fetch("/api/portfolio/holdings");
   holdings=await r.json();
+
+  // Fetch latest transaction for each holding (batch)
+  try{
+    const tr=await fetch("/api/portfolio/transactions/latest");
+    const txnMap=await tr.json(); // {holding_id: {txn_type, txn_date, amount}}
+    holdings.forEach(h=>{
+      h._lastTxn=txnMap[h.id]||null;
+    });
+  }catch(e){}
+
   renderTable();
 }
 function filterType(t,el){
@@ -308,9 +353,17 @@ function filterType(t,el){
   el.classList.add("active");
   renderTable();
 }
+function filterOwner(o,el){
+  curOwner=o;
+  el.closest('.type-tabs').querySelectorAll('.type-tab').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderTable();
+}
+
 function renderTable(){
   const tbody=document.getElementById("holdings-body");
   let items=curType==='all'?holdings:holdings.filter(h=>h.asset_type===curType);
+  if(curOwner!=='all')items=items.filter(h=>h.held_by===curOwner);
   if(!items.length){tbody.innerHTML=`<tr><td colspan="9"><div class="empty">No holdings yet. Add or import to get started.</div></td></tr>`;return;}
 
   tbody.innerHTML=items.map(h=>{
@@ -324,7 +377,7 @@ function renderTable(){
     const cls=pnl>=0?'pnl-up':'pnl-down';
     const typeCls={'stock':'type-stock','mf':'type-mf','etf':'type-etf'}[h.asset_type]||'type-stock';
     return `<tr data-id="${h.id}">
-      <td><div class="name-cell">${esc(h.name)}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}</td>
+      <td><div class="name-cell">${esc(h.name)}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
       <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
       <td class="num">${qty}</td>
       <td class="num">${INR(avg)}</td>
@@ -384,6 +437,7 @@ function editHolding(id){
   document.getElementById("h-avg").value=h.avg_price||'';
   document.getElementById("h-cmp").value=h.current_price||'';
   document.getElementById("h-folio").value=h.folio_number||'';
+  document.getElementById("h-owner").value=h.held_by||'Venghatesh';
   document.getElementById("h-broker").value=h.broker||'';
   document.getElementById("h-sector").value=h.sector||'';
   document.getElementById("h-notes").value=h.notes||'';
@@ -410,6 +464,7 @@ async function saveHolding(){
     broker:document.getElementById("h-broker").value.trim(),
     sector:document.getElementById("h-sector").value.trim(),
     notes:document.getElementById("h-notes").value.trim(),
+    held_by:document.getElementById("h-owner").value,
     institution:document.getElementById("h-institution").value.trim(),
     interest_rate:document.getElementById("h-rate").value||null,
     maturity_date:document.getElementById("h-maturity").value||null,
@@ -432,6 +487,90 @@ function delHolding(id){
   document.body.appendChild(toast);setTimeout(()=>{if(toast.parentNode)toast.remove();},4500);
 }
 
+/* ── Symbol Search + Auto-suggest ── */
+let _searchTimer=null;
+
+function searchSymbol(q){
+  clearTimeout(_searchTimer);
+  const list=document.getElementById("suggest-list");
+  if(!q||q.length<2){list.style.display='none';return;}
+
+  _searchTimer=setTimeout(async()=>{
+    const assetType=document.getElementById("h-type").value;
+    let results=[];
+
+    if(assetType==='mf'){
+      const r=await fetch(`/api/portfolio/search-mf?q=${encodeURIComponent(q)}`);
+      results=(await r.json()).map(x=>({name:x.name,symbol:x.symbol,exchange:'AMFI',type:'MF'}));
+    }else{
+      const r=await fetch(`/api/portfolio/search-stock?q=${encodeURIComponent(q)}`);
+      results=await r.json();
+    }
+
+    if(!results.length){list.style.display='none';return;}
+
+    list.innerHTML=results.map(r=>
+      `<div class="suggest-item" onclick="selectSuggestion('${esc(r.name)}','${esc(r.symbol)}','${esc(r.exchange||'')}')">
+        <div><span class="suggest-name">${esc(r.name)}</span></div>
+        <div><span class="suggest-symbol">${esc(r.symbol)}</span> <span class="suggest-exchange">${esc(r.exchange||'')}</span></div>
+      </div>`
+    ).join('');
+    list.style.display='block';
+  },300);
+}
+
+function selectSuggestion(name,symbol,exchange){
+  document.getElementById("h-name").value=name;
+  document.getElementById("h-symbol").value=symbol;
+  if(exchange){
+    const exchSel=document.getElementById("h-exchange");
+    if(exchange.includes('NS'))exchSel.value='NSE';
+    else if(exchange.includes('BO'))exchSel.value='BSE';
+  }
+  document.getElementById("suggest-list").style.display='none';
+
+  // Auto-fetch current price
+  if(symbol)fetchQuote(symbol);
+}
+
+async function fetchQuote(symbol){
+  const assetType=document.getElementById("h-type").value;
+  try{
+    if(assetType==='mf'){
+      const r=await fetch(`/api/portfolio/mf-nav/${symbol}`);
+      const d=await r.json();
+      if(d.nav)document.getElementById("h-cmp").value=d.nav;
+    }else{
+      let yf=symbol;
+      if(!symbol.includes('.'))yf=symbol+'.NS';
+      const r=await fetch(`/api/portfolio/quote/${yf}`);
+      const d=await r.json();
+      if(d.price)document.getElementById("h-cmp").value=d.price;
+    }
+  }catch(e){console.warn('Quote fetch failed',e);}
+}
+
+// Close suggest on click outside
+document.addEventListener('click',e=>{
+  if(!e.target.closest('#h-name')&&!e.target.closest('#suggest-list')){
+    const l=document.getElementById("suggest-list");if(l)l.style.display='none';
+  }
+});
+
+/* ── Refresh All Prices ── */
+async function refreshAllPrices(){
+  const btn=document.getElementById("refresh-btn");
+  btn.disabled=true;btn.innerHTML='<span>Refreshing…</span>';
+  try{
+    const r=await fetch("/api/portfolio/refresh-prices",{method:"POST"});
+    const d=await r.json();
+    showToast(`Updated ${d.updated}/${d.total} prices`,"success");
+    await loadHoldings();loadSummary();loadPortfolioXirr();
+  }catch(e){showToast("Refresh failed","error");}
+  btn.disabled=false;btn.innerHTML='<i data-feather="refresh-cw" style="width:14px;height:14px"></i> Refresh Prices';
+  feather.replace();
+}
+
 /* ── Transactions + XIRR ── */
 let txnHoldingId=null;
 
@@ -448,6 +587,8 @@ function openTxn(hid,name){
   loadHoldingXirr(hid);
   document.getElementById("txn-modal").classList.remove("hidden");
   feather.replace();
+  // Auto-fetch today's price
+  autoFetchTxnPrice();
 }
 function closeTxn(){document.getElementById("txn-modal").classList.add("hidden");}
 
@@ -477,6 +618,53 @@ async function loadHoldingXirr(hid){
       el.textContent='XIRR: Add transactions to calculate';
     }
   }catch(e){console.warn(e);}
+}
+
+function autoCalcAmount(){
+  const qty=parseFloat(document.getElementById("tx-qty").value)||0;
+  const price=parseFloat(document.getElementById("tx-price").value)||0;
+  if(qty&&price){
+    document.getElementById("tx-amount").value=(qty*price).toFixed(2);
+  }
+}
+
+async function autoFetchTxnPrice(){
+  if(!txnHoldingId)return;
+  const h=holdings.find(x=>x.id===txnHoldingId);
+  if(!h||!h.symbol)return;
+
+  const statusEl=document.getElementById("tx-price-status");
+  statusEl.textContent="fetching…";
+
+  try{
+    const assetType=h.asset_type||'stock';
+    let price=null;
+
+    if(assetType==='mf'){
+      const r=await fetch(`/api/portfolio/mf-nav/${h.symbol}`);
+      const d=await r.json();
+      price=d.nav;
+    }else{
+      let sym=h.symbol;
+      if(!sym.includes('.'))sym+='.NS';
+      const r=await fetch(`/api/portfolio/quote/${sym}`);
+      const d=await r.json();
+      price=d.price;
+    }
+
+    if(price){
+      document.getElementById("tx-price").value=price;
+      statusEl.textContent="✓ auto-filled";
+      autoCalcAmount();
+    }else{
+      statusEl.textContent="not found";
+    }
+  }catch(e){
+    statusEl.textContent="failed";
+    console.warn("Price fetch failed",e);
+  }
+
+  setTimeout(()=>{statusEl.textContent='';},3000);
 }
 
 async function saveTxn(){
