@@ -7,7 +7,9 @@ let currentDate = new Date().toISOString().split("T")[0];
 let draggedTask = null;
 let snapLine = null;
 let creatingEvent = false;
+let pendingCreate = false;
 let createStartY = 0;
+let createStartX = 0;
 let ghostEvent = null;
 /* =========================
    TIME HELPERS
@@ -250,6 +252,9 @@ function render() {
       draggedTask = ev;
     };
 
+    // Touch drag to move event on mobile
+    attachCalendarEventTouchDrag(div, ev);
+
     const resizeHandle = document.createElement("div");
     resizeHandle.className = "resize-handle";
     div.appendChild(resizeHandle);
@@ -425,6 +430,212 @@ function openProjectTaskModal(task) {
 }
 
 /* =========================
+   TOUCH DRAG (mobile)
+========================= */
+
+// Touch drag for calendar events (move existing event)
+function attachCalendarEventTouchDrag(div, ev) {
+  let clone = null;
+  let dragging = false;
+  let startX, startY;
+  const DRAG_THRESHOLD = 10;
+
+  div.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dragging = false;
+  }, { passive: true });
+
+  div.addEventListener("touchmove", (e) => {
+    const dx = Math.abs(e.touches[0].clientX - startX);
+    const dy = Math.abs(e.touches[0].clientY - startY);
+
+    if (!dragging && (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD)) {
+      dragging = true;
+      draggedTask = ev;
+
+      clone = div.cloneNode(true);
+      clone.style.cssText = `
+        position: fixed;
+        opacity: 0.75;
+        pointer-events: none;
+        z-index: 9999;
+        width: ${div.offsetWidth}px;
+        height: ${div.offsetHeight}px;
+        transform: scale(1.04);
+        box-shadow: 0 8px 24px rgba(0,0,0,.3);
+      `;
+      document.body.appendChild(clone);
+    }
+
+    if (!dragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const x = e.touches[0].clientX;
+    const y = e.touches[0].clientY;
+
+    clone.style.left = (x - div.offsetWidth / 2) + "px";
+    clone.style.top  = (y - div.offsetHeight / 2) + "px";
+
+    const tl = document.getElementById("timeline");
+    const rect = tl.getBoundingClientRect();
+
+    if (y >= rect.top && y <= rect.bottom) {
+      const relY = y - rect.top;
+      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
+      const top = (snapped / 60) * HOUR_HEIGHT;
+
+      if (!snapLine) {
+        snapLine = document.createElement("div");
+        snapLine.className = "snap-line";
+        tl.appendChild(snapLine);
+      }
+      snapLine.style.top = top + "px";
+    }
+  }, { passive: false });
+
+  div.addEventListener("touchend", async (e) => {
+    if (clone) { clone.remove(); clone = null; }
+    if (snapLine) { snapLine.remove(); snapLine = null; }
+
+    if (!dragging || !draggedTask) {
+      dragging = false;
+      return;
+    }
+
+    const x = e.changedTouches[0].clientX;
+    const y = e.changedTouches[0].clientY;
+    const tl = document.getElementById("timeline");
+    const rect = tl.getBoundingClientRect();
+
+    if (y >= rect.top && y <= rect.bottom) {
+      const relY = y - rect.top;
+      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
+      const duration = ev.end - ev.start;
+      const newStart = toTime(snapped);
+      const newEnd = toTime(snapped + duration);
+
+      if (ev.type === "project") {
+        await fetch(`/api/v2/project-tasks/${ev.task_id}/schedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan_date: currentDate, start_time: newStart, end_time: newEnd })
+        });
+      } else {
+        await fetch(`/api/v2/events/${ev.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan_date: currentDate, start_time: newStart, end_time: newEnd, title: ev.title })
+        });
+      }
+
+      loadEvents();
+    }
+
+    draggedTask = null;
+    dragging = false;
+  });
+}
+
+// Touch drag for floating tasks → timeline
+function attachTouchDrag(div, task) {
+  let clone = null;
+  let dragging = false;
+  let startX, startY;
+
+  div.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dragging = false;
+  }, { passive: true });
+
+  div.addEventListener("touchmove", (e) => {
+    const dx = Math.abs(e.touches[0].clientX - startX);
+    const dy = Math.abs(e.touches[0].clientY - startY);
+
+    if (!dragging && (dx > 8 || dy > 8)) {
+      dragging = true;
+      draggedTask = { ...task, type: "project" };
+
+      clone = div.cloneNode(true);
+      clone.style.cssText = `
+        position: fixed;
+        opacity: 0.8;
+        pointer-events: none;
+        z-index: 9999;
+        width: ${div.offsetWidth}px;
+        transform: scale(1.05);
+        box-shadow: 0 8px 24px rgba(0,0,0,.3);
+      `;
+      document.body.appendChild(clone);
+    }
+
+    if (!dragging) return;
+    e.preventDefault();
+
+    const x = e.touches[0].clientX;
+    const y = e.touches[0].clientY;
+
+    clone.style.left = (x - div.offsetWidth / 2) + "px";
+    clone.style.top  = (y - 30) + "px";
+
+    // Snap line on timeline
+    const tl = document.getElementById("timeline");
+    const rect = tl.getBoundingClientRect();
+
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      const relY = y - rect.top;
+      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
+      const top = (snapped / 60) * HOUR_HEIGHT;
+
+      if (!snapLine) {
+        snapLine = document.createElement("div");
+        snapLine.className = "snap-line";
+        tl.appendChild(snapLine);
+      }
+      snapLine.style.top = top + "px";
+    } else if (snapLine) {
+      snapLine.remove();
+      snapLine = null;
+    }
+  }, { passive: false });
+
+  div.addEventListener("touchend", async (e) => {
+    if (clone) { clone.remove(); clone = null; }
+    if (snapLine) { snapLine.remove(); snapLine = null; }
+
+    if (!dragging || !draggedTask) {
+      dragging = false;
+      return;
+    }
+
+    const x = e.changedTouches[0].clientX;
+    const y = e.changedTouches[0].clientY;
+    const tl = document.getElementById("timeline");
+    const rect = tl.getBoundingClientRect();
+
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      const relY = y - rect.top;
+      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
+      const start = toTime(snapped);
+      const end = calculateEndTime(start, 30);
+
+      await fetch(`/api/v2/project-tasks/${draggedTask.task_id}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_date: currentDate, start_time: start, end_time: end })
+      });
+
+      loadEvents();
+    }
+
+    draggedTask = null;
+    dragging = false;
+  });
+}
+
+/* =========================
    FLOATING TASKS
 ========================= */
 function renderFloatingTasks(tasks) {
@@ -533,6 +744,9 @@ function renderFloatingTasks(tasks) {
       div.ondragstart = () => {
         draggedTask = { ...task, type: "project" };
       };
+
+      // Touch drag for mobile
+      attachTouchDrag(div, task);
 
       container.appendChild(div);
     });
@@ -1146,70 +1360,100 @@ async function runSmartPlanner() {
 }
 
 function startCreateEvent(e) {
-
-  // ignore if touching an existing event
+  // ignore if touching an existing event or button
   if (e.target.closest(".event")) return;
+  if (e.target.closest("button")) return;
 
-  creatingEvent = true;
+  pendingCreate = true;
+  creatingEvent = false;
   createStartY = e.clientY;
-
-  const rect = timeline.getBoundingClientRect();
-  const y = createStartY - rect.top;
-
-  const minutesFromTop = (y / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
-
-  const top = (snapped / 60) * HOUR_HEIGHT;
-
-  ghostEvent = document.createElement("div");
-  ghostEvent.className = "event ghost-event";
-  ghostEvent.style.top = top + "px";
-  ghostEvent.style.height = "5px";
-
-  timeline.appendChild(ghostEvent);
+  createStartX = e.clientX;
 
   document.addEventListener("pointermove", moveCreateEvent);
   document.addEventListener("pointerup", endCreateEvent);
 }
+
+function cancelCreateEvent() {
+  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
+  pendingCreate = false;
+  creatingEvent = false;
+  document.removeEventListener("pointermove", moveCreateEvent);
+  document.removeEventListener("pointerup", endCreateEvent);
+}
 function moveCreateEvent(e) {
+  if (!pendingCreate && !creatingEvent) return;
 
-  if (!creatingEvent || !ghostEvent) return;
+  const dY = e.clientY - createStartY;
+  const dX = Math.abs(e.clientX - createStartX);
 
-  const rect = timeline.getBoundingClientRect();
+  // If horizontal movement dominates, it's a scroll — cancel
+  if (!creatingEvent) {
+    if (dX > dY && dX > 8) {
+      cancelCreateEvent();
+      return;
+    }
+    // On touch, require stricter vertical threshold to avoid triggering on scroll
+    const threshold = e.pointerType === "touch" ? 20 : 8;
+    if (Math.abs(dY) < threshold) return;
+    // Also cancel if touch is scrolling (horizontal >= vertical)
+    if (e.pointerType === "touch" && dX >= Math.abs(dY)) {
+      cancelCreateEvent();
+      return;
+    }
 
+    // Commit to creating — build ghost now
+    creatingEvent = true;
+    pendingCreate = false;
+
+    const tl = document.getElementById("timeline");
+    const rect = tl.getBoundingClientRect();
+    const y = createStartY - rect.top;
+    const minutesFromTop = (y / HOUR_HEIGHT) * 60;
+    const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+    const top = (snapped / 60) * HOUR_HEIGHT;
+
+    ghostEvent = document.createElement("div");
+    ghostEvent.className = "event ghost-event";
+    ghostEvent.style.top = top + "px";
+    ghostEvent.style.height = "5px";
+    tl.appendChild(ghostEvent);
+  }
+
+  if (!ghostEvent) return;
+
+  const rect = document.getElementById("timeline").getBoundingClientRect();
   const startY = createStartY - rect.top;
   const currentY = e.clientY - rect.top;
-
   const delta = currentY - startY;
 
   if (delta < 0) return;
 
-  const minutes = (delta / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutes / SNAP) * SNAP;
-
+  const mins = (delta / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(mins / SNAP) * SNAP;
   const height = (snapped / 60) * HOUR_HEIGHT;
-
   ghostEvent.style.height = height + "px";
 }
 function endCreateEvent(e) {
+  if (!pendingCreate && !creatingEvent) return;
 
-  if (!creatingEvent) return;
+  const wasCreating = creatingEvent;
 
-  const rect = timeline.getBoundingClientRect();
+  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
+  pendingCreate = false;
+  creatingEvent = false;
 
+  document.removeEventListener("pointermove", moveCreateEvent);
+  document.removeEventListener("pointerup", endCreateEvent);
+
+  // Was just a tap (no ghost drawn) — do nothing
+  if (!wasCreating) return;
+
+  const rect = document.getElementById("timeline").getBoundingClientRect();
   const startY = createStartY - rect.top;
   const endY = e.clientY - rect.top;
 
   const startMinutes = Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
   const endMinutes = Math.round(((endY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
-
-  if (ghostEvent) ghostEvent.remove();
-
-  creatingEvent = false;
-  ghostEvent = null;
-
-  document.removeEventListener("pointermove", moveCreateEvent);
-  document.removeEventListener("pointerup", endCreateEvent);
 
   if (endMinutes <= startMinutes) return;
 
@@ -1217,7 +1461,6 @@ function endCreateEvent(e) {
   const duration = endMinutes - startMinutes;
 
   openCreateModal();
-
   document.getElementById("start-time").value = start;
   document.getElementById("duration").value = normalizeDuration(duration);
 }
