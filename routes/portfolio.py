@@ -80,6 +80,8 @@ def add_holding():
         # FD / Bond / PPF specific fields
         "institution": (data.get("institution") or "").strip() or None,
         "interest_rate": float(data["interest_rate"]) if data.get("interest_rate") else None,
+        "payout_type": data.get("payout_type") or None,
+        "compounding": data.get("compounding") or None,
         "maturity_date": data.get("maturity_date") or None,
         "start_date": data.get("start_date") or None,
         "account_ref": (data.get("account_ref") or "").strip() or None,
@@ -100,7 +102,8 @@ def update_holding(hid):
         "name", "symbol", "asset_type", "exchange", "quantity", "avg_price",
         "current_price", "currency", "folio_number", "broker", "notes", "sector",
         "held_by", "buy_date", "sell_date",
-        "institution", "interest_rate", "maturity_date", "start_date", "account_ref",
+        "institution", "interest_rate", "payout_type", "compounding",
+        "maturity_date", "start_date", "account_ref",
     ]
     payload = {f: data[f] for f in allowed if f in data}
     if not payload:

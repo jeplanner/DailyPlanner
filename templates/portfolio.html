@@ -279,14 +279,47 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <div id="fd-fields" style="display:none;">
       <div class="fr">
         <div class="fg"><label>Institution / Bank</label><input type="text" id="h-institution" class="fi" placeholder="SBI, HDFC Bank, ICICI"></div>
-        <div class="fg"><label>Interest Rate (%)</label><input type="number" id="h-rate" class="fi" step="0.01" min="0" placeholder="7.5"></div>
+        <div class="fg"><label>Interest Rate (% p.a.)</label><input type="number" id="h-rate" class="fi" step="0.01" min="0" placeholder="7.5" oninput="calcMaturityValue()"></div>
       </div>
       <div class="fr">
-        <div class="fg"><label>Start / Deposit Date</label><input type="date" id="h-start-date" class="fi"></div>
-        <div class="fg"><label>Maturity Date</label><input type="date" id="h-maturity" class="fi"></div>
+        <div class="fg"><label>Payout Type</label>
+          <select id="h-payout" class="fi" onchange="calcMaturityValue()">
+            <option value="cumulative">Cumulative (reinvest interest)</option>
+            <option value="monthly">Monthly Payout</option>
+            <option value="quarterly">Quarterly Payout</option>
+            <option value="half-yearly">Half-Yearly Payout</option>
+            <option value="yearly">Yearly Payout</option>
+          </select>
+        </div>
+        <div class="fg"><label>Compounding</label>
+          <select id="h-compounding" class="fi" onchange="calcMaturityValue()">
+            <option value="quarterly" selected>Quarterly</option>
+            <option value="monthly">Monthly</option>
+            <option value="half-yearly">Half-Yearly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
       </div>
-      <div class="fr full">
-        <div class="fg"><label>Account / FD Reference</label><input type="text" id="h-account-ref" class="fi" placeholder="FD No., Bond ISIN, account ref"></div>
+      <div class="fr">
+        <div class="fg"><label>Deposit Date</label><input type="date" id="h-start-date" class="fi" onchange="calcMaturityValue()"></div>
+        <div class="fg"><label>Maturity Date</label><input type="date" id="h-maturity" class="fi" onchange="calcMaturityValue()"></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label>Tenure</label><input type="text" id="h-tenure" class="fi" readonly style="background:var(--pf-border);"></div>
+        <div class="fg"><label>Account / FD Reference</label><input type="text" id="h-account-ref" class="fi" placeholder="FD No., Bond ISIN"></div>
+      </div>
+      <!-- Maturity Calculator -->
+      <div id="fd-calc" style="background:var(--pf-bg);border:1px solid var(--pf-border);border-radius:8px;padding:12px;margin-top:8px;">
+        <div style="font-size:11px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;margin-bottom:8px;">Maturity Calculator</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px;">
+          <div><span style="color:var(--pf-text3);font-size:11px;">Principal</span><div id="fd-principal" style="font-weight:700;">—</div></div>
+          <div><span style="color:var(--pf-text3);font-size:11px;">Interest Earned</span><div id="fd-interest" style="font-weight:700;color:#059669;">—</div></div>
+          <div><span style="color:var(--pf-text3);font-size:11px;">Maturity Value</span><div id="fd-maturity-val" style="font-weight:700;color:var(--pf-primary);">—</div></div>
+        </div>
+        <div id="fd-monthly-payout" style="display:none;margin-top:8px;font-size:12px;">
+          <span style="color:var(--pf-text3);">Payout per period:</span>
+          <strong id="fd-payout-amt">—</strong>
+        </div>
       </div>
     </div>
     <div class="fr">
@@ -603,7 +636,7 @@ function renderTable(){
     const cls=pnl>=0?'pnl-up':'pnl-down';
     const typeCls={'stock':'type-stock','mf':'type-mf','etf':'type-etf'}[h.asset_type]||'type-stock';
     return `<tr data-id="${h.id}">
-      <td><div class="name-cell">${esc(h.name)}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
+      <td><div class="name-cell">${esc(h.name)}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.payout_type&&h.payout_type!=='cumulative'?' · '+h.payout_type:''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
       <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
       <td class="num">${qty}</td>
       <td class="num">${INR(avg)}</td>
@@ -650,6 +683,12 @@ function openAdd(){
   document.getElementById("h-type").value="stock";
   document.getElementById("h-exchange").value="NSE";
   document.getElementById("h-broker").value="ICICI Direct";
+  document.getElementById("h-payout").value="cumulative";
+  document.getElementById("h-compounding").value="quarterly";
+  document.getElementById("h-tenure").value="";
+  document.getElementById("fd-principal").textContent="—";
+  document.getElementById("fd-interest").textContent="—";
+  document.getElementById("fd-maturity-val").textContent="—";
   onTypeChange();
   document.getElementById("add-modal").classList.remove("hidden");
   feather.replace();
@@ -673,8 +712,11 @@ function editHolding(id){
   document.getElementById("h-notes").value=h.notes||'';
   document.getElementById("h-institution").value=h.institution||'';
   document.getElementById("h-rate").value=h.interest_rate||'';
+  document.getElementById("h-payout").value=h.payout_type||'cumulative';
+  document.getElementById("h-compounding").value=h.compounding||'quarterly';
   document.getElementById("h-start-date").value=h.start_date||'';
   document.getElementById("h-maturity").value=h.maturity_date||'';
+  calcMaturityValue();
   document.getElementById("h-account-ref").value=h.account_ref||'';
   onTypeChange();
   document.getElementById("add-modal").classList.remove("hidden");
@@ -699,6 +741,8 @@ async function saveHolding(){
     sell_date:document.getElementById("h-sell-date").value||null,
     institution:document.getElementById("h-institution").value.trim(),
     interest_rate:document.getElementById("h-rate").value||null,
+    payout_type:document.getElementById("h-payout").value||null,
+    compounding:document.getElementById("h-compounding").value||null,
     maturity_date:document.getElementById("h-maturity").value||null,
     start_date:document.getElementById("h-start-date").value||null,
     account_ref:document.getElementById("h-account-ref").value.trim(),
@@ -717,6 +761,71 @@ function delHolding(id){
   toast.innerHTML='<span>Holding deleted</span><button style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>';
   toast.querySelector("button").onclick=()=>{clearTimeout(t);if(!gone){loadHoldings();showToast("Restored","success");}toast.remove();};
   document.body.appendChild(toast);setTimeout(()=>{if(toast.parentNode)toast.remove();},4500);
+}
+
+/* ── FD Maturity Calculator ── */
+function calcMaturityValue(){
+  const principal=parseFloat(document.getElementById("h-avg").value)*parseFloat(document.getElementById("h-qty").value||1);
+  const rate=parseFloat(document.getElementById("h-rate").value)||0;
+  const startStr=document.getElementById("h-start-date").value;
+  const matStr=document.getElementById("h-maturity").value;
+  const payout=document.getElementById("h-payout").value;
+  const compounding=document.getElementById("h-compounding").value;
+
+  if(!principal||!rate||!startStr||!matStr){
+    document.getElementById("fd-principal").textContent='—';
+    document.getElementById("fd-interest").textContent='—';
+    document.getElementById("fd-maturity-val").textContent='—';
+    document.getElementById("h-tenure").value='';
+    return;
+  }
+
+  const start=new Date(startStr);
+  const mat=new Date(matStr);
+  const diffMs=mat-start;
+  if(diffMs<=0)return;
+
+  // Tenure display
+  const totalDays=Math.round(diffMs/86400000);
+  const years=Math.floor(totalDays/365);
+  const months=Math.floor((totalDays%365)/30);
+  const days=totalDays%30;
+  let tenureStr='';
+  if(years)tenureStr+=years+'y ';
+  if(months)tenureStr+=months+'m ';
+  if(days)tenureStr+=days+'d';
+  document.getElementById("h-tenure").value=tenureStr.trim()||totalDays+' days';
+
+  // Compounding frequency
+  const freqMap={'monthly':12,'quarterly':4,'half-yearly':2,'yearly':1};
+  const n=freqMap[compounding]||4;
+  const t=totalDays/365;
+
+  let maturityValue,interestEarned,payoutPerPeriod=0;
+
+  if(payout==='cumulative'){
+    // A = P × (1 + r/n)^(n×t)
+    maturityValue=principal*Math.pow(1+(rate/100)/n, n*t);
+    interestEarned=maturityValue-principal;
+    document.getElementById("fd-monthly-payout").style.display='none';
+  }else{
+    // Non-cumulative: interest paid out periodically, principal returned at maturity
+    const payoutFreq=freqMap[payout]||12;
+    payoutPerPeriod=principal*(rate/100)/payoutFreq;
+    interestEarned=payoutPerPeriod*payoutFreq*t;
+    maturityValue=principal; // principal returned at maturity
+    document.getElementById("fd-monthly-payout").style.display='block';
+    document.getElementById("fd-payout-amt").textContent=INR(payoutPerPeriod)+' / '+payout.replace('-',' ');
+  }
+
+  document.getElementById("fd-principal").textContent=INR(principal);
+  document.getElementById("fd-interest").textContent=INR(interestEarned);
+  document.getElementById("fd-maturity-val").textContent=INR(maturityValue);
+
+  // Auto-fill current_price with maturity value for cumulative FDs
+  if(payout==='cumulative'){
+    document.getElementById("h-cmp").value=Math.round(maturityValue*100)/100;
+  }
 }
 
 /* ── Fetch Price for Holding Form ── */
