@@ -394,7 +394,7 @@ function updateProjectStats() {
 }
 
 /* ---------------------------------------------------------
-   Task Detail Bottom Sheet
+   Task Detail Side Panel
    --------------------------------------------------------- */
 async function openTaskDetail(taskId) {
   _sheetTaskId = taskId;
@@ -418,27 +418,30 @@ async function openTaskDetail(taskId) {
     _val("sheet-notes",     t.notes || "");
     _val("sheet-reminder",  "");
 
+    // Hours progress bar
+    updateHoursProgress();
+
     // Recurrence
     const recType = t.is_recurring ? (t.recurrence_type || "daily") : "none";
     _val("sheet-recurrence", recType);
     onRecurrenceChange();
 
-    // Populate day chips for weekly
     if (recType === "weekly" && Array.isArray(t.recurrence_days)) {
       _qa("#recurrence-days .day-chip").forEach(chip => {
         chip.classList.toggle("active", t.recurrence_days.includes(parseInt(chip.dataset.day)));
       });
     }
 
-    // Load subtasks
     loadSubtasks(taskId);
 
-    // Store task id on sheet
-    const sheet = _id("task-sheet");
-    if (sheet) {
-      sheet.dataset.taskId = taskId;
-      sheet.classList.remove("hidden");
+    // Open panel with animation
+    const panel = _id("task-panel");
+    const overlay = _id("task-panel-overlay");
+    if (panel) {
+      panel.classList.remove("hidden");
+      requestAnimationFrame(() => panel.classList.add("open"));
     }
+    if (overlay) overlay.classList.remove("hidden");
 
     feather.replace();
   } catch (err) {
@@ -453,73 +456,121 @@ function _val(id, value) {
 }
 
 function closeTaskSheet() {
-  const sheet = _id("task-sheet");
-  if (sheet) sheet.classList.add("hidden");
+  const panel = _id("task-panel");
+  const overlay = _id("task-panel-overlay");
+
+  if (panel) {
+    panel.classList.remove("open");
+    setTimeout(() => panel.classList.add("hidden"), 250);
+  }
+  if (overlay) overlay.classList.add("hidden");
   _sheetTaskId = null;
 }
 
+/* Auto-save individual field on blur/change */
+let _saveTimer = null;
+async function autoSaveField(field, value) {
+  if (!_sheetTaskId) return;
+
+  // Show saving indicator
+  const indicator = _id("saved-indicator");
+
+  try {
+    // Route field to correct endpoint
+    if (field === "due_date") {
+      await _post("/projects/tasks/update-date", { task_id: _sheetTaskId, due_date: value });
+    } else if (field === "start_date" || field === "duration_days") {
+      const start = _id("sheet-start")?.value || null;
+      const dur = _id("sheet-duration")?.value || null;
+      await _post("/projects/tasks/update-planning", {
+        task_id: _sheetTaskId, start_date: start, duration_days: dur
+      });
+    } else if (field === "planned_hours") {
+      await _post("/projects/tasks/update-planned", { task_id: _sheetTaskId, planned_hours: value });
+      updateHoursProgress();
+    } else if (field === "actual_hours") {
+      await _post("/projects/tasks/update-actual", { task_id: _sheetTaskId, actual_hours: value });
+      updateHoursProgress();
+    } else if (field === "due_time") {
+      await _post("/projects/tasks/update-time", { id: _sheetTaskId, due_time: value });
+    } else if (field === "delegated_to") {
+      await _post(`/projects/tasks/${_sheetTaskId}/update`, { delegated_to: value });
+    } else if (field === "status") {
+      await _post("/projects/tasks/status", { task_id: _sheetTaskId, status: value });
+    } else if (field === "priority") {
+      await _post("/projects/tasks/update-priority", { task_id: _sheetTaskId, priority: value });
+    } else {
+      await _post(`/projects/tasks/${_sheetTaskId}/update`, { [field]: value });
+    }
+
+    // Show saved indicator
+    if (indicator) {
+      indicator.textContent = "Saved";
+      indicator.classList.add("show");
+      clearTimeout(_saveTimer);
+      _saveTimer = setTimeout(() => indicator.classList.remove("show"), 2000);
+    }
+  } catch (err) {
+    console.error("Auto-save failed:", err);
+    if (indicator) {
+      indicator.textContent = "Save failed";
+      indicator.classList.add("show");
+    }
+  }
+}
+
+function stepField(fieldId, delta) {
+  const el = _id(fieldId);
+  if (!el) return;
+  const step = parseFloat(el.step) || 1;
+  const current = parseFloat(el.value) || 0;
+  el.value = Math.max(0, current + delta);
+  el.dispatchEvent(new Event("change"));
+}
+
+function updateHoursProgress() {
+  const planned = parseFloat(_id("sheet-planned")?.value) || 0;
+  const actual = parseFloat(_id("sheet-actual")?.value) || 0;
+  const container = _id("hours-progress");
+  if (!container) return;
+
+  if (planned > 0) {
+    const pct = Math.min(100, Math.round((actual / planned) * 100));
+    container.innerHTML = `<div class="hours-progress-fill" style="width:${pct}%"></div>`;
+    container.title = `${actual}h / ${planned}h (${pct}%)`;
+  } else {
+    container.innerHTML = "";
+  }
+}
+
+/* Legacy save function — still used by recurrence save */
 async function saveTaskSheet() {
   if (!_sheetTaskId) return;
 
-  const name     = _id("sheet-name")?.value.trim();
-  const status   = _id("sheet-status")?.value;
-  const priority = _id("sheet-priority")?.value;
-  const start    = _id("sheet-start")?.value || null;
-  const due      = _id("sheet-due")?.value || null;
-  const duration = _id("sheet-duration")?.value || null;
-  const planned  = _id("sheet-planned")?.value || null;
-  const actual   = _id("sheet-actual")?.value || null;
-  const delegate = _id("sheet-delegate")?.value || null;
-  const notes    = _id("sheet-notes")?.value || null;
-  const dueTime  = _id("sheet-due-time")?.value || null;
-
-  if (!name) {
-    showToast("Task name cannot be empty", "error");
-    return;
-  }
-
   try {
-    // Main fields via PUT
-    const putRes = await _put(`/api/v2/project-tasks/${_sheetTaskId}`, {
-      task_text: name,
-      status,
-      priority,
-      due_date: due,
-      duration_days: duration,
-      planned_hours: planned,
-      actual_hours: actual,
-      notes,
-    });
-    if (!putRes.ok) throw new Error();
-
-    // Additional fields via PATCH endpoint
     const recurrence = _id("sheet-recurrence")?.value || "none";
     const isRecurring = recurrence !== "none";
     const recurrenceDays = isRecurring && recurrence === "weekly"
-      ? _qa("#recurrence-days .day-chip.active").map(c => parseInt(c.dataset.day))
+      ? Array.from(_qa("#recurrence-days .day-chip.active")).map(c => parseInt(c.dataset.day))
       : [];
 
     await _post(`/projects/tasks/${_sheetTaskId}/update`, {
-      start_date: start,
-      due_time: dueTime,
-      delegated_to: delegate,
       is_recurring: isRecurring,
       recurrence_type: isRecurring ? recurrence : null,
       recurrence_days: recurrenceDays.length ? recurrenceDays : null,
     });
 
-    // Schedule reminder if set
     const reminderMin = _id("sheet-reminder")?.value;
+    const due = _id("sheet-due")?.value;
+    const dueTime = _id("sheet-due-time")?.value;
     if (reminderMin !== "" && due && dueTime) {
-      scheduleReminder(_sheetTaskId, name, due, dueTime, parseInt(reminderMin));
+      scheduleReminder(_sheetTaskId, _id("sheet-name")?.value, due, dueTime, parseInt(reminderMin));
     }
 
-    closeTaskSheet();
-    showToast("Task saved", "success");
-    location.reload();
+    showToast("Saved", "success");
   } catch (err) {
     console.error(err);
-    showToast("Failed to save task", "error");
+    showToast("Failed to save", "error");
   }
 }
 
@@ -738,15 +789,6 @@ function eliminateTask() {
 }
 
 /* ---------------------------------------------------------
-   Click-outside to close sheet
-   --------------------------------------------------------- */
-function onSheetOverlayClick(e) {
-  if (e.target.id === "task-sheet") {
-    closeTaskSheet();
-  }
-}
-
-/* ---------------------------------------------------------
    DOMContentLoaded
    --------------------------------------------------------- */
 document.addEventListener("DOMContentLoaded", () => {
@@ -757,9 +799,10 @@ document.addEventListener("DOMContentLoaded", () => {
   updateProjectStats();
   schedulePageReminders();
 
-  // Close sheet on overlay click
-  const sheet = _id("task-sheet");
-  if (sheet) sheet.addEventListener("click", onSheetOverlayClick);
+  // Close panel on Escape key
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeTaskSheet();
+  });
 
   feather.replace();
 });

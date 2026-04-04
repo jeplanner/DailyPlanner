@@ -254,112 +254,150 @@
 
 </div>
 
-<!-- ═══════════ TASK DETAIL BOTTOM SHEET ═══════════ -->
-<div id="task-sheet" class="sheet-overlay hidden">
-  <div class="sheet-card">
-    <div class="sheet-header">
-      <h3 id="sheet-task-title">Task Details</h3>
-      <button class="sheet-close" onclick="closeTaskSheet()"><i data-feather="x"></i></button>
-    </div>
+<!-- ═══════════ TASK DETAIL SIDE PANEL (Asana/Linear style) ═══════════ -->
+<div id="task-panel-overlay" class="panel-overlay hidden" onclick="closeTaskSheet()"></div>
+<aside id="task-panel" class="task-panel hidden">
+  <div class="panel-header">
+    <input type="text" id="sheet-name" class="panel-title-input" placeholder="Task name"
+           onblur="autoSaveField('task_text', this.value)">
+    <button class="panel-close" onclick="closeTaskSheet()"><i data-feather="x"></i></button>
+  </div>
 
-    <div class="sheet-body">
-      <!-- Title -->
-      <div class="sheet-field full">
-        <label>Task Name</label>
-        <input type="text" id="sheet-name" class="form-input">
-      </div>
+  <!-- Quick Actions Bar -->
+  <div class="panel-quick-actions">
+    <select id="sheet-status" class="quick-select status-select"
+            onchange="autoSaveField('status', this.value)">
+      <option value="backlog">Backlog</option>
+      <option value="open">Open</option>
+      <option value="in_progress">In Progress</option>
+      <option value="done">Done</option>
+    </select>
+    <select id="sheet-priority" class="quick-select prio-select"
+            onchange="autoSaveField('priority', this.value)">
+      <option value="high">🔴 High</option>
+      <option value="medium">🟡 Medium</option>
+      <option value="low">🟢 Low</option>
+    </select>
+    <button class="quick-action-btn" onclick="addSheetTaskToGCal()" title="Add to Calendar">
+      <i data-feather="calendar"></i>
+    </button>
+    <button class="quick-action-btn" onclick="pinTask()" title="Pin">
+      <i data-feather="bookmark"></i>
+    </button>
+  </div>
 
-      <!-- Row: Status + Priority -->
-      <div class="sheet-row">
-        <div class="sheet-field">
-          <label>Status</label>
-          <select id="sheet-status" class="form-input">
-            <option value="backlog">Backlog</option>
-            <option value="open">Open</option>
-            <option value="in_progress">In Progress</option>
-            <option value="done">Done</option>
-          </select>
+  <div class="panel-body">
+    <!-- ── Section: Schedule ── -->
+    <details class="panel-section" open>
+      <summary class="section-toggle">
+        <i data-feather="calendar" class="section-icon"></i> Schedule
+      </summary>
+      <div class="section-fields">
+        <div class="field-row">
+          <label>Start</label>
+          <input type="date" id="sheet-start" class="panel-input"
+                 onchange="autoSaveField('start_date', this.value)">
         </div>
-        <div class="sheet-field">
-          <label>Priority</label>
-          <select id="sheet-priority" class="form-input">
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
+        <div class="field-row">
+          <label>Due</label>
+          <input type="date" id="sheet-due" class="panel-input"
+                 onchange="autoSaveField('due_date', this.value)">
         </div>
-      </div>
-
-      <!-- Row: Start + Due -->
-      <div class="sheet-row">
-        <div class="sheet-field">
-          <label>Start Date</label>
-          <input type="date" id="sheet-start" class="form-input">
+        <div class="field-row">
+          <label>Duration</label>
+          <div class="inline-stepper">
+            <button onclick="stepField('sheet-duration', -1)" class="step-btn">−</button>
+            <input type="number" id="sheet-duration" class="panel-input stepper-input" min="0"
+                   onchange="autoSaveField('duration_days', this.value)">
+            <button onclick="stepField('sheet-duration', 1)" class="step-btn">+</button>
+            <span class="field-unit">days</span>
+          </div>
         </div>
-        <div class="sheet-field">
-          <label>Due Date</label>
-          <input type="date" id="sheet-due" class="form-input">
-        </div>
-      </div>
-
-      <!-- Row: Duration + Due Time -->
-      <div class="sheet-row">
-        <div class="sheet-field">
-          <label>Duration (days)</label>
-          <input type="number" id="sheet-duration" class="form-input" min="0">
-        </div>
-        <div class="sheet-field">
+        <div class="field-row">
           <label>Due Time</label>
-          <input type="time" id="sheet-due-time" class="form-input">
+          <input type="time" id="sheet-due-time" class="panel-input"
+                 onchange="autoSaveField('due_time', this.value)">
+        </div>
+        <div class="field-row">
+          <label>Reminder</label>
+          <select id="sheet-reminder" class="panel-input"
+                  onchange="autoSaveField('reminder', this.value)">
+            <option value="">None</option>
+            <option value="0">At due time</option>
+            <option value="5">5 min before</option>
+            <option value="15">15 min before</option>
+            <option value="30">30 min before</option>
+            <option value="60">1 hour before</option>
+          </select>
         </div>
       </div>
+    </details>
 
-      <!-- Row: Planned + Actual Hours -->
-      <div class="sheet-row">
-        <div class="sheet-field">
-          <label>Planned Hours</label>
-          <input type="number" id="sheet-planned" class="form-input" step="0.5" min="0">
+    <!-- ── Section: Time Tracking ── -->
+    <details class="panel-section">
+      <summary class="section-toggle">
+        <i data-feather="clock" class="section-icon"></i> Time Tracking
+      </summary>
+      <div class="section-fields">
+        <div class="field-row">
+          <label>Planned</label>
+          <div class="inline-stepper">
+            <button onclick="stepField('sheet-planned', -0.5)" class="step-btn">−</button>
+            <input type="number" id="sheet-planned" class="panel-input stepper-input" step="0.5" min="0"
+                   onchange="autoSaveField('planned_hours', this.value)">
+            <button onclick="stepField('sheet-planned', 0.5)" class="step-btn">+</button>
+            <span class="field-unit">hrs</span>
+          </div>
         </div>
-        <div class="sheet-field">
-          <label>Actual Hours</label>
-          <input type="number" id="sheet-actual" class="form-input" step="0.5" min="0">
+        <div class="field-row">
+          <label>Actual</label>
+          <div class="inline-stepper">
+            <button onclick="stepField('sheet-actual', -0.5)" class="step-btn">−</button>
+            <input type="number" id="sheet-actual" class="panel-input stepper-input" step="0.5" min="0"
+                   onchange="autoSaveField('actual_hours', this.value)">
+            <button onclick="stepField('sheet-actual', 0.5)" class="step-btn">+</button>
+            <span class="field-unit">hrs</span>
+          </div>
+        </div>
+        <div class="hours-progress" id="hours-progress"></div>
+      </div>
+    </details>
+
+    <!-- ── Section: Details ── -->
+    <details class="panel-section">
+      <summary class="section-toggle">
+        <i data-feather="file-text" class="section-icon"></i> Details
+      </summary>
+      <div class="section-fields">
+        <div class="field-row full">
+          <label>Notes</label>
+          <textarea id="sheet-notes" class="panel-input panel-textarea" rows="3"
+                    placeholder="Add notes…"
+                    onblur="autoSaveField('notes', this.value)"></textarea>
+        </div>
+        <div class="field-row">
+          <label>Delegate</label>
+          <input type="text" id="sheet-delegate" class="panel-input" placeholder="Person name"
+                 maxlength="25" onblur="autoSaveField('delegated_to', this.value)">
         </div>
       </div>
+    </details>
 
-      <!-- Delegate -->
-      <div class="sheet-field full">
-        <label>Delegate To</label>
-        <input type="text" id="sheet-delegate" class="form-input" placeholder="Person name" maxlength="25">
-      </div>
-
-      <!-- Notes -->
-      <div class="sheet-field full">
-        <label>Notes</label>
-        <textarea id="sheet-notes" class="form-input" rows="3" placeholder="Add notes…"></textarea>
-      </div>
-
-      <!-- Reminder -->
-      <div class="sheet-field full">
-        <label>Reminder</label>
-        <select id="sheet-reminder" class="form-input">
-          <option value="">No reminder</option>
-          <option value="0">At due time</option>
-          <option value="5">5 min before</option>
-          <option value="15">15 min before</option>
-          <option value="30">30 min before</option>
-          <option value="60">1 hour before</option>
-        </select>
-      </div>
-
-      <!-- Recurrence -->
-      <div class="sheet-field full">
-        <label>Repeat</label>
-        <select id="sheet-recurrence" class="form-input" onchange="onRecurrenceChange()">
-          <option value="none">Never</option>
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-        </select>
+    <!-- ── Section: Repeat ── -->
+    <details class="panel-section">
+      <summary class="section-toggle">
+        <i data-feather="repeat" class="section-icon"></i> Repeat
+      </summary>
+      <div class="section-fields">
+        <div class="field-row">
+          <label>Frequency</label>
+          <select id="sheet-recurrence" class="panel-input" onchange="onRecurrenceChange()">
+            <option value="none">Never</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
         <div id="recurrence-days" class="recur-days hidden">
           <button class="day-chip" data-day="0">S</button>
           <button class="day-chip" data-day="1">M</button>
@@ -370,36 +408,33 @@
           <button class="day-chip" data-day="6">S</button>
         </div>
       </div>
+    </details>
 
-      <!-- Subtasks -->
-      <div class="sheet-field full">
-        <label>Subtasks</label>
+    <!-- ── Section: Subtasks ── -->
+    <details class="panel-section" open>
+      <summary class="section-toggle">
+        <i data-feather="check-square" class="section-icon"></i> Subtasks
+        <span class="subtask-count" id="subtask-count"></span>
+      </summary>
+      <div class="section-fields">
         <div id="subtask-list"></div>
         <div class="add-subtask-row">
-          <input type="text" id="subtask-input" class="form-input" placeholder="Add subtask…">
-          <button class="btn btn-sm btn-primary" onclick="addSubtask()">
-            <i data-feather="plus" style="width:14px;height:14px"></i>
-          </button>
+          <input type="text" id="subtask-input" class="panel-input" placeholder="Add subtask…"
+                 onkeydown="if(event.key==='Enter'){addSubtask();event.preventDefault();}">
+          <button class="step-btn add-sub-btn" onclick="addSubtask()">+</button>
         </div>
       </div>
-    </div>
-
-    <div class="sheet-actions">
-      <button class="btn btn-primary" onclick="saveTaskSheet()">
-        <i data-feather="check" style="width:16px;height:16px"></i> Save
-      </button>
-      <button class="btn btn-ghost gcal-sheet-btn" onclick="addSheetTaskToGCal()">
-        <i data-feather="calendar" style="width:16px;height:16px"></i> Calendar
-      </button>
-      <button class="btn btn-ghost" onclick="pinTask()">
-        <i data-feather="bookmark" style="width:16px;height:16px"></i> Pin
-      </button>
-      <button class="btn btn-danger" onclick="eliminateTask()" style="margin-left:auto;">
-        <i data-feather="trash-2" style="width:16px;height:16px"></i>
-      </button>
-    </div>
+    </details>
   </div>
-</div>
+
+  <!-- Bottom Actions -->
+  <div class="panel-footer">
+    <button class="btn btn-danger btn-sm" onclick="eliminateTask()">
+      <i data-feather="trash-2" style="width:14px;height:14px"></i> Delete
+    </button>
+    <span class="panel-saved-indicator" id="saved-indicator"></span>
+  </div>
+</aside>
 
 <script>
   const PROJECT_ID = "{{ project.project_id }}";
