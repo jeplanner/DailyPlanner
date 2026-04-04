@@ -1,149 +1,190 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Inbox</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f9fafb; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Inbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+:root {
+  --ib-bg:#f7f8fa; --ib-surface:#fff; --ib-text:#1a1a2e;
+  --ib-text2:#6b7280; --ib-text3:#9ca3af; --ib-border:#e5e7eb;
+  --ib-primary:#2563eb; --ib-primary-light:#eff6ff;
+  --ib-success:#10b981; --ib-warning:#f59e0b; --ib-danger:#ef4444;
+  --ib-shadow:0 1px 3px rgba(0,0,0,0.06);
+}
+html.dark {
+  --ib-bg:#0f172a; --ib-surface:#1e293b; --ib-text:#f1f5f9;
+  --ib-text2:#94a3b8; --ib-text3:#64748b; --ib-border:#334155;
+  --ib-primary-light:#1e3a5f; --ib-shadow:0 1px 3px rgba(0,0,0,0.2);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--ib-bg);color:var(--ib-text);min-height:100vh;}
+.hidden{display:none!important;}
 
-    .inbox-wrap { max-width: 800px; margin: 0 auto; padding: 16px; }
+.inbox-app{max-width:860px;margin:0 auto;padding:16px 20px 48px;}
+.inbox-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;}
+.inbox-header h1{font-size:22px;font-weight:800;}
+.inbox-count{font-size:13px;color:var(--ib-text3);font-weight:500;}
 
-    /* ── Add form ── */
-    .inbox-form {
-      background: #fff;
-      border: 1px solid #e5e7eb;
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .inbox-form input, .inbox-form textarea {
-      width: 100%;
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-size: 14px;
-    }
-    .inbox-form textarea { resize: none; height: 64px; }
-    .inbox-form button {
-      align-self: flex-end;
-      background: #2563eb;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 9px 20px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .inbox-form button:disabled { background: #93c5fd; cursor: not-allowed; }
+/* ── Quick Add Bar ── */
+.quick-add{
+  background:var(--ib-surface);border:2px solid var(--ib-border);border-radius:14px;
+  padding:14px 16px;margin-bottom:20px;box-shadow:var(--ib-shadow);
+  transition:border-color 0.2s;
+}
+.quick-add:focus-within{border-color:var(--ib-primary);}
 
-    /* ── Filter bar ── */
-    .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-    .filter-btn {
-      padding: 5px 12px;
-      border-radius: 20px;
-      border: 1px solid #d1d5db;
-      background: #f9fafb;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    .filter-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+.qa-row{display:flex;gap:8px;align-items:center;}
+.qa-url{
+  flex:1;border:none;outline:none;font-size:15px;font-family:inherit;
+  color:var(--ib-text);background:transparent;min-width:0;
+}
+.qa-url::placeholder{color:var(--ib-text3);}
+.qa-paste-btn{
+  display:flex;align-items:center;gap:4px;padding:7px 14px;
+  border:1px solid var(--ib-border);border-radius:8px;background:var(--ib-surface);
+  font-size:12px;font-weight:600;font-family:inherit;color:var(--ib-text2);
+  cursor:pointer;transition:all 0.15s;white-space:nowrap;
+}
+.qa-paste-btn:hover{border-color:var(--ib-primary);color:var(--ib-primary);}
+.qa-paste-btn svg{width:14px;height:14px;}
+.qa-save-btn{
+  width:38px;height:38px;border:none;background:var(--ib-primary);color:#fff;
+  border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:opacity 0.15s;flex-shrink:0;
+}
+.qa-save-btn:hover{opacity:0.9;}
+.qa-save-btn:disabled{opacity:0.4;cursor:not-allowed;}
+.qa-save-btn svg{width:18px;height:18px;}
 
-    /* ── Cards ── */
-    .inbox-card {
-      background: #fff;
-      border: 1px solid #e5e7eb;
-      border-radius: 12px;
-      padding: 14px 16px;
-      margin-bottom: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .inbox-card.done { opacity: 0.55; }
+.qa-desc{
+  margin-top:8px;width:100%;border:none;outline:none;resize:none;height:0;
+  font-size:13px;font-family:inherit;color:var(--ib-text);background:transparent;
+  transition:height 0.2s,padding 0.2s;overflow:hidden;padding:0;
+}
+.qa-desc.show{height:48px;padding-top:8px;border-top:1px solid var(--ib-border);}
 
-    .card-title a {
-      font-size: 15px;
-      font-weight: 600;
-      color: #111827;
-      text-decoration: none;
-      word-break: break-word;
-    }
-    .card-title a:hover { color: #2563eb; }
-    .card-url { font-size: 12px; color: #9ca3af; }
-    .card-desc { font-size: 13px; color: #6b7280; line-height: 1.5; }
+.qa-status{font-size:12px;color:var(--ib-text3);margin-top:6px;min-height:18px;}
 
-    .card-meta {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 4px;
-    }
-    .badge {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 20px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
-    .badge-type { background: #ede9fe; color: #6d28d9; }
-    .badge-cat  { background: #dcfce7; color: #166534; }
+/* ── Filter + Search ── */
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
+.filter-btn{
+  padding:5px 14px;border-radius:20px;border:1px solid var(--ib-border);
+  background:var(--ib-surface);font-size:12px;font-weight:500;
+  font-family:inherit;color:var(--ib-text2);cursor:pointer;transition:all 0.15s;
+}
+.filter-btn:hover{border-color:var(--ib-primary);color:var(--ib-primary);}
+.filter-btn.active{background:var(--ib-primary);color:#fff;border-color:var(--ib-primary);}
+.search-input{
+  margin-left:auto;padding:5px 12px;border:1px solid var(--ib-border);border-radius:8px;
+  font-size:13px;font-family:inherit;background:var(--ib-surface);color:var(--ib-text);
+  outline:none;width:180px;
+}
+.search-input:focus{border-color:var(--ib-primary);}
 
-    .status-select {
-      font-size: 12px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      border: 1px solid #d1d5db;
-      background: #f9fafb;
-      cursor: pointer;
-    }
-    .status-Unread  { border-color: #93c5fd; color: #1d4ed8; background: #eff6ff; }
-    .status-Reading { border-color: #fcd34d; color: #92400e; background: #fffbeb; }
-    .status-Done    { border-color: #6ee7b7; color: #065f46; background: #f0fdf4; }
-    .status-Saved   { border-color: #c4b5fd; color: #5b21b6; background: #f5f3ff; }
+/* ── Cards ── */
+.inbox-card{
+  background:var(--ib-surface);border:1px solid var(--ib-border);border-radius:12px;
+  padding:14px 16px;margin-bottom:10px;box-shadow:var(--ib-shadow);
+  transition:all 0.15s;display:flex;gap:12px;align-items:flex-start;
+}
+.inbox-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+.inbox-card.done{opacity:0.45;}
+.inbox-card.fav{border-left:3px solid var(--ib-warning);}
 
-    .card-actions { display: flex; gap: 8px; align-items: center; }
-    .btn-fav, .btn-del {
-      background: none; border: none; cursor: pointer;
-      font-size: 16px; padding: 2px 4px; border-radius: 4px;
-    }
-    .btn-fav:hover { background: #fef9c3; }
-    .btn-del:hover { background: #fee2e2; }
+.card-favicon{
+  width:32px;height:32px;border-radius:6px;background:var(--ib-border);
+  flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden;
+}
+.card-favicon img{width:100%;height:100%;object-fit:cover;}
 
-    .empty-state { text-align: center; color: #9ca3af; padding: 48px 0; font-size: 15px; }
-    #save-status { font-size: 13px; color: #6b7280; }
-  </style>
+.card-body{flex:1;min-width:0;}
+.card-title{font-size:14px;font-weight:600;margin-bottom:2px;}
+.card-title a{color:var(--ib-text);text-decoration:none;word-break:break-word;}
+.card-title a:hover{color:var(--ib-primary);}
+.card-domain{font-size:11px;color:var(--ib-text3);margin-bottom:4px;}
+.card-desc{font-size:13px;color:var(--ib-text2);line-height:1.5;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+.card-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}
+.tag{font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:0.3px;}
+.tag-type{background:#ede9fe;color:#6d28d9;}
+.tag-cat{background:#dcfce7;color:#166534;}
+
+.card-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
+.card-status{
+  padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;font-family:inherit;
+  border:1px solid var(--ib-border);background:var(--ib-surface);cursor:pointer;outline:none;
+}
+.s-Unread{border-color:#93c5fd;color:#1d4ed8;background:#eff6ff;}
+.s-Reading{border-color:#fcd34d;color:#92400e;background:#fffbeb;}
+.s-Done{border-color:#6ee7b7;color:#065f46;background:#f0fdf4;}
+.s-Saved{border-color:#c4b5fd;color:#5b21b6;background:#f5f3ff;}
+
+.card-btns{display:flex;gap:4px;}
+.card-btn{
+  width:28px;height:28px;border:none;background:none;border-radius:6px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  color:var(--ib-text3);font-size:14px;transition:all 0.15s;
+}
+.card-btn:hover{background:var(--ib-border);}
+.card-btn.fav-on{color:var(--ib-warning);}
+.card-btn.del:hover{color:var(--ib-danger);}
+
+.card-date{font-size:10px;color:var(--ib-text3);}
+
+.empty-state{text-align:center;color:var(--ib-text3);padding:48px 0;font-size:14px;}
+
+/* Responsive */
+@media(max-width:640px){
+  .inbox-card{flex-direction:column;}
+  .card-right{flex-direction:row;width:100%;justify-content:space-between;}
+  .search-input{width:100%;margin-left:0;margin-top:8px;}
+  .card-favicon{display:none;}
+}
+</style>
 </head>
 <body>
 
 {% include "_top_nav.html" %}
 
-<div class="inbox-wrap">
-  <h2 style="margin: 16px 0;">📥 Inbox</h2>
-
-  <!-- Add form -->
-  <div class="inbox-form">
-    <input id="inp-url" type="url" placeholder="Paste a link…" oninput="clearSaveStatus()">
-    <textarea id="inp-desc" placeholder="Description (optional — auto-fetched if blank)"></textarea>
-    <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;">
-      <span id="save-status"></span>
-      <button id="save-btn" onclick="saveLink()">Save</button>
-    </div>
+<div class="inbox-app">
+  <div class="inbox-header">
+    <h1>Inbox</h1>
+    <span class="inbox-count" id="item-count"></span>
   </div>
 
-  <!-- Filter bar -->
-  <div class="filter-bar">
-    <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
-    <button class="filter-btn" onclick="setFilter('Unread', this)">Unread</button>
-    <button class="filter-btn" onclick="setFilter('Reading', this)">Reading</button>
-    <button class="filter-btn" onclick="setFilter('Saved', this)">Saved</button>
-    <button class="filter-btn" onclick="setFilter('Done', this)">Done</button>
+  <!-- Quick Add -->
+  <div class="quick-add">
+    <div class="qa-row">
+      <input type="url" id="inp-url" class="qa-url" placeholder="Paste or type a URL…"
+             oninput="onUrlInput()" onpaste="onUrlPaste(event)">
+      <button class="qa-paste-btn" onclick="pasteFromClipboard()" title="Paste from clipboard">
+        <i data-feather="clipboard"></i> Paste
+      </button>
+      <button class="qa-save-btn" id="save-btn" onclick="saveLink()" disabled title="Save link">
+        <i data-feather="plus"></i>
+      </button>
+    </div>
+    <textarea id="inp-desc" class="qa-desc" placeholder="Add a note (optional — AI will generate a description if blank)"></textarea>
+    <div class="qa-status" id="save-status"></div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+    <button class="filter-btn" onclick="setFilter('Unread',this)">Unread</button>
+    <button class="filter-btn" onclick="setFilter('Reading',this)">Reading</button>
+    <button class="filter-btn" onclick="setFilter('Saved',this)">Saved</button>
+    <button class="filter-btn" onclick="setFilter('Done',this)">Done</button>
+    <input type="text" class="search-input" id="search-input" placeholder="Search…" oninput="filterCards()">
   </div>
 
   <!-- Cards -->
@@ -152,11 +193,49 @@
 
 <script>
 let currentFilter = "all";
+let allItems = [];
 
-function clearSaveStatus() {
-  document.getElementById("save-status").textContent = "";
+/* ── URL Input Handling ── */
+function onUrlInput() {
+  const url = document.getElementById("inp-url").value.trim();
+  document.getElementById("save-btn").disabled = !url;
+  // Show description area when URL is entered
+  const desc = document.getElementById("inp-desc");
+  if (url) desc.classList.add("show"); else desc.classList.remove("show");
 }
 
+function onUrlPaste(e) {
+  // Auto-save after small delay when pasting
+  setTimeout(() => {
+    onUrlInput();
+    const url = document.getElementById("inp-url").value.trim();
+    if (url && isValidUrl(url)) {
+      document.getElementById("save-status").textContent = "URL detected — press Enter or click + to save";
+    }
+  }, 100);
+}
+
+async function pasteFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && isValidUrl(text.trim())) {
+      document.getElementById("inp-url").value = text.trim();
+      onUrlInput();
+      document.getElementById("save-status").textContent = "Pasted from clipboard — press Enter to save";
+    } else {
+      showToast("No URL found in clipboard", "error");
+    }
+  } catch {
+    // Clipboard API may be blocked
+    showToast("Clipboard access denied. Please paste manually.", "error");
+  }
+}
+
+function isValidUrl(str) {
+  try { new URL(str); return true; } catch { return false; }
+}
+
+/* ── Save Link ── */
 async function saveLink() {
   const url = document.getElementById("inp-url").value.trim();
   if (!url) return;
@@ -164,94 +243,129 @@ async function saveLink() {
   const btn = document.getElementById("save-btn");
   const statusEl = document.getElementById("save-status");
   btn.disabled = true;
-  statusEl.textContent = "Saving…";
+  statusEl.innerHTML = '<span style="color:var(--ib-primary)">Fetching metadata & generating description…</span>';
 
-  const res = await fetch("/api/inbox", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      description: document.getElementById("inp-desc").value.trim(),
-    }),
-  });
+  try {
+    const res = await fetch("/api/inbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        description: document.getElementById("inp-desc").value.trim(),
+      }),
+    });
 
-  const data = await res.json();
-  if (data.success) {
-    statusEl.textContent = `✓ Saved as "${data.category}"`;
-    document.getElementById("inp-url").value = "";
-    document.getElementById("inp-desc").value = "";
-    load();
-  } else {
-    statusEl.textContent = "Error saving.";
+    const data = await res.json();
+    if (data.success) {
+      statusEl.innerHTML = `<span style="color:var(--ib-success)">Saved — ${esc(data.category || "Uncategorized")}</span>`;
+      document.getElementById("inp-url").value = "";
+      document.getElementById("inp-desc").value = "";
+      document.getElementById("inp-desc").classList.remove("show");
+      btn.disabled = true;
+      load();
+      if (typeof showToast === "function") showToast("Link saved!", "success");
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--ib-danger)">${esc(data.error || "Save failed")}</span>`;
+    }
+  } catch {
+    statusEl.innerHTML = '<span style="color:var(--ib-danger)">Network error</span>';
   }
-  btn.disabled = false;
+  btn.disabled = !document.getElementById("inp-url").value.trim();
 }
 
+/* ── Filters + Search ── */
 function setFilter(filter, el) {
   currentFilter = filter;
   document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
   el.classList.add("active");
-  load();
+  renderCards();
 }
 
+function filterCards() {
+  renderCards();
+}
+
+/* ── Load & Render ── */
 async function load() {
-  const params = new URLSearchParams();
-  if (currentFilter !== "all") params.set("status", currentFilter);
+  const res = await fetch("/api/inbox");
+  allItems = await res.json();
+  renderCards();
+}
 
-  const res = await fetch("/api/inbox?" + params.toString());
-  const items = await res.json();
-
+function renderCards() {
   const list = document.getElementById("inbox-list");
-  list.innerHTML = "";
+  const search = (document.getElementById("search-input")?.value || "").toLowerCase();
+
+  let items = allItems;
+  if (currentFilter !== "all") {
+    items = items.filter(x => x.status === currentFilter);
+  }
+  if (search) {
+    items = items.filter(x =>
+      (x.title || "").toLowerCase().includes(search) ||
+      (x.description || "").toLowerCase().includes(search) ||
+      (x.url || "").toLowerCase().includes(search) ||
+      (x.category || "").toLowerCase().includes(search)
+    );
+  }
+
+  document.getElementById("item-count").textContent = `${items.length} item${items.length !== 1 ? "s" : ""}`;
 
   if (!items.length) {
-    list.innerHTML = '<div class="empty-state">No items yet. Paste a link above.</div>';
+    list.innerHTML = '<div class="empty-state">No items found. Paste a link above to get started.</div>';
     return;
   }
 
-  items.forEach(x => {
-    const card = document.createElement("div");
-    card.className = "inbox-card" + (x.status === "Done" ? " done" : "");
-    card.id = "card-" + x.id;
+  list.innerHTML = items.map(x => {
+    const domain = getDomain(x.url);
+    const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+    const ago = timeAgo(x.created_at);
 
-    const domain = (() => { try { return new URL(x.url).hostname.replace("www.", ""); } catch { return ""; } })();
-
-    card.innerHTML = `
-      <div class="card-title">
-        <a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || x.url)}</a>
-      </div>
-      ${domain ? `<div class="card-url">${esc(domain)}</div>` : ""}
-      ${x.description ? `<div class="card-desc">${esc(x.description)}</div>` : ""}
-      <div class="card-meta">
-        ${x.content_type ? `<span class="badge badge-type">${esc(x.content_type)}</span>` : ""}
-        ${x.category    ? `<span class="badge badge-cat">${esc(x.category)}</span>` : ""}
-        <select class="status-select status-${esc(x.status || 'Unread')}"
-                onchange="updateStatus('${x.id}', this)">
-          ${["Unread","Reading","Done","Saved"].map(s =>
-            `<option value="${s}" ${x.status === s ? "selected" : ""}>${s}</option>`
-          ).join("")}
-        </select>
-        <div class="card-actions">
-          <button class="btn-fav" onclick="toggleFav('${x.id}')">${x.is_favorite ? "★" : "☆"}</button>
-          <button class="btn-del" onclick="deleteItem('${x.id}')">🗑</button>
+    return `
+    <div class="inbox-card ${x.status === 'Done' ? 'done' : ''} ${x.is_favorite ? 'fav' : ''}" id="card-${x.id}">
+      <div class="card-favicon"><img src="${favicon}" alt="" onerror="this.style.display='none'"></div>
+      <div class="card-body">
+        <div class="card-title"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></div>
+        <div class="card-domain">${esc(domain)} · ${ago}</div>
+        ${x.description ? `<div class="card-desc">${esc(x.description)}</div>` : ""}
+        <div class="card-tags">
+          ${x.content_type ? `<span class="tag tag-type">${esc(x.content_type)}</span>` : ""}
+          ${x.category ? `<span class="tag tag-cat">${esc(x.category)}</span>` : ""}
         </div>
       </div>
-    `;
-    list.appendChild(card);
-  });
+      <div class="card-right">
+        <select class="card-status s-${x.status || 'Unread'}" onchange="updateStatus('${x.id}',this)">
+          ${["Unread","Reading","Done","Saved"].map(s =>
+            `<option value="${s}" ${x.status===s?"selected":""}>${s}</option>`
+          ).join("")}
+        </select>
+        <div class="card-btns">
+          <button class="card-btn ${x.is_favorite?'fav-on':''}" onclick="toggleFav('${x.id}')" title="Favorite">
+            ${x.is_favorite ? "★" : "☆"}
+          </button>
+          <button class="card-btn del" onclick="deleteItem('${x.id}')" title="Delete">
+            <i data-feather="trash-2" style="width:14px;height:14px"></i>
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  if (typeof feather !== "undefined") feather.replace();
 }
 
-function esc(str) {
-  const d = document.createElement("div");
-  d.textContent = String(str || "");
-  return d.innerHTML;
-}
-
+/* ── Actions ── */
 async function updateStatus(id, select) {
   const status = select.value;
-  select.className = `status-select status-${status}`;
+  select.className = `card-status s-${status}`;
   const card = document.getElementById("card-" + id);
-  if (card) card.className = "inbox-card" + (status === "Done" ? " done" : "");
+  if (card) {
+    card.classList.toggle("done", status === "Done");
+  }
+  // Update local data
+  const item = allItems.find(x => x.id === id);
+  if (item) item.status = status;
+
   await fetch(`/api/inbox/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -261,21 +375,51 @@ async function updateStatus(id, select) {
 
 async function toggleFav(id) {
   await fetch(`/api/inbox/${id}/favorite`, { method: "POST" });
-  load();
+  const item = allItems.find(x => x.id === id);
+  if (item) item.is_favorite = !item.is_favorite;
+  renderCards();
 }
 
 async function deleteItem(id) {
-  if (!confirm("Delete this item?")) return;
+  if (!confirm("Delete this link?")) return;
   await fetch(`/api/inbox/${id}`, { method: "DELETE" });
-  load();
+  allItems = allItems.filter(x => x.id !== id);
+  renderCards();
+  showToast("Deleted", "success");
 }
 
+/* ── Helpers ── */
+function esc(str) {
+  const d = document.createElement("div");
+  d.textContent = String(str || "");
+  return d.innerHTML;
+}
+
+function getDomain(url) {
+  try { return new URL(url).hostname.replace("www.", ""); } catch { return ""; }
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return mins + "m ago";
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + "h ago";
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return days + "d ago";
+  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/* ── Keyboard shortcuts ── */
 document.getElementById("inp-url").addEventListener("keydown", e => {
   if (e.key === "Enter") saveLink();
 });
 
+/* ── Init ── */
 load();
+if (typeof feather !== "undefined") feather.replace();
 </script>
-
 </body>
 </html>

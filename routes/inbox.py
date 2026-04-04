@@ -27,9 +27,25 @@ def create_inbox():
 
     meta = fetch_meta(url)
     title = meta["title"]
-    description = data.get("description", "").strip() or meta["description"]
+    raw_desc = data.get("description", "").strip() or meta["description"]
     content_type = detect_type(url)
-    category = auto_categorize(url, title, description)
+    category = auto_categorize(url, title, raw_desc)
+
+    # AI-powered description if user didn't provide one and meta description is weak
+    description = raw_desc
+    if not data.get("description", "").strip() and len(raw_desc) < 50:
+        try:
+            from services.ai_service import call_gemini
+            prompt = (
+                f"Write a 1-2 sentence description of what this webpage is about. "
+                f"Be concise and factual.\n\n"
+                f"URL: {url}\nTitle: {title}\nMeta: {raw_desc}"
+            )
+            ai_desc = call_gemini(prompt)
+            if ai_desc and len(ai_desc) > 10:
+                description = ai_desc.strip()[:500]
+        except Exception:
+            pass  # Fall back to raw meta description
 
     post("inbox_links", {
         "id": str(uuid.uuid4()),
@@ -42,7 +58,13 @@ def create_inbox():
         "status": "Unread",
     })
 
-    return jsonify({"success": True, "title": title, "category": category})
+    return jsonify({
+        "success": True,
+        "title": title,
+        "description": description,
+        "category": category,
+        "content_type": content_type,
+    })
 
 
 @inbox_bp.route("/api/inbox", methods=["GET"])
