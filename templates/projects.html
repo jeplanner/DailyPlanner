@@ -1,121 +1,137 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Projects</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Projects</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<style>
+  :root {
+    --pl-bg: #f7f8fa; --pl-surface: #fff; --pl-text: #1a1a2e;
+    --pl-text2: #6b7280; --pl-text3: #9ca3af; --pl-border: #e5e7eb;
+    --pl-primary: #2563eb; --pl-primary-light: #eff6ff;
+    --pl-success: #10b981; --pl-warning: #f59e0b;
+    --pl-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  html.dark {
+    --pl-bg: #0f172a; --pl-surface: #1e293b; --pl-text: #f1f5f9;
+    --pl-text2: #94a3b8; --pl-text3: #64748b; --pl-border: #334155;
+    --pl-primary-light: #1e3a5f; --pl-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: var(--pl-bg); color: var(--pl-text); min-height: 100vh; }
 
-    .nav-icons {
-      display: flex; justify-content: center; align-items: center;
-      gap: 14px; padding: 10px 16px;
-      background: #fff; border-bottom: 1px solid #e2e8f0;
-    }
-    .nav-icons a, .nav-icons button {
-      background: none; border: none; font-size: 18px;
-      cursor: pointer; padding: 6px; border-radius: 10px; text-decoration: none;
-    }
-    .nav-icons a:hover, .nav-icons button:hover { background: #f1f5f9; }
+  .container { max-width: 960px; margin: 0 auto; padding: 16px 20px 48px; }
 
-    .container { max-width: 900px; margin: 0 auto; padding: 20px 16px 48px; }
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px; gap: 12px;
+  }
+  .page-header h1 { font-size: 24px; font-weight: 800; }
 
-    .page-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
-    }
-    .page-header h2 { font-size: 22px; font-weight: 700; }
+  .btn-new {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--pl-primary); color: #fff;
+    padding: 10px 20px; border-radius: 10px;
+    font-weight: 600; font-size: 14px; font-family: inherit;
+    text-decoration: none; border: none; cursor: pointer;
+    transition: opacity 0.15s; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  .btn-new:hover { opacity: 0.9; }
+  .btn-new svg { width: 18px; height: 18px; }
 
-    .btn-new {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: #2563eb; color: #fff;
-      padding: 9px 18px; border-radius: 10px;
-      font-weight: 600; font-size: 14px;
-      text-decoration: none; border: none; cursor: pointer;
-      transition: background 0.15s;
-    }
-    .btn-new:hover { background: #1d4ed8; }
+  /* Stats bar */
+  .stats-bar {
+    display: flex; gap: 16px; margin-bottom: 20px; font-size: 13px; color: var(--pl-text2);
+  }
+  .stats-bar span { display: flex; align-items: center; gap: 4px; }
 
-    /* ── Card grid ── */
-    .project-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 16px;
-    }
+  /* Grid */
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+  }
 
-    .project-card {
-      background: #fff;
-      border-radius: 16px;
-      padding: 18px 18px 14px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.06);
-      text-decoration: none; color: inherit;
-      display: flex; flex-direction: column; gap: 10px;
-      transition: box-shadow 0.2s, transform 0.15s;
-      border: 1px solid #e2e8f0;
-    }
-    .project-card:hover {
-      box-shadow: 0 8px 24px rgba(0,0,0,.1);
-      transform: translateY(-2px);
-    }
+  .project-card {
+    background: var(--pl-surface);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: var(--pl-shadow);
+    text-decoration: none; color: inherit;
+    display: flex; flex-direction: column; gap: 10px;
+    transition: all 0.2s;
+    border: 1px solid var(--pl-border);
+    position: relative;
+  }
+  .project-card:hover {
+    box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+  }
 
-    .project-card-header {
-      display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
-    }
-    .project-name {
-      font-size: 15px; font-weight: 700; line-height: 1.3; color: #1e293b;
-      flex: 1;
-    }
-    .task-count-pill {
-      font-size: 11px; font-weight: 600;
-      background: #eef2ff; color: #4338ca;
-      padding: 3px 9px; border-radius: 999px;
-      white-space: nowrap; flex-shrink: 0;
-    }
+  .card-color-bar {
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 4px; border-radius: 14px 14px 0 0;
+    background: var(--pl-primary);
+  }
 
-    .project-desc {
-      font-size: 13px; color: #64748b; line-height: 1.5;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
+  .card-header {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+    padding-top: 4px;
+  }
+  .card-name { font-size: 16px; font-weight: 700; line-height: 1.3; flex: 1; }
+  .task-pill {
+    font-size: 11px; font-weight: 600;
+    background: var(--pl-primary-light); color: var(--pl-primary);
+    padding: 2px 10px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
+  }
 
-    .project-footer {
-      margin-top: auto; display: flex; flex-direction: column; gap: 6px;
-    }
-    .progress-row {
-      display: flex; align-items: center; gap: 8px;
-    }
-    .progress-bar {
-      flex: 1; height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden;
-    }
-    .progress-fill {
-      height: 100%; background: #22c55e; border-radius: 999px;
-      transition: width 0.4s ease;
-    }
-    .progress-fill.low    { background: #f59e0b; }
-    .progress-fill.medium { background: #3b82f6; }
-    .progress-label {
-      font-size: 12px; color: #64748b; white-space: nowrap;
-    }
+  .card-desc {
+    font-size: 13px; color: var(--pl-text2); line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
 
-    .task-stats {
-      display: flex; gap: 10px; font-size: 12px; color: #64748b;
-    }
-    .task-stats span { display: flex; align-items: center; gap: 3px; }
+  .card-footer { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
 
-    /* ── Empty state ── */
-    .empty-state {
-      text-align: center; padding: 64px 24px;
-      display: flex; flex-direction: column; align-items: center; gap: 16px;
-    }
-    .empty-icon { font-size: 48px; }
-    .empty-state p { font-size: 16px; color: #64748b; }
+  .progress-row { display: flex; align-items: center; gap: 10px; }
+  .progress-bar {
+    flex: 1; height: 6px; background: var(--pl-border); border-radius: 3px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; border-radius: 3px; transition: width 0.4s ease;
+  }
+  .progress-fill.green { background: var(--pl-success); }
+  .progress-fill.blue { background: var(--pl-primary); }
+  .progress-fill.yellow { background: var(--pl-warning); }
+  .progress-pct {
+    font-size: 13px; font-weight: 700; color: var(--pl-text); min-width: 36px; text-align: right;
+  }
 
-    /* ── Mobile ── */
-    @media (max-width: 480px) {
-      .project-grid { grid-template-columns: 1fr; }
-      .page-header h2 { font-size: 20px; }
-    }
-  </style>
+  .card-stats {
+    display: flex; gap: 12px; font-size: 12px; color: var(--pl-text3);
+  }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center; padding: 64px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  .empty-icon { font-size: 56px; opacity: 0.5; }
+  .empty-state h3 { font-size: 18px; font-weight: 600; }
+  .empty-state p { font-size: 14px; color: var(--pl-text2); max-width: 300px; }
+
+  @media (max-width: 480px) {
+    .project-grid { grid-template-columns: 1fr; }
+    .page-header h1 { font-size: 20px; }
+    .btn-new { padding: 8px 14px; font-size: 13px; }
+  }
+</style>
 </head>
 <body>
 
@@ -123,53 +139,64 @@
 
 <div class="container">
   <div class="page-header">
-    <h2>Projects</h2>
-    <a href="/projects/new" class="btn-new">＋ New Project</a>
+    <h1>Projects</h1>
+    <a href="/projects/new" class="btn-new">
+      <i data-feather="plus"></i> New Project
+    </a>
   </div>
 
   {% if projects %}
+  <div class="stats-bar">
+    <span><i data-feather="folder" style="width:14px;height:14px"></i> {{ projects|length }} projects</span>
+    <span><i data-feather="check-circle" style="width:14px;height:14px"></i>
+      {{ projects|selectattr('completion_pct', 'equalto', 100)|list|length }} completed
+    </span>
+  </div>
+
   <div class="project-grid">
     {% for p in projects %}
     <a href="/projects/{{ p.project_id }}/tasks" class="project-card">
+      <div class="card-color-bar"></div>
 
-      <div class="project-card-header">
-        <div class="project-name">{{ p.name }}</div>
-        <span class="task-count-pill">{{ p.task_count }} tasks</span>
+      <div class="card-header">
+        <div class="card-name">{{ p.name }}</div>
+        <span class="task-pill">{{ p.task_count }} tasks</span>
       </div>
 
       {% if p.description %}
-      <div class="project-desc">{{ p.description }}</div>
+      <div class="card-desc">{{ p.description }}</div>
       {% endif %}
 
-      <div class="project-footer">
+      <div class="card-footer">
         <div class="progress-row">
           <div class="progress-bar">
-            <div class="progress-fill
-              {% if p.completion_pct < 40 %}low
-              {% elif p.completion_pct < 75 %}medium{% endif %}"
-              style="width: {{ p.completion_pct }}%">
-            </div>
+            {% set pct = p.completion_pct %}
+            <div class="progress-fill {{ 'green' if pct >= 75 else ('blue' if pct >= 40 else 'yellow') }}"
+                 style="width:{{ pct }}%"></div>
           </div>
-          <span class="progress-label">{{ p.completion_pct }}%</span>
+          <span class="progress-pct">{{ pct }}%</span>
         </div>
-        <div class="task-stats">
-          <span>✅ {{ p.done_count }} done</span>
-          <span>📋 {{ p.task_count - p.done_count }} remaining</span>
+        <div class="card-stats">
+          <span>{{ p.done_count }} done</span>
+          <span>{{ p.task_count - p.done_count }} remaining</span>
         </div>
       </div>
-
     </a>
     {% endfor %}
   </div>
 
   {% else %}
   <div class="empty-state">
-    <div class="empty-icon">📁</div>
-    <p>No projects yet. Start by creating one.</p>
-    <a href="/projects/new" class="btn-new">Create your first project</a>
+    <div class="empty-icon"><i data-feather="folder-plus" style="width:56px;height:56px;color:var(--pl-text3)"></i></div>
+    <h3>No projects yet</h3>
+    <p>Create your first project to start organizing tasks and tracking progress.</p>
+    <a href="/projects/new" class="btn-new">
+      <i data-feather="plus"></i> Create Project
+    </a>
   </div>
   {% endif %}
-
 </div>
+
+<script>if(window.feather)feather.replace();</script>
 </body>
 </html>
