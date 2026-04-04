@@ -1,3 +1,108 @@
+/* ========================= */
+/* ASK MY REFERENCES Q&A    */
+/* ========================= */
+
+.ask-card {
+  background: #fff;
+  border: 2px solid #2563eb;
+  border-radius: 16px;
+  padding: 18px 20px;
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ask-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e40af;
+}
+
+.ask-header small {
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b7280;
+}
+
+.ask-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ask-input-row input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.ask-input-row input:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+.ask-input-row button {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ask-input-row button:disabled {
+  background: #93c5fd;
+  cursor: not-allowed;
+}
+
+.ask-answer {
+  background: #f0f7ff;
+  border-left: 4px solid #2563eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #1f2937;
+  white-space: pre-wrap;
+}
+
+.ask-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ask-sources-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ask-source-link {
+  font-size: 13px;
+  color: #2563eb;
+  text-decoration: none;
+  padding: 4px 0;
+  word-break: break-all;
+}
+
+.ask-source-link:hover {
+  text-decoration: underline;
+}
+
+/* ========================= */
+
 .reference-container {
   max-width: 900px;
   margin: 0 auto;
