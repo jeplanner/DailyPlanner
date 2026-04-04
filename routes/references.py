@@ -296,16 +296,16 @@ Use a real public URL. No explanation. JSON only."""
 def ai_generate_groq():
     query = request.get_json().get("query")
 
-    system_prompt = """You are a knowledge reference generator.
+    system_prompt = """You are a knowledge reference generator for a personal study library.
 Return ONLY valid JSON in this exact format:
 {
   "title": "short clear title",
-  "description": "detailed 4-6 sentence explanation",
+  "description": "Write a study-friendly description in this exact format:\\n\\nWhat it is: [1-2 sentence plain-English explanation]\\n\\nKey concepts: [3-4 bullet points of the most important ideas]\\n\\nWhy it matters: [1 sentence on practical relevance]",
   "tags": ["tag1", "tag2"],
-  "category": "Technology | Health | Finance | Learning",
+  "category": "Technology | Health | Finance | Learning | AI / ML | Programming | Science | Business | Other",
   "url": "real public URL if known, otherwise null"
 }
-Rules: No markdown, no explanation, only raw JSON."""
+Rules: No markdown code fences, no extra explanation, only raw JSON."""
 
     response = requests.post(
         GROQ_URL,
@@ -371,6 +371,85 @@ def search_references():
     return jsonify({"results": rows})
 
 
+# ── Study a reference ─────────────────────────────────────────────────────────
+
+@references_bp.post("/references/study")
+@login_required
+def study_reference():
+    user_id = session["user_id"]
+    ref_id  = (request.json or {}).get("ref_id")
+
+    if not ref_id:
+        return jsonify({"error": "ref_id required"}), 400
+
+    rows = get("reference_links", {
+        "id": f"eq.{ref_id}",
+        "user_id": f"eq.{user_id}",
+        "limit": 1,
+    })
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+
+    ref = rows[0]
+    soup = BeautifulSoup(ref.get("description") or "", "html.parser")
+    desc_text = soup.get_text(separator=" ").strip()[:600]
+
+    prompt = f"""You are a study coach using the Feynman technique. Create concise study notes for this topic.
+
+Topic: {ref.get("title", "")}
+URL: {ref.get("url", "")}
+Description: {desc_text or "Not available"}
+Tags: {", ".join(ref.get("tags") or [])}
+
+Respond in this exact markdown format:
+
+## What is it?
+[2-3 sentence plain-English explanation for a curious learner]
+
+## Key Concepts
+- [Concept 1]
+- [Concept 2]
+- [Concept 3]
+
+## Real-World Analogy
+[One concrete analogy or example that makes the idea click]
+
+## Why It Matters
+[1-2 sentences on practical importance or application]
+
+## Test Yourself
+1. [Factual question]
+2. [Conceptual question]
+3. [Application question]
+
+Keep it focused and use simple language. No filler."""
+
+    try:
+        resp = requests.post(
+            GROQ_URL,
+            headers=_groq_headers(),
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            notes = resp.json()["choices"][0]["message"]["content"].strip()
+        else:
+            return jsonify({"error": "AI unavailable"}), 503
+    except Exception as e:
+        logger.error("study_reference failed: %s", e)
+        return jsonify({"error": "AI service failed"}), 503
+
+    return jsonify({
+        "title": ref.get("title"),
+        "url": ref.get("url"),
+        "notes": notes,
+    })
+
+
 # ── Ask my references (Q&A) ───────────────────────────────────────────────────
 
 @references_bp.post("/references/ask")
@@ -431,18 +510,29 @@ def ask_references():
 
     context = "\n\n".join(context_lines)
 
-    prompt = f"""You are a personal knowledge assistant. Answer the user's question using ONLY the references below.
+    prompt = f"""You are a study coach helping a learner understand topics from their personal knowledge base.
 
 References:
 {context}
 
 Question: {question}
 
+Answer in this format:
+
+**Answer**
+[Direct clear answer. Cite sources as [1], [2] etc.]
+
+**Key Takeaway**
+[The single most important thing to remember about this]
+
+**Example or Analogy**
+[A concrete real-world example or analogy that makes this stick]
+
 Rules:
-- Answer directly and clearly.
-- Cite sources using [1], [2] etc.
-- If the references don't contain enough info, say so honestly.
-- Keep the answer under 200 words."""
+- Use simple, clear language.
+- Cite using [1], [2] etc.
+- If references lack enough info, say so honestly.
+- Total response under 280 words."""
 
     try:
         response = requests.post(

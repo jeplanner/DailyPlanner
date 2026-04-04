@@ -139,6 +139,24 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════
+     STUDY MODAL
+════════════════════════════════════════════════ -->
+<div id="study-modal-overlay" class="modal-overlay" onclick="handleStudyOverlayClick(event)">
+  <div class="modal-box study-modal-box">
+    <div class="modal-header">
+      <span>📚 Study Notes</span>
+      <button class="modal-close" onclick="closeStudyModal()" title="Close">✕</button>
+    </div>
+    <div id="study-title-row" class="study-title-row"></div>
+    <div id="study-loading" class="study-loading" style="display:none;">
+      <span class="fetch-spinner"></span>
+      <span>Generating study notes…</span>
+    </div>
+    <div id="study-notes" class="study-notes"></div>
+  </div>
+</div>
+
 <div id="toast-container"></div>
 
 <script src="{{ url_for('static', filename='references.js') }}" defer></script>
