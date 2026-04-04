@@ -289,6 +289,12 @@
       titleBlock.appendChild(a);
       titleBlock.appendChild(domainSpan);
 
+      const studyBtn = document.createElement("button");
+      studyBtn.className   = "btn-study";
+      studyBtn.title       = "Generate study notes";
+      studyBtn.textContent = "📚";
+      studyBtn.addEventListener("click", () => openStudyModal(ref.id, ref.title));
+
       const delBtn = document.createElement("button");
       delBtn.className   = "btn-delete";
       delBtn.title       = "Delete";
@@ -297,6 +303,7 @@
 
       header.appendChild(favicon);
       header.appendChild(titleBlock);
+      header.appendChild(studyBtn);
       header.appendChild(delBtn);
       item.appendChild(header);
 
@@ -509,8 +516,144 @@
   }
 
   // ==========================================================
+  // STUDY MODAL
+  // ==========================================================
+
+  async function openStudyModal(refId, title) {
+    const overlay  = document.getElementById("study-modal-overlay");
+    const titleRow = document.getElementById("study-title-row");
+    const notesEl  = document.getElementById("study-notes");
+    const loading  = document.getElementById("study-loading");
+
+    // Reset
+    notesEl.innerHTML  = "";
+    titleRow.innerHTML = "";
+    loading.style.display = "flex";
+
+    // Show title
+    const h = document.createElement("h3");
+    h.className   = "study-ref-title";
+    h.textContent = title || "Study Notes";
+    titleRow.appendChild(h);
+
+    overlay.classList.add("open");
+    document.body.style.overflow = "hidden";
+
+    try {
+      const res  = await fetch("/references/study", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ref_id: refId }),
+      });
+      const data = await res.json();
+
+      loading.style.display = "none";
+
+      if (data.error) {
+        notesEl.textContent = "Could not generate study notes. Try again.";
+        return;
+      }
+
+      notesEl.innerHTML = renderStudyMarkdown(data.notes);
+
+    } catch (err) {
+      loading.style.display = "none";
+      notesEl.textContent = "Failed to load study notes.";
+    }
+  }
+
+  function renderStudyMarkdown(md) {
+    if (!md) return "";
+    const lines  = md.split("\n");
+    let html     = "";
+    let inList   = false;
+
+    for (const raw of lines) {
+      const line = raw.trim();
+
+      if (line.startsWith("## ")) {
+        if (inList) { html += "</ul>"; inList = false; }
+        const label = esc(line.slice(3));
+        html += `<div class="study-section-header">${label}</div>`;
+
+      } else if (line.startsWith("- ")) {
+        if (!inList) { html += "<ul class='study-list'>"; inList = true; }
+        html += `<li>${formatInline(line.slice(2))}</li>`;
+
+      } else if (/^\d+\.\s/.test(line)) {
+        if (inList) { html += "</ul>"; inList = false; }
+        html += `<div class="study-quiz-item">${formatInline(line)}</div>`;
+
+      } else if (line === "") {
+        if (inList) { html += "</ul>"; inList = false; }
+
+      } else {
+        if (inList) { html += "</ul>"; inList = false; }
+        html += `<p class="study-para">${formatInline(line)}</p>`;
+      }
+    }
+
+    if (inList) html += "</ul>";
+    return html;
+  }
+
+  function formatInline(text) {
+    return esc(text)
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>");
+  }
+
+  // ==========================================================
   // Q&A — Ask my references
   // ==========================================================
+
+  function renderAskAnswer(text) {
+    if (!text) return "";
+    // Split on section headers like **Answer**, **Key Takeaway**, **Example or Analogy**
+    const sectionIcons = {
+      "Answer": "💬",
+      "Key Takeaway": "🔑",
+      "Example or Analogy": "💡",
+      "Example": "💡",
+      "Analogy": "💡",
+    };
+
+    let html = "";
+    const lines = text.split("\n");
+    let inSection = false;
+
+    for (const raw of lines) {
+      const line = raw.trim();
+
+      // Detect **Section Header**
+      const headerMatch = line.match(/^\*\*(.+?)\*\*\s*$/);
+      if (headerMatch) {
+        const label = headerMatch[1];
+        const icon  = sectionIcons[label] || "•";
+        if (inSection) html += "</div>";
+        html += `<div class="ask-section">`;
+        html += `<div class="ask-section-label">${icon} ${esc(label)}</div>`;
+        html += `<div class="ask-section-body">`;
+        inSection = true;
+        continue;
+      }
+
+      if (line === "") continue;
+
+      const formatted = esc(line)
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\[(\d+)\]/g, "<strong class='cite'>[$1]</strong>");
+
+      if (inSection) {
+        html += `<p>${formatted}</p>`;
+      } else {
+        html += `<p>${formatted}</p>`;
+      }
+    }
+
+    if (inSection) html += "</div></div>";
+    return html;
+  }
 
   async function askReferences() {
     const input     = $("ask-input");
@@ -538,12 +681,7 @@
       if (data.error) {
         answerEl.textContent = "Error: " + data.error;
       } else {
-        // Render answer preserving line breaks and bold citations like [1]
-        answerEl.innerHTML = data.answer
-          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-          .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-          .replace(/\[(\d+)\]/g, "<strong>[$1]</strong>")
-          .replace(/\n/g, "<br>");
+        answerEl.innerHTML = renderAskAnswer(data.answer);
 
         if (data.sources && data.sources.length > 0) {
           const label = document.createElement("div");
