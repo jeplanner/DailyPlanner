@@ -747,6 +747,75 @@ async function addSubtask() {
 
 function toggleSubtask(id, isDone) {
   _post("/subtask/toggle", { id, is_done: isDone }).catch(console.error);
+
+  // Update badge count if visible
+  updateSubtaskBadges();
+}
+
+/* Toggle inline subtask list visibility */
+function toggleSubtasks(btn) {
+  btn.classList.toggle("expanded");
+  const row = btn.closest("td");
+  const subtaskDiv = row?.querySelector(".inline-subtasks");
+  if (subtaskDiv) subtaskDiv.classList.toggle("collapsed");
+}
+
+/* Add subtask inline (from the table row, not the side panel) */
+async function addInlineSubtask(input) {
+  const title = (input.value || "").trim();
+  const taskId = input.dataset.taskId;
+  if (!title || !taskId) return;
+
+  try {
+    const res = await fetch("/subtask/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, task_id: taskId, title }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to add subtask", "error");
+      return;
+    }
+
+    const st = await res.json();
+
+    // Insert new subtask before the add input
+    const container = input.closest(".inline-subtasks");
+    const addRow = input.closest(".inline-add-subtask");
+    if (container && addRow) {
+      const label = document.createElement("label");
+      label.className = "inline-subtask";
+      label.innerHTML = `
+        <input type="checkbox" onchange="toggleSubtask('${st.id}', this.checked); this.parentElement.classList.toggle('st-done')">
+        <span>${_escHtml(st.title || title)}</span>
+      `;
+      container.insertBefore(label, addRow);
+    }
+
+    input.value = "";
+    updateSubtaskBadges();
+    showToast("Subtask added", "success");
+  } catch {
+    showToast("Failed to add subtask", "error");
+  }
+}
+
+/* Update all subtask badges (done/total count) */
+function updateSubtaskBadges() {
+  _qa(".inline-subtasks").forEach(container => {
+    const taskId = container.dataset.taskId;
+    const row = container.closest("tr");
+    if (!row) return;
+
+    const checks = container.querySelectorAll("input[type=checkbox]");
+    const done = Array.from(checks).filter(c => c.checked).length;
+    const total = checks.length;
+
+    const badge = row.querySelector(".subtask-badge");
+    if (badge) badge.textContent = `${done}/${total}`;
+  });
 }
 
 /* ---------------------------------------------------------

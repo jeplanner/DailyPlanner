@@ -216,7 +216,53 @@ html.dark .task-row.overdue { background: #3b1111; }
 .prio-medium { background: var(--pt-medium); }
 .prio-low { background: var(--pt-low); }
 
-.task-name-cell { display: flex; align-items: center; gap: 6px; }
+.task-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Subtask expand button */
+.subtask-expand-btn {
+  width: 20px; height: 20px; border: none; background: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  color: var(--pt-text3); transition: transform 0.2s; flex-shrink: 0; padding: 0;
+}
+.subtask-expand-btn:hover { color: var(--pt-primary); }
+.subtask-expand-btn.expanded .expand-chevron { transform: rotate(90deg); }
+.expand-chevron { width: 14px; height: 14px; transition: transform 0.2s; }
+
+.subtask-badge {
+  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+  background: var(--pt-primary-light); color: var(--pt-primary); white-space: nowrap;
+}
+
+/* Inline subtasks (below task name, inside the same cell) */
+.inline-subtasks {
+  width: 100%; margin-top: 6px; padding-left: 26px;
+  overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s;
+}
+.inline-subtasks.collapsed {
+  max-height: 0; opacity: 0; margin-top: 0;
+}
+.inline-subtasks:not(.collapsed) {
+  max-height: 500px; opacity: 1;
+}
+
+.inline-subtask {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 0; font-size: 13px; color: var(--pt-text); cursor: pointer;
+}
+.inline-subtask input[type=checkbox] {
+  width: 14px; height: 14px; accent-color: var(--pt-success); cursor: pointer; flex-shrink: 0;
+}
+.inline-subtask.st-done span { text-decoration: line-through; color: var(--pt-text3); }
+
+.inline-add-subtask {
+  margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--pt-border-light);
+}
+.inline-subtask-input {
+  width: 100%; border: none; outline: none; font-size: 12px;
+  font-family: inherit; color: var(--pt-text); background: transparent;
+  padding: 4px 0;
+}
+.inline-subtask-input::placeholder { color: var(--pt-text3); }
 .task-text { font-weight: 500; cursor: pointer; color: var(--pt-text); transition: color 0.15s; }
 .task-text:hover { color: var(--pt-primary); }
 .pin-icon { width: 14px; height: 14px; color: var(--pt-warning); flex-shrink: 0; }

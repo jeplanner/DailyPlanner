@@ -127,6 +127,25 @@ def project_tasks(project_id):
 
     tasks = [_build_task_dict(t, project, today) for t in raw_tasks]
 
+    # Batch-load subtasks for all tasks in ONE query
+    task_ids = [t["task_id"] for t in tasks]
+    subtask_map = {}
+    if task_ids:
+        ids_str = ",".join(str(tid) for tid in task_ids)
+        all_subtasks = get("project_subtasks", params={
+            "parent_task_id": f"in.({ids_str})",
+            "select": "id,parent_task_id,title,is_done",
+            "order": "created_at.asc",
+            "limit": 1000,
+        }) or []
+        for st in all_subtasks:
+            pid = st.get("parent_task_id")
+            subtask_map.setdefault(pid, []).append(st)
+
+    # Attach subtasks to each task
+    for t in tasks:
+        t["subtasks"] = subtask_map.get(t["task_id"], [])
+
     grouped_tasks = group_tasks_smart(tasks)
 
     return render_template(

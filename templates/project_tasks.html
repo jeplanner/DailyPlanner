@@ -158,11 +158,19 @@
                     title="{{ t.priority }}"></span>
             </td>
 
-            <!-- Task name (click to expand) -->
+            <!-- Task name + inline subtasks -->
             <td class="col-name">
               <div class="task-name-cell">
                 {% if t.is_pinned %}<i data-feather="bookmark" class="pin-icon"></i>{% endif %}
+                {% if t.subtasks %}
+                  <button class="subtask-expand-btn" onclick="toggleSubtasks(this)" title="Toggle subtasks">
+                    <i data-feather="chevron-right" class="expand-chevron"></i>
+                  </button>
+                {% endif %}
                 <span class="task-text" onclick="openTaskDetail('{{ t.task_id }}')">{{ t.task_text }}</span>
+                {% if t.subtasks %}
+                  <span class="subtask-badge">{{ t.subtasks|selectattr('is_done')|list|length }}/{{ t.subtasks|length }}</span>
+                {% endif %}
                 {% if t.recurrence_badge %}
                   <span class="recur-badge">{{ t.recurrence_badge }}</span>
                 {% endif %}
@@ -170,6 +178,22 @@
                   <span class="delegate-badge">→ {{ t.delegated_to }}</span>
                 {% endif %}
               </div>
+              {% if t.subtasks %}
+              <div class="inline-subtasks collapsed" data-task-id="{{ t.task_id }}">
+                {% for st in t.subtasks %}
+                <label class="inline-subtask {{ 'st-done' if st.is_done }}">
+                  <input type="checkbox" {{ 'checked' if st.is_done }}
+                         onchange="toggleSubtask('{{ st.id }}', this.checked); this.parentElement.classList.toggle('st-done')">
+                  <span>{{ st.title }}</span>
+                </label>
+                {% endfor %}
+                <div class="inline-add-subtask">
+                  <input type="text" placeholder="Add subtask…" class="inline-subtask-input"
+                         data-task-id="{{ t.task_id }}"
+                         onkeydown="if(event.key==='Enter'){addInlineSubtask(this);event.preventDefault();}">
+                </div>
+              </div>
+              {% endif %}
             </td>
 
             <!-- Status -->
