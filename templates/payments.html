@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>Payments & Bills</title>
+<title>Reference Cards</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
@@ -13,196 +13,191 @@
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
 :root{
-  --py-bg:#f7f8fa;--py-surface:#fff;--py-text:#1a1a2e;--py-text2:#6b7280;
-  --py-text3:#9ca3af;--py-border:#e5e7eb;--py-primary:#2563eb;
-  --py-primary-light:#eff6ff;--py-success:#10b981;--py-warning:#f59e0b;
-  --py-danger:#ef4444;--py-shadow:0 1px 3px rgba(0,0,0,0.06);
+  --rc-bg:#f7f8fa;--rc-surface:#fff;--rc-text:#1a1a2e;--rc-text2:#6b7280;
+  --rc-text3:#9ca3af;--rc-border:#e5e7eb;--rc-primary:#2563eb;
+  --rc-primary-light:#eff6ff;--rc-success:#10b981;--rc-warning:#f59e0b;
+  --rc-danger:#ef4444;--rc-shadow:0 1px 3px rgba(0,0,0,0.06);
 }
 html.dark{
-  --py-bg:#0f172a;--py-surface:#1e293b;--py-text:#f1f5f9;--py-text2:#94a3b8;
-  --py-text3:#64748b;--py-border:#334155;--py-primary-light:#1e3a5f;
-  --py-shadow:0 1px 3px rgba(0,0,0,0.2);
+  --rc-bg:#0f172a;--rc-surface:#1e293b;--rc-text:#f1f5f9;--rc-text2:#94a3b8;
+  --rc-text3:#64748b;--rc-border:#334155;--rc-primary-light:#1e3a5f;
+  --rc-shadow:0 1px 3px rgba(0,0,0,0.2);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:'Inter',system-ui,sans-serif;background:var(--py-bg);color:var(--py-text);min-height:100vh;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--rc-bg);color:var(--rc-text);min-height:100vh;}
 .hidden{display:none!important;}
-.pay-app{max-width:1000px;margin:0 auto;padding:16px 20px 48px;}
+.rc-app{max-width:1000px;margin:0 auto;padding:16px 20px 48px;}
 
 /* Header */
-.pay-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;}
-.pay-header h1{font-size:22px;font-weight:800;}
-.pay-header-btns{display:flex;gap:6px;}
+.rc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;}
+.rc-header h1{font-size:22px;font-weight:800;}
+.rc-header-btns{display:flex;gap:6px;}
 
-/* Overview Cards */
-.overview-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;}
-.ov-card{background:var(--py-surface);border-radius:12px;padding:16px;box-shadow:var(--py-shadow);display:flex;flex-direction:column;gap:4px;}
-.ov-label{font-size:11px;font-weight:600;color:var(--py-text3);text-transform:uppercase;letter-spacing:0.3px;}
-.ov-value{font-size:24px;font-weight:800;}
-.ov-value.danger{color:var(--py-danger);}
-.ov-value.warning{color:var(--py-warning);}
-.ov-value.success{color:var(--py-success);}
-
-/* Property Tabs */
-.prop-tabs{display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;padding-bottom:4px;flex-wrap:wrap;}
-.prop-tab{
-  padding:6px 16px;border-radius:20px;border:1px solid var(--py-border);
-  background:var(--py-surface);font-size:13px;font-weight:500;font-family:inherit;
-  color:var(--py-text2);cursor:pointer;transition:all 0.15s;white-space:nowrap;
-}
-.prop-tab:hover{border-color:var(--py-primary);color:var(--py-primary);}
-.prop-tab.active{background:var(--py-primary);color:#fff;border-color:var(--py-primary);}
-.prop-tab.add-tab{border-style:dashed;color:var(--py-text3);}
-.prop-tab.add-tab:hover{color:var(--py-primary);border-color:var(--py-primary);}
-
-/* Category Sections */
-.cat-section{margin-bottom:20px;}
-.cat-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:4px 0;}
-.cat-icon{font-size:18px;}
-.cat-name{font-size:14px;font-weight:700;color:var(--py-text);}
-.cat-count{font-size:11px;color:var(--py-text3);font-weight:500;}
-
-/* Bill Cards */
-.bill-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;}
-.bill-card{
-  background:var(--py-surface);border:1px solid var(--py-border);border-radius:12px;
-  padding:14px 16px;box-shadow:var(--py-shadow);transition:all 0.15s;cursor:pointer;
-  display:flex;flex-direction:column;gap:8px;
-}
-.bill-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.08);transform:translateY(-1px);}
-.bill-card.inactive{opacity:0.5;}
-
-.bill-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
-.bill-provider{font-size:15px;font-weight:700;}
-.bill-amount{font-size:18px;font-weight:800;color:var(--py-primary);white-space:nowrap;}
-
-.bill-details{display:flex;flex-wrap:wrap;gap:6px;font-size:12px;}
-.bill-tag{padding:2px 8px;border-radius:6px;font-weight:500;}
-.bill-tag.cycle{background:#ede9fe;color:#6d28d9;}
-.bill-tag.due{background:#fef3c7;color:#92400e;}
-.bill-tag.autopay{background:#d1fae5;color:#065f46;}
-.bill-tag.method{background:var(--py-primary-light);color:var(--py-primary);}
-
-.bill-meta{font-size:12px;color:var(--py-text3);display:flex;flex-direction:column;gap:2px;}
-.bill-acct{font-family:monospace;letter-spacing:0.5px;}
-
-.bill-actions{display:flex;gap:4px;margin-top:auto;padding-top:6px;border-top:1px solid var(--py-border);}
-.bill-action{
-  padding:4px 10px;border:1px solid var(--py-border);border-radius:6px;
-  font-size:11px;font-weight:500;font-family:inherit;background:var(--py-surface);
-  color:var(--py-text2);cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:4px;
-}
-.bill-action:hover{border-color:var(--py-primary);color:var(--py-primary);}
-.bill-action.danger:hover{border-color:var(--py-danger);color:var(--py-danger);}
-.bill-action svg{width:12px;height:12px;}
+/* Overview */
+.ov-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:16px;}
+.ov-card{background:var(--rc-surface);border-radius:12px;padding:14px;box-shadow:var(--rc-shadow);display:flex;flex-direction:column;gap:2px;}
+.ov-label{font-size:10px;font-weight:600;color:var(--rc-text3);text-transform:uppercase;letter-spacing:0.3px;}
+.ov-value{font-size:22px;font-weight:800;}
+.ov-value.warn{color:var(--rc-warning);}.ov-value.danger{color:var(--rc-danger);}
 
 /* Alerts */
-.alert-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
-.alert-chip{
-  display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;
-  font-size:12px;font-weight:600;
-}
+.alert-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+.alert-chip{display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;}
 .alert-chip.overdue{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;}
 .alert-chip.upcoming{background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
 
-/* Modal */
+/* Context tabs */
+.ctx-tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;flex-wrap:wrap;}
+.ctx-tab{
+  padding:5px 14px;border-radius:20px;border:1px solid var(--rc-border);
+  background:var(--rc-surface);font-size:12px;font-weight:500;font-family:inherit;
+  color:var(--rc-text2);cursor:pointer;transition:all 0.15s;white-space:nowrap;
+}
+.ctx-tab:hover{border-color:var(--rc-primary);color:var(--rc-primary);}
+.ctx-tab.active{background:var(--rc-primary);color:#fff;border-color:var(--rc-primary);}
+.ctx-tab.add{border-style:dashed;color:var(--rc-text3);}
+
+/* Search + Category filter */
+.filter-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;}
+.search-box{
+  flex:1;min-width:180px;padding:7px 12px 7px 32px;border:1px solid var(--rc-border);
+  border-radius:8px;font-size:13px;font-family:inherit;background:var(--rc-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E") 10px center no-repeat;
+  color:var(--rc-text);outline:none;
+}
+.search-box:focus{border-color:var(--rc-primary);}
+.cat-filter{
+  padding:5px 10px;border:1px solid var(--rc-border);border-radius:8px;
+  font-size:12px;font-family:inherit;background:var(--rc-surface);color:var(--rc-text);
+  cursor:pointer;outline:none;
+}
+
+/* Category Sections */
+.cat-section{margin-bottom:20px;}
+.cat-hdr{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.cat-hdr i{width:18px;height:18px;color:var(--rc-primary);}
+.cat-name{font-size:14px;font-weight:700;}
+.cat-cnt{font-size:11px;color:var(--rc-text3);}
+
+/* Cards */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;}
+.ref-card{
+  background:var(--rc-surface);border:1px solid var(--rc-border);border-radius:12px;
+  padding:14px 16px;box-shadow:var(--rc-shadow);transition:all 0.15s;
+  display:flex;flex-direction:column;gap:6px;
+}
+.ref-card:hover{box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+.ref-card.inactive{opacity:0.45;}
+
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
+.card-title{font-size:15px;font-weight:700;flex:1;}
+.card-amt{font-size:16px;font-weight:800;color:var(--rc-primary);white-space:nowrap;}
+
+.card-ctx{font-size:11px;color:var(--rc-text3);}
+
+.card-tags{display:flex;flex-wrap:wrap;gap:4px;}
+.ctag{padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;}
+.ctag.cycle{background:#ede9fe;color:#6d28d9;}
+.ctag.due{background:#fef3c7;color:#92400e;}
+.ctag.auto{background:#d1fae5;color:#065f46;}
+.ctag.method{background:var(--rc-primary-light);color:var(--rc-primary);}
+.ctag.status-active{background:#d1fae5;color:#065f46;}
+.ctag.status-inactive{background:#fee2e2;color:#991b1b;}
+
+.card-info{font-size:12px;color:var(--rc-text3);display:flex;flex-direction:column;gap:1px;}
+.card-info .mono{font-family:monospace;letter-spacing:0.3px;}
+
+.card-notes{font-size:12px;color:var(--rc-text2);line-height:1.5;white-space:pre-wrap;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+
+.card-btns{display:flex;gap:4px;margin-top:auto;padding-top:6px;border-top:1px solid var(--rc-border);}
+.card-btn{
+  padding:4px 10px;border:1px solid var(--rc-border);border-radius:6px;
+  font-size:11px;font-weight:500;font-family:inherit;background:var(--rc-surface);
+  color:var(--rc-text2);cursor:pointer;transition:all 0.15s;display:flex;align-items:center;gap:4px;
+  text-decoration:none;
+}
+.card-btn:hover{border-color:var(--rc-primary);color:var(--rc-primary);}
+.card-btn.del:hover{border-color:var(--rc-danger);color:var(--rc-danger);}
+.card-btn svg{width:12px;height:12px;}
+
+/* Modal shared */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:1000;}
-.modal-card{
-  background:var(--py-surface);border-radius:16px;padding:24px;width:520px;
-  max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.2);
-  animation:slideUp 0.2s ease;
-}
-@keyframes slideUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
-.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
-.modal-header h3{font-size:18px;font-weight:700;}
-.modal-close{width:36px;height:36px;border:none;background:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--py-text3);}
-.modal-close:hover{background:var(--py-border);}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
-.form-row.full{grid-template-columns:1fr;}
-.form-group{display:flex;flex-direction:column;gap:4px;}
-.form-group label{font-size:11px;font-weight:600;color:var(--py-text3);text-transform:uppercase;letter-spacing:0.3px;}
-.form-input{
-  padding:8px 10px;border:1px solid var(--py-border);border-radius:6px;font-size:14px;
-  font-family:inherit;background:var(--py-bg);color:var(--py-text);outline:none;width:100%;
-}
-.form-input:focus{border-color:var(--py-primary);box-shadow:0 0 0 2px rgba(37,99,235,0.12);}
-.form-check{display:flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;cursor:pointer;}
-.form-check input{accent-color:var(--py-success);}
-.modal-actions{display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--py-border);}
-.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:6px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;transition:all 0.15s;}
-.btn:active{transform:scale(0.97);}
-.btn-primary{background:var(--py-primary);color:#fff;}
-.btn-primary:hover{opacity:0.9;}
-.btn-danger{background:var(--py-danger);color:#fff;}
-.btn-ghost{background:transparent;color:var(--py-text2);}
-.btn-ghost:hover{background:var(--py-border);color:var(--py-text);}
+.modal-card{background:var(--rc-surface);border-radius:16px;padding:24px;width:540px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.2);animation:mSlide .2s ease;}
+@keyframes mSlide{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.modal-hdr h3{font-size:18px;font-weight:700;}
+.modal-x{width:36px;height:36px;border:none;background:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--rc-text3);}
+.modal-x:hover{background:var(--rc-border);}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+.fr.full{grid-template-columns:1fr;}
+.fg{display:flex;flex-direction:column;gap:4px;}
+.fg label{font-size:11px;font-weight:600;color:var(--rc-text3);text-transform:uppercase;letter-spacing:0.3px;}
+.fi{padding:8px 10px;border:1px solid var(--rc-border);border-radius:6px;font-size:14px;font-family:inherit;background:var(--rc-bg);color:var(--rc-text);outline:none;width:100%;}
+.fi:focus{border-color:var(--rc-primary);box-shadow:0 0 0 2px rgba(37,99,235,0.12);}
+.fcheck{display:flex;align-items:center;gap:6px;font-size:13px;margin-top:4px;cursor:pointer;}
+.fcheck input{accent-color:var(--rc-success);}
+.modal-foot{display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--rc-border);}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:6px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;transition:all .15s;}
+.btn:active{transform:scale(.97);}
+.btn-primary{background:var(--rc-primary);color:#fff;}.btn-primary:hover{opacity:.9;}
+.btn-danger{background:var(--rc-danger);color:#fff;}
+.btn-ghost{background:transparent;color:var(--rc-text2);}.btn-ghost:hover{background:var(--rc-border);}
 
-/* History Modal */
-.history-list{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;}
-.history-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--py-border);font-size:13px;}
-.history-date{font-weight:600;min-width:90px;color:var(--py-text);}
-.history-amount{font-weight:700;color:var(--py-primary);min-width:80px;}
-.history-ref{color:var(--py-text3);flex:1;}
+/* History */
+.hist-list{display:flex;flex-direction:column;gap:4px;max-height:250px;overflow-y:auto;}
+.hist-item{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--rc-border);font-size:12px;}
+.hist-date{font-weight:600;min-width:80px;}.hist-amt{font-weight:700;color:var(--rc-primary);min-width:70px;}.hist-ref{color:var(--rc-text3);flex:1;}
 
-.empty-state{text-align:center;padding:48px 16px;color:var(--py-text3);font-size:14px;}
+.empty{text-align:center;padding:48px 16px;color:var(--rc-text3);font-size:14px;}
 
 @media(max-width:640px){
-  .bill-grid{grid-template-columns:1fr;}
-  .form-row{grid-template-columns:1fr;}
-  .overview-row{grid-template-columns:1fr 1fr;}
-  .bill-amount{font-size:16px;}
+  .card-grid{grid-template-columns:1fr;}.fr{grid-template-columns:1fr;}
+  .ov-row{grid-template-columns:1fr 1fr;}
 }
 </style>
 </head>
 <body>
-
 {% include "_top_nav.html" %}
 
-<div class="pay-app">
-
-  <div class="pay-header">
-    <h1>Payments & Bills</h1>
-    <div class="pay-header-btns">
-      <button class="btn btn-primary" onclick="openBillModal()">
-        <i data-feather="plus" style="width:16px;height:16px"></i> Add Bill
-      </button>
+<div class="rc-app">
+  <div class="rc-header">
+    <h1>Reference Cards</h1>
+    <div class="rc-header-btns">
+      <button class="btn btn-primary" onclick="openCardModal()"><i data-feather="plus" style="width:16px;height:16px"></i> Add Card</button>
     </div>
   </div>
 
-  <!-- Overview -->
-  <div class="overview-row" id="overview-row">
-    <div class="ov-card"><span class="ov-label">Monthly Total</span><span class="ov-value" id="ov-monthly">—</span></div>
-    <div class="ov-card"><span class="ov-label">Active Bills</span><span class="ov-value" id="ov-active">0</span></div>
-    <div class="ov-card"><span class="ov-label">Upcoming (7d)</span><span class="ov-value warning" id="ov-upcoming">0</span></div>
+  <div class="ov-row" id="ov-row">
+    <div class="ov-card"><span class="ov-label">Total Cards</span><span class="ov-value" id="ov-total">0</span></div>
+    <div class="ov-card"><span class="ov-label">Monthly Cost</span><span class="ov-value" id="ov-cost">—</span></div>
+    <div class="ov-card"><span class="ov-label">Upcoming (7d)</span><span class="ov-value warn" id="ov-upcoming">0</span></div>
     <div class="ov-card"><span class="ov-label">Overdue</span><span class="ov-value danger" id="ov-overdue">0</span></div>
   </div>
 
-  <!-- Alerts -->
   <div class="alert-row" id="alert-row"></div>
+  <div class="ctx-tabs" id="ctx-tabs"></div>
 
-  <!-- Property Tabs -->
-  <div class="prop-tabs" id="prop-tabs"></div>
+  <div class="filter-row">
+    <input type="text" class="search-box" id="search-box" placeholder="Search cards…" oninput="renderCards()">
+    <select class="cat-filter" id="cat-filter" onchange="renderCards()">
+      <option value="">All Categories</option>
+    </select>
+  </div>
 
-  <!-- Bills grouped by category -->
-  <div id="bills-container"></div>
-
+  <div id="cards-container"></div>
 </div>
 
-<!-- ═══════════ ADD/EDIT BILL MODAL ═══════════ -->
-<div id="bill-modal" class="modal-overlay hidden">
+<!-- ═══════ ADD/EDIT CARD MODAL ═══════ -->
+<div id="card-modal" class="modal-overlay hidden">
   <div class="modal-card">
-    <div class="modal-header">
-      <h3 id="bill-modal-title">Add Bill</h3>
-      <button class="modal-close" onclick="closeBillModal()"><i data-feather="x"></i></button>
-    </div>
+    <div class="modal-hdr"><h3 id="card-modal-title">Add Reference Card</h3><button class="modal-x" onclick="closeCardModal()"><i data-feather="x"></i></button></div>
 
-    <div class="form-row">
-      <div class="form-group">
-        <label>Property *</label>
-        <select id="bill-property" class="form-input"></select>
+    <div class="fr">
+      <div class="fg"><label>Context</label>
+        <select id="c-ctx" class="fi"></select>
       </div>
-      <div class="form-group">
-        <label>Category *</label>
-        <select id="bill-category" class="form-input">
+      <div class="fg"><label>Category *</label>
+        <select id="c-cat" class="fi">
           <option value="Broadband">Broadband / Internet</option>
           <option value="Electricity">Electricity</option>
           <option value="Water">Water</option>
@@ -212,426 +207,284 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--py-bg);color:var(
           <option value="Insurance">Insurance</option>
           <option value="Rent">Rent</option>
           <option value="Maintenance">Maintenance / Society</option>
-          <option value="Tax">Property Tax</option>
+          <option value="Tax">Tax</option>
           <option value="Subscription">Subscription</option>
+          <option value="Vehicle">Vehicle</option>
+          <option value="Health">Health / Medical</option>
+          <option value="IT">IT / Server / Hosting</option>
+          <option value="Banking">Banking</option>
+          <option value="Government">Government / ID</option>
+          <option value="Education">Education</option>
+          <option value="Travel">Travel</option>
+          <option value="SOP">SOP / Procedure</option>
+          <option value="Credentials">Credentials / Login</option>
+          <option value="Emergency">Emergency</option>
           <option value="Other">Other</option>
         </select>
       </div>
     </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label>Provider *</label>
-        <input type="text" id="bill-provider" class="form-input" placeholder="e.g., Airtel, BESCOM, Jio">
-      </div>
-      <div class="form-group">
-        <label>Account / Consumer No.</label>
-        <input type="text" id="bill-account" class="form-input" placeholder="e.g., 1234567890">
-      </div>
+    <div class="fr">
+      <div class="fg"><label>Title / Provider *</label><input type="text" id="c-title" class="fi" placeholder="e.g., Airtel Fiber, HDFC Savings, Passport Renewal"></div>
+      <div class="fg"><label>Account / Reference No.</label><input type="text" id="c-acct" class="fi" placeholder="Account, policy, ID number"></div>
     </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label>Amount</label>
-        <input type="number" id="bill-amount" class="form-input" step="0.01" placeholder="Monthly amount">
-      </div>
-      <div class="form-group">
-        <label>Billing Cycle</label>
-        <select id="bill-cycle" class="form-input">
+    <div class="fr">
+      <div class="fg"><label>Amount / Cost</label><input type="number" id="c-amt" class="fi" step="0.01" placeholder="Optional"></div>
+      <div class="fg"><label>Frequency</label>
+        <select id="c-cycle" class="fi">
+          <option value="">N/A</option>
           <option value="monthly">Monthly</option>
           <option value="quarterly">Quarterly</option>
           <option value="half-yearly">Half-Yearly</option>
           <option value="yearly">Yearly</option>
-          <option value="prepaid">Prepaid / As-needed</option>
+          <option value="one-time">One-time</option>
+          <option value="as-needed">As-needed</option>
         </select>
       </div>
     </div>
-
-    <div class="form-row">
-      <div class="form-group">
-        <label>Due Day of Month</label>
-        <input type="number" id="bill-due-day" class="form-input" min="1" max="31" placeholder="e.g., 15">
-      </div>
-      <div class="form-group">
-        <label>Payment Method</label>
-        <input type="text" id="bill-method" class="form-input" placeholder="e.g., HDFC autopay, GPay">
+    <div class="fr">
+      <div class="fg"><label>Due Day of Month</label><input type="number" id="c-due" class="fi" min="1" max="31" placeholder="e.g., 15"></div>
+      <div class="fg"><label>Payment / Action Method</label><input type="text" id="c-method" class="fi" placeholder="e.g., GPay, Bank transfer, Online"></div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Login / Customer ID</label><input type="text" id="c-custid" class="fi" placeholder="Username or customer ID"></div>
+      <div class="fg"><label>Portal / Website URL</label><input type="url" id="c-portal" class="fi" placeholder="https://..."></div>
+    </div>
+    <div class="fr full">
+      <div class="fg"><label>Notes / Instructions / Steps</label>
+        <textarea id="c-notes" class="fi" rows="4" placeholder="Detailed notes, steps, checklist, credentials hints…"></textarea>
       </div>
     </div>
+    <label class="fcheck"><input type="checkbox" id="c-auto"> Auto-pay / Auto-renew enabled</label>
 
-    <div class="form-row">
-      <div class="form-group">
-        <label>Customer ID</label>
-        <input type="text" id="bill-customer-id" class="form-input" placeholder="Login ID / Customer ID">
-      </div>
-      <div class="form-group">
-        <label>Portal URL</label>
-        <input type="url" id="bill-portal" class="form-input" placeholder="https://portal.provider.com">
-      </div>
-    </div>
-
-    <div class="form-row full">
-      <div class="form-group">
-        <label>Notes</label>
-        <textarea id="bill-notes" class="form-input" rows="2" placeholder="Connection speed, plan details, etc."></textarea>
-      </div>
-    </div>
-
-    <label class="form-check">
-      <input type="checkbox" id="bill-autopay"> Auto-pay enabled
-    </label>
-
-    <div class="modal-actions">
-      <button class="btn btn-primary" onclick="saveBill()">Save</button>
-      <button class="btn btn-ghost" onclick="closeBillModal()">Cancel</button>
+    <div class="modal-foot">
+      <button class="btn btn-primary" onclick="saveCard()">Save</button>
+      <button class="btn btn-ghost" onclick="closeCardModal()">Cancel</button>
     </div>
   </div>
 </div>
 
-<!-- ═══════════ ADD PROPERTY MODAL ═══════════ -->
-<div id="prop-modal" class="modal-overlay hidden">
+<!-- ═══════ CONTEXT MODAL ═══════ -->
+<div id="ctx-modal" class="modal-overlay hidden">
   <div class="modal-card" style="width:380px;">
-    <div class="modal-header">
-      <h3>Add Property</h3>
-      <button class="modal-close" onclick="closePropModal()"><i data-feather="x"></i></button>
-    </div>
-    <div class="form-row full">
-      <div class="form-group">
-        <label>Name *</label>
-        <input type="text" id="prop-name" class="form-input" placeholder="e.g., Home, Parents' House, Office">
-      </div>
-    </div>
-    <div class="form-row full">
-      <div class="form-group">
-        <label>Address</label>
-        <input type="text" id="prop-address" class="form-input" placeholder="Optional address or description">
-      </div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-primary" onclick="saveProperty()">Add Property</button>
-      <button class="btn btn-ghost" onclick="closePropModal()">Cancel</button>
-    </div>
+    <div class="modal-hdr"><h3>Add Context</h3><button class="modal-x" onclick="closeCtxModal()"><i data-feather="x"></i></button></div>
+    <div class="fr full"><div class="fg"><label>Name *</label><input type="text" id="ctx-name" class="fi" placeholder="e.g., Home, Office, Parents' House, Car"></div></div>
+    <div class="fr full"><div class="fg"><label>Description</label><input type="text" id="ctx-addr" class="fi" placeholder="Address, details, or description"></div></div>
+    <div class="modal-foot"><button class="btn btn-primary" onclick="saveCtx()">Add</button><button class="btn btn-ghost" onclick="closeCtxModal()">Cancel</button></div>
   </div>
 </div>
 
-<!-- ═══════════ PAYMENT HISTORY MODAL ═══════════ -->
-<div id="history-modal" class="modal-overlay hidden">
+<!-- ═══════ HISTORY MODAL ═══════ -->
+<div id="hist-modal" class="modal-overlay hidden">
   <div class="modal-card">
-    <div class="modal-header">
-      <h3 id="history-title">Payment History</h3>
-      <button class="modal-close" onclick="closeHistoryModal()"><i data-feather="x"></i></button>
+    <div class="modal-hdr"><h3 id="hist-title">Activity Log</h3><button class="modal-x" onclick="closeHist()"><i data-feather="x"></i></button></div>
+    <div class="hist-list" id="hist-list"></div>
+    <hr style="margin:12px 0;border:none;border-top:1px solid var(--rc-border);">
+    <h4 style="font-size:12px;font-weight:600;color:var(--rc-text2);margin-bottom:8px;">Log Entry</h4>
+    <div class="fr">
+      <div class="fg"><label>Date</label><input type="date" id="h-date" class="fi"></div>
+      <div class="fg"><label>Amount</label><input type="number" id="h-amt" class="fi" step="0.01"></div>
     </div>
-    <div class="history-list" id="history-list"></div>
-    <hr style="margin:12px 0;border:none;border-top:1px solid var(--py-border);">
-    <h4 style="font-size:13px;font-weight:600;color:var(--py-text2);margin-bottom:8px;">Log Payment</h4>
-    <div class="form-row">
-      <div class="form-group"><label>Date</label><input type="date" id="hist-date" class="form-input"></div>
-      <div class="form-group"><label>Amount</label><input type="number" id="hist-amount" class="form-input" step="0.01"></div>
+    <div class="fr">
+      <div class="fg"><label>Method</label><input type="text" id="h-method" class="fi" placeholder="How it was done"></div>
+      <div class="fg"><label>Reference / Note</label><input type="text" id="h-ref" class="fi" placeholder="Transaction ID, notes"></div>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label>Method</label><input type="text" id="hist-method" class="form-input" placeholder="GPay, Bank transfer"></div>
-      <div class="form-group"><label>Reference</label><input type="text" id="hist-ref" class="form-input" placeholder="Transaction ID"></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-primary" onclick="logPayment()">Log Payment</button>
-    </div>
+    <div class="modal-foot"><button class="btn btn-primary" onclick="logEntry()">Log</button></div>
   </div>
 </div>
 
 <script>
-const CATEGORIES = {
-  'Broadband':'wifi','Electricity':'zap','Water':'droplet','Gas':'flame',
-  'Phone':'phone','DTH':'tv','Insurance':'shield','Rent':'home',
-  'Maintenance':'tool','Tax':'file-text','Subscription':'star','Other':'more-horizontal'
-};
+const CAT_ICONS={Broadband:'wifi',Electricity:'zap',Water:'droplet',Gas:'flame',Phone:'phone',DTH:'tv',
+  Insurance:'shield',Rent:'home',Maintenance:'tool',Tax:'file-text',Subscription:'star',Vehicle:'truck',
+  Health:'heart',IT:'server',Banking:'dollar-sign',Government:'flag',Education:'book',Travel:'map-pin',
+  SOP:'clipboard',Credentials:'lock',Emergency:'alert-circle',Other:'more-horizontal'};
 
-let properties = [];
-let bills = [];
-let currentPropId = 'all';
-let editingBillId = null;
-let historyBillId = null;
+let contexts=[],cards=[],curCtx='all',editId=null,histId=null;
 
-/* ── Init ── */
-async function init() {
-  await loadProperties();
-  await loadBills();
-  loadSummary();
-  feather.replace();
+async function init(){await loadCtx();await loadCards();loadSummary();feather.replace();}
+
+/* ── Contexts ── */
+async function loadCtx(){const r=await fetch("/api/payments/properties");contexts=await r.json();renderCtxTabs();}
+function renderCtxTabs(){
+  const c=document.getElementById("ctx-tabs");
+  let h=`<button class="ctx-tab ${curCtx==='all'?'active':''}" onclick="selCtx('all')">All</button>`;
+  contexts.forEach(p=>{h+=`<button class="ctx-tab ${curCtx===p.id?'active':''}" onclick="selCtx('${p.id}')">${esc(p.name)}</button>`;});
+  h+=`<button class="ctx-tab add" onclick="openCtxModal()">+ Add</button>`;
+  c.innerHTML=h;
+  // Update card modal context dropdown
+  const sel=document.getElementById("c-ctx");
+  if(sel) sel.innerHTML=`<option value="">No context</option>`+contexts.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+}
+function selCtx(id){curCtx=id;renderCtxTabs();renderCards();}
+function openCtxModal(){document.getElementById("ctx-modal").classList.remove("hidden");document.getElementById("ctx-name").focus();}
+function closeCtxModal(){document.getElementById("ctx-modal").classList.add("hidden");}
+async function saveCtx(){
+  const n=document.getElementById("ctx-name").value.trim();if(!n){showToast("Name required","error");return;}
+  await fetch("/api/payments/properties",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:n,address:document.getElementById("ctx-addr").value.trim()})});
+  document.getElementById("ctx-name").value="";document.getElementById("ctx-addr").value="";
+  closeCtxModal();await loadCtx();showToast("Context added","success");
 }
 
-/* ── Properties ── */
-async function loadProperties() {
-  const res = await fetch("/api/payments/properties");
-  properties = await res.json();
-  renderPropTabs();
+/* ── Cards ── */
+async function loadCards(){const r=await fetch("/api/payments/bills");cards=await r.json();renderCards();populateCatFilter();}
+function populateCatFilter(){
+  const cats=[...new Set(cards.map(c=>c.category).filter(Boolean))].sort();
+  const sel=document.getElementById("cat-filter");
+  sel.innerHTML=`<option value="">All Categories</option>`+cats.map(c=>`<option value="${c}">${c}</option>`).join('');
 }
+function renderCards(){
+  const container=document.getElementById("cards-container");
+  const search=(document.getElementById("search-box")?.value||"").toLowerCase();
+  const catF=document.getElementById("cat-filter")?.value||"";
+  let filtered=cards;
+  if(curCtx!=='all') filtered=filtered.filter(c=>c.property_id===curCtx);
+  if(catF) filtered=filtered.filter(c=>c.category===catF);
+  if(search) filtered=filtered.filter(c=>[c.provider,c.category,c.notes,c.account_number,c.customer_id].some(f=>(f||"").toLowerCase().includes(search)));
 
-function renderPropTabs() {
-  const c = document.getElementById("prop-tabs");
-  let html = `<button class="prop-tab ${currentPropId==='all'?'active':''}" onclick="selectProp('all')">All Properties</button>`;
-  properties.forEach(p => {
-    html += `<button class="prop-tab ${currentPropId===p.id?'active':''}" onclick="selectProp('${p.id}')">${esc(p.name)}</button>`;
-  });
-  html += `<button class="prop-tab add-tab" onclick="openPropModal()">+ Add Property</button>`;
-  c.innerHTML = html;
-}
+  if(!filtered.length){container.innerHTML='<div class="empty">No reference cards found. Add one to get started.</div>';return;}
 
-function selectProp(id) {
-  currentPropId = id;
-  renderPropTabs();
-  renderBills();
-}
+  const groups={};
+  filtered.forEach(c=>{const cat=c.category||"Other";(groups[cat]=groups[cat]||[]).push(c);});
 
-function openPropModal() { document.getElementById("prop-modal").classList.remove("hidden"); document.getElementById("prop-name").focus(); }
-function closePropModal() { document.getElementById("prop-modal").classList.add("hidden"); }
-
-async function saveProperty() {
-  const name = document.getElementById("prop-name").value.trim();
-  const address = document.getElementById("prop-address").value.trim();
-  if (!name) { showToast("Name required","error"); return; }
-  await fetch("/api/payments/properties",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,address})});
-  document.getElementById("prop-name").value="";
-  document.getElementById("prop-address").value="";
-  closePropModal();
-  await loadProperties();
-  showToast("Property added","success");
-}
-
-/* ── Bills ── */
-async function loadBills() {
-  const params = currentPropId !== 'all' ? `?property_id=${currentPropId}` : '';
-  const res = await fetch(`/api/payments/bills${params}`);
-  bills = await res.json();
-  renderBills();
-}
-
-function renderBills() {
-  const c = document.getElementById("bills-container");
-  let filtered = currentPropId === 'all' ? bills : bills.filter(b => b.property_id === currentPropId);
-
-  if (!filtered.length) {
-    c.innerHTML = '<div class="empty-state">No bills yet. Add your first bill to start tracking payments.</div>';
-    return;
-  }
-
-  // Group by category
-  const groups = {};
-  filtered.forEach(b => {
-    const cat = b.category || "Other";
-    (groups[cat] = groups[cat] || []).push(b);
-  });
-
-  let html = '';
-  Object.keys(groups).sort().forEach(cat => {
-    const icon = CATEGORIES[cat] || 'file';
-    const items = groups[cat];
-    html += `<div class="cat-section">
-      <div class="cat-header">
-        <i data-feather="${icon}" class="cat-icon" style="width:18px;height:18px"></i>
-        <span class="cat-name">${esc(cat)}</span>
-        <span class="cat-count">${items.length}</span>
-      </div>
-      <div class="bill-grid">`;
-
-    items.forEach(b => {
-      const propName = properties.find(p=>p.id===b.property_id)?.name || '';
-      html += renderBillCard(b, propName);
+  let html='';
+  Object.keys(groups).sort().forEach(cat=>{
+    const icon=CAT_ICONS[cat]||'file';const items=groups[cat];
+    html+=`<div class="cat-section"><div class="cat-hdr"><i data-feather="${icon}"></i><span class="cat-name">${esc(cat)}</span><span class="cat-cnt">${items.length}</span></div><div class="card-grid">`;
+    items.forEach(b=>{
+      const ctx=contexts.find(p=>p.id===b.property_id);
+      const amt=b.amount?`₹${Number(b.amount).toLocaleString('en-IN')}`:'';
+      html+=`<div class="ref-card ${b.status==='inactive'?'inactive':''}" data-id="${b.id}">
+        <div class="card-top"><div class="card-title">${esc(b.provider)}</div>${amt?`<div class="card-amt">${amt}</div>`:''}</div>
+        ${ctx?`<div class="card-ctx">${esc(ctx.name)}${ctx.address?' — '+esc(ctx.address):''}</div>`:''}
+        <div class="card-tags">
+          ${b.billing_cycle?`<span class="ctag cycle">${esc(b.billing_cycle)}</span>`:''}
+          ${b.due_day?`<span class="ctag due">Due: ${b.due_day}th</span>`:''}
+          ${b.auto_pay?`<span class="ctag auto">Auto</span>`:''}
+          ${b.payment_method?`<span class="ctag method">${esc(b.payment_method)}</span>`:''}
+          <span class="ctag status-${b.status||'active'}">${b.status||'active'}</span>
+        </div>
+        <div class="card-info">
+          ${b.account_number?`<span>Ref: <span class="mono">${esc(b.account_number)}</span></span>`:''}
+          ${b.customer_id?`<span>ID: ${esc(b.customer_id)}</span>`:''}
+        </div>
+        ${b.notes?`<div class="card-notes">${esc(b.notes)}</div>`:''}
+        <div class="card-btns">
+          ${b.portal_url?`<a href="${esc(b.portal_url)}" target="_blank" class="card-btn" onclick="event.stopPropagation()"><i data-feather="external-link"></i> Open</a>`:''}
+          <button class="card-btn" onclick="openHist('${b.id}','${esc(b.provider)}')"><i data-feather="clock"></i> Log</button>
+          <button class="card-btn" onclick="editCard('${b.id}')"><i data-feather="edit-2"></i> Edit</button>
+          <button class="card-btn del" onclick="delCard('${b.id}')"><i data-feather="trash-2"></i></button>
+        </div>
+      </div>`;
     });
-
-    html += `</div></div>`;
+    html+=`</div></div>`;
   });
-
-  c.innerHTML = html;
-  feather.replace();
+  container.innerHTML=html;feather.replace();
 }
 
-function renderBillCard(b, propName) {
-  const amt = b.amount ? `₹${Number(b.amount).toLocaleString('en-IN')}` : '—';
-  return `
-  <div class="bill-card ${b.status==='inactive'?'inactive':''}" data-id="${b.id}">
-    <div class="bill-top">
-      <div>
-        <div class="bill-provider">${esc(b.provider)}</div>
-        ${propName ? `<div style="font-size:11px;color:var(--py-text3)">${esc(propName)}</div>` : ''}
-      </div>
-      <div class="bill-amount">${amt}</div>
-    </div>
-    <div class="bill-details">
-      <span class="bill-tag cycle">${esc(b.billing_cycle||'monthly')}</span>
-      ${b.due_day?`<span class="bill-tag due">Due: ${b.due_day}th</span>`:''}
-      ${b.auto_pay?`<span class="bill-tag autopay">Auto-pay</span>`:''}
-      ${b.payment_method?`<span class="bill-tag method">${esc(b.payment_method)}</span>`:''}
-    </div>
-    <div class="bill-meta">
-      ${b.account_number?`<span>Account: <span class="bill-acct">${esc(b.account_number)}</span></span>`:''}
-      ${b.customer_id?`<span>Customer ID: ${esc(b.customer_id)}</span>`:''}
-      ${b.notes?`<span>${esc(b.notes)}</span>`:''}
-    </div>
-    <div class="bill-actions">
-      ${b.portal_url?`<a href="${esc(b.portal_url)}" target="_blank" class="bill-action" onclick="event.stopPropagation()"><i data-feather="external-link"></i> Portal</a>`:''}
-      <button class="bill-action" onclick="event.stopPropagation();openHistory('${b.id}','${esc(b.provider)}')"><i data-feather="clock"></i> History</button>
-      <button class="bill-action" onclick="event.stopPropagation();editBill('${b.id}')"><i data-feather="edit-2"></i> Edit</button>
-      <button class="bill-action danger" onclick="event.stopPropagation();deleteBill('${b.id}')"><i data-feather="trash-2"></i></button>
-    </div>
-  </div>`;
+/* ── Card Modal ── */
+function openCardModal(){
+  editId=null;document.getElementById("card-modal-title").textContent="Add Reference Card";
+  renderCtxTabs(); // refresh dropdown
+  ["c-title","c-acct","c-amt","c-due","c-method","c-custid","c-portal","c-notes"].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  document.getElementById("c-cycle").value="";document.getElementById("c-cat").value="Broadband";
+  document.getElementById("c-auto").checked=false;
+  if(curCtx!=='all'){const sel=document.getElementById("c-ctx");if(sel)sel.value=curCtx;}
+  document.getElementById("card-modal").classList.remove("hidden");feather.replace();
 }
-
-/* ── Bill Modal ── */
-function openBillModal() {
-  editingBillId = null;
-  document.getElementById("bill-modal-title").textContent = "Add Bill";
-  // Populate property dropdown
-  const sel = document.getElementById("bill-property");
-  sel.innerHTML = properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  if (currentPropId !== 'all') sel.value = currentPropId;
-  // Clear fields
-  ["bill-provider","bill-account","bill-amount","bill-due-day","bill-method","bill-customer-id","bill-portal","bill-notes"].forEach(id=>{
-    const el=document.getElementById(id);if(el)el.value='';
-  });
-  document.getElementById("bill-cycle").value="monthly";
-  document.getElementById("bill-category").value="Broadband";
-  document.getElementById("bill-autopay").checked=false;
-  document.getElementById("bill-modal").classList.remove("hidden");
-  feather.replace();
+function editCard(id){
+  const b=cards.find(x=>x.id===id);if(!b)return;editId=id;
+  document.getElementById("card-modal-title").textContent="Edit Card";
+  renderCtxTabs();
+  const sel=document.getElementById("c-ctx");if(sel)sel.value=b.property_id||'';
+  document.getElementById("c-cat").value=b.category||'Other';
+  document.getElementById("c-title").value=b.provider||'';
+  document.getElementById("c-acct").value=b.account_number||'';
+  document.getElementById("c-amt").value=b.amount||'';
+  document.getElementById("c-cycle").value=b.billing_cycle||'';
+  document.getElementById("c-due").value=b.due_day||'';
+  document.getElementById("c-method").value=b.payment_method||'';
+  document.getElementById("c-custid").value=b.customer_id||'';
+  document.getElementById("c-portal").value=b.portal_url||'';
+  document.getElementById("c-notes").value=b.notes||'';
+  document.getElementById("c-auto").checked=!!b.auto_pay;
+  document.getElementById("card-modal").classList.remove("hidden");feather.replace();
 }
-
-function editBill(id) {
-  const b = bills.find(x=>x.id===id);
-  if(!b)return;
-  editingBillId = id;
-  document.getElementById("bill-modal-title").textContent = "Edit Bill";
-  const sel = document.getElementById("bill-property");
-  sel.innerHTML = properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  sel.value = b.property_id||'';
-  document.getElementById("bill-category").value = b.category||'Broadband';
-  document.getElementById("bill-provider").value = b.provider||'';
-  document.getElementById("bill-account").value = b.account_number||'';
-  document.getElementById("bill-amount").value = b.amount||'';
-  document.getElementById("bill-cycle").value = b.billing_cycle||'monthly';
-  document.getElementById("bill-due-day").value = b.due_day||'';
-  document.getElementById("bill-method").value = b.payment_method||'';
-  document.getElementById("bill-customer-id").value = b.customer_id||'';
-  document.getElementById("bill-portal").value = b.portal_url||'';
-  document.getElementById("bill-notes").value = b.notes||'';
-  document.getElementById("bill-autopay").checked = !!b.auto_pay;
-  document.getElementById("bill-modal").classList.remove("hidden");
-  feather.replace();
-}
-
-function closeBillModal() { document.getElementById("bill-modal").classList.add("hidden"); }
-
-async function saveBill() {
-  const payload = {
-    property_id: document.getElementById("bill-property").value,
-    category: document.getElementById("bill-category").value,
-    provider: document.getElementById("bill-provider").value.trim(),
-    account_number: document.getElementById("bill-account").value.trim(),
-    amount: document.getElementById("bill-amount").value||null,
-    billing_cycle: document.getElementById("bill-cycle").value,
-    due_day: document.getElementById("bill-due-day").value||null,
-    payment_method: document.getElementById("bill-method").value.trim(),
-    customer_id: document.getElementById("bill-customer-id").value.trim(),
-    portal_url: document.getElementById("bill-portal").value.trim(),
-    notes: document.getElementById("bill-notes").value.trim(),
-    auto_pay: document.getElementById("bill-autopay").checked,
+function closeCardModal(){document.getElementById("card-modal").classList.add("hidden");}
+async function saveCard(){
+  const p={
+    property_id:document.getElementById("c-ctx").value||null,
+    category:document.getElementById("c-cat").value,
+    provider:document.getElementById("c-title").value.trim(),
+    account_number:document.getElementById("c-acct").value.trim(),
+    amount:document.getElementById("c-amt").value||null,
+    billing_cycle:document.getElementById("c-cycle").value||null,
+    due_day:document.getElementById("c-due").value||null,
+    payment_method:document.getElementById("c-method").value.trim(),
+    customer_id:document.getElementById("c-custid").value.trim(),
+    portal_url:document.getElementById("c-portal").value.trim(),
+    notes:document.getElementById("c-notes").value.trim(),
+    auto_pay:document.getElementById("c-auto").checked,
   };
-  if(!payload.provider){showToast("Provider is required","error");return;}
-
-  const url = editingBillId ? `/api/payments/bills/${editingBillId}` : '/api/payments/bills';
-  const method = editingBillId ? 'PUT' : 'POST';
-  await fetch(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  closeBillModal();
-  await loadBills();
-  loadSummary();
-  showToast(editingBillId?"Bill updated":"Bill added","success");
+  if(!p.provider){showToast("Title is required","error");return;}
+  const url=editId?`/api/payments/bills/${editId}`:'/api/payments/bills';
+  await fetch(url,{method:editId?'PUT':'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  closeCardModal();await loadCards();loadSummary();showToast(editId?"Updated":"Added","success");
+}
+function delCard(id){
+  const b=cards.find(x=>x.id===id);cards=cards.filter(x=>x.id!==id);renderCards();
+  let gone=false;const t=setTimeout(async()=>{await fetch(`/api/payments/bills/${id}`,{method:'DELETE'});gone=true;loadSummary();},4000);
+  showUndo(esc(b?.provider||'Card')+' deleted',()=>{clearTimeout(t);if(!gone&&b){cards.push(b);renderCards();showToast("Restored","success");}});
 }
 
-function deleteBill(id) {
-  const b = bills.find(x=>x.id===id);
-  bills = bills.filter(x=>x.id!==id);
-  renderBills();
-  // Undo pattern
-  let deleted=false;
-  const timer=setTimeout(async()=>{
-    await fetch(`/api/payments/bills/${id}`,{method:'DELETE'});
-    deleted=true;loadSummary();
-  },4000);
-  showUndoToast(`${b?.provider||'Bill'} deleted`,()=>{
-    clearTimeout(timer);
-    if(!deleted&&b){bills.push(b);renderBills();showToast("Restored","success");}
-  });
+/* ── History ── */
+function openHist(id,name){
+  histId=id;document.getElementById("hist-title").textContent=name+' — Activity Log';
+  document.getElementById("h-date").value=new Date().toISOString().split('T')[0];
+  const b=cards.find(x=>x.id===id);document.getElementById("h-amt").value=b?.amount||'';
+  document.getElementById("h-method").value=b?.payment_method||'';document.getElementById("h-ref").value='';
+  loadHist(id);document.getElementById("hist-modal").classList.remove("hidden");
 }
-
-function showUndoToast(msg,onUndo){
-  const old=document.getElementById("undo-toast");if(old)old.remove();
-  const t=document.createElement("div");t.id="undo-toast";
-  Object.assign(t.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,0.9)",color:"#fff",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,0.25)"});
-  t.innerHTML=`<span>${msg}</span><button style="background:none;border:1px solid rgba(255,255,255,0.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>`;
-  t.querySelector("button").onclick=()=>{onUndo();t.remove();};
-  document.body.appendChild(t);
-  setTimeout(()=>{if(t.parentNode)t.remove();},4500);
+function closeHist(){document.getElementById("hist-modal").classList.add("hidden");}
+async function loadHist(id){
+  const r=await fetch(`/api/payments/history/${id}`);const items=await r.json();
+  const c=document.getElementById("hist-list");
+  if(!items.length){c.innerHTML='<div style="color:var(--rc-text3);font-size:12px;padding:12px 0">No entries yet.</div>';return;}
+  c.innerHTML=items.map(h=>`<div class="hist-item"><span class="hist-date">${h.paid_date||''}</span><span class="hist-amt">${h.amount?'₹'+Number(h.amount).toLocaleString('en-IN'):''}</span><span class="hist-ref">${esc(h.method||'')} ${h.reference?'· '+esc(h.reference):''} ${h.notes?'· '+esc(h.notes):''}</span></div>`).join('');
 }
-
-/* ── Payment History ── */
-function openHistory(billId,provider) {
-  historyBillId=billId;
-  document.getElementById("history-title").textContent=`${provider} — Payment History`;
-  document.getElementById("hist-date").value=new Date().toISOString().split('T')[0];
-  const b=bills.find(x=>x.id===billId);
-  document.getElementById("hist-amount").value=b?.amount||'';
-  document.getElementById("hist-method").value=b?.payment_method||'';
-  document.getElementById("hist-ref").value='';
-  loadHistory(billId);
-  document.getElementById("history-modal").classList.remove("hidden");
-}
-function closeHistoryModal(){document.getElementById("history-modal").classList.add("hidden");}
-
-async function loadHistory(billId) {
-  const res=await fetch(`/api/payments/history/${billId}`);
-  const items=await res.json();
-  const c=document.getElementById("history-list");
-  if(!items.length){c.innerHTML='<div style="color:var(--py-text3);font-size:13px;padding:12px 0;">No payments logged yet.</div>';return;}
-  c.innerHTML=items.map(h=>`
-    <div class="history-item">
-      <span class="history-date">${h.paid_date||''}</span>
-      <span class="history-amount">₹${Number(h.amount||0).toLocaleString('en-IN')}</span>
-      <span class="history-ref">${esc(h.method||'')} ${h.reference?'· '+esc(h.reference):''}</span>
-    </div>
-  `).join('');
-}
-
-async function logPayment() {
-  if(!historyBillId)return;
-  const payload={
-    bill_id:historyBillId,
-    paid_date:document.getElementById("hist-date").value,
-    amount:document.getElementById("hist-amount").value||null,
-    method:document.getElementById("hist-method").value.trim(),
-    reference:document.getElementById("hist-ref").value.trim(),
-  };
-  await fetch("/api/payments/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-  loadHistory(historyBillId);
-  showToast("Payment logged","success");
+async function logEntry(){
+  if(!histId)return;
+  await fetch("/api/payments/history",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+    bill_id:histId,paid_date:document.getElementById("h-date").value,
+    amount:document.getElementById("h-amt").value||null,
+    method:document.getElementById("h-method").value.trim(),
+    reference:document.getElementById("h-ref").value.trim(),
+  })});
+  loadHist(histId);showToast("Logged","success");
 }
 
 /* ── Summary ── */
-async function loadSummary() {
-  try{
-    const res=await fetch("/api/payments/summary");
-    const d=await res.json();
-    document.getElementById("ov-monthly").textContent=`₹${Number(d.total_monthly||0).toLocaleString('en-IN')}`;
-    document.getElementById("ov-active").textContent=d.active_bills||0;
+async function loadSummary(){
+  try{const r=await fetch("/api/payments/summary");const d=await r.json();
+    document.getElementById("ov-total").textContent=d.active_cards||0;
+    document.getElementById("ov-cost").textContent=d.total_monthly?`₹${Number(d.total_monthly).toLocaleString('en-IN')}`:'—';
     document.getElementById("ov-upcoming").textContent=d.upcoming?.length||0;
     document.getElementById("ov-overdue").textContent=d.overdue?.length||0;
-    // Alerts
-    const alertRow=document.getElementById("alert-row");
     let alerts='';
-    (d.overdue||[]).forEach(a=>{alerts+=`<span class="alert-chip overdue">⚠ ${esc(a.provider)} overdue (${Math.abs(a.days_until)}d)</span>`;});
+    (d.overdue||[]).forEach(a=>{alerts+=`<span class="alert-chip overdue">⚠ ${esc(a.provider)} overdue</span>`;});
     (d.upcoming||[]).forEach(a=>{alerts+=`<span class="alert-chip upcoming">⏰ ${esc(a.provider)} due in ${a.days_until}d</span>`;});
-    alertRow.innerHTML=alerts;
-  }catch(e){console.warn("Summary load failed",e);}
+    document.getElementById("alert-row").innerHTML=alerts;
+  }catch(e){console.warn(e);}
 }
 
+/* ── Utils ── */
 function esc(s){const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;}
+function showUndo(msg,onUndo){
+  const old=document.getElementById("undo-t");if(old)old.remove();
+  const t=document.createElement("div");t.id="undo-t";
+  Object.assign(t.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,.9)",color:"#fff",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,.25)"});
+  t.innerHTML=`<span>${msg}</span><button style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>`;
+  t.querySelector("button").onclick=()=>{onUndo();t.remove();};
+  document.body.appendChild(t);setTimeout(()=>{if(t.parentNode)t.remove();},4500);
+}
 
 init();
 </script>

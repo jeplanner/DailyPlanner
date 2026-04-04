@@ -1,3 +1,7 @@
+"""
+Reference Cards — A hub for recurring tasks, important info, SOPs, credentials, and checklists.
+Organized by context (Home, Office, etc.) and category (Bills, IT, Vehicle, Health, etc.)
+"""
 import uuid
 from datetime import date, datetime
 from flask import Blueprint, request, jsonify, session, render_template
@@ -19,7 +23,7 @@ def payments_page():
 
 
 # ═══════════════════════════════════════════════════
-# PROPERTIES (homes / locations)
+# CONTEXTS (homes / offices / vehicles / etc.)
 # ═══════════════════════════════════════════════════
 
 @payments_bp.route("/api/payments/properties", methods=["GET"])
@@ -38,7 +42,7 @@ def add_property():
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
     if not name:
-        return jsonify({"error": "Property name required"}), 400
+        return jsonify({"error": "Name required"}), 400
 
     rows = post("payment_properties", {
         "id": str(uuid.uuid4()),
@@ -70,7 +74,6 @@ def update_property(prop_id):
 @payments_bp.route("/api/payments/properties/<prop_id>", methods=["DELETE"])
 @login_required
 def delete_property(prop_id):
-    # Delete all bills under this property first
     delete("payment_bills",
            params={"property_id": f"eq.{prop_id}", "user_id": f"eq.{session['user_id']}"})
     delete("payment_properties",
@@ -79,7 +82,7 @@ def delete_property(prop_id):
 
 
 # ═══════════════════════════════════════════════════
-# BILLS (recurring payment references)
+# REFERENCE CARDS (bills, SOPs, credentials, checklists, anything)
 # ═══════════════════════════════════════════════════
 
 @payments_bp.route("/api/payments/bills", methods=["GET"])
@@ -87,6 +90,8 @@ def delete_property(prop_id):
 def list_bills():
     user_id = session["user_id"]
     prop_id = request.args.get("property_id")
+    category = request.args.get("category")
+    search = request.args.get("q", "").strip()
 
     params = {
         "user_id": f"eq.{user_id}",
@@ -94,8 +99,21 @@ def list_bills():
     }
     if prop_id:
         params["property_id"] = f"eq.{prop_id}"
+    if category:
+        params["category"] = f"eq.{category}"
 
     rows = get("payment_bills", params=params) or []
+
+    # Client-side search fallback (Supabase free tier doesn't have full-text)
+    if search:
+        s = search.lower()
+        rows = [r for r in rows if
+                s in (r.get("provider") or "").lower() or
+                s in (r.get("category") or "").lower() or
+                s in (r.get("notes") or "").lower() or
+                s in (r.get("account_number") or "").lower() or
+                s in (r.get("customer_id") or "").lower()]
+
     return jsonify(rows)
 
 
@@ -104,27 +122,27 @@ def list_bills():
 def add_bill():
     data = request.get_json() or {}
 
-    required = ["property_id", "category", "provider"]
-    for f in required:
-        if not data.get(f, "").strip():
-            return jsonify({"error": f"{f} is required"}), 400
+    if not (data.get("category") or "").strip():
+        return jsonify({"error": "Category is required"}), 400
+    if not (data.get("provider") or "").strip():
+        return jsonify({"error": "Title is required"}), 400
 
     bill = {
         "id": str(uuid.uuid4()),
         "user_id": session["user_id"],
-        "property_id": data["property_id"],
+        "property_id": data.get("property_id") or None,
         "category": data["category"].strip(),
         "provider": data["provider"].strip(),
-        "account_number": (data.get("account_number") or "").strip(),
+        "account_number": (data.get("account_number") or "").strip() or None,
         "amount": float(data["amount"]) if data.get("amount") else None,
         "currency": data.get("currency", "INR"),
-        "billing_cycle": data.get("billing_cycle", "monthly"),
+        "billing_cycle": data.get("billing_cycle") or None,
         "due_day": int(data["due_day"]) if data.get("due_day") else None,
         "auto_pay": bool(data.get("auto_pay", False)),
-        "payment_method": (data.get("payment_method") or "").strip(),
-        "portal_url": (data.get("portal_url") or "").strip(),
-        "customer_id": (data.get("customer_id") or "").strip(),
-        "notes": (data.get("notes") or "").strip(),
+        "payment_method": (data.get("payment_method") or "").strip() or None,
+        "portal_url": (data.get("portal_url") or "").strip() or None,
+        "customer_id": (data.get("customer_id") or "").strip() or None,
+        "notes": (data.get("notes") or "").strip() or None,
         "status": data.get("status", "active"),
     }
 
@@ -141,10 +159,7 @@ def update_bill(bill_id):
         "billing_cycle", "due_day", "auto_pay", "payment_method",
         "portal_url", "customer_id", "notes", "status", "property_id",
     ]
-    payload = {}
-    for f in allowed_fields:
-        if f in data:
-            payload[f] = data[f]
+    payload = {f: data[f] for f in allowed_fields if f in data}
 
     if not payload:
         return jsonify({"error": "Nothing to update"}), 400
@@ -158,7 +173,6 @@ def update_bill(bill_id):
 @payments_bp.route("/api/payments/bills/<bill_id>", methods=["DELETE"])
 @login_required
 def delete_bill(bill_id):
-    # Delete payment history for this bill
     delete("payment_history",
            params={"bill_id": f"eq.{bill_id}", "user_id": f"eq.{session['user_id']}"})
     delete("payment_bills",
@@ -167,7 +181,7 @@ def delete_bill(bill_id):
 
 
 # ═══════════════════════════════════════════════════
-# PAYMENT HISTORY (actual payments logged)
+# ACTIVITY LOG (payment history, task completions, notes)
 # ═══════════════════════════════════════════════════
 
 @payments_bp.route("/api/payments/history/<bill_id>", methods=["GET"])
@@ -177,7 +191,7 @@ def get_history(bill_id):
         "bill_id": f"eq.{bill_id}",
         "user_id": f"eq.{session['user_id']}",
         "order": "paid_date.desc",
-        "limit": 24,
+        "limit": 50,
     }) or []
     return jsonify(rows)
 
@@ -196,9 +210,9 @@ def log_payment():
         "bill_id": bill_id,
         "paid_date": data.get("paid_date") or datetime.now(IST).date().isoformat(),
         "amount": float(data["amount"]) if data.get("amount") else None,
-        "method": (data.get("method") or "").strip(),
-        "reference": (data.get("reference") or "").strip(),
-        "notes": (data.get("notes") or "").strip(),
+        "method": (data.get("method") or "").strip() or None,
+        "reference": (data.get("reference") or "").strip() or None,
+        "notes": (data.get("notes") or "").strip() or None,
     }
 
     rows = post("payment_history", entry)
@@ -226,41 +240,52 @@ def payment_summary():
 
     for b in bills:
         amt = b.get("amount") or 0
-        if b.get("billing_cycle") == "monthly":
+        cycle = b.get("billing_cycle") or ""
+        if cycle == "monthly":
             total_monthly += amt
-        elif b.get("billing_cycle") == "quarterly":
+        elif cycle == "quarterly":
             total_monthly += amt / 3
-        elif b.get("billing_cycle") == "yearly":
+        elif cycle in ("half-yearly", "half_yearly"):
+            total_monthly += amt / 6
+        elif cycle == "yearly":
             total_monthly += amt / 12
 
         due_day = b.get("due_day")
         if due_day:
-            # Compute next due date
-            if today.day <= due_day:
-                next_due = today.replace(day=min(due_day, 28))
-            else:
-                m = today.month + 1 if today.month < 12 else 1
-                y = today.year if today.month < 12 else today.year + 1
-                next_due = date(y, m, min(due_day, 28))
+            try:
+                if today.day <= due_day:
+                    next_due = today.replace(day=min(due_day, 28))
+                else:
+                    m = today.month + 1 if today.month < 12 else 1
+                    y = today.year if today.month < 12 else today.year + 1
+                    next_due = date(y, m, min(due_day, 28))
 
-            days_until = (next_due - today).days
-            info = {
-                "id": b["id"],
-                "provider": b["provider"],
-                "category": b["category"],
-                "amount": amt,
-                "due_date": next_due.isoformat(),
-                "days_until": days_until,
-                "property_id": b.get("property_id"),
-            }
-            if days_until < 0:
-                overdue.append(info)
-            elif days_until <= 7:
-                upcoming.append(info)
+                days_until = (next_due - today).days
+                info = {
+                    "id": b["id"],
+                    "provider": b["provider"],
+                    "category": b["category"],
+                    "amount": amt,
+                    "due_date": next_due.isoformat(),
+                    "days_until": days_until,
+                }
+                if days_until < 0:
+                    overdue.append(info)
+                elif days_until <= 7:
+                    upcoming.append(info)
+            except (ValueError, TypeError):
+                pass
+
+    # Count by category
+    cat_counts = {}
+    for b in bills:
+        c = b.get("category", "Other")
+        cat_counts[c] = cat_counts.get(c, 0) + 1
 
     return jsonify({
         "total_monthly": round(total_monthly, 2),
-        "active_bills": len(bills),
+        "active_cards": len(bills),
         "upcoming": sorted(upcoming, key=lambda x: x["days_until"]),
         "overdue": sorted(overdue, key=lambda x: x["days_until"]),
+        "categories": cat_counts,
     })
