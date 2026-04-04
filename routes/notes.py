@@ -2,8 +2,12 @@
 from flask import Blueprint, abort, jsonify, render_template, request, session
 
 from auth import login_required
-from routes.projects import get_one
 from supabase_client import get, post, update
+
+
+def get_one(table, params):
+    rows = get(table, params=params)
+    return rows[0] if rows else None
 
 notes_bp = Blueprint("notes", __name__)
 @notes_bp.route("/notes/scribble", methods=["GET"])
