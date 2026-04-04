@@ -75,6 +75,8 @@ def add_holding():
         "notes": (data.get("notes") or "").strip() or None,
         "sector": (data.get("sector") or "").strip() or None,
         "held_by": (data.get("held_by") or "").strip() or None,
+        "buy_date": data.get("buy_date") or None,
+        "sell_date": data.get("sell_date") or None,
         # FD / Bond / PPF specific fields
         "institution": (data.get("institution") or "").strip() or None,
         "interest_rate": float(data["interest_rate"]) if data.get("interest_rate") else None,
@@ -97,7 +99,8 @@ def update_holding(hid):
     allowed = [
         "name", "symbol", "asset_type", "exchange", "quantity", "avg_price",
         "current_price", "currency", "folio_number", "broker", "notes", "sector",
-        "held_by", "institution", "interest_rate", "maturity_date", "start_date", "account_ref",
+        "held_by", "buy_date", "sell_date",
+        "institution", "interest_rate", "maturity_date", "start_date", "account_ref",
     ]
     payload = {f: data[f] for f in allowed if f in data}
     if not payload:
@@ -281,6 +284,34 @@ def get_mf_nav(scheme_code):
         logger.warning("AMFI NAV failed for %s: %s", scheme_code, e)
 
     return jsonify({"scheme_code": scheme_code, "nav": None})
+
+
+@portfolio_bp.route("/api/portfolio/stock-info/<symbol>")
+@login_required
+def stock_info(symbol):
+    """Fetch sector/industry from Yahoo Finance for a stock symbol."""
+    try:
+        yf_symbol = symbol if "." in symbol else f"{symbol}.NS"
+        r = http_requests.get(
+            f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{yf_symbol}",
+            params={"modules": "assetProfile,price"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json().get("quoteSummary", {}).get("result", [{}])[0]
+            profile = data.get("assetProfile", {})
+            price = data.get("price", {})
+            return jsonify({
+                "sector": profile.get("sector", ""),
+                "industry": profile.get("industry", ""),
+                "name": price.get("shortName") or price.get("longName", ""),
+                "price": price.get("regularMarketPrice", {}).get("raw"),
+            })
+    except Exception as e:
+        logger.warning("Yahoo stock-info failed for %s: %s", symbol, e)
+
+    return jsonify({"sector": None})
 
 
 @portfolio_bp.route("/api/portfolio/refresh-prices", methods=["POST"])
@@ -521,12 +552,13 @@ def holding_xirr(holding_id):
         elif t["txn_type"] in ("sell", "dividend"):
             cashflows.append((d, abs(amt)))
 
-    # If no transactions, use avg_price as single buy
+    # If no transactions, use buy_date + avg_price as single buy
     if not cashflows:
         avg = float(h.get("avg_price") or 0)
         if avg and qty:
-            buy_date = date.fromisoformat(h["created_at"][:10]) if h.get("created_at") else datetime.now(IST).date()
-            cashflows.append((buy_date, -(qty * avg)))
+            bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
+            buy_dt = date.fromisoformat(bd) if bd else datetime.now(IST).date()
+            cashflows.append((buy_dt, -(qty * avg)))
 
     # Add current value as final "sell"
     if qty > 0 and cmp > 0:
@@ -535,6 +567,81 @@ def holding_xirr(holding_id):
     xirr = _xirr(cashflows) if len(cashflows) >= 2 else None
 
     return jsonify({"xirr": xirr, "cashflows_count": len(cashflows)})
+
+
+@portfolio_bp.route("/api/portfolio/xirr-breakdown", methods=["GET"])
+@login_required
+def xirr_breakdown():
+    """XIRR grouped by asset_type and sector."""
+    user_id = session["user_id"]
+
+    holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+    }) or []
+
+    txns = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "order": "txn_date.asc",
+    }) or []
+
+    # Group transactions by holding_id
+    txn_by_holding = {}
+    for t in txns:
+        txn_by_holding.setdefault(t["holding_id"], []).append(t)
+
+    today = datetime.now(IST).date()
+    by_type = {}   # asset_type -> {cashflows}
+    by_sector = {} # sector -> {cashflows}
+    allocation = {} # asset_type -> current_value
+
+    for h in holdings:
+        qty = float(h.get("quantity") or 0)
+        avg = float(h.get("avg_price") or 0)
+        cmp = float(h.get("current_price") or avg)
+        atype = h.get("asset_type", "other")
+        sector = h.get("sector") or "Unknown"
+        current_val = qty * cmp
+
+        allocation[atype] = allocation.get(atype, 0) + current_val
+
+        # Build cashflows for this holding
+        hcf = []
+        for t in txn_by_holding.get(h["id"], []):
+            d = date.fromisoformat(t["txn_date"])
+            amt = float(t.get("amount") or 0)
+            if t["txn_type"] == "buy":
+                hcf.append((d, -abs(amt)))
+            elif t["txn_type"] in ("sell", "dividend"):
+                hcf.append((d, abs(amt)))
+
+        if not hcf and avg and qty:
+            bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
+            buy_dt = date.fromisoformat(bd) if bd else today
+            hcf.append((buy_dt, -(qty * avg)))
+
+        if qty > 0 and cmp > 0:
+            hcf.append((today, current_val))
+
+        # Aggregate into type and sector groups
+        by_type.setdefault(atype, []).extend(hcf)
+        by_sector.setdefault(sector, []).extend(hcf)
+
+    # Calculate XIRR per group
+    type_xirr = {}
+    for k, cfs in by_type.items():
+        x = _xirr(cfs) if len(cfs) >= 2 else None
+        type_xirr[k] = x
+
+    sector_xirr = {}
+    for k, cfs in by_sector.items():
+        x = _xirr(cfs) if len(cfs) >= 2 else None
+        sector_xirr[k] = x
+
+    return jsonify({
+        "by_type": type_xirr,
+        "by_sector": sector_xirr,
+        "allocation": {k: round(v, 2) for k, v in allocation.items()},
+    })
 
 
 @portfolio_bp.route("/api/portfolio/xirr", methods=["GET"])
@@ -563,14 +670,15 @@ def portfolio_xirr():
         elif t["txn_type"] in ("sell", "dividend"):
             cashflows.append((d, abs(amt)))
 
-    # If no transactions, derive from holdings
+    # If no transactions, derive from holdings using buy_date
     if not cashflows:
         for h in holdings:
             qty = float(h.get("quantity") or 0)
             avg = float(h.get("avg_price") or 0)
             if qty and avg:
-                buy_date = date.fromisoformat(h["created_at"][:10]) if h.get("created_at") else datetime.now(IST).date()
-                cashflows.append((buy_date, -(qty * avg)))
+                bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
+                buy_dt = date.fromisoformat(bd) if bd else datetime.now(IST).date()
+                cashflows.append((buy_dt, -(qty * avg)))
 
     # Current portfolio value as final inflow
     today = datetime.now(IST).date()
@@ -584,6 +692,350 @@ def portfolio_xirr():
     xirr = _xirr(cashflows) if len(cashflows) >= 2 else None
 
     return jsonify({"xirr": xirr, "cashflows_count": len(cashflows)})
+
+
+# ═══════════════════════════════════════════════════
+# DAILY SNAPSHOTS (for trend charts)
+# ═══════════════════════════════════════════════════
+
+@portfolio_bp.route("/api/portfolio/snapshot", methods=["POST"])
+@login_required
+def take_snapshot():
+    """Save today's portfolio values. Called once per day (auto or manual)."""
+    user_id = session["user_id"]
+    today = datetime.now(IST).date().isoformat()
+
+    # Check if snapshot already exists for today
+    existing = get("portfolio_snapshots", params={
+        "user_id": f"eq.{user_id}",
+        "snap_date": f"eq.{today}",
+        "limit": 1,
+    })
+    if existing:
+        # Delete old snapshot for today (will re-create)
+        delete("portfolio_snapshots", params={
+            "user_id": f"eq.{user_id}",
+            "snap_date": f"eq.{today}",
+        })
+
+    holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+    }) or []
+
+    txns = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "order": "txn_date.asc",
+    }) or []
+
+    txn_by_holding = {}
+    for t in txns:
+        txn_by_holding.setdefault(t["holding_id"], []).append(t)
+
+    today_date = datetime.now(IST).date()
+
+    # Aggregate by type and sector
+    by_type = {}   # type -> {invested, current, cashflows}
+    by_sector = {} # sector -> {invested, current, cashflows}
+    total_invested = 0
+    total_current = 0
+
+    for h in holdings:
+        qty = float(h.get("quantity") or 0)
+        avg = float(h.get("avg_price") or 0)
+        cmp = float(h.get("current_price") or avg)
+        invested = qty * avg
+        current_val = qty * cmp
+        atype = h.get("asset_type", "other")
+        sector = h.get("sector") or "Unknown"
+
+        total_invested += invested
+        total_current += current_val
+
+        for key, group in [(atype, by_type), (sector, by_sector)]:
+            if key not in group:
+                group[key] = {"invested": 0, "current": 0, "cashflows": []}
+            group[key]["invested"] += invested
+            group[key]["current"] += current_val
+
+            # Build cashflows for XIRR
+            for t in txn_by_holding.get(h["id"], []):
+                d = date.fromisoformat(t["txn_date"])
+                amt = float(t.get("amount") or 0)
+                if t["txn_type"] == "buy":
+                    group[key]["cashflows"].append((d, -abs(amt)))
+                elif t["txn_type"] in ("sell", "dividend"):
+                    group[key]["cashflows"].append((d, abs(amt)))
+
+            if not txn_by_holding.get(h["id"]) and avg and qty:
+                bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
+                buy_dt = date.fromisoformat(bd) if bd else today_date
+                group[key]["cashflows"].append((buy_dt, -(qty * avg)))
+
+            if qty > 0 and cmp > 0:
+                group[key]["cashflows"].append((today_date, current_val))
+
+    # Calculate overall XIRR
+    all_cashflows = []
+    for g in by_type.values():
+        all_cashflows.extend(g["cashflows"])
+    overall_xirr = _xirr(all_cashflows) if len(all_cashflows) >= 2 else None
+
+    # Save snapshot rows
+    rows = []
+
+    # Overall row
+    rows.append({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "snap_date": today,
+        "group_type": "overall",
+        "group_name": "overall",
+        "invested": round(total_invested, 2),
+        "current_value": round(total_current, 2),
+        "xirr": overall_xirr,
+    })
+
+    # Per asset type
+    for k, v in by_type.items():
+        x = _xirr(v["cashflows"]) if len(v["cashflows"]) >= 2 else None
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "snap_date": today,
+            "group_type": "asset_type",
+            "group_name": k,
+            "invested": round(v["invested"], 2),
+            "current_value": round(v["current"], 2),
+            "xirr": x,
+        })
+
+    # Per sector
+    for k, v in by_sector.items():
+        x = _xirr(v["cashflows"]) if len(v["cashflows"]) >= 2 else None
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "snap_date": today,
+            "group_type": "sector",
+            "group_name": k,
+            "invested": round(v["invested"], 2),
+            "current_value": round(v["current"], 2),
+            "xirr": x,
+        })
+
+    for row in rows:
+        try:
+            post("portfolio_snapshots", row)
+        except Exception as e:
+            logger.warning("Snapshot row failed: %s", e)
+
+    return jsonify({"status": "ok", "rows_saved": len(rows), "date": today})
+
+
+@portfolio_bp.route("/api/portfolio/backfill-snapshots", methods=["POST"])
+@login_required
+def backfill_snapshots():
+    """Fill missing snapshot days by copying the last known snapshot forward."""
+    user_id = session["user_id"]
+    today = datetime.now(IST).date()
+
+    # Get all existing snapshot dates (overall only, to detect gaps)
+    existing = get("portfolio_snapshots", params={
+        "user_id": f"eq.{user_id}",
+        "group_type": "eq.overall",
+        "order": "snap_date.asc",
+        "select": "snap_date",
+    }) or []
+
+    if not existing:
+        return jsonify({"status": "ok", "filled": 0})
+
+    existing_dates = set(r["snap_date"] for r in existing)
+    first_date = date.fromisoformat(existing[0]["snap_date"])
+
+    # Find all missing dates between first snapshot and today
+    from datetime import timedelta as td
+    missing = []
+    d = first_date + td(days=1)
+    while d <= today:
+        if d.isoformat() not in existing_dates:
+            missing.append(d)
+        d += td(days=1)
+
+    if not missing:
+        return jsonify({"status": "ok", "filled": 0})
+
+    # Get ALL snapshots to use as source for forward-fill
+    all_snaps = get("portfolio_snapshots", params={
+        "user_id": f"eq.{user_id}",
+        "order": "snap_date.asc",
+    }) or []
+
+    # Index by (date, group_type, group_name)
+    snap_by_date = {}
+    for s in all_snaps:
+        snap_by_date.setdefault(s["snap_date"], []).append(s)
+
+    filled = 0
+    last_known_rows = []
+
+    # Walk through all dates from first to today
+    d = first_date
+    while d <= today:
+        ds = d.isoformat()
+        if ds in snap_by_date:
+            last_known_rows = snap_by_date[ds]
+        elif last_known_rows and ds in [m.isoformat() for m in missing]:
+            # Copy last known rows with new date
+            for src in last_known_rows:
+                try:
+                    post("portfolio_snapshots", {
+                        "id": str(uuid.uuid4()),
+                        "user_id": user_id,
+                        "snap_date": ds,
+                        "group_type": src["group_type"],
+                        "group_name": src["group_name"],
+                        "invested": src.get("invested"),
+                        "current_value": src.get("current_value"),
+                        "xirr": src.get("xirr"),
+                    })
+                    filled += 1
+                except Exception:
+                    pass
+        d += td(days=1)
+
+    return jsonify({"status": "ok", "filled": filled})
+
+
+@portfolio_bp.route("/api/portfolio/cron-snapshot", methods=["POST"])
+def cron_snapshot():
+    """Called by external cron service (cron-job.org, etc.) to snapshot ALL users.
+    Requires CRON_SECRET header for auth (set in .env)."""
+    import os
+    secret = os.environ.get("CRON_SECRET", "")
+    if not secret or request.headers.get("X-Cron-Secret") != secret:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Get all distinct user_ids that have holdings
+    all_holdings = get("portfolio_holdings", params={
+        "select": "user_id",
+    }) or []
+
+    user_ids = list(set(h["user_id"] for h in all_holdings))
+    today = datetime.now(IST).date().isoformat()
+    total = 0
+
+    for uid in user_ids:
+        # Check if already snapshotted today
+        existing = get("portfolio_snapshots", params={
+            "user_id": f"eq.{uid}",
+            "snap_date": f"eq.{today}",
+            "group_type": "eq.overall",
+            "limit": 1,
+        })
+        if existing:
+            continue
+
+        # Simulate a snapshot for this user by calling the logic directly
+        holdings = get("portfolio_holdings", params={"user_id": f"eq.{uid}"}) or []
+        if not holdings:
+            continue
+
+        txns = get("portfolio_transactions", params={"user_id": f"eq.{uid}", "order": "txn_date.asc"}) or []
+        txn_by_holding = {}
+        for t in txns:
+            txn_by_holding.setdefault(t["holding_id"], []).append(t)
+
+        today_date = datetime.now(IST).date()
+        total_invested = 0
+        total_current = 0
+        by_type = {}
+        all_cf = []
+
+        for h in holdings:
+            qty = float(h.get("quantity") or 0)
+            avg = float(h.get("avg_price") or 0)
+            cmp = float(h.get("current_price") or avg)
+            invested = qty * avg
+            current_val = qty * cmp
+            atype = h.get("asset_type", "other")
+
+            total_invested += invested
+            total_current += current_val
+
+            if atype not in by_type:
+                by_type[atype] = {"invested": 0, "current": 0, "cf": []}
+            by_type[atype]["invested"] += invested
+            by_type[atype]["current"] += current_val
+
+            hcf = []
+            for t in txn_by_holding.get(h["id"], []):
+                d = date.fromisoformat(t["txn_date"])
+                amt = float(t.get("amount") or 0)
+                if t["txn_type"] == "buy":
+                    hcf.append((d, -abs(amt)))
+                else:
+                    hcf.append((d, abs(amt)))
+
+            if not hcf and avg and qty:
+                bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
+                buy_dt = date.fromisoformat(bd) if bd else today_date
+                hcf.append((buy_dt, -(qty * avg)))
+
+            if qty > 0 and cmp > 0:
+                hcf.append((today_date, current_val))
+
+            by_type[atype]["cf"].extend(hcf)
+            all_cf.extend(hcf)
+
+        # Save overall
+        overall_xirr = _xirr(all_cf) if len(all_cf) >= 2 else None
+        try:
+            post("portfolio_snapshots", {
+                "id": str(uuid.uuid4()), "user_id": uid, "snap_date": today,
+                "group_type": "overall", "group_name": "overall",
+                "invested": round(total_invested, 2),
+                "current_value": round(total_current, 2), "xirr": overall_xirr,
+            })
+        except Exception:
+            pass
+
+        for k, v in by_type.items():
+            x = _xirr(v["cf"]) if len(v["cf"]) >= 2 else None
+            try:
+                post("portfolio_snapshots", {
+                    "id": str(uuid.uuid4()), "user_id": uid, "snap_date": today,
+                    "group_type": "asset_type", "group_name": k,
+                    "invested": round(v["invested"], 2),
+                    "current_value": round(v["current"], 2), "xirr": x,
+                })
+            except Exception:
+                pass
+
+        total += 1
+
+    return jsonify({"status": "ok", "users_processed": total, "date": today})
+
+
+@portfolio_bp.route("/api/portfolio/trends", methods=["GET"])
+@login_required
+def portfolio_trends():
+    """Return snapshot history for trend charts. Query params: days=90, group_type=overall|asset_type|sector"""
+    user_id = session["user_id"]
+    days = int(request.args.get("days", 90))
+    group_type = request.args.get("group_type", "overall")
+
+    from datetime import timedelta as td
+    from_date = (datetime.now(IST).date() - td(days=days)).isoformat()
+
+    rows = get("portfolio_snapshots", params={
+        "user_id": f"eq.{user_id}",
+        "group_type": f"eq.{group_type}",
+        "snap_date": f"gte.{from_date}",
+        "order": "snap_date.asc,group_name.asc",
+    }) or []
+
+    return jsonify(rows)
 
 
 # ═══════════════════════════════════════════════════

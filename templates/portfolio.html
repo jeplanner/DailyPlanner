@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
@@ -103,6 +104,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 @media(max-width:768px){
   .kpi-row{grid-template-columns:1fr 1fr;}.fr{grid-template-columns:1fr;}
   .pf-table .hide-m{display:none;}
+  .chart-row{grid-template-columns:1fr!important;}
 }
 </style>
 </head>
@@ -150,6 +152,46 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <button class="type-tab" onclick="filterOwner('Sethu',this)">Sethu</button>
   </div>
 
+  <!-- Charts Row 1: Point-in-time -->
+  <div class="chart-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+    <div class="kpi" style="padding:14px;">
+      <span class="kpi-label">XIRR by Asset Type</span>
+      <canvas id="chart-xirr-type" height="180"></canvas>
+    </div>
+    <div class="kpi" style="padding:14px;">
+      <span class="kpi-label">Allocation by Value</span>
+      <canvas id="chart-allocation" height="180"></canvas>
+    </div>
+    <div class="kpi" style="padding:14px;">
+      <span class="kpi-label">XIRR by Sector</span>
+      <canvas id="chart-xirr-sector" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- Charts Row 2: Trends over time -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <span style="font-size:14px;font-weight:700;">Trends</span>
+    <select id="trend-days" class="fi" style="width:auto;padding:3px 8px;font-size:11px;" onchange="loadTrendCharts()">
+      <option value="30">30 days</option>
+      <option value="90" selected>90 days</option>
+      <option value="180">6 months</option>
+      <option value="365">1 year</option>
+    </select>
+    <button class="btn btn-ghost btn-sm" onclick="takeSnapshot()" id="snap-btn" style="margin-left:auto;font-size:11px;">
+      <i data-feather="camera" style="width:12px;height:12px"></i> Save Today's Snapshot
+    </button>
+  </div>
+  <div class="chart-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
+    <div class="kpi" style="padding:14px;">
+      <span class="kpi-label">Portfolio Value Over Time</span>
+      <canvas id="chart-trend-value" height="200"></canvas>
+    </div>
+    <div class="kpi" style="padding:14px;">
+      <span class="kpi-label">XIRR Over Time</span>
+      <canvas id="chart-trend-xirr" height="200"></canvas>
+    </div>
+  </div>
+
   <!-- Holdings Table -->
   <div class="pf-table-wrap">
     <table class="pf-table">
@@ -163,6 +205,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
           <th class="num">Invested</th>
           <th class="num">Current</th>
           <th class="num">P&L</th>
+          <th class="num hide-m">XIRR</th>
           <th class="hide-m">Last Txn</th>
           <th></th>
         </tr>
@@ -211,11 +254,25 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
       </div>
     </div>
     <div class="fr">
-      <div class="fg"><label>Quantity / Units</label><input type="number" id="h-qty" class="fi" step="0.001" min="0"></div>
-      <div class="fg"><label>Avg Buy Price / NAV</label><input type="number" id="h-avg" class="fi" step="0.01" min="0"></div>
+      <div class="fg"><label>Buy Date</label><input type="date" id="h-buy-date" class="fi"></div>
+      <div class="fg"><label>Sell Date</label><input type="date" id="h-sell-date" class="fi" placeholder="Leave blank if holding"></div>
     </div>
     <div class="fr">
-      <div class="fg"><label>Current Price / Value</label><input type="number" id="h-cmp" class="fi" step="0.01" min="0" placeholder="Optional"></div>
+      <div class="fg"><label>Quantity / Units</label><input type="number" id="h-qty" class="fi" step="0.001" min="0"></div>
+      <div class="fg"><label>Avg Buy Price / NAV</label>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <input type="number" id="h-avg" class="fi" step="0.01" min="0" style="flex:1;">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="fetchHoldingPrice('h-avg')" title="Fetch price" style="padding:6px;white-space:nowrap;font-size:10px;">⟳ Fetch</button>
+        </div>
+      </div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Current Price / Value</label>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <input type="number" id="h-cmp" class="fi" step="0.01" min="0" style="flex:1;">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="fetchHoldingPrice('h-cmp')" title="Fetch current price" style="padding:6px;white-space:nowrap;font-size:10px;">⟳ Fetch</button>
+        </div>
+      </div>
       <div class="fg"><label>Folio / Demat / A/C No.</label><input type="text" id="h-folio" class="fi" placeholder="Optional"></div>
     </div>
     <!-- FD / Bond specific fields -->
@@ -329,7 +386,176 @@ let holdings=[], editId=null, importRows=[], curType='all', curOwner='all';
 const INR=v=>v!=null?'₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:2}):'—';
 const esc=s=>{const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;};
 
-async function init(){await loadHoldings();loadSummary();loadPortfolioXirr();feather.replace();}
+async function init(){
+  await loadHoldings();loadSummary();loadPortfolioXirr();loadAllHoldingXirrs();
+  loadCharts();autoSnapshot();loadTrendCharts();
+  feather.replace();
+}
+
+/* ── Auto-snapshot + backfill: runs once per day on page load ── */
+async function autoSnapshot(){
+  const lastSnap=localStorage.getItem('pf_last_snapshot');
+  const today=new Date().toISOString().split('T')[0];
+  if(lastSnap===today)return;
+  if(!holdings.length)return;
+
+  try{
+    // 1. Backfill any missing days since last snapshot
+    await fetch("/api/portfolio/backfill-snapshots",{method:"POST"});
+    // 2. Take today's fresh snapshot
+    await fetch("/api/portfolio/snapshot",{method:"POST"});
+    localStorage.setItem('pf_last_snapshot',today);
+  }catch(e){}
+}
+
+async function takeSnapshot(){
+  const btn=document.getElementById("snap-btn");
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    const r=await fetch("/api/portfolio/snapshot",{method:"POST"});
+    const d=await r.json();
+    showToast(`Snapshot saved (${d.rows_saved} rows)`,"success");
+    localStorage.setItem('pf_last_snapshot',d.date);
+    loadTrendCharts();
+  }catch(e){showToast("Snapshot failed","error");}
+  btn.disabled=false;btn.innerHTML='<i data-feather="camera" style="width:12px;height:12px"></i> Save Today\'s Snapshot';
+  feather.replace();
+}
+
+/* ── Trend Charts ── */
+let trendValueChart=null, trendXirrChart=null;
+
+async function loadTrendCharts(){
+  const days=document.getElementById("trend-days")?.value||90;
+
+  try{
+    // Fetch overall trends
+    const rOverall=await fetch(`/api/portfolio/trends?days=${days}&group_type=overall`);
+    const overall=await rOverall.json();
+
+    // Fetch asset_type trends
+    const rType=await fetch(`/api/portfolio/trends?days=${days}&group_type=asset_type`);
+    const byType=await rType.json();
+
+    if(!overall.length&&!byType.length)return;
+
+    // ── Portfolio Value Trend (line chart: invested vs current) ──
+    const dates=overall.map(r=>r.snap_date);
+    const invested=overall.map(r=>r.invested||0);
+    const current=overall.map(r=>r.current_value||0);
+
+    if(trendValueChart)trendValueChart.destroy();
+    const ctx1=document.getElementById("chart-trend-value");
+    if(ctx1)trendValueChart=new Chart(ctx1,{
+      type:'line',
+      data:{
+        labels:dates.map(d=>d.slice(5)), // MM-DD
+        datasets:[
+          {label:'Current Value',data:current,borderColor:'#2563eb',backgroundColor:'rgba(37,99,235,0.1)',fill:true,tension:0.3,pointRadius:2},
+          {label:'Invested',data:invested,borderColor:'#9ca3af',backgroundColor:'transparent',borderDash:[4,4],tension:0.3,pointRadius:0}
+        ]
+      },
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12,font:{size:10}}}},
+        scales:{y:{ticks:{callback:v=>'₹'+Math.round(v/1000)+'K',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},x:{ticks:{maxTicksLimit:8,font:{size:9}},grid:{display:false}}}
+      }
+    });
+
+    // ── XIRR Trend (multi-line: overall + per type) ──
+    const xirrDates=overall.map(r=>r.snap_date);
+    const xirrOverall=overall.map(r=>r.xirr);
+
+    // Group byType snapshots by group_name
+    const typeGroups={};
+    byType.forEach(r=>{
+      if(!typeGroups[r.group_name])typeGroups[r.group_name]={dates:[],values:[]};
+      typeGroups[r.group_name].dates.push(r.snap_date);
+      typeGroups[r.group_name].values.push(r.xirr);
+    });
+
+    const colors=['#2563eb','#7c3aed','#059669','#d97706','#ec4899','#06b6d4','#84cc16','#f43f5e'];
+    const datasets=[{label:'Overall',data:xirrOverall,borderColor:'#111827',borderWidth:2,tension:0.3,pointRadius:2}];
+    let ci=0;
+    for(const[name,g]of Object.entries(typeGroups)){
+      datasets.push({label:name.toUpperCase(),data:g.values,borderColor:colors[ci%colors.length],borderWidth:1.5,tension:0.3,pointRadius:1,borderDash:ci>0?[3,3]:[]});
+      ci++;
+    }
+
+    if(trendXirrChart)trendXirrChart.destroy();
+    const ctx2=document.getElementById("chart-trend-xirr");
+    if(ctx2)trendXirrChart=new Chart(ctx2,{
+      type:'line',
+      data:{labels:xirrDates.map(d=>d.slice(5)),datasets},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:8,font:{size:9}}}},
+        scales:{y:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},x:{ticks:{maxTicksLimit:8,font:{size:9}},grid:{display:false}}}
+      }
+    });
+
+  }catch(e){console.warn("Trend charts failed",e);}
+}
+
+let chartXirrType=null, chartAlloc=null, chartXirrSector=null;
+
+async function loadCharts(){
+  try{
+    const r=await fetch("/api/portfolio/xirr-breakdown");
+    const d=await r.json();
+
+    // 1. XIRR by Asset Type (bar chart)
+    const types=Object.keys(d.by_type||{});
+    const typeVals=types.map(t=>d.by_type[t]||0);
+    const typeColors=typeVals.map(v=>v>=0?'rgba(16,185,129,0.7)':'rgba(239,68,68,0.7)');
+
+    if(chartXirrType)chartXirrType.destroy();
+    const ctx1=document.getElementById("chart-xirr-type");
+    if(ctx1)chartXirrType=new Chart(ctx1,{
+      type:'bar',
+      data:{labels:types.map(t=>t.toUpperCase()),datasets:[{label:'XIRR %',data:typeVals,backgroundColor:typeColors,borderRadius:4}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
+    });
+
+    // 2. Allocation by Value (doughnut)
+    const allocTypes=Object.keys(d.allocation||{});
+    const allocVals=allocTypes.map(t=>d.allocation[t]||0);
+    const allocColors=['#2563eb','#7c3aed','#059669','#d97706','#ec4899','#06b6d4','#84cc16','#f43f5e','#8b5cf6','#14b8a6'];
+
+    if(chartAlloc)chartAlloc.destroy();
+    const ctx2=document.getElementById("chart-allocation");
+    if(ctx2)chartAlloc=new Chart(ctx2,{
+      type:'doughnut',
+      data:{labels:allocTypes.map(t=>t.toUpperCase()),datasets:[{data:allocVals,backgroundColor:allocColors.slice(0,allocTypes.length),borderWidth:0}]},
+      options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:8,font:{size:9}}}}}
+    });
+
+    // 3. XIRR by Sector (horizontal bar)
+    const sectors=Object.keys(d.by_sector||{}).filter(s=>d.by_sector[s]!==null);
+    const sectorVals=sectors.map(s=>d.by_sector[s]||0);
+    const sectorColors=sectorVals.map(v=>v>=0?'rgba(37,99,235,0.7)':'rgba(239,68,68,0.7)');
+
+    if(chartXirrSector)chartXirrSector.destroy();
+    const ctx3=document.getElementById("chart-xirr-sector");
+    if(ctx3)chartXirrSector=new Chart(ctx3,{
+      type:'bar',
+      data:{labels:sectors,datasets:[{label:'XIRR %',data:sectorVals,backgroundColor:sectorColors,borderRadius:4}]},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},y:{ticks:{font:{size:9}},grid:{display:false}}}}
+    });
+  }catch(e){console.warn("Charts failed",e);}
+}
+
+async function loadAllHoldingXirrs(){
+  for(const h of holdings){
+    try{
+      const r=await fetch(`/api/portfolio/xirr/${h.id}`);
+      const d=await r.json();
+      const el=document.getElementById(`xirr-${h.id}`);
+      if(el&&d.xirr!==null){
+        const cls=d.xirr>=0?'pnl-up':'pnl-down';
+        el.innerHTML=`<span class="${cls}" style="font-weight:600;">${d.xirr>=0?'+':''}${d.xirr}%</span>`;
+      }
+    }catch(e){}
+  }
+}
 
 /* ── Load & Render ── */
 async function loadHoldings(){
@@ -385,7 +611,8 @@ function renderTable(){
       <td class="num hide-m">${INR(invested)}</td>
       <td class="num">${INR(current)}</td>
       <td class="num ${cls}">${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small></td>
-      <td class="hide-m">${h._lastTxn?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;${h._lastTxn.txn_type==='buy'?'background:#fef2f2;color:#dc2626':'background:#ecfdf5;color:#059669'}">${h._lastTxn.txn_type}</span><div class="symbol">${h._lastTxn.txn_date||''}</div>`:'-'}</td>
+      <td class="num hide-m" id="xirr-${h.id}"><small style="color:var(--pf-text3);">—</small></td>
+      <td class="hide-m">${h._lastTxn?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;${h._lastTxn.txn_type==='buy'?'background:#fef2f2;color:#dc2626':'background:#ecfdf5;color:#059669'}">${h._lastTxn.txn_type}</span><div class="symbol">${h._lastTxn.txn_date||''}</div>`:`${h.buy_date?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:#fef2f2;color:#dc2626;">BUY</span><div class="symbol">${h.buy_date}</div>`:'—'}`}</td>
       <td><button class="row-btn" onclick="openTxn('${h.id}','${esc(h.name)}')" title="Transactions">&#128200;</button><button class="row-btn" onclick="editHolding('${h.id}')" title="Edit">&#9998;</button><button class="row-btn del" onclick="delHolding('${h.id}')" title="Delete">&#128465;</button></td>
     </tr>`;
   }).join('');
@@ -419,7 +646,7 @@ function onTypeChange(){
 function openAdd(){
   editId=null;
   document.getElementById("add-title").textContent="Add Holding";
-  ["h-name","h-symbol","h-qty","h-avg","h-cmp","h-folio","h-sector","h-notes","h-institution","h-rate","h-start-date","h-maturity","h-account-ref"].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  ["h-name","h-symbol","h-qty","h-avg","h-cmp","h-folio","h-sector","h-notes","h-institution","h-rate","h-start-date","h-maturity","h-account-ref","h-buy-date","h-sell-date"].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
   document.getElementById("h-type").value="stock";
   document.getElementById("h-exchange").value="NSE";
   document.getElementById("h-broker").value="ICICI Direct";
@@ -439,6 +666,8 @@ function editHolding(id){
   document.getElementById("h-cmp").value=h.current_price||'';
   document.getElementById("h-folio").value=h.folio_number||'';
   document.getElementById("h-owner").value=h.held_by||'Venghatesh';
+  document.getElementById("h-buy-date").value=h.buy_date||'';
+  document.getElementById("h-sell-date").value=h.sell_date||'';
   document.getElementById("h-broker").value=h.broker||'';
   document.getElementById("h-sector").value=h.sector||'';
   document.getElementById("h-notes").value=h.notes||'';
@@ -466,6 +695,8 @@ async function saveHolding(){
     sector:document.getElementById("h-sector").value.trim(),
     notes:document.getElementById("h-notes").value.trim(),
     held_by:document.getElementById("h-owner").value,
+    buy_date:document.getElementById("h-buy-date").value||null,
+    sell_date:document.getElementById("h-sell-date").value||null,
     institution:document.getElementById("h-institution").value.trim(),
     interest_rate:document.getElementById("h-rate").value||null,
     maturity_date:document.getElementById("h-maturity").value||null,
@@ -486,6 +717,34 @@ function delHolding(id){
   toast.innerHTML='<span>Holding deleted</span><button style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>';
   toast.querySelector("button").onclick=()=>{clearTimeout(t);if(!gone){loadHoldings();showToast("Restored","success");}toast.remove();};
   document.body.appendChild(toast);setTimeout(()=>{if(toast.parentNode)toast.remove();},4500);
+}
+
+/* ── Fetch Price for Holding Form ── */
+async function fetchHoldingPrice(targetFieldId){
+  const symbol=document.getElementById("h-symbol").value.trim();
+  const assetType=document.getElementById("h-type").value;
+  if(!symbol){showToast("Enter a symbol first","error");return;}
+
+  try{
+    let price=null;
+    if(assetType==='mf'){
+      const r=await fetch(`/api/portfolio/mf-nav/${symbol}`);
+      const d=await r.json();
+      price=d.nav;
+    }else{
+      let sym=symbol;
+      if(!sym.includes('.'))sym+='.NS';
+      const r=await fetch(`/api/portfolio/quote/${sym}`);
+      const d=await r.json();
+      price=d.price;
+    }
+    if(price){
+      document.getElementById(targetFieldId).value=price;
+      showToast(`Price: ₹${price}`,"success");
+    }else{
+      showToast("Price not found","error");
+    }
+  }catch(e){showToast("Fetch failed","error");}
 }
 
 /* ── Symbol Search + Auto-suggest ── */
@@ -530,8 +789,24 @@ function selectSuggestion(name,symbol,exchange){
   }
   document.getElementById("suggest-list").style.display='none';
 
-  // Auto-fetch current price
-  if(symbol)fetchQuote(symbol);
+  // Auto-fetch current price + sector
+  if(symbol){
+    fetchQuote(symbol);
+    fetchSectorInfo(symbol);
+  }
+}
+
+async function fetchSectorInfo(symbol){
+  try{
+    const r=await fetch(`/api/portfolio/stock-info/${symbol}`);
+    const d=await r.json();
+    if(d.sector){
+      document.getElementById("h-sector").value=d.sector;
+    }
+    if(d.price&&!document.getElementById("h-cmp").value){
+      document.getElementById("h-cmp").value=d.price;
+    }
+  }catch(e){}
 }
 
 async function fetchQuote(symbol){
