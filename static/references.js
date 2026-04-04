@@ -207,25 +207,38 @@
     if (!data.items || data.items.length === 0) {
       state.hasMore = false;
       if (state.currentPage === 1)
-        container.innerHTML = "<div class='empty-state'>No results found.</div>";
+        container.innerHTML = "<div class='empty-state'>No references found. Add one below ↓</div>";
       return;
     }
 
     data.items.forEach(ref => {
       const item = document.createElement("div");
       item.className = "ref-item";
+      item.dataset.id = ref.id;
 
-      // Title + link
+      // Header row: title + delete button
+      const header = document.createElement("div");
+      header.className = "ref-item-header";
+
       const h4 = document.createElement("h4");
       const a  = document.createElement("a");
-      a.href   = safeHref(ref.url);
-      a.target = "_blank";
-      a.rel    = "noopener noreferrer";
+      a.href        = safeHref(ref.url);
+      a.target      = "_blank";
+      a.rel         = "noopener noreferrer";
       a.textContent = ref.title || ref.url;
       h4.appendChild(a);
-      item.appendChild(h4);
 
-      // Description — stored as sanitized HTML, safe to render
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn-delete";
+      delBtn.title     = "Delete";
+      delBtn.textContent = "🗑";
+      delBtn.addEventListener("click", () => deleteReference(ref.id, item));
+
+      header.appendChild(h4);
+      header.appendChild(delBtn);
+      item.appendChild(header);
+
+      // Description — stored as bleach-sanitized HTML, safe to render
       if (ref.description) {
         const descDiv = document.createElement("div");
         descDiv.className = "ref-content";
@@ -233,16 +246,16 @@
         item.appendChild(descDiv);
       }
 
-      // Meta row
+      // Meta row: tags + category
       const meta = document.createElement("div");
       meta.className = "ref-meta";
 
       (ref.tags || []).forEach(tag => {
         const span = document.createElement("span");
-        span.className = "tag clickable-tag";
-        span.dataset.tag = tag;
+        span.className   = "tag";
         span.textContent = tag;
-        span.addEventListener("click", function () {
+        span.title       = `Filter by "${tag}"`;
+        span.addEventListener("click", () => {
           if (!state.selectedTags.includes(tag)) state.selectedTags.push(tag);
           resetAndReload();
         });
@@ -251,7 +264,7 @@
 
       if (ref.category) {
         const cat = document.createElement("span");
-        cat.className = "category";
+        cat.className   = "category";
         cat.textContent = ref.category;
         meta.appendChild(cat);
       }
@@ -264,7 +277,30 @@
     state.hasMore = data.has_more;
 
     const resultCount = $("resultCount");
-    if (resultCount) resultCount.innerText = `Showing ${state.totalRendered} results`;
+    if (resultCount)
+      resultCount.textContent = `Showing ${state.totalRendered} result${state.totalRendered !== 1 ? "s" : ""}`;
+  }
+
+  // ==========================================================
+  // DELETE
+  // ==========================================================
+
+  async function deleteReference(id, el) {
+    if (!confirm("Delete this reference?")) return;
+    try {
+      const res = await fetch(`/references/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        el.remove();
+        state.totalRendered = Math.max(0, state.totalRendered - 1);
+        clearCache();
+        loadTagCloud();
+        const resultCount = $("resultCount");
+        if (resultCount)
+          resultCount.textContent = `Showing ${state.totalRendered} result${state.totalRendered !== 1 ? "s" : ""}`;
+      }
+    } catch (err) {
+      showToast("Delete failed", "error");
+    }
   }
 
   // ==========================================================
@@ -358,48 +394,59 @@
   // ==========================================================
 
   async function askReferences() {
-    const input    = $("ask-input");
-    const answerEl = $("ask-answer");
-    const sourcesEl= $("ask-sources");
-    const btn      = $("ask-btn");
+    const input     = $("ask-input");
+    const answerEl  = $("ask-answer");
+    const sourcesEl = $("ask-sources");
+    const btn       = $("ask-btn");
 
     const question = input?.value.trim();
     if (!question) return;
 
-    btn.disabled    = true;
-    btn.textContent = "Thinking…";
-    answerEl.textContent  = "";
-    sourcesEl.innerHTML   = "";
+    btn.disabled      = true;
+    btn.textContent   = "Thinking…";
+    answerEl.innerHTML = "";
+    sourcesEl.innerHTML = "";
     $("ask-result").style.display = "none";
 
     try {
-      const res = await fetch("/references/ask", {
+      const res  = await fetch("/references/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-
       const data = await res.json();
 
       if (data.error) {
         answerEl.textContent = "Error: " + data.error;
       } else {
-        answerEl.textContent = data.answer;
+        // Render answer preserving line breaks and bold citations like [1]
+        answerEl.innerHTML = data.answer
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+          .replace(/\[(\d+)\]/g, "<strong>[$1]</strong>")
+          .replace(/\n/g, "<br>");
 
         if (data.sources && data.sources.length > 0) {
           const label = document.createElement("div");
-          label.className = "ask-sources-label";
+          label.className   = "ask-sources-label";
           label.textContent = "Sources used:";
           sourcesEl.appendChild(label);
 
-          data.sources.forEach(s => {
+          data.sources.forEach((s, i) => {
+            const row = document.createElement("div");
+            const num = document.createElement("span");
+            num.textContent = `[${i + 1}] `;
+            num.style.color = "#6b7280";
+            num.style.fontWeight = "600";
             const a = document.createElement("a");
-            a.href   = safeHref(s.url);
-            a.target = "_blank";
-            a.rel    = "noopener noreferrer";
-            a.className = "ask-source-link";
+            a.href        = safeHref(s.url);
+            a.target      = "_blank";
+            a.rel         = "noopener noreferrer";
+            a.className   = "ask-source-link";
             a.textContent = s.title || s.url;
-            sourcesEl.appendChild(a);
+            row.appendChild(num);
+            row.appendChild(a);
+            sourcesEl.appendChild(row);
           });
         }
       }
@@ -471,15 +518,29 @@
       resetAndReload();
     });
 
+    $("categoryFilter")?.addEventListener("change", function () {
+      state.selectedCategory = this.value || null;
+      resetAndReload();
+    });
+
     $("resetFilterBtn")?.addEventListener("click", function () {
       state.selectedTags     = [];
       state.searchQuery      = "";
       state.sortOption       = "created_at_desc";
       state.selectedCategory = null;
-      if ($("searchInput")) $("searchInput").value = "";
-      if ($("sortSelect"))  $("sortSelect").value  = "created_at_desc";
+      if ($("searchInput"))    $("searchInput").value    = "";
+      if ($("sortSelect"))     $("sortSelect").value     = "created_at_desc";
+      if ($("categoryFilter")) $("categoryFilter").value = "";
       document.querySelectorAll(".tag-cloud-item").forEach(el => el.classList.remove("active"));
       resetAndReload();
+    });
+
+    // Tag cloud toggle
+    $("tagCloudToggle")?.addEventListener("click", function () {
+      const cloud = $("tagCloud");
+      const hidden = cloud.classList.toggle("tag-cloud-hidden");
+      this.style.background = hidden ? "" : "#e0e7ff";
+      this.style.color      = hidden ? "" : "#3730a3";
     });
 
     // Q&A

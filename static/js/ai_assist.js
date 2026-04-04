@@ -125,28 +125,16 @@ async function generateViaAPI(query, mode) {
     
 
     // Autofill form
-    $("ref-title").value = data.title || "";
-    $("ref-url").value = data.url || "";
-    $("ref-category").value = data.category || "";
+    if ($("ref-title"))    $("ref-title").value    = data.title    || "";
+    if ($("ref-url"))      $("ref-url").value      = data.url      || "";
+    if ($("ref-category")) $("ref-category").value = data.category || "";
 
     if (window.tagifyInstance && Array.isArray(data.tags)) {
       window.tagifyInstance.removeAllTags();
       window.tagifyInstance.addTags(data.tags);
     }
-    // Autofill form
-    $("ref-title").value = data.title || "";
-    $("ref-url").value = data.url || "";
-    $("ref-category").value = data.category || "";
 
-    // Inject into main reference editor (#ref-editor)
-    const mainEditor = document.getElementById("ref-editor");
-
-    if (mainEditor && mainEditor.__quill) {
-      const refQuill = mainEditor.__quill;
-      refQuill.setContents([]);
-      refQuill.clipboard.dangerouslyPasteHTML(htmlContent);
-    }
-    showToast(`${mode === "groq" ? "Groq" : "Gemini"} content generated.`);
+    showToast(`${mode === "groq" ? "Groq" : "Gemini"} content generated. Review and save below.`, "success");
 
   } catch (err) {
     console.error(err);

@@ -302,6 +302,17 @@ Rules: No markdown, no explanation, only raw JSON."""
     return jsonify(structured)
 
 
+# ── Delete reference ──────────────────────────────────────────────────────────
+
+@references_bp.route("/references/<ref_id>", methods=["DELETE"])
+@login_required
+def delete_reference(ref_id):
+    user_id = session["user_id"]
+    from supabase_client import delete
+    delete("reference_links", params={"id": f"eq.{ref_id}", "user_id": f"eq.{user_id}"})
+    return jsonify({"success": True})
+
+
 # ── Search references ─────────────────────────────────────────────────────────
 
 @references_bp.get("/search_references")
