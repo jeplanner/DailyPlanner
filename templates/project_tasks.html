@@ -3,148 +3,137 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ project.name }}</title>
-
-  <!-- Global stylesheet -->
   <link rel="stylesheet" href="{{ url_for('static', filename='project_tasks.css') }}">
 </head>
-
 <body>
 
-<div class="nav-icons">  {% include "_top_nav.html" %}  </div>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-  <div class="container">
-      
-    <!-- Header -->
-    <div class="header">
-      <a href="/projects" class="back">← Projects</a>
-      <h2>{{ project.name }}</h2>
+<div class="container">
+
+  <!-- ── Page Header ── -->
+  <div class="page-header">
+    <div class="header-left">
+      <a href="/projects" class="back-link">← Projects</a>
+      <div>
+        <h2 class="project-title">{{ project.name }}</h2>
+        {% if project.description %}
+          <p class="project-subtitle">{{ project.description }}</p>
+        {% endif %}
+      </div>
     </div>
-
-    <!-- Add Task -->
-    <div class="add-box">
-      <form method="post" action="/projects/{{ project.project_id }}/tasks/add">
-        <input
-          name="task_text"
-          placeholder="Add a clear, actionable task…"
-          autocomplete="off"
-          required
-        />
-
-        <input
-          type="date"
-          name="start_date"
-          value="{{ selected_date }}"
-        >
-
-        <button type="submit">Add</button>
-      </form>
+    <div class="header-actions">
+      <a href="/projects/{{ project.project_id }}/gantt"
+         class="header-link-btn" title="View Gantt chart">📊 Gantt</a>
+      <a href="/projects/timeline?project={{ project.project_id }}"
+         class="header-link-btn" title="View timeline">📅 Timeline</a>
     </div>
-
-<div class="task-filters">
-  <label class="filter">
-    <input
-      type="checkbox"
-      id="hideClosed"
-      {% if hide_completed %}checked{% endif %}
-      onchange="toggleHideCompleted(this.checked)"
-    >
-    Hide closed
-  </label>
-
-  <label class="filter">
-    <input
-      type="checkbox"
-      id="showOverdueOnly"
-      {% if overdue_only %}checked{% endif %}
-      onchange="toggleFilter('overdue_only', this.checked)"
-    >
-    Overdue only
-  </label>
-</div>
-
-<!-- Notes + Voice collapsible panel -->
-<div class="notes-toggle-bar">
-  <button type="button" class="notes-toggle-btn" id="notesToggleBtn" onclick="toggleNotesPanel()">
-    📝 Notes &amp; Voice <span class="notes-chevron" id="notesChevron">▶</span>
-  </button>
-</div>
-
-<div id="notesPanel" class="notes-panel collapsed">
-  <!-- Voice Dictation -->
-  <div class="voice-box">
-    <button
-      type="button"
-      class="voice-btn"
-      onclick="toggleVoice('projectNotes', 'voiceStatus')">
-      🎙 Dictate tasks
-    </button>
-    <div id="voiceStatus" class="voice-status">Tap mic and start speaking</div>
   </div>
 
-  <!-- Project Notes -->
-  <div class="project-notes">
-    <textarea
-      id="projectNotes"
+  <!-- ── Add Task ── -->
+  <div class="add-box">
+    <div class="add-priority-row" id="addPriorityPicker">
+      <button type="button" class="prio-btn" data-priority="high" title="High">🔴</button>
+      <button type="button" class="prio-btn active" data-priority="medium" title="Medium">🟡</button>
+      <button type="button" class="prio-btn" data-priority="low" title="Low">🟢</button>
+    </div>
+    <input
+      id="addTaskInput"
       data-project-id="{{ project.project_id }}"
-      placeholder="• Capture thoughts here…"
-      rows="5"></textarea>
-    <div style="margin-top:8px; text-align:right;">
-      <button id="addTasksFromNotes" class="save-task-btn">➕ Add as Tasks</button>
-    </div>
+      placeholder="Add a task… (Enter to add)"
+      autocomplete="off"
+    >
+    <button type="button" class="date-toggle-btn" id="addDateToggle" title="Set start date">📅</button>
+    <input type="date" id="addTaskDate" class="add-date-input hidden" value="{{ selected_date }}">
+    <button type="button" class="add-btn" id="addTaskBtn">Add</button>
   </div>
-</div>
 
-    <!-- Project Health -->
-    <div id="project-health" class="project-health">
-      <div class="health-score">
-        <div class="score-value" id="health-score">—</div>
-        <div class="score-label">Health · {{ project.name }}</div>
-      </div>
-
-      <div class="health-metrics">
-        <div><strong id="metric-complete">0%</strong><span>Complete</span></div>
-        <div><strong id="metric-overdue">0</strong><span>Overdue</span></div>
-        <div><strong id="metric-accuracy">0%</strong><span>Accuracy</span></div>
-        <div><strong id="metric-progress">0</strong><span>In Progress</span></div>
-      </div>
-    </div>
-
-    <!-- Sort -->
-    <div class="sort-row">
-      <label for="sortSelect" class="sort-label">Sort by</label>
-      <select
-        id="sortSelect"
-        data-project-id="{{ project.project_id }}">
-        <option value="smart"    {% if sort == 'smart'    %}selected{% endif %}>Smart</option>
-        <option value="due"      {% if sort == 'due'      %}selected{% endif %}>Due date</option>
-        <option value="priority" {% if sort == 'priority' %}selected{% endif %}>Priority</option>
-        <option value="created"  {% if sort == 'created'  %}selected{% endif %}>Created</option>
+  <!-- ── Controls: filters + sort + panel toggles ── -->
+  <div class="controls-row">
+    <label class="filter-chip">
+      <input type="checkbox" id="hideClosed"
+             {% if hide_completed %}checked{% endif %}
+             onchange="toggleHideCompleted(this.checked)">
+      Hide done
+    </label>
+    <label class="filter-chip">
+      <input type="checkbox" id="showOverdueOnly"
+             {% if overdue_only %}checked{% endif %}
+             onchange="toggleFilter('overdue_only', this.checked)">
+      Overdue only
+    </label>
+    <div class="sort-inline">
+      <label for="sortSelect">Sort</label>
+      <select id="sortSelect" data-project-id="{{ project.project_id }}">
+        <option value="smart"    {% if sort=='smart'    %}selected{% endif %}>Smart</option>
+        <option value="due"      {% if sort=='due'      %}selected{% endif %}>Due date</option>
+        <option value="priority" {% if sort=='priority' %}selected{% endif %}>Priority</option>
+        <option value="created"  {% if sort=='created'  %}selected{% endif %}>Created</option>
       </select>
     </div>
+    <button type="button" class="ctrl-toggle-btn" id="healthToggleBtn"
+            onclick="toggleHealthWidget()">📊 Health</button>
+    <button type="button" class="ctrl-toggle-btn" id="notesToggleBtn"
+            onclick="toggleNotesPanel()">📝 Notes</button>
+  </div>
 
-    <!-- Task Groups -->
-    {% for group, tasks in grouped_tasks.items() %}
-      <div class="task-group">
+  <!-- ── Health Widget (hidden by default) ── -->
+  <div id="project-health" class="project-health hidden">
+    <div class="health-score">
+      <div class="score-value" id="health-score">—</div>
+      <div class="score-label">Health · {{ project.name }}</div>
+    </div>
+    <div class="health-metrics">
+      <div><strong id="metric-complete">—</strong><span>Complete</span></div>
+      <div><strong id="metric-overdue">—</strong><span>Overdue</span></div>
+      <div><strong id="metric-accuracy">—</strong><span>Accuracy</span></div>
+      <div><strong id="metric-progress">—</strong><span>In Progress</span></div>
+    </div>
+  </div>
 
-        <h3 class="group-title">
-          {{ group }}
-          <span class="count">{{ tasks|length }}</span>
-        </h3>
+  <!-- ── Notes + Voice panel (hidden by default) ── -->
+  <div id="notesPanel" class="notes-panel collapsed">
+    <div class="voice-box">
+      <button type="button" class="voice-btn"
+              onclick="toggleVoice('projectNotes', 'voiceStatus')">
+        🎙 Dictate tasks
+      </button>
+      <div id="voiceStatus" class="voice-status">Tap mic and start speaking</div>
+    </div>
+    <div class="project-notes">
+      <textarea id="projectNotes"
+                data-project-id="{{ project.project_id }}"
+                placeholder="• Capture thoughts here…"
+                rows="5"></textarea>
+      <div style="margin-top:8px; text-align:right;">
+        <button id="addTasksFromNotes" class="add-btn">➕ Add as Tasks</button>
+      </div>
+    </div>
+  </div>
 
+  <!-- ── Task Groups ── -->
+  {% for group, tasks in grouped_tasks.items() %}
+    <div class="task-group">
+      <div class="group-header" onclick="toggleGroup(this)">
+        <span class="group-name">{{ group }}</span>
+        <span class="group-count">{{ tasks|length }}</span>
+        <span class="group-chevron">▾</span>
+      </div>
+      <div class="task-group-body">
         {% if tasks %}
           {% for task in tasks %}
             {% include "_project_task_card.html" %}
           {% endfor %}
         {% else %}
-          <div class="empty">No tasks</div>
+          <div class="empty-group">No tasks</div>
         {% endif %}
-
       </div>
-    {% endfor %}
+    </div>
+  {% endfor %}
 
-  </div><!-- /.container -->
+</div><!-- /.container -->
 
-<!-- Task Action Sheet (bottom sheet for long-press) -->
+<!-- Task Action Sheet (long-press) -->
 <div id="task-action-sheet" class="action-sheet hidden">
   <div class="action-sheet-inner">
     <div id="sheet-title" class="sheet-title"></div>
@@ -156,7 +145,7 @@
       </label>
     </div>
     <button class="sheet-btn primary" onclick="sheetCompleteToday()">✅ Complete Today</button>
-    <button class="sheet-btn" onclick="sheetEditAll()">✏️ Edit Task</button>
+    <button class="sheet-btn" onclick="sheetEditAll()">✏️ Edit Title</button>
     <button class="sheet-btn danger" onclick="closeTaskSheet()">Cancel</button>
   </div>
 </div>
@@ -172,17 +161,17 @@
     </div>
     <p class="eisenhower-task-name" id="eisenhower-task-name"></p>
     <div class="quadrant-grid">
-      <button class="quadrant-btn q-do"       onclick="submitEisenhower('do')">
+      <button class="quadrant-btn q-do"        onclick="submitEisenhower('do')">
         <span class="q-emoji">🔥</span>
         <span class="q-label">Do</span>
         <span class="q-desc">Urgent + Important</span>
       </button>
-      <button class="quadrant-btn q-decide"   onclick="submitEisenhower('decide')">
+      <button class="quadrant-btn q-decide"    onclick="submitEisenhower('decide')">
         <span class="q-emoji">🗓</span>
         <span class="q-label">Decide</span>
         <span class="q-desc">Important, not urgent</span>
       </button>
-      <button class="quadrant-btn q-delegate" onclick="submitEisenhower('delegate')">
+      <button class="quadrant-btn q-delegate"  onclick="submitEisenhower('delegate')">
         <span class="q-emoji">🤝</span>
         <span class="q-label">Delegate</span>
         <span class="q-desc">Urgent, not important</span>
@@ -197,17 +186,15 @@
   </div>
 </div>
 
-  <!-- ✅ ONE JS ENTRY POINT -->
-  <script
-    src="{{ url_for('static', filename='project_tasks.js') }}"
-    defer>
-  </script>
-
-  <!-- Voice (kept separate on purpose) -->
-  <script src="{{ url_for('static', filename='voice.js') }}"></script>
-  <script>
-    initVoiceDictation("projectNotes", "voiceStatus");
-  </script>
+<script src="{{ url_for('static', filename='project_tasks.js') }}" defer></script>
+<script src="{{ url_for('static', filename='voice.js') }}"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (typeof initVoiceDictation === "function") {
+      initVoiceDictation("projectNotes", "voiceStatus");
+    }
+  });
+</script>
 
 </body>
 </html>

@@ -1,6 +1,5 @@
 import calendar
 from datetime import date, datetime, timedelta
-import os
 import re
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from supabase_client import post
@@ -13,7 +12,6 @@ from services.planner_service import  fetch_daily_slots, generate_weekly_insight
 from services.recurring_service import materialize_recurring_slots
 from services.untimed_service import remove_untimed_task
 from supabase_client import get, update
-from templates.login import LOGIN_TEMPLATE
 from templates.planner import PLANNER_TEMPLATE
 from templates.summary import SUMMARY_TEMPLATE
 from utils.calender_links import google_calendar_link
@@ -22,7 +20,6 @@ from utils.slots import current_slot, slot_label
 from utils.smartplanner import parse_smart_sentence
 
 planner_bp = Blueprint("planner", __name__)
-APP_PASSWORD = os.environ.get("APP_PASSWORD", "changeme")
 logger = setup_logger()
 @planner_bp.route("/", methods=["GET", "POST"])
 @login_required
@@ -726,27 +723,3 @@ def build_google_datetime(plan_date, time_str):
 
     dt = tz.localize(dt)
     return dt.isoformat()
-@planner_bp.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-
-        username = request.form.get("username", "").strip().lower()
-        password = request.form.get("password")
-
-        if password == APP_PASSWORD and username:
-            session.clear()
-            session["user_id"] = username
-            session["authenticated"] = True
-
-            print("USER ID:", username)
-
-            return redirect(url_for("planner.planner"))
-
-        return render_template_string(LOGIN_TEMPLATE, error="Invalid login")
-
-    return render_template_string(LOGIN_TEMPLATE)
-
-@planner_bp.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("planner.login"))

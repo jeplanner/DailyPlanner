@@ -131,38 +131,7 @@ def project_tasks(project_id):
             if due_date >= today or status == "done":
                 continue
 
-        tasks.append({
-            "task_id": t["task_id"],
-            "task_text": t["task_text"],
-            "status": status,
-            "done": status == "done",
-            "start_date": t.get("start_date"),
-            "duration_days": t.get("duration_days"),
-            "due_date": due,
-            "due_time": t.get("due_time"),
-            "delegated_to": t.get("delegated_to"),
-            "elimination_reason": t.get("elimination_reason"),
-            "project_name": project["name"],
-            "priority": t.get("priority", "medium"),
-            "urgency": None,
-            "priority_rank": PRIORITY_MAP.get(t.get("priority"), 2),
-            "is_pinned": t.get("is_pinned", False),
-            "planned_hours": t.get("planned_hours", 0),
-            "actual_hours": t.get("actual_hours", 0),
-            "is_recurring": t.get("is_recurring", False),
-            "recurrence_type": t.get("recurrence_type", "none"),
-            "recurrence_days": t.get("recurrence_days"),
-            "recurrence_interval": t.get("recurrence_interval"),
-            "recurrence_end": t.get("recurrence_end"),
-            "auto_advance": t.get("auto_advance", True),
-            "recurrence_badge": build_recurrence_badge(t),
-            # used by task card for date-aware actions (e.g. recurring completion)
-            "occurrence_date": due or date.today().isoformat(),
-            # Eisenhower fields (safe defaults — full feature requires eisenhower query)
-            "eisenhower_sent": False,
-            "missed_eisenhower": False,
-            "eisenhower_plan_date": None,
-        })
+        tasks.append(_build_task_dict(t, project, today))
 
     grouped_tasks = group_tasks_smart(tasks)
 
@@ -895,6 +864,100 @@ def toggle_subtask():
     )
     
     return ("", 204)
+
+def _build_task_dict(t, project, today):
+    """Build a normalised task dict for template rendering."""
+    due = t.get("due_date")
+
+    # Pre-format due label server-side to avoid client-side flash
+    due_label = None
+    if due:
+        try:
+            due_d = date.fromisoformat(due)
+            diff = (due_d - today).days
+            if diff == 0:
+                due_label = "⏰ Today"
+            elif diff == 1:
+                due_label = "⏰ Tomorrow"
+            elif diff < 0:
+                due_label = f"⚠ {abs(diff)}d overdue"
+            else:
+                due_label = f"📅 In {diff}d"
+        except ValueError:
+            due_label = f"📅 {due}"
+
+    return {
+        "task_id": t["task_id"],
+        "task_text": t["task_text"],
+        "status": t.get("status"),
+        "done": t.get("status") == "done",
+        "start_date": t.get("start_date"),
+        "duration_days": t.get("duration_days") or 0,
+        "due_date": due,
+        "due_label": due_label,
+        "due_time": t.get("due_time"),
+        "delegated_to": t.get("delegated_to"),
+        "project_name": project["name"],
+        "priority": t.get("priority", "medium"),
+        "priority_rank": PRIORITY_MAP.get(t.get("priority"), 2),
+        "is_pinned": t.get("is_pinned", False),
+        "planned_hours": t.get("planned_hours") or 0,
+        "actual_hours": t.get("actual_hours") or 0,
+        "is_recurring": t.get("is_recurring", False),
+        "recurrence_type": t.get("recurrence_type", "none"),
+        "recurrence_days": t.get("recurrence_days"),
+        "recurrence_interval": t.get("recurrence_interval"),
+        "recurrence_end": t.get("recurrence_end"),
+        "auto_advance": t.get("auto_advance", True),
+        "recurrence_badge": build_recurrence_badge(t),
+        "occurrence_date": due or today.isoformat(),
+        "eisenhower_sent": False,
+        "missed_eisenhower": False,
+        "eisenhower_plan_date": None,
+    }
+
+
+@projects_bp.route("/projects/<project_id>/tasks/add-ajax", methods=["POST"])
+@login_required
+def add_project_task_ajax(project_id):
+    """Async task add — returns rendered card HTML + task_id."""
+    data = request.get_json() or {}
+    text = (data.get("task_text") or "").strip()
+    if not text:
+        return jsonify({"error": "Task text required"}), 400
+
+    priority = data.get("priority", "medium")
+    start_date = data.get("start_date") or date.today().isoformat()
+
+    max_order = get_max_order_index(project_id)
+    result = post("project_tasks", {
+        "project_id": project_id,
+        "user_id": session["user_id"],
+        "task_text": text,
+        "status": "open",
+        "priority": priority,
+        "priority_rank": PRIORITY_MAP.get(priority, 2),
+        "start_date": start_date,
+        "order_index": (max_order or 0) + 1,
+    })
+
+    if not result:
+        return jsonify({"error": "Insert failed"}), 500
+
+    raw = result[0]
+    today = date.today()
+
+    # Minimal project stub for _build_task_dict
+    project_stub = {"name": ""}
+    task = _build_task_dict(raw, project_stub, today)
+
+    html = render_template(
+        "_project_task_card.html",
+        task=task,
+        today=today.isoformat(),
+    )
+    return jsonify({"html": html, "task_id": raw["task_id"]})
+
 
 def compute_due_date(start_date, duration_days):
     return start_date + timedelta(days=duration_days)

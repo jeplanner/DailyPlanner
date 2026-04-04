@@ -1,30 +1,51 @@
-from flask import Flask
 import os
-from logger import setup_logger
-from werkzeug.exceptions import HTTPException
+from flask import Flask, session, request, jsonify, render_template
+from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
-logger=setup_logger()
+from logger import setup_logger
+from settings import config_map
+from extensions import login_manager, csrf, limiter
+
+logger = setup_logger()
+
+
 def create_app():
     app = Flask(__name__)
 
+    # ── Config ──────────────────────────────────────────
+    env = os.environ.get("FLASK_ENV", "production")
+    app.config.from_object(config_map.get(env, config_map["production"]))
+
     app.wsgi_app = ProxyFix(
-        app.wsgi_app,
-        x_for=1,
-        x_proto=1,
-        x_host=1,
-        x_port=1
+        app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1
     )
 
-    app.secret_key = os.environ["FLASK_SECRET_KEY"]
+    # ── Extensions ──────────────────────────────────────
+    login_manager.login_view = "auth.login"
+    login_manager.login_message_category = "info"
+    login_manager.init_app(app)
+    csrf.init_app(app)
+    limiter.init_app(app)
 
-    app.config.update(
-        SESSION_COOKIE_SECURE=True,
-        SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE="Lax",
-    )
-    # --------------------------------
-    # Register Blueprints
-    # --------------------------------
+    @login_manager.user_loader
+    def load_user(user_id):
+        from models.user import User
+        return User.get(user_id)
+
+    # ── Session bridge ──────────────────────────────────
+    # Keeps session["user_id"] populated for all existing routes
+    @app.before_request
+    def sync_session_user_id():
+        if current_user.is_authenticated:
+            session["user_id"] = current_user.get_id()
+            session["authenticated"] = True
+
+    # ── Security headers ────────────────────────────────
+    from middleware.security import apply_security_headers
+    apply_security_headers(app)
+
+    # ── Blueprints ──────────────────────────────────────
+    from routes.auth import auth_bp
     from routes.planner import planner_bp
     from routes.todo import todo_bp
     from routes.projects import projects_bp
@@ -37,6 +58,8 @@ def create_app():
     from routes.notes import notes_bp
     from routes.system import system_bp
     from routes.inbox import inbox_bp
+
+    app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(planner_bp)
     app.register_blueprint(todo_bp)
@@ -50,42 +73,35 @@ def create_app():
     app.register_blueprint(notes_bp)
     app.register_blueprint(inbox_bp)
 
-    # --------------------------------
-    # OAuth dev override (SAFE)
-    # --------------------------------
-    if os.environ.get("FLASK_ENV") == "development":
+    # ── OAuth dev override ──────────────────────────────
+    if env == "development":
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+    # ── Error handlers ──────────────────────────────────
+    @app.errorhandler(404)
+    def not_found(e):
+        if request.path.startswith("/api/"):
+            return jsonify({"status": "error", "error": "Not found"}), 404
+        return render_template("errors/404.html"), 404
+
+    @app.errorhandler(429)
+    def rate_limited(e):
+        return jsonify({"status": "error", "error": "Too many requests. Please slow down."}), 429
+
+    @app.errorhandler(500)
+    def server_error(e):
+        logger.exception("Unhandled server error")
+        if request.path.startswith("/api/"):
+            return jsonify({"status": "error", "error": "Internal server error"}), 500
+        return render_template("errors/500.html"), 500
+
     @app.errorhandler(Exception)
     def handle_exception(e):
         import traceback
-        print("🔥 UNHANDLED EXCEPTION")
+        logger.error("Unhandled exception: %s", str(e))
         traceback.print_exc()
+        if request.path.startswith("/api/"):
+            return jsonify({"status": "error", "error": "Internal server error"}), 500
         raise e
+
     return app
-
-   
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ENTR
-# Y POINT
-# ==========================================================
-#if __name__ == "__main__":
- #   logger.info("Starting Daily Planner – stable + Eisenhower")
-    #app.run(debug=True)

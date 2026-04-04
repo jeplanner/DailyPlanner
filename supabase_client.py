@@ -32,6 +32,7 @@ def get(path, params=None):
         url,
         headers=HEADERS,
         params=params,
+        timeout=10,
     )
 
     # 🔑 Log final URL (THIS IS WHAT SUPABASE SEES)
@@ -70,6 +71,7 @@ def post(path, data, prefer="return=representation"):
         f"{SUPABASE_URL}/rest/v1/{path}",
         headers=headers,
         json=data,
+        timeout=10,
     )
 
     r.raise_for_status()
@@ -84,6 +86,7 @@ def delete(path, params):
         f"{SUPABASE_URL}/rest/v1/{path}",
         headers=HEADERS,
         params=params,
+        timeout=10,
     )
     r.raise_for_status()
 def update(table, params, json):
@@ -118,3 +121,9 @@ def update(table, params, json):
         )
 
     return response.json() if response.text else None
+
+
+def get_for_user(path, user_id, params=None):
+    params = params or {}
+    params["user_id"] = f"eq.{user_id}"
+    return get(path, params)

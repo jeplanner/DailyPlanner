@@ -30,17 +30,20 @@ def todo():
 
     plan_date = date(year, month, day)
 
+    user_id = session["user_id"]
+
     # 1️⃣ Fetch ONLY Eisenhower tasks for this date
     raw_tasks = get(
         "todo_matrix",
         params={
+            "user_id": f"eq.{user_id}",
             "plan_date": f"eq.{plan_date.isoformat()}",
             "is_deleted": "eq.false"
         }
     )
 
     # 2️⃣ Fetch projects (for labels / linking only)
-    projects = get("projects")
+    projects = get("projects", params={"user_id": f"eq.{user_id}"})
     project_map = {
         p["project_id"]: p["name"]
         for p in projects

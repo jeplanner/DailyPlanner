@@ -1,0 +1,208 @@
+/* ================================================
+   REUSABLE COMPONENTS
+   Loading states, empty states, buttons, forms
+   ================================================ */
+
+/* ── Loading Spinner ──────────────────────────── */
+.loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--color-border, #e5e7eb);
+    border-top-color: var(--color-primary, #2563eb);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+.loading-spinner.sm { width: 18px; height: 18px; border-width: 2px; }
+.loading-spinner.lg { width: 48px; height: 48px; border-width: 4px; }
+
+.loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    border-radius: inherit;
+}
+
+html.dark .loading-overlay {
+    background: rgba(15, 23, 42, 0.7);
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Skeleton Loading ─────────────────────────── */
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--color-border-light, #f3f4f6) 25%,
+        var(--color-border, #e5e7eb) 50%,
+        var(--color-border-light, #f3f4f6) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: var(--radius-sm, 6px);
+}
+
+.skeleton-text { height: 14px; margin-bottom: 8px; }
+.skeleton-text.short { width: 60%; }
+.skeleton-title { height: 20px; width: 40%; margin-bottom: 12px; }
+.skeleton-card {
+    height: 80px;
+    border-radius: var(--radius-md, 10px);
+    margin-bottom: 12px;
+}
+
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ── Empty State ──────────────────────────────── */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--color-text-muted, #9ca3af);
+}
+
+.empty-state-icon {
+    font-size: 40px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.empty-state-title {
+    font-size: var(--font-size-base, 15px);
+    font-weight: var(--font-weight-semibold, 600);
+    color: var(--color-text-secondary, #6b7280);
+    margin-bottom: 4px;
+}
+
+.empty-state-desc {
+    font-size: var(--font-size-sm, 13px);
+    max-width: 280px;
+}
+
+/* ── Buttons ──────────────────────────────────── */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--radius-md, 10px);
+    font-family: var(--font-family, 'Inter', system-ui);
+    font-size: var(--font-size-sm, 13px);
+    font-weight: var(--font-weight-semibold, 600);
+    cursor: pointer;
+    transition: all var(--transition-fast, 0.15s ease);
+    text-decoration: none;
+    line-height: 1.4;
+}
+
+.btn:active { transform: scale(0.97); }
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-primary {
+    background: var(--color-primary, #2563eb);
+    color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-hover, #1d4ed8);
+}
+
+.btn-danger {
+    background: var(--color-danger, #dc2626);
+    color: #fff;
+}
+.btn-danger:hover:not(:disabled) {
+    background: #b91c1c;
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--color-text-secondary, #6b7280);
+    border: 1px solid var(--color-border, #e5e7eb);
+}
+.btn-ghost:hover:not(:disabled) {
+    background: var(--color-surface-secondary, #f9fafb);
+    color: var(--color-text, #111827);
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: var(--font-size-xs, 11px);
+    border-radius: var(--radius-sm, 6px);
+}
+
+/* ── Form Inputs ──────────────────────────────── */
+.form-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--color-border, #e5e7eb);
+    border-radius: var(--radius-md, 10px);
+    font-size: var(--font-size-base, 15px);
+    font-family: var(--font-family, 'Inter', system-ui);
+    background: var(--color-surface-secondary, #f9fafb);
+    color: var(--color-text, #111827);
+    transition: all 0.2s;
+    outline: none;
+}
+
+.form-input:focus {
+    border-color: var(--color-primary, #2563eb);
+    background: var(--color-surface, #ffffff);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37, 99, 235, 0.15));
+}
+
+.form-input::placeholder {
+    color: var(--color-text-muted, #9ca3af);
+}
+
+.form-label {
+    display: block;
+    font-size: var(--font-size-sm, 13px);
+    font-weight: var(--font-weight-semibold, 600);
+    color: var(--color-text-secondary, #374151);
+    margin-bottom: 6px;
+}
+
+/* ── Badge ────────────────────────────────────── */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-full, 999px);
+    font-size: var(--font-size-xs, 11px);
+    font-weight: var(--font-weight-semibold, 600);
+    line-height: 1.6;
+}
+
+.badge-primary {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+}
+.badge-success {
+    background: var(--color-success-light);
+    color: var(--color-success);
+}
+.badge-warning {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+}
+.badge-danger {
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+}

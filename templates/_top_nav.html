@@ -6,7 +6,12 @@
      Notion-Style Sidebar Navigation (Enhanced)
 ====================================================== -->
 
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link rel="stylesheet" href="/static/design-system.css">
+<link rel="stylesheet" href="/static/components.css">
 <script src="https://unpkg.com/feather-icons"></script>
+<script src="/static/js/global.js"></script>
+<script src="/static/js/toast.js"></script>
 
 <style>
 
@@ -318,8 +323,14 @@ body.menu-open{
 
     <hr>
 
+    <a href="javascript:void(0)" onclick="toggleDarkMode()" style="display:flex;align-items:center;gap:8px;">
+      <i data-feather="moon" id="dark-mode-icon"></i>
+      Dark Mode
+    </a>
+
     <a href="/logout">
-      🚪 Logout
+      <i data-feather="log-out"></i>
+      Logout
     </a>
   </div>
 

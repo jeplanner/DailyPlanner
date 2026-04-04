@@ -5,276 +5,226 @@
   data-date="{{ task.occurrence_date }}"
   data-status="{{ task.status }}"
   data-pinned="{{ 1 if task.is_pinned else 0 }}"
+  data-auto-advance="{{ task.auto_advance }}"
   ondragover="dragOver(event)"
   ondrop="dropTask(event)"
-  data-auto-advance="{{ task.auto_advance }}"
 >
 
-  <!-- 🔹 SUMMARY ROW -->
-  <div class="task-row task-main"
-       onclick="toggleTask('{{ task.task_id }}')">
-    <!-- ICON ROW -->
-  <div class="task-icons">
-    <!-- ☰ Drag handle -->
-    <span class="drag-handle"
-          draggable="true"
-          onmousedown="event.stopPropagation()"
-          onclick="event.stopPropagation()"
-          ondragstart="dragStart(event)"
-          title="Drag to reorder">
-      ☰
-    </span>
+  <!-- ── SUMMARY ROW ── -->
+  <div class="task-main" onclick="toggleTask('{{ task.task_id }}')">
 
-    <!-- ✅ Checkbox -->
-  <input type="checkbox"
-       {% if task.status == "done" %}checked{% endif %}
-       onclick="event.stopPropagation()"
-       onchange="updateStatus(
-         '{{ task.task_id }}',
-         this.checked ? 'done' : 'open',
-         this.closest('.task').dataset.date
-       )">
+    <div class="task-left">
+      <!-- Drag handle -->
+      <span class="drag-handle"
+            draggable="true"
+            onmousedown="event.stopPropagation()"
+            onclick="event.stopPropagation()"
+            ondragstart="dragStart(event)"
+            title="Drag to reorder">☰</span>
 
+      <!-- Checkbox -->
+      <input type="checkbox"
+             class="task-checkbox"
+             {% if task.status == "done" %}checked{% endif %}
+             onclick="event.stopPropagation()"
+             onchange="updateStatus('{{ task.task_id }}', this.checked ? 'done' : 'open', this.closest('.task').dataset.date)">
 
-    <!-- 🔺 Priority -->
-    <span class="priority-icon"
-          data-priority="{{ task.priority or 'medium' }}"
-          onclick="event.stopPropagation(); cyclePriority(event, '{{ task.task_id }}')"
-          title="Change priority">
-    </span>
+      <!-- Priority -->
+      <span class="priority-icon"
+            data-priority="{{ task.priority or 'medium' }}"
+            onclick="event.stopPropagation(); cyclePriority(event, '{{ task.task_id }}')"
+            title="Click to change priority"></span>
 
-    <button
-    type="button"
-    class="icon-btn edit-btn"
-    title="Edit task"
-    onclick="event.stopPropagation(); enableEdit(
-      this.closest('.task').querySelector('.task-title'),
-      '{{ task.task_id }}',
-  this.closest('.task').dataset.date
-    )">
-    ✏️
-  </button>
-  
-  <!-- 🔁 Recurrence Icon -->
-  <button
-    type="button"
-    class="icon-btn recurrence-btn {% if task.is_recurring %}active{% endif %}"
-    title="Recurrence"
-    onclick="event.stopPropagation(); toggleTask('{{ task.task_id }}')">
-    🔁
-  </button>
+      <!-- Title -->
+      <span class="task-title">{{ task.task_text }}</span>
 
-  <!-- 🧠 Eisenhower -->
-  <button
-    id="send-{{ task.task_id }}"
-    class="icon-btn eisenhower-btn {% if task.eisenhower_sent %}sent{% endif %}"
-    type="button"
-    title="{% if task.eisenhower_sent %}In Eisenhower{% else %}Send to Eisenhower{% endif %}"
-    onclick="event.stopPropagation(); openEisenhower('{{ task.task_id }}')">
-    🧠
-  </button>
-
-  </div>
-    <!-- 📝 Text -->
-    <div class="task-text">
-      <span class="task-title"
-            ondblclick="enableEdit(this, '{{ task.task_id }}')">
-        {{ task.task_text }}
-      </span>
       {% if task.is_recurring %}
-        <span class="recurrence-badge"
-              title="{{ task.recurrence_type|capitalize }}">
+        <span class="recurrence-badge" title="{{ task.recurrence_type|capitalize }}">
           {{ task.recurrence_badge }}
         </span>
       {% endif %}
 
       {% if task.missed_eisenhower %}
-        <span class="badge missed">
-          ⏰ Missed on {{ task.eisenhower_plan_date }}
-        </span>
+        <span class="badge missed">⏰ Missed on {{ task.eisenhower_plan_date }}</span>
       {% endif %}
     </div>
 
-    {% if task.due_date %}
-      <span class="due-badge {% if task.due_date < today %}overdue{% endif %}"
-            data-due="{{ task.due_date }}">
-        📅 {{ task.due_date }}
+    <div class="task-right">
+      <!-- Status chip -->
+      <span class="status-chip status-{{ task.status }}">
+        {% if task.status == 'done' %}Done
+        {% elif task.status == 'in_progress' %}In Progress
+        {% else %}Open{% endif %}
       </span>
-    {% endif %}
 
-    <div class="flex-spacer"></div>
-    <span class="task-chevron" aria-hidden="true"></span>
+      <!-- Due badge (server pre-formatted to avoid flash) -->
+      {% if task.due_date %}
+        <span class="due-badge {% if task.due_date < today %}overdue{% endif %}"
+              data-due="{{ task.due_date }}">
+          {{ task.due_label or task.due_date }}
+        </span>
+      {% endif %}
 
-  </div>
+      <span class="task-chevron" aria-hidden="true"></span>
+    </div>
 
-  <!-- 🔽 EXPANDED DETAILS -->
+  </div><!-- /.task-main -->
+
+  <!-- ── EXPANDED DETAILS ── -->
   <div class="task-details">
 
-    <!-- Planning -->
-    <div class="task-row task-details-row planning-row">
-      <div class="field">
-          <label>Repeat</label>
-         <select
-          onchange="updateRecurrence('{{ task.task_id }}', this.value)">
-          <option value="none" {% if not task.is_recurring %}selected{% endif %}>Never</option>
-          <option value="daily" {% if task.recurrence_type=='daily' %}selected{% endif %}>Every Day</option>
-          <option value="weekly" {% if task.recurrence_type=='weekly' %}selected{% endif %}>Specific Days</option>
-          <option value="monthly" {% if task.recurrence_type=='monthly' %}selected{% endif %}>Monthly</option>
-        </select>
-      </div>
-      <div class="field recurrence-days"
-          {% if task.recurrence_type != 'weekly' %}style="display:none"{% endif %}>
+    <!-- Section 1: Scheduling -->
+    <div class="detail-section">
+      <div class="section-label">Scheduling</div>
+      <div class="fields-row">
 
-        <label>On</label>
+        <div class="field">
+          <label>Start date</label>
+          <input type="date"
+                 class="start-date"
+                 value="{{ task.start_date or '' }}"
+                 onchange="updatePlanning('{{ task.task_id }}', this)">
+          <span class="field-fb"></span>
+        </div>
 
-        {% for i, day in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}
-          <label class="day-chip">
-            <input type="checkbox"
-                  value="{{ i }}"
-                  {% if task.recurrence_days and i in task.recurrence_days %}checked{% endif %}
-                  onchange="updateRecurrenceDays('{{ task.task_id }}')">
-            {{ day }}
-          </label>
-        {% endfor %}
-      </div>
-
-      <div class="field">
-        <label>Start</label>
-        <input type="date"
-               class="start-date"
-               value="{{ task.start_date or '' }}"
-               oninput="updatePlanning('{{ task.task_id }}')">
-      </div>
-
-      <div class="field">
-        <label>Duration</label>
-        <div class="number-control inline-number"
-              data-step="1">
-
+        <div class="field">
+          <label>Duration (days)</label>
+          <div class="number-control inline-number" data-step="1">
             <button type="button"
-                    onclick="adjustInlineNumber(this,-1,'duration','{{ task.task_id }}','{{ task.occurrence_date }}')">
-              −
-            </button>
-
-          <input type="number"
-                class="duration-days"
-                min="0"
-                max="100"
-                step="1"
-                value="{{ task.duration_days or 0 }}"
-                oninput="validateInlineNumber(this); updatePlanning('{{ task.task_id }}','{{ task.occurrence_date }}')">
-
-          <button type="button"
-                  onclick="adjustInlineNumber(this,1,'duration','{{ task.task_id }}','{{ task.occurrence_date }}')">
-            +
-          </button>
-
+                    onclick="adjustAndSave(this,-1,'duration','{{ task.task_id }}')">−</button>
+            <input type="number" class="duration-days" min="0" max="365" step="1"
+                   value="{{ task.duration_days or 0 }}"
+                   onchange="updatePlanning('{{ task.task_id }}', this)">
+            <button type="button"
+                    onclick="adjustAndSave(this,1,'duration','{{ task.task_id }}')">+</button>
+          </div>
+          <span class="field-fb"></span>
         </div>
 
-
-      </div>
-
-      <div class="field">
-        <label>Planned</label>
-        <div class="number-control inline-number"
-     data-step="1">
-
-  <button type="button"
-          onclick="adjustInlineNumber(this,-1,'planned','{{ task.task_id }}')">
-    −
-  </button>
-
-  <input type="number"
-         min="0"
-         max="100"
-         step="1"
-         value="{{ task.planned_hours or 0 }}"
-         oninput="validateInlineNumber(this)"
-         onchange="updatePlanned('{{ task.task_id }}', this.value)">
-
-  <button type="button"
-          onclick="adjustInlineNumber(this,1,'planned','{{ task.task_id }}')">
-    +
-  </button>
-
-</div>
-
-
-      </div>
-
-      <div class="field">
-        <label>Actual</label>
-            <div class="number-control inline-number"
-            data-step="1">
-
-          <button type="button"
-                  onclick="adjustInlineNumber(this,-1,'actual','{{ task.task_id }}')">
-            −
-          </button>
-
-          <input type="number"
-                min="0"
-                max="100"
-                step="1"
-                value="{{ task.actual_hours or 0 }}"
-                oninput="validateInlineNumber(this)"
-                onchange="updateActual('{{ task.task_id }}', this.value)">
-
-          <button type="button"
-                  onclick="adjustInlineNumber(this,1,'actual','{{ task.task_id }}')">
-            +
-          </button>
-
+        <div class="field">
+          <label>Due time</label>
+          <input type="time"
+                 value="{{ task.due_time or '' }}"
+                 onchange="updateDueTime('{{ task.task_id }}', this.value, this)">
+          <span class="field-fb"></span>
         </div>
 
-
-      </div>
-
-      <div class="field">
-        <label>Due Time</label>
-        <select onchange="updateDueTime('{{ task.task_id }}', this.value)">
-          {% for h in range(0,24) %}
-            <option value="{{ '%02d:00'|format(h) }}"
-              {% if task.due_time == '%02d:00'|format(h) %}selected{% endif %}>
-              {{ '%02d:00'|format(h) }}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <div class="field">
-        <select onchange="updateStatus(
-              '{{ task.task_id }}',
-              this.value,
-              this.closest('.task').dataset.date
-            )">
-
-          <option value="open" {% if task.status=='open' %}selected{% endif %}>Open</option>
-          <option value="in_progress" {% if task.status=='in_progress' %}selected{% endif %}>In Progress</option>
-          <option value="done" {% if task.status=='done' %}selected{% endif %}>Done</option>
-        </select>
       </div>
     </div>
 
-    <!-- Actions -->
-    <div class="task-row task-details-row action-row">
+    <!-- Section 2: Tracking -->
+    <div class="detail-section">
+      <div class="section-label">Tracking</div>
+      <div class="fields-row">
 
-      <div class="field wide">
-        <label>Delegate</label>
-        <input type="text"
-               maxlength="25"
-               value="{{ task.delegated_to or '' }}"
-               onchange="updateDelegation('{{ task.task_id }}', this.value)">
-      </div>
+        <div class="field">
+          <label>Status</label>
+          <select onchange="updateStatus('{{ task.task_id }}', this.value, this.closest('.task').dataset.date, this)">
+            <option value="open"        {% if task.status=='open'        %}selected{% endif %}>Open</option>
+            <option value="in_progress" {% if task.status=='in_progress' %}selected{% endif %}>In Progress</option>
+            <option value="done"        {% if task.status=='done'        %}selected{% endif %}>Done</option>
+          </select>
+          <span class="field-fb"></span>
+        </div>
 
-      <div class="task-actions">
-        <button class="save-task-btn">💾 Save</button>
-        <button class="icon-btn danger"
-                onclick="eliminateTask('{{ task.task_id }}')">
-          🗑 Delete
-        </button>
+        <div class="field">
+          <label>Planned hrs</label>
+          <div class="number-control inline-number" data-step="0.5">
+            <button type="button"
+                    onclick="adjustAndSave(this,-1,'planned','{{ task.task_id }}')">−</button>
+            <input type="number" min="0" max="999" step="0.5"
+                   value="{{ task.planned_hours or 0 }}"
+                   onchange="updatePlanned('{{ task.task_id }}', this.value, this)">
+            <button type="button"
+                    onclick="adjustAndSave(this,1,'planned','{{ task.task_id }}')">+</button>
+          </div>
+          <span class="field-fb"></span>
+        </div>
+
+        <div class="field">
+          <label>Actual hrs</label>
+          <div class="number-control inline-number" data-step="0.5">
+            <button type="button"
+                    onclick="adjustAndSave(this,-1,'actual','{{ task.task_id }}')">−</button>
+            <input type="number" min="0" max="999" step="0.5"
+                   value="{{ task.actual_hours or 0 }}"
+                   onchange="updateActual('{{ task.task_id }}', this.value, this)">
+            <button type="button"
+                    onclick="adjustAndSave(this,1,'actual','{{ task.task_id }}')">+</button>
+          </div>
+          <span class="field-fb"></span>
+        </div>
+
       </div>
     </div>
 
-  </div>
-</div>
+    <!-- Section 3: Recurrence -->
+    <div class="detail-section">
+      <div class="section-label">Recurrence</div>
+      <div class="fields-row recurrence-fields">
+
+        <div class="field">
+          <label>Repeat</label>
+          <select onchange="updateRecurrence('{{ task.task_id }}', this.value)">
+            <option value="none"    {% if not task.is_recurring           %}selected{% endif %}>Never</option>
+            <option value="daily"   {% if task.recurrence_type=='daily'   %}selected{% endif %}>Every day</option>
+            <option value="weekly"  {% if task.recurrence_type=='weekly'  %}selected{% endif %}>Specific days</option>
+            <option value="monthly" {% if task.recurrence_type=='monthly' %}selected{% endif %}>Monthly</option>
+          </select>
+        </div>
+
+        <div class="field recurrence-days"
+             {% if task.recurrence_type != 'weekly' %}style="display:none"{% endif %}>
+          <label>On</label>
+          <div class="day-chips">
+            {% for i, day in [(0,'Mon'),(1,'Tue'),(2,'Wed'),(3,'Thu'),(4,'Fri'),(5,'Sat'),(6,'Sun')] %}
+              <label class="day-chip">
+                <input type="checkbox" value="{{ i }}"
+                       {% if task.recurrence_days and i in task.recurrence_days %}checked{% endif %}
+                       onchange="updateRecurrenceDays('{{ task.task_id }}')">
+                {{ day }}
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Section 4: Actions -->
+    <div class="detail-section actions-section">
+      <div class="section-label">Actions</div>
+      <div class="fields-row actions-row">
+
+        <div class="field">
+          <label>Delegate to</label>
+          <input type="text" maxlength="25"
+                 value="{{ task.delegated_to or '' }}"
+                 placeholder="Name or team…"
+                 onchange="updateDelegation('{{ task.task_id }}', this.value, this)">
+          <span class="field-fb"></span>
+        </div>
+
+        <div class="action-btns">
+          <button type="button" class="action-btn"
+                  onclick="event.stopPropagation(); enableEdit(this.closest('.task').querySelector('.task-title'), '{{ task.task_id }}')">
+            ✏️ Edit title
+          </button>
+          <button type="button"
+                  id="send-{{ task.task_id }}"
+                  class="action-btn {% if task.eisenhower_sent %}active{% endif %}"
+                  onclick="event.stopPropagation(); openEisenhower('{{ task.task_id }}')">
+            🧠 Eisenhower
+          </button>
+          <button type="button" class="action-btn danger"
+                  onclick="event.stopPropagation(); eliminateTask('{{ task.task_id }}')">
+            🗑 Delete
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /.task-details -->
+
+</div><!-- /.task -->

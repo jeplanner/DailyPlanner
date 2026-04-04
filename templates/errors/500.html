@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>500 — Server Error</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f0f2f5;
+            color: #111827;
+            text-align: center;
+        }
+        .error-page { max-width: 400px; padding: 20px; }
+        .error-code { font-size: 80px; font-weight: 700; color: #dc2626; line-height: 1; }
+        .error-title { font-size: 22px; font-weight: 600; margin: 12px 0 8px; }
+        .error-desc { font-size: 15px; color: #6b7280; margin-bottom: 24px; }
+        .error-link {
+            display: inline-block;
+            padding: 10px 24px;
+            background: #2563eb;
+            color: #fff;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .error-link:hover { background: #1d4ed8; }
+    </style>
+</head>
+<body>
+    <div class="error-page">
+        <div class="error-code">500</div>
+        <div class="error-title">Something went wrong</div>
+        <p class="error-desc">We're working on fixing this. Please try again in a moment.</p>
+        <a href="/" class="error-link">Go to Planner</a>
+    </div>
+</body>
+</html>

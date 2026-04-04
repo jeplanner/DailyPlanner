@@ -2,13 +2,16 @@ import logging
 from flask import Blueprint, jsonify, request, session
 from services.ai_service import call_gemini
 from services.login_service import login_required
+from extensions import limiter
 from supabase_client import get
 from openai import OpenAI
 import os
 
 logger = logging.getLogger("daily_plan")
 ai_bp = Blueprint("ai", __name__)
+ai_limiter = limiter.limit("10 per minute")
 @ai_bp.post("/ai/reflection-summary")
+@ai_limiter
 @login_required
 def reflection_summary():
     data = request.get_json(silent=True) or {}
@@ -58,6 +61,7 @@ def call_groq(prompt):
     return resp.choices[0].message.content
 
 @ai_bp.post("/ai/generate-day-plan")
+@ai_limiter
 @login_required
 def generate_day_plan():
 
@@ -124,6 +128,7 @@ def generate_day_plan():
 })
 
 @ai_bp.post("/ai/assistant")
+@ai_limiter
 @login_required
 def ai_assistant():
     message = request.json.get("message")

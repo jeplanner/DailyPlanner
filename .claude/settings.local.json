@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -oE '\\(get|post|update|delete\\)\\\\\\([\"\\\\'][^\"\\\\']+' | sed 's/.*[\"\\\\047]//g' | sort -u)",
+      "Bash(python3:*)",
+      "Bash(wc -l /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/routes/*.py /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/services/*.py /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/*.js)"
+    ]
+  }
+}

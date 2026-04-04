@@ -1,0 +1,127 @@
+/* ================================================
+   DAILYPLANNER DESIGN SYSTEM
+   Global CSS custom properties & base styles
+   ================================================ */
+
+:root {
+    /* ── Colors ────────────────────────────────── */
+    --color-primary: #2563eb;
+    --color-primary-hover: #1d4ed8;
+    --color-primary-light: #eff6ff;
+    --color-primary-ring: rgba(37, 99, 235, 0.15);
+
+    --color-danger: #dc2626;
+    --color-danger-light: #fef2f2;
+    --color-danger-border: #fecaca;
+
+    --color-success: #16a34a;
+    --color-success-light: #f0fdf4;
+    --color-success-border: #bbf7d0;
+
+    --color-warning: #f59e0b;
+    --color-warning-light: #fffbeb;
+    --color-warning-border: #fde68a;
+
+    --color-info: #2563eb;
+    --color-info-light: #eff6ff;
+
+    --color-bg: #f0f2f5;
+    --color-surface: #ffffff;
+    --color-surface-secondary: #f9fafb;
+    --color-text: #111827;
+    --color-text-secondary: #6b7280;
+    --color-text-muted: #9ca3af;
+    --color-border: #e5e7eb;
+    --color-border-light: #f3f4f6;
+    --color-overlay: rgba(0, 0, 0, 0.4);
+
+    /* ── Typography ────────────────────────────── */
+    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-size-xs: 11px;
+    --font-size-sm: 13px;
+    --font-size-base: 15px;
+    --font-size-lg: 18px;
+    --font-size-xl: 22px;
+    --font-size-2xl: 28px;
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --line-height-tight: 1.25;
+    --line-height-normal: 1.5;
+
+    /* ── Spacing ───────────────────────────────── */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+
+    /* ── Radius ────────────────────────────────── */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 18px;
+    --radius-full: 999px;
+
+    /* ── Shadows ───────────────────────────────── */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.12);
+
+    /* ── Transitions ──────────────────────────── */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s ease;
+    --transition-slow: 0.35s ease;
+}
+
+/* ── Dark Mode ─────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+    :root:not(.light) {
+        --color-bg: #0f172a;
+        --color-surface: #1e293b;
+        --color-surface-secondary: #1a2332;
+        --color-text: #f1f5f9;
+        --color-text-secondary: #94a3b8;
+        --color-text-muted: #64748b;
+        --color-border: #334155;
+        --color-border-light: #1e293b;
+        --color-overlay: rgba(0, 0, 0, 0.6);
+        --color-primary-light: #1e3a5f;
+        --color-danger-light: #3b1111;
+        --color-danger-border: #7f1d1d;
+        --color-success-light: #052e16;
+        --color-success-border: #14532d;
+        --color-warning-light: #451a03;
+        --color-warning-border: #78350f;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+        --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+}
+
+html.dark {
+    --color-bg: #0f172a;
+    --color-surface: #1e293b;
+    --color-surface-secondary: #1a2332;
+    --color-text: #f1f5f9;
+    --color-text-secondary: #94a3b8;
+    --color-text-muted: #64748b;
+    --color-border: #334155;
+    --color-border-light: #1e293b;
+    --color-overlay: rgba(0, 0, 0, 0.6);
+    --color-primary-light: #1e3a5f;
+    --color-danger-light: #3b1111;
+    --color-danger-border: #7f1d1d;
+    --color-success-light: #052e16;
+    --color-success-border: #14532d;
+    --color-warning-light: #451a03;
+    --color-warning-border: #78350f;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
