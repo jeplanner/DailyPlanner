@@ -436,18 +436,66 @@
   async function autoFetchMetadata() {
     const urlInput = $("ref-url");
     if (!urlInput || !urlInput.value.trim()) return;
+
+    const useAI = $("enable-ai")?.checked !== false;
+
+    // Show loading state in the editor
+    if (quillInstance) {
+      quillInstance.setText(useAI ? "Fetching title, description and tags…" : "Fetching title…");
+    }
+    if ($("ref-title")) $("ref-title").placeholder = "Fetching…";
+
     try {
       const res = await fetch("/references/metadata", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: urlInput.value.trim() }),
+        body: JSON.stringify({ url: urlInput.value.trim(), use_ai: useAI }),
       });
       if (!res.ok) return;
       const data = await res.json();
-      if ($("ref-title") && data.title) $("ref-title").value = data.title;
-      if (quillInstance && data.description) quillInstance.root.innerHTML = data.description;
+
+      // Title
+      if ($("ref-title") && data.title) {
+        $("ref-title").value = data.title;
+        $("ref-title").placeholder = "Title (auto-filled from URL)";
+      }
+
+      // Description — use dangerouslyPasteHTML so Quill formats it correctly
+      if (quillInstance) {
+        if (data.description) {
+          quillInstance.setContents([]);
+          quillInstance.clipboard.dangerouslyPasteHTML(
+            `<p>${data.description.replace(/\n/g, "</p><p>")}</p>`
+          );
+        } else {
+          quillInstance.setText("");
+        }
+      }
+
+      // Tags
+      if (window.tagifyInstance && Array.isArray(data.tags) && data.tags.length) {
+        window.tagifyInstance.removeAllTags();
+        window.tagifyInstance.addTags(data.tags);
+      }
+
+      // Category
+      if (data.category) {
+        const catSelect = $("ref-category");
+        if (catSelect) {
+          // Try to match existing option
+          const opt = [...catSelect.options].find(
+            o => o.value.toLowerCase() === data.category.toLowerCase()
+          );
+          if (opt) catSelect.value = opt.value;
+          else if ($("new-category")) $("new-category").value = data.category;
+        }
+      }
+
+      showToast("Metadata fetched ✓", "success", 2000);
+
     } catch (err) {
       console.error("Metadata fetch failed:", err);
+      if (quillInstance) quillInstance.setText("");
     }
   }
 

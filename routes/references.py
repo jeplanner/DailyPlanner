@@ -181,39 +181,78 @@ def get_tags():
 @references_bp.route("/references/metadata", methods=["POST"])
 @login_required
 def fetch_metadata():
-    data    = request.json
-    url     = data.get("url")
-    use_ai  = data.get("use_ai", True)
+    data   = request.json
+    url    = data.get("url")
+    use_ai = data.get("use_ai", True)
 
     if not url:
         return jsonify({"error": "URL required"}), 400
 
     try:
-        page  = requests.get(url, timeout=5)
-        soup  = BeautifulSoup(page.text, "html.parser")
-        title = soup.title.string.strip() if soup.title else None
+        page = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        soup = BeautifulSoup(page.text, "html.parser")
+
+        # Title — prefer og:title, fall back to <title>
+        og_title = soup.find("meta", property="og:title")
+        title = (og_title["content"].strip() if og_title and og_title.get("content")
+                 else (soup.title.string.strip() if soup.title else url))
+
+        # Meta description — prefer og:description, then name=description
+        og_desc = soup.find("meta", property="og:description")
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        meta_text = (
+            (og_desc["content"].strip()   if og_desc   and og_desc.get("content")   else None)
+            or (meta_desc["content"].strip() if meta_desc and meta_desc.get("content") else None)
+            or ""
+        )
 
         if not use_ai:
-            return jsonify({"title": title, "tags": [], "category": None})
+            return jsonify({"title": title, "description": meta_text, "tags": [], "category": None})
 
-        prompt = f"""Analyze this webpage title: "{title}"
+        # Ask Groq for description + tags + category in one call
+        prompt = f"""You are a knowledge base assistant. Analyze this webpage and return structured JSON.
 
-Return JSON ONLY:
+URL: {url}
+Title: {title}
+Meta description: {meta_text[:300] if meta_text else "not available"}
+
+Return ONLY valid JSON in this exact format:
 {{
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "category": "Technology"
+  "description": "4-6 sentence explanation of what this page is about, what you can learn from it, and why it is useful. Be specific and informative.",
+  "tags": ["tag1", "tag2", "tag3", "tag4"],
+  "category": "one of: Technology, Health, Finance, Learning, AI / ML, Programming, Design, Productivity, Science, Business, Other"
 }}
 
-Category must be one of: Technology, Health, Finance, Learning, AI / ML, Programming, Design, Productivity, Science, Business"""
+Rules: No markdown, no explanation, raw JSON only."""
 
-        ai_response = call_gemini(prompt)
         try:
-            ai_data = json.loads(ai_response)
-        except Exception:
+            resp = requests.post(
+                GROQ_URL,
+                headers=_groq_headers(),
+                json={
+                    "model": GROQ_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                content = resp.json()["choices"][0]["message"]["content"].strip()
+                # Strip markdown code fences if present
+                if content.startswith("```"):
+                    content = content.split("```")[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                ai_data = json.loads(content)
+            else:
+                ai_data = {}
+        except Exception as e:
+            logger.warning("fetch_metadata Groq call failed: %s", e)
             ai_data = {}
 
         return jsonify({
             "title": title,
+            "description": ai_data.get("description") or meta_text,
             "tags": ai_data.get("tags", []),
             "category": ai_data.get("category"),
         })
