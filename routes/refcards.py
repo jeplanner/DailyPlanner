@@ -8,8 +8,12 @@ from flask import Blueprint, request, jsonify, session, render_template
 from supabase_client import get, post, update, delete
 from services.login_service import login_required
 from config import IST
+from utils.encryption import encrypt_fields, decrypt_fields, decrypt_rows
 
 refcards_bp = Blueprint("refcards", __name__)
+
+# Fields that contain sensitive data — encrypted at rest in Supabase
+ENCRYPTED_FIELDS = ["account_number", "customer_id", "portal_url", "notes", "payment_method"]
 
 
 # ═══════════════════════════════════════════════════
@@ -104,6 +108,9 @@ def list_cards():
 
     rows = get("ref_cards", params=params) or []
 
+    # Decrypt sensitive fields before search and return
+    decrypt_rows(rows, ENCRYPTED_FIELDS)
+
     if search:
         s = search.lower()
         rows = [r for r in rows if
@@ -145,8 +152,12 @@ def add_card():
         "status": data.get("status", "active"),
     }
 
+    encrypt_fields(card, ENCRYPTED_FIELDS)
+
     rows = post("ref_cards", card)
-    return jsonify(rows[0] if rows else card)
+    if rows:
+        decrypt_fields(rows[0], ENCRYPTED_FIELDS)
+    return jsonify(rows[0] if rows else data)
 
 
 @refcards_bp.route("/api/refcards/cards/<card_id>", methods=["PUT"])
@@ -162,6 +173,8 @@ def update_card(card_id):
 
     if not payload:
         return jsonify({"error": "Nothing to update"}), 400
+
+    encrypt_fields(payload, ENCRYPTED_FIELDS)
 
     update("ref_cards",
            params={"id": f"eq.{card_id}", "user_id": f"eq.{session['user_id']}"},

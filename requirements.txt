@@ -2,6 +2,7 @@ flask
 flask-login
 flask-wtf
 flask-limiter
+cryptography
 requests
 python-dotenv
 gunicorn
