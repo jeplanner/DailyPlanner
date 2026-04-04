@@ -760,6 +760,7 @@ def reorder_tasks():
 
     return jsonify({"status": "ok"})
 @projects_bp.route("/api/v2/project-tasks")
+@login_required
 def get_project_tasks():
     user_id = session["user_id"]
     date = request.args.get("date")
@@ -789,6 +790,7 @@ def get_project_tasks():
     return jsonify(tasks)
 
 @projects_bp.route("/api/v2/project-tasks/<task_id>/schedule", methods=["POST"])
+@login_required
 def schedule_project_task(task_id):
     data = request.json
 
@@ -796,14 +798,14 @@ def schedule_project_task(task_id):
         "project_tasks",
         params={"task_id": f"eq.{task_id}"},
         json={
-            "plan_date": data["due_date"],
+            "plan_date": data["plan_date"],
             "start_time": data["start_time"],
-            "end_time": data["end_time"]
         }
     )
 
     return {"ok": True}
 @projects_bp.route("/api/v2/project-tasks/<task_id>", methods=["GET"])
+@login_required
 def get_single_project_task(task_id):
 
     task = get(
@@ -816,6 +818,7 @@ def get_single_project_task(task_id):
 
     return jsonify(task[0] if task else {})
 @projects_bp.route("/api/v2/project-tasks/<task_id>", methods=["PUT"])
+@login_required
 def update_project_task(task_id):
 
     data = request.get_json(silent=True) or {}
@@ -874,8 +877,6 @@ def update_project_task(task_id):
     if not update_payload:
         return jsonify({"error": "No valid fields to update"}), 400
 
-    print("FINAL PAYLOAD:", update_payload)
-
     update(
         "project_tasks",
         params={"task_id": f"eq.{task_id}"},
@@ -886,6 +887,7 @@ def update_project_task(task_id):
 
 
 @projects_bp.route("/api/v2/project-tasks/<task_id>/complete", methods=["POST"])
+@login_required
 def complete_task(task_id):
     update(
         "project_tasks",

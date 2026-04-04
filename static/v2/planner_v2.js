@@ -262,9 +262,6 @@ function render() {
     root.appendChild(div);
   });
 }
-document.addEventListener("click", (e) => {
-  console.log("GLOBAL CLICK:", e.target);
-});
 
 async function openTaskCard(taskId) {
   selected = { task_id: taskId };   // 🔥 CRITICAL
@@ -407,8 +404,11 @@ function updateDateHeader() {
   const el = document.getElementById("current-date");
   if (!el) return;
 
-  const d = new Date(currentDate);
-  el.textContent = d.toDateString();
+  // Parse manually to avoid UTC→local timezone shift
+  const [y, m, d] = currentDate.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const isToday = currentDate === getISTDate();
+  el.textContent = date.toDateString() + (isToday ? " — Today" : "");
 }
 function openProjectTaskModal(task) {
   selected = { ...task, type: "project" };
@@ -507,17 +507,18 @@ function renderFloatingTasks(tasks) {
         div.classList.add("scheduled-floating");
       }
 
+      const projectName = task.projects?.name || "";
+
       div.innerHTML = `
         <div class="floating-title">
           ${task.task_text}
           ${task.plan_date ? `<span class="scheduled-icon">📅</span>` : ""}
         </div>
-
+        ${projectName ? `<div class="floating-project">${projectName}</div>` : ""}
         <div class="floating-meta">
           <div class="meta-left">
             ${time ? `<span class="floating-time">🕒 ${time}</span>` : ""}
           </div>
-
           <span class="floating-priority p-${priority}">
             ${priority.toUpperCase()}
           </span>
@@ -576,7 +577,7 @@ function openCreateModal() {
   custom.style.display = "none";
 
   document.getElementById("modal").classList.remove("hidden");
-    // 🔥 AUTO FOCUS START FIELD
+  updateEndPreview();
   setTimeout(() => {
     document.getElementById("start-time").focus();
   }, 50);
@@ -618,6 +619,7 @@ function openModal(ev) {
   }
 
   document.getElementById("modal").classList.remove("hidden");
+  updateEndPreview();
 }
 function closeTaskCard() {
   const modal = document.getElementById("task-card-modal");
@@ -626,8 +628,11 @@ function closeTaskCard() {
 }
 
 async function saveTaskCard() {
-
   const taskId = selected?.task_id;
+  if (!taskId) return;
+
+  const btn = document.querySelector(".task-card-actions .primary-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
 
   const payload = {
     task_text: document.getElementById("task-title").value,
@@ -641,14 +646,20 @@ async function saveTaskCard() {
     start_time: document.getElementById("task-start-time").value
   };
 
-  await fetch(`/api/v2/project-tasks/${taskId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  closeTaskCard();
-  loadEvents();
+  try {
+    const res = await fetch(`/api/v2/project-tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error("Save failed");
+    closeTaskCard();
+    loadEvents();
+  } catch (err) {
+    showPlannerToast("Save failed. Please try again.", "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Save"; }
+  }
 }
 
 function attachScrollNumber(id) {
@@ -676,6 +687,14 @@ attachScrollNumber("task-planned-hours");
 attachScrollNumber("task-actual-hours");
 attachScrollNumber("task-duration");
 
+
+function updateEndPreview() {
+  const start    = document.getElementById("start-time").value;
+  const duration = document.getElementById("duration").value;
+  const el       = document.getElementById("end-display");
+  if (!el) return;
+  el.textContent = start ? `Ends at ${calculateEndTime(start, duration)}` : "";
+}
 
 function closeModal() {
   document.getElementById("modal").classList.add("hidden");
@@ -818,15 +837,54 @@ function startResize(e, ev) {
   document.addEventListener("mousemove", onMouseMove);
   document.addEventListener("mouseup", onMouseUp);
 }
+function showPlannerToast(message, type = "info") {
+  const existing = document.getElementById("planner-toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.id = "planner-toast";
+  toast.className = `planner-toast planner-toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add("show"), 10);
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
+
+function goToToday() {
+  currentDate = getISTDate();
+  updateDateHeader();
+  loadEvents();
+  setTimeout(scrollToNow, 300);
+}
+
+function scrollToNow() {
+  const now = getISTNow();
+  const top = (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT;
+  window.scrollTo({ top: Math.max(0, top - 180), behavior: "smooth" });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   updateDateHeader();
   loadEvents();
   document.getElementById("reminder-select")
-  ?.addEventListener("change", handleReminderSelect);
+    ?.addEventListener("change", handleReminderSelect);
   document.getElementById("new-event-btn")
-  .addEventListener("click", openCreateModal);
+    ?.addEventListener("click", openCreateModal);
+
+  // End-time preview updates
+  document.getElementById("start-time")?.addEventListener("change", updateEndPreview);
+  document.getElementById("duration")?.addEventListener("change", updateEndPreview);
+
+  // Today button
+  document.getElementById("today-btn")?.addEventListener("click", goToToday);
+
+  // Auto-scroll to current time on load
+  setTimeout(scrollToNow, 400);
 
   const timeline = document.getElementById("timeline");
+  if (timeline) timeline.addEventListener("pointerdown", startCreateEvent);
 
 
 
@@ -1087,7 +1145,6 @@ async function runSmartPlanner() {
   loadEvents();
 }
 
-timeline.addEventListener("pointerdown", startCreateEvent);
 function startCreateEvent(e) {
 
   // ignore if touching an existing event

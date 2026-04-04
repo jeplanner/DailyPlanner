@@ -1,9 +1,12 @@
 
+import logging
 from datetime import datetime
 import os
 
-from flask import Blueprint,  jsonify, redirect, request, session, url_for
+from flask import Blueprint, jsonify, redirect, request, session, url_for
 from supabase_client import get, post, update
+
+logger = logging.getLogger("daily_plan")
 
 from routes.planner import build_google_datetime, get_conflicts
 from services.login_service import login_required
@@ -36,11 +39,6 @@ def list_events():
 @events_bp.route("/api/v2/events", methods=["POST"])
 @login_required
 def create_event():
-    from flask import jsonify
-    print("Received event creation request with data:", request.json)
-    print("Session data:", dict(session))
-    print("User ID from session:", session.get("user_id"))
-    print("Session user_id:", session["user_id"]) 
     user_id = session["user_id"]
     data = request.json
     force = data.get("force", False)
@@ -70,22 +68,18 @@ def create_event():
     "description": data.get("description", ""),
     "priority": data.get("priority", "medium")
     })
-    print("Created event:", response1)
     created_row = response1[0] if response1 else None
-    print("Created row:", created_row )
-# 🔥 AUTO SYNC TO GOOGLE
     if created_row:
         try:
             google_id = insert_google_event(created_row)
-
             if google_id:
                 update(
                     "daily_events",
-                    params={"id": f"eq.{created_row['id']}","user_id": f"eq.{session['user_id']}"},
-                    json={"google_event_id": google_id} 
+                    params={"id": f"eq.{created_row['id']}", "user_id": f"eq.{session['user_id']}"},
+                    json={"google_event_id": google_id}
                 )
         except Exception as e:
-            print("Google sync failed:", e)
+            logger.warning("Google sync failed on create: %s", e)
 
     return jsonify({"success": True})
 
@@ -180,9 +174,8 @@ def update_event(event_id):
                         }
                     }
                 ).execute()
-                print("Google event successfuly created")
         except Exception as e:
-            print("Google update failed:", e)
+            logger.warning("Google update failed: %s", e)
     return jsonify({"success": True})
 
 @events_bp.route("/api/v2/events/<event_id>", methods=["DELETE"])
@@ -229,7 +222,7 @@ def delete_event(event_id):
                 ).execute()
 
         except Exception as e:
-            print("Google delete failed:", e)
+            logger.warning("Google delete failed: %s", e)
     return {"ok": True}
 
 @events_bp.post("/api/v2/smart-create")
@@ -374,12 +367,9 @@ def oauth2callback():
     return redirect("/planner-v2")
 
 def insert_google_event(event_row):
-    print("🔥 GOOGLE INSERT FUNCTION CALLED")
     user_id = session.get("user_id")
     if not user_id:
-      return None
-    user_id = session["user_id"]  # session.get("user_id") or hardcoded for testing
-    print("USER ID:", session.get("user_id"))
+        return None
     rows = get(
         "user_google_tokens",
         {"user_id": f"eq.{user_id}"}
@@ -482,6 +472,6 @@ def insert_event(user_id, data, force=False):
                     json={"google_event_id": google_id}
                 )
         except Exception as e:
-            print("Google sync failed:", e)
+            logger.warning("Google sync failed on insert: %s", e)
 
     return {"success": True}, 200

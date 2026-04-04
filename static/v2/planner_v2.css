@@ -654,3 +654,78 @@ body {
   border-radius: 6px;
   pointer-events: none;
 }
+
+/* ============================= */
+/* Today Button                  */
+/* ============================= */
+.today-btn {
+  background: #eef2ff;
+  color: #4f46e5;
+  border: 1px solid #c7d2fe;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.today-btn:hover { background: #e0e7ff; }
+
+/* ============================= */
+/* Planner Toast                 */
+/* ============================= */
+.planner-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  opacity: 0;
+  background: #1e293b;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  z-index: 9999;
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none;
+}
+.planner-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.planner-toast-error { background: #dc2626; }
+.planner-toast-success { background: #16a34a; }
+
+/* ============================= */
+/* Floating task — project label */
+/* ============================= */
+.floating-project {
+  font-size: 11px;
+  color: #6366f1;
+  font-weight: 600;
+  margin-bottom: 6px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* ============================= */
+/* Date nav                      */
+/* ============================= */
+.date-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.date-nav button {
+  background: none;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 16px;
+}
+.date-nav button:hover { background: #f1f5f9; }
+#current-date {
+  font-weight: 700;
+  font-size: 15px;
+  min-width: 180px;
+  text-align: center;
+}
