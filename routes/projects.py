@@ -730,17 +730,22 @@ def get_project_tasks():
     if not date:
         return jsonify([])
 
-    tasks = get(
-        "project_tasks",
-        params={
-            "user_id": f"eq.{user_id}",
-            "is_eliminated": "eq.false",
-            "status": "neq.done",
-            "or": f"(due_date.is.null,due_date.lte.{date})",
-            "select": "task_id,task_text,priority,project_id,start_time,due_date,duration_minutes,projects(name)",
-            "limit": 200,
-        }
-    )
+    try:
+        tasks = get(
+            "project_tasks",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_eliminated": "eq.false",
+                "status": "neq.done",
+                "or": f"(due_date.is.null,due_date.lte.{date})",
+                "select": "task_id,task_text,priority,project_id,start_time,due_date",
+                "limit": 200,
+            }
+        ) or []
+    except Exception as e:
+        import logging
+        logging.getLogger("daily_plan").error("project-tasks API error: %s", str(e))
+        tasks = []
 
     return jsonify(tasks)
 

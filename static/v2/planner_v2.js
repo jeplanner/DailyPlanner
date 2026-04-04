@@ -309,15 +309,23 @@ async function loadAllEvents() {
   const dates = getVisibleDates();
   eventsMap.clear();
 
-  // Fetch all dates in parallel
+  // Fetch all dates in parallel — each date fetches independently
   const fetches = dates.map(async (ds) => {
-    const [evRes, taskRes] = await Promise.all([
-      fetch(`/api/v2/events?date=${ds}`),
-      fetch(`/api/v2/project-tasks?date=${ds}`)
-    ]);
+    let eventData = [];
+    let taskData = [];
 
-    const eventData = await evRes.json();
-    const taskData = await taskRes.json();
+    try {
+      const evRes = await fetch(`/api/v2/events?date=${ds}`);
+      if (evRes.ok) eventData = await evRes.json();
+    } catch (e) { console.warn("Events fetch failed for", ds, e); }
+
+    try {
+      const taskRes = await fetch(`/api/v2/project-tasks?date=${ds}`);
+      if (taskRes.ok) {
+        const raw = await taskRes.json();
+        taskData = Array.isArray(raw) ? raw : [];
+      }
+    } catch (e) { console.warn("Tasks fetch failed for", ds, e); }
 
     const timedTasks = taskData.filter(t => t.start_time);
 
@@ -327,7 +335,7 @@ async function loadAllEvents() {
         ...t,
         task_id: t.task_id,
         title: t.task_text,
-        end_time: calculateEndTime(t.start_time, t.duration_minutes || 30),
+        end_time: calculateEndTime(t.start_time, 30),
         type: "project",
         priority: t.priority || "medium"
       }))
@@ -335,7 +343,6 @@ async function loadAllEvents() {
 
     eventsMap.set(ds, combined);
 
-    // Collect floating tasks only for the anchor date
     if (ds === currentDate) {
       floatingTasks = taskData;
     }
@@ -451,11 +458,12 @@ function computeLayout(events) {
   enriched.sort((a, b) => a._start - b._start || a._end - b._end);
 
   // Build overlap clusters
+  // Adjacent events (end === start) are NOT overlapping — use strict < / >
   const clusters = [];
   enriched.forEach(ev => {
     let placed = false;
     for (const cluster of clusters) {
-      if (cluster.some(e => !(ev._end <= e._start || ev._start >= e._end))) {
+      if (cluster.some(e => ev._start < e._end && ev._end > e._start)) {
         cluster.push(ev);
         placed = true;
         break;
@@ -471,7 +479,7 @@ function computeLayout(events) {
       let placed = false;
       for (let i = 0; i < columns.length; i++) {
         const last = columns[i][columns[i].length - 1];
-        if (ev._start >= last._end) {
+        if (ev._start >= last._end) { // adjacent (start === end) fits in same column
           columns[i].push(ev);
           ev._col = i;
           placed = true;

@@ -702,6 +702,12 @@ def build_slot_blocks(rows):
 
     return blocks
 
+def _to_minutes(t):
+    """Convert "HH:MM" or "HH:MM:SS" to total minutes for reliable comparison."""
+    parts = str(t).split(":")
+    return int(parts[0]) * 60 + int(parts[1])
+
+
 def get_conflicts(user_id, plan_date, start_time, end_time, exclude_id=None):
     existing = get(
         "daily_events",
@@ -712,16 +718,21 @@ def get_conflicts(user_id, plan_date, start_time, end_time, exclude_id=None):
         }
     ) or []
 
+    new_start = _to_minutes(start_time)
+    new_end = _to_minutes(end_time)
+
     conflicts = []
 
     for e in existing:
         if exclude_id and str(e["id"]) == str(exclude_id):
             continue
 
-        if not (
-            end_time <= e["start_time"] or
-            start_time >= e["end_time"]
-        ):
+        e_start = _to_minutes(e["start_time"])
+        e_end = _to_minutes(e["end_time"])
+
+        # Two events overlap only if one starts BEFORE the other ends (strict <)
+        # Adjacent events (1:00-1:15 and 1:15-2:00) are NOT conflicts
+        if new_start < e_end and new_end > e_start:
             conflicts.append({
                 "start_time": str(e["start_time"]),
                 "end_time": str(e["end_time"]),
