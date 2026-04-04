@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>DailyPlanner — User Guide</title>
+<style>
+@page { margin: 1.5cm; size: A4; }
+@media print { .no-print { display: none; } body { font-size: 11pt; } }
+body { font-family: 'Segoe UI', system-ui, sans-serif; color: #1a1a2e; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 28px; font-weight: 800; margin-bottom: 4px; color: #2563eb; }
+h2 { font-size: 20px; font-weight: 700; margin-top: 28px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #2563eb; color: #1a1a2e; }
+h3 { font-size: 15px; font-weight: 700; margin-top: 16px; margin-bottom: 6px; color: #374151; }
+p, li { font-size: 13px; }
+ul, ol { padding-left: 20px; }
+li { margin-bottom: 4px; }
+.subtitle { font-size: 14px; color: #6b7280; margin-bottom: 20px; }
+.section { page-break-inside: avoid; }
+table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+th { background: #eff6ff; color: #1d4ed8; text-align: left; padding: 8px 10px; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+tr:hover { background: #f9fafb; }
+code { background: #f3f4f6; padding: 1px 6px; border-radius: 4px; font-size: 12px; font-family: 'Consolas', monospace; }
+.tip { background: #eff6ff; border-left: 4px solid #2563eb; padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 10px 0; font-size: 12px; }
+.tip strong { color: #1d4ed8; }
+.flow { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin: 10px 0; font-family: monospace; font-size: 11px; line-height: 1.8; color: #065f46; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.badge-do { background: #fef2f2; color: #dc2626; }
+.badge-schedule { background: #eff6ff; color: #2563eb; }
+.print-btn { position: fixed; bottom: 20px; right: 20px; padding: 10px 24px; background: #2563eb; color: #fff; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.print-btn:hover { background: #1d4ed8; }
+.footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #9ca3af; text-align: center; }
+</style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()">📄 Save as PDF</button>
+
+<h1>DailyPlanner</h1>
+<p class="subtitle">User Guide — Daily Workflow & Best Practices</p>
+
+<div class="section">
+<h2>🌅 Morning Routine (5-10 mins)</h2>
+
+<h3>1. Open Planner — your Google Calendar-style day view</h3>
+<ul>
+<li>Review today's events at a glance</li>
+<li>Use <strong>Smart Planner</strong> to quickly add your day — type natural language like <code>9-10 Standup, 10-12 Deep work, 14-15 Review</code></li>
+<li>Tag important events with <strong>Eisenhower quadrant</strong> (Do/Schedule) right in the event modal</li>
+</ul>
+
+<h3>2. Check Eisenhower Matrix</h3>
+<ul>
+<li>See what's tagged as <span class="badge badge-do">🔥 DO NOW</span> — this is your focus list</li>
+<li>Items from planner events + project tasks auto-appear here</li>
+<li>Use <strong>Copy Previous Day</strong> if your routine is similar</li>
+<li>Quick-add any standalone tasks for the day</li>
+</ul>
+
+<h3>3. Check Health & Habits</h3>
+<ul>
+<li>Date strip shows today — log morning habits (meditation, water, etc.)</li>
+<li>Takes 30 seconds — use slider + toggle inputs</li>
+<li>Completion ring updates in real-time</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>💼 During the Day</h2>
+
+<h3>4. Track Time in Planner</h3>
+<ul>
+<li>Drag events to reschedule if plans change</li>
+<li>Click events to mark status or edit details</li>
+<li>Use <strong>3-day or week view</strong> to see what's coming</li>
+</ul>
+
+<h3>5. Work on Projects</h3>
+<ul>
+<li>Open your active project → task table shows priorities</li>
+<li>Use the <strong>side panel</strong> to log actual hours as you work</li>
+<li>Check off subtasks as you complete them (visible inline under each task)</li>
+<li>Tag tasks with Eisenhower quadrant when priorities shift</li>
+</ul>
+
+<h3>6. Save Links as You Browse</h3>
+<ul>
+<li>Find a useful article/video → go to <strong>Inbox</strong></li>
+<li>Paste URL → auto-fetches title, description, category via AI</li>
+<li>Set status: Unread → Reading → Done → Saved</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>🌙 Evening Review (5 mins)</h2>
+
+<h3>7. Daily Summary</h3>
+<ul>
+<li>See what you completed vs planned</li>
+<li>Check habit completion ring and streak</li>
+<li>Click <strong>AI Day Recap</strong> for insights on what went well</li>
+</ul>
+
+<h3>8. Log Remaining Habits</h3>
+<ul>
+<li>Water intake, exercise, reading pages — use +/- buttons or slider</li>
+<li>Boolean habits (meditation, prayers) — toggle Done</li>
+</ul>
+
+<h3>9. Write Reflection</h3>
+<ul>
+<li>Health page → Notes field</li>
+<li>Prompt: "How was today? What could improve? What am I grateful for?"</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>📊 Weekly Review (Sunday, 15 mins)</h2>
+
+<h3>10. Weekly Summary</h3>
+<ul>
+<li>Review: Focus hours, completion %, habit consistency</li>
+<li>Check the <strong>activity chart</strong> (total vs completed per day)</li>
+<li>Click <strong>AI Weekly Recap</strong> for patterns and suggestions</li>
+<li>Read your reflection highlights from the week</li>
+</ul>
+
+<h3>11. Project Health Check</h3>
+<ul>
+<li>Visit each project → check progress bar, overdue count</li>
+<li>Export CSV if you need to share status with others</li>
+<li>Plan next week's tasks — set due dates and priorities</li>
+</ul>
+
+<h3>12. Portfolio Check (if using)</h3>
+<ul>
+<li>Click <strong>Refresh Prices</strong> → see live P&L</li>
+<li>Review XIRR trends across asset types</li>
+<li>Log any buy/sell transactions</li>
+</ul>
+</div>
+
+<div class="section">
+<h2>💡 Tips for Sticking With It</h2>
+
+<table>
+<thead><tr><th>Tip</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><strong>Start with planner + 3 habits</strong></td><td>Don't try to use everything on day 1. Add modules gradually.</td></tr>
+<tr><td><strong>Use Smart Planner text input</strong></td><td>Fastest way to plan a day — type natural language, not click forms.</td></tr>
+<tr><td><strong>Tag Eisenhower quadrants on events</strong></td><td>Forces you to think "is this really urgent?" before scheduling.</td></tr>
+<tr><td><strong>Keep projects under 30 active tasks</strong></td><td>Larger projects → break into sub-projects for clarity.</td></tr>
+<tr><td><strong>Review weekly, not just daily</strong></td><td>Patterns only show up over a week. The AI recap helps spot them.</td></tr>
+<tr><td><strong>Use Reference Cards for SOPs</strong></td><td>Anything you do repeatedly — save the steps once, never forget.</td></tr>
+<tr><td><strong>Set cron for portfolio snapshots</strong></td><td>If you track investments, daily snapshots = meaningful trend charts.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>🔗 The Power Combo — How Modules Connect</h2>
+
+<div class="flow">
+Project task → tagged as 🔴 Do → appears on Eisenhower page<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓<br>
+Scheduled in Planner V2 → shows on calendar with red "DO" badge<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓<br>
+Complete it → progress updates in project → habit streak counts<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓<br>
+Weekly summary → AI sees pattern → suggests adjustment
+</div>
+
+<div class="tip">
+<strong>Key insight:</strong> Everything connects. You don't need to use all modules — pick what fits your workflow and expand from there. The Eisenhower matrix becomes most powerful when it automatically pulls from your planner and projects.
+</div>
+</div>
+
+<div class="section">
+<h2>📱 Module Quick Reference</h2>
+
+<table>
+<thead><tr><th>Module</th><th>URL</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><strong>Planner</strong></td><td>/</td><td>Google Calendar-style daily/weekly planner</td></tr>
+<tr><td><strong>Eisenhower Matrix</strong></td><td>/todo</td><td>Priority quadrants — Do, Schedule, Delegate, Eliminate</td></tr>
+<tr><td><strong>Health & Habits</strong></td><td>/health</td><td>Habit tracking with progress rings, streaks, heatmap</td></tr>
+<tr><td><strong>Projects</strong></td><td>/projects</td><td>Task management with Gantt, subtasks, time tracking</td></tr>
+<tr><td><strong>Daily Summary</strong></td><td>/summary?view=daily</td><td>Day recap with stats and AI insights</td></tr>
+<tr><td><strong>Weekly Summary</strong></td><td>/summary?view=weekly</td><td>Weekly review with charts and trends</td></tr>
+<tr><td><strong>Inbox</strong></td><td>/inbox</td><td>Save and categorize important URLs</td></tr>
+<tr><td><strong>Notes</strong></td><td>/notes/scribble</td><td>Quick notes and scribbles</td></tr>
+<tr><td><strong>Reference Cards</strong></td><td>/refcards</td><td>SOPs, credentials, recurring task info</td></tr>
+<tr><td><strong>Portfolio</strong></td><td>/portfolio</td><td>Stock/MF/FD watchlist with XIRR</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="footer">
+DailyPlanner — Built with Flask, Supabase, and Gemini AI<br>
+Generated on <script>document.write(new Date().toLocaleDateString('en-IN', {day:'numeric',month:'long',year:'numeric'}))</script>
+</div>
+
+</body>
+</html>
