@@ -9,7 +9,6 @@
   // ==========================================================
 
   window.tagifyInstance = null;
-  let quillInstance = null;
 
   const state = {
     currentPage: 1,
@@ -100,12 +99,13 @@
   // ==========================================================
 
   async function saveReference() {
+    const rawDesc = ($("ref-description")?.value || "").trim();
     const payload = {
-      title: $("ref-title")?.value.trim() || null,
-      description: quillInstance ? quillInstance.root.innerHTML : null,
-      url: $("ref-url")?.value.trim(),
-      tags: window.tagifyInstance ? window.tagifyInstance.value.map(t => t.value) : [],
-      category: $("new-category")?.value.trim() || $("ref-category")?.value || null,
+      title:       $("ref-title")?.value.trim() || null,
+      description: rawDesc ? rawDesc.replace(/\n/g, "<br>") : null,
+      url:         $("ref-url")?.value.trim(),
+      tags:        window.tagifyInstance ? window.tagifyInstance.value.map(t => t.value) : [],
+      category:    $("new-category")?.value.trim() || $("ref-category")?.value || null,
     };
 
     if (!payload.url) { showToast("URL is required", "error"); return; }
@@ -139,12 +139,12 @@
       showToast("Saved successfully ✓", "success");
 
       // Reset form
-      if (quillInstance) quillInstance.setContents([]);
       if (window.tagifyInstance) window.tagifyInstance.removeAllTags();
-      if ($("ref-title"))    $("ref-title").value    = "";
-      if ($("ref-url"))      $("ref-url").value      = "";
-      if ($("ref-category")) $("ref-category").value = "";
-      if ($("new-category")) $("new-category").value = "";
+      if ($("ref-title"))       $("ref-title").value       = "";
+      if ($("ref-url"))         $("ref-url").value         = "";
+      if ($("ref-description")) $("ref-description").value = "";
+      if ($("ref-category"))    $("ref-category").value    = "";
+      if ($("new-category"))    $("new-category").value    = "";
       setFetchStatus(null);
       resetAIAssist();
 
@@ -169,10 +169,8 @@
   // ==========================================================
 
   function resetAIAssist() {
-    const aiInput   = $("ai-query");
-    const aiPreview = $("ai-preview");
-    if (aiInput)   { aiInput.value = ""; aiInput.focus(); }
-    if (aiPreview) aiPreview.innerHTML = "";
+    const aiInput = $("ai-query");
+    if (aiInput) aiInput.value = "";
   }
 
   // ==========================================================
@@ -460,7 +458,7 @@
     const useAI = $("enable-ai")?.checked !== false;
 
     setFetchStatus(useAI ? "Fetching title, description and tags…" : "Fetching title…");
-    if (quillInstance) quillInstance.setText("");
+    if ($("ref-description")) $("ref-description").value = "";
 
     try {
       const res = await fetch("/references/metadata", {
@@ -477,16 +475,9 @@
         $("ref-title").placeholder = "Title (auto-filled from URL)";
       }
 
-      // Description — use dangerouslyPasteHTML so Quill formats it correctly
-      if (quillInstance) {
-        if (data.description) {
-          quillInstance.setContents([]);
-          quillInstance.clipboard.dangerouslyPasteHTML(
-            `<p>${data.description.replace(/\n/g, "</p><p>")}</p>`
-          );
-        } else {
-          quillInstance.setText("");
-        }
+      // Description — plain textarea, always works
+      if ($("ref-description")) {
+        $("ref-description").value = data.description || "";
       }
 
       // Tags
@@ -514,7 +505,6 @@
     } catch (err) {
       console.error("Metadata fetch failed:", err);
       setFetchStatus(null);
-      if (quillInstance) quillInstance.setText("");
     }
   }
 
@@ -601,22 +591,6 @@
     const initialCategory = params.get("category");
     if (initialTag)      state.selectedTags    = [initialTag.toLowerCase()];
     if (initialCategory) state.selectedCategory = initialCategory;
-
-    // Quill
-    const editor = $("ref-editor");
-    if (editor) {
-      quillInstance = new Quill("#ref-editor", {
-        theme: "snow",
-        modules: {
-          toolbar: [
-            [{ header: [1, 2, false] }],
-            ["bold", "italic"],
-            [{ list: "ordered" }, { list: "bullet" }],
-            ["link"],
-          ],
-        },
-      });
-    }
 
     // Tagify
     const tagInput = $("ref-tags");
