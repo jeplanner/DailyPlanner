@@ -74,6 +74,9 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 .suggest-symbol{font-size:11px;color:var(--pf-text3);font-family:monospace;}
 .suggest-exchange{font-size:10px;color:var(--pf-text3);}
 
+.xirr-calc-btn{padding:2px 8px;border:1px solid var(--pf-border);border-radius:4px;font-size:10px;font-weight:600;font-family:inherit;background:var(--pf-surface);color:var(--pf-text2);cursor:pointer;transition:all .15s;}
+.xirr-calc-btn:hover{border-color:var(--pf-primary);color:var(--pf-primary);background:var(--pf-primary-light);}
+
 .empty{text-align:center;padding:48px 16px;color:var(--pf-text3);font-size:14px;}
 
 /* Modal */
@@ -152,6 +155,33 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <button class="type-tab" onclick="filterOwner('Sethu',this)">Sethu</button>
   </div>
 
+  <!-- Holdings Table (primary content — first) -->
+  <div class="pf-table-wrap" style="margin-bottom:24px;">
+    <table class="pf-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th class="hide-m">Type</th>
+          <th class="num">Qty</th>
+          <th class="num">Avg Price</th>
+          <th class="num">CMP</th>
+          <th class="num">Invested</th>
+          <th class="num">Current</th>
+          <th class="num">P&L</th>
+          <th class="num hide-m">XIRR</th>
+          <th class="hide-m">Last Txn</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="holdings-body"></tbody>
+    </table>
+  </div>
+
+  <!-- Analytics Section (below table) -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <h2 style="font-size:16px;font-weight:700;">Analytics</h2>
+  </div>
+
   <!-- Charts Row 1: Point-in-time -->
   <div class="chart-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
     <div class="kpi" style="padding:14px;">
@@ -190,28 +220,6 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
       <span class="kpi-label">XIRR Over Time</span>
       <canvas id="chart-trend-xirr" height="200"></canvas>
     </div>
-  </div>
-
-  <!-- Holdings Table -->
-  <div class="pf-table-wrap">
-    <table class="pf-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th class="hide-m">Type</th>
-          <th class="num">Qty</th>
-          <th class="num">Avg Price</th>
-          <th class="num">CMP</th>
-          <th class="num">Invested</th>
-          <th class="num">Current</th>
-          <th class="num">P&L</th>
-          <th class="num hide-m">XIRR</th>
-          <th class="hide-m">Last Txn</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="holdings-body"></tbody>
-    </table>
   </div>
 </div>
 
@@ -420,9 +428,14 @@ const INR=v=>v!=null?'₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigi
 const esc=s=>{const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;};
 
 async function init(){
-  await loadHoldings();loadSummary();loadPortfolioXirr();loadAllHoldingXirrs();
-  loadCharts();autoSnapshot();loadTrendCharts();
+  await loadHoldings();
+  loadSummary();
   feather.replace();
+  // Only consolidated XIRR auto-loads. Per-holding XIRR is on-demand.
+  setTimeout(()=>loadPortfolioXirr(), 500);
+  setTimeout(()=>loadCharts(), 1000);
+  setTimeout(()=>loadTrendCharts(), 1500);
+  setTimeout(()=>autoSnapshot(), 2500);
 }
 
 /* ── Auto-snapshot + backfill: runs once per day on page load ── */
@@ -576,17 +589,24 @@ async function loadCharts(){
   }catch(e){console.warn("Charts failed",e);}
 }
 
-async function loadAllHoldingXirrs(){
-  for(const h of holdings){
-    try{
-      const r=await fetch(`/api/portfolio/xirr/${h.id}`);
-      const d=await r.json();
-      const el=document.getElementById(`xirr-${h.id}`);
-      if(el&&d.xirr!==null){
-        const cls=d.xirr>=0?'pnl-up':'pnl-down';
-        el.innerHTML=`<span class="${cls}" style="font-weight:600;">${d.xirr>=0?'+':''}${d.xirr}%</span>`;
-      }
-    }catch(e){}
+/* Per-holding XIRR — on-demand, user clicks to fetch */
+async function calcHoldingXirr(holdingId){
+  const el=document.getElementById(`xirr-${holdingId}`);
+  if(!el)return;
+  el.innerHTML='<span style="font-size:10px;color:var(--pf-text3);">…</span>';
+
+  try{
+    const r=await fetch(`/api/portfolio/xirr/${holdingId}`);
+    if(!r.ok)throw new Error();
+    const d=await r.json();
+    if(d.xirr!==null&&d.xirr!==undefined){
+      const cls=d.xirr>=0?'pnl-up':'pnl-down';
+      el.innerHTML=`<span class="${cls}" style="font-weight:600;">${d.xirr>=0?'+':''}${d.xirr}%</span>`;
+    }else{
+      el.innerHTML='<span style="font-size:10px;color:var(--pf-text3);">N/A</span>';
+    }
+  }catch(e){
+    el.innerHTML='<button class="xirr-calc-btn" onclick="calcHoldingXirr(\''+holdingId+'\')">Retry</button>';
   }
 }
 
@@ -644,7 +664,7 @@ function renderTable(){
       <td class="num hide-m">${INR(invested)}</td>
       <td class="num">${INR(current)}</td>
       <td class="num ${cls}">${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small></td>
-      <td class="num hide-m" id="xirr-${h.id}"><small style="color:var(--pf-text3);">—</small></td>
+      <td class="num hide-m" id="xirr-${h.id}"><button class="xirr-calc-btn" onclick="calcHoldingXirr('${h.id}')" title="Calculate XIRR">Calc</button></td>
       <td class="hide-m">${h._lastTxn?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;${h._lastTxn.txn_type==='buy'?'background:#fef2f2;color:#dc2626':'background:#ecfdf5;color:#059669'}">${h._lastTxn.txn_type}</span><div class="symbol">${h._lastTxn.txn_date||''}</div>`:`${h.buy_date?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:#fef2f2;color:#dc2626;">BUY</span><div class="symbol">${h.buy_date}</div>`:'—'}`}</td>
       <td><button class="row-btn" onclick="openTxn('${h.id}','${esc(h.name)}')" title="Transactions">&#128200;</button><button class="row-btn" onclick="editHolding('${h.id}')" title="Edit">&#9998;</button><button class="row-btn del" onclick="delHolding('${h.id}')" title="Delete">&#128465;</button></td>
     </tr>`;
