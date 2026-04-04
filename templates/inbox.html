@@ -1,12 +1,16 @@
+{% extends "base.html" %}
+
+{% block content %}
 <div class="container">
   <h2>📥 Inbox</h2>
 
-  <input id="url" placeholder="Paste link">
-  <textarea id="desc" placeholder="Description"></textarea>
+  <input id="url" placeholder="Paste link" style="width:100%;margin-bottom:8px;">
+  <textarea id="desc" placeholder="Description (optional)" style="width:100%;margin-bottom:8px;"></textarea>
 
   <button onclick="save()">Save</button>
 
-  <div id="list"></div>
+  <div id="list" style="margin-top:16px;"></div>
 </div>
 
 <script src="/static/js/inbox.js"></script>
+{% endblock %}

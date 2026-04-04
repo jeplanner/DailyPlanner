@@ -7,6 +7,13 @@ from services.inbox_service import detect_type, fetch_title, generate_summary
 inbox_bp = Blueprint("inbox_bp", __name__)
 
 
+@inbox_bp.route("/inbox")
+@login_required
+def inbox_page():
+    from flask import render_template
+    return render_template("inbox.html")
+
+
 @inbox_bp.route("/api/inbox", methods=["POST"])
 @login_required
 def create_inbox():
