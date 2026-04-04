@@ -59,6 +59,7 @@ def create_app():
     from routes.system import system_bp
     from routes.inbox import inbox_bp
     from routes.refcards import refcards_bp
+    from routes.portfolio import portfolio_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -74,6 +75,7 @@ def create_app():
     app.register_blueprint(notes_bp)
     app.register_blueprint(inbox_bp)
     app.register_blueprint(refcards_bp)
+    app.register_blueprint(portfolio_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -88,6 +90,7 @@ def create_app():
     csrf.exempt(planner_bp)
     csrf.exempt(notes_bp)
     csrf.exempt(refcards_bp)
+    csrf.exempt(portfolio_bp)
 
     # ── OAuth dev override ──────────────────────────────
     if env == "development":

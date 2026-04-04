@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Portfolio Watchlist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+:root{--pf-bg:#f7f8fa;--pf-surface:#fff;--pf-text:#1a1a2e;--pf-text2:#6b7280;--pf-text3:#9ca3af;--pf-border:#e5e7eb;--pf-primary:#2563eb;--pf-primary-light:#eff6ff;--pf-success:#10b981;--pf-danger:#ef4444;--pf-shadow:0 1px 3px rgba(0,0,0,.06);}
+html.dark{--pf-bg:#0f172a;--pf-surface:#1e293b;--pf-text:#f1f5f9;--pf-text2:#94a3b8;--pf-text3:#64748b;--pf-border:#334155;--pf-primary-light:#1e3a5f;--pf-shadow:0 1px 3px rgba(0,0,0,.2);}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(--pf-text);min-height:100vh;}
+.hidden{display:none!important;}
+.pf-app{max-width:1100px;margin:0 auto;padding:16px 20px 48px;}
+
+.pf-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;}
+.pf-header h1{font-size:22px;font-weight:800;}
+.pf-header-btns{display:flex;gap:6px;}
+
+/* KPI Row */
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px;}
+.kpi{background:var(--pf-surface);border-radius:12px;padding:14px;box-shadow:var(--pf-shadow);}
+.kpi-label{font-size:10px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;letter-spacing:.3px;}
+.kpi-val{font-size:22px;font-weight:800;margin-top:2px;}
+.kpi-val.up{color:var(--pf-success);}.kpi-val.down{color:var(--pf-danger);}
+.kpi-sub{font-size:11px;color:var(--pf-text3);margin-top:2px;}
+
+/* Type Tabs */
+.type-tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+.type-tab{padding:5px 14px;border-radius:20px;border:1px solid var(--pf-border);background:var(--pf-surface);font-size:12px;font-weight:500;font-family:inherit;color:var(--pf-text2);cursor:pointer;transition:all .15s;}
+.type-tab:hover{border-color:var(--pf-primary);color:var(--pf-primary);}
+.type-tab.active{background:var(--pf-primary);color:#fff;border-color:var(--pf-primary);}
+
+/* Table */
+.pf-table-wrap{background:var(--pf-surface);border-radius:10px;border:1px solid var(--pf-border);box-shadow:var(--pf-shadow);overflow-x:auto;}
+table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
+.pf-table th{padding:8px 10px;text-align:left;font-size:10px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;letter-spacing:.4px;background:var(--pf-bg);border-bottom:1px solid var(--pf-border);white-space:nowrap;}
+.pf-table td{padding:8px 10px;border-bottom:1px solid var(--pf-border);vertical-align:middle;}
+.pf-table tr:hover{background:var(--pf-primary-light);}
+.pf-table .name-cell{font-weight:600;}
+.pf-table .symbol{font-size:11px;color:var(--pf-text3);font-family:monospace;}
+.pf-table .num{text-align:right;font-variant-numeric:tabular-nums;}
+.pf-table .pnl-up{color:var(--pf-success);font-weight:600;}
+.pf-table .pnl-down{color:var(--pf-danger);font-weight:600;}
+.pf-table .type-badge{font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;}
+.pf-table .type-stock{background:#dbeafe;color:#1d4ed8;}
+.pf-table .type-mf{background:#ede9fe;color:#6d28d9;}
+.pf-table .type-etf{background:#d1fae5;color:#065f46;}
+.pf-table .type-fd{background:#fef3c7;color:#92400e;}
+.pf-table .type-bond{background:#fce7f3;color:#9d174d;}
+.pf-table .type-gold{background:#fefce8;color:#a16207;}
+.pf-table .type-ppf{background:#ecfdf5;color:#047857;}
+.pf-table .type-nps{background:#f0f9ff;color:#0369a1;}
+.pf-table .type-cash{background:#f1f5f9;color:#475569;}
+.pf-table .type-realestate{background:#f5f3ff;color:#6d28d9;}
+.pf-table .type-crypto{background:#fdf4ff;color:#a21caf;}
+.row-btn{width:26px;height:26px;border:none;background:none;border-radius:6px;cursor:pointer;color:var(--pf-text3);display:inline-flex;align-items:center;justify-content:center;}
+.row-btn:hover{background:var(--pf-border);color:var(--pf-text);}
+.row-btn.del:hover{color:var(--pf-danger);}
+
+.empty{text-align:center;padding:48px 16px;color:var(--pf-text3);font-size:14px;}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000;}
+.modal-card{background:var(--pf-surface);border-radius:16px;padding:24px;width:520px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.2);animation:mUp .2s ease;}
+@keyframes mUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.modal-hdr h3{font-size:18px;font-weight:700;}
+.modal-x{width:36px;height:36px;border:none;background:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--pf-text3);}
+.modal-x:hover{background:var(--pf-border);}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+.fr.full{grid-template-columns:1fr;}
+.fg{display:flex;flex-direction:column;gap:4px;}
+.fg label{font-size:11px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;letter-spacing:.3px;}
+.fi{padding:8px 10px;border:1px solid var(--pf-border);border-radius:6px;font-size:14px;font-family:inherit;background:var(--pf-bg);color:var(--pf-text);outline:none;width:100%;}
+.fi:focus{border-color:var(--pf-primary);box-shadow:0 0 0 2px rgba(37,99,235,.12);}
+.modal-foot{display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--pf-border);}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:6px;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;transition:all .15s;}
+.btn:active{transform:scale(.97);}
+.btn-primary{background:var(--pf-primary);color:#fff;}.btn-primary:hover{opacity:.9;}
+.btn-ghost{background:transparent;color:var(--pf-text2);}.btn-ghost:hover{background:var(--pf-border);}
+.btn-sm{padding:5px 12px;font-size:12px;}
+
+/* Import */
+.drop-zone{border:2px dashed var(--pf-border);border-radius:12px;padding:32px 16px;text-align:center;transition:all .2s;background:var(--pf-bg);margin-bottom:12px;}
+.drop-zone.dragover{border-color:var(--pf-primary);background:var(--pf-primary-light);}
+
+@media(max-width:768px){
+  .kpi-row{grid-template-columns:1fr 1fr;}.fr{grid-template-columns:1fr;}
+  .pf-table .hide-m{display:none;}
+}
+</style>
+</head>
+<body>
+{% include "_top_nav.html" %}
+
+<div class="pf-app">
+  <div class="pf-header">
+    <h1>Portfolio</h1>
+    <div class="pf-header-btns">
+      <button class="btn btn-ghost btn-sm" onclick="openImport()"><i data-feather="upload" style="width:14px;height:14px"></i> Import CSV</button>
+      <button class="btn btn-primary btn-sm" onclick="openAdd()"><i data-feather="plus" style="width:14px;height:14px"></i> Add</button>
+    </div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpi-row">
+    <div class="kpi"><span class="kpi-label">Invested</span><div class="kpi-val" id="kpi-invested">—</div></div>
+    <div class="kpi"><span class="kpi-label">Current Value</span><div class="kpi-val" id="kpi-current">—</div></div>
+    <div class="kpi"><span class="kpi-label">P&L</span><div class="kpi-val" id="kpi-pnl">—</div><div class="kpi-sub" id="kpi-pnl-pct"></div></div>
+    <div class="kpi"><span class="kpi-label">Holdings</span><div class="kpi-val" id="kpi-count">0</div></div>
+    <div class="kpi"><span class="kpi-label">XIRR</span><div class="kpi-val" id="kpi-xirr">—</div><div class="kpi-sub">annualized return</div></div>
+  </div>
+
+  <!-- Type Tabs -->
+  <div class="type-tabs">
+    <button class="type-tab active" onclick="filterType('all',this)">All</button>
+    <button class="type-tab" onclick="filterType('stock',this)">Stocks</button>
+    <button class="type-tab" onclick="filterType('mf',this)">MF</button>
+    <button class="type-tab" onclick="filterType('etf',this)">ETF</button>
+    <button class="type-tab" onclick="filterType('fd',this)">FD</button>
+    <button class="type-tab" onclick="filterType('bond',this)">Bonds</button>
+    <button class="type-tab" onclick="filterType('gold',this)">Gold</button>
+    <button class="type-tab" onclick="filterType('ppf',this)">PPF</button>
+    <button class="type-tab" onclick="filterType('cash',this)">Cash</button>
+  </div>
+
+  <!-- Holdings Table -->
+  <div class="pf-table-wrap">
+    <table class="pf-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th class="hide-m">Type</th>
+          <th class="num">Qty</th>
+          <th class="num">Avg Price</th>
+          <th class="num">CMP</th>
+          <th class="num">Invested</th>
+          <th class="num">Current</th>
+          <th class="num">P&L</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="holdings-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════ ADD/EDIT MODAL ═══════ -->
+<div id="add-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeAdd()">
+  <div class="modal-card">
+    <div class="modal-hdr"><h3 id="add-title">Add Holding</h3><button class="modal-x" onclick="closeAdd()"><i data-feather="x"></i></button></div>
+    <div class="fr">
+      <div class="fg"><label>Name *</label><input type="text" id="h-name" class="fi" placeholder="Reliance Industries, HDFC Mid Cap"></div>
+      <div class="fg"><label>Symbol / Code</label><input type="text" id="h-symbol" class="fi" placeholder="RELIANCE, 120505"></div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Type</label>
+        <select id="h-type" class="fi" onchange="onTypeChange()">
+          <option value="stock">Stock</option>
+          <option value="mf">Mutual Fund</option>
+          <option value="etf">ETF</option>
+          <option value="fd">Fixed Deposit</option>
+          <option value="bond">Bond / NCD</option>
+          <option value="gold">Gold / Silver</option>
+          <option value="ppf">PPF / EPF</option>
+          <option value="nps">NPS</option>
+          <option value="cash">Cash / Savings</option>
+          <option value="realestate">Real Estate</option>
+          <option value="crypto">Crypto</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="fg"><label>Exchange</label>
+        <select id="h-exchange" class="fi">
+          <option value="NSE">NSE</option>
+          <option value="BSE">BSE</option>
+          <option value="">N/A</option>
+        </select>
+      </div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Quantity / Units</label><input type="number" id="h-qty" class="fi" step="0.001" min="0"></div>
+      <div class="fg"><label>Avg Buy Price / NAV</label><input type="number" id="h-avg" class="fi" step="0.01" min="0"></div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Current Price / Value</label><input type="number" id="h-cmp" class="fi" step="0.01" min="0" placeholder="Optional"></div>
+      <div class="fg"><label>Folio / Demat / A/C No.</label><input type="text" id="h-folio" class="fi" placeholder="Optional"></div>
+    </div>
+    <!-- FD / Bond specific fields -->
+    <div id="fd-fields" style="display:none;">
+      <div class="fr">
+        <div class="fg"><label>Institution / Bank</label><input type="text" id="h-institution" class="fi" placeholder="SBI, HDFC Bank, ICICI"></div>
+        <div class="fg"><label>Interest Rate (%)</label><input type="number" id="h-rate" class="fi" step="0.01" min="0" placeholder="7.5"></div>
+      </div>
+      <div class="fr">
+        <div class="fg"><label>Start / Deposit Date</label><input type="date" id="h-start-date" class="fi"></div>
+        <div class="fg"><label>Maturity Date</label><input type="date" id="h-maturity" class="fi"></div>
+      </div>
+      <div class="fr full">
+        <div class="fg"><label>Account / FD Reference</label><input type="text" id="h-account-ref" class="fi" placeholder="FD No., Bond ISIN, account ref"></div>
+      </div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Broker / Platform</label><input type="text" id="h-broker" class="fi" placeholder="ICICI Direct, Zerodha" value="ICICI Direct"></div>
+      <div class="fg"><label>Sector / Category</label><input type="text" id="h-sector" class="fi" placeholder="IT, Banking, Pharma, Govt"></div>
+    </div>
+    <div class="fr full"><div class="fg"><label>Notes</label><textarea id="h-notes" class="fi" rows="2" placeholder="Optional notes"></textarea></div></div>
+    <div class="modal-foot">
+      <button class="btn btn-primary" onclick="saveHolding()">Save</button>
+      <button class="btn btn-ghost" onclick="closeAdd()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ TRANSACTIONS MODAL ═══════ -->
+<div id="txn-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeTxn()">
+  <div class="modal-card">
+    <div class="modal-hdr"><h3 id="txn-title">Transactions</h3><button class="modal-x" onclick="closeTxn()"><i data-feather="x"></i></button></div>
+    <div id="txn-list" style="max-height:220px;overflow-y:auto;margin-bottom:12px;"></div>
+    <div id="txn-xirr" style="font-size:13px;font-weight:600;margin-bottom:12px;"></div>
+    <hr style="margin:8px 0;border:none;border-top:1px solid var(--pf-border);">
+    <h4 style="font-size:12px;font-weight:600;color:var(--pf-text2);margin-bottom:8px;">Add Transaction</h4>
+    <div class="fr">
+      <div class="fg"><label>Type</label>
+        <select id="tx-type" class="fi">
+          <option value="buy">Buy</option>
+          <option value="sell">Sell</option>
+          <option value="dividend">Dividend</option>
+        </select>
+      </div>
+      <div class="fg"><label>Date</label><input type="date" id="tx-date" class="fi"></div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Quantity</label><input type="number" id="tx-qty" class="fi" step="0.001" min="0"></div>
+      <div class="fg"><label>Price / NAV</label><input type="number" id="tx-price" class="fi" step="0.01" min="0"></div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label>Total Amount</label><input type="number" id="tx-amount" class="fi" step="0.01" placeholder="Auto-calculated"></div>
+      <div class="fg"><label>Notes</label><input type="text" id="tx-notes" class="fi" placeholder="Optional"></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-primary" onclick="saveTxn()">Add Transaction</button></div>
+  </div>
+</div>
+
+<!-- ═══════ IMPORT MODAL ═══════ -->
+<div id="import-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeImport()">
+  <div class="modal-card" style="width:600px;">
+    <div class="modal-hdr"><h3>Import from CSV</h3><button class="modal-x" onclick="closeImport()"><i data-feather="x"></i></button></div>
+    <p style="font-size:13px;color:var(--pf-text2);margin-bottom:10px;">
+      Upload your ICICI Direct holdings export (CSV). Supports stock and mutual fund formats.<br>
+      Also works with Zerodha, Groww, or any CSV with columns: Name, Symbol, Qty, Avg Price.
+    </p>
+    <div class="fr">
+      <div class="fg"><label>Broker</label>
+        <select id="imp-broker" class="fi">
+          <option value="ICICI Direct">ICICI Direct</option>
+          <option value="Zerodha">Zerodha</option>
+          <option value="Groww">Groww</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="fg"><label>Asset Type</label>
+        <select id="imp-type" class="fi">
+          <option value="stock">Stocks</option>
+          <option value="mf">Mutual Funds</option>
+          <option value="etf">ETFs</option>
+        </select>
+      </div>
+    </div>
+    <div class="drop-zone" id="imp-drop"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleDrop(event)">
+      <p style="font-size:13px;color:var(--pf-text2);">Drag & drop CSV or</p>
+      <label class="btn btn-primary btn-sm" style="margin-top:8px;cursor:pointer;">Browse<input type="file" accept=".csv" onchange="handleFile(event)" style="display:none;"></label>
+    </div>
+    <div id="imp-preview" style="display:none;">
+      <div id="imp-stats" style="font-size:12px;color:var(--pf-text2);margin-bottom:6px;"></div>
+      <div id="imp-table" style="max-height:200px;overflow-y:auto;border:1px solid var(--pf-border);border-radius:8px;font-size:12px;"></div>
+      <div class="modal-foot"><button class="btn btn-primary" onclick="doImport()">Import</button><button class="btn btn-ghost" onclick="closeImport()">Cancel</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let holdings=[], editId=null, importRows=[], curType='all';
+const INR=v=>v!=null?'₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:2}):'—';
+const esc=s=>{const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;};
+
+async function init(){await loadHoldings();loadSummary();loadPortfolioXirr();feather.replace();}
+
+/* ── Load & Render ── */
+async function loadHoldings(){
+  const r=await fetch("/api/portfolio/holdings");
+  holdings=await r.json();
+  renderTable();
+}
+function filterType(t,el){
+  curType=t;
+  document.querySelectorAll(".type-tab").forEach(b=>b.classList.remove("active"));
+  el.classList.add("active");
+  renderTable();
+}
+function renderTable(){
+  const tbody=document.getElementById("holdings-body");
+  let items=curType==='all'?holdings:holdings.filter(h=>h.asset_type===curType);
+  if(!items.length){tbody.innerHTML=`<tr><td colspan="9"><div class="empty">No holdings yet. Add or import to get started.</div></td></tr>`;return;}
+
+  tbody.innerHTML=items.map(h=>{
+    const qty=parseFloat(h.quantity)||0;
+    const avg=parseFloat(h.avg_price)||0;
+    const cmp=parseFloat(h.current_price)||avg;
+    const invested=qty*avg;
+    const current=qty*cmp;
+    const pnl=current-invested;
+    const pnlPct=invested?((pnl/invested)*100).toFixed(2):0;
+    const cls=pnl>=0?'pnl-up':'pnl-down';
+    const typeCls={'stock':'type-stock','mf':'type-mf','etf':'type-etf'}[h.asset_type]||'type-stock';
+    return `<tr data-id="${h.id}">
+      <td><div class="name-cell">${esc(h.name)}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}</td>
+      <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
+      <td class="num">${qty}</td>
+      <td class="num">${INR(avg)}</td>
+      <td class="num">${INR(cmp)}</td>
+      <td class="num hide-m">${INR(invested)}</td>
+      <td class="num">${INR(current)}</td>
+      <td class="num ${cls}">${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small></td>
+      <td><button class="row-btn" onclick="openTxn('${h.id}','${esc(h.name)}')" title="Transactions">&#128200;</button><button class="row-btn" onclick="editHolding('${h.id}')" title="Edit">&#9998;</button><button class="row-btn del" onclick="delHolding('${h.id}')" title="Delete">&#128465;</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadSummary(){
+  try{
+    const r=await fetch("/api/portfolio/summary");
+    const d=await r.json();
+    document.getElementById("kpi-invested").textContent=INR(d.total_invested);
+    document.getElementById("kpi-current").textContent=INR(d.total_current);
+    const pnlEl=document.getElementById("kpi-pnl");
+    pnlEl.textContent=(d.total_pnl>=0?'+':'')+INR(d.total_pnl);
+    pnlEl.className='kpi-val '+(d.total_pnl>=0?'up':'down');
+    document.getElementById("kpi-pnl-pct").textContent=`(${d.total_pnl_pct}%)`;
+    document.getElementById("kpi-count").textContent=d.holdings_count;
+  }catch(e){console.warn(e);}
+}
+
+/* ── Add/Edit ── */
+function onTypeChange(){
+  const t=document.getElementById("h-type").value;
+  const fdFields=document.getElementById("fd-fields");
+  const showFD=['fd','bond','ppf','nps','cash','realestate'].includes(t);
+  fdFields.style.display=showFD?'block':'none';
+  // Hide exchange for non-market instruments
+  const exch=document.getElementById("h-exchange").closest('.fg');
+  if(exch) exch.style.display=['stock','etf'].includes(t)?'':'none';
+}
+
+function openAdd(){
+  editId=null;
+  document.getElementById("add-title").textContent="Add Holding";
+  ["h-name","h-symbol","h-qty","h-avg","h-cmp","h-folio","h-sector","h-notes","h-institution","h-rate","h-start-date","h-maturity","h-account-ref"].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  document.getElementById("h-type").value="stock";
+  document.getElementById("h-exchange").value="NSE";
+  document.getElementById("h-broker").value="ICICI Direct";
+  onTypeChange();
+  document.getElementById("add-modal").classList.remove("hidden");
+  feather.replace();
+}
+function editHolding(id){
+  const h=holdings.find(x=>x.id===id);if(!h)return;editId=id;
+  document.getElementById("add-title").textContent="Edit Holding";
+  document.getElementById("h-name").value=h.name||'';
+  document.getElementById("h-symbol").value=h.symbol||'';
+  document.getElementById("h-type").value=h.asset_type||'stock';
+  document.getElementById("h-exchange").value=h.exchange||'NSE';
+  document.getElementById("h-qty").value=h.quantity||'';
+  document.getElementById("h-avg").value=h.avg_price||'';
+  document.getElementById("h-cmp").value=h.current_price||'';
+  document.getElementById("h-folio").value=h.folio_number||'';
+  document.getElementById("h-broker").value=h.broker||'';
+  document.getElementById("h-sector").value=h.sector||'';
+  document.getElementById("h-notes").value=h.notes||'';
+  document.getElementById("h-institution").value=h.institution||'';
+  document.getElementById("h-rate").value=h.interest_rate||'';
+  document.getElementById("h-start-date").value=h.start_date||'';
+  document.getElementById("h-maturity").value=h.maturity_date||'';
+  document.getElementById("h-account-ref").value=h.account_ref||'';
+  onTypeChange();
+  document.getElementById("add-modal").classList.remove("hidden");
+  feather.replace();
+}
+function closeAdd(){document.getElementById("add-modal").classList.add("hidden");}
+async function saveHolding(){
+  const p={
+    name:document.getElementById("h-name").value.trim(),
+    symbol:document.getElementById("h-symbol").value.trim(),
+    asset_type:document.getElementById("h-type").value,
+    exchange:document.getElementById("h-exchange").value,
+    quantity:document.getElementById("h-qty").value||null,
+    avg_price:document.getElementById("h-avg").value||null,
+    current_price:document.getElementById("h-cmp").value||null,
+    folio_number:document.getElementById("h-folio").value.trim(),
+    broker:document.getElementById("h-broker").value.trim(),
+    sector:document.getElementById("h-sector").value.trim(),
+    notes:document.getElementById("h-notes").value.trim(),
+    institution:document.getElementById("h-institution").value.trim(),
+    interest_rate:document.getElementById("h-rate").value||null,
+    maturity_date:document.getElementById("h-maturity").value||null,
+    start_date:document.getElementById("h-start-date").value||null,
+    account_ref:document.getElementById("h-account-ref").value.trim(),
+  };
+  if(!p.name){showToast("Name required","error");return;}
+  const url=editId?`/api/portfolio/holdings/${editId}`:'/api/portfolio/holdings';
+  await fetch(url,{method:editId?'PUT':'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  closeAdd();await loadHoldings();loadSummary();showToast(editId?"Updated":"Added","success");
+}
+function delHolding(id){
+  holdings=holdings.filter(x=>x.id!==id);renderTable();
+  let gone=false;const t=setTimeout(async()=>{await fetch(`/api/portfolio/holdings/${id}`,{method:'DELETE'});gone=true;loadSummary();},4000);
+  const old=document.getElementById("undo-t");if(old)old.remove();
+  const toast=document.createElement("div");toast.id="undo-t";
+  Object.assign(toast.style,{position:"fixed",bottom:"24px",left:"50%",transform:"translateX(-50%)",background:"rgba(30,30,30,.9)",color:"#fff",padding:"10px 16px",borderRadius:"10px",fontSize:"14px",fontFamily:"'Inter',system-ui",display:"flex",alignItems:"center",gap:"12px",zIndex:"9999",boxShadow:"0 4px 16px rgba(0,0,0,.25)"});
+  toast.innerHTML='<span>Holding deleted</span><button style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Undo</button>';
+  toast.querySelector("button").onclick=()=>{clearTimeout(t);if(!gone){loadHoldings();showToast("Restored","success");}toast.remove();};
+  document.body.appendChild(toast);setTimeout(()=>{if(toast.parentNode)toast.remove();},4500);
+}
+
+/* ── Transactions + XIRR ── */
+let txnHoldingId=null;
+
+function openTxn(hid,name){
+  txnHoldingId=hid;
+  document.getElementById("txn-title").textContent=name+' — Transactions';
+  document.getElementById("tx-date").value=new Date().toISOString().split('T')[0];
+  document.getElementById("tx-qty").value='';
+  document.getElementById("tx-price").value='';
+  document.getElementById("tx-amount").value='';
+  document.getElementById("tx-notes").value='';
+  document.getElementById("tx-type").value='buy';
+  loadTxns(hid);
+  loadHoldingXirr(hid);
+  document.getElementById("txn-modal").classList.remove("hidden");
+  feather.replace();
+}
+function closeTxn(){document.getElementById("txn-modal").classList.add("hidden");}
+
+async function loadTxns(hid){
+  const r=await fetch(`/api/portfolio/transactions/${hid}`);
+  const txns=await r.json();
+  const c=document.getElementById("txn-list");
+  if(!txns.length){c.innerHTML='<div style="color:var(--pf-text3);font-size:12px;padding:12px 0;">No transactions yet. Add buy/sell entries for XIRR calculation.</div>';return;}
+  let html='<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--pf-bg);"><th style="padding:4px 8px;text-align:left;">Date</th><th style="padding:4px 8px;">Type</th><th style="padding:4px 8px;text-align:right;">Qty</th><th style="padding:4px 8px;text-align:right;">Price</th><th style="padding:4px 8px;text-align:right;">Amount</th><th></th></tr></thead><tbody>';
+  txns.forEach(t=>{
+    const cls=t.txn_type==='buy'?'':'pnl-up';
+    html+=`<tr style="border-bottom:1px solid var(--pf-border);"><td style="padding:4px 8px;">${t.txn_date}</td><td style="padding:4px 8px;"><span style="font-weight:600;color:${t.txn_type==='buy'?'var(--pf-danger)':'var(--pf-success)'};text-transform:uppercase;font-size:10px;">${t.txn_type}</span></td><td style="padding:4px 8px;text-align:right;">${t.quantity||''}</td><td style="padding:4px 8px;text-align:right;">${INR(t.price)}</td><td style="padding:4px 8px;text-align:right;font-weight:600;">${INR(t.amount)}</td><td><button class="row-btn del" onclick="delTxn('${t.id}','${hid}')" style="width:20px;height:20px;">×</button></td></tr>`;
+  });
+  html+='</tbody></table>';
+  c.innerHTML=html;
+}
+
+async function loadHoldingXirr(hid){
+  try{
+    const r=await fetch(`/api/portfolio/xirr/${hid}`);
+    const d=await r.json();
+    const el=document.getElementById("txn-xirr");
+    if(d.xirr!==null){
+      const cls=d.xirr>=0?'pnl-up':'pnl-down';
+      el.innerHTML=`XIRR: <span class="${cls}">${d.xirr>=0?'+':''}${d.xirr}%</span> (from ${d.cashflows_count} cashflows)`;
+    }else{
+      el.textContent='XIRR: Add transactions to calculate';
+    }
+  }catch(e){console.warn(e);}
+}
+
+async function saveTxn(){
+  if(!txnHoldingId)return;
+  const qty=document.getElementById("tx-qty").value;
+  const price=document.getElementById("tx-price").value;
+  let amount=document.getElementById("tx-amount").value;
+  if(!amount&&qty&&price)amount=(parseFloat(qty)*parseFloat(price)).toFixed(2);
+
+  await fetch("/api/portfolio/transactions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+    holding_id:txnHoldingId,
+    txn_type:document.getElementById("tx-type").value,
+    txn_date:document.getElementById("tx-date").value,
+    quantity:qty||null,
+    price:price||null,
+    amount:amount||null,
+    notes:document.getElementById("tx-notes").value.trim(),
+  })});
+  loadTxns(txnHoldingId);
+  loadHoldingXirr(txnHoldingId);
+  showToast("Transaction added","success");
+  // Clear inputs
+  document.getElementById("tx-qty").value='';
+  document.getElementById("tx-price").value='';
+  document.getElementById("tx-amount").value='';
+}
+
+async function delTxn(tid,hid){
+  await fetch(`/api/portfolio/transactions/${tid}`,{method:'DELETE'});
+  loadTxns(hid);
+  loadHoldingXirr(hid);
+}
+
+async function loadPortfolioXirr(){
+  try{
+    const r=await fetch("/api/portfolio/xirr");
+    const d=await r.json();
+    const el=document.getElementById("kpi-xirr");
+    if(d.xirr!==null){
+      el.textContent=(d.xirr>=0?'+':'')+d.xirr+'%';
+      el.className='kpi-val '+(d.xirr>=0?'up':'down');
+    }else{
+      el.textContent='—';
+    }
+  }catch(e){console.warn(e);}
+}
+
+/* ── CSV Import ── */
+function openImport(){importRows=[];document.getElementById("imp-preview").style.display="none";document.getElementById("import-modal").classList.remove("hidden");feather.replace();}
+function closeImport(){document.getElementById("import-modal").classList.add("hidden");}
+
+function handleDrop(e){e.preventDefault();document.getElementById("imp-drop").classList.remove("dragover");if(e.dataTransfer.files[0])parseFile(e.dataTransfer.files[0]);}
+function handleFile(e){if(e.target.files[0])parseFile(e.target.files[0]);}
+
+function parseFile(file){
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const lines=e.target.result.split('\n').map(l=>l.trim()).filter(l=>l);
+    if(lines.length<2){showToast("Empty CSV","error");return;}
+
+    const headers=parseCSVLine(lines[0]).map(h=>h.toLowerCase().trim());
+    const broker=document.getElementById("imp-broker").value;
+    const assetType=document.getElementById("imp-type").value;
+
+    importRows=[];
+    for(let i=1;i<lines.length;i++){
+      const cols=parseCSVLine(lines[i]);
+      const row=mapCSVRow(headers,cols,broker,assetType);
+      if(row&&row.name)importRows.push(row);
+    }
+
+    showImportPreview();
+  };
+  reader.readAsText(file);
+}
+
+function parseCSVLine(line){
+  const r=[];let cur='',inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
+    else if(c===','&&!inQ){r.push(cur);cur='';}
+    else cur+=c;
+  }
+  r.push(cur);return r;
+}
+
+function mapCSVRow(headers,cols,broker,assetType){
+  const get=(keys)=>{for(const k of keys){const i=headers.indexOf(k);if(i>=0&&cols[i])return cols[i].trim();}return '';};
+
+  // ICICI Direct stock format: Stock Symbol, Company Name, Quantity, Average Price, Current Market Price
+  // ICICI Direct MF format: Scheme Name, Folio No., Units, Purchase NAV, Current NAV
+  // Generic: Name, Symbol, Qty/Quantity/Units, Avg Price/Purchase Price/NAV, Current Price/CMP/Current NAV
+
+  const name=get(['company name','scheme name','name','stock name','scrip name','fund name','security']);
+  const symbol=get(['stock symbol','symbol','scrip code','isin','code','ticker']);
+  const qty=get(['quantity','qty','units','balance units','net quantity']);
+  const avg=get(['average price','avg price','avg. price','purchase nav','buy price','purchase price','nav','cost price','avg cost']);
+  const cmp=get(['current market price','cmp','current nav','ltp','current price','market price','latest nav']);
+  const folio=get(['folio no.','folio no','folio','demat']);
+  const sector=get(['sector','industry']);
+
+  if(!name)return null;
+  return{name,symbol,quantity:qty,avg_price:avg,current_price:cmp||null,folio_number:folio,sector,asset_type:assetType,exchange:assetType==='mf'?'':'NSE'};
+}
+
+function showImportPreview(){
+  document.getElementById("imp-stats").textContent=`${importRows.length} holdings detected`;
+  let html='<table style="width:100%;border-collapse:collapse;"><thead><tr style="background:var(--pf-bg);"><th style="padding:4px 8px;text-align:left;">Name</th><th style="padding:4px 8px;">Qty</th><th style="padding:4px 8px;">Avg</th><th style="padding:4px 8px;">CMP</th></tr></thead><tbody>';
+  importRows.forEach(r=>{
+    html+=`<tr style="border-bottom:1px solid var(--pf-border);"><td style="padding:4px 8px;">${esc(r.name)}</td><td style="padding:4px 8px;text-align:right;">${r.quantity||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.avg_price||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.current_price||'—'}</td></tr>`;
+  });
+  html+='</tbody></table>';
+  document.getElementById("imp-table").innerHTML=html;
+  document.getElementById("imp-preview").style.display="block";
+}
+
+async function doImport(){
+  if(!importRows.length)return;
+  const broker=document.getElementById("imp-broker").value;
+  const res=await fetch("/api/portfolio/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker})});
+  const d=await res.json();
+  closeImport();await loadHoldings();loadSummary();
+  showToast(`Imported ${d.imported} holdings`,"success");
+}
+
+init();
+</script>
+</body>
+</html>
