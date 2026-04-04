@@ -1,16 +1,60 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from collections import defaultdict
 
 from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
 from config import IST
 from routes.planner import build_slot_blocks, load_slot_timeline
-from routes.projects import build_timeline_blocks
 from services.timeline_service import load_timeline_tasks
 from supabase_client import get, update
 
 
 timeline_bp = Blueprint("timeline", __name__)
+
+
+def build_timeline_blocks(tasks, zoom="day"):
+    """
+    Group tasks into timeline blocks.
+    zoom="day"  → one block per day
+    zoom="week" → one block per ISO week
+    Returns list of {date, label, tasks}
+    """
+    groups = defaultdict(list)
+
+    for t in tasks:
+        anchor = t.get("due_date") or t.get("start_date")
+        if not anchor:
+            continue
+        if isinstance(anchor, str):
+            anchor = date.fromisoformat(anchor)
+
+        if zoom == "week":
+            # Key = Monday of that ISO week
+            monday = anchor - timedelta(days=anchor.weekday())
+            key = monday
+            label = f"Week of {monday.strftime('%b %d, %Y')}"
+        else:
+            key = anchor
+            label = anchor.strftime("%a, %b %d %Y")
+
+        groups[key].append(t)
+
+    blocks = []
+    for key in sorted(groups):
+        block_date = key
+        if zoom == "week":
+            label = f"Week of {key.strftime('%b %d, %Y')}"
+        else:
+            label = key.strftime("%a, %b %d %Y")
+
+        blocks.append({
+            "date": block_date.isoformat(),
+            "label": label,
+            "tasks": groups[key],
+        })
+
+    return blocks
 @timeline_bp.route("/projects/timeline")
 @login_required
 def task_timeline():
