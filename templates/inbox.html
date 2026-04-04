@@ -1,154 +1,136 @@
-{% extends "base.html" %}
-{% block content %}
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inbox</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f9fafb; }
 
-<style>
-  .inbox-wrap { max-width: 800px; margin: 0 auto; padding: 16px; }
+    .inbox-wrap { max-width: 800px; margin: 0 auto; padding: 16px; }
 
-  /* ── Add form ── */
-  .inbox-form {
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .inbox-form input, .inbox-form textarea {
-    width: 100%;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 14px;
-    box-sizing: border-box;
-  }
-  .inbox-form textarea { resize: none; height: 64px; }
-  .inbox-form button {
-    align-self: flex-end;
-    background: #2563eb;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 9px 20px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .inbox-form button:disabled { background: #93c5fd; cursor: not-allowed; }
+    /* ── Add form ── */
+    .inbox-form {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .inbox-form input, .inbox-form textarea {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .inbox-form textarea { resize: none; height: 64px; }
+    .inbox-form button {
+      align-self: flex-end;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .inbox-form button:disabled { background: #93c5fd; cursor: not-allowed; }
 
-  /* ── Filter bar ── */
-  .filter-bar {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 16px;
-  }
-  .filter-btn {
-    padding: 5px 12px;
-    border-radius: 20px;
-    border: 1px solid #d1d5db;
-    background: #f9fafb;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  .filter-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    /* ── Filter bar ── */
+    .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .filter-btn {
+      padding: 5px 12px;
+      border-radius: 20px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .filter-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
 
-  /* ── Cards ── */
-  .inbox-card {
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 14px 16px;
-    margin-bottom: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .inbox-card.done { opacity: 0.55; }
+    /* ── Cards ── */
+    .inbox-card {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .inbox-card.done { opacity: 0.55; }
 
-  .card-title a {
-    font-size: 15px;
-    font-weight: 600;
-    color: #111827;
-    text-decoration: none;
-    word-break: break-word;
-  }
-  .card-title a:hover { color: #2563eb; }
+    .card-title a {
+      font-size: 15px;
+      font-weight: 600;
+      color: #111827;
+      text-decoration: none;
+      word-break: break-word;
+    }
+    .card-title a:hover { color: #2563eb; }
+    .card-url { font-size: 12px; color: #9ca3af; }
+    .card-desc { font-size: 13px; color: #6b7280; line-height: 1.5; }
 
-  .card-url {
-    font-size: 12px;
-    color: #9ca3af;
-    word-break: break-all;
-  }
+    .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .badge-type { background: #ede9fe; color: #6d28d9; }
+    .badge-cat  { background: #dcfce7; color: #166534; }
 
-  .card-desc {
-    font-size: 13px;
-    color: #6b7280;
-    line-height: 1.5;
-  }
+    .status-select {
+      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      cursor: pointer;
+    }
+    .status-Unread  { border-color: #93c5fd; color: #1d4ed8; background: #eff6ff; }
+    .status-Reading { border-color: #fcd34d; color: #92400e; background: #fffbeb; }
+    .status-Done    { border-color: #6ee7b7; color: #065f46; background: #f0fdf4; }
+    .status-Saved   { border-color: #c4b5fd; color: #5b21b6; background: #f5f3ff; }
 
-  .card-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 4px;
-  }
+    .card-actions { display: flex; gap: 8px; align-items: center; }
+    .btn-fav, .btn-del {
+      background: none; border: none; cursor: pointer;
+      font-size: 16px; padding: 2px 4px; border-radius: 4px;
+    }
+    .btn-fav:hover { background: #fef9c3; }
+    .btn-del:hover { background: #fee2e2; }
 
-  .badge {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 20px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-  }
-  .badge-type  { background: #ede9fe; color: #6d28d9; }
-  .badge-cat   { background: #dcfce7; color: #166534; }
+    .empty-state { text-align: center; color: #9ca3af; padding: 48px 0; font-size: 15px; }
+    #save-status { font-size: 13px; color: #6b7280; }
+  </style>
+</head>
+<body>
 
-  .status-select {
-    font-size: 12px;
-    padding: 3px 8px;
-    border-radius: 6px;
-    border: 1px solid #d1d5db;
-    background: #f9fafb;
-    cursor: pointer;
-  }
-  .status-Unread  { border-color: #93c5fd; color: #1d4ed8; background: #eff6ff; }
-  .status-Reading { border-color: #fcd34d; color: #92400e; background: #fffbeb; }
-  .status-Done    { border-color: #6ee7b7; color: #065f46; background: #f0fdf4; }
-  .status-Saved   { border-color: #c4b5fd; color: #5b21b6; background: #f5f3ff; }
-
-  .card-actions { display: flex; gap: 8px; align-items: center; }
-  .btn-fav, .btn-del {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 16px;
-    padding: 2px 4px;
-    border-radius: 4px;
-  }
-  .btn-fav:hover { background: #fef9c3; }
-  .btn-del:hover { background: #fee2e2; }
-
-  .empty-state {
-    text-align: center;
-    color: #9ca3af;
-    padding: 48px 0;
-    font-size: 15px;
-  }
-
-  #save-status { font-size: 13px; color: #6b7280; align-self: center; }
-</style>
+{% include "_top_nav.html" %}
 
 <div class="inbox-wrap">
-  <h2 style="margin-bottom:16px;">📥 Inbox</h2>
+  <h2 style="margin: 16px 0;">📥 Inbox</h2>
 
   <!-- Add form -->
   <div class="inbox-form">
     <input id="inp-url" type="url" placeholder="Paste a link…" oninput="clearSaveStatus()">
-    <textarea id="inp-desc" placeholder="Description (optional — or leave blank to auto-fetch)"></textarea>
+    <textarea id="inp-desc" placeholder="Description (optional — auto-fetched if blank)"></textarea>
     <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;">
       <span id="save-status"></span>
       <button id="save-btn" onclick="saveLink()">Save</button>
@@ -156,12 +138,12 @@
   </div>
 
   <!-- Filter bar -->
-  <div class="filter-bar" id="filter-bar">
-    <button class="filter-btn active" data-filter="all" onclick="setFilter('all',this)">All</button>
-    <button class="filter-btn" data-filter="Unread"  onclick="setFilter('Unread',this)">Unread</button>
-    <button class="filter-btn" data-filter="Reading" onclick="setFilter('Reading',this)">Reading</button>
-    <button class="filter-btn" data-filter="Saved"   onclick="setFilter('Saved',this)">Saved</button>
-    <button class="filter-btn" data-filter="Done"    onclick="setFilter('Done',this)">Done</button>
+  <div class="filter-bar">
+    <button class="filter-btn active" onclick="setFilter('all', this)">All</button>
+    <button class="filter-btn" onclick="setFilter('Unread', this)">Unread</button>
+    <button class="filter-btn" onclick="setFilter('Reading', this)">Reading</button>
+    <button class="filter-btn" onclick="setFilter('Saved', this)">Saved</button>
+    <button class="filter-btn" onclick="setFilter('Done', this)">Done</button>
   </div>
 
   <!-- Cards -->
@@ -236,24 +218,22 @@ async function load() {
 
     card.innerHTML = `
       <div class="card-title">
-        <a href="${escHtml(x.url)}" target="_blank" rel="noopener noreferrer">${escHtml(x.title || x.url)}</a>
+        <a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.title || x.url)}</a>
       </div>
-      ${domain ? `<div class="card-url">${escHtml(domain)}</div>` : ""}
-      ${x.description ? `<div class="card-desc">${escHtml(x.description)}</div>` : ""}
+      ${domain ? `<div class="card-url">${esc(domain)}</div>` : ""}
+      ${x.description ? `<div class="card-desc">${esc(x.description)}</div>` : ""}
       <div class="card-meta">
-        ${x.content_type ? `<span class="badge badge-type">${escHtml(x.content_type)}</span>` : ""}
-        ${x.category    ? `<span class="badge badge-cat">${escHtml(x.category)}</span>` : ""}
-        <select class="status-select status-${escHtml(x.status || 'Unread')}"
+        ${x.content_type ? `<span class="badge badge-type">${esc(x.content_type)}</span>` : ""}
+        ${x.category    ? `<span class="badge badge-cat">${esc(x.category)}</span>` : ""}
+        <select class="status-select status-${esc(x.status || 'Unread')}"
                 onchange="updateStatus('${x.id}', this)">
           ${["Unread","Reading","Done","Saved"].map(s =>
             `<option value="${s}" ${x.status === s ? "selected" : ""}>${s}</option>`
           ).join("")}
         </select>
         <div class="card-actions">
-          <button class="btn-fav" onclick="toggleFav('${x.id}')" title="Favourite">
-            ${x.is_favorite ? "★" : "☆"}
-          </button>
-          <button class="btn-del" onclick="deleteItem('${x.id}')" title="Delete">🗑</button>
+          <button class="btn-fav" onclick="toggleFav('${x.id}')">${x.is_favorite ? "★" : "☆"}</button>
+          <button class="btn-del" onclick="deleteItem('${x.id}')">🗑</button>
         </div>
       </div>
     `;
@@ -261,7 +241,7 @@ async function load() {
   });
 }
 
-function escHtml(str) {
+function esc(str) {
   const d = document.createElement("div");
   d.textContent = String(str || "");
   return d.innerHTML;
@@ -272,7 +252,6 @@ async function updateStatus(id, select) {
   select.className = `status-select status-${status}`;
   const card = document.getElementById("card-" + id);
   if (card) card.className = "inbox-card" + (status === "Done" ? " done" : "");
-
   await fetch(`/api/inbox/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -291,7 +270,6 @@ async function deleteItem(id) {
   load();
 }
 
-// allow pressing Enter in URL field to save
 document.getElementById("inp-url").addEventListener("keydown", e => {
   if (e.key === "Enter") saveLink();
 });
@@ -299,4 +277,5 @@ document.getElementById("inp-url").addEventListener("keydown", e => {
 load();
 </script>
 
-{% endblock %}
+</body>
+</html>
