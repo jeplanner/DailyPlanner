@@ -292,6 +292,19 @@ body {
   justify-content: center;
 }
 .smart-go-btn:hover { opacity: 0.9; }
+.smart-voice-btn {
+  width: 28px; height: 28px; border: 1px solid var(--gcal-border); background: var(--gcal-bg);
+  color: var(--gcal-text-secondary); border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.smart-voice-btn:hover { border-color: #dc2626; color: #dc2626; }
+.smart-ai-btn {
+  display: flex; align-items: center; gap: 4px; width: 100%;
+  padding: 6px 10px; border: none; border-top: 1px solid var(--gcal-border-light);
+  background: var(--gcal-surface); color: var(--gcal-text-secondary);
+  font-size: 11px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s;
+}
+.smart-ai-btn:hover { color: var(--gcal-primary); background: var(--gcal-surface); }
 
 .smart-planner-box textarea {
   width: 100%;

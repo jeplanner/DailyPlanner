@@ -1613,6 +1613,38 @@ async function runSmartPlanner() {
   }
 }
 
+async function runAISmartPlanner() {
+  const input = document.getElementById("smart-input");
+  const text = input.value.trim();
+  if (!text) return;
+
+  showToast("AI is parsing your input…", "info");
+
+  try {
+    const res = await fetch("/api/v2/ai-parse-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: currentDate, text })
+    });
+
+    if (!res.ok) {
+      showToast("AI parsing failed", "error");
+      return;
+    }
+
+    const data = await res.json();
+    if (data.created_count > 0) {
+      input.value = "";
+      showToast(`Created ${data.created_count} event${data.created_count > 1 ? "s" : ""}`, "success");
+      loadAllEvents();
+    } else {
+      showToast("AI couldn't parse any events. Try being more specific.", "error");
+    }
+  } catch {
+    showToast("AI parsing failed", "error");
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════
    20. NUMBER CONTROL (scroll wheel on task fields)
    ══════════════════════════════════════════════════════════════ */

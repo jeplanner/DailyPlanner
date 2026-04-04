@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='voice.js') }}"></script>
 <script defer src="{{ url_for('static', filename='v2/planner_v2.js') }}"></script>
 </head>
 <body>
@@ -54,11 +55,20 @@
     <div class="smart-planner-box">
       <div class="smart-header">
         <span class="smart-label">Quick Add</span>
-        <button onclick="runSmartPlanner()" class="smart-go-btn">
-          <i data-feather="zap" style="width:14px;height:14px"></i>
-        </button>
+        <div style="display:flex;gap:4px;">
+          <button onclick="toggleVoice('smart-input','voice-status')" class="smart-voice-btn" title="Voice input">
+            <i data-feather="mic" style="width:14px;height:14px"></i>
+          </button>
+          <button onclick="runSmartPlanner()" class="smart-go-btn" title="Parse & create events">
+            <i data-feather="zap" style="width:14px;height:14px"></i>
+          </button>
+        </div>
       </div>
-      <textarea id="smart-input" rows="3" placeholder="7-8 Breakfast&#10;10-11 Standup&#10;15-16 Design Review"></textarea>
+      <div id="voice-status" style="font-size:10px;color:var(--gcal-text-secondary);padding:0 10px;"></div>
+      <textarea id="smart-input" rows="3" placeholder="Type, paste, or dictate:&#10;&#10;Meeting with Renga for 30 min at 2pm&#10;9-10 Standup&#10;Lunch from 1 to 2&#10;Design review 3pm to 4:30pm"></textarea>
+      <button onclick="runAISmartPlanner()" class="smart-ai-btn" title="Use AI to parse natural language">
+        <i data-feather="cpu" style="width:12px;height:12px"></i> AI Parse
+      </button>
     </div>
 
     <!-- Floating Tasks (unscheduled project tasks) -->

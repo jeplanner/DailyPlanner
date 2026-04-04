@@ -68,6 +68,7 @@ def create_event():
     "description": data.get("description", ""),
     "priority": data.get("priority", "medium"),
     "quadrant": data.get("quadrant") or None,
+    "reminder_minutes": data.get("reminder_minutes", 10),
     })
     created_row = response1[0] if response1 else None
     if created_row:
@@ -291,6 +292,89 @@ def smart_create():
         "failed_count": len(failed),
         "failed": failed
     })
+@events_bp.post("/api/v2/ai-parse-events")
+@login_required
+def ai_parse_events():
+    """Use AI to parse natural language into events, then create them."""
+    data = request.json or {}
+    text = data.get("text", "").strip()
+    plan_date = data.get("date") or safe_date_from_string(None)
+
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+
+    try:
+        from services.ai_service import call_gemini
+
+        prompt = f"""Parse the following text into calendar events for date {plan_date}.
+Return ONLY a JSON array of objects, each with: title, start_time (HH:MM 24h), end_time (HH:MM 24h).
+If duration is mentioned but no end time, calculate end_time from start + duration.
+If time is in 12h format (2pm, 3:30 AM), convert to 24h.
+If no time is mentioned, skip that line.
+Each event on a separate line in the input.
+
+Input:
+{text}
+
+Output JSON array only, no markdown, no explanation:"""
+
+        ai_response = call_gemini(prompt)
+
+        if not ai_response or ai_response.startswith("AI service"):
+            return jsonify({"error": "AI unavailable", "created_count": 0}), 503
+
+        # Parse JSON from AI response
+        import json
+        # Clean markdown wrapping if present
+        cleaned = ai_response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        events_list = json.loads(cleaned)
+        if not isinstance(events_list, list):
+            events_list = [events_list]
+
+        user_id = session["user_id"]
+        created = 0
+
+        for ev in events_list:
+            title = ev.get("title", "").strip()
+            start = ev.get("start_time", "").strip()
+            end = ev.get("end_time", "").strip()
+
+            if not title or not start or not end:
+                continue
+
+            # Validate time format
+            try:
+                int(start.split(":")[0])
+                int(end.split(":")[0])
+            except (ValueError, IndexError):
+                continue
+
+            try:
+                result, status = insert_event(user_id, {
+                    "plan_date": str(plan_date),
+                    "start_time": start,
+                    "end_time": end,
+                    "title": title,
+                    "description": "",
+                    "priority": "medium",
+                }, force=True)
+                if status == 200:
+                    created += 1
+            except Exception as e:
+                logger.warning("AI event create failed: %s", e)
+
+        return jsonify({"status": "ok", "created_count": created})
+
+    except json.JSONDecodeError:
+        return jsonify({"error": "AI returned invalid format", "created_count": 0}), 500
+    except Exception as e:
+        logger.error("AI parse events error: %s", e)
+        return jsonify({"error": str(e), "created_count": 0}), 500
+
+
 @events_bp.route('/google-login')
 @login_required
 def google_login():
@@ -438,7 +522,7 @@ def insert_google_event(event_row):
         "reminders": {
             "useDefault": False,
             "overrides": [
-                {"method": "popup", "minutes": 10}
+                {"method": "popup", "minutes": int(event_row.get("reminder_minutes") or 10)}
             ]
         }
     }
@@ -473,7 +557,9 @@ def insert_event(user_id, data, force=False):
         "start_time": data["start_time"],
         "end_time": data["end_time"],
         "title": data["title"],
-        "description": data.get("description", "")
+        "description": data.get("description", ""),
+        "priority": data.get("priority", "medium"),
+        "reminder_minutes": data.get("reminder_minutes", 10),
     })
 
     created_row = response1[0] if response1 else None
