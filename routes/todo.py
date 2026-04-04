@@ -2,7 +2,7 @@ import calendar
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
 
-from flask import Blueprint, jsonify, redirect, render_template_string, request, session, url_for
+from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
 
 from auth import login_required
 from config import IST
@@ -111,15 +111,17 @@ def todo():
     # 5️⃣ Render
     days = calendar.monthrange(year, month)[1]
 
-    return render_template_string(
-        TODO_TEMPLATE,
+    from datetime import datetime as dt
+    from config import IST
+    today = dt.now(IST).date().isoformat()
+
+    return render_template(
+        "todo.html",
         todo=todo,
         plan_date=plan_date,
         year=year,
         month=month,
-        days=days,
-        calendar=calendar,
-        toast=session.pop("toast", None),
+        today=today,
         quadrant_counts=quadrant_counts,
     )
 

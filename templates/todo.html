@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Eisenhower Matrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+:root{--em-bg:#f7f8fa;--em-surface:#fff;--em-text:#1a1a2e;--em-text2:#6b7280;--em-text3:#9ca3af;
+  --em-border:#e5e7eb;--em-shadow:0 1px 3px rgba(0,0,0,.06);
+  --q-do:#dc2626;--q-do-bg:#fef2f2;--q-do-border:#fecaca;
+  --q-schedule:#2563eb;--q-schedule-bg:#eff6ff;--q-schedule-border:#bfdbfe;
+  --q-delegate:#d97706;--q-delegate-bg:#fffbeb;--q-delegate-border:#fde68a;
+  --q-eliminate:#6b7280;--q-eliminate-bg:#f3f4f6;--q-eliminate-border:#d1d5db;}
+html.dark{--em-bg:#0f172a;--em-surface:#1e293b;--em-text:#f1f5f9;--em-text2:#94a3b8;--em-text3:#64748b;--em-border:#334155;
+  --q-do-bg:#3b1111;--q-schedule-bg:#1e3a5f;--q-delegate-bg:#451a03;--q-eliminate-bg:#1f2937;
+  --em-shadow:0 1px 3px rgba(0,0,0,.2);}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(--em-text);min-height:100vh;}
+
+.em-app{max-width:1100px;margin:0 auto;padding:16px 20px 48px;}
+
+/* Header */
+.em-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap;}
+.em-header h1{font-size:22px;font-weight:800;}
+.em-date-nav{display:flex;align-items:center;gap:6px;}
+.em-nav-btn{width:32px;height:32px;border:none;background:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--em-text2);}
+.em-nav-btn:hover{background:var(--em-border);}
+.em-date-pick{border:1px solid var(--em-border);border-radius:6px;padding:5px 10px;font-size:13px;font-family:inherit;background:var(--em-surface);color:var(--em-text);cursor:pointer;}
+.em-today-btn{padding:5px 14px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-weight:500;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;}
+.em-today-btn:hover{background:var(--em-border);}
+
+/* Quick Actions */
+.em-actions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+.em-action-btn{display:flex;align-items:center;gap:4px;padding:6px 12px;border:1px solid var(--em-border);border-radius:8px;font-size:12px;font-weight:500;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;transition:all .15s;}
+.em-action-btn:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
+
+/* Quick Add */
+.em-quick-add{display:flex;gap:8px;margin-bottom:20px;align-items:center;}
+.em-quick-input{flex:1;padding:10px 14px;border:1.5px solid var(--em-border);border-radius:10px;font-size:14px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
+.em-quick-input:focus{border-color:var(--q-schedule);}
+.em-quad-select{padding:8px 10px;border:1px solid var(--em-border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--em-surface);color:var(--em-text);cursor:pointer;}
+.em-add-btn{padding:8px 16px;border:none;border-radius:8px;font-size:14px;font-weight:600;font-family:inherit;background:var(--q-schedule);color:#fff;cursor:pointer;}
+.em-add-btn:hover{opacity:.9;}
+
+/* Matrix Grid */
+.em-matrix{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media(max-width:768px){.em-matrix{grid-template-columns:1fr;}}
+
+/* Quadrant Card */
+.em-quad{background:var(--em-surface);border-radius:14px;border:1px solid var(--em-border);box-shadow:var(--em-shadow);overflow:hidden;}
+.em-quad-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;user-select:none;}
+.em-quad-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;}
+.em-quad-dot{width:10px;height:10px;border-radius:50%;}
+.em-quad-count{font-size:11px;color:var(--em-text3);font-weight:500;}
+.em-quad-body{padding:0 12px 12px;}
+
+.q-do .em-quad-header{border-bottom:3px solid var(--q-do);}
+.q-schedule .em-quad-header{border-bottom:3px solid var(--q-schedule);}
+.q-delegate .em-quad-header{border-bottom:3px solid var(--q-delegate);}
+.q-eliminate .em-quad-header{border-bottom:3px solid var(--q-eliminate);}
+.q-do .em-quad-dot{background:var(--q-do);}
+.q-schedule .em-quad-dot{background:var(--q-schedule);}
+.q-delegate .em-quad-dot{background:var(--q-delegate);}
+.q-eliminate .em-quad-dot{background:var(--q-eliminate);}
+
+/* Task Item */
+.em-task{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-top:6px;border-radius:10px;border:1px solid var(--em-border);transition:all .15s;background:var(--em-surface);}
+.em-task:hover{box-shadow:0 2px 8px rgba(0,0,0,.06);}
+.em-task.done{opacity:.45;}
+.em-task.done .em-task-title{text-decoration:line-through;}
+
+.em-task input[type=checkbox]{width:18px;height:18px;margin-top:2px;cursor:pointer;accent-color:var(--q-schedule);flex-shrink:0;}
+
+.em-task-body{flex:1;min-width:0;}
+.em-task-title{font-size:14px;font-weight:500;word-break:break-word;}
+.em-task-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;}
+.em-source-badge{font-size:9px;font-weight:600;padding:1px 6px;border-radius:4px;text-transform:uppercase;}
+.em-src-event{background:#eff6ff;color:#2563eb;}
+.em-src-project{background:#f0fdf4;color:#059669;}
+.em-src-matrix{background:#f3f4f6;color:#6b7280;}
+.em-project-name{font-size:11px;color:var(--em-text3);}
+
+.em-task-actions{display:flex;gap:2px;flex-shrink:0;}
+.em-task-btn{width:26px;height:26px;border:none;background:none;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--em-text3);font-size:12px;}
+.em-task-btn:hover{background:var(--em-border);color:var(--em-text);}
+
+.em-move-select{padding:2px 4px;border:1px solid var(--em-border);border-radius:4px;font-size:10px;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;}
+
+.em-empty{text-align:center;padding:20px 8px;color:var(--em-text3);font-size:13px;}
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="em-app">
+  <div class="em-header">
+    <h1>Eisenhower Matrix</h1>
+    <div class="em-date-nav">
+      <button class="em-nav-btn" onclick="navDate(-1)"><i data-feather="chevron-left" style="width:18px;height:18px"></i></button>
+      <input type="date" class="em-date-pick" id="date-pick" value="{{ plan_date.isoformat() }}" onchange="goToDate(this.value)">
+      <button class="em-nav-btn" onclick="navDate(1)"><i data-feather="chevron-right" style="width:18px;height:18px"></i></button>
+      <button class="em-today-btn" onclick="goToDate('{{ today }}')">Today</button>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="em-actions">
+    <form method="post" action="/todo/copy-prev" style="display:contents;">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <input type="hidden" name="day" value="{{ plan_date.day }}">
+      <button type="submit" class="em-action-btn"><i data-feather="copy" style="width:14px;height:14px"></i> Copy Previous Day</button>
+    </form>
+    <form method="post" action="/todo/travel-mode" style="display:contents;">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <input type="hidden" name="day" value="{{ plan_date.day }}">
+      <button type="submit" class="em-action-btn"><i data-feather="navigation" style="width:14px;height:14px"></i> Travel Mode</button>
+    </form>
+  </div>
+
+  <!-- Quick Add Task -->
+  <div class="em-quick-add">
+    <input type="text" id="quick-task" class="em-quick-input" placeholder="Add a task…" onkeydown="if(event.key==='Enter')quickAdd()">
+    <select id="quick-quad" class="em-quad-select">
+      <option value="do">🔴 Do</option>
+      <option value="schedule" selected>🔵 Schedule</option>
+      <option value="delegate">🟡 Delegate</option>
+      <option value="eliminate">⚪ Eliminate</option>
+    </select>
+    <button class="em-add-btn" onclick="quickAdd()">Add</button>
+  </div>
+
+  <!-- Matrix Grid -->
+  <div class="em-matrix">
+    {% for q, label, desc in [
+      ('do', '🔥 Do Now', 'Urgent + Important'),
+      ('schedule', '📅 Schedule', 'Important, not urgent'),
+      ('delegate', '🤝 Delegate', 'Urgent, not important'),
+      ('eliminate', '🗑 Eliminate', 'Neither')
+    ] %}
+    <div class="em-quad q-{{ q }}" data-quadrant="{{ q }}">
+      <div class="em-quad-header" onclick="this.parentElement.querySelector('.em-quad-body').classList.toggle('collapsed')">
+        <div class="em-quad-title">
+          <span class="em-quad-dot"></span>
+          {{ label }}
+        </div>
+        {% set c = quadrant_counts[q] %}
+        <span class="em-quad-count">{{ c.done }}/{{ c.total }} done</span>
+      </div>
+      <div class="em-quad-body">
+        {% set tasks = todo[q]["tasks"] %}
+        {% if tasks %}
+          {% for t in tasks %}
+          <div class="em-task {{ 'done' if t.is_done }}" data-id="{{ t.id }}" data-quadrant="{{ q }}">
+            {% if t.source != 'event' and t.source != 'project' %}
+            <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
+            {% else %}
+            <input type="checkbox" {{ 'checked' if t.is_done }} disabled style="opacity:0.4;">
+            {% endif %}
+
+            <div class="em-task-body">
+              <div class="em-task-title">{{ t.task_text }}</div>
+              <div class="em-task-meta">
+                {% if t.source == 'event' %}
+                  <span class="em-source-badge em-src-event">Event</span>
+                {% elif t.source == 'project' %}
+                  <span class="em-source-badge em-src-project">Project</span>
+                {% else %}
+                  <span class="em-source-badge em-src-matrix">Task</span>
+                {% endif %}
+                {% if t.project_name %}
+                  <span class="em-project-name">{{ t.project_name }}</span>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="em-task-actions">
+              {% if t.source == 'matrix' %}
+              <select class="em-move-select" onchange="moveQuadrant('{{ t.id }}', this.value)">
+                <option value="do" {{ 'selected' if q=='do' }}>Do</option>
+                <option value="schedule" {{ 'selected' if q=='schedule' }}>Schedule</option>
+                <option value="delegate" {{ 'selected' if q=='delegate' }}>Delegate</option>
+                <option value="eliminate" {{ 'selected' if q=='eliminate' }}>Eliminate</option>
+              </select>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="em-empty">No tasks in this quadrant</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+const PLAN_DATE = "{{ plan_date.isoformat() }}";
+
+function navDate(delta) {
+  const d = new Date(PLAN_DATE);
+  d.setDate(d.getDate() + delta);
+  goToDate(d.toISOString().split('T')[0]);
+}
+
+function goToDate(dateStr) {
+  const d = new Date(dateStr);
+  location.href = `/todo?year=${d.getFullYear()}&month=${d.getMonth()+1}&day=${d.getDate()}`;
+}
+
+function toggleDone(taskId, isDone) {
+  const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
+  if (task) task.classList.toggle("done", isDone);
+
+  fetch("/todo/toggle-done", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: taskId, is_done: isDone})
+  }).catch(console.error);
+}
+
+function moveQuadrant(taskId, newQ) {
+  fetch("/todo/move", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: taskId, quadrant: newQ})
+  }).then(() => {
+    const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
+    const target = document.querySelector(`.em-quad[data-quadrant="${newQ}"] .em-quad-body`);
+    if (task && target) {
+      const empty = target.querySelector('.em-empty');
+      if (empty) empty.remove();
+      target.appendChild(task);
+    }
+  }).catch(console.error);
+}
+
+function quickAdd() {
+  const input = document.getElementById("quick-task");
+  const text = input.value.trim();
+  if (!text) return;
+
+  const quadrant = document.getElementById("quick-quad").value;
+
+  fetch("/todo/autosave", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      plan_date: PLAN_DATE,
+      task_text: text,
+      quadrant: quadrant,
+      is_done: false
+    })
+  }).then(() => {
+    location.reload();
+  }).catch(() => {
+    showToast("Failed to add task", "error");
+  });
+
+  input.value = "";
+}
+
+document.getElementById("quick-task")?.focus();
+if (typeof feather !== "undefined") feather.replace();
+</script>
+</body>
+</html>
