@@ -364,24 +364,82 @@ html.dark .task-row.overdue { background: #3b1111; }
 .btn-ghost { background: transparent; color: var(--pt-text2); }
 .btn-ghost:hover { background: var(--pt-border-light); color: var(--pt-text); }
 
-/* ═══════════ RESPONSIVE ═══════════ */
+/* ═══════════ MOBILE CARD VIEW ═══════════ */
+/* On mobile, convert table rows to stacked cards */
 @media (max-width: 768px) {
   .proj-app { padding: 8px 12px 32px; }
   .proj-name { font-size: 18px; }
   .header-action span { display: none; }
   .header-action { padding: 6px 8px; }
-  .col-start, .col-dur, .col-progress { display: none; }
-  .col-name { min-width: 120px; }
-  .col-status { width: 90px; }
-  .col-due { width: 100px; }
   .add-task-date { width: 100px; }
   .sheet-row { grid-template-columns: 1fr; }
   .board-col { min-width: 200px; }
+  .view-toggle { display: none; }
+
+  /* Hide table header */
+  .task-table thead { display: none; }
+  .task-table-wrap { border: none; box-shadow: none; background: transparent; overflow: visible; }
+  .task-table { display: block; }
+  .task-table tbody { display: flex; flex-direction: column; gap: 8px; }
+
+  /* Group rows stay as-is */
+  .group-row { display: block; }
+  .group-row td { display: block; padding: 8px 4px; border-radius: 8px; }
+
+  /* Convert each task row to a card */
+  .task-row {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px; padding: 12px;
+    background: var(--pt-surface); border-radius: 12px;
+    border: 1px solid var(--pt-border); box-shadow: var(--pt-shadow);
+  }
+  .task-row td { display: contents; border: none; padding: 0; }
+
+  /* Hide columns not needed on mobile */
+  .col-start, .col-dur, .col-progress, .col-actions .gcal-btn { display: none; }
+
+  /* Layout within mobile card */
+  .col-check { order: 1; }
+  .col-prio { order: 2; }
+  .col-name {
+    order: 3; flex: 1; min-width: 0;
+  }
+  .col-actions { order: 4; }
+  .col-status { order: 5; }
+  .col-due { order: 6; }
+
+  /* Status + Due on second row */
+  .col-status, .col-due {
+    width: auto;
+  }
+
+  .task-name-cell { flex-wrap: wrap; }
+  .task-text { white-space: normal; word-break: break-word; font-size: 14px; }
+
+  .status-select { font-size: 12px; }
+  .due-cell { flex-direction: row; gap: 4px; align-items: center; }
+  .cell-date { width: 100px; font-size: 11px; }
+
+  .row-action-btn { width: 32px; height: 32px; }
+
+  /* Overdue card highlight */
+  .task-row.overdue { border-left: 3px solid var(--pt-danger); }
+
+  /* Done card fade */
+  .task-row.done { opacity: 0.4; }
+
+  /* Add task row adjustments */
+  .add-task-row { flex-wrap: wrap; }
+  .prio-picker { order: 2; }
+  .add-task-input { order: 1; flex-basis: 100%; }
+  .add-task-date { order: 3; }
+  .add-task-btn { order: 4; }
 }
 
 @media (max-width: 480px) {
-  .col-actions { width: 36px; }
-  .gcal-btn { display: none; }
   .proj-stats { font-size: 11px; }
   .filter-pill { font-size: 11px; padding: 3px 8px; }
+  .proj-header { flex-direction: column; align-items: flex-start; }
+  .task-text { font-size: 13px; }
+  .add-task-row { padding: 8px 10px; }
 }

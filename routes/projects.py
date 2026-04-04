@@ -833,12 +833,26 @@ def complete_task(task_id):
 
     return {"ok": True}
 
+@projects_bp.route("/subtask/list/<task_id>")
+@login_required
+def list_subtasks(task_id):
+    rows = get(
+        "project_subtasks",
+        params={
+            "parent_task_id": f"eq.{task_id}",
+            "select": "id,title,is_done",
+            "order": "id.asc",
+        }
+    ) or []
+    return jsonify(rows)
+
+
 @projects_bp.route("/subtask/add", methods=["POST"])
 @login_required
 def add_subtask():
     data = request.get_json()
 
-    post(
+    rows = post(
         "project_subtasks",
         {
             "project_id": data["project_id"],
@@ -846,7 +860,9 @@ def add_subtask():
             "title": data["title"],
         },
     )
-    return ("", 204)
+    if rows:
+        return jsonify(rows[0])
+    return jsonify({"id": None, "title": data["title"], "is_done": False})
 
 @projects_bp.route("/subtask/toggle", methods=["POST"])
 @login_required

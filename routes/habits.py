@@ -15,11 +15,21 @@ def add_habit():
     data = request.get_json()
 
     name = (data.get("name") or "").strip().upper()
-    unit = (data.get("unit") or "").strip().upper()
-    goal = float(data.get("goal") or 0)
+    habit_type = data.get("habit_type", "number")
     start_date = data.get("start_date") or date.today().isoformat()
-    if not name or not unit or not goal:
-        return jsonify({"error": "All fields required"}), 400
+
+    # Boolean habits: auto-fill unit and goal
+    if habit_type == "boolean":
+        unit = "BOOLEAN"
+        goal = 1.0
+    else:
+        unit = (data.get("unit") or "").strip().upper()
+        goal = float(data.get("goal") or 0)
+
+    if not name:
+        return jsonify({"error": "Habit name is required"}), 400
+    if habit_type != "boolean" and (not unit or not goal):
+        return jsonify({"error": "Unit and goal are required for numeric habits"}), 400
 
     try:
         inserted = post(
@@ -29,9 +39,10 @@ def add_habit():
                 "name": name,
                 "unit": unit,
                 "goal": goal,
+                "habit_type": habit_type,
                 "position": 9999,
                 "is_deleted": False,
-                "start_date":start_date
+                "start_date": start_date,
             },
             prefer="return=representation"
         )

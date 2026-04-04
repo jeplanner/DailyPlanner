@@ -639,17 +639,11 @@ async function loadSubtasks(taskId) {
   list.innerHTML = "";
 
   try {
-    // Fetch subtasks -- they may be embedded in task data or need separate call
-    // The GET endpoint returns the task row; subtasks need a separate fetch
-    const res = await fetch(`/api/v2/project-tasks/${taskId}`);
+    const res = await fetch(`/subtask/list/${taskId}`);
     if (!res.ok) return;
-    const task = await res.json();
-
-    // If subtasks are embedded in the task response
-    const subtasks = task.subtasks || [];
+    const subtasks = await res.json();
     subtasks.forEach(st => _renderSubtask(list, st));
   } catch (e) {
-    // Subtasks may not be available -- show empty list
     console.debug("No subtasks loaded", e);
   }
 }
@@ -671,16 +665,16 @@ async function addSubtask() {
   if (!title || !_sheetTaskId) return;
 
   try {
-    await _post("/subtask/add", {
-      project_id: PROJECT_ID,
-      task_id: _sheetTaskId,
-      title,
+    const res = await fetch("/subtask/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: PROJECT_ID, task_id: _sheetTaskId, title }),
     });
+    const st = await res.json();
 
-    // Append optimistically
     const list = _id("subtask-list");
     if (list) {
-      _renderSubtask(list, { id: "temp-" + Date.now(), title, is_done: false });
+      _renderSubtask(list, { id: st.id || Date.now(), title: st.title || title, is_done: false });
     }
     input.value = "";
   } catch {

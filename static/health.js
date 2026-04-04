@@ -25,6 +25,14 @@ document.addEventListener("DOMContentLoaded", () => {
   loadWeeklyStats();
   loadHeatmap();
   if (typeof feather !== "undefined") feather.replace();
+
+  // Close habit sheet on overlay click
+  const sheet = document.getElementById("habit-sheet");
+  if (sheet) {
+    sheet.addEventListener("click", (e) => {
+      if (e.target === sheet) closeHabitSheet();
+    });
+  }
 });
 
 // ============================================================
@@ -592,7 +600,7 @@ function openHabitSheet() {
   const sheet = document.getElementById("habit-sheet");
   if (!sheet) return;
 
-  sheet.classList.add("open");
+  sheet.classList.remove("hidden");
   sheet.dataset.editId = "";
 
   // Clear fields
@@ -613,7 +621,7 @@ function openHabitSheet() {
 
 function closeHabitSheet() {
   const sheet = document.getElementById("habit-sheet");
-  if (sheet) sheet.classList.remove("open");
+  if (sheet) sheet.classList.add("hidden");
 }
 
 function setHabitType(type) {
@@ -623,20 +631,17 @@ function setHabitType(type) {
   sheet.dataset.habitType = type;
 
   // Toggle active state on type buttons
-  document.querySelectorAll(".habit-type-btn").forEach(btn => {
+  document.querySelectorAll(".type-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.type === type);
   });
 
-  // Show/hide unit and goal fields for boolean
-  const unitRow = document.getElementById("sheet-unit")?.closest(".sheet-field");
-  const goalRow = document.getElementById("sheet-goal")?.closest(".sheet-field");
+  // Show/hide unit+goal row for boolean habits
+  const unitGoalRow = document.getElementById("sheet-unit")?.closest(".sheet-row");
 
   if (type === "boolean") {
-    if (unitRow) unitRow.style.display = "none";
-    if (goalRow) goalRow.style.display = "none";
+    if (unitGoalRow) unitGoalRow.style.display = "none";
   } else {
-    if (unitRow) unitRow.style.display = "";
-    if (goalRow) goalRow.style.display = "";
+    if (unitGoalRow) unitGoalRow.style.display = "";
   }
 }
 
@@ -701,7 +706,7 @@ async function editHabit(id) {
     const sheet = document.getElementById("habit-sheet");
     if (!sheet) return;
 
-    sheet.classList.add("open");
+    sheet.classList.remove("hidden");
     sheet.dataset.editId = id;
 
     const titleEl = document.getElementById("sheet-title");
