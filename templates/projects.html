@@ -1,41 +1,175 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Projects</title>
-  <link rel="stylesheet"
-        href="{{ url_for('static', filename='old_slot_ui.css') }}">
-</head>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; }
 
+    .nav-icons {
+      display: flex; justify-content: center; align-items: center;
+      gap: 14px; padding: 10px 16px;
+      background: #fff; border-bottom: 1px solid #e2e8f0;
+    }
+    .nav-icons a, .nav-icons button {
+      background: none; border: none; font-size: 18px;
+      cursor: pointer; padding: 6px; border-radius: 10px; text-decoration: none;
+    }
+    .nav-icons a:hover, .nav-icons button:hover { background: #f1f5f9; }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 20px 16px 48px; }
+
+    .page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    }
+    .page-header h2 { font-size: 22px; font-weight: 700; }
+
+    .btn-new {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #2563eb; color: #fff;
+      padding: 9px 18px; border-radius: 10px;
+      font-weight: 600; font-size: 14px;
+      text-decoration: none; border: none; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-new:hover { background: #1d4ed8; }
+
+    /* ── Card grid ── */
+    .project-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .project-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 18px 18px 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+      text-decoration: none; color: inherit;
+      display: flex; flex-direction: column; gap: 10px;
+      transition: box-shadow 0.2s, transform 0.15s;
+      border: 1px solid #e2e8f0;
+    }
+    .project-card:hover {
+      box-shadow: 0 8px 24px rgba(0,0,0,.1);
+      transform: translateY(-2px);
+    }
+
+    .project-card-header {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+    }
+    .project-name {
+      font-size: 15px; font-weight: 700; line-height: 1.3; color: #1e293b;
+      flex: 1;
+    }
+    .task-count-pill {
+      font-size: 11px; font-weight: 600;
+      background: #eef2ff; color: #4338ca;
+      padding: 3px 9px; border-radius: 999px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+
+    .project-desc {
+      font-size: 13px; color: #64748b; line-height: 1.5;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .project-footer {
+      margin-top: auto; display: flex; flex-direction: column; gap: 6px;
+    }
+    .progress-row {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .progress-bar {
+      flex: 1; height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: #22c55e; border-radius: 999px;
+      transition: width 0.4s ease;
+    }
+    .progress-fill.low    { background: #f59e0b; }
+    .progress-fill.medium { background: #3b82f6; }
+    .progress-label {
+      font-size: 12px; color: #64748b; white-space: nowrap;
+    }
+
+    .task-stats {
+      display: flex; gap: 10px; font-size: 12px; color: #64748b;
+    }
+    .task-stats span { display: flex; align-items: center; gap: 3px; }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center; padding: 64px 24px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+    }
+    .empty-icon { font-size: 48px; }
+    .empty-state p { font-size: 16px; color: #64748b; }
+
+    /* ── Mobile ── */
+    @media (max-width: 480px) {
+      .project-grid { grid-template-columns: 1fr; }
+      .page-header h2 { font-size: 20px; }
+    }
+  </style>
+</head>
 <body>
 
-  <div id="clock" class="clock"></div>
-  <div class="nav-icons">  {% include "_top_nav.html" %}  </div>
-  <div class="container">
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
 
+<div class="container">
+  <div class="page-header">
     <h2>Projects</h2>
-    <a href="/projects/new" class="save-task-btn" style="margin-bottom:12px;display:inline-block;">
-      ➕ New Project
-    </a>
-
-    {% if projects %}
-      {% for p in projects %}
-        <div class="project">
-          <div class="project-name">
-            {{ p.name }}
-          </div>
-          <a class="open" href="/projects/{{ p.project_id }}/tasks">
-            Open →
-          </a>
-        </div>
-      {% endfor %}
-    {% else %}
-      <div class="empty">
-        No projects yet
-      </div>
-    {% endif %}
+    <a href="/projects/new" class="btn-new">＋ New Project</a>
   </div>
 
+  {% if projects %}
+  <div class="project-grid">
+    {% for p in projects %}
+    <a href="/projects/{{ p.project_id }}/tasks" class="project-card">
+
+      <div class="project-card-header">
+        <div class="project-name">{{ p.name }}</div>
+        <span class="task-count-pill">{{ p.task_count }} tasks</span>
+      </div>
+
+      {% if p.description %}
+      <div class="project-desc">{{ p.description }}</div>
+      {% endif %}
+
+      <div class="project-footer">
+        <div class="progress-row">
+          <div class="progress-bar">
+            <div class="progress-fill
+              {% if p.completion_pct < 40 %}low
+              {% elif p.completion_pct < 75 %}medium{% endif %}"
+              style="width: {{ p.completion_pct }}%">
+            </div>
+          </div>
+          <span class="progress-label">{{ p.completion_pct }}%</span>
+        </div>
+        <div class="task-stats">
+          <span>✅ {{ p.done_count }} done</span>
+          <span>📋 {{ p.task_count - p.done_count }} remaining</span>
+        </div>
+      </div>
+
+    </a>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📁</div>
+    <p>No projects yet. Start by creating one.</p>
+    <a href="/projects/new" class="btn-new">Create your first project</a>
+  </div>
+  {% endif %}
+
+</div>
 </body>
 </html>
-

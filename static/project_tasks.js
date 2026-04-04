@@ -97,7 +97,7 @@ window.togglePin = btn => {
 };
 
 /* -------------------------
-   Status Update
+   Status Update (no full reload)
 ------------------------- */
 window.updateStatus = (taskId, status, date = null) => {
   const task = $(`task-${taskId}`);
@@ -106,6 +106,10 @@ window.updateStatus = (taskId, status, date = null) => {
   const prev = task.dataset.status;
   task.dataset.status = status;
 
+  // Update checkbox state immediately
+  const checkbox = task.querySelector('input[type="checkbox"]');
+  if (checkbox) checkbox.checked = status === "done";
+
   fetch("/projects/tasks/status", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -113,10 +117,20 @@ window.updateStatus = (taskId, status, date = null) => {
   })
     .then(r => {
       if (!r.ok) throw new Error();
-      location.reload();
+      // If hide_completed is active and task is now done, fade it out
+      const hideCompleted = new URL(window.location.href).searchParams.get("hide_completed") === "1";
+      if (hideCompleted && status === "done") {
+        task.style.transition = "opacity 0.4s, transform 0.4s";
+        task.style.opacity = "0";
+        task.style.transform = "translateX(20px)";
+        setTimeout(() => task.remove(), 420);
+        return;
+      }
+      showProjectToast(status === "done" ? "Marked complete ✓" : "Status updated", "success", 1500);
     })
     .catch(() => {
       task.dataset.status = prev;
+      if (checkbox) checkbox.checked = prev === "done";
       showProjectToast("Failed to update status", "error");
     });
 };
@@ -173,39 +187,51 @@ window.updateDueTime = function (taskId, value) {
 };
 
 /* -------------------------
-   Eisenhower
+   Eisenhower Modal
 ------------------------- */
-window.openEisenhower = function (taskId) {
-  const today = new Date().toLocaleDateString("en-CA");
-  // Simple quadrant picker — replace with modal if needed
-  const options = ["do", "decide", "delegate", "eliminate"];
-  const choice = window.prompt(
-    `Send to Eisenhower quadrant:\n${options.join(" / ")}`,
-    "do"
-  );
-  if (!choice) return;
-  const quadrant = choice.trim().toLowerCase();
-  if (!options.includes(quadrant)) {
-    showProjectToast("Invalid quadrant", "error");
-    return;
-  }
+let eisenhowerTaskId = null;
 
-  fetch("/projects/tasks/send-to-eisenhower", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ task_id: taskId, plan_date: today, quadrant })
-  })
-    .then(r => r.json())
-    .then(data => {
-      if (data.status === "ok") {
-        showProjectToast("Sent to Eisenhower ✓", "success");
-        const btn = $(`send-${taskId}`);
-        if (btn) btn.classList.add("sent");
-      } else if (data.status === "already-sent") {
-        showProjectToast("Already in Eisenhower", "info");
-      }
-    })
-    .catch(console.error);
+window.openEisenhower = function (taskId) {
+  eisenhowerTaskId = taskId;
+  const taskEl = document.querySelector(`.task[data-id="${taskId}"]`);
+  const name = taskEl?.querySelector(".task-title")?.textContent.trim() || "";
+  const nameEl = $("eisenhower-task-name");
+  if (nameEl) nameEl.textContent = name;
+  $("eisenhower-modal")?.classList.remove("hidden");
+};
+
+window.closeEisenhowerModal = function () {
+  $("eisenhower-modal")?.classList.add("hidden");
+  eisenhowerTaskId = null;
+};
+
+window.handleEisenhowerOverlay = function (e) {
+  if (e.target === $("eisenhower-modal")) closeEisenhowerModal();
+};
+
+window.submitEisenhower = async function (quadrant) {
+  if (!eisenhowerTaskId) return;
+  const today = new Date().toLocaleDateString("en-CA");
+  closeEisenhowerModal();
+
+  try {
+    const r = await fetch("/projects/tasks/send-to-eisenhower", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: eisenhowerTaskId, plan_date: today, quadrant })
+    });
+    const data = await r.json();
+    if (data.status === "ok") {
+      showProjectToast("Sent to Eisenhower ✓", "success");
+      const btn = $(`send-${eisenhowerTaskId}`);
+      if (btn) btn.classList.add("sent");
+    } else if (data.status === "already-sent") {
+      showProjectToast("Already in Eisenhower", "info");
+    }
+  } catch {
+    showProjectToast("Failed to send", "error");
+  }
+  eisenhowerTaskId = null;
 };
 
 /* -------------------------
@@ -472,16 +498,16 @@ async function updateRecurrence(taskId, type) {
   const weeklyBox = taskEl.querySelector(".recurrence-days");
   if (weeklyBox) weeklyBox.style.display = type === "weekly" ? "flex" : "none";
 
-  const badge = taskEl.querySelector(".repeat-badge");
+  const badge = taskEl.querySelector(".recurrence-badge");
   if (type === "none") {
     if (badge) badge.remove();
   } else {
     if (!badge) {
       const newBadge = document.createElement("span");
-      newBadge.className = "repeat-badge";
-      taskEl.querySelector(".task-header")?.appendChild(newBadge);
+      newBadge.className = "recurrence-badge";
+      taskEl.querySelector(".task-text")?.appendChild(newBadge);
     }
-    const finalBadge = taskEl.querySelector(".repeat-badge");
+    const finalBadge = taskEl.querySelector(".recurrence-badge");
     if (finalBadge) finalBadge.textContent = `🔁 ${type}`;
   }
 }
@@ -577,6 +603,105 @@ function attachLongPress(el, onLongPress) {
 }
 
 /* -------------------------
+   Notes panel toggle
+------------------------- */
+function toggleNotesPanel() {
+  const panel  = $("notesPanel");
+  const chevron = $("notesChevron");
+  if (!panel) return;
+  const open = panel.classList.toggle("collapsed");
+  // collapsed means hidden; toggle returns true when class was added (i.e. now collapsed)
+  if (chevron) chevron.textContent = open ? "▶" : "▼";
+}
+window.toggleNotesPanel = toggleNotesPanel;
+
+/* -------------------------
+   Touch drag-to-reorder
+------------------------- */
+function attachTouchReorder(taskEl) {
+  const handle = taskEl.querySelector(".drag-handle");
+  if (!handle) return;
+
+  let clone = null;
+  let dragging = false;
+  let startY, startX;
+
+  handle.addEventListener("touchstart", e => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dragging = false;
+  }, { passive: true });
+
+  handle.addEventListener("touchmove", e => {
+    const dy = Math.abs(e.touches[0].clientY - startY);
+    const dx = Math.abs(e.touches[0].clientX - startX);
+
+    if (!dragging && (dy > 8 || dx > 8)) {
+      dragging = true;
+      draggedId = taskEl.dataset.id;
+
+      // Ghost clone that follows the finger
+      clone = taskEl.cloneNode(true);
+      const rect = taskEl.getBoundingClientRect();
+      clone.style.cssText = `
+        position: fixed;
+        left: ${rect.left}px; width: ${rect.width}px;
+        opacity: 0.85; pointer-events: none; z-index: 9999;
+        transform: scale(1.02) rotate(1deg);
+        box-shadow: 0 10px 28px rgba(0,0,0,.22);
+        border-radius: 14px;
+      `;
+      document.body.appendChild(clone);
+      taskEl.style.opacity = "0.3";
+    }
+
+    if (!dragging) return;
+    e.preventDefault();
+
+    const y = e.touches[0].clientY;
+    clone.style.top = (y - 30) + "px";
+
+    // Highlight potential drop target
+    document.querySelectorAll(".task.drag-over").forEach(t => t.classList.remove("drag-over"));
+    const el = document.elementFromPoint(e.touches[0].clientX, y);
+    const target = el?.closest(".task");
+    if (target && target !== taskEl) target.classList.add("drag-over");
+  }, { passive: false });
+
+  handle.addEventListener("touchend", async e => {
+    if (clone) { clone.remove(); clone = null; }
+    taskEl.style.opacity = "";
+    document.querySelectorAll(".task.drag-over").forEach(t => t.classList.remove("drag-over"));
+
+    if (!dragging) { dragging = false; return; }
+    dragging = false;
+
+    const x = e.changedTouches[0].clientX;
+    const y = e.changedTouches[0].clientY;
+    const el = document.elementFromPoint(x, y);
+    const targetTask = el?.closest(".task");
+
+    if (!targetTask || targetTask === taskEl || !draggedId) {
+      draggedId = null; return;
+    }
+
+    const targetId = targetTask.dataset.id;
+    try {
+      const r = await fetch("/projects/tasks/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dragged_id: draggedId, target_id: targetId })
+      });
+      if (r.ok) location.reload();
+      else showProjectToast("Can only reorder within the same group", "error");
+    } catch {
+      showProjectToast("Reorder failed", "error");
+    }
+    draggedId = null;
+  });
+}
+
+/* -------------------------
    Number controls
 ------------------------- */
 function attachScrollNumbers() {
@@ -656,5 +781,8 @@ document.addEventListener("DOMContentLoaded", () => {
         autoAdvance: el.dataset.autoAdvance === "true"
       });
     });
+
+    // Touch drag-to-reorder (mobile)
+    attachTouchReorder(el);
   });
 });

@@ -62,37 +62,37 @@
   </label>
 </div>
 
-<!-- Voice Dictation -->
-<div class="voice-box">
-  <button
-    type="button"
-    class="voice-btn"
-    onclick="toggleVoice('projectNotes', 'voiceStatus')">
-    🎙 Dictate tasks
+<!-- Notes + Voice collapsible panel -->
+<div class="notes-toggle-bar">
+  <button type="button" class="notes-toggle-btn" id="notesToggleBtn" onclick="toggleNotesPanel()">
+    📝 Notes &amp; Voice <span class="notes-chevron" id="notesChevron">▶</span>
   </button>
-
-  <div id="voiceStatus" class="voice-status">
-    Tap mic and start speaking
-  </div>
 </div>
 
+<div id="notesPanel" class="notes-panel collapsed">
+  <!-- Voice Dictation -->
+  <div class="voice-box">
+    <button
+      type="button"
+      class="voice-btn"
+      onclick="toggleVoice('projectNotes', 'voiceStatus')">
+      🎙 Dictate tasks
+    </button>
+    <div id="voiceStatus" class="voice-status">Tap mic and start speaking</div>
+  </div>
 
-    <!-- Project Notes -->
-    <div class="project-notes">
-      <textarea
-        id="projectNotes"
-        data-project-id="{{ project.project_id }}"
-        placeholder="• Capture thoughts here…"
-        rows="6"></textarea>
-
-      <div style="margin-top:8px; text-align:right;">
-        <button
-          id="addTasksFromNotes"
-          class="save-task-btn">
-          ➕ Add as Tasks
-        </button>
-      </div>
+  <!-- Project Notes -->
+  <div class="project-notes">
+    <textarea
+      id="projectNotes"
+      data-project-id="{{ project.project_id }}"
+      placeholder="• Capture thoughts here…"
+      rows="5"></textarea>
+    <div style="margin-top:8px; text-align:right;">
+      <button id="addTasksFromNotes" class="save-task-btn">➕ Add as Tasks</button>
     </div>
+  </div>
+</div>
 
     <!-- Project Health -->
     <div id="project-health" class="project-health">
@@ -110,14 +110,17 @@
     </div>
 
     <!-- Sort -->
-    <select
-      id="sortSelect"
-      data-project-id="{{ project.project_id }}">
-      <option value="smart"    {% if sort == 'smart'    %}selected{% endif %}>Smart</option>
-      <option value="due"      {% if sort == 'due'      %}selected{% endif %}>Due</option>
-      <option value="priority" {% if sort == 'priority' %}selected{% endif %}>Priority</option>
-      <option value="created"  {% if sort == 'created'  %}selected{% endif %}>Created</option>
-    </select>
+    <div class="sort-row">
+      <label for="sortSelect" class="sort-label">Sort by</label>
+      <select
+        id="sortSelect"
+        data-project-id="{{ project.project_id }}">
+        <option value="smart"    {% if sort == 'smart'    %}selected{% endif %}>Smart</option>
+        <option value="due"      {% if sort == 'due'      %}selected{% endif %}>Due date</option>
+        <option value="priority" {% if sort == 'priority' %}selected{% endif %}>Priority</option>
+        <option value="created"  {% if sort == 'created'  %}selected{% endif %}>Created</option>
+      </select>
+    </div>
 
     <!-- Task Groups -->
     {% for group, tasks in grouped_tasks.items() %}
@@ -159,6 +162,40 @@
 </div>
 
 <div id="project-toast-container"></div>
+
+<!-- Eisenhower Quadrant Modal -->
+<div id="eisenhower-modal" class="modal hidden" onclick="handleEisenhowerOverlay(event)">
+  <div class="modal-content eisenhower-modal-content">
+    <div class="eisenhower-header">
+      <h3>Send to Eisenhower</h3>
+      <button class="modal-close" onclick="closeEisenhowerModal()">✕</button>
+    </div>
+    <p class="eisenhower-task-name" id="eisenhower-task-name"></p>
+    <div class="quadrant-grid">
+      <button class="quadrant-btn q-do"       onclick="submitEisenhower('do')">
+        <span class="q-emoji">🔥</span>
+        <span class="q-label">Do</span>
+        <span class="q-desc">Urgent + Important</span>
+      </button>
+      <button class="quadrant-btn q-decide"   onclick="submitEisenhower('decide')">
+        <span class="q-emoji">🗓</span>
+        <span class="q-label">Decide</span>
+        <span class="q-desc">Important, not urgent</span>
+      </button>
+      <button class="quadrant-btn q-delegate" onclick="submitEisenhower('delegate')">
+        <span class="q-emoji">🤝</span>
+        <span class="q-label">Delegate</span>
+        <span class="q-desc">Urgent, not important</span>
+      </button>
+      <button class="quadrant-btn q-eliminate" onclick="submitEisenhower('eliminate')">
+        <span class="q-emoji">🗑</span>
+        <span class="q-label">Eliminate</span>
+        <span class="q-desc">Neither</span>
+      </button>
+    </div>
+    <button class="sheet-btn" onclick="closeEisenhowerModal()" style="margin-top:8px;">Cancel</button>
+  </div>
+</div>
 
   <!-- ✅ ONE JS ENTRY POINT -->
   <script

@@ -13,52 +13,6 @@ from services.task_service import complete_task_occurrence, compute_next_occurre
 from supabase_client import get, post, update
 
 projects_bp = Blueprint("projects", __name__)
-@projects_bp.route("/projects/tasks/send-to-eisenhower11", methods=["POST"])
-@login_required
-def send_project_task_to_eisenhower11():    
-    data = request.get_json() or {}
-
-    task_id = data.get("task_id")
-    plan_date = data.get("plan_date")
-    quadrant = data.get("quadrant", "do")
-
-    if not task_id or not plan_date:
-        return jsonify({"error": "Missing data"}), 400
-
-    # 1️⃣ Fetch project task
-    rows = get(
-        "project_tasks",
-        params={"task_id": f"eq.{task_id}"}
-    )
-
-    if not rows:
-        return jsonify({"error": "Task not found"}), 404
-
-    task = rows[0]
-    existing = get(
-    "todo_matrix",
-    params={
-        "source_task_id": f"eq.{task_id}",
-        "plan_date": f"eq.{plan_date}"
-    }
-)
-
-    if existing:
-        return jsonify({"status": "already-sent"})
-    # 2️⃣ CREATE todo_matrix row (via post)
-    post(
-        "todo_matrix",
-        {
-            "text": task["task_text"],
-            "plan_date": plan_date,
-            "quadrant": quadrant,
-            "project_id": task["project_id"],
-            "source_task_id": task_id,   # 🔑 back-reference
-            "is_done": False
-        }
-    )
-
-    return jsonify({"status": "ok"})
 
 @projects_bp.route("/projects")
 @login_required
@@ -72,7 +26,31 @@ def projects():
             "is_archived": "eq.false",
             "order": "created_at.asc",
         },
-    )
+    ) or []
+
+    # Batch-fetch task counts for all projects in one query
+    if projects:
+        ids_str = ",".join(str(p["project_id"]) for p in projects)
+        all_tasks = get("project_tasks", params={
+            "project_id": f"in.({ids_str})",
+            "is_eliminated": "eq.false",
+            "select": "project_id,status",
+        }) or []
+
+        task_counts, done_counts = {}, {}
+        for t in all_tasks:
+            pid = t["project_id"]
+            task_counts[pid] = task_counts.get(pid, 0) + 1
+            if t["status"] == "done":
+                done_counts[pid] = done_counts.get(pid, 0) + 1
+
+        for p in projects:
+            pid = p["project_id"]
+            total = task_counts.get(pid, 0)
+            done = done_counts.get(pid, 0)
+            p["task_count"] = total
+            p["done_count"] = done
+            p["completion_pct"] = round(done / total * 100) if total else 0
 
     return render_template(
         "projects.html",
@@ -415,7 +393,7 @@ def update_task(task_id):
         "priority",
         "elimination_reason",
         "duration_days",
-         # 🔥 ADD THESE
+        "delegated_to",
         "is_recurring",
         "recurrence_type",
         "recurrence_days",
@@ -543,9 +521,18 @@ def update_due_time():
 def update_task_planning():
     data = request.get_json()
 
-    task_id = data["task_id"]
-    start   = date.fromisoformat(data["start_date"])
-    days    = int(data.get("duration_days", 1))
+    task_id = data.get("task_id")
+    start_str = (data.get("start_date") or "").strip()
+
+    if not task_id or not start_str:
+        return jsonify({"error": "task_id and start_date are required"}), 400
+
+    try:
+        start = date.fromisoformat(start_str)
+    except ValueError:
+        return jsonify({"error": "Invalid start_date format"}), 400
+
+    days    = int(data.get("duration_days") or 1)
 
     due_date = start + timedelta(days=days)  # noqa: F821
 
