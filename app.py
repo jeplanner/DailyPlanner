@@ -73,6 +73,19 @@ def create_app():
     app.register_blueprint(notes_bp)
     app.register_blueprint(inbox_bp)
 
+    # ── Exempt JSON API blueprints from CSRF ────────────
+    # These use session auth + @login_required, not form tokens
+    csrf.exempt(events_bp)
+    csrf.exempt(habits_bp)
+    csrf.exempt(health_bp)
+    csrf.exempt(ai_bp)
+    csrf.exempt(inbox_bp)
+    csrf.exempt(timeline_bp)
+    csrf.exempt(projects_bp)
+    csrf.exempt(todo_bp)
+    csrf.exempt(planner_bp)
+    csrf.exempt(notes_bp)
+
     # ── OAuth dev override ──────────────────────────────
     if env == "development":
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"

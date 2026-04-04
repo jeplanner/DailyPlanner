@@ -215,24 +215,18 @@ body.menu-open{
   <div class="sidebar-nav">
 
     <a href="/" title="Planner">
-      <i data-feather="home"></i>
+      <i data-feather="calendar"></i>
       Planner
-    </a>
-
-    <a href="/health">
-      🧘 Health
-    </a>
-
-    <a href="/planner-v2"
-       title="Time-Based Planner"
-       class="{% if request.path == '/planner-v2' %}active{% endif %}">
-      <i data-feather="layout"></i>
-      Time
     </a>
 
     <a href="/todo" title="Matrix">
       <i data-feather="target"></i>
       Matrix
+    </a>
+
+    <a href="/health">
+      <i data-feather="heart"></i>
+      Health
     </a>
 
     <a href="/projects" title="Projects">
@@ -256,40 +250,6 @@ body.menu-open{
       <i data-feather="bar-chart-2"></i>
       Weekly
     </a>
-    <div style="padding:10px 16px;">
-
-  <div class="planner-toggle">
-
-    <!-- SLOT MODE -->
-    <a href="
-      ?view={{ view }}
-      {% if view == 'weekly' %}
-        &week={{ selected_week }}
-      {% else %}
-        &date={{ date }}
-      {% endif %}
-      &mode=slots"
-      
-      class="toggle-btn {{ 'active' if request.args.get('mode', 'slots') == 'slots' else '' }}">
-      Slot Planner
-    </a>
-
-    <!-- V2 MODE -->
-    <a href="
-      ?view={{ view }}
-      {% if view == 'weekly' %}
-        &week={{ selected_week }}
-      {% else %}
-        &date={{ date }}
-      {% endif %}
-      &mode=v2"
-      
-      class="toggle-btn {{ 'active' if request.args.get('mode') == 'v2' else '' }}">
-      Planner V2
-    </a>
-
-    </div>
-  </div>
     {% if project is defined %}
 
     <a href="/projects/{{ project.project_id }}/gantt" title="Gantt">

@@ -21,9 +21,16 @@ from utils.smartplanner import parse_smart_sentence
 
 planner_bp = Blueprint("planner", __name__)
 logger = setup_logger()
-@planner_bp.route("/", methods=["GET", "POST"])
+@planner_bp.route("/")
 @login_required
 def planner():
+    return render_template("planner_v2.html")
+
+
+@planner_bp.route("/planner-legacy", methods=["GET", "POST"])
+@login_required
+def planner_legacy():
+    """Legacy V1 slot-based planner — kept for backward compatibility."""
     user_id = session["user_id"]
     daily_slots = []
     if request.method == "HEAD":
@@ -146,8 +153,10 @@ def planner():
     
 
 @planner_bp.route("/planner-v2")
+@login_required
 def planner_v2():
-    return render_template("planner_v2.html")
+    """Alias — redirects to homepage which now serves V2."""
+    return redirect(url_for("planner.planner"))
 
 @planner_bp.route("/smart/add", methods=["POST"])
 @login_required
@@ -581,8 +590,8 @@ def summary():
     # -------------------------
     # ✅ Planner Mode (NEW)
     # -------------------------
-    planner_mode = request.args.get("mode", "slots")  
-    # options: "slots" | "v2"
+    planner_mode = request.args.get("mode", "v2")
+    # options: "slots" | "v2" — default to v2
 
     # -------------------------
     # DAILY DATE PARAM
