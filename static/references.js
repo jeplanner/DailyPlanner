@@ -136,19 +136,27 @@
       });
       if (!res.ok) throw new Error("Save failed");
 
-      tempItem.classList.remove("saving");
       showToast("Saved successfully ✓", "success");
 
+      // Reset form
       if (quillInstance) quillInstance.setContents([]);
       if (window.tagifyInstance) window.tagifyInstance.removeAllTags();
       if ($("ref-title"))    $("ref-title").value    = "";
       if ($("ref-url"))      $("ref-url").value      = "";
       if ($("ref-category")) $("ref-category").value = "";
       if ($("new-category")) $("new-category").value = "";
+      setFetchStatus(null);
       resetAIAssist();
+
+      // Close modal after short delay so user sees the toast
+      setTimeout(() => {
+        if (typeof closeAddModal === "function") closeAddModal();
+      }, 800);
+
       clearCache();
       resetAndReload();
       loadTagCloud();
+      tempItem.classList.remove("saving");
 
     } catch (err) {
       tempItem.remove();
@@ -433,17 +441,26 @@
   // METADATA
   // ==========================================================
 
+  function setFetchStatus(msg) {
+    const bar  = $("fetch-status");
+    const text = $("fetch-status-text");
+    if (!bar) return;
+    if (msg) {
+      bar.style.display   = "flex";
+      if (text) text.textContent = msg;
+    } else {
+      bar.style.display = "none";
+    }
+  }
+
   async function autoFetchMetadata() {
     const urlInput = $("ref-url");
     if (!urlInput || !urlInput.value.trim()) return;
 
     const useAI = $("enable-ai")?.checked !== false;
 
-    // Show loading state in the editor
-    if (quillInstance) {
-      quillInstance.setText(useAI ? "Fetching title, description and tags…" : "Fetching title…");
-    }
-    if ($("ref-title")) $("ref-title").placeholder = "Fetching…";
+    setFetchStatus(useAI ? "Fetching title, description and tags…" : "Fetching title…");
+    if (quillInstance) quillInstance.setText("");
 
     try {
       const res = await fetch("/references/metadata", {
@@ -491,10 +508,12 @@
         }
       }
 
-      showToast("Metadata fetched ✓", "success", 2000);
+      setFetchStatus(null);
+      showToast("Details fetched ✓", "success", 2000);
 
     } catch (err) {
       console.error("Metadata fetch failed:", err);
+      setFetchStatus(null);
       if (quillInstance) quillInstance.setText("");
     }
   }
@@ -609,7 +628,9 @@
     }
 
     $("saveRefBtn")?.addEventListener("click", saveReference);
-    $("ref-url")?.addEventListener("change", autoFetchMetadata);
+    // Trigger on blur (tab away) AND on paste
+    $("ref-url")?.addEventListener("blur",  autoFetchMetadata);
+    $("ref-url")?.addEventListener("paste", () => setTimeout(autoFetchMetadata, 100));
 
     // Search
     const searchInput = $("searchInput");

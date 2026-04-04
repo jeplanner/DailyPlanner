@@ -35,68 +35,7 @@
   </div>
 
   <!-- ═══════════════════════════════════════════════
-       2. ADD REFERENCE (collapsible) — above filter
-  ════════════════════════════════════════════════ -->
-  <div class="add-toggle-row">
-    <button id="addToggleBtn" class="btn-add-toggle" onclick="toggleAddPanel()">
-      ＋ Add Reference
-    </button>
-  </div>
-
-  <div id="add-panel" class="add-panel" style="display:none;">
-
-    <!-- AI Assist -->
-    <div class="ai-assist-card">
-      <div class="ai-header">
-        <h3>🤖 AI Generate</h3>
-        <select id="ai-mode">
-          <option value="groq">Groq (Fast)</option>
-          <option value="gemini">Gemini</option>
-          <option value="manual">Manual (ChatGPT)</option>
-        </select>
-      </div>
-      <div class="question-input-wrapper">
-        <input type="text" id="ai-query" placeholder="Type a topic to generate a reference…" />
-        <button type="button" id="voiceBtn" title="Voice input">🎙</button>
-      </div>
-      <div class="ai-buttons">
-        <button id="ai-primary-btn">Generate</button>
-      </div>
-      <div id="ai-preview"></div>
-    </div>
-
-    <!-- Add form -->
-    <div class="reference-card">
-      <div class="ai-toggle">
-        <label class="ai-toggle-label">
-          <input type="checkbox" id="enable-ai" checked>
-          <span>Auto-fetch title, tags &amp; category from URL</span>
-        </label>
-      </div>
-
-      <input type="url"   id="ref-url"   placeholder="https://example.com" required />
-      <input type="text"  id="ref-title" placeholder="Title (auto-filled from URL)" />
-      <div id="ref-editor"></div>
-
-      <input type="text" id="ref-tags" placeholder="Tags (comma separated)" />
-
-      <div class="category-row">
-        <select id="ref-category">
-          <option value="">Select Category</option>
-          {% for cat in categories %}
-            <option value="{{ cat }}">{{ cat }}</option>
-          {% endfor %}
-        </select>
-        <input type="text" id="new-category" placeholder="Or type a new category" />
-      </div>
-
-      <button type="button" id="saveRefBtn" class="btn-save">Save Reference</button>
-    </div>
-
-  </div>
-
-  <!-- ═══════════════════════════════════════════════
-       3. FILTER BAR
+       2. FILTER BAR  +  ADD BUTTON
   ════════════════════════════════════════════════ -->
   <div class="filter-bar">
     <input type="text" id="searchInput" placeholder="🔍 Search references…">
@@ -113,6 +52,7 @@
     </select>
     <button id="resetFilterBtn" class="btn-outline">Clear</button>
     <button id="tagCloudToggle" class="btn-outline">🏷 Tags</button>
+    <button class="btn-add-toggle" onclick="openAddModal()">＋ Add</button>
   </div>
 
   <!-- Tag cloud (collapsed by default) -->
@@ -122,10 +62,81 @@
   <div id="resultCount" class="result-count"></div>
 
   <!-- ═══════════════════════════════════════════════
-       4. REFERENCE LIST
+       3. REFERENCE LIST
   ════════════════════════════════════════════════ -->
   <div id="referenceList" class="reference-list"></div>
 
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     ADD REFERENCE MODAL
+════════════════════════════════════════════════ -->
+<div id="add-modal-overlay" class="modal-overlay" onclick="handleOverlayClick(event)">
+  <div class="modal-box">
+
+    <div class="modal-header">
+      <span>＋ Add Reference</span>
+      <button class="modal-close" onclick="closeAddModal()" title="Close">✕</button>
+    </div>
+
+    <!-- Status bar shown while fetching -->
+    <div id="fetch-status" class="fetch-status" style="display:none;">
+      <span class="fetch-spinner"></span>
+      <span id="fetch-status-text">Fetching details…</span>
+    </div>
+
+    <!-- AI Generate section -->
+    <div class="modal-section">
+      <div class="ai-assist-card">
+        <div class="ai-header">
+          <h3>🤖 AI Generate</h3>
+          <select id="ai-mode">
+            <option value="groq">Groq (Fast)</option>
+            <option value="gemini">Gemini</option>
+            <option value="manual">Manual (ChatGPT)</option>
+          </select>
+        </div>
+        <div class="question-input-wrapper">
+          <input type="text" id="ai-query" placeholder="Type a topic to generate a reference…" />
+          <button type="button" id="voiceBtn" title="Voice input">🎙</button>
+        </div>
+        <div class="ai-buttons">
+          <button id="ai-primary-btn">Generate</button>
+        </div>
+        <div id="ai-preview"></div>
+      </div>
+    </div>
+
+    <div class="modal-divider">or paste a URL below</div>
+
+    <!-- Form -->
+    <div class="modal-section">
+      <div class="ai-toggle">
+        <label class="ai-toggle-label">
+          <input type="checkbox" id="enable-ai" checked>
+          <span>Auto-fetch title, description &amp; tags from URL</span>
+        </label>
+      </div>
+
+      <input type="url"  id="ref-url"   placeholder="https://example.com" />
+      <input type="text" id="ref-title" placeholder="Title" />
+      <div id="ref-editor"></div>
+      <input type="text" id="ref-tags"  placeholder="Tags (comma separated)" />
+
+      <div class="category-row">
+        <select id="ref-category">
+          <option value="">Select Category</option>
+          {% for cat in categories %}
+            <option value="{{ cat }}">{{ cat }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" id="new-category" placeholder="Or type a new category" />
+      </div>
+
+      <button type="button" id="saveRefBtn" class="btn-save">Save Reference</button>
+    </div>
+
+  </div>
 </div>
 
 <div id="toast-container"></div>
@@ -134,15 +145,24 @@
 <script src="{{ url_for('static', filename='js/ai_assist.js') }}" defer></script>
 
 <script>
-  function toggleAddPanel() {
-    const panel = document.getElementById("add-panel");
-    const btn   = document.getElementById("addToggleBtn");
-    const open  = panel.style.display === "none";
-    panel.style.display = open ? "block" : "none";
-    btn.textContent     = open ? "✕ Close" : "＋ Add Reference";
-    btn.classList.toggle("btn-add-toggle-open", open);
-    if (open) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  function openAddModal() {
+    document.getElementById("add-modal-overlay").classList.add("open");
+    document.body.style.overflow = "hidden";
+    setTimeout(() => document.getElementById("ref-url")?.focus(), 100);
   }
+
+  function closeAddModal() {
+    document.getElementById("add-modal-overlay").classList.remove("open");
+    document.body.style.overflow = "";
+  }
+
+  function handleOverlayClick(e) {
+    if (e.target === document.getElementById("add-modal-overlay")) closeAddModal();
+  }
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeAddModal();
+  });
 </script>
 
 </body>
