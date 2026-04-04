@@ -42,7 +42,7 @@ def create_inbox():
                 f"URL: {url}\nTitle: {title}\nMeta: {raw_desc}"
             )
             ai_desc = call_gemini(prompt)
-            if ai_desc and len(ai_desc) > 10:
+            if ai_desc and len(ai_desc) > 10 and not ai_desc.startswith("AI service"):
                 description = ai_desc.strip()[:500]
         except Exception:
             pass  # Fall back to raw meta description
