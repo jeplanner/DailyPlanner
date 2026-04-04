@@ -89,12 +89,21 @@ def create_event():
 def update_event(event_id):
 
     user_id = session["user_id"]
-    data = request.json
+    data = request.json or {}
     force = data.get("force", False)
+
+    # Get plan_date from request or fetch from DB
+    plan_date = data.get("plan_date")
+    if not plan_date:
+        existing = get("daily_events", params={"id": f"eq.{event_id}", "select": "plan_date"})
+        plan_date = existing[0]["plan_date"] if existing else None
+
+    if not plan_date or not data.get("start_time") or not data.get("end_time"):
+        return jsonify({"error": "start_time and end_time are required"}), 400
 
     conflicts = get_conflicts(
         user_id,
-        data["plan_date"],
+        plan_date,
         data["start_time"],
         data["end_time"],
         exclude_id=event_id
@@ -106,15 +115,21 @@ def update_event(event_id):
             "conflicting_events": conflicts
         }), 409
 
+    payload = {
+        "start_time": data["start_time"],
+        "end_time": data["end_time"],
+    }
+    if data.get("title"):
+        payload["title"] = data["title"]
+    if "description" in data:
+        payload["description"] = data.get("description", "")
+    if data.get("priority"):
+        payload["priority"] = data["priority"]
+
     update(
         "daily_events",
         params={"id": f"eq.{event_id}"},
-        json={
-            "start_time": data["start_time"],
-            "end_time": data["end_time"],
-            "title": data["title"],
-            "description": data.get("description", "")
-        }
+        json=payload
     )
     # 🔥 SYNC GOOGLE UPDATE
     row = get(

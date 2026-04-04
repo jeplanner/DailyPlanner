@@ -683,11 +683,12 @@ function closePopover() {
 
 function editFromPopover() {
   if (!popoverEvent) return;
+  const ev = popoverEvent;
   closePopover();
-  if (popoverEvent.type === "project") {
-    openTaskCard(popoverEvent.task_id);
+  if (ev.type === "project") {
+    openTaskCard(ev.task_id);
   } else {
-    openModal(popoverEvent);
+    openModal(ev);
   }
 }
 
@@ -820,7 +821,7 @@ async function saveEvent() {
   }
 
   const payload = {
-    plan_date: (selected && selected._date) || currentDate,
+    plan_date: (selected && (selected.plan_date || selected._date)) || currentDate,
     start_time: start,
     end_time: calculateEndTime(start, duration),
     title: document.getElementById("event-title").value,
