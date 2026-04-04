@@ -194,6 +194,20 @@ def habit_detail(habit_id):
         )
         return jsonify({"success": True})
 
+@habits_bp.route("/api/habits/restore", methods=["POST"])
+@login_required
+def restore_habit():
+    data = request.get_json()
+    habit_id = data.get("habit_id")
+    if not habit_id:
+        return jsonify({"error": "habit_id required"}), 400
+
+    update("habit_master",
+           params={"id": f"eq.{habit_id}", "user_id": f"eq.{session['user_id']}"},
+           json={"is_deleted": False})
+    return jsonify({"success": True})
+
+
 def get_goal_for_date(habit_id, plan_date):
 
     rows = get(

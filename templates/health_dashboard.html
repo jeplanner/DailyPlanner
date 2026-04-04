@@ -1,217 +1,164 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="{{ url_for('static', filename='health.css') }}">
-  <title>Health Dashboard</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='health.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 </head>
-
 <body>
 
-  <div class="health-container">
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-    <!-- Top Navigation -->
-    <div class="nav-icons">
-      {% include "_top_nav.html" %}
+<!-- ═══════════ MAIN CONTAINER ═══════════ -->
+<div class="habit-app">
+
+  <!-- ── Date Strip ── -->
+  <div class="date-strip" id="date-strip"></div>
+
+  <!-- ── Overview Cards ── -->
+  <div class="overview-row">
+    <div class="overview-card ring-card">
+      <div class="ring-container">
+        <svg class="ring-svg" viewBox="0 0 120 120">
+          <circle class="ring-bg" cx="60" cy="60" r="52" />
+          <circle class="ring-fill" cx="60" cy="60" r="52" id="ring-fill" />
+        </svg>
+        <div class="ring-label">
+          <span class="ring-percent" id="ring-percent">0%</span>
+          <span class="ring-sub">Complete</span>
+        </div>
+      </div>
     </div>
 
-    <!-- Header -->
-    <div class="health-header">
-      <h2>💚 Health Dashboard</h2>
-      <input type="date" id="health-date">
+    <div class="overview-card stat-card">
+      <div class="stat-icon streak-icon"><i data-feather="zap"></i></div>
+      <div class="stat-value" id="streak-value">0</div>
+      <div class="stat-label">Day Streak</div>
     </div>
 
-    <!-- ===== MAIN GRID ===== -->
-    <div class="health-grid">
-
-      <!-- ================= LEFT COLUMN ================= -->
-
-      <!-- Health Metrics Card -->
-      <div class="health-card">
-
-        <!-- Header (ONLY title + save) -->
-        <div class="metrics-header">
-          <h4>Health Metrics</h4>
-          <button id="saveBtn" class="icon-save" onclick="saveHealth()">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-              <path d="M17 3H5a2 2 0 0 0-2 2v14l4-4h10a2 2 0 0 0 2-2V7l-2-4zM7 5h8v4H7V5z" />
-            </svg>
-          </button>
-        </div>
-
-        <!-- Summary moved OUTSIDE header -->
-        <div class="habit-summary">
-          <div class="kpi-strip">
-
-            <div class="kpi">
-              <div class="kpi-label">Health Score</div>
-              <div class="kpi-value" id="healthScoreNumber">0</div>
-              <div class="kpi-bar">
-                <div class="kpi-fill" id="healthScoreBar"></div>
-              </div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Habit Completion</div>
-              <div class="kpi-value" id="habitPercentText">0%</div>
-              <div class="kpi-bar">
-                <div class="kpi-fill blue" id="habitPercentBar"></div>
-              </div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">7-Day Avg</div>
-              <div class="kpi-value" id="weeklyAvg">0%</div>
-            </div>
-
-            <div class="kpi">
-              <div class="kpi-label">Streak</div>
-              <div class="kpi-value" id="streak-badge">0 days</div>
-            </div>
-
-          </div>
-        </div>
-
-        <!-- Weight Inputs -->
-        <div class="health-metrics-row">
-          <div>
-            <label>Weight (kg)</label>
-            <input type="number" step="0.5" id="weight" placeholder="Enter weight">
-          </div>
-
-          <div>
-            <label>Height (cm)</label>
-            <input type="number" step="0.1" id="height" placeholder="Enter height">
-          </div>
-
-          <div class="bmi-display">
-            <span id="bmiValue">BMI: --</span>
-          </div>
-
-          <div class="weight-delta" id="weightDelta"></div>
-        </div>
-
-        <h4>Weight Trend</h4>
-        <canvas id="weightChart" height="80"></canvas>
-
-      </div>
-
-      <!-- ================= HABITS CARD ================= -->
-      <div class="health-card">
-
-        <div class="habits-header">
-          <h4>Habits</h4>
-          <button id="addHabitBtn" class="btn-add-habit">
-            + Add Habit
-          </button>
-        </div>
-
-        <div id="habitContainer" class="sortable-habits">
-
-          <!-- Habits rendered by health.js via /api/v2/daily-health -->
-
-        </div>
-
-      </div>
-
-      <!-- ================= REFLECTION CARD ================= -->
-      <div class="health-card">
-
-        <h4>Daily Reflection</h4>
-
-        <label>Mood</label>
-        <select id="mood">
-          <option>😊 Happy</option>
-          <option>😐 Neutral</option>
-          <option>😞 Low</option>
-        </select>
-
-        <label>Energy (1–10)</label>
-        <input type="range" id="energy" min="1" max="10">
-
-        <label>Notes</label>
-        <textarea id="health-notes"></textarea>
-
-      </div>
-
-      <!-- ================= RIGHT COLUMN ================= -->
-
-      <!-- Analytics Card -->
-      <div class="health-card">
-        <canvas id="healthChart"></canvas>
-
-        <h4>📅 Monthly Summary</h4>
-        <div id="monthlySummary"></div>
-      </div>
-
-      <!-- Heatmap Card -->
-      <div class="health-card">
-        <h4>📊 Activity Heatmap</h4>
-        <div id="heatmap"></div>
-      </div>
-
+    <div class="overview-card stat-card">
+      <div class="stat-icon score-icon"><i data-feather="heart"></i></div>
+      <div class="stat-value" id="health-score">0</div>
+      <div class="stat-label">Health Score</div>
     </div>
 
-  </div>
-
-  <!-- Scripts -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
-  <script src="{{ url_for('static', filename='health.js') }}" defer></script>
-
-  <div id="toast-container"></div>
-  <div id="saveToast">Saved ✓</div>
-
-  <!-- Habit Bottom Sheet (UNCHANGED) -->
-  <div id="habitSheet" class="sheet-overlay">
-    <div class="sheet">
-      <div class="sheet-handle"></div>
-
-      <div class="sheet-header">
-        <h3>New Habit</h3>
-        <button onclick="closeHabitSheet()">✕</button>
-      </div>
-
-      <div class="sheet-body">
-
-        <div class="emoji-picker" id="emojiPicker">
-          <span class="emoji">😀</span>
-          <span class="emoji">💪</span>
-          <span class="emoji">🚶</span>
-          <span class="emoji">📚</span>
-          <span class="emoji">🧘</span>
-          <span class="emoji">🏃</span>
-          <span class="emoji">🥗</span>
-          <span class="emoji">💧</span>
-          <span class="emoji">💤</span>
-          <span class="emoji">🎯</span>
-        </div>
-
-        <input type="text" id="sheetHabitName" placeholder="Habit name">
-        <input type="text" id="sheetHabitUnit" placeholder="Unit (mins, steps, ml)">
-        <input type="number" id="sheetHabitGoal" placeholder="Daily goal">
-        <label>Start Date</label>
-        <input type="date" id="sheetHabitStartDate">
-        <div class="goal-suggestions" id="goalSuggestions"></div>
-
-        <div class="color-picker">
-          <div class="color-dot" data-color="#2563eb"></div>
-          <div class="color-dot" data-color="#16a34a"></div>
-          <div class="color-dot" data-color="#f59e0b"></div>
-          <div class="color-dot" data-color="#ef4444"></div>
-          <div class="color-dot" data-color="#8b5cf6"></div>
-        </div>
-
-        <button class="sheet-submit" onclick="submitHabitSheet()">
-          Add Habit
-        </button>
-
-      </div>
+    <div class="overview-card stat-card">
+      <div class="stat-icon avg-icon"><i data-feather="trending-up"></i></div>
+      <div class="stat-value" id="weekly-avg">0%</div>
+      <div class="stat-label">7-Day Avg</div>
     </div>
   </div>
 
+  <!-- ── Habit Grid ── -->
+  <div class="section-header">
+    <h2>Today's Habits</h2>
+    <button class="add-habit-btn" onclick="openHabitSheet()">
+      <i data-feather="plus" style="width:16px;height:16px"></i>
+      Add Habit
+    </button>
+  </div>
+
+  <div class="habit-grid" id="habit-grid"></div>
+
+  <!-- ── Health Metrics ── -->
+  <div class="section-header" style="margin-top:28px;">
+    <h2>Health Metrics</h2>
+  </div>
+
+  <div class="metrics-row">
+    <div class="metric-card">
+      <label>Weight (kg)</label>
+      <input type="number" id="health-weight" class="metric-input" step="0.1" placeholder="—" oninput="autoSaveHealth()">
+      <div class="bmi-display" id="bmi-display"></div>
+    </div>
+    <div class="metric-card">
+      <label>Height (cm)</label>
+      <input type="number" id="health-height" class="metric-input" step="1" placeholder="—" oninput="autoSaveHealth()">
+    </div>
+    <div class="metric-card">
+      <label>Mood</label>
+      <select id="health-mood" class="metric-input" onchange="autoSaveHealth()">
+        <option value="">—</option>
+        <option value="great">😄 Great</option>
+        <option value="good">🙂 Good</option>
+        <option value="neutral">😐 Neutral</option>
+        <option value="low">😔 Low</option>
+        <option value="bad">😞 Bad</option>
+      </select>
+    </div>
+    <div class="metric-card">
+      <label>Energy</label>
+      <div class="energy-row">
+        <input type="range" id="health-energy" min="1" max="10" value="5" class="energy-slider" oninput="updateEnergyLabel(); autoSaveHealth()">
+        <span class="energy-val" id="energy-label">5</span>
+      </div>
+    </div>
+    <div class="metric-card metric-wide">
+      <label>Notes</label>
+      <textarea id="health-notes" class="metric-input" rows="2" placeholder="How's your day going?" oninput="autoSaveHealth()"></textarea>
+    </div>
+  </div>
+
+  <!-- ── Heatmap ── -->
+  <div class="section-header" style="margin-top:28px;">
+    <h2>30-Day Activity</h2>
+  </div>
+  <div class="heatmap-container" id="heatmap"></div>
+
+</div>
+
+<!-- ═══════════ HABIT SHEET (Add/Edit Modal) ═══════════ -->
+<div id="habit-sheet" class="sheet-overlay hidden">
+  <div class="sheet-card">
+    <div class="sheet-header">
+      <h3 id="sheet-title">New Habit</h3>
+      <button class="modal-close" onclick="closeHabitSheet()"><i data-feather="x"></i></button>
+    </div>
+
+    <div class="form-group">
+      <label>Habit Name</label>
+      <input type="text" id="sheet-name" class="form-input" placeholder="e.g., Walking, Meditation">
+    </div>
+
+    <div class="sheet-row">
+      <div class="form-group">
+        <label>Unit</label>
+        <input type="text" id="sheet-unit" class="form-input" placeholder="e.g., steps, mins, ml">
+      </div>
+      <div class="form-group">
+        <label>Daily Goal</label>
+        <input type="number" id="sheet-goal" class="form-input" placeholder="e.g., 8000" min="1">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Start Date</label>
+      <input type="date" id="sheet-start" class="form-input">
+    </div>
+
+    <div class="form-group">
+      <label>Type</label>
+      <div class="type-toggle">
+        <button class="type-btn active" data-type="number" onclick="setHabitType('number')">Numeric</button>
+        <button class="type-btn" data-type="boolean" onclick="setHabitType('boolean')">Yes / No</button>
+      </div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn btn-primary" onclick="submitHabitSheet()">Save Habit</button>
+      <button class="btn btn-ghost" onclick="closeHabitSheet()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='health.js') }}"></script>
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
 </body>
-
 </html>

@@ -1,1228 +1,797 @@
-let lastHealthPayload = "";
-async function loadHealth(date) {
+/* ============================================================
+   Health Dashboard — Modern SaaS Habit Tracker
+   ============================================================ */
 
-  const res = await fetch(`/api/v2/daily-health?date=${date}`);
-  const data = await res.json();
+// --------------- State ---------------
+let currentDate = "";
+let saveHealthTimer = null;
+let habitSaveTimers = {};
 
-  // ------------------------
-  // Basic health fields
-  // ------------------------
-  const weightEl = document.getElementById("weight");
-  const heightEl = document.getElementById("height");
-  const energyEl = document.getElementById("energy");
-  const moodEl = document.getElementById("mood");
-  const notesEl = document.getElementById("health-notes");
-
-  if (weightEl) weightEl.value = data.weight || "";
-  if (heightEl) heightEl.value = data.height || "";
-  if (energyEl) energyEl.value = data.energy_level || 5;
-  if (moodEl) moodEl.value = data.mood || "😊 Happy";
-  if (notesEl) notesEl.value = data.notes || "";
-
-  // ------------------------
-  // Habits
-  // ------------------------
-  if (data.habits) {
-    renderHabits(data.habits);
-  }
-
-  updateHabitCircle(data.habit_percent || 0);
-  updateHealthScore(data);
-  calculateBMI();
-
-  // ------------------------
-  // Streak
-  // ------------------------
-  const badge = document.getElementById("streak-badge");
-  if (badge) {
-    badge.innerText = `🔥 ${data.streak || 0} day streak`;
-  }
-  // ------------------------
-  // Weight Trend Graph
-  // ------------------------
-  if (data.weight_trend) {
-    renderWeightTrend(data.weight_trend);
-  }
-  if (data.weight_delta !== undefined) {
-    const deltaEl = document.getElementById("weightDelta");
-
-    if (!deltaEl) {
-      console.warn("weightDelta element missing");
-    } else {
-
-      if (data.weight_delta > 0) {
-        deltaEl.className = "weight-delta up";
-        deltaEl.innerText = `↑ ${data.weight_delta.toFixed(1)} kg`;
-      } else if (data.weight_delta < 0) {
-        deltaEl.className = "weight-delta down";
-        deltaEl.innerText = `↓ ${Math.abs(data.weight_delta)} kg from yesterday`;
-      } else {
-        deltaEl.className = "weight-delta";
-        deltaEl.innerText = `No change from yesterday`;
-      }
-    }
-  }
-  // ------------------------
-  // Chart update
-  // ------------------------
-  if (
-    window.healthChart &&
-    window.healthChart.data &&
-    window.healthChart.data.datasets &&
-    window.healthChart.data.datasets.length > 2
-  ) {
-    window.healthChart.data.datasets[2].data = [data.habit_percent || 0];
-    window.healthChart.update();
-  }
-
-  // ------------------------
-  // Weekly + Monthly analytics (parallel)
-  // ------------------------
-
-
+// --------------- IST Timezone ---------------
+function getISTDate() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
-function renderHabits(habits) {
 
-  const container = document.getElementById("habitContainer");
-  if (!container) return;
+function getISTDateObj() {
+  const str = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  return new Date(str);
+}
 
-  let html = "";
+// --------------- Initialization ---------------
+document.addEventListener("DOMContentLoaded", () => {
+  currentDate = getISTDate();
+  renderDateStrip();
+  loadHealth(currentDate);
+  loadWeeklyStats();
+  loadHeatmap();
+  if (typeof feather !== "undefined") feather.replace();
+});
 
-  habits.forEach(h => {
+// ============================================================
+//  DATE STRIP
+// ============================================================
+function renderDateStrip() {
+  const strip = document.getElementById("date-strip");
+  if (!strip) return;
+  strip.innerHTML = "";
 
-    const value = parseFloat(h.value || 0);
-    const goal = parseFloat(h.goal || 0);
+  const today = getISTDateObj();
+  const todayStr = getISTDate();
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-    const percent = goal > 0
-      ? Math.min(100, Math.round((value / goal) * 100))
-      : 0;
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toLocaleDateString("en-CA");
+    const dayName = dayNames[d.getDay()];
+    const dayNum = d.getDate();
 
-    // -------------------------
-    // Status Logic
-    // -------------------------
-    let statusSVG = "";
-    let statusClass = "";
+    const pill = document.createElement("button");
+    pill.className = "date-pill";
+    if (dateStr === todayStr) pill.classList.add("today");
+    if (dateStr === currentDate) pill.classList.add("active");
+    pill.dataset.date = dateStr;
 
-    if (goal > 0 && value >= goal) {
-      statusClass = "status-complete";
-      statusSVG = `
-        <svg viewBox="0 0 24 24" class="status-icon">
-          <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
-          <path d="M8 12l3 3 5-6"
-                stroke="currentColor"
-                stroke-width="2.5"
-                fill="none"
-                stroke-linecap="round"
-                stroke-linejoin="round"/>
-        </svg>
-      `;
-    }
-    else if (value > 0) {
-      statusClass = "status-progress";
-      statusSVG = `
-        <svg viewBox="0 0 24 24" class="status-icon">
-          <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
-          <path d="M12 7v6l4 2"
-                stroke="currentColor"
-                stroke-width="2.5"
-                fill="none"
-                stroke-linecap="round"/>
-        </svg>
-      `;
-    }
-    else {
-      statusClass = "status-empty";
-      statusSVG = `
-        <svg viewBox="0 0 24 24" class="status-icon">
-          <circle cx="12" cy="12" r="10"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  fill="none"/>
-        </svg>
-      `;
-    }
-
-    const inputHTML = h.habit_type === "boolean"
-      ? `
-        <label class="switch">
-          <input type="checkbox"
-                 data-id="${h.id}"
-                 class="habit-boolean"
-                 ${value == 1 ? "checked" : ""}>
-          <span class="slider"></span>
-        </label>
-      `
-      : `
-        <input type="number"
-               step="1"
-               value="${value}"
-               data-id="${h.id}"
-               class="habit-input"
-               placeholder="Enter value">
-      `;
-
-    html += `
-      <div class="habit-item ${statusClass}"
-           data-id="${h.id}"
-           data-goal="${goal}"
-           data-unit="${h.unit}">
-
-        <div class="habit-header habit-tap" data-id="${h.id}">
-          <div>
-            <div class="habit-title">
-              ${h.name}
-              ${statusSVG}
-            </div>
-
-            <div class="goal-under-title">
-              Goal: ${goal} ${h.unit}
-            </div>
-          </div>
-
-          <div class="habit-actions">
-            <button onclick="event.stopPropagation(); editHabit('${h.id}')">✏️</button>
-            <button onclick="event.stopPropagation(); showHabitChart('${h.id}')">📈</button>
-            <button onclick="event.stopPropagation(); deleteHabit('${h.id}')">🗑</button>
-          </div>
-        </div>
-
-        <div class="habit-entry-block">
-          <div class="entry-label">Today</div>
-          ${inputHTML}
-        </div>
-
-        <div class="habit-progress">
-          <div class="habit-progress-fill ${percent >= 100 ? "completed" : ""}"
-               style="width: ${percent}%"></div>
-        </div>
-
-        <div class="goal-percent-row">
-          ${percent}%
-        </div>
-      </div>
+    pill.innerHTML = `
+      <span class="date-pill-day">${dayName}</span>
+      <span class="date-pill-num">${dayNum}</span>
+      <span class="date-pill-dot"></span>
     `;
-  });
 
-  container.innerHTML = html;
-
-  wireHabitInputs();
-  wireBooleanHabits();
-}
-function updateHabitCircle(percent) {
-
-  const bar = document.getElementById("habitPercentBar");
-  const text = document.getElementById("habitPercentText");
-
-  if (bar) bar.style.width = percent + "%";
-  if (text) text.innerText = percent + "%";
-}
-function openHabitModal() {
-  const modal = document.getElementById("habitModal");
-  modal.classList.add("active");
-
-  setTimeout(() => {
-    document.getElementById("modalHabitName").focus();
-  }, 100);
-}
-
-function closeHabitModal() {
-  document.getElementById("habitModal").classList.remove("active");
-}
-
-async function submitHabitModal() {
-
-  const name = document.getElementById("modalHabitName").value.trim();
-  const unit = document.getElementById("modalHabitUnit").value.trim();
-  const goal = parseFloat(document.getElementById("modalHabitGoal").value);
-
-  if (!name || !unit || !goal) {
-    showToast("All fields are required", "error");
-    return;
-  }
-
-  const res = await fetch("/api/habits/add", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, unit, goal })
-  });
-  if (res.status === 409) {
-    showToast("Habit already exists", "error");
-    return;
-  }
-  if (!res.ok) {
-    showToast("Failed to add habit", "error");
-    return;
-  }
-
-  const newHabit = await res.json();
-
-  appendHabitToDOM(newHabit);
-
-  showToast("Habit added", "success");
-
-  // Clear inputs
-  document.getElementById("modalHabitName").value = "";
-  document.getElementById("modalHabitUnit").value = "";
-  document.getElementById("modalHabitGoal").value = "";
-
-  closeHabitModal();
-}
-function appendHabitToDOM(h) {
-
-  const container = document.getElementById("habitContainer");
-  if (!container) return;
-
-  const goal = parseFloat(h.goal || 0);
-  const value = parseFloat(h.value || 0);
-
-  const percent = goal > 0
-    ? Math.min(100, Math.round((value / goal) * 100))
-    : 0;
-
-  const div = document.createElement("div");
-
-  div.className = "habit-item";
-  div.dataset.id = h.id;
-  div.dataset.goal = goal;
-  div.dataset.unit = h.unit;
-
-  div.innerHTML = `
-    <div class="habit-header habit-tap" data-id="${h.id}">
-      <div>
-        <div class="habit-title">
-          ${h.name}
-        </div>
-
-        <div class="goal-under-title">
-          Goal: ${goal} ${h.unit}
-        </div>
-      </div>
-
-      <div class="habit-actions">
-        <button onclick="event.stopPropagation(); editHabit('${h.id}')">✏️</button>
-        <button onclick="event.stopPropagation(); showHabitChart('${h.id}')">📈</button>
-        <button onclick="event.stopPropagation(); deleteHabit('${h.id}')">🗑</button>
-      </div>
-    </div>
-
-    <div class="habit-entry-block">
-      <div class="entry-label">Today</div>
-      <input type="number"
-             step="1"
-             value="${value}"
-             data-id="${h.id}"
-             class="habit-input"
-             placeholder="Enter value">
-    </div>
-
-    <div class="habit-progress">
-      <div class="habit-progress-fill ${percent >= 100 ? "completed" : ""}"
-           style="width: ${percent}%"></div>
-    </div>
-
-    <div class="goal-percent-row">
-      ${percent}%
-    </div>
-  `;
-
-  container.appendChild(div);
-
-  wireHabitInputs();
-}
-async function saveHealth() {
-
-  const payload = {
-    plan_date: document.getElementById("health-date").value,
-    weight: document.getElementById("weight").value,
-    height: document.getElementById("height").value,
-    mood: document.getElementById("mood").value,
-    energy_level: document.getElementById("energy").value,
-    notes: document.getElementById("health-notes").value
-  };
-
-  const payloadString = JSON.stringify(payload);
-
-  // 🚀 Prevent duplicate saves
-  if (payloadString === lastHealthPayload) return;
-
-  lastHealthPayload = payloadString;
-
-  const res = await fetch("/api/v2/daily-health", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: payloadString
-  });
-
-  if (!res.ok) {
-    showToast("Save failed", "error");
-    return;
-  }
-
-  updateHealthScore({
-    habit_percent: parseInt(document.querySelector(".circle-text")?.innerText) || 0,
-    energy_level: document.getElementById("energy").value,
-    mood: document.getElementById("mood").value,
-    streak: 0 // keep current, or store globally if you want
-  });
-
-  calculateBMI();
-  showSaveToast();
-}
-function wireHabitInputs() {
-
-  document.querySelectorAll(".habit-input").forEach(input => {
-
-    if (input.dataset.bound) return;
-    input.dataset.bound = "1";
-
-    let timeout;
-
-    input.addEventListener("input", () => {
-
-      clearTimeout(timeout);
-
-      timeout = setTimeout(async () => {
-
-        const date = document.getElementById("health-date").value;
-        const value = parseFloat(input.value) || 0;
-
-        await fetch("/api/save-habit-value", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            habit_id: input.dataset.id,
-            plan_date: date,
-            value: value
-          })
-        });
-
-        showSaveToast();
-        recalcHabitPercent();
-
-        // 🔥 Update progress visually
-        const item = input.closest(".habit-item");
-        if (!item) return;
-
-        const goal = parseFloat(item.dataset.goal) || 0;
-        const percentEl = item.querySelector(".goal-percent");
-        const bar = item.querySelector(".habit-progress-fill");
-
-        const percent = goal > 0
-          ? Math.min(100, Math.round((value / goal) * 100))
-          : 0;
-
-        if (percentEl) {
-          percentEl.innerText = percent + "%";
-        }
-
-        if (bar) {
-          bar.style.width = percent + "%";
-          bar.classList.toggle("completed", percent >= 100);
-        }
-
-        // 🔥 Subtle card glow
-        item.classList.toggle("completed", percent >= 100);
-        updateHabitStatus(item, value, goal);
-
-      }, 500);
-
+    pill.addEventListener("click", () => {
+      currentDate = dateStr;
+      document.querySelectorAll(".date-pill").forEach(p => p.classList.remove("active"));
+      pill.classList.add("active");
+      loadHealth(currentDate);
+      loadHeatmap();
     });
 
+    strip.appendChild(pill);
+  }
+}
+
+// Mark dots for dates that have data (called after heatmap loads)
+function markDateStripDots(heatmapData) {
+  document.querySelectorAll(".date-pill").forEach(pill => {
+    const d = pill.dataset.date;
+    const dot = pill.querySelector(".date-pill-dot");
+    if (dot && heatmapData[d] && heatmapData[d] > 0) {
+      dot.classList.add("has-data");
+    }
+  });
+}
+
+// ============================================================
+//  MAIN DATA LOADER
+// ============================================================
+async function loadHealth(date) {
+  try {
+    const res = await fetch(`/api/v2/daily-health?date=${date}`);
+    if (!res.ok) throw new Error("Failed to load health data");
+    const data = await res.json();
+
+    // --- Health metric fields ---
+    const weightEl = document.getElementById("health-weight");
+    const heightEl = document.getElementById("health-height");
+    const moodEl = document.getElementById("health-mood");
+    const energyEl = document.getElementById("health-energy");
+    const notesEl = document.getElementById("health-notes");
+
+    if (weightEl) weightEl.value = data.weight || "";
+    if (heightEl) heightEl.value = data.height || "";
+    if (moodEl) moodEl.value = data.mood || "neutral";
+    if (energyEl) energyEl.value = data.energy_level || 5;
+    if (notesEl) notesEl.value = data.notes || "";
+
+    updateEnergyLabel();
+    calculateBMI();
+
+    // --- Habits ---
+    if (data.habits) {
+      renderHabits(data.habits);
+    }
+
+    // --- Overview cards ---
+    updateRing(data.habit_percent || 0);
+    updateHealthScore(data);
+
+    const streakEl = document.getElementById("streak-value");
+    if (streakEl) streakEl.textContent = data.streak || 0;
+
+    if (typeof feather !== "undefined") feather.replace();
+  } catch (err) {
+    console.error("loadHealth error:", err);
+    if (typeof showToast === "function") showToast("Failed to load health data", "error");
+  }
+}
+
+// ============================================================
+//  COMPLETION RING
+// ============================================================
+const RING_CIRCUMFERENCE = 2 * Math.PI * 52; // ~326.73
+
+function updateRing(percent) {
+  const fill = document.getElementById("ring-fill");
+  const pctEl = document.getElementById("ring-percent");
+  if (!fill) return;
+
+  const offset = RING_CIRCUMFERENCE * (1 - percent / 100);
+  fill.style.transition = "stroke-dashoffset 0.8s ease";
+  fill.setAttribute("stroke-dasharray", RING_CIRCUMFERENCE);
+  fill.setAttribute("stroke-dashoffset", offset);
+
+  if (pctEl) pctEl.textContent = `${Math.round(percent)}%`;
+}
+
+// ============================================================
+//  HEALTH SCORE
+// ============================================================
+function updateHealthScore(data) {
+  const el = document.getElementById("health-score");
+  if (!el) return;
+
+  const habitPercent = data.habit_percent || 0;
+  const energy = data.energy_level || 0;
+  const mood = data.mood || "neutral";
+  const streak = data.streak || 0;
+
+  // habitScore: 0-50
+  const habitScore = habitPercent * 0.5;
+
+  // energyScore: 0-15
+  const energyScore = (energy / 10) * 15;
+
+  // moodScore: 0-10
+  const moodMap = { great: 10, good: 8, neutral: 6, low: 3, bad: 1 };
+  const moodScore = moodMap[mood] || 6;
+
+  // streakScore: 0-15
+  const streakScore = Math.min(streak * 1.5, 15);
+
+  // weightScore: constant 10
+  const weightScore = 10;
+
+  const total = Math.round(habitScore + energyScore + moodScore + streakScore + weightScore);
+  el.textContent = total;
+}
+
+// ============================================================
+//  WEEKLY STATS
+// ============================================================
+async function loadWeeklyStats() {
+  try {
+    const res = await fetch("/api/v2/weekly-health");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const avgEl = document.getElementById("weekly-avg");
+    if (avgEl) avgEl.textContent = `${Math.round(data.weekly_avg || 0)}%`;
+  } catch (err) {
+    console.error("loadWeeklyStats error:", err);
+  }
+}
+
+// ============================================================
+//  HEATMAP
+// ============================================================
+async function loadHeatmap() {
+  try {
+    const res = await fetch("/api/v2/heatmap");
+    if (!res.ok) return;
+    const data = await res.json();
+    renderHeatmap(data);
+    markDateStripDots(data);
+  } catch (err) {
+    console.error("loadHeatmap error:", err);
+  }
+}
+
+function renderHeatmap(data) {
+  const container = document.getElementById("heatmap");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const today = getISTDateObj();
+
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toLocaleDateString("en-CA");
+    const pct = data[dateStr] || 0;
+
+    const cell = document.createElement("div");
+    cell.className = "heatmap-cell";
+    cell.title = `${dateStr}: ${Math.round(pct)}%`;
+
+    if (pct === 0) {
+      cell.classList.add("level-0");
+    } else if (pct <= 25) {
+      cell.classList.add("level-1");
+    } else if (pct <= 50) {
+      cell.classList.add("level-2");
+    } else if (pct <= 75) {
+      cell.classList.add("level-3");
+    } else {
+      cell.classList.add("level-4");
+    }
+
+    container.appendChild(cell);
+  }
+}
+
+// ============================================================
+//  HABIT GRID
+// ============================================================
+function renderHabits(habits) {
+  const grid = document.getElementById("habit-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  habits.forEach(habit => {
+    const card = createHabitCard(habit);
+    grid.appendChild(card);
   });
 
+  if (typeof feather !== "undefined") feather.replace();
 }
-function wireBooleanHabits() {
 
-  document.querySelectorAll(".habit-boolean").forEach(input => {
+function createHabitCard(habit) {
+  const card = document.createElement("div");
+  card.className = "habit-card";
+  card.dataset.habitId = habit.id;
 
-    if (input.dataset.bound) return;
-    input.dataset.bound = "1";
+  const value = habit.value || 0;
+  const goal = habit.goal || 1;
+  const pct = Math.min(Math.round((value / goal) * 100), 100);
+  const isBoolean = habit.habit_type === "boolean";
+  const isComplete = value >= goal;
 
-    input.addEventListener("change", async () => {
+  if (isComplete) card.classList.add("completed");
 
-      const date = document.getElementById("health-date").value;
-      const value = input.checked ? 1 : 0;
+  // Determine step based on unit
+  const step = getStepForUnit(habit.unit);
 
-      await fetch("/api/save-habit-value", {
+  // Goal text
+  const goalText = isBoolean ? "Yes / No" : `${goal} ${habit.unit || ""}`;
+
+  card.innerHTML = `
+    <div class="habit-card-header">
+      <div class="habit-card-info">
+        <span class="habit-card-name">${escapeHtml(habit.name)}</span>
+        <span class="habit-card-goal">${escapeHtml(goalText)}</span>
+      </div>
+      <div class="habit-card-actions">
+        <button class="habit-action-btn" onclick="editHabit(${habit.id})" title="Edit">
+          <i data-feather="edit-2" style="width:14px;height:14px"></i>
+        </button>
+        <button class="habit-action-btn habit-delete-btn" onclick="deleteHabit(${habit.id})" title="Delete">
+          <i data-feather="trash-2" style="width:14px;height:14px"></i>
+        </button>
+      </div>
+    </div>
+
+    ${isBoolean ? buildBooleanInput(habit) : buildNumericInput(habit, step)}
+
+    <div class="habit-progress-row">
+      <div class="habit-progress-bar">
+        <div class="habit-progress-fill" style="width:${pct}%"></div>
+      </div>
+      <span class="habit-progress-pct">${pct}%</span>
+    </div>
+
+    <div class="habit-weekly-dots" data-habit-id="${habit.id}"></div>
+  `;
+
+  // Load weekly dots
+  loadWeeklyDots(habit.id);
+
+  return card;
+}
+
+function buildNumericInput(habit, step) {
+  const value = habit.value || 0;
+  return `
+    <div class="habit-input-row">
+      <button class="habit-step-btn habit-minus" onclick="stepHabit(${habit.id}, -${step})">
+        <i data-feather="minus" style="width:16px;height:16px"></i>
+      </button>
+      <input type="number" class="habit-value-input" id="habit-val-${habit.id}"
+             value="${value}" min="0" step="${step}"
+             data-habit-id="${habit.id}"
+             onchange="onHabitValueChange(${habit.id})">
+      <button class="habit-step-btn habit-plus" onclick="stepHabit(${habit.id}, ${step})">
+        <i data-feather="plus" style="width:16px;height:16px"></i>
+      </button>
+    </div>
+  `;
+}
+
+function buildBooleanInput(habit) {
+  const value = habit.value || 0;
+  const isOn = value >= 1;
+  return `
+    <div class="habit-input-row habit-input-row-bool">
+      <button class="habit-toggle ${isOn ? "active" : ""}"
+              id="habit-val-${habit.id}"
+              data-habit-id="${habit.id}"
+              onclick="toggleBooleanHabit(${habit.id})">
+        ${isOn ? "Done" : "Not done"}
+      </button>
+    </div>
+  `;
+}
+
+function getStepForUnit(unit) {
+  if (!unit) return 1;
+  const u = unit.toLowerCase();
+  if (u === "steps") return 100;
+  if (u === "ml") return 100;
+  if (u === "mins" || u === "minutes") return 5;
+  return 1;
+}
+
+// ============================================================
+//  HABIT VALUE CHANGES
+// ============================================================
+function onHabitValueChange(habitId) {
+  const input = document.getElementById(`habit-val-${habitId}`);
+  if (!input) return;
+
+  let val = parseFloat(input.value) || 0;
+  if (val < 0) val = 0;
+  input.value = val;
+
+  updateHabitCardProgress(habitId, val);
+  debouncedSaveHabit(habitId, val);
+}
+
+function stepHabit(habitId, delta) {
+  const input = document.getElementById(`habit-val-${habitId}`);
+  if (!input) return;
+
+  let val = parseFloat(input.value) || 0;
+  val = Math.max(0, val + delta);
+  input.value = val;
+
+  updateHabitCardProgress(habitId, val);
+  debouncedSaveHabit(habitId, val);
+}
+
+function toggleBooleanHabit(habitId) {
+  const btn = document.getElementById(`habit-val-${habitId}`);
+  if (!btn) return;
+
+  const isActive = btn.classList.toggle("active");
+  const val = isActive ? 1 : 0;
+  btn.textContent = isActive ? "Done" : "Not done";
+
+  updateHabitCardProgress(habitId, val);
+  debouncedSaveHabit(habitId, val);
+}
+
+function updateHabitCardProgress(habitId, value) {
+  const card = document.querySelector(`.habit-card[data-habit-id="${habitId}"]`);
+  if (!card) return;
+
+  const fill = card.querySelector(".habit-progress-fill");
+  const pctEl = card.querySelector(".habit-progress-pct");
+
+  // Get goal from the card's goal text or fallback
+  const goalText = card.querySelector(".habit-card-goal");
+  let goal = 1;
+  if (goalText) {
+    const match = goalText.textContent.match(/^(\d+)/);
+    if (match) goal = parseFloat(match[1]);
+  }
+
+  const pct = Math.min(Math.round((value / goal) * 100), 100);
+  if (fill) fill.style.width = `${pct}%`;
+  if (pctEl) pctEl.textContent = `${pct}%`;
+
+  if (value >= goal) {
+    card.classList.add("completed");
+  } else {
+    card.classList.remove("completed");
+  }
+}
+
+// ============================================================
+//  DEBOUNCED HABIT SAVE
+// ============================================================
+function debouncedSaveHabit(habitId, value) {
+  if (habitSaveTimers[habitId]) clearTimeout(habitSaveTimers[habitId]);
+
+  habitSaveTimers[habitId] = setTimeout(async () => {
+    try {
+      const res = await fetch("/api/save-habit-value", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          habit_id: input.dataset.id,
-          plan_date: date,
+          habit_id: habitId,
+          plan_date: currentDate,
           value: value
         })
       });
 
-      showSaveToast();
-      recalcHabitPercent();
-     
-      // 🔥 Update progress visually
-      const item = input.closest(".habit-item");
-      if (!item) return;
+      if (!res.ok) throw new Error("Save failed");
+      if (typeof showToast === "function") showToast("Habit saved", "success");
 
-      const bar = item.querySelector(".habit-progress-fill");
-      const percentEl = item.querySelector(".goal-percent");
-      const percent = input.checked ? 100 : 0;
+      // Refresh completion ring
+      const healthRes = await fetch(`/api/v2/daily-health?date=${currentDate}`);
+      if (healthRes.ok) {
+        const healthData = await healthRes.json();
+        updateRing(healthData.habit_percent || 0);
+        updateHealthScore(healthData);
+      }
+    } catch (err) {
+      console.error("saveHabitValue error:", err);
+      if (typeof showToast === "function") showToast("Failed to save habit", "error");
+    }
+  }, 500);
+}
 
-      if (percentEl) percentEl.innerText = percent + "%";
+// ============================================================
+//  WEEKLY DOTS
+// ============================================================
+async function loadWeeklyDots(habitId) {
+  try {
+    const res = await fetch(`/api/v2/habit-weekly/${habitId}`);
+    if (!res.ok) return;
+    const values = await res.json();
 
-      if (bar) {
-        bar.style.width = percent + "%";
-        bar.classList.toggle("completed", percent >= 100);
+    const container = document.querySelector(`.habit-weekly-dots[data-habit-id="${habitId}"]`);
+    if (!container) return;
+    container.innerHTML = "";
+
+    const dayLabels = ["M", "T", "W", "T", "F", "S", "S"];
+    values.forEach((val, i) => {
+      const dot = document.createElement("span");
+      dot.className = "weekly-dot";
+      dot.title = dayLabels[i] || "";
+
+      if (val >= 100) {
+        dot.classList.add("dot-full");
+      } else if (val > 0) {
+        dot.classList.add("dot-partial");
+      } else {
+        dot.classList.add("dot-empty");
       }
 
-      item.classList.toggle("completed", percent >= 100);
-      updateHabitStatus(item, value, 1);
+      container.appendChild(dot);
     });
-
-  });
-
-}
-
-function recalcHabitPercent() {
-
-  const items = document.querySelectorAll(".habit-item");
-
-  let total = items.length;
-  let completed = 0;
-
-  items.forEach(item => {
-
-    const checkbox = item.querySelector(".habit-boolean");
-    const input = item.querySelector(".habit-input");
-
-    if (checkbox) {
-      if (checkbox.checked) completed++;
-      return;
-    }
-
-    if (input) {
-      const value = parseFloat(input.value || 0);
-      const goal = parseFloat(item.dataset.goal) || 0;
-
-      if (goal > 0 && value >= goal) completed++;
-    }
-
-  });
-
-  const percent = total
-    ? Math.round((completed / total) * 100)
-    : 0;
-
-  updateHabitCircle(percent);
-}
-function showSavedFeedback() {
-  const btn = document.getElementById("saveBtn");
-  if (!btn) return;
-
-  btn.innerText = "✓ Saved";
-  btn.style.background = "#16a34a";
-
-  setTimeout(() => {
-    btn.innerText = "Save";
-    btn.style.background = "#2563eb";
-  }, 1500);
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-
-  const dateInput = document.getElementById("health-date");
-  if (!dateInput) return;
-
-  ["weight", "height", "mood", "energy", "health-notes"].forEach(id => {
-
-    const el = document.getElementById(id);
-    if (!el || el.dataset.bound) return;
-
-    el.dataset.bound = "1";
-
-    el.addEventListener("input", autoSaveHealth);
-    el.addEventListener("blur", autoSaveHealth);
-
-  });
-  ["weight", "height"].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener("input", calculateBMI);
-  });
-  const today = new Date().toLocaleDateString("en-CA", {
-    timeZone: "Asia/Kolkata"
-  });
-
-  dateInput.value = today;
-
-  await loadHealth(today);
-  loadAnalytics(); // 🔥 call once only
-
-  dateInput.addEventListener("change", async () => {
-    await loadHealth(dateInput.value);
-  });
-  // 🔥 Load heatmap once
-  fetch("/api/v2/heatmap")
-    .then(res => res.json())
-    .then(data => {
-
-      const container = document.getElementById("heatmap");
-      if (!container) return;
-
-      container.innerHTML = "";
-
-      Object.keys(data).forEach(day => {
-
-        const div = document.createElement("div");
-        div.className = "heat-cell";
-
-        div.style.background =
-          data[day] > 75 ? "#16a34a" :
-            data[day] > 40 ? "#4ade80" :
-              data[day] > 10 ? "#86efac" :
-                "#e5e7eb";
-
-        container.appendChild(div);
-      });
-    });
-  // 🔥 Enable Drag Reorder
-  const container = document.getElementById("habitContainer");
-
-  if (container && typeof Sortable !== "undefined") {
-    new Sortable(container, {
-      animation: 150,
-      handle: ".habit-drag",
-      onEnd: async function () {
-
-        const items = document.querySelectorAll(".habit-item");
-
-        await Promise.all(
-          Array.from(items).map((item, i) =>
-            fetch("/api/habits/reorder", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                habit_id: item.dataset.id,
-                position: i
-              })
-            })
-          )
-        );
-
-      }
-    });
-  }
-  document.querySelectorAll(".emoji-picker .emoji").forEach(el => {
-    el.addEventListener("click", () => {
-      selectedEmoji = el.textContent;
-      document.getElementById("sheetHabitName").value = selectedEmoji + " ";
-    });
-  });
-
-  const addBtn = document.getElementById("addHabitBtn");
-  if (addBtn) {
-    addBtn.addEventListener("click", openHabitSheet);
-  }
-
-  // Color picker for habit sheet
-  document.querySelectorAll(".color-dot").forEach(dot => {
-    dot.style.background = dot.dataset.color;
-    dot.addEventListener("click", () => {
-      document.querySelectorAll(".color-dot").forEach(d => d.classList.remove("active"));
-      dot.classList.add("active");
-      selectedColor = dot.dataset.color;
-    });
-  });
-
-  // Unit input suggestions
-  const unitInput = document.getElementById("sheetHabitUnit");
-  if (unitInput) {
-    unitInput.addEventListener("input", function () {
-      const unit = this.value.toLowerCase();
-      const suggestions = document.getElementById("goalSuggestions");
-      if (!suggestions) return;
-      suggestions.innerHTML = "";
-      let values = [];
-      if (unit.includes("step")) values = [5000, 8000, 10000];
-      if (unit.includes("min")) values = [15, 30, 45];
-      if (unit.includes("ml")) values = [1500, 2000, 3000];
-      if (unit.includes("hr")) values = [1, 2, 3];
-      values.forEach(val => {
-        const btn = document.createElement("button");
-        btn.innerText = val;
-        btn.onclick = () => {
-          const goalInput = document.getElementById("sheetHabitGoal");
-          if (goalInput) goalInput.value = val;
-        };
-        suggestions.appendChild(btn);
-      });
-    });
-  }
-});
-async function deleteHabit(id) {
-
-  // Optimistically remove from UI immediately
-  const item = document.querySelector(`.habit-item[data-id="${id}"]`);
-  if (item) item.remove();
-
-  showUndoDeleteToast(id);
-
-  // Soft delete in backend
-  const res = await fetch("/api/habits/delete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ habit_id: id })
-  });
-  if (!res.ok) {
-    showToast("Delete failed", "error");
-    await loadHealth(document.getElementById("health-date").value);
+  } catch (err) {
+    console.error("loadWeeklyDots error:", err);
   }
 }
-function showUndoDeleteToast(id) {
 
-  const container = document.getElementById("toast-container");
-  if (!container) return;
+// ============================================================
+//  HEALTH METRICS SAVE
+// ============================================================
+function autoSaveHealth() {
+  if (saveHealthTimer) clearTimeout(saveHealthTimer);
+  saveHealthTimer = setTimeout(() => saveHealth(), 1500);
+}
 
-  const toast = document.createElement("div");
-  toast.className = "toast";
-  toast.innerHTML = `
-    Habit deleted
-    <button class="undo-btn">Undo</button>
-  `;
+async function saveHealth() {
+  const weightEl = document.getElementById("health-weight");
+  const heightEl = document.getElementById("health-height");
+  const moodEl = document.getElementById("health-mood");
+  const energyEl = document.getElementById("health-energy");
+  const notesEl = document.getElementById("health-notes");
 
-  container.appendChild(toast);
+  const payload = {
+    plan_date: currentDate,
+    weight: weightEl ? parseFloat(weightEl.value) || null : null,
+    height: heightEl ? parseFloat(heightEl.value) || null : null,
+    mood: moodEl ? moodEl.value : "neutral",
+    energy_level: energyEl ? parseInt(energyEl.value) || 5 : 5,
+    notes: notesEl ? notesEl.value : ""
+  };
 
-  requestAnimationFrame(() => {
-    toast.classList.add("show");
-  });
-
-  const timer = setTimeout(() => {
-    toast.remove();
-  }, 4000);
-
-  toast.querySelector(".undo-btn").onclick = async () => {
-    clearTimeout(timer);
-
-    await fetch("/api/habits/restore", {
+  try {
+    const res = await fetch("/api/v2/daily-health", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ habit_id: id })
+      body: JSON.stringify(payload)
     });
 
-    toast.remove();
-    loadHealth(document.getElementById("health-date").value);
-  };
-}
-async function showHabitChart(id) {
+    if (!res.ok) throw new Error("Save failed");
+    if (typeof showToast === "function") showToast("Health data saved", "success");
 
-  const res = await fetch(`/api/v2/habit-weekly/${id}`);
-  const data = await res.json();
+    calculateBMI();
 
-  const ctx = document.getElementById("healthChart");
-  if (!ctx) return;
-
-  if (window.habitChartInstance) {
-    window.habitChartInstance.destroy();
-  }
-
-  window.habitChartInstance = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-      datasets: [{
-        label: "Weekly Progress",
-        data: data,
-        tension: 0.3
-      }]
+    // Refresh score
+    const healthRes = await fetch(`/api/v2/daily-health?date=${currentDate}`);
+    if (healthRes.ok) {
+      const data = await healthRes.json();
+      updateHealthScore(data);
     }
-  });
-}
-function toggleEdit(id) {
-  const panel = document.getElementById("edit-" + id);
-  panel.style.display =
-    panel.style.display === "flex" ? "none" : "flex";
-}
-
-document.addEventListener("focus", function (e) {
-  if (
-    e.target.classList.contains("habit-input") ||
-    e.target.classList.contains("habit-name-edit") ||
-    e.target.classList.contains("habit-unit-edit") ||
-    e.target.classList.contains("habit-goal-edit")
-  ) {
-    e.target.select();
-  }
-}, true);
-
-let weightChart = null;
-
-function renderWeightTrend(data) {
-
-  if (!data || data.length === 0) return;
-
-  const ctx = document.getElementById("weightChart");
-
-  if (!ctx) return;
-
-  // destroy previous chart
-  if (weightChart) {
-    weightChart.destroy();
-  }
-
-  weightChart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: data.map(d => d.date.slice(5)),
-      datasets: [{
-        data: data.map(d => d.weight ?? null),
-        tension: 0.4,
-        borderColor: "#2563eb",
-        borderWidth: 2,
-        pointRadius: 3,
-        fill: false
-      }]
-    },
-    options: {
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { display: false },
-        x: { display: false }
-      }
-    }
-  });
-
-}
-let sparklineChart = null;
-
-function renderWeightSparkline(data) {
-
-  if (!data || data.length === 0) return;
-
-  const ctx = document.getElementById("weightSparkline");
-  if (!ctx) return;
-
-  if (sparklineChart) sparklineChart.destroy();
-
-  sparklineChart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: data.map(d => ""),
-      datasets: [{
-        data: data.map(d => d.weight ?? null),
-        borderColor: "#16a34a",
-        borderWidth: 2,
-        tension: 0.4,
-        pointRadius: 0,
-        fill: false
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { display: false },
-        y: { display: false }
-      },
-      animation: {
-        duration: 800
-      }
-    }
-  });
-}
-document.addEventListener("keydown", function (e) {
-
-  if (e.target.classList.contains("habit-goal-edit") && e.key === "Enter") {
-
-    const item = e.target.closest(".habit-item");
-    const entry = item.querySelector(".habit-input");
-
-    if (entry) {
-      entry.focus();
-      entry.select();
-    }
-
-  }
-
-});
-async function quickAdd(id) {
-
-  const item = document.querySelector(`.habit-item[data-id="${id}"]`);
-  if (!item) return;
-
-  const input = item.querySelector(".habit-input");
-  if (!input) return;
-
-  let current = parseFloat(input.value || 0);
-
-  const unit = item.dataset.unit || "";
-  const step = getStepFromUnit(unit);
-
-  current = Math.round((current + step) * 100) / 100;
-
-  input.value = current;
-
-  // Trigger autosave
-  input.dispatchEvent(new Event("input"));
-
-  // Visual feedback
-  item.classList.add("tap-flash");
-  setTimeout(() => item.classList.remove("tap-flash"), 300);
-}
-function getStepFromUnit(unit) {
-
-  if (!unit) return 1;
-
-  unit = unit.toLowerCase();
-
-  if (unit.includes("min")) return 5;
-  if (unit.includes("hr")) return 0.5;
-  if (unit.includes("step")) return 50;
-  if (unit.includes("ml")) return 50;
-  if (unit.includes("rs")) return 50;
-
-  return 1;
-}
-function quickAdjust(id, direction) {
-
-  const item = document.querySelector(`.habit-item[data-id="${id}"]`);
-  if (!item) return;
-
-  const input = item.querySelector(".habit-input");
-  if (!input) return;
-
-  let current = parseFloat(input.value || 0);
-
-  const unit = item.dataset.unit || "";
-  const step = getStepFromUnit(unit);
-
-  current = Math.round((current + step * direction) * 100) / 100;
-
-  if (current < 0) current = 0;
-
-  input.value = current;
-
-  // Trigger autosave
-  input.dispatchEvent(new Event("input"));
-
-  // Visual feedback
-  item.classList.add("tap-flash");
-  setTimeout(() => item.classList.remove("tap-flash"), 250);
-}
-let healthSaveTimer;
-
-function autoSaveHealth() {
-
-  clearTimeout(healthSaveTimer);
-
-  healthSaveTimer = setTimeout(() => {
-    saveHealth();
-  }, 1500); // save after user pauses 1.5s
-
-}
-function showToast(message, type = "info") {
-
-  const container = document.getElementById("toast-container");
-  if (!container) return;
-
-  const toast = document.createElement("div");
-  toast.className = `toast ${type} `;
-  toast.textContent = message;
-
-  container.appendChild(toast);
-
-  requestAnimationFrame(() => {
-    toast.classList.add("show");
-  });
-
-  setTimeout(() => {
-    toast.classList.remove("show");
-
-    setTimeout(() => {
-      toast.remove();
-    }, 300);
-
-  }, 2200);
-}
-function showSaveToast() {
-
-  const toast = document.getElementById("saveToast");
-  if (!toast) return;
-
-  toast.classList.add("show");
-
-  clearTimeout(toast.timer);
-
-  toast.timer = setTimeout(() => {
-    toast.classList.remove("show");
-  }, 1200);
-
-}
-
-function updateHealthScore(data) {
-
-  const habits = data.habit_percent || 0;
-  const energy = data.energy_level || 5;
-  const mood = data.mood || "Neutral";
-  const streak = data.streak || 0;
-
-  const habitScore = habits * 0.5;
-
-  const energyScore = (energy / 10) * 15;
-
-  const moodScore =
-    mood.includes("Happy") ? 10 :
-      mood.includes("Neutral") ? 6 :
-        3;
-
-  const streakScore = Math.min(streak * 1.5, 15);
-
-  const weightScore = 10; // optional stability logic later
-
-  const total =
-    habitScore +
-    energyScore +
-    moodScore +
-    streakScore +
-    weightScore;
-
-  const score = Math.round(total);
-
-  renderHealthScore(score);
-
-}
-function renderHealthScore(score) {
-
-  const number = document.getElementById("healthScoreNumber");
-  const bar = document.getElementById("healthScoreBar");
-
-  if (number) number.innerText = score;
-  if (bar) bar.style.width = score + "%";
-}
-async function loadAnalytics() {
-  try {
-
-    const [weekly, month] = await Promise.all([
-      fetch("/api/v2/weekly-health").then(r => r.json()),
-      fetch("/api/v2/monthly-summary").then(r => r.json())
-    ]);
-
-    const avgEl = document.getElementById("weeklyAvg");
-    if (avgEl) {
-      avgEl.innerText = `7-day avg: ${weekly.weekly_avg}%`;
-    }
-
-    const bestEl = document.getElementById("bestHabit");
-    if (bestEl) {
-      bestEl.innerText =
-        weekly.best_habit ? `🏆 Best: ${weekly.best_habit}` : "";
-    }
-
-    const monthlyEl = document.getElementById("monthlySummary");
-    if (monthlyEl) {
-      monthlyEl.innerHTML = `
-        <p>Days tracked: ${month.days_tracked}</p>
-        <p>Avg completion: ${month.avg_percent}%</p>
-        <p>Weight change: ${month.weight_change} kg</p>
-        <p>Avg energy: ${month.avg_energy}/10</p>
-      `;
-    }
-
   } catch (err) {
-    console.warn("Analytics load failed", err);
+    console.error("saveHealth error:", err);
+    if (typeof showToast === "function") showToast("Failed to save health data", "error");
   }
 }
-let selectedEmoji = "";
-let selectedColor = "#2563eb";
 
-
-
-function closeHabitSheet() {
-
-  const sheet = document.getElementById("habitSheet");
-
-  sheet.classList.remove("active");
-
-  document.getElementById("sheetHabitName").value = "";
-  document.getElementById("sheetHabitUnit").value = "";
-  document.getElementById("sheetHabitGoal").value = "";
-
-  sheet.querySelector(".sheet-header h3").innerText = "New Habit";
-  sheet.querySelector(".sheet-submit").innerText = "Add Habit";
-
-  delete sheet.dataset.editId;
-}
-
-
+// ============================================================
+//  BMI CALCULATION
+// ============================================================
 function calculateBMI() {
-  const weight = parseFloat(document.getElementById("weight")?.value);
-  const heightCm = parseFloat(document.getElementById("height")?.value);
-  const bmiEl = document.getElementById("bmiValue");
-
+  const weightEl = document.getElementById("health-weight");
+  const heightEl = document.getElementById("health-height");
+  const bmiEl = document.getElementById("bmi-display");
   if (!bmiEl) return;
 
-  if (!weight || !heightCm) {
-    bmiEl.innerText = "BMI: --";
-    bmiEl.style.color = "#6b7280";
+  const weight = weightEl ? parseFloat(weightEl.value) : 0;
+  const height = heightEl ? parseFloat(heightEl.value) : 0;
+
+  if (!weight || !height || height === 0) {
+    bmiEl.textContent = "--";
+    bmiEl.className = "bmi-display";
     return;
   }
 
-  const heightM = heightCm / 100;
+  const heightM = height / 100;
   const bmi = weight / (heightM * heightM);
   const rounded = bmi.toFixed(1);
 
-  let status = "";
+  bmiEl.textContent = rounded;
+  bmiEl.className = "bmi-display";
 
   if (bmi < 18.5) {
-    status = "Underweight";
-    bmiEl.style.color = "#f59e0b";
+    bmiEl.classList.add("bmi-under");
   } else if (bmi < 25) {
-    status = "Normal";
-    bmiEl.style.color = "#16a34a";
+    bmiEl.classList.add("bmi-normal");
   } else if (bmi < 30) {
-    status = "Overweight";
-    bmiEl.style.color = "#f97316";
+    bmiEl.classList.add("bmi-over");
   } else {
-    status = "Obese";
-    bmiEl.style.color = "#ef4444";
+    bmiEl.classList.add("bmi-obese");
   }
-
-  bmiEl.innerText = `BMI: ${rounded} (${status})`;
 }
-async function editHabit(id) {
 
-  const res = await fetch(`/api/habits/${id}`);
-  if (!res.ok) {
-    showToast("Failed to load habit", "error");
-    return;
-  }
+// ============================================================
+//  ENERGY LABEL
+// ============================================================
+function updateEnergyLabel() {
+  const energyEl = document.getElementById("health-energy");
+  const labelEl = document.getElementById("energy-label");
+  if (!energyEl || !labelEl) return;
 
-  const habit = await res.json();
-
-  const sheet = document.getElementById("habitSheet");
-
-  document.getElementById("sheetHabitName").value = habit.name;
-  document.getElementById("sheetHabitUnit").value = habit.unit;
-  document.getElementById("sheetHabitGoal").value = habit.goal;
-
-  sheet.dataset.editId = id;
-
-  sheet.querySelector(".sheet-header h3").innerText = "Edit Habit";
-  sheet.querySelector(".sheet-submit").innerText = "Save Changes";
-
-  sheet.classList.add("active");
-}
-async function submitHabitSheet() {
-
-  const sheet = document.getElementById("habitSheet");
-  const editId = sheet.dataset.editId;
-  const startDate = document.getElementById("sheetHabitStartDate").value;
-  const name = document.getElementById("sheetHabitName").value.trim();
-  const unit = document.getElementById("sheetHabitUnit").value.trim();
-  const goal = parseFloat(document.getElementById("sheetHabitGoal").value);
-
-  if (!name || !unit || !goal) {
-    showToast("All fields required", "error");
-    return;
-  }
-
-  const payload = {
-    name,
-    unit,
-    goal,
-    emoji: selectedEmoji,
-    color: selectedColor,
-    effective_from: startDate
+  const val = parseInt(energyEl.value) || 5;
+  const labels = {
+    1: "Exhausted", 2: "Very Low", 3: "Low", 4: "Below Avg",
+    5: "Average", 6: "Above Avg", 7: "Good", 8: "High",
+    9: "Very High", 10: "Peak"
   };
+  labelEl.textContent = labels[val] || `${val}/10`;
+}
 
-  let res;
+// ============================================================
+//  HABIT SHEET (ADD / EDIT MODAL)
+// ============================================================
+function openHabitSheet() {
+  const sheet = document.getElementById("habit-sheet");
+  if (!sheet) return;
 
-  if (editId) {
-    res = await fetch(`/api/habits/${editId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+  sheet.classList.add("open");
+  sheet.dataset.editId = "";
 
-    delete sheet.dataset.editId;
-    showToast("Habit updated", "success");
+  // Clear fields
+  const nameEl = document.getElementById("sheet-name");
+  const unitEl = document.getElementById("sheet-unit");
+  const goalEl = document.getElementById("sheet-goal");
+  const startEl = document.getElementById("sheet-start");
+  const titleEl = document.getElementById("sheet-title");
 
+  if (nameEl) nameEl.value = "";
+  if (unitEl) unitEl.value = "";
+  if (goalEl) goalEl.value = "";
+  if (startEl) startEl.value = getISTDate();
+  if (titleEl) titleEl.textContent = "Add Habit";
+
+  setHabitType("number");
+}
+
+function closeHabitSheet() {
+  const sheet = document.getElementById("habit-sheet");
+  if (sheet) sheet.classList.remove("open");
+}
+
+function setHabitType(type) {
+  const sheet = document.getElementById("habit-sheet");
+  if (!sheet) return;
+
+  sheet.dataset.habitType = type;
+
+  // Toggle active state on type buttons
+  document.querySelectorAll(".habit-type-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.type === type);
+  });
+
+  // Show/hide unit and goal fields for boolean
+  const unitRow = document.getElementById("sheet-unit")?.closest(".sheet-field");
+  const goalRow = document.getElementById("sheet-goal")?.closest(".sheet-field");
+
+  if (type === "boolean") {
+    if (unitRow) unitRow.style.display = "none";
+    if (goalRow) goalRow.style.display = "none";
   } else {
-    res = await fetch(`/api/habits/add`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    showToast("Habit added", "success");
+    if (unitRow) unitRow.style.display = "";
+    if (goalRow) goalRow.style.display = "";
   }
+}
 
-  if (!res.ok) {
-    showToast("Save failed", "error");
+async function submitHabitSheet() {
+  const sheet = document.getElementById("habit-sheet");
+  if (!sheet) return;
+
+  const editId = sheet.dataset.editId;
+  const habitType = sheet.dataset.habitType || "number";
+
+  const name = document.getElementById("sheet-name")?.value?.trim();
+  const unit = document.getElementById("sheet-unit")?.value?.trim() || "";
+  const goal = parseFloat(document.getElementById("sheet-goal")?.value) || (habitType === "boolean" ? 1 : 0);
+  const startDate = document.getElementById("sheet-start")?.value || getISTDate();
+
+  if (!name) {
+    if (typeof showToast === "function") showToast("Habit name is required", "error");
     return;
   }
 
-  closeHabitSheet();
-  await loadHealth(document.getElementById("health-date").value);
+  try {
+    let res;
+    if (editId) {
+      // Edit existing habit
+      res = await fetch(`/api/habits/${editId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, unit, goal })
+      });
+    } else {
+      // Add new habit
+      res = await fetch("/api/habits/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          unit: habitType === "boolean" ? "boolean" : unit,
+          goal: habitType === "boolean" ? 1 : goal,
+          start_date: startDate,
+          habit_type: habitType
+        })
+      });
+    }
+
+    if (!res.ok) throw new Error("Save failed");
+
+    closeHabitSheet();
+    if (typeof showToast === "function") showToast(editId ? "Habit updated" : "Habit added", "success");
+    loadHealth(currentDate);
+  } catch (err) {
+    console.error("submitHabitSheet error:", err);
+    if (typeof showToast === "function") showToast("Failed to save habit", "error");
+  }
 }
-function openHabitSheet() {
-  const today = new Date().toISOString().split("T")[0];
-  document.getElementById("sheetHabitStartDate").value = today;
 
-  document.getElementById("habitSheet").classList.add("active");
+async function editHabit(id) {
+  try {
+    const res = await fetch(`/api/habits/${id}`);
+    if (!res.ok) throw new Error("Failed to fetch habit");
+    const habit = await res.json();
 
+    const sheet = document.getElementById("habit-sheet");
+    if (!sheet) return;
+
+    sheet.classList.add("open");
+    sheet.dataset.editId = id;
+
+    const titleEl = document.getElementById("sheet-title");
+    const nameEl = document.getElementById("sheet-name");
+    const unitEl = document.getElementById("sheet-unit");
+    const goalEl = document.getElementById("sheet-goal");
+    const startEl = document.getElementById("sheet-start");
+
+    if (titleEl) titleEl.textContent = "Edit Habit";
+    if (nameEl) nameEl.value = habit.name || "";
+    if (unitEl) unitEl.value = habit.unit || "";
+    if (goalEl) goalEl.value = habit.goal || "";
+    if (startEl) startEl.value = habit.start_date || getISTDate();
+
+    setHabitType(habit.habit_type === "boolean" ? "boolean" : "number");
+  } catch (err) {
+    console.error("editHabit error:", err);
+    if (typeof showToast === "function") showToast("Failed to load habit", "error");
+  }
 }
 
+function deleteHabit(id) {
+  // Remove card from DOM immediately (optimistic)
+  const card = document.querySelector(`.habit-card[data-habit-id="${id}"]`);
+  if (card) card.remove();
 
-function updateHabitStatus(item, value, goal) {
-
-  const title = item.querySelector(".habit-title");
-  if (!title) return;
-
-  let statusSVG = "";
-  let statusClass = "";
-
-  if (goal > 0 && value >= goal) {
-    statusClass = "status-complete";
-    statusSVG = `
-      <svg viewBox="0 0 24 24" class="status-icon">
-        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
-        <path d="M8 12l3 3 5-6"
-              stroke="currentColor"
-              stroke-width="2.5"
-              fill="none"
-              stroke-linecap="round"
-              stroke-linejoin="round"/>
-      </svg>
-    `;
-  } 
-  else if (value > 0) {
-    statusClass = "status-progress";
-    statusSVG = `
-      <svg viewBox="0 0 24 24" class="status-icon">
-        <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.15"/>
-        <path d="M12 7v6l4 2"
-              stroke="currentColor"
-              stroke-width="2.5"
-              fill="none"
-              stroke-linecap="round"/>
-      </svg>
-    `;
-  } 
-  else {
-    statusClass = "status-empty";
-    statusSVG = `
-      <svg viewBox="0 0 24 24" class="status-icon">
-        <circle cx="12" cy="12" r="10"
-                stroke="currentColor"
-                stroke-width="2"
-                fill="none"/>
-      </svg>
-    `;
+  // Show undo toast
+  let undone = false;
+  if (typeof showToast === "function") {
+    showToast("Habit deleted. Undo?", "success");
   }
 
-  // remove old icon
-  const oldIcon = title.querySelector(".status-icon");
-  if (oldIcon) oldIcon.remove();
+  // Create an undo container
+  const undoToast = document.createElement("div");
+  undoToast.className = "undo-toast";
+  undoToast.innerHTML = `
+    <span>Habit deleted</span>
+    <button class="undo-btn" id="undo-delete-${id}">Undo</button>
+  `;
+  document.body.appendChild(undoToast);
+  requestAnimationFrame(() => undoToast.classList.add("show"));
 
-  // append new icon
-  title.insertAdjacentHTML("beforeend", statusSVG);
+  const undoBtn = document.getElementById(`undo-delete-${id}`);
+  if (undoBtn) {
+    undoBtn.addEventListener("click", async () => {
+      undone = true;
+      undoToast.classList.remove("show");
+      setTimeout(() => undoToast.remove(), 300);
 
-  // update class
-  item.classList.remove("status-complete", "status-progress", "status-empty");
-  item.classList.add(statusClass);
+      try {
+        await fetch("/api/habits/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ habit_id: id })
+        });
+        loadHealth(currentDate);
+        if (typeof showToast === "function") showToast("Habit restored", "success");
+      } catch (err) {
+        console.error("restoreHabit error:", err);
+      }
+    });
+  }
+
+  // Perform delete after 4 seconds if not undone
+  setTimeout(async () => {
+    undoToast.classList.remove("show");
+    setTimeout(() => undoToast.remove(), 300);
+
+    if (undone) return;
+
+    try {
+      await fetch("/api/habits/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ habit_id: id })
+      });
+    } catch (err) {
+      console.error("deleteHabit error:", err);
+      if (typeof showToast === "function") showToast("Failed to delete habit", "error");
+      loadHealth(currentDate);
+    }
+  }, 4000);
+}
+
+// ============================================================
+//  UTILITY
+// ============================================================
+function escapeHtml(str) {
+  if (!str) return "";
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
 }

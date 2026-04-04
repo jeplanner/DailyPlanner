@@ -336,6 +336,105 @@ def save_habit_value():
 
 
 # ==========================================================
+# HEATMAP — 30-day habit completion grid
+# ==========================================================
+
+@health_bp.route("/api/v2/heatmap", methods=["GET"])
+@login_required
+def heatmap():
+    user_id = session["user_id"]
+    today = datetime.now(IST).date()
+
+    habits = get("habit_master", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false"
+    })
+    if not habits:
+        return jsonify({})
+
+    habit_ids = [h["id"] for h in habits]
+    total_habits = len(habit_ids)
+
+    start = (today - timedelta(days=29)).isoformat()
+    entries = get("habit_entries", params={
+        "user_id": f"eq.{user_id}",
+        "plan_date": f"gte.{start}",
+        "plan_date": f"lte.{today.isoformat()}"
+    })
+
+    # Build a map: date -> count of entries with value > 0
+    day_counts = {}
+    for e in entries:
+        d = e["plan_date"]
+        if e.get("value") and float(e["value"]) > 0:
+            day_counts[d] = day_counts.get(d, 0) + 1
+
+    result = {}
+    for i in range(30):
+        d = (today - timedelta(days=29 - i)).isoformat()
+        count = day_counts.get(d, 0)
+        result[d] = round((count / total_habits) * 100) if total_habits else 0
+
+    return jsonify(result)
+
+
+# ==========================================================
+# MONTHLY SUMMARY
+# ==========================================================
+
+@health_bp.route("/api/v2/monthly-summary", methods=["GET"])
+@login_required
+def monthly_summary():
+    user_id = session["user_id"]
+    today = datetime.now(IST).date()
+    start = today.replace(day=1).isoformat()
+
+    habits = get("habit_master", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false"
+    })
+    total_habits = len(habits) if habits else 1
+
+    entries = get("habit_entries", params={
+        "user_id": f"eq.{user_id}",
+        "plan_date": f"gte.{start}",
+        "plan_date": f"lte.{today.isoformat()}"
+    })
+
+    # Days tracked = unique dates with at least 1 entry
+    days_with_entries = set()
+    total_value_entries = 0
+    for e in entries:
+        if e.get("value") and float(e["value"]) > 0:
+            days_with_entries.add(e["plan_date"])
+            total_value_entries += 1
+
+    days_tracked = len(days_with_entries)
+    days_in_month = today.day
+    avg_percent = round((total_value_entries / (days_in_month * total_habits)) * 100) if days_in_month else 0
+
+    # Weight change this month
+    health_rows = get("daily_health", params={
+        "user_id": f"eq.{user_id}",
+        "plan_date": f"gte.{start}",
+        "plan_date": f"lte.{today.isoformat()}",
+        "order": "plan_date.asc"
+    })
+    weights = [r["weight"] for r in (health_rows or []) if r.get("weight")]
+    weight_change = round(weights[-1] - weights[0], 1) if len(weights) >= 2 else 0
+
+    energies = [r["energy_level"] for r in (health_rows or []) if r.get("energy_level")]
+    avg_energy = round(sum(energies) / len(energies), 1) if energies else 0
+
+    return jsonify({
+        "days_tracked": days_tracked,
+        "avg_percent": min(avg_percent, 100),
+        "weight_change": weight_change,
+        "avg_energy": avg_energy
+    })
+
+
+# ==========================================================
 # UTIL
 # ==========================================================
 
