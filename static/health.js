@@ -267,20 +267,18 @@ function createHabitCard(habit) {
   const card = document.createElement("div");
   card.className = "habit-card";
   card.dataset.habitId = habit.id;
+  card.dataset.goal = habit.goal || 1;
 
-  const value = habit.value || 0;
-  const goal = habit.goal || 1;
+  const value = parseFloat(habit.value) || 0;
+  const goal = parseFloat(habit.goal) || 1;
   const pct = Math.min(Math.round((value / goal) * 100), 100);
-  const isBoolean = habit.habit_type === "boolean";
+  const isBoolean = habit.habit_type === "boolean" || (habit.unit || "").toUpperCase() === "BOOLEAN";
   const isComplete = value >= goal;
+  const step = getStepForUnit(habit.unit);
 
   if (isComplete) card.classList.add("completed");
 
-  // Determine step based on unit
-  const step = getStepForUnit(habit.unit);
-
-  // Goal text
-  const goalText = isBoolean ? "Yes / No" : `${goal} ${habit.unit || ""}`;
+  const goalText = isBoolean ? "Yes / No" : `Goal: ${goal} ${habit.unit || ""}`;
 
   card.innerHTML = `
     <div class="habit-card-header">
@@ -289,12 +287,8 @@ function createHabitCard(habit) {
         <span class="habit-card-goal">${escapeHtml(goalText)}</span>
       </div>
       <div class="habit-card-actions">
-        <button class="habit-action-btn" onclick="editHabit(${habit.id})" title="Edit">
-          <i data-feather="edit-2" style="width:14px;height:14px"></i>
-        </button>
-        <button class="habit-action-btn habit-delete-btn" onclick="deleteHabit(${habit.id})" title="Delete">
-          <i data-feather="trash-2" style="width:14px;height:14px"></i>
-        </button>
+        <button class="habit-action-btn" onclick="editHabit(${habit.id})" title="Edit">&#9998;</button>
+        <button class="habit-action-btn habit-delete-btn" onclick="deleteHabit(${habit.id})" title="Delete">&#128465;</button>
       </div>
     </div>
 
@@ -310,41 +304,45 @@ function createHabitCard(habit) {
     <div class="habit-weekly-dots" data-habit-id="${habit.id}"></div>
   `;
 
-  // Load weekly dots
   loadWeeklyDots(habit.id);
-
   return card;
 }
 
 function buildNumericInput(habit, step) {
-  const value = habit.value || 0;
+  const value = parseFloat(habit.value) || 0;
+  const goal = parseFloat(habit.goal) || 1;
   return `
     <div class="habit-input-row">
-      <button class="habit-step-btn habit-minus" onclick="stepHabit(${habit.id}, -${step})">
-        <i data-feather="minus" style="width:16px;height:16px"></i>
-      </button>
-      <input type="number" class="habit-value-input" id="habit-val-${habit.id}"
-             value="${value}" min="0" step="${step}"
-             data-habit-id="${habit.id}"
-             onchange="onHabitValueChange(${habit.id})">
-      <button class="habit-step-btn habit-plus" onclick="stepHabit(${habit.id}, ${step})">
-        <i data-feather="plus" style="width:16px;height:16px"></i>
-      </button>
+      <button class="habit-adjust-btn" onclick="stepHabit(${habit.id}, -${step})">&#8722;</button>
+      <div class="habit-value-wrap">
+        <input type="number" class="habit-value-input" id="habit-val-${habit.id}"
+               value="${value}" min="0" step="${step}"
+               data-habit-id="${habit.id}"
+               inputmode="decimal"
+               onchange="onHabitValueChange(${habit.id})"
+               onfocus="this.select()">
+        <span class="habit-value-unit">${escapeHtml((habit.unit || "").toLowerCase())}</span>
+      </div>
+      <button class="habit-adjust-btn" onclick="stepHabit(${habit.id}, ${step})">&#43;</button>
+    </div>
+    <div class="habit-slider-row">
+      <input type="range" class="habit-slider" min="0" max="${goal * 1.5}" step="${step}" value="${value}"
+             oninput="onSliderChange(${habit.id}, this.value)">
     </div>
   `;
 }
 
 function buildBooleanInput(habit) {
-  const value = habit.value || 0;
+  const value = parseFloat(habit.value) || 0;
   const isOn = value >= 1;
   return `
-    <div class="habit-input-row habit-input-row-bool">
-      <button class="habit-toggle ${isOn ? "active" : ""}"
+    <div class="habit-toggle-row">
+      <button class="habit-toggle ${isOn ? "on" : ""}"
               id="habit-val-${habit.id}"
               data-habit-id="${habit.id}"
               onclick="toggleBooleanHabit(${habit.id})">
-        ${isOn ? "Done" : "Not done"}
       </button>
+      <span class="habit-toggle-label">${isOn ? "Done" : "Not yet"}</span>
     </div>
   `;
 }
@@ -352,10 +350,21 @@ function buildBooleanInput(habit) {
 function getStepForUnit(unit) {
   if (!unit) return 1;
   const u = unit.toLowerCase();
-  if (u === "steps") return 100;
-  if (u === "ml") return 100;
-  if (u === "mins" || u === "minutes") return 5;
+  if (u === "steps") return 500;
+  if (u === "ml" || u === "l") return 250;
+  if (u === "mins" || u === "minutes" || u === "min") return 5;
+  if (u === "km") return 0.5;
+  if (u === "hours" || u === "hrs") return 0.5;
+  if (u === "pages") return 5;
+  if (u === "reps") return 5;
   return 1;
+}
+
+function onSliderChange(habitId, val) {
+  const input = document.getElementById(`habit-val-${habitId}`);
+  if (input) input.value = val;
+  updateHabitCardProgress(habitId, parseFloat(val));
+  debouncedSaveHabit(habitId, parseFloat(val));
 }
 
 // ============================================================
@@ -389,9 +398,12 @@ function toggleBooleanHabit(habitId) {
   const btn = document.getElementById(`habit-val-${habitId}`);
   if (!btn) return;
 
-  const isActive = btn.classList.toggle("active");
-  const val = isActive ? 1 : 0;
-  btn.textContent = isActive ? "Done" : "Not done";
+  const isOn = btn.classList.toggle("on");
+  const val = isOn ? 1 : 0;
+
+  // Update label next to toggle
+  const label = btn.parentElement?.querySelector(".habit-toggle-label");
+  if (label) label.textContent = isOn ? "Done" : "Not yet";
 
   updateHabitCardProgress(habitId, val);
   debouncedSaveHabit(habitId, val);
@@ -403,24 +415,32 @@ function updateHabitCardProgress(habitId, value) {
 
   const fill = card.querySelector(".habit-progress-fill");
   const pctEl = card.querySelector(".habit-progress-pct");
+  const slider = card.querySelector(".habit-slider");
 
-  // Get goal from the card's goal text or fallback
-  const goalText = card.querySelector(".habit-card-goal");
-  let goal = 1;
-  if (goalText) {
-    const match = goalText.textContent.match(/^(\d+)/);
-    if (match) goal = parseFloat(match[1]);
-  }
-
+  const goal = parseFloat(card.dataset.goal) || 1;
   const pct = Math.min(Math.round((value / goal) * 100), 100);
+
   if (fill) fill.style.width = `${pct}%`;
   if (pctEl) pctEl.textContent = `${pct}%`;
+  if (slider) slider.value = value;
 
   if (value >= goal) {
     card.classList.add("completed");
   } else {
     card.classList.remove("completed");
   }
+
+  // Update completion ring after any habit change
+  recalcCompletionRing();
+}
+
+function recalcCompletionRing() {
+  const cards = document.querySelectorAll(".habit-card");
+  if (!cards.length) return;
+  const completed = document.querySelectorAll(".habit-card.completed").length;
+  const pct = Math.round((completed / cards.length) * 100);
+  updateRing(pct);
+  document.getElementById("ring-percent").textContent = pct + "%";
 }
 
 // ============================================================

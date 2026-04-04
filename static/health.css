@@ -230,47 +230,77 @@ body {
 
 /* Habit Input Row */
 .habit-input-row {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
 }
 .habit-adjust-btn {
-  width: 36px; height: 36px;
+  width: 42px; height: 42px;
   border: 1px solid var(--hab-border);
   background: var(--hab-surface);
-  border-radius: 10px;
-  font-size: 18px; font-weight: 600;
+  border-radius: 12px;
+  font-size: 22px; font-weight: 600; line-height: 1;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   color: var(--hab-text2); transition: all 0.15s; flex-shrink: 0;
+  user-select: none; -webkit-tap-highlight-color: transparent;
 }
 .habit-adjust-btn:hover { background: var(--hab-primary-light); color: var(--hab-primary); }
-.habit-adjust-btn:active { transform: scale(0.92); }
+.habit-adjust-btn:active { transform: scale(0.88); background: var(--hab-primary); color: #fff; }
 
+.habit-value-wrap {
+  flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0;
+}
 .habit-value-input {
-  flex: 1; text-align: center;
-  font-size: 24px; font-weight: 800; color: var(--hab-text);
+  width: 100%; text-align: center;
+  font-size: 28px; font-weight: 800; color: var(--hab-text);
   border: none; background: transparent; outline: none;
   font-family: inherit; min-width: 0;
 }
+.habit-value-input:focus { background: var(--hab-primary-light); border-radius: 8px; }
 .habit-card.completed .habit-value-input { color: var(--hab-success); }
+.habit-value-unit {
+  font-size: 10px; color: var(--hab-text3); font-weight: 500;
+  text-transform: lowercase; margin-top: -2px;
+}
+
+/* Range slider for quick adjust */
+.habit-slider-row {
+  padding: 0 4px; margin-bottom: 8px;
+}
+.habit-slider {
+  width: 100%; height: 6px; -webkit-appearance: none; appearance: none;
+  background: var(--hab-ring-bg); border-radius: 3px; outline: none;
+  cursor: pointer;
+}
+.habit-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--hab-primary); border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2); cursor: pointer;
+}
+.habit-card.completed .habit-slider::-webkit-slider-thumb { background: var(--hab-success); }
 
 /* Boolean Toggle */
 .habit-toggle-row {
-  display: flex; align-items: center; justify-content: center; margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px;
 }
 .habit-toggle {
-  width: 72px; height: 40px;
-  border-radius: 20px; background: var(--hab-border);
+  width: 64px; height: 36px;
+  border-radius: 18px; background: var(--hab-border);
   border: none; cursor: pointer; position: relative; transition: background 0.25s;
+  -webkit-tap-highlight-color: transparent;
 }
 .habit-toggle.on { background: var(--hab-success); }
 .habit-toggle::after {
   content: '';
-  position: absolute; top: 4px; left: 4px;
-  width: 32px; height: 32px;
+  position: absolute; top: 3px; left: 3px;
+  width: 30px; height: 30px;
   background: #fff; border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
   transition: transform 0.25s;
 }
-.habit-toggle.on::after { transform: translateX(32px); }
+.habit-toggle.on::after { transform: translateX(28px); }
+.habit-toggle-label {
+  font-size: 14px; font-weight: 600; color: var(--hab-text2);
+}
+.habit-card.completed .habit-toggle-label { color: var(--hab-success); }
 
 /* Progress Bar */
 .habit-progress, .habit-progress-bar {
