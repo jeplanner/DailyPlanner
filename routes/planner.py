@@ -23,6 +23,14 @@ logger = setup_logger()
 @planner_bp.route("/")
 @login_required
 def planner():
+    # Default landing page = Eisenhower Matrix (priority-focused start)
+    return redirect(url_for("todo.todo"))
+
+
+@planner_bp.route("/calendar")
+@login_required
+def planner_calendar():
+    """Google Calendar-style planner view (previously the homepage)."""
     return render_template("planner_v2.html")
 
 

@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, redirect, render_template, render_template
 from auth import login_required
 from config import IST
 from services.eisenhower_service import autosave_task, copy_open_tasks_from_previous_day, enable_travel_mode
+from services.recurring_service import materialize_recurring_tasks
 from services.task_service import update_task_occurrence
 from supabase_client import get, post, update
 from templates.todo import TODO_TEMPLATE
@@ -30,6 +31,12 @@ def todo():
     plan_date = date(year, month, day)
 
     user_id = session["user_id"]
+
+    # 0️⃣ Materialize recurring tasks for this date (idempotent — safe to call always)
+    try:
+        materialize_recurring_tasks(plan_date, user_id)
+    except Exception as e:
+        logger.warning("Failed to materialize recurring tasks: %s", e)
 
     # 1️⃣ Fetch standalone Eisenhower tasks
     raw_tasks = get(
