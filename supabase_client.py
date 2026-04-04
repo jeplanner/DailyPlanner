@@ -16,6 +16,10 @@ HEADERS = {
 }
 logger = logging.getLogger("daily_plan")
 
+# Connection-pooled session — reuses TCP connections across requests
+_session = requests.Session()
+_session.headers.update(HEADERS)
+
 def _strip_eq(value):
     if isinstance(value, str) and value.startswith("eq."):
         return value[3:]
@@ -28,9 +32,8 @@ def get(path, params=None):
     # 🔍 Log intent
     logger.debug("SUPABASE GET → %s | params=%s", url, params)
 
-    r = requests.get(
+    r = _session.get(
         url,
-        headers=HEADERS,
         params=params,
         timeout=10,
     )
@@ -67,7 +70,7 @@ def post(path, data, prefer="return=representation"):
 
     logger.debug("SUPABASE Post → %s | params=%s", path, data)
 
-    r = requests.post(
+    r = _session.post(
         f"{SUPABASE_URL}/rest/v1/{path}",
         headers=headers,
         json=data,
@@ -82,9 +85,8 @@ def post(path, data, prefer="return=representation"):
 
     return []
 def delete(path, params):
-    r = requests.delete(
+    r = _session.delete(
         f"{SUPABASE_URL}/rest/v1/{path}",
-        headers=HEADERS,
         params=params,
         timeout=10,
     )
@@ -105,9 +107,8 @@ def update(table, params, json):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     # 🔍 Log intent
     logger.debug("SUPABASE UPDATE → %s | params=%s", url, params)
-    response = requests.patch(
+    response = _session.patch(
         url,
-        headers=HEADERS,
         params=params,
         json=json,
         timeout=10

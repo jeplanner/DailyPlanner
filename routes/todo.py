@@ -95,32 +95,30 @@ def toggle_todo_done():
 
     status = "done" if is_done else "open"
 
-    # 1️⃣ Update Eisenhower task
-    update(
-        "todo_matrix",
-        params={"id": f"eq.{task_id}"},
-        json={
-            "is_done": is_done,
-            "status": status,
-        },
-    )
-
-    # 2️⃣ Optional: sync back to project task
+    # 1️⃣ Fetch source_task_id BEFORE update (avoids extra fetch after)
+    source_task_id = None
     if is_done:
         rows = get(
             "todo_matrix",
-            params={
-                "id": f"eq.{task_id}",
-                "select": "source_task_id",
-            },
+            params={"id": f"eq.{task_id}", "select": "source_task_id"},
         )
+        if rows:
+            source_task_id = rows[0].get("source_task_id")
 
-        if rows and rows[0].get("source_task_id"):
-            update(
-                "project_tasks",
-                params={"task_id": f"eq.{rows[0]['source_task_id']}"},
-                json={"status": "done"},
-            )
+    # 2️⃣ Update Eisenhower task
+    update(
+        "todo_matrix",
+        params={"id": f"eq.{task_id}"},
+        json={"is_done": is_done, "status": status},
+    )
+
+    # 3️⃣ Sync back to project task (using pre-fetched source_task_id)
+    if source_task_id:
+        update(
+            "project_tasks",
+            params={"task_id": f"eq.{source_task_id}"},
+            json={"status": "done"},
+        )
 
     return jsonify({"status": "ok"})
 
@@ -351,28 +349,32 @@ def expire_old_eisenhower_tasks(user_id):
         params={
             "user_id": f"eq.{user_id}",
             "is_done": "eq.false",
+            "is_deleted": "eq.false",
             "plan_date": f"lt.{today}",
-            "select": "id, source_task_id"
+            "select": "id,source_task_id",
+            "limit": 500,
         }
     )
 
-    for r in rows:
-        # 1️⃣ Remove / expire Eisenhower entry
-        update(
-            "todo_matrix",
-            params={"id": f"eq.{r['id']}"},
-            json={"is_deleted": True}
-        )
+    if not rows:
+        return
 
-        # 2️⃣ Restore project task status (if linked)
-        if r.get("source_task_id"):
-            update(
-                "project_tasks",
-                params={"task_id": f"eq.{r['source_task_id']}"},
-                json={
-                    "status": "open"
-                }
-            )
+    # Batch update: mark all expired tasks as deleted in ONE call
+    expired_ids = ",".join(str(r["id"]) for r in rows)
+    update(
+        "todo_matrix",
+        params={"id": f"in.({expired_ids})"},
+        json={"is_deleted": True}
+    )
+
+    # Batch restore: reopen linked project tasks in ONE call
+    source_ids = [str(r["source_task_id"]) for r in rows if r.get("source_task_id")]
+    if source_ids:
+        update(
+            "project_tasks",
+            params={"task_id": f"in.({','.join(source_ids)})"},
+            json={"status": "open"}
+        )
 
 
 @todo_bp.route("/set_recurrence", methods=["POST"])

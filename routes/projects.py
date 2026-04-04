@@ -101,37 +101,31 @@ def project_tasks(project_id):
     order = SORT_PRESETS.get(sort, SORT_PRESETS["smart"])
 
     # ---------------------------------
-    # Fetch tasks (no filtering in SQL)
+    # Fetch tasks (with server-side filtering)
     # ---------------------------------
-    raw_tasks = get(
-        "project_tasks",
-        params={
-            "project_id": f"eq.{project_id}",
-            "is_eliminated": "eq.false",   # ✅ ADD THIS
-            "order": order,
-        },
-    ) or []
-
     today = date.today()
 
-    tasks = []
-    for t in raw_tasks:
-        status = t.get("status")
-        due    = t.get("due_date")
+    params = {
+        "project_id": f"eq.{project_id}",
+        "is_eliminated": "eq.false",
+        "select": "task_id,task_text,status,due_date,due_time,priority,start_date,"
+                  "duration_days,delegated_to,is_pinned,planned_hours,actual_hours,"
+                  "is_recurring,recurrence_type,recurrence_days,recurrence_interval,"
+                  "recurrence_end,auto_advance,order_index,created_at",
+        "order": order,
+        "limit": 500,
+    }
 
-        # ❌ Hide completed
-        if hide_completed and status == "done":
-            continue
+    # Push filters to database
+    if hide_completed:
+        params["status"] = "neq.done"
+    if overdue_only:
+        params["status"] = "neq.done"
+        params["due_date"] = f"lt.{today.isoformat()}"
 
-        # ❌ Overdue only
-        if overdue_only:
-            if not due:
-                continue
-            due_date = date.fromisoformat(due)
-            if due_date >= today or status == "done":
-                continue
+    raw_tasks = get("project_tasks", params=params) or []
 
-        tasks.append(_build_task_dict(t, project, today))
+    tasks = [_build_task_dict(t, project, today) for t in raw_tasks]
 
     grouped_tasks = group_tasks_smart(tasks)
 
@@ -523,8 +517,14 @@ def update_task_planning():
 def project_gantt(project_id):
     tasks = get(
         "project_tasks",
-        params={"project_id": f"eq.{project_id}"}
-    )
+        params={
+            "project_id": f"eq.{project_id}",
+            "user_id": f"eq.{session['user_id']}",
+            "is_eliminated": "eq.false",
+            "select": "task_id,task_text,start_date,duration_days,planned_hours,actual_hours",
+            "limit": 500,
+        }
+    ) or []
 
     gantt_tasks = build_gantt_tasks(tasks)
 
@@ -613,18 +613,21 @@ def bulk_add_tasks():
 
     today = date.today().isoformat()
 
+    # Fetch max order_index ONCE (not per task)
+    max_order = get_max_order_index(project_id) or 0
+
     rows = []
-    for idx,text in enumerate(tasks):
+    for idx, text in enumerate(tasks):
         if not text.strip():
             continue
 
         rows.append({
-            "project_id": project_id,          # ✅ guaranteed non-empty
+            "project_id": project_id,
             "task_text": text.strip(),
             "start_date": today,
             "priority": "medium",
             "priority_rank": PRIORITY_MAP["medium"],
-            "order_index": idx,          # ✅ THIS LINE
+            "order_index": max_order + idx + 1,
             "duration_days": 0,
             "status": "open",
             "user_id": session["user_id"]
@@ -714,16 +717,9 @@ def get_project_tasks():
             "user_id": f"eq.{user_id}",
             "is_eliminated": "eq.false",
             "status": "neq.done",
-            "or": f"(due_date.is.null,due_date.eq.{date},due_date.lt.{date})",
-            "select": """
-                task_id,
-                task_text,
-                priority,
-                project_id,
-                start_time,
-                due_date,
-                projects(name)
-            """
+            "or": f"(due_date.is.null,due_date.lte.{date})",
+            "select": "task_id,task_text,priority,project_id,start_time,due_date,duration_minutes,projects(name)",
+            "limit": 200,
         }
     )
 
