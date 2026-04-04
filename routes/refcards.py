@@ -9,26 +9,26 @@ from supabase_client import get, post, update, delete
 from services.login_service import login_required
 from config import IST
 
-payments_bp = Blueprint("payments", __name__)
+refcards_bp = Blueprint("refcards", __name__)
 
 
 # ═══════════════════════════════════════════════════
 # PAGE
 # ═══════════════════════════════════════════════════
 
-@payments_bp.route("/payments")
+@refcards_bp.route("/refcards")
 @login_required
-def payments_page():
-    return render_template("payments.html")
+def refcards_page():
+    return render_template("refcards.html")
 
 
 # ═══════════════════════════════════════════════════
 # CONTEXTS (homes / offices / vehicles / etc.)
 # ═══════════════════════════════════════════════════
 
-@payments_bp.route("/api/payments/properties", methods=["GET"])
+@refcards_bp.route("/api/refcards/contexts", methods=["GET"])
 @login_required
-def list_properties():
+def list_contexts():
     rows = get("ref_contexts", params={
         "user_id": f"eq.{session['user_id']}",
         "order": "position.asc,name.asc",
@@ -36,9 +36,9 @@ def list_properties():
     return jsonify(rows)
 
 
-@payments_bp.route("/api/payments/properties", methods=["POST"])
+@refcards_bp.route("/api/refcards/contexts", methods=["POST"])
 @login_required
-def add_property():
+def add_context():
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
     if not name:
@@ -54,9 +54,9 @@ def add_property():
     return jsonify(rows[0] if rows else {"name": name})
 
 
-@payments_bp.route("/api/payments/properties/<prop_id>", methods=["PUT"])
+@refcards_bp.route("/api/refcards/contexts/<ctx_id>", methods=["PUT"])
 @login_required
-def update_property(prop_id):
+def update_context(ctx_id):
     data = request.get_json() or {}
     allowed = {}
     for f in ["name", "address", "position"]:
@@ -66,30 +66,30 @@ def update_property(prop_id):
         return jsonify({"error": "Nothing to update"}), 400
 
     update("ref_contexts",
-           params={"id": f"eq.{prop_id}", "user_id": f"eq.{session['user_id']}"},
+           params={"id": f"eq.{ctx_id}", "user_id": f"eq.{session['user_id']}"},
            json=allowed)
     return jsonify({"success": True})
 
 
-@payments_bp.route("/api/payments/properties/<prop_id>", methods=["DELETE"])
+@refcards_bp.route("/api/refcards/contexts/<ctx_id>", methods=["DELETE"])
 @login_required
-def delete_property(prop_id):
+def delete_context(ctx_id):
     delete("ref_cards",
-           params={"property_id": f"eq.{prop_id}", "user_id": f"eq.{session['user_id']}"})
+           params={"property_id": f"eq.{ctx_id}", "user_id": f"eq.{session['user_id']}"})
     delete("ref_contexts",
-           params={"id": f"eq.{prop_id}", "user_id": f"eq.{session['user_id']}"})
+           params={"id": f"eq.{ctx_id}", "user_id": f"eq.{session['user_id']}"})
     return jsonify({"success": True})
 
 
 # ═══════════════════════════════════════════════════
-# REFERENCE CARDS (bills, SOPs, credentials, checklists, anything)
+# REFERENCE CARDS
 # ═══════════════════════════════════════════════════
 
-@payments_bp.route("/api/payments/bills", methods=["GET"])
+@refcards_bp.route("/api/refcards/cards", methods=["GET"])
 @login_required
-def list_bills():
+def list_cards():
     user_id = session["user_id"]
-    prop_id = request.args.get("property_id")
+    ctx_id = request.args.get("context_id")
     category = request.args.get("category")
     search = request.args.get("q", "").strip()
 
@@ -97,14 +97,13 @@ def list_bills():
         "user_id": f"eq.{user_id}",
         "order": "category.asc,provider.asc",
     }
-    if prop_id:
-        params["property_id"] = f"eq.{prop_id}"
+    if ctx_id:
+        params["property_id"] = f"eq.{ctx_id}"
     if category:
         params["category"] = f"eq.{category}"
 
     rows = get("ref_cards", params=params) or []
 
-    # Client-side search fallback (Supabase free tier doesn't have full-text)
     if search:
         s = search.lower()
         rows = [r for r in rows if
@@ -117,9 +116,9 @@ def list_bills():
     return jsonify(rows)
 
 
-@payments_bp.route("/api/payments/bills", methods=["POST"])
+@refcards_bp.route("/api/refcards/cards", methods=["POST"])
 @login_required
-def add_bill():
+def add_card():
     data = request.get_json() or {}
 
     if not (data.get("category") or "").strip():
@@ -127,7 +126,7 @@ def add_bill():
     if not (data.get("provider") or "").strip():
         return jsonify({"error": "Title is required"}), 400
 
-    bill = {
+    card = {
         "id": str(uuid.uuid4()),
         "user_id": session["user_id"],
         "property_id": data.get("property_id") or None,
@@ -146,13 +145,13 @@ def add_bill():
         "status": data.get("status", "active"),
     }
 
-    rows = post("ref_cards", bill)
-    return jsonify(rows[0] if rows else bill)
+    rows = post("ref_cards", card)
+    return jsonify(rows[0] if rows else card)
 
 
-@payments_bp.route("/api/payments/bills/<bill_id>", methods=["PUT"])
+@refcards_bp.route("/api/refcards/cards/<card_id>", methods=["PUT"])
 @login_required
-def update_bill(bill_id):
+def update_card(card_id):
     data = request.get_json() or {}
     allowed_fields = [
         "category", "provider", "account_number", "amount", "currency",
@@ -165,30 +164,30 @@ def update_bill(bill_id):
         return jsonify({"error": "Nothing to update"}), 400
 
     update("ref_cards",
-           params={"id": f"eq.{bill_id}", "user_id": f"eq.{session['user_id']}"},
+           params={"id": f"eq.{card_id}", "user_id": f"eq.{session['user_id']}"},
            json=payload)
     return jsonify({"success": True})
 
 
-@payments_bp.route("/api/payments/bills/<bill_id>", methods=["DELETE"])
+@refcards_bp.route("/api/refcards/cards/<card_id>", methods=["DELETE"])
 @login_required
-def delete_bill(bill_id):
+def delete_card(card_id):
     delete("ref_activity_log",
-           params={"bill_id": f"eq.{bill_id}", "user_id": f"eq.{session['user_id']}"})
+           params={"bill_id": f"eq.{card_id}", "user_id": f"eq.{session['user_id']}"})
     delete("ref_cards",
-           params={"id": f"eq.{bill_id}", "user_id": f"eq.{session['user_id']}"})
+           params={"id": f"eq.{card_id}", "user_id": f"eq.{session['user_id']}"})
     return jsonify({"success": True})
 
 
 # ═══════════════════════════════════════════════════
-# ACTIVITY LOG (payment history, task completions, notes)
+# ACTIVITY LOG
 # ═══════════════════════════════════════════════════
 
-@payments_bp.route("/api/payments/history/<bill_id>", methods=["GET"])
+@refcards_bp.route("/api/refcards/log/<card_id>", methods=["GET"])
 @login_required
-def get_history(bill_id):
+def get_log(card_id):
     rows = get("ref_activity_log", params={
-        "bill_id": f"eq.{bill_id}",
+        "bill_id": f"eq.{card_id}",
         "user_id": f"eq.{session['user_id']}",
         "order": "paid_date.desc",
         "limit": 50,
@@ -196,18 +195,18 @@ def get_history(bill_id):
     return jsonify(rows)
 
 
-@payments_bp.route("/api/payments/history", methods=["POST"])
+@refcards_bp.route("/api/refcards/log", methods=["POST"])
 @login_required
-def log_payment():
+def add_log():
     data = request.get_json() or {}
-    bill_id = data.get("bill_id")
-    if not bill_id:
-        return jsonify({"error": "bill_id required"}), 400
+    card_id = data.get("card_id") or data.get("bill_id")
+    if not card_id:
+        return jsonify({"error": "card_id required"}), 400
 
     entry = {
         "id": str(uuid.uuid4()),
         "user_id": session["user_id"],
-        "bill_id": bill_id,
+        "bill_id": card_id,
         "paid_date": data.get("paid_date") or datetime.now(IST).date().isoformat(),
         "amount": float(data["amount"]) if data.get("amount") else None,
         "method": (data.get("method") or "").strip() or None,
@@ -223,13 +222,13 @@ def log_payment():
 # DASHBOARD SUMMARY
 # ═══════════════════════════════════════════════════
 
-@payments_bp.route("/api/payments/summary", methods=["GET"])
+@refcards_bp.route("/api/refcards/summary", methods=["GET"])
 @login_required
-def payment_summary():
+def refcards_summary():
     user_id = session["user_id"]
     today = datetime.now(IST).date()
 
-    bills = get("ref_cards", params={
+    cards = get("ref_cards", params={
         "user_id": f"eq.{user_id}",
         "status": "eq.active",
     }) or []
@@ -238,7 +237,7 @@ def payment_summary():
     upcoming = []
     overdue = []
 
-    for b in bills:
+    for b in cards:
         amt = b.get("amount") or 0
         cycle = b.get("billing_cycle") or ""
         if cycle == "monthly":
@@ -276,15 +275,14 @@ def payment_summary():
             except (ValueError, TypeError):
                 pass
 
-    # Count by category
     cat_counts = {}
-    for b in bills:
+    for b in cards:
         c = b.get("category", "Other")
         cat_counts[c] = cat_counts.get(c, 0) + 1
 
     return jsonify({
         "total_monthly": round(total_monthly, 2),
-        "active_cards": len(bills),
+        "active_cards": len(cards),
         "upcoming": sorted(upcoming, key=lambda x: x["days_until"]),
         "overdue": sorted(overdue, key=lambda x: x["days_until"]),
         "categories": cat_counts,
