@@ -856,12 +856,20 @@ def add_subtask():
     if not title:
         return jsonify({"error": "Subtask title required"}), 400
 
+    task_id = data.get("task_id")
+    project_id = data.get("project_id")
+
+    # IMPORTANT: Run this SQL in Supabase to fix FK (points to todo_matrix instead of project_tasks):
+    #   ALTER TABLE project_subtasks DROP CONSTRAINT project_subtasks_parent_task_id_fkey;
+    #   ALTER TABLE project_subtasks ADD CONSTRAINT project_subtasks_parent_task_id_fkey
+    #     FOREIGN KEY (parent_task_id) REFERENCES project_tasks(task_id) ON DELETE CASCADE;
+
     try:
         rows = post(
             "project_subtasks",
             {
-                "project_id": data["project_id"],
-                "parent_task_id": data["task_id"],
+                "project_id": project_id,
+                "parent_task_id": task_id,
                 "title": title,
                 "is_done": False,
             },
@@ -869,10 +877,8 @@ def add_subtask():
         if rows:
             return jsonify(rows[0])
     except Exception as e:
-        # 409 = unique constraint conflict — subtask with same title exists
-        if "409" in str(e):
-            return jsonify({"error": "A subtask with this title already exists"}), 409
-        raise
+        logger.error("Subtask add failed: %s", str(e))
+        return jsonify({"error": "Failed to add subtask. Check database constraints."}), 500
 
     return jsonify({"id": None, "title": title, "is_done": False})
 

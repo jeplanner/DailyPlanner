@@ -722,11 +722,11 @@ async function addSubtask() {
       body: JSON.stringify({ project_id: PROJECT_ID, task_id: _sheetTaskId, title }),
     });
 
-    if (res.status === 409) {
-      showToast("Subtask with this title already exists", "error");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to add subtask", "error");
       return;
     }
-    if (!res.ok) throw new Error();
 
     const st = await res.json();
     const list = _id("subtask-list");
