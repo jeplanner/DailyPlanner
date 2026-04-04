@@ -1,97 +1,143 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='v2/planner_v2.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <script defer src="{{ url_for('static', filename='v2/planner_v2.js') }}"></script>
 </head>
 <body>
-<div class="nav-icons">  {% include "_top_nav.html" %}  </div>
 
-<div class="top-bar">
+<!-- ═══════════ TOP NAV ═══════════ -->
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-
-  <div class="date-nav">
-    <button onclick="changeDate(-1)">‹</button>
-    <div id="current-date"></div>
-    <button onclick="changeDate(1)">›</button>
-    <button id="today-btn" class="today-btn">Today</button>
+<!-- ═══════════ HEADER BAR (Google Calendar style) ═══════════ -->
+<header class="gcal-header">
+  <div class="gcal-header-left">
+    <button class="gcal-today-btn" onclick="goToday()">Today</button>
+    <div class="gcal-nav-arrows">
+      <button onclick="changeDate(-1)" aria-label="Previous"><i data-feather="chevron-left"></i></button>
+      <button onclick="changeDate(1)" aria-label="Next"><i data-feather="chevron-right"></i></button>
+    </div>
+    <h2 class="gcal-title" id="header-title"></h2>
   </div>
 
-  <button id="new-event-btn">+ New Event</button>
-
-</div>
-<h3 style="margin-top:30px;">Day Summary</h3>
-<table id="summary-table">
-  <thead>
-    <tr>
-      <th>Time</th>
-      <th>Meeting</th>
-    </tr>
-  </thead>
-  <tbody></tbody>
-</table>
-<div id="floating-tasks"></div>
-<div class="smart-planner-box">
-  <div class="smart-header">
-    <h4>Smart Planner</h4>
-    <button onclick="runSmartPlanner()" class="primary-btn">
-      Generate
+  <div class="gcal-header-right">
+    <div class="gcal-view-switcher">
+      <button class="view-btn active" data-view="day" onclick="setView('day')">Day</button>
+      <button class="view-btn" data-view="3day" onclick="setView('3day')">3 Day</button>
+      <button class="view-btn" data-view="week" onclick="setView('week')">Week</button>
+    </div>
+    <button class="gcal-create-btn" onclick="openCreateModal()" id="new-event-btn">
+      <i data-feather="plus"></i>
+      <span>Create</span>
     </button>
   </div>
+</header>
 
-  <textarea id="smart-input" placeholder="Example:
-  7-8 Breakfast
-  10-11 Standup
-  15.00-16.00 Architects Sync"></textarea>
-  </div>
-<div class="planner-wrapper">
-  <div class="time-gutter" id="time-gutter"></div>
-  <div id="timeline"></div>
+<!-- ═══════════ MAIN LAYOUT ═══════════ -->
+<div class="gcal-layout">
+
+  <!-- ── Sidebar ── -->
+  <aside class="gcal-sidebar" id="sidebar">
+    <!-- Mini Calendar -->
+    <div class="mini-cal" id="mini-cal"></div>
+
+    <!-- Smart Planner -->
+    <div class="smart-planner-box">
+      <div class="smart-header">
+        <span class="smart-label">Quick Add</span>
+        <button onclick="runSmartPlanner()" class="smart-go-btn">
+          <i data-feather="zap" style="width:14px;height:14px"></i>
+        </button>
+      </div>
+      <textarea id="smart-input" rows="3" placeholder="7-8 Breakfast&#10;10-11 Standup&#10;15-16 Design Review"></textarea>
+    </div>
+
+    <!-- Floating Tasks (unscheduled project tasks) -->
+    <div class="sidebar-section">
+      <h4 class="sidebar-section-title">
+        <i data-feather="inbox" style="width:14px;height:14px"></i>
+        Unscheduled Tasks
+      </h4>
+      <div id="floating-tasks"></div>
+    </div>
+  </aside>
+
+  <!-- ── Calendar Grid ── -->
+  <main class="gcal-main">
+    <!-- All-day row -->
+    <div class="gcal-allday-row" id="allday-row">
+      <div class="gcal-gutter-header"></div>
+      <div class="gcal-allday-cells" id="allday-cells"></div>
+    </div>
+
+    <!-- Column Headers (day names) -->
+    <div class="gcal-col-headers" id="col-headers">
+      <div class="gcal-gutter-header"></div>
+      <div class="gcal-day-headers" id="day-headers"></div>
+    </div>
+
+    <!-- Scrollable time grid -->
+    <div class="gcal-scroll" id="gcal-scroll">
+      <div class="gcal-grid">
+        <div class="gcal-gutter" id="time-gutter"></div>
+        <div class="gcal-columns" id="gcal-columns"></div>
+      </div>
+    </div>
+  </main>
 </div>
 
-
+<!-- ═══════════ EVENT MODAL ═══════════ -->
 <div id="modal" class="modal-overlay hidden">
-  <div class="modal-card modern">
-
-    <!-- Header -->
+  <div class="modal-card">
     <div class="modal-header">
       <h3 id="modal-title">New Event</h3>
-      <button class="close-btn" onclick="closeModal()">✕</button>
+      <button class="modal-close" onclick="closeModal()">
+        <i data-feather="x"></i>
+      </button>
     </div>
 
-    <!-- Conflict Section -->
+    <!-- Conflict alert -->
     <div id="conflict-section" class="conflict-box" style="display:none;">
-      <h4>Time Conflict</h4>
-      <div id="conflict-list"></div>
+      <div class="conflict-icon"><i data-feather="alert-triangle"></i></div>
+      <div>
+        <strong>Time Conflict</strong>
+        <div id="conflict-list"></div>
+      </div>
       <div class="conflict-actions">
-        <button id="accept-conflict" class="primary-btn">Accept Anyway</button>
-        <button onclick="hideConflict()" class="secondary-btn">Cancel</button>
+        <button id="accept-conflict" class="btn btn-sm btn-primary">Accept Anyway</button>
+        <button onclick="hideConflict()" class="btn btn-sm btn-ghost">Cancel</button>
       </div>
     </div>
 
-    <!-- Time Row -->
-    <div class="form-row">
+    <!-- Time controls -->
+    <div class="modal-time-row">
       <div class="form-group">
         <label>Start</label>
-        <input type="time" id="start-time" step="300">
+        <input type="time" id="start-time" step="300" class="form-input">
       </div>
-
       <div class="form-group">
         <label>Duration</label>
-        <select id="duration">
-          <option value="15">15m</option>
-          <option value="30" selected>30m</option>
-          <option value="45">45m</option>
-          <option value="60">1h</option>
-          <option value="90">1.5h</option>
-          <option value="120">2h</option>
+        <select id="duration" class="form-input">
+          <option value="15">15 min</option>
+          <option value="30" selected>30 min</option>
+          <option value="45">45 min</option>
+          <option value="60">1 hour</option>
+          <option value="90">1.5 hours</option>
+          <option value="120">2 hours</option>
         </select>
       </div>
-
       <div class="form-group">
         <label>Priority</label>
-        <select id="event-priority">
+        <select id="event-priority" class="form-input">
           <option value="low">Low</option>
           <option value="medium" selected>Medium</option>
           <option value="high">High</option>
@@ -101,131 +147,139 @@
 
     <div id="end-display" class="end-preview"></div>
 
-   <div class="form-row">
     <div class="form-group">
       <label>Title</label>
-      <input type="text" id="event-title" placeholder="Meeting with team">
+      <input type="text" id="event-title" class="form-input" placeholder="Add title">
     </div>
 
     <div class="form-group">
       <label>Description</label>
-      <textarea id="event-desc" placeholder="Optional notes..."></textarea>
-    </div>
-  </div>
-<div class="form-group">
-  <label>Reminder</label>
-  <div class="reminder-row">
-    <select id="reminder-select" onchange="handleReminderSelect()">
-      <option value="0">No reminder</option>
-      <option value="5">5 mins before</option>
-      <option value="10">10 mins before</option>
-      <option value="15">15 mins before</option>
-      <option value="30">30 mins before</option>
-      <option value="60">1 hour before</option>
-      <option value="custom">Custom</option>
-    </select>
-
-    <input
-      type="number"
-      id="custom-reminder"
-      placeholder="Minutes"
-      min="1"
-      style="display:none;">
-  </div>
-</div>
-    <!-- Actions -->
-    <div class="modal-actions modern-actions">
-      <button class="primary-btn" onclick="saveEvent()">Save</button>
-      <button class="danger-btn" onclick="deleteEvent()">Delete</button>
+      <textarea id="event-desc" class="form-input" rows="2" placeholder="Add description"></textarea>
     </div>
 
+    <div class="form-group">
+      <label>Reminder</label>
+      <div class="reminder-row">
+        <select id="reminder-select" onchange="handleReminderSelect()" class="form-input">
+          <option value="0">No reminder</option>
+          <option value="5">5 min before</option>
+          <option value="10" selected>10 min before</option>
+          <option value="15">15 min before</option>
+          <option value="30">30 min before</option>
+          <option value="60">1 hour before</option>
+          <option value="custom">Custom</option>
+        </select>
+        <input type="number" id="custom-reminder" class="form-input" placeholder="Minutes" min="1" style="display:none;width:100px;">
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="saveEvent()">
+        <i data-feather="check" style="width:16px;height:16px"></i> Save
+      </button>
+      <button class="btn btn-danger" onclick="deleteEvent()" id="delete-btn" style="display:none;">
+        <i data-feather="trash-2" style="width:16px;height:16px"></i> Delete
+      </button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    </div>
   </div>
 </div>
 
-
- <div id="task-card-modal" class="hidden">
-  <div class="task-card">
-
-    <h2>Project Task</h2>
+<!-- ═══════════ PROJECT TASK MODAL ═══════════ -->
+<div id="task-card-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3>Project Task</h3>
+      <button class="modal-close" onclick="closeTaskCard()">
+        <i data-feather="x"></i>
+      </button>
+    </div>
 
     <div class="task-grid">
-
       <div class="full">
         <label>Title</label>
-        <input id="task-title">
+        <input id="task-title" class="form-input">
       </div>
-
       <div class="full">
         <label>Description</label>
-        <textarea id="task-description"></textarea>
+        <textarea id="task-description" class="form-input" rows="2"></textarea>
       </div>
-
       <div>
         <label>Status</label>
-        <select id="task-status">
+        <select id="task-status" class="form-input">
           <option value="open">Open</option>
           <option value="in_progress">In Progress</option>
           <option value="done">Done</option>
         </select>
       </div>
-
       <div>
         <label>Priority</label>
-        <select id="task-priority">
+        <select id="task-priority" class="form-input">
           <option value="low">Low</option>
           <option value="medium">Medium</option>
           <option value="high">High</option>
         </select>
       </div>
-
       <div>
         <label>Planned Hours</label>
-        <div class="number-control" data-target="task-planned-hours" data-step="0.5">
+        <div class="number-control">
           <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
-          <input id="task-planned-hours" type="number" step="0.5" value="0">
+          <input id="task-planned-hours" type="number" step="0.5" value="0" class="form-input">
           <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
         </div>
       </div>
-
       <div>
         <label>Actual Hours</label>
-        <div class="number-control" data-target="task-actual-hours" data-step="0.5">
+        <div class="number-control">
           <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
-          <input id="task-actual-hours" type="number" step="0.5" value="0">
+          <input id="task-actual-hours" type="number" step="0.5" value="0" class="form-input">
           <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
         </div>
       </div>
-
       <div>
         <label>Duration (days)</label>
-        <div class="number-control" data-target="task-duration" data-step="1">
+        <div class="number-control">
           <button type="button" onclick="adjustTaskNumber(this,-1)">−</button>
-          <input id="task-duration" type="number" step="1" value="0">
+          <input id="task-duration" type="number" step="1" value="0" class="form-input">
           <button type="button" onclick="adjustTaskNumber(this,1)">+</button>
         </div>
       </div>
-
       <div>
         <label>Due Date</label>
-        <input id="task-due-date" type="date">
+        <input id="task-due-date" type="date" class="form-input">
       </div>
-
       <div>
         <label>Start Time</label>
-        <input id="task-start-time" type="time">
+        <input id="task-start-time" type="time" class="form-input">
       </div>
-
     </div>
 
-    <div class="task-card-actions">
-      <button class="primary-btn" onclick="saveTaskCard()">Save</button>
-      <button class="secondary-btn" onclick="closeTaskCard()">Cancel</button>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="saveTaskCard()">Save</button>
+      <button class="btn btn-ghost" onclick="closeTaskCard()">Cancel</button>
     </div>
-
-
-</div>
+  </div>
 </div>
 
+<!-- ═══════════ EVENT POPOVER (quick view on click) ═══════════ -->
+<div id="event-popover" class="event-popover hidden">
+  <div class="popover-header">
+    <span class="popover-color-dot" id="popover-dot"></span>
+    <strong id="popover-title"></strong>
+    <button class="popover-close" onclick="closePopover()"><i data-feather="x"></i></button>
+  </div>
+  <div class="popover-time" id="popover-time"></div>
+  <div class="popover-desc" id="popover-desc"></div>
+  <div class="popover-actions">
+    <button class="btn btn-sm btn-ghost" onclick="editFromPopover()">
+      <i data-feather="edit-2" style="width:14px;height:14px"></i> Edit
+    </button>
+    <button class="btn btn-sm btn-ghost" onclick="deleteFromPopover()">
+      <i data-feather="trash-2" style="width:14px;height:14px"></i> Delete
+    </button>
+  </div>
+</div>
 
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
 </body>
 </html>

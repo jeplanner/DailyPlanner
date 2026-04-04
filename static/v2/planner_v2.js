@@ -1,22 +1,61 @@
-const HOUR_HEIGHT = 100;
-const SNAP = 5;
+"use strict";
 
-let events = [];
-let selected = null;
-let currentDate = new Date().toISOString().split("T")[0];
+/* ═══════════════════════════════════════════════════════════════════
+   PLANNER V2 — Google Calendar-style Day / 3-Day / Week planner
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ──────────────────────────
+   CONSTANTS
+   ────────────────────────── */
+const HOUR_HEIGHT = 60;   // px per hour
+const SNAP = 5;           // 5-minute snap grid
+const TOTAL_HOURS = 24;
+const GRID_HEIGHT = HOUR_HEIGHT * TOTAL_HOURS;
+
+/* ──────────────────────────
+   STATE
+   ────────────────────────── */
+let currentDate = getISTDate();          // YYYY-MM-DD anchor
+let currentView = "day";                 // "day" | "3day" | "week"
+let eventsMap = new Map();               // date-string -> array of events
+let floatingTasks = [];
+let selected = null;                     // event being edited
+let popoverEvent = null;                 // event shown in popover
 let draggedTask = null;
 let snapLine = null;
+
+// Drag-to-create state
 let creatingEvent = false;
 let pendingCreate = false;
 let createStartY = 0;
 let createStartX = 0;
+let createColDate = null;
 let ghostEvent = null;
-/* =========================
-   TIME HELPERS
-========================= */
+
+// Mini-cal state
+let miniCalMonth = null;   // Date object for displayed month
+let miniCalYear = null;
+
+// Current-time timer
+let timeLineInterval = null;
+
+/* ══════════════════════════════════════════════════════════════
+   1. TIME / DATE HELPERS
+   ══════════════════════════════════════════════════════════════ */
+
+function getISTNow() {
+  return new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+  );
+}
+
+function getISTDate() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
 function formatTime(t) {
   if (!t) return "";
-  return t.slice(0, 5); // removes seconds safely
+  return t.slice(0, 5);
 }
 
 function minutes(t) {
@@ -25,6 +64,7 @@ function minutes(t) {
 }
 
 function toTime(mins) {
+  mins = Math.max(0, Math.min(1439, mins));
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -33,362 +73,425 @@ function toTime(mins) {
 function calculateEndTime(start, duration) {
   return toTime(minutes(start) + parseInt(duration));
 }
+
 function normalizeDuration(mins) {
-
   const allowed = [15, 30, 45, 60, 90, 120];
-
-  for (let d of allowed) {
+  for (const d of allowed) {
     if (mins <= d) return d;
   }
-
   return 120;
 }
-/* =========================
-   LOAD DATA
-========================= */
 
-async function loadEvents() {
-  const eventRes = await fetch(`/api/v2/events?date=${currentDate}`);
-  const taskRes = await fetch(`/api/v2/project-tasks?date=${currentDate}`);
-
-  const eventData = await eventRes.json();
-  const taskData = await taskRes.json();
-
-  // All project tasks stay in floating section
-  const floatingTasks = taskData;
-
-  // Only those with start_time go to calendar
-  const timedTasks = taskData.filter(t => t.start_time);
-
-
-  events = [
-    ...eventData.map(e => ({
-      ...e,
-      type: "event"
-    })),
-    ...timedTasks.map(t => ({
-      ...t,
-      task_id: t.task_id,                  // 🔥 critical
-      title: t.task_text,
-      end_time: calculateEndTime(t.start_time, 30),
-      type: "project"
-    }))
-  ];
-
-  render();
-  renderFloatingTasks(floatingTasks);
-  renderSummary();
+function formatHour(hour) {
+  if (hour === 0) return "12 AM";
+  if (hour < 12) return `${hour} AM`;
+  if (hour === 12) return "12 PM";
+  return `${hour - 12} PM`;
 }
 
-function normalizeProjectTask(t) {
-  return {
-    task_id: t.task_id,
-    title: t.task_text,
-    start_time: t.start_time,
-    end_time: calculateEndTime(t.start_time, 30),
-    type: "project",
-    raw: t
-  };
+function formatTimeRange(start, end) {
+  return `${formatTime12(start)} - ${formatTime12(end)}`;
 }
 
-function hasConflict(ev, list) {
-  return list.some(other =>
-    other !== ev &&
-    !(minutes(ev.end_time) <= minutes(other.start_time) ||
-      minutes(ev.start_time) >= minutes(other.end_time))
-  );
-}
-function getConflicts(event, allEvents) {
-  return allEvents.filter(ev => {
-    if (ev === event) return false;
-
-    return (
-      minutes(ev.start_time) < minutes(event.end_time) &&
-      minutes(ev.end_time) > minutes(event.start_time)
-    );
-  });
+function formatTime12(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const ampm = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 || 12;
+  return m === 0 ? `${h12} ${ampm}` : `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-function renderSummary() {
-  const tbody = document.querySelector("#summary-table tbody");
-  if (!tbody) return;
+/** Parse "YYYY-MM-DD" into a local Date (no timezone shift). */
+function parseLocalDate(str) {
+  const [y, m, d] = str.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
 
-  tbody.innerHTML = "";
+/** Format a Date to "YYYY-MM-DD". */
+function dateToStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
-  if (!events.length) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="2" style="opacity:.6;">No events for this day</td>
-      </tr>
-    `;
-    return;
+/** Add days to a YYYY-MM-DD string, return new YYYY-MM-DD. */
+function addDays(dateStr, n) {
+  const d = parseLocalDate(dateStr);
+  d.setDate(d.getDate() + n);
+  return dateToStr(d);
+}
+
+/** Get Monday of the week containing dateStr. */
+function getMonday(dateStr) {
+  const d = parseLocalDate(dateStr);
+  const day = d.getDay(); // 0=Sun
+  const diff = (day === 0 ? -6 : 1 - day);
+  d.setDate(d.getDate() + diff);
+  return dateToStr(d);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   2. VISIBLE DATES CALCULATION
+   ══════════════════════════════════════════════════════════════ */
+
+function getVisibleDates() {
+  if (currentView === "day") {
+    return [currentDate];
   }
-
-  const sorted = [...events].sort(
-    (a, b) => minutes(a.start_time) - minutes(b.start_time)
-  );
-
-  sorted.forEach(ev => {
-    const row = document.createElement("tr");
-    row.classList.add("summary-row");
-
-    const conflicts = getConflicts(ev, sorted);
-
-    if (conflicts.length) {
-      row.classList.add("summary-conflict");
-    }
-
-    row.innerHTML = `
-      <td>
-        ${formatTime(ev.start_time)} – ${formatTime(ev.end_time)}
-        ${conflicts.length ? `<span class="conflict-pill">Conflict</span>` : ""}
-      </td>
-      <td>
-        ${ev.task_text || ev.title}
-        ${
-          conflicts.length
-            ? `<div class="conflict-detail">
-                 ⚠ Conflicts with:
-                 ${conflicts
-                   .map(c => `${formatTime(c.start_time)} (${c.task_text || c.title})`)
-                   .join(", ")}
-               </div>`
-            : ""
-        }
-      </td>
-    `;
-
-    tbody.appendChild(row);
-  });
+  if (currentView === "3day") {
+    return [currentDate, addDays(currentDate, 1), addDays(currentDate, 2)];
+  }
+  // week: Mon-Sun
+  const monday = getMonday(currentDate);
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
+    dates.push(addDays(monday, i));
+  }
+  return dates;
 }
 
-function handleReminderSelect() {
-  const select = document.getElementById("reminder-select");
-  const custom = document.getElementById("custom-reminder");
+/* ══════════════════════════════════════════════════════════════
+   3. VIEW SWITCHING / NAVIGATION
+   ══════════════════════════════════════════════════════════════ */
 
-  if (select.value === "custom") {
-    custom.style.display = "block";
+function setView(view) {
+  currentView = view;
+
+  // Update button active state
+  document.querySelectorAll(".view-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.view === view);
+  });
+
+  // Set body data attribute for CSS
+  document.body.dataset.view = view;
+
+  buildGrid();
+  loadAllEvents();
+}
+
+function changeDate(delta) {
+  if (currentView === "day") {
+    currentDate = addDays(currentDate, delta);
+  } else if (currentView === "3day") {
+    currentDate = addDays(currentDate, delta * 3);
   } else {
-    custom.style.display = "none";
+    currentDate = addDays(currentDate, delta * 7);
+  }
+  buildGrid();
+  loadAllEvents();
+}
+
+function goToday() {
+  currentDate = getISTDate();
+  buildGrid();
+  loadAllEvents();
+  setTimeout(scrollToNow, 300);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   4. HEADER TITLE
+   ══════════════════════════════════════════════════════════════ */
+
+function updateHeaderTitle() {
+  const el = document.getElementById("header-title");
+  if (!el) return;
+
+  const d = parseLocalDate(currentDate);
+  const months = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"];
+  const monthsShort = ["Jan","Feb","Mar","Apr","May","Jun",
+                       "Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  if (currentView === "day") {
+    el.textContent = `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+  } else if (currentView === "3day") {
+    const end = parseLocalDate(addDays(currentDate, 2));
+    if (d.getMonth() === end.getMonth()) {
+      el.textContent = `${monthsShort[d.getMonth()]} ${d.getDate()} - ${end.getDate()}, ${d.getFullYear()}`;
+    } else {
+      el.textContent = `${monthsShort[d.getMonth()]} ${d.getDate()} - ${monthsShort[end.getMonth()]} ${end.getDate()}, ${d.getFullYear()}`;
+    }
+  } else {
+    el.textContent = `${monthsShort[d.getMonth()]} ${d.getFullYear()}`;
   }
 }
 
-function getReminderMinutes() {
-  const select = document.getElementById("reminder-select");
-  const custom = document.getElementById("custom-reminder");
+/* ══════════════════════════════════════════════════════════════
+   5. GRID BUILDING (columns, headers, time gutter)
+   ══════════════════════════════════════════════════════════════ */
 
-  if (select.value === "custom") {
-    return parseInt(custom.value || 0);
-  }
-
-  return parseInt(select.value);
-}
-/* =========================
-   RENDER TIMELINE
-========================= */
-function render() {
-  const root = document.getElementById("timeline");
-  root.innerHTML = "";
-
-  renderTimeGrid();
-  renderCurrentTimeLine(root);
-
-  const positioned = computeLayout(events);
-
-  positioned.forEach(ev => {
-    const div = document.createElement("div");
-    div.className = "event";
-    const TIMELINE_LEFT_PADDING = 12; // px
-    div.style.top = ev.top + "px";
-    div.style.height = ev.height + "px";
-    div.style.left = `calc(${ev.left}% + ${TIMELINE_LEFT_PADDING}px)`;
-    div.style.width = `calc(${ev.width}% - ${TIMELINE_LEFT_PADDING}px)`;
-
-    div.dataset.id = ev.id;
-
-    if (ev.type === "project") div.classList.add("project-event");
-    div.classList.add(`p-${ev.priority || "medium"}`);
-
-   div.innerHTML = `
-      <div class="event-actions">
-
-    <div class="event-line">
-      <span class="event-title-text">
-        ${ev.task_text || ev.title}
-      </span>
-
-      <span class="event-time-inline">
-        (${formatTime(ev.start_time).replace(":", ".")} - ${formatTime(ev.end_time).replace(":", ".")})
-      </span>
-      </div>
-
-        <button class="gcal-btn">📅</button>
-
-      </div>
-
-    <div class="event-description">
-      ${ev.description || ""}
-    </div>
-    `;
-    const gbtn = div.querySelector(".gcal-btn");
-
-    gbtn.addEventListener("click", (e) => {
-      e.stopPropagation(); // prevents modal
-      addToGoogleCalendar(ev);
-    });
-  
-    div.addEventListener("click", (e) => {
-      if (e.target.classList.contains("resize-handle")) return;
-
-      if (ev.type === "project") {
-        openTaskCard(ev.task_id);
-      } else {
-        openModal(ev);
-      }
-    });
-
-    div.draggable = true;
-    div.ondragstart = () => {
-      draggedTask = ev;
-    };
-
-    // Touch drag to move event on mobile
-    attachCalendarEventTouchDrag(div, ev);
-
-    const resizeHandle = document.createElement("div");
-    resizeHandle.className = "resize-handle";
-    div.appendChild(resizeHandle);
-
-    resizeHandle.addEventListener("mousedown", e => {
-      e.stopPropagation();
-      startResize(e, ev);
-    });
-
-    root.appendChild(div);
-  });
-}
-
-async function openTaskCard(taskId) {
-  selected = { task_id: taskId };   // 🔥 CRITICAL
-  const res = await fetch(`/api/v2/project-tasks/${taskId}`);
-  const task = await res.json();
-
-  // populate your full project task modal fields
-
-  document.getElementById("task-title").value = task.task_text;
-  document.getElementById("task-description").value = task.notes || "";
-  document.getElementById("task-planned-hours").value = task.planned_hours || 0;
-  document.getElementById("task-actual-hours").value = task.actual_hours || 0;
-  document.getElementById("task-status").value = task.status;
-  document.getElementById("task-priority").value = task.priority;
-  document.getElementById("task-duration").value = task.duration_days || 0;
-  document.getElementById("task-due-date").value = task.due_date || "";
-  document.getElementById("task-start-time").value = task.start_time || "";
-
-  document.getElementById("task-card-modal")
-  .classList.add("show");
-
-
-}
-function getISTNow() {
-  return new Date(
-    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
-  );
-}
-function getISTDate() {
-  return new Date().toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Kolkata'
-  });
-}
-
-function renderCurrentTimeLine(root) {
-  const now = getISTNow();
+function buildGrid() {
+  const dates = getVisibleDates();
   const today = getISTDate();
 
-  if (currentDate !== today) return;
-
-  const minutesNow = now.getHours() * 60 + now.getMinutes();
-  const top = (minutesNow / 60) * HOUR_HEIGHT;
-
-  const line = document.createElement("div");
-  line.className = "current-time-line";
-  line.style.top = top + "px";
-
-  root.appendChild(line);
+  updateHeaderTitle();
+  buildDayHeaders(dates, today);
+  buildTimeGutter();
+  buildColumns(dates, today);
+  renderMiniCal();
 }
 
-/* =========================
-   LAYOUT ENGINE
-========================= */
-function computeLayout(events) {
-  const GAP_PX = 8;
+function buildDayHeaders(dates, today) {
+  const container = document.getElementById("day-headers");
+  if (!container) return;
 
-  const enriched = events.map(ev => {
-    const start = minutes(ev.start_time);
-    const end = minutes(ev.end_time);
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-    return {
-      ...ev,
-      start,
-      end,
-      top: (start / 60) * HOUR_HEIGHT,
-      height: ((end - start) / 60) * HOUR_HEIGHT
-    };
+  container.innerHTML = dates.map(ds => {
+    const d = parseLocalDate(ds);
+    const isToday = ds === today;
+    return `<div class="gcal-day-header ${isToday ? "today" : ""}" data-date="${ds}">
+      <span class="day-name">${dayNames[d.getDay()]}</span>
+      <span class="day-number ${isToday ? "today-number" : ""}">${d.getDate()}</span>
+    </div>`;
+  }).join("");
+}
+
+function buildTimeGutter() {
+  const gutter = document.getElementById("time-gutter");
+  if (!gutter) return;
+
+  gutter.innerHTML = "";
+  gutter.style.height = GRID_HEIGHT + "px";
+
+  for (let hour = 0; hour < TOTAL_HOURS; hour++) {
+    const label = document.createElement("div");
+    label.className = "hour-label";
+    label.style.top = (hour * HOUR_HEIGHT) + "px";
+    label.textContent = hour === 0 ? "" : formatHour(hour);
+    gutter.appendChild(label);
+  }
+}
+
+function buildColumns(dates, today) {
+  const container = document.getElementById("gcal-columns");
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  dates.forEach(ds => {
+    const col = document.createElement("div");
+    col.className = "gcal-day-col";
+    col.dataset.date = ds;
+    if (ds === today) col.classList.add("today");
+
+    col.style.height = GRID_HEIGHT + "px";
+
+    // Hour lines
+    for (let hour = 0; hour < TOTAL_HOURS; hour++) {
+      const line = document.createElement("div");
+      line.className = "hour-line";
+      line.style.top = (hour * HOUR_HEIGHT) + "px";
+      col.appendChild(line);
+    }
+
+    // Drag-and-drop listeners (desktop)
+    col.addEventListener("dragover", onColumnDragOver);
+    col.addEventListener("dragleave", onColumnDragLeave);
+    col.addEventListener("drop", onColumnDrop);
+
+    // Drag-to-create (pointer)
+    col.addEventListener("pointerdown", onColumnPointerDown);
+
+    container.appendChild(col);
   });
 
-  enriched.sort((a, b) => a.start - b.start);
+  // Render the current-time line
+  renderCurrentTimeLine();
+}
 
-  const clusters = [];
+/* ══════════════════════════════════════════════════════════════
+   6. DATA LOADING
+   ══════════════════════════════════════════════════════════════ */
+
+async function loadAllEvents() {
+  const dates = getVisibleDates();
+  eventsMap.clear();
+
+  // Fetch all dates in parallel
+  const fetches = dates.map(async (ds) => {
+    const [evRes, taskRes] = await Promise.all([
+      fetch(`/api/v2/events?date=${ds}`),
+      fetch(`/api/v2/project-tasks?date=${ds}`)
+    ]);
+
+    const eventData = await evRes.json();
+    const taskData = await taskRes.json();
+
+    const timedTasks = taskData.filter(t => t.start_time);
+
+    const combined = [
+      ...eventData.map(e => ({ ...e, type: "event" })),
+      ...timedTasks.map(t => ({
+        ...t,
+        task_id: t.task_id,
+        title: t.task_text,
+        end_time: calculateEndTime(t.start_time, t.duration_minutes || 30),
+        type: "project",
+        priority: t.priority || "medium"
+      }))
+    ];
+
+    eventsMap.set(ds, combined);
+
+    // Collect floating tasks only for the anchor date
+    if (ds === currentDate) {
+      floatingTasks = taskData;
+    }
+  });
+
+  await Promise.all(fetches);
+  renderAllColumns();
+  renderFloatingTasks(floatingTasks);
+  renderMiniCal();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   7. EVENT RENDERING
+   ══════════════════════════════════════════════════════════════ */
+
+function renderAllColumns() {
+  const dates = getVisibleDates();
+
+  dates.forEach(ds => {
+    const col = document.querySelector(`.gcal-day-col[data-date="${ds}"]`);
+    if (!col) return;
+
+    // Remove old event chips
+    col.querySelectorAll(".event-chip").forEach(c => c.remove());
+
+    const dayEvents = eventsMap.get(ds) || [];
+    if (!dayEvents.length) return;
+
+    const positioned = computeLayout(dayEvents);
+
+    positioned.forEach(ev => {
+      const chip = document.createElement("div");
+      chip.className = "event-chip";
+      chip.dataset.id = ev.id || ev.task_id;
+      chip.dataset.type = ev.type;
+
+      // Priority class
+      if (ev.type === "project") {
+        chip.classList.add("p-project");
+      } else {
+        chip.classList.add(`p-${ev.priority || "medium"}`);
+      }
+
+      // Position
+      chip.style.top = ev.top + "px";
+      chip.style.height = Math.max(ev.height, 18) + "px";
+      chip.style.left = `calc(${ev.left}% + 2px)`;
+      chip.style.width = `calc(${ev.width}% - 4px)`;
+
+      // Content
+      const timeStr = formatTime(ev.start_time);
+      const title = ev.task_text || ev.title || "";
+      const isSmall = ev.height < 36;
+
+      if (isSmall) {
+        chip.innerHTML = `<span class="chip-title">${timeStr} ${title}</span>`;
+      } else {
+        chip.innerHTML = `
+          <div class="chip-time">${timeStr}</div>
+          <div class="chip-title">${title}</div>
+        `;
+      }
+
+      // Click -> popover
+      chip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        showPopover(ev, chip, ds);
+      });
+
+      // Drag to move (desktop)
+      chip.draggable = true;
+      chip.addEventListener("dragstart", (e) => {
+        draggedTask = { ...ev, _sourceDate: ds };
+        e.dataTransfer.effectAllowed = "move";
+        // Make chip semi-transparent during drag
+        setTimeout(() => chip.style.opacity = "0.4", 0);
+      });
+      chip.addEventListener("dragend", () => {
+        chip.style.opacity = "";
+      });
+
+      // Touch drag for mobile
+      attachChipTouchDrag(chip, ev, ds);
+
+      col.appendChild(chip);
+    });
+  });
+
+  // Re-render current time line
+  renderCurrentTimeLine();
+}
+
+/* ──────────────────────────
+   Layout Engine (overlap columns)
+   ────────────────────────── */
+function computeLayout(events) {
+  if (!events.length) return [];
+
+  const enriched = events
+    .filter(ev => ev.start_time)
+    .map(ev => {
+      const start = minutes(ev.start_time);
+      const end = minutes(ev.end_time);
+      return {
+        ...ev,
+        _start: start,
+        _end: end,
+        top: (start / 60) * HOUR_HEIGHT,
+        height: ((end - start) / 60) * HOUR_HEIGHT
+      };
+    });
+
+  enriched.sort((a, b) => a._start - b._start || a._end - b._end);
 
   // Build overlap clusters
+  const clusters = [];
   enriched.forEach(ev => {
     let placed = false;
-
-    for (let cluster of clusters) {
-      if (cluster.some(e => !(ev.end <= e.start || ev.start >= e.end))) {
+    for (const cluster of clusters) {
+      if (cluster.some(e => !(ev._end <= e._start || ev._start >= e._end))) {
         cluster.push(ev);
         placed = true;
         break;
       }
     }
-
     if (!placed) clusters.push([ev]);
   });
 
-  // Assign columns inside each cluster
+  // Assign columns within each cluster
   clusters.forEach(cluster => {
     const columns = [];
-
     cluster.forEach(ev => {
       let placed = false;
-
       for (let i = 0; i < columns.length; i++) {
         const last = columns[i][columns[i].length - 1];
-        if (ev.start >= last.end) {
+        if (ev._start >= last._end) {
           columns[i].push(ev);
-          ev.col = i;
+          ev._col = i;
           placed = true;
           break;
         }
       }
-
       if (!placed) {
         columns.push([ev]);
-        ev.col = columns.length - 1;
+        ev._col = columns.length - 1;
       }
     });
 
     const totalCols = columns.length;
-
     cluster.forEach(ev => {
-      ev.totalCols = totalCols;
-
       if (totalCols === 1) {
         ev.width = 100;
         ev.left = 0;
       } else {
         ev.width = 100 / totalCols;
-        ev.left = ev.col * ev.width;
+        ev.left = ev._col * ev.width;
       }
     });
   });
@@ -396,72 +499,815 @@ function computeLayout(events) {
   return enriched;
 }
 
-function changeDate(offset) {
-  const date = new Date(currentDate);
-  date.setDate(date.getDate() + offset);
+/* ══════════════════════════════════════════════════════════════
+   8. CURRENT TIME LINE
+   ══════════════════════════════════════════════════════════════ */
 
-  currentDate = date.toISOString().split("T")[0];
+function renderCurrentTimeLine() {
+  // Remove existing
+  document.querySelectorAll(".current-time-line").forEach(el => el.remove());
 
-  updateDateHeader();
-  loadEvents();
+  const today = getISTDate();
+  const col = document.querySelector(`.gcal-day-col[data-date="${today}"]`);
+  if (!col) return;
+
+  const now = getISTNow();
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+  const top = (minutesNow / 60) * HOUR_HEIGHT;
+
+  const line = document.createElement("div");
+  line.className = "current-time-line";
+  line.style.top = top + "px";
+
+  // Red dot
+  const dot = document.createElement("div");
+  dot.className = "current-time-dot";
+  line.appendChild(dot);
+
+  col.appendChild(line);
 }
-function updateDateHeader() {
-  const el = document.getElementById("current-date");
-  if (!el) return;
 
-  // Parse manually to avoid UTC→local timezone shift
-  const [y, m, d] = currentDate.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  const isToday = currentDate === getISTDate();
-  el.textContent = date.toDateString() + (isToday ? " — Today" : "");
+function startTimeLineUpdater() {
+  if (timeLineInterval) clearInterval(timeLineInterval);
+  timeLineInterval = setInterval(renderCurrentTimeLine, 60000);
 }
-function openProjectTaskModal(task) {
-  selected = { ...task, type: "project" };
 
-  document.getElementById("modal-title").innerText = "Project Task";
+/* ══════════════════════════════════════════════════════════════
+   9. AUTO-SCROLL
+   ══════════════════════════════════════════════════════════════ */
 
-  document.getElementById("start-time").value = task.start_time || "";
-  document.getElementById("duration").value = 30;
+function scrollToNow() {
+  const scroll = document.getElementById("gcal-scroll");
+  if (!scroll) return;
+  const now = getISTNow();
+  const top = (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT;
+  scroll.scrollTo({ top: Math.max(0, top - 200), behavior: "smooth" });
+}
 
-  document.getElementById("event-title").value = task.task_text || "";
-  document.getElementById("event-desc").value = task.description || "";
+function scrollTo7AM() {
+  const scroll = document.getElementById("gcal-scroll");
+  if (!scroll) return;
+  scroll.scrollTop = 7 * HOUR_HEIGHT - 20;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   10. MINI CALENDAR
+   ══════════════════════════════════════════════════════════════ */
+
+function renderMiniCal() {
+  const container = document.getElementById("mini-cal");
+  if (!container) return;
+
+  const anchor = parseLocalDate(currentDate);
+  if (miniCalMonth === null) {
+    miniCalMonth = anchor.getMonth();
+    miniCalYear = anchor.getFullYear();
+  }
+
+  const today = getISTDate();
+  const dayNames = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+
+  // First day of month
+  const first = new Date(miniCalYear, miniCalMonth, 1);
+  let startDay = first.getDay(); // 0=Sun
+  startDay = startDay === 0 ? 6 : startDay - 1; // Convert to Mon=0
+
+  const daysInMonth = new Date(miniCalYear, miniCalMonth + 1, 0).getDate();
+
+  const monthNames = ["January","February","March","April","May","June",
+                      "July","August","September","October","November","December"];
+
+  let html = `<div class="mini-cal-header">
+    <button class="mini-cal-nav" onclick="miniCalNav(-1)"><i data-feather="chevron-left"></i></button>
+    <span class="mini-cal-title">${monthNames[miniCalMonth]} ${miniCalYear}</span>
+    <button class="mini-cal-nav" onclick="miniCalNav(1)"><i data-feather="chevron-right"></i></button>
+  </div>`;
+
+  html += `<div class="mini-cal-grid">`;
+  dayNames.forEach(dn => {
+    html += `<div class="mini-cal-dayname">${dn}</div>`;
+  });
+
+  // Empty cells before first day
+  for (let i = 0; i < startDay; i++) {
+    html += `<div class="mini-cal-day empty"></div>`;
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds = `${miniCalYear}-${String(miniCalMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const isToday = ds === today;
+    const isSelected = ds === currentDate;
+    const classes = ["mini-cal-day"];
+    if (isToday) classes.push("today");
+    if (isSelected) classes.push("selected");
+
+    html += `<div class="${classes.join(" ")}" onclick="miniCalSelect('${ds}')">${d}</div>`;
+  }
+
+  html += `</div>`;
+
+  container.innerHTML = html;
+
+  if (window.feather) feather.replace();
+}
+
+function miniCalNav(delta) {
+  miniCalMonth += delta;
+  if (miniCalMonth < 0) { miniCalMonth = 11; miniCalYear--; }
+  if (miniCalMonth > 11) { miniCalMonth = 0; miniCalYear++; }
+  renderMiniCal();
+}
+
+function miniCalSelect(dateStr) {
+  currentDate = dateStr;
+  const d = parseLocalDate(dateStr);
+  miniCalMonth = d.getMonth();
+  miniCalYear = d.getFullYear();
+  buildGrid();
+  loadAllEvents();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   11. EVENT POPOVER
+   ══════════════════════════════════════════════════════════════ */
+
+function showPopover(ev, chipEl, dateStr) {
+  closePopover();
+  popoverEvent = { ...ev, _date: dateStr };
+
+  const popover = document.getElementById("event-popover");
+  if (!popover) return;
+
+  // Fill content
+  const dot = document.getElementById("popover-dot");
+  const pClass = ev.type === "project" ? "project" : (ev.priority || "medium");
+  dot.className = `popover-color-dot p-${pClass}`;
+
+  document.getElementById("popover-title").textContent = ev.task_text || ev.title || "";
+  document.getElementById("popover-time").textContent = formatTimeRange(ev.start_time, ev.end_time);
+  document.getElementById("popover-desc").textContent = ev.description || ev.notes || "";
+
+  // Position near chip
+  const rect = chipEl.getBoundingClientRect();
+  popover.style.top = (rect.top + window.scrollY) + "px";
+  popover.style.left = (rect.right + 8) + "px";
+  popover.classList.remove("hidden");
+
+  // Adjust if offscreen right
+  requestAnimationFrame(() => {
+    const pr = popover.getBoundingClientRect();
+    if (pr.right > window.innerWidth - 10) {
+      popover.style.left = (rect.left - pr.width - 8) + "px";
+    }
+    if (pr.bottom > window.innerHeight - 10) {
+      popover.style.top = (window.innerHeight - pr.height - 10 + window.scrollY) + "px";
+    }
+  });
+
+  if (window.feather) feather.replace();
+}
+
+function closePopover() {
+  const popover = document.getElementById("event-popover");
+  if (popover) popover.classList.add("hidden");
+  popoverEvent = null;
+}
+
+function editFromPopover() {
+  if (!popoverEvent) return;
+  closePopover();
+  if (popoverEvent.type === "project") {
+    openTaskCard(popoverEvent.task_id);
+  } else {
+    openModal(popoverEvent);
+  }
+}
+
+function deleteFromPopover() {
+  if (!popoverEvent) return;
+  const ev = popoverEvent;
+  closePopover();
+
+  if (ev.type === "project") {
+    // Cannot delete project tasks from here; open task card instead
+    openTaskCard(ev.task_id);
+    return;
+  }
+
+  deleteEventById(ev.id);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   12. EVENT MODAL (create / edit)
+   ══════════════════════════════════════════════════════════════ */
+
+function openCreateModal(prefillDate) {
+  hideConflict();
+  selected = null;
+
+  document.getElementById("modal-title").textContent = "New Event";
+  document.getElementById("start-time").value = "";
+  document.getElementById("duration").value = "30";
+  document.getElementById("event-priority").value = "medium";
+  document.getElementById("event-title").value = "";
+  document.getElementById("event-desc").value = "";
+
+  // Reset reminder
+  const select = document.getElementById("reminder-select");
+  const custom = document.getElementById("custom-reminder");
+  select.value = "10";
+  custom.value = "";
+  custom.style.display = "none";
+
+  // Hide delete button for new events
+  const delBtn = document.getElementById("delete-btn");
+  if (delBtn) delBtn.style.display = "none";
 
   document.getElementById("modal").classList.remove("hidden");
+  updateEndPreview();
+
+  setTimeout(() => {
+    document.getElementById("start-time").focus();
+  }, 50);
 }
 
-/* =========================
-   TOUCH DRAG (mobile)
-========================= */
+function openModal(ev) {
+  hideConflict();
+  selected = ev;
 
-// Touch drag for calendar events (move existing event)
-function attachCalendarEventTouchDrag(div, ev) {
+  document.getElementById("modal-title").textContent = "Edit Event";
+  document.getElementById("start-time").value = ev.start_time || "";
+
+  const duration = (ev.end_time && ev.start_time)
+    ? minutes(ev.end_time) - minutes(ev.start_time)
+    : 30;
+  document.getElementById("duration").value = normalizeDuration(duration);
+  document.getElementById("event-priority").value = ev.priority || "medium";
+  document.getElementById("event-title").value = ev.task_text || ev.title || "";
+  document.getElementById("event-desc").value = ev.description || "";
+
+  // Reminder
+  const select = document.getElementById("reminder-select");
+  const custom = document.getElementById("custom-reminder");
+  select.value = "10";
+  custom.value = "";
+  custom.style.display = "none";
+
+  if (ev.reminder_minutes !== undefined && ev.reminder_minutes !== null) {
+    const reminder = parseInt(ev.reminder_minutes);
+    if ([0, 5, 10, 15, 30, 60].includes(reminder)) {
+      select.value = String(reminder);
+    } else {
+      select.value = "custom";
+      custom.value = reminder;
+      custom.style.display = "block";
+    }
+  }
+
+  // Show delete button for existing events
+  const delBtn = document.getElementById("delete-btn");
+  if (delBtn) delBtn.style.display = "";
+
+  document.getElementById("modal").classList.remove("hidden");
+  updateEndPreview();
+
+  if (window.feather) feather.replace();
+}
+
+function closeModal() {
+  document.getElementById("modal").classList.add("hidden");
+  selected = null;
+}
+
+function updateEndPreview() {
+  const start = document.getElementById("start-time").value;
+  const duration = document.getElementById("duration").value;
+  const el = document.getElementById("end-display");
+  if (!el) return;
+  el.textContent = start ? `Ends at ${formatTime12(calculateEndTime(start, duration))}` : "";
+}
+
+function handleReminderSelect() {
+  const select = document.getElementById("reminder-select");
+  const custom = document.getElementById("custom-reminder");
+  custom.style.display = select.value === "custom" ? "block" : "none";
+}
+
+function getReminderMinutes() {
+  const select = document.getElementById("reminder-select");
+  const custom = document.getElementById("custom-reminder");
+  if (select.value === "custom") {
+    return parseInt(custom.value || 0);
+  }
+  return parseInt(select.value);
+}
+
+async function saveEvent() {
+  const start = document.getElementById("start-time").value;
+  const duration = document.getElementById("duration").value;
+
+  if (!start) {
+    showToast("Please enter a start time", "error");
+    return;
+  }
+
+  const payload = {
+    plan_date: (selected && selected._date) || currentDate,
+    start_time: start,
+    end_time: calculateEndTime(start, duration),
+    title: document.getElementById("event-title").value,
+    description: document.getElementById("event-desc").value,
+    priority: document.getElementById("event-priority").value,
+    reminder_minutes: getReminderMinutes()
+  };
+
+  let url, method;
+
+  if (selected) {
+    if (selected.type === "project") {
+      url = `/api/v2/project-tasks/${selected.task_id}`;
+      method = "PUT";
+    } else {
+      url = `/api/v2/events/${selected.id}`;
+      method = "PUT";
+    }
+  } else {
+    url = "/api/v2/events";
+    method = "POST";
+  }
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      let data = {};
+      try { data = await res.json(); } catch {}
+
+      if (data.conflict) {
+        showConflictDialog(data.conflicting_events, payload);
+        return;
+      }
+
+      showToast("Save failed", "error");
+      return;
+    }
+
+    closeModal();
+    showToast("Event saved", "success");
+    loadAllEvents();
+
+  } catch (err) {
+    console.error("Save error:", err);
+    showToast("Save failed", "error");
+  }
+}
+
+async function deleteEvent() {
+  if (!selected || !selected.id) return;
+  await deleteEventById(selected.id);
+  closeModal();
+}
+
+async function deleteEventById(id) {
+  try {
+    await fetch(`/api/v2/events/${id}`, { method: "DELETE" });
+    showToast("Event deleted", "success");
+    loadAllEvents();
+  } catch (err) {
+    showToast("Delete failed", "error");
+  }
+}
+
+function hideConflict() {
+  const section = document.getElementById("conflict-section");
+  if (section) section.style.display = "none";
+}
+
+function showConflictDialog(conflicts, payload) {
+  const list = document.getElementById("conflict-list");
+  const section = document.getElementById("conflict-section");
+
+  list.innerHTML = conflicts.map(c =>
+    `<div style="margin:6px 0;">
+       ${formatTime(c.start_time)} - ${formatTime(c.end_time)}: ${c.title}
+     </div>`
+  ).join("");
+
+  section.style.display = "block";
+
+  document.getElementById("accept-conflict").onclick = async () => {
+    payload.force = true;
+
+    await fetch("/api/v2/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    hideConflict();
+    closeModal();
+    showToast("Event saved (conflict accepted)", "success");
+    loadAllEvents();
+  };
+
+  if (window.feather) feather.replace();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   13. PROJECT TASK MODAL
+   ══════════════════════════════════════════════════════════════ */
+
+async function openTaskCard(taskId) {
+  selected = { task_id: taskId };
+
+  try {
+    const res = await fetch(`/api/v2/project-tasks/${taskId}`);
+    if (!res.ok) throw new Error("Failed to load task");
+    const task = await res.json();
+
+    document.getElementById("task-title").value = task.task_text || "";
+    document.getElementById("task-description").value = task.notes || "";
+    document.getElementById("task-planned-hours").value = task.planned_hours || 0;
+    document.getElementById("task-actual-hours").value = task.actual_hours || 0;
+    document.getElementById("task-status").value = task.status || "open";
+    document.getElementById("task-priority").value = task.priority || "medium";
+    document.getElementById("task-duration").value = task.duration_days || 0;
+    document.getElementById("task-due-date").value = task.due_date || "";
+    document.getElementById("task-start-time").value = task.start_time || "";
+
+    document.getElementById("task-card-modal").classList.add("show");
+    document.getElementById("task-card-modal").classList.remove("hidden");
+  } catch (err) {
+    showToast("Failed to load task", "error");
+  }
+}
+
+async function saveTaskCard() {
+  const taskId = selected?.task_id;
+  if (!taskId) return;
+
+  const payload = {
+    task_text: document.getElementById("task-title").value,
+    notes: document.getElementById("task-description").value,
+    status: document.getElementById("task-status").value,
+    priority: document.getElementById("task-priority").value,
+    planned_hours: parseFloat(document.getElementById("task-planned-hours").value) || 0,
+    actual_hours: parseFloat(document.getElementById("task-actual-hours").value) || 0,
+    duration_days: parseInt(document.getElementById("task-duration").value) || 0,
+    due_date: document.getElementById("task-due-date").value,
+    start_time: document.getElementById("task-start-time").value
+  };
+
+  try {
+    const res = await fetch(`/api/v2/project-tasks/${taskId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error("Save failed");
+    closeTaskCard();
+    showToast("Task saved", "success");
+    loadAllEvents();
+  } catch (err) {
+    showToast("Save failed", "error");
+  }
+}
+
+function closeTaskCard() {
+  const modal = document.getElementById("task-card-modal");
+  modal.classList.remove("show");
+  modal.classList.add("hidden");
+  selected = null;
+}
+
+function adjustTaskNumber(btn, direction) {
+  const wrapper = btn.closest(".number-control");
+  const input = wrapper.querySelector("input");
+  const step = parseFloat(input.step || 1);
+  let value = parseFloat(input.value || 0);
+  value += direction * step;
+  if (value < 0) value = 0;
+  if (value > 999) value = 999;
+  input.value = parseFloat(value.toFixed(2));
+}
+
+/* ══════════════════════════════════════════════════════════════
+   14. FLOATING TASKS (sidebar)
+   ══════════════════════════════════════════════════════════════ */
+
+function renderFloatingTasks(tasks) {
+  const container = document.getElementById("floating-tasks");
+  if (!container) return;
+  container.innerHTML = "";
+
+  // Only unscheduled tasks (no start_time)
+  const unscheduled = (tasks || []).filter(t => !t.start_time);
+
+  if (!unscheduled.length) {
+    container.innerHTML = `<div class="empty-state">No unscheduled tasks</div>`;
+    return;
+  }
+
+  const priorityOrder = { high: 0, medium: 1, low: 2 };
+  const todayStr = getISTDate();
+
+  // Sort: priority high->low, then by due date
+  unscheduled.sort((a, b) => {
+    const pa = priorityOrder[a.priority || "medium"] ?? 1;
+    const pb = priorityOrder[b.priority || "medium"] ?? 1;
+    if (pa !== pb) return pa - pb;
+    if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
+    if (a.due_date) return -1;
+    if (b.due_date) return 1;
+    return 0;
+  });
+
+  unscheduled.forEach(task => {
+    const div = document.createElement("div");
+    div.className = "floating-task";
+    div.draggable = true;
+
+    const priority = task.priority || "medium";
+    const projectName = task.projects?.name || "";
+    const isOverdue = task.due_date && task.due_date < todayStr;
+
+    if (isOverdue) div.classList.add("overdue-floating");
+
+    div.innerHTML = `
+      <div class="floating-title">${task.task_text || ""}</div>
+      ${projectName ? `<div class="floating-project">${projectName}</div>` : ""}
+      <div class="floating-meta">
+        <span class="floating-priority p-${priority}">${priority.toUpperCase()}</span>
+        ${task.due_date ? `<span class="floating-due">${task.due_date}</span>` : ""}
+      </div>
+    `;
+
+    // Click -> open task card
+    div.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openTaskCard(task.task_id);
+    });
+
+    // Desktop drag
+    div.addEventListener("dragstart", () => {
+      draggedTask = { ...task, type: "project" };
+    });
+
+    // Touch drag for mobile
+    attachFloatingTouchDrag(div, task);
+
+    container.appendChild(div);
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   15. DRAG & DROP — Desktop (column handlers)
+   ══════════════════════════════════════════════════════════════ */
+
+function onColumnDragOver(e) {
+  e.preventDefault();
+  if (!draggedTask) return;
+
+  const col = e.currentTarget;
+  const rect = col.getBoundingClientRect();
+  const y = e.clientY - rect.top + col.closest("#gcal-scroll").scrollTop;
+  const minutesFromTop = (y / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const top = (snapped / 60) * HOUR_HEIGHT;
+
+  // Show snap line
+  let line = col.querySelector(".snap-line");
+  if (!line) {
+    line = document.createElement("div");
+    line.className = "snap-line";
+    col.appendChild(line);
+  }
+  line.style.top = top + "px";
+}
+
+function onColumnDragLeave(e) {
+  const col = e.currentTarget;
+  const line = col.querySelector(".snap-line");
+  if (line) line.remove();
+}
+
+async function onColumnDrop(e) {
+  e.preventDefault();
+  if (!draggedTask) return;
+
+  const col = e.currentTarget;
+  const targetDate = col.dataset.date;
+
+  // Clean snap line
+  const line = col.querySelector(".snap-line");
+  if (line) line.remove();
+
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const y = e.clientY - rect.top + scrollTop;
+  const minutesFromTop = (y / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+
+  const newStart = toTime(snapped);
+
+  if (draggedTask.type === "project") {
+    const end = calculateEndTime(newStart, 30);
+    await fetch(`/api/v2/project-tasks/${draggedTask.task_id}/schedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_date: targetDate, start_time: newStart, end_time: end })
+    });
+  } else {
+    const duration = (draggedTask._end || minutes(draggedTask.end_time)) - (draggedTask._start || minutes(draggedTask.start_time));
+    const newEnd = toTime(snapped + duration);
+
+    await fetch(`/api/v2/events/${draggedTask.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_date: targetDate,
+        start_time: newStart,
+        end_time: newEnd,
+        title: draggedTask.title
+      })
+    });
+  }
+
+  draggedTask = null;
+  showToast("Event moved", "success");
+  loadAllEvents();
+}
+
+/* ══════════════════════════════════════════════════════════════
+   16. DRAG-TO-CREATE (pointer events on columns)
+   ══════════════════════════════════════════════════════════════ */
+
+function onColumnPointerDown(e) {
+  // Ignore if on an event chip or button
+  if (e.target.closest(".event-chip")) return;
+  if (e.target.closest("button")) return;
+
+  const col = e.currentTarget;
+  createColDate = col.dataset.date;
+  pendingCreate = true;
+  creatingEvent = false;
+  createStartY = e.clientY;
+  createStartX = e.clientX;
+
+  document.addEventListener("pointermove", onCreatePointerMove);
+  document.addEventListener("pointerup", onCreatePointerUp);
+}
+
+function onCreatePointerMove(e) {
+  if (!pendingCreate && !creatingEvent) return;
+
+  const dY = e.clientY - createStartY;
+  const dX = Math.abs(e.clientX - createStartX);
+
+  if (!creatingEvent) {
+    // Cancel if horizontal movement dominates (scroll)
+    if (dX > Math.abs(dY) && dX > 8) {
+      cancelCreate();
+      return;
+    }
+
+    const threshold = e.pointerType === "touch" ? 20 : 8;
+    if (Math.abs(dY) < threshold) return;
+
+    if (e.pointerType === "touch" && dX >= Math.abs(dY)) {
+      cancelCreate();
+      return;
+    }
+
+    // Commit to creating
+    creatingEvent = true;
+    pendingCreate = false;
+
+    const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
+    if (!col) return;
+
+    const rect = col.getBoundingClientRect();
+    const scrollTop = col.closest("#gcal-scroll").scrollTop;
+    const y = createStartY - rect.top + scrollTop;
+    const minutesFromTop = (y / HOUR_HEIGHT) * 60;
+    const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+    const top = (snapped / 60) * HOUR_HEIGHT;
+
+    ghostEvent = document.createElement("div");
+    ghostEvent.className = "event-chip ghost-event";
+    ghostEvent.style.top = top + "px";
+    ghostEvent.style.height = "5px";
+    ghostEvent.style.left = "2px";
+    ghostEvent.style.width = "calc(100% - 4px)";
+    col.appendChild(ghostEvent);
+  }
+
+  if (!ghostEvent) return;
+
+  const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
+  if (!col) return;
+
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const startY = createStartY - rect.top + scrollTop;
+  const currentY = e.clientY - rect.top + scrollTop;
+  const delta = currentY - startY;
+
+  if (delta < 0) return;
+
+  const mins = (delta / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(mins / SNAP) * SNAP;
+  const height = (snapped / 60) * HOUR_HEIGHT;
+  ghostEvent.style.height = Math.max(height, 5) + "px";
+}
+
+function onCreatePointerUp(e) {
+  if (!pendingCreate && !creatingEvent) return;
+
+  const wasCreating = creatingEvent;
+
+  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
+  pendingCreate = false;
+  creatingEvent = false;
+
+  document.removeEventListener("pointermove", onCreatePointerMove);
+  document.removeEventListener("pointerup", onCreatePointerUp);
+
+  if (!wasCreating) return;
+
+  const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
+  if (!col) return;
+
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const startY = createStartY - rect.top + scrollTop;
+  const endY = e.clientY - rect.top + scrollTop;
+
+  const startMinutes = Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+  const endMinutes = Math.round(((endY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+
+  if (endMinutes <= startMinutes) return;
+
+  const start = toTime(startMinutes);
+  const duration = endMinutes - startMinutes;
+
+  // Set currentDate to the column's date for new event creation
+  const prevDate = currentDate;
+  currentDate = createColDate;
+
+  openCreateModal();
+  document.getElementById("start-time").value = start;
+  document.getElementById("duration").value = normalizeDuration(duration);
+  updateEndPreview();
+
+  // Restore currentDate if needed (the save uses currentDate)
+  // Actually, we want the event on the column date, so keep it
+}
+
+function cancelCreate() {
+  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
+  pendingCreate = false;
+  creatingEvent = false;
+  document.removeEventListener("pointermove", onCreatePointerMove);
+  document.removeEventListener("pointerup", onCreatePointerUp);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   17. TOUCH DRAG — Event chips (mobile)
+   ══════════════════════════════════════════════════════════════ */
+
+function attachChipTouchDrag(chipEl, ev, dateStr) {
   let clone = null;
   let dragging = false;
   let startX, startY;
   const DRAG_THRESHOLD = 10;
 
-  div.addEventListener("touchstart", (e) => {
+  chipEl.addEventListener("touchstart", (e) => {
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
     dragging = false;
   }, { passive: true });
 
-  div.addEventListener("touchmove", (e) => {
+  chipEl.addEventListener("touchmove", (e) => {
     const dx = Math.abs(e.touches[0].clientX - startX);
     const dy = Math.abs(e.touches[0].clientY - startY);
 
     if (!dragging && (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD)) {
       dragging = true;
-      draggedTask = ev;
+      draggedTask = { ...ev, _sourceDate: dateStr };
 
-      clone = div.cloneNode(true);
+      clone = chipEl.cloneNode(true);
       clone.style.cssText = `
         position: fixed;
         opacity: 0.75;
         pointer-events: none;
         z-index: 9999;
-        width: ${div.offsetWidth}px;
-        height: ${div.offsetHeight}px;
+        width: ${chipEl.offsetWidth}px;
+        height: ${chipEl.offsetHeight}px;
         transform: scale(1.04);
         box-shadow: 0 8px 24px rgba(0,0,0,.3);
       `;
@@ -475,29 +1321,16 @@ function attachCalendarEventTouchDrag(div, ev) {
     const x = e.touches[0].clientX;
     const y = e.touches[0].clientY;
 
-    clone.style.left = (x - div.offsetWidth / 2) + "px";
-    clone.style.top  = (y - div.offsetHeight / 2) + "px";
+    clone.style.left = (x - chipEl.offsetWidth / 2) + "px";
+    clone.style.top = (y - chipEl.offsetHeight / 2) + "px";
 
-    const tl = document.getElementById("timeline");
-    const rect = tl.getBoundingClientRect();
-
-    if (y >= rect.top && y <= rect.bottom) {
-      const relY = y - rect.top;
-      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
-      const top = (snapped / 60) * HOUR_HEIGHT;
-
-      if (!snapLine) {
-        snapLine = document.createElement("div");
-        snapLine.className = "snap-line";
-        tl.appendChild(snapLine);
-      }
-      snapLine.style.top = top + "px";
-    }
+    // Show snap line on the column under the touch point
+    showTouchSnapLine(x, y);
   }, { passive: false });
 
-  div.addEventListener("touchend", async (e) => {
+  chipEl.addEventListener("touchend", async (e) => {
     if (clone) { clone.remove(); clone = null; }
-    if (snapLine) { snapLine.remove(); snapLine = null; }
+    clearTouchSnapLines();
 
     if (!dragging || !draggedTask) {
       dragging = false;
@@ -506,40 +1339,18 @@ function attachCalendarEventTouchDrag(div, ev) {
 
     const x = e.changedTouches[0].clientX;
     const y = e.changedTouches[0].clientY;
-    const tl = document.getElementById("timeline");
-    const rect = tl.getBoundingClientRect();
 
-    if (y >= rect.top && y <= rect.bottom) {
-      const relY = y - rect.top;
-      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
-      const duration = ev.end - ev.start;
-      const newStart = toTime(snapped);
-      const newEnd = toTime(snapped + duration);
-
-      if (ev.type === "project") {
-        await fetch(`/api/v2/project-tasks/${ev.task_id}/schedule`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan_date: currentDate, start_time: newStart, end_time: newEnd })
-        });
-      } else {
-        await fetch(`/api/v2/events/${ev.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan_date: currentDate, start_time: newStart, end_time: newEnd, title: ev.title })
-        });
-      }
-
-      loadEvents();
-    }
-
+    await handleTouchDrop(x, y, ev);
     draggedTask = null;
     dragging = false;
   });
 }
 
-// Touch drag for floating tasks → timeline
-function attachTouchDrag(div, task) {
+/* ══════════════════════════════════════════════════════════════
+   18. TOUCH DRAG — Floating tasks (mobile)
+   ══════════════════════════════════════════════════════════════ */
+
+function attachFloatingTouchDrag(div, task) {
   let clone = null;
   let dragging = false;
   let startX, startY;
@@ -578,32 +1389,14 @@ function attachTouchDrag(div, task) {
     const y = e.touches[0].clientY;
 
     clone.style.left = (x - div.offsetWidth / 2) + "px";
-    clone.style.top  = (y - 30) + "px";
+    clone.style.top = (y - 30) + "px";
 
-    // Snap line on timeline
-    const tl = document.getElementById("timeline");
-    const rect = tl.getBoundingClientRect();
-
-    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-      const relY = y - rect.top;
-      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
-      const top = (snapped / 60) * HOUR_HEIGHT;
-
-      if (!snapLine) {
-        snapLine = document.createElement("div");
-        snapLine.className = "snap-line";
-        tl.appendChild(snapLine);
-      }
-      snapLine.style.top = top + "px";
-    } else if (snapLine) {
-      snapLine.remove();
-      snapLine = null;
-    }
+    showTouchSnapLine(x, y);
   }, { passive: false });
 
   div.addEventListener("touchend", async (e) => {
     if (clone) { clone.remove(); clone = null; }
-    if (snapLine) { snapLine.remove(); snapLine = null; }
+    clearTouchSnapLines();
 
     if (!dragging || !draggedTask) {
       dragging = false;
@@ -612,22 +1405,27 @@ function attachTouchDrag(div, task) {
 
     const x = e.changedTouches[0].clientX;
     const y = e.changedTouches[0].clientY;
-    const tl = document.getElementById("timeline");
-    const rect = tl.getBoundingClientRect();
 
-    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-      const relY = y - rect.top;
-      const snapped = Math.round((relY / HOUR_HEIGHT * 60) / SNAP) * SNAP;
+    // Find column under touch
+    const col = getColumnUnderPoint(x, y);
+    if (col) {
+      const rect = col.getBoundingClientRect();
+      const scrollTop = col.closest("#gcal-scroll").scrollTop;
+      const relY = y - rect.top + scrollTop;
+      const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
+      const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
       const start = toTime(snapped);
       const end = calculateEndTime(start, 30);
+      const targetDate = col.dataset.date;
 
       await fetch(`/api/v2/project-tasks/${draggedTask.task_id}/schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_date: currentDate, start_time: start, end_time: end })
+        body: JSON.stringify({ plan_date: targetDate, start_time: start, end_time: end })
       });
 
-      loadEvents();
+      showToast("Task scheduled", "success");
+      loadAllEvents();
     }
 
     draggedTask = null;
@@ -635,855 +1433,207 @@ function attachTouchDrag(div, task) {
   });
 }
 
-/* =========================
-   FLOATING TASKS
-========================= */
-function renderFloatingTasks(tasks) {
-  const container = document.getElementById("floating-tasks");
-  container.innerHTML = "";
+/* ── Shared touch helpers ── */
 
-  if (!tasks || !tasks.length) return;
-
-  const priorityOrder = { high: 1, medium: 2, low: 3 };
-  const todayStr = new Date().toISOString().split("T")[0];
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-  // 🔥 Sort by priority
-  tasks.sort((a, b) => {
-    const pa = priorityOrder[a.priority || "medium"];
-    const pb = priorityOrder[b.priority || "medium"];
-    return pa - pb;
-  });
-
-  // 🧠 Group by due date
-  const grouped = {};
-
-  tasks.forEach(task => {
-    const date = task.due_date || "No Date";
-    if (!grouped[date]) grouped[date] = [];
-    grouped[date].push(task);
-  });
-
-  // 🔥 Sort groups chronologically
-  const sortedDates = Object.keys(grouped).sort((a, b) => {
-    if (a === "No Date") return 1;
-    if (b === "No Date") return -1;
-    return new Date(a) - new Date(b);
-  });
-
-  sortedDates.forEach(dateKey => {
-
-    let label = dateKey;
-
-    if (dateKey === todayStr) {
-      label = `
-        <span class="today-badge">🟡 Today</span>
-        <span class="real-date">${dateKey}</span>
-      `;
+function getColumnUnderPoint(x, y) {
+  const cols = document.querySelectorAll(".gcal-day-col");
+  for (const col of cols) {
+    const rect = col.getBoundingClientRect();
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      return col;
     }
-
-    const groupHeader = document.createElement("div");
-    groupHeader.className = "floating-group-header";
-    groupHeader.innerHTML = `<div class="group-title">${label}</div>`;
-    container.appendChild(groupHeader);
-
-    grouped[dateKey].forEach(task => {
-
-      const div = document.createElement("div");
-      div.className = "floating-task";
-      div.draggable = true;
-
-      const due = task.due_date || null;
-      const time = task.start_time ? task.start_time.slice(0, 5) : null;
-      const priority = task.priority || "medium";
-
-      // 🔴 Overdue
-      if (due && new Date(due) < new Date(todayStr)) {
-        div.classList.add("overdue-floating");
-      }
-
-      // ⏰ Elapsed today
-      if (due === todayStr && time) {
-        const [h, m] = time.split(":").map(Number);
-        const taskMinutes = h * 60 + m;
-
-        if (taskMinutes < currentMinutes) {
-          div.classList.add("elapsed-floating");
-        }
-      }
-
-      // 📅 Scheduled indicator
-      if (task.plan_date) {
-        div.classList.add("scheduled-floating");
-      }
-
-      const projectName = task.projects?.name || "";
-
-      div.innerHTML = `
-        <div class="floating-title">
-          ${task.task_text}
-          ${task.plan_date ? `<span class="scheduled-icon">📅</span>` : ""}
-        </div>
-        ${projectName ? `<div class="floating-project">${projectName}</div>` : ""}
-        <div class="floating-meta">
-          <div class="meta-left">
-            ${time ? `<span class="floating-time">🕒 ${time}</span>` : ""}
-          </div>
-          <span class="floating-priority p-${priority}">
-            ${priority.toUpperCase()}
-          </span>
-        </div>
-      `;
-
-      div.onclick = (e) => {
-        e.stopPropagation();
-        openTaskCard(task.task_id);
-      };
-
-      div.ondragstart = () => {
-        draggedTask = { ...task, type: "project" };
-      };
-
-      // Touch drag for mobile
-      attachTouchDrag(div, task);
-
-      container.appendChild(div);
-    });
-  });
+  }
+  return null;
 }
 
+function showTouchSnapLine(x, y) {
+  clearTouchSnapLines();
+  const col = getColumnUnderPoint(x, y);
+  if (!col) return;
 
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const relY = y - rect.top + scrollTop;
+  const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const top = (snapped / 60) * HOUR_HEIGHT;
 
-
-/* =========================
-   DRAG INTO CALENDAR
-========================= */
-
-
-/* =========================
-   CHECKBOX
-========================= */
-
-function toggleComplete(e, id) {
-  e.stopPropagation();
-
-  fetch(`/api/v2/project-tasks/${id}/complete`, {
-    method: "POST"
-  });
-
-  loadEvents();
-}
-function openCreateModal() {
-  hideConflict();
-  selected = null;
-
-  document.getElementById("start-time").value = "";
-  document.getElementById("duration").value = 30;
-  document.getElementById("event-title").value = "";
-
-  // 🔥 Reset reminder cleanly
-  const select = document.getElementById("reminder-select");
-  const custom = document.getElementById("custom-reminder");
-
-  select.value = "10";
-  custom.value = "";
-  custom.style.display = "none";
-
-  document.getElementById("modal").classList.remove("hidden");
-  updateEndPreview();
-  setTimeout(() => {
-    document.getElementById("start-time").focus();
-  }, 50);
+  const line = document.createElement("div");
+  line.className = "snap-line";
+  line.style.top = top + "px";
+  col.appendChild(line);
 }
 
-/* =========================
-   MODAL
-========================= */
-function openModal(ev) {
-  hideConflict();
-  selected = ev;
+function clearTouchSnapLines() {
+  document.querySelectorAll(".snap-line").forEach(l => l.remove());
+}
 
-  document.getElementById("start-time").value = ev.start_time;
+async function handleTouchDrop(x, y, ev) {
+  const col = getColumnUnderPoint(x, y);
+  if (!col) return;
+
+  const targetDate = col.dataset.date;
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const relY = y - rect.top + scrollTop;
+  const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
 
   const duration = minutes(ev.end_time) - minutes(ev.start_time);
-  document.getElementById("duration").value = duration;
+  const newStart = toTime(snapped);
+  const newEnd = toTime(snapped + duration);
 
-  document.getElementById("event-title").value = ev.task_text || ev.title;
-
-  // 🔥 RESET REMINDER FIRST
-  const select = document.getElementById("reminder-select");
-  const custom = document.getElementById("custom-reminder");
-
-  select.value = "10";          // default
-  custom.value = "";
-  custom.style.display = "none";
-
-  // 🔥 APPLY EXISTING REMINDER IF AVAILABLE
-  if (ev.reminder_minutes !== undefined && ev.reminder_minutes !== null) {
-    const reminder = parseInt(ev.reminder_minutes);
-
-    if ([5, 10, 15, 30, 60].includes(reminder)) {
-      select.value = reminder;
-    } else {
-      select.value = "custom";
-      custom.value = reminder;
-      custom.style.display = "block";
-    }
-  }
-
-  document.getElementById("modal").classList.remove("hidden");
-  updateEndPreview();
-}
-function closeTaskCard() {
-  const modal = document.getElementById("task-card-modal");
-  modal.classList.remove("show");
-  selected = null;  // clean state
-}
-
-async function saveTaskCard() {
-  const taskId = selected?.task_id;
-  if (!taskId) return;
-
-  const btn = document.querySelector(".task-card-actions .primary-btn");
-  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
-
-  const payload = {
-    task_text: document.getElementById("task-title").value,
-    notes: document.getElementById("task-description").value,
-    status: document.getElementById("task-status").value,
-    priority: document.getElementById("task-priority").value,
-    planned_hours: document.getElementById("task-planned-hours").value,
-    actual_hours: document.getElementById("task-actual-hours").value,
-    duration_days: document.getElementById("task-duration").value,
-    due_date: document.getElementById("task-due-date").value,
-    start_time: document.getElementById("task-start-time").value
-  };
-
-  try {
-    const res = await fetch(`/api/v2/project-tasks/${taskId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error("Save failed");
-    closeTaskCard();
-    loadEvents();
-  } catch (err) {
-    showPlannerToast("Save failed. Please try again.", "error");
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "Save"; }
-  }
-}
-
-function attachScrollNumber(id) {
-  const el = document.getElementById(id);
-
-  el.addEventListener("wheel", (e) => {
-    e.preventDefault();
-
-    let value = parseInt(el.value || 0);
-
-    if (e.deltaY < 0) {
-      value++;
-    } else {
-      value--;
-    }
-
-    if (value < 0) value = 0;
-    if (value > 100) value = 100;
-
-    el.value = value;
-  });
-}
-
-attachScrollNumber("task-planned-hours");
-attachScrollNumber("task-actual-hours");
-attachScrollNumber("task-duration");
-
-
-function updateEndPreview() {
-  const start    = document.getElementById("start-time").value;
-  const duration = document.getElementById("duration").value;
-  const el       = document.getElementById("end-display");
-  if (!el) return;
-  el.textContent = start ? `Ends at ${calculateEndTime(start, duration)}` : "";
-}
-
-function closeModal() {
-  document.getElementById("modal").classList.add("hidden");
-}
-async function saveEvent() {
-  const start = document.getElementById("start-time").value;
-  const duration = document.getElementById("duration").value;
-  
-  const payload = {
-    plan_date: currentDate,
-    start_time: start,
-    end_time: calculateEndTime(start, duration),
-    title: document.getElementById("event-title").value,
-    description: document.getElementById("event-desc").value,   // 🔥 ADD THIS
-    priority: document.getElementById("event-priority").value
-  };
-  payload.reminder_minutes = getReminderMinutes();
-  let url;
-  let method = "POST";
-
-  if (selected) {
-    if (selected.type === "project") {
-      url = `/api/v2/project-tasks/${selected.task_id}`;
-      method = "PUT";
-    } else {
-      url = `/api/v2/events/${selected.id}`;
-      method = "PUT";
-    }
-  } else {
-    url = `/api/v2/events`;
-  }
-
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    // 🔥 HANDLE CONFLICT
-    if (!res.ok) {
-    let data = {};
-    try {
-      data = await res.json();
-    } catch {}
-
-    if (data.conflict) {
-      showConflictDialog(data.conflicting_events, payload);
-      return;
-    }
-
-    alert("Save failed");
-    return;
-  }
-
-
-    closeModal();
-    loadEvents();
-
-  } catch (err) {
-    console.error("Save error:", err);
-  }
-}
-function hideConflict() {
-  const section = document.getElementById("conflict-section");
-  if (section) section.style.display = "none";
-}
-function showConflictDialog(conflicts, payload) {
-
-  const list = document.getElementById("conflict-list");
-  const section = document.getElementById("conflict-section");
-
-  list.innerHTML = conflicts.map(c =>
-    `<div style="margin:6px 0;">
-       ${c.start_time} – ${c.end_time} : ${c.title}
-     </div>`
-  ).join("");
-
-  section.style.display = "block";
-
-  document.getElementById("accept-conflict").onclick = async () => {
-    payload.force = true;
-
-    await fetch(`/api/v2/events`, {
+  if (ev.type === "project") {
+    await fetch(`/api/v2/project-tasks/${ev.task_id}/schedule`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ plan_date: targetDate, start_time: newStart, end_time: newEnd })
     });
-
-    hideConflict();
-    closeModal();
-    loadEvents();
-  };
-}
-/* =========================
-   INIT
-========================= */
-function startResize(e, ev) {
-  const startY = e.clientY;
-  const originalEnd = minutes(ev.end_time);
-
-  function onMouseMove(moveEvent) {
-    const delta = moveEvent.clientY - startY;
-    const minutesDelta = (delta / HOUR_HEIGHT) * 60;
-    const snapped = Math.round(minutesDelta / SNAP) * SNAP;
-
-    const newEnd = originalEnd + snapped;
-    if (newEnd <= ev.start) return;
-    const el = document.querySelector(`[data-id='${ev.id}']`);
-    if (el) {
-      const newHeight = ((newEnd - ev.start) / 60) * HOUR_HEIGHT;
-      el.style.height = newHeight + "px";
-    }
-  }
-
-  async function onMouseUp(upEvent) {
-    document.removeEventListener("mousemove", onMouseMove);
-    document.removeEventListener("mouseup", onMouseUp);
-
-    const delta = upEvent.clientY - startY;
-    const minutesDelta = (delta / HOUR_HEIGHT) * 60;
-    const snapped = Math.round(minutesDelta / SNAP) * SNAP;
-
-    const newEnd = toTime(originalEnd + snapped);
-
+  } else {
     await fetch(`/api/v2/events/${ev.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        plan_date: currentDate,
-        start_time: ev.start_time,
+        plan_date: targetDate,
+        start_time: newStart,
         end_time: newEnd,
         title: ev.title
       })
     });
-
-    loadEvents();
   }
 
-  document.addEventListener("mousemove", onMouseMove);
-  document.addEventListener("mouseup", onMouseUp);
-}
-function showPlannerToast(message, type = "info") {
-  const existing = document.getElementById("planner-toast");
-  if (existing) existing.remove();
-  const toast = document.createElement("div");
-  toast.id = "planner-toast";
-  toast.className = `planner-toast planner-toast-${type}`;
-  toast.textContent = message;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.classList.add("show"), 10);
-  setTimeout(() => {
-    toast.classList.remove("show");
-    setTimeout(() => toast.remove(), 300);
-  }, 2500);
+  showToast("Event moved", "success");
+  loadAllEvents();
 }
 
-function goToToday() {
-  currentDate = getISTDate();
-  updateDateHeader();
-  loadEvents();
-  setTimeout(scrollToNow, 300);
-}
+/* ══════════════════════════════════════════════════════════════
+   19. SMART PLANNER
+   ══════════════════════════════════════════════════════════════ */
 
-function scrollToNow() {
-  const now = getISTNow();
-  const top = (now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_HEIGHT;
-  window.scrollTo({ top: Math.max(0, top - 180), behavior: "smooth" });
-}
+async function runSmartPlanner() {
+  const input = document.getElementById("smart-input");
+  const text = input.value.trim();
+  if (!text) return;
 
-document.addEventListener("DOMContentLoaded", () => {
-  updateDateHeader();
-  loadEvents();
-  document.getElementById("reminder-select")
-    ?.addEventListener("change", handleReminderSelect);
-  document.getElementById("new-event-btn")
-    ?.addEventListener("click", openCreateModal);
-
-  // End-time preview updates
-  document.getElementById("start-time")?.addEventListener("change", updateEndPreview);
-  document.getElementById("duration")?.addEventListener("change", updateEndPreview);
-
-  // Today button
-  document.getElementById("today-btn")?.addEventListener("click", goToToday);
-
-  // Auto-scroll to current time on load
-  setTimeout(scrollToNow, 400);
-
-  const timeline = document.getElementById("timeline");
-  if (timeline) timeline.addEventListener("pointerdown", startCreateEvent);
-
-
-
-  timeline.addEventListener("drop", async e => {
-  e.preventDefault();
-
-  if (!draggedTask) return;
-
-  const rect = timeline.getBoundingClientRect();
-  const y = e.clientY - rect.top;
-
-  const minutesFromTop = Math.floor((y / HOUR_HEIGHT) * 60);
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
-
-  // PROJECT TASK DROP
-  if (draggedTask.type === "project") {
-    const start = toTime(snapped);
-    const end = calculateEndTime(start, 30);
-
-    await fetch(`/api/v2/project-tasks/${draggedTask.task_id}/schedule`, {
+  try {
+    const res = await fetch("/api/v2/smart-create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        plan_date: currentDate,
-        start_time: start,
-        end_time: end
-      })
+      body: JSON.stringify({ date: currentDate, text })
     });
-  }
 
-  // EVENT MOVE
-  else {
-    const duration = draggedTask.end - draggedTask.start;
-
-    const newStart = toTime(snapped);
-    const newEnd = toTime(snapped + duration);
-
-    await fetch(`/api/v2/events/${draggedTask.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        plan_date: currentDate,
-        start_time: newStart,
-        end_time: newEnd,
-        title: draggedTask.title
-      })
-    });
-  }
-
-  draggedTask = null;
-
-  if (snapLine) {
-    snapLine.remove();
-    snapLine = null;
-  }
-
- loadEvents();
-
-});
-
-timeline.addEventListener("dragover", e => {
-  e.preventDefault();
-
-  const rect = timeline.getBoundingClientRect();
-  const y = e.clientY - rect.top;
-
-  const minutesFromTop = Math.floor((y / HOUR_HEIGHT) * 60);
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
-  const top = (snapped / 60) * HOUR_HEIGHT;
-
-  if (!snapLine) {
-    snapLine = document.createElement("div");
-    snapLine.className = "snap-line";
-    timeline.appendChild(snapLine);
-  }
-
-  snapLine.style.top = top + "px";
-});
-
-
-timeline.addEventListener("dragleave", () => {
-  if (snapLine) {
-    snapLine.remove();
-    snapLine = null;
-  }
-});
-
-// ✅ update current time every minute
-setInterval(() => {
-  render();
-}, 60000);
-
-});   // ← closes DOMContentLoaded
-
-function renderTimeGrid() {
-  const timeline = document.getElementById("timeline");
-  const gutter = document.getElementById("time-gutter");
-
-  if (!timeline || !gutter) return;
-
-  timeline.innerHTML = "";
-  gutter.innerHTML = "";
-
-  for (let hour = 0; hour < 24; hour++) {
-    const hourTop = hour * HOUR_HEIGHT;
-
-    // ========================
-    // HOUR LINE (grid)
-    // ========================
-    const hourLine = document.createElement("div");
-    hourLine.className = "hour-line";
-    hourLine.style.top = hourTop + "px";
-    timeline.appendChild(hourLine);
-
-    // ========================
-    // HOUR LABEL (gutter)
-    // ========================
-    const label = document.createElement("div");
-    label.className = "hour-label";
-    label.style.top = hourTop + "px";
-    label.innerText = `${hour}:00`;
-     // 🔥 Add this block
-    const now = getISTNow();
-    const today = getISTDate();
-     if (currentDate === today && hour === now.getHours()) {
-      label.classList.add("current-hour");
+    if (!res.ok) {
+      showToast("Smart planner failed", "error");
+      return;
     }
-    gutter.appendChild(label);
 
-    // ========================
-    // 15 / 30 / 45 lines
-    // ========================
-    for (let q = 1; q <= 3; q++) {
-      const minuteTop = hourTop + (HOUR_HEIGHT / 4) * q;
-
-      const line = document.createElement("div");
-      line.style.top = minuteTop + "px";
-
-      if (q === 2) {
-        line.className = "half-line";
-      } else {
-        line.className = "micro-line";
-      }
-
-      timeline.appendChild(line);
-    }
+    input.value = "";
+    showToast("Events created", "success");
+    loadAllEvents();
+  } catch (err) {
+    showToast("Smart planner failed", "error");
   }
 }
 
+/* ══════════════════════════════════════════════════════════════
+   20. NUMBER CONTROL (scroll wheel on task fields)
+   ══════════════════════════════════════════════════════════════ */
 
-function formatHour(hour) {
-  const h = hour % 12 || 12;
-  const ampm = hour < 12 ? "AM" : "PM";
-  return `${h} ${ampm}`;
-}
-
-
-function adjustTaskNumber(btn, direction) {
-  const wrapper = btn.closest(".number-control");
-  const input = wrapper.querySelector("input");
-
-  const step = parseFloat(wrapper.dataset.step || 1);
-  let value = parseFloat(input.value || 0);
-
-  value += direction * step;
-
-  if (value < 0) value = 0;
-  if (value > 100) value = 100;
-
-  input.value = parseFloat(value.toFixed(2));
-}
-
-function validateTaskNumber(input) {
-  let value = parseFloat(input.value);
-
-  if (isNaN(value)) value = 0;
-  if (value < 0) value = 0;
-  if (value > 100) value = 100;
-
-  input.value = value;
-}
-document.addEventListener("wheel", function(e) {
+document.addEventListener("wheel", function (e) {
   const wrapper = e.target.closest(".number-control");
   if (!wrapper) return;
 
   e.preventDefault();
-
   const input = wrapper.querySelector("input");
-  const step = parseFloat(wrapper.dataset.step || 1);
-
+  const step = parseFloat(input.step || 1);
   let value = parseFloat(input.value || 0);
 
   if (e.deltaY < 0) value += step;
   else value -= step;
 
   if (value < 0) value = 0;
-  if (value > 100) value = 100;
+  if (value > 999) value = 999;
 
   input.value = parseFloat(value.toFixed(2));
 }, { passive: false });
-async function deleteEvent() {
-  if (!selected) return;
 
-  const id = selected.id;
+/* ══════════════════════════════════════════════════════════════
+   21. CLOSE POPOVER ON OUTSIDE CLICK
+   ══════════════════════════════════════════════════════════════ */
 
-  await fetch(`/api/v2/events/${id}`, {
-    method: "DELETE"
-  });
+document.addEventListener("click", (e) => {
+  const popover = document.getElementById("event-popover");
+  if (!popover || popover.classList.contains("hidden")) return;
+  if (popover.contains(e.target)) return;
+  if (e.target.closest(".event-chip")) return;
+  closePopover();
+});
 
-  closeModal();
-  loadEvents();
+/* ══════════════════════════════════════════════════════════════
+   22. KEYBOARD SHORTCUTS
+   ══════════════════════════════════════════════════════════════ */
 
-  showUndoToast(id);
+document.addEventListener("keydown", (e) => {
+  // Escape closes modals / popovers
+  if (e.key === "Escape") {
+    closePopover();
+    if (!document.getElementById("modal").classList.contains("hidden")) {
+      closeModal();
+    }
+    if (document.getElementById("task-card-modal").classList.contains("show")) {
+      closeTaskCard();
+    }
+  }
+
+  // T = go to today
+  if (e.key === "t" && !e.ctrlKey && !e.metaKey && !isInputFocused()) {
+    goToday();
+  }
+
+  // D / 3 / W = switch view
+  if (!isInputFocused()) {
+    if (e.key === "d") setView("day");
+    if (e.key === "3") setView("3day");
+    if (e.key === "w") setView("week");
+  }
+});
+
+function isInputFocused() {
+  const tag = document.activeElement?.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
-function showUndoToast(eventId) {
-  const toast = document.createElement("div");
-  toast.className = "undo-toast";
-  toast.innerHTML = `
-    Event deleted
-    <button onclick="undoDelete('${eventId}')">Undo</button>
-  `;
 
-  document.body.appendChild(toast);
+/* ══════════════════════════════════════════════════════════════
+   23. INITIALIZATION
+   ══════════════════════════════════════════════════════════════ */
 
+document.addEventListener("DOMContentLoaded", () => {
+  // Set initial view
+  document.body.dataset.view = currentView;
+
+  // Build the grid and load data
+  buildGrid();
+  loadAllEvents();
+
+  // Bind modal form listeners
+  document.getElementById("start-time")?.addEventListener("change", updateEndPreview);
+  document.getElementById("duration")?.addEventListener("change", updateEndPreview);
+  document.getElementById("reminder-select")?.addEventListener("change", handleReminderSelect);
+
+  // Auto-scroll to current time (or 7 AM if not today)
   setTimeout(() => {
-    toast.remove();
-  }, 5000);
-}
-async function undoDelete(id) {
-  await fetch(`/api/v2/events/${id}/restore`, {
-    method: "POST"
-  });
-
-  loadEvents();
-}
-async function runSmartPlanner() {
-
-  const text = document.getElementById("smart-input").value;
-
-  if (!text.trim()) return;
-
-  const res = await fetch("/api/v2/smart-create", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      date: currentDate,
-      text
-    })
-  });
-
-  if (!res.ok) {
-    alert("Smart planner failed");
-    return;
-  }
-
-  document.getElementById("smart-input").value = "";
-
-  loadEvents();
-}
-
-function startCreateEvent(e) {
-  // ignore if touching an existing event or button
-  if (e.target.closest(".event")) return;
-  if (e.target.closest("button")) return;
-
-  pendingCreate = true;
-  creatingEvent = false;
-  createStartY = e.clientY;
-  createStartX = e.clientX;
-
-  document.addEventListener("pointermove", moveCreateEvent);
-  document.addEventListener("pointerup", endCreateEvent);
-}
-
-function cancelCreateEvent() {
-  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
-  pendingCreate = false;
-  creatingEvent = false;
-  document.removeEventListener("pointermove", moveCreateEvent);
-  document.removeEventListener("pointerup", endCreateEvent);
-}
-function moveCreateEvent(e) {
-  if (!pendingCreate && !creatingEvent) return;
-
-  const dY = e.clientY - createStartY;
-  const dX = Math.abs(e.clientX - createStartX);
-
-  // If horizontal movement dominates, it's a scroll — cancel
-  if (!creatingEvent) {
-    if (dX > dY && dX > 8) {
-      cancelCreateEvent();
-      return;
+    const today = getISTDate();
+    const dates = getVisibleDates();
+    if (dates.includes(today)) {
+      scrollToNow();
+    } else {
+      scrollTo7AM();
     }
-    // On touch, require stricter vertical threshold to avoid triggering on scroll
-    const threshold = e.pointerType === "touch" ? 20 : 8;
-    if (Math.abs(dY) < threshold) return;
-    // Also cancel if touch is scrolling (horizontal >= vertical)
-    if (e.pointerType === "touch" && dX >= Math.abs(dY)) {
-      cancelCreateEvent();
-      return;
-    }
+  }, 400);
 
-    // Commit to creating — build ghost now
-    creatingEvent = true;
-    pendingCreate = false;
+  // Start current-time-line updater
+  startTimeLineUpdater();
 
-    const tl = document.getElementById("timeline");
-    const rect = tl.getBoundingClientRect();
-    const y = createStartY - rect.top;
-    const minutesFromTop = (y / HOUR_HEIGHT) * 60;
-    const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
-    const top = (snapped / 60) * HOUR_HEIGHT;
-
-    ghostEvent = document.createElement("div");
-    ghostEvent.className = "event ghost-event";
-    ghostEvent.style.top = top + "px";
-    ghostEvent.style.height = "5px";
-    tl.appendChild(ghostEvent);
-  }
-
-  if (!ghostEvent) return;
-
-  const rect = document.getElementById("timeline").getBoundingClientRect();
-  const startY = createStartY - rect.top;
-  const currentY = e.clientY - rect.top;
-  const delta = currentY - startY;
-
-  if (delta < 0) return;
-
-  const mins = (delta / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(mins / SNAP) * SNAP;
-  const height = (snapped / 60) * HOUR_HEIGHT;
-  ghostEvent.style.height = height + "px";
-}
-function endCreateEvent(e) {
-  if (!pendingCreate && !creatingEvent) return;
-
-  const wasCreating = creatingEvent;
-
-  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
-  pendingCreate = false;
-  creatingEvent = false;
-
-  document.removeEventListener("pointermove", moveCreateEvent);
-  document.removeEventListener("pointerup", endCreateEvent);
-
-  // Was just a tap (no ghost drawn) — do nothing
-  if (!wasCreating) return;
-
-  const rect = document.getElementById("timeline").getBoundingClientRect();
-  const startY = createStartY - rect.top;
-  const endY = e.clientY - rect.top;
-
-  const startMinutes = Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
-  const endMinutes = Math.round(((endY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
-
-  if (endMinutes <= startMinutes) return;
-
-  const start = toTime(startMinutes);
-  const duration = endMinutes - startMinutes;
-
-  openCreateModal();
-  document.getElementById("start-time").value = start;
-  document.getElementById("duration").value = normalizeDuration(duration);
-}
-
-async function addToGoogleCalendar(ev) {
-
-  const title = encodeURIComponent(ev.title || ev.task_text || "");
-  const description = encodeURIComponent(ev.description || "");
-
-  const date = currentDate.replaceAll("-", "");
-
-  const start = ev.start_time.replace(":", "") + "00";
-  const end = ev.end_time.replace(":", "") + "00";
-
-  const reminder = ev.reminder_minutes || 10;
-
-  const url =
-    `https://calendar.google.com/calendar/render?action=TEMPLATE` +
-    `&text=${title}` +
-    `&details=${description}` +
-    `&dates=${date}T${start}/${date}T${end}` +
-    `&trp=true` +
-    `&reminder=${reminder}`;
-
-  window.open(url, "_blank");
-}
+  // Render feather icons
+  if (window.feather) feather.replace();
+});
