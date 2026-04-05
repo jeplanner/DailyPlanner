@@ -11,7 +11,14 @@ from flask import Blueprint, jsonify, redirect, render_template, render_template
 
 from auth import login_required
 from config import IST
-from services.eisenhower_service import autosave_task, copy_open_tasks_from_previous_day, enable_travel_mode
+from services.eisenhower_service import (
+    autosave_task,
+    copy_open_tasks_from_previous_day,
+    enable_travel_mode,
+    list_travel_categories,
+    list_travel_tasks,
+)
+from supabase_client import delete as sb_delete
 from services.recurring_service import materialize_recurring_tasks
 from services.task_service import update_task_occurrence
 from supabase_client import get, post, update
@@ -416,10 +423,152 @@ def travel_mode():
     day = int(request.form["day"])
     plan_date = date(year, month, day)
 
-    added = enable_travel_mode(plan_date)
-    logger.info(f"Travel Mode enabled: {added} tasks added")
+    # Optional travel template category (e.g. "Domestic", "International").
+    # When omitted, ALL of the user's travel_tasks are applied.
+    category = (request.form.get("category") or "").strip() or None
 
-    return redirect(url_for("todo.todo", year=plan_date.year, month=plan_date.month, day=plan_date.day, travel=1))
+    added = enable_travel_mode(plan_date, category=category)
+    logger.info(f"Travel Mode enabled: {added} tasks added (category={category})")
+
+    return redirect(url_for(
+        "todo.todo",
+        year=plan_date.year, month=plan_date.month, day=plan_date.day,
+        travel=1,
+    ))
+
+
+# ==========================================================
+# ROUTES – TRAVEL TEMPLATE CRUD
+# ==========================================================
+
+@todo_bp.route("/travel/categories", methods=["GET"])
+@login_required
+def travel_categories():
+    return jsonify({"categories": list_travel_categories(session["user_id"])})
+
+
+@todo_bp.route("/travel/tasks", methods=["GET"])
+@login_required
+def travel_tasks_list():
+    category = (request.args.get("category") or "").strip() or None
+    return jsonify({"tasks": list_travel_tasks(session["user_id"], category=category)})
+
+
+@todo_bp.route("/travel/tasks", methods=["POST"])
+@login_required
+def travel_tasks_create():
+    data = request.get_json(force=True) or {}
+    text = (data.get("task_text") or "").strip()
+    if not text:
+        return jsonify({"error": "task_text required"}), 400
+
+    category = (data.get("category") or "Default").strip() or "Default"
+    quadrant = (data.get("quadrant") or "do").strip().lower()
+    if quadrant not in ("do", "schedule", "delegate", "eliminate"):
+        quadrant = "do"
+    subcategory = (data.get("subcategory") or "General").strip() or "General"
+
+    # Place at end of the category's order
+    existing = get(
+        "travel_tasks",
+        params={
+            "user_id": f"eq.{session['user_id']}",
+            "category": f"eq.{category}",
+            "select": "order_index",
+            "order": "order_index.desc",
+            "limit": 1,
+        },
+    ) or []
+    next_order = (existing[0]["order_index"] + 1) if existing else 0
+
+    rows = post("travel_tasks", {
+        "user_id": session["user_id"],
+        "category": category,
+        "quadrant": quadrant,
+        "task_text": text,
+        "subcategory": subcategory,
+        "order_index": next_order,
+    })
+    return jsonify({"status": "ok", "task": rows[0] if rows else None})
+
+
+@todo_bp.route("/travel/tasks/<int:task_id>", methods=["PATCH"])
+@login_required
+def travel_tasks_update(task_id):
+    data = request.get_json(force=True) or {}
+    allowed = {"category", "quadrant", "task_text", "subcategory", "order_index"}
+    patch = {k: v for k, v in data.items() if k in allowed}
+    if not patch:
+        return jsonify({"error": "no valid fields"}), 400
+
+    if "quadrant" in patch:
+        q = (patch["quadrant"] or "").strip().lower()
+        if q not in ("do", "schedule", "delegate", "eliminate"):
+            return jsonify({"error": "invalid quadrant"}), 400
+        patch["quadrant"] = q
+    if "task_text" in patch:
+        patch["task_text"] = (patch["task_text"] or "").strip()
+        if not patch["task_text"]:
+            return jsonify({"error": "task_text required"}), 400
+
+    update(
+        "travel_tasks",
+        params={
+            "id": f"eq.{task_id}",
+            "user_id": f"eq.{session['user_id']}",
+        },
+        json=patch,
+    )
+    return jsonify({"status": "ok"})
+
+
+@todo_bp.route("/travel/tasks/<int:task_id>", methods=["DELETE"])
+@login_required
+def travel_tasks_delete(task_id):
+    sb_delete(
+        "travel_tasks",
+        params={
+            "id": f"eq.{task_id}",
+            "user_id": f"eq.{session['user_id']}",
+        },
+    )
+    return jsonify({"status": "ok"})
+
+
+@todo_bp.route("/travel/categories/rename", methods=["POST"])
+@login_required
+def travel_categories_rename():
+    data = request.get_json(force=True) or {}
+    old = (data.get("old_name") or "").strip()
+    new = (data.get("new_name") or "").strip()
+    if not old or not new or old == new:
+        return jsonify({"error": "old_name and new_name required and must differ"}), 400
+    update(
+        "travel_tasks",
+        params={
+            "user_id": f"eq.{session['user_id']}",
+            "category": f"eq.{old}",
+        },
+        json={"category": new},
+    )
+    return jsonify({"status": "ok"})
+
+
+@todo_bp.route("/travel/categories/delete", methods=["POST"])
+@login_required
+def travel_categories_delete():
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    sb_delete(
+        "travel_tasks",
+        params={
+            "user_id": f"eq.{session['user_id']}",
+            "category": f"eq.{name}",
+        },
+    )
+    return jsonify({"status": "ok"})
 
 @todo_bp.route("/todo/autosave", methods=["POST"])
 @login_required

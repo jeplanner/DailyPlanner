@@ -459,19 +459,123 @@ def copy_open_tasks_from_previous_day(plan_date):
 
 
 ### Travel mode Code Changes ###
+#
+# Travel templates are stored per-user in the `travel_tasks` table.
+# Run this migration once in Supabase before using the new UI:
+#
+#   create table if not exists travel_tasks (
+#     id bigserial primary key,
+#     user_id uuid not null,
+#     category text not null default 'Default',
+#     quadrant text not null default 'do',
+#     task_text text not null,
+#     subcategory text default 'General',
+#     order_index int default 0,
+#     created_at timestamptz default now()
+#   );
+#   create index if not exists travel_tasks_user_cat_idx
+#     on travel_tasks (user_id, category);
+#
+# On first use for a given user, we lazy-seed this table with the
+# hardcoded list from config.TRAVEL_MODE_TASKS under a default
+# category named "Default".
 
 
-def enable_travel_mode(plan_date):
+def _seed_travel_tasks_if_empty(user_id):
+    """First-run seeding: copy config.TRAVEL_MODE_TASKS into travel_tasks
+    under category 'Default'. Idempotent — only seeds if user has zero rows."""
+    existing = get(
+        "travel_tasks",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "id",
+            "limit": 1,
+        },
+    ) or []
+    if existing:
+        return 0
+
+    payload = []
+    for idx, (quadrant, text, subcat) in enumerate(TRAVEL_MODE_TASKS):
+        payload.append({
+            "user_id": user_id,
+            "category": "Default",
+            "quadrant": quadrant,
+            "task_text": text,
+            "subcategory": subcat,
+            "order_index": idx,
+        })
+    if payload:
+        try:
+            post("travel_tasks", payload)
+        except Exception as e:
+            logger.warning("Travel-tasks seed failed: %s", e)
+            return 0
+    return len(payload)
+
+
+def list_travel_categories(user_id):
+    """Return sorted list of categories with task counts for a user."""
+    _seed_travel_tasks_if_empty(user_id)
+    rows = get(
+        "travel_tasks",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "category",
+            "limit": 5000,
+        },
+    ) or []
+    counts = {}
+    for r in rows:
+        c = r.get("category") or "Default"
+        counts[c] = counts.get(c, 0) + 1
+    return [{"name": k, "count": v} for k, v in sorted(counts.items())]
+
+
+def list_travel_tasks(user_id, category=None):
+    _seed_travel_tasks_if_empty(user_id)
+    params = {
+        "user_id": f"eq.{user_id}",
+        "select": "id,category,quadrant,task_text,subcategory,order_index",
+        "order": "order_index.asc,id.asc",
+        "limit": 5000,
+    }
+    if category:
+        params["category"] = f"eq.{category}"
+    return get("travel_tasks", params=params) or []
+
+
+def enable_travel_mode(plan_date, category=None):
     """
-    Insert Travel Mode tasks for the day.
-    Idempotent: inserts only missing tasks.
+    Insert Travel Mode tasks for the day from the user's configured
+    travel_tasks table, optionally filtered by category.
+    Idempotent: skips tasks already present on the target day.
     """
-    user_id=session["user_id"]
+    user_id = session["user_id"]
+
+    # Lazy seed (no-op if user already has rows)
+    _seed_travel_tasks_if_empty(user_id)
+
+    # Load template tasks from DB
+    tpl_params = {
+        "user_id": f"eq.{user_id}",
+        "select": "quadrant,task_text,subcategory,order_index",
+        "order": "order_index.asc,id.asc",
+        "limit": 5000,
+    }
+    if category:
+        tpl_params["category"] = f"eq.{category}"
+
+    templates = get("travel_tasks", params=tpl_params) or []
+    if not templates:
+        return 0
+
+    # Existing tasks for the target day — idempotency guard
     existing = (
         get(
             "todo_matrix",
             params={
-                "user_id":f"eq.{user_id}",
+                "user_id": f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "is_deleted": "eq.false",
                 "select": "quadrant,task_text",
@@ -484,12 +588,12 @@ def enable_travel_mode(plan_date):
         (r["quadrant"], (r["task_text"] or "").strip().lower()) for r in existing
     }
 
-    payload = []
+    # Position seed per quadrant
     max_rows = (
         get(
             "todo_matrix",
             params={
-                "user_id":f"eq.{user_id}",
+                "user_id": f"eq.{user_id}",
                 "plan_date": f"eq.{plan_date}",
                 "is_deleted": "eq.false",
                 "select": "quadrant,position",
@@ -497,13 +601,18 @@ def enable_travel_mode(plan_date):
         )
         or []
     )
-
     position_map = {}
     for r in max_rows:
         q = r["quadrant"]
         position_map[q] = max(position_map.get(q, -1), r.get("position", -1))
 
-    for quadrant, text, subcat in TRAVEL_MODE_TASKS:
+    payload = []
+    for t in templates:
+        quadrant = t.get("quadrant") or "do"
+        text = (t.get("task_text") or "").strip()
+        if not text:
+            continue
+
         key = (quadrant, text.lower())
         if key in existing_keys:
             continue
@@ -511,23 +620,17 @@ def enable_travel_mode(plan_date):
         pos = position_map.get(quadrant, -1) + 1
         position_map[quadrant] = pos
 
-        ### Category, Sub Category Changes start here ###
-
-        payload.append(
-            {
-                "plan_date": str(plan_date),
-                "quadrant": quadrant,
-                "task_text": text,
-                "category": "Travel",
-                "subcategory": subcat,
-                "is_done": False,
-                "is_deleted": False,
-                "position": pos,
-                "user_id" :user_id
-            }
-        )
-
-        ### Category, Subcategory code ends here ###
+        payload.append({
+            "plan_date": str(plan_date),
+            "quadrant": quadrant,
+            "task_text": text,
+            "category": "Travel",
+            "subcategory": t.get("subcategory") or "General",
+            "is_done": False,
+            "is_deleted": False,
+            "position": pos,
+            "user_id": user_id,
+        })
 
     if payload:
         post("todo_matrix", payload)

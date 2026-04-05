@@ -123,6 +123,38 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 
 /* Recurring pill next to title */
 .em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:600;padding:1px 5px;border-radius:4px;background:var(--em-border);color:var(--em-text2);margin-left:4px;text-transform:uppercase;}
+
+/* ── Travel settings modal ── */
+.tv-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(2px);}
+.tv-overlay.hidden{display:none;}
+.tv-modal{background:var(--em-surface);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.25);width:720px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;}
+.tv-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--em-border);}
+.tv-head h3{font-size:17px;font-weight:700;}
+.tv-close{width:32px;height:32px;border:none;background:none;border-radius:50%;cursor:pointer;color:var(--em-text2);display:flex;align-items:center;justify-content:center;}
+.tv-close:hover{background:var(--em-border);}
+.tv-body{flex:1;overflow-y:auto;padding:16px 18px;}
+.tv-cat-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+.tv-cat-row select,.tv-cat-row input{padding:7px 10px;border:1px solid var(--em-border);border-radius:7px;font-size:13px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
+.tv-cat-row button{padding:7px 12px;border:1px solid var(--em-border);border-radius:7px;font-size:12px;font-weight:500;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;}
+.tv-cat-row button:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
+.tv-cat-row button.danger:hover{border-color:var(--q-do);color:var(--q-do);}
+
+.tv-task{display:grid;grid-template-columns:1fr 110px 130px 28px;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--em-border);}
+.tv-task input,.tv-task select{padding:6px 8px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
+.tv-task .tv-del{border:none;background:none;cursor:pointer;color:var(--em-text3);font-size:16px;line-height:1;}
+.tv-task .tv-del:hover{color:var(--q-do);}
+
+.tv-add{display:grid;grid-template-columns:1fr 110px 130px 70px;gap:6px;align-items:center;padding:10px 0 4px;}
+.tv-add input,.tv-add select{padding:7px 10px;border:1px solid var(--em-border);border-radius:6px;font-size:13px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
+.tv-add button{padding:8px 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;background:var(--q-schedule);color:#fff;cursor:pointer;}
+
+.tv-empty{text-align:center;padding:24px 10px;color:var(--em-text3);font-size:13px;}
+
+@media(max-width:640px){
+  .tv-task{grid-template-columns:1fr 28px;grid-auto-rows:auto;}
+  .tv-task select{grid-column:1 / -1;}
+  .tv-add{grid-template-columns:1fr;gap:8px;}
+}
 </style>
 </head>
 <body>
@@ -148,11 +180,17 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
       <input type="hidden" name="day" value="{{ plan_date.day }}">
       <button type="submit" class="em-action-btn"><i data-feather="copy" style="width:14px;height:14px"></i> Copy Previous Day</button>
     </form>
-    <form method="post" action="/todo/travel-mode" style="display:contents;">
+    <form method="post" action="/todo/travel-mode" style="display:inline-flex;gap:4px;align-items:center;">
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
       <input type="hidden" name="day" value="{{ plan_date.day }}">
+      <select name="category" id="travel-category-select" class="em-quad-select" title="Travel template" style="max-width:160px;">
+        <option value="">All templates</option>
+      </select>
       <button type="submit" class="em-action-btn"><i data-feather="navigation" style="width:14px;height:14px"></i> Travel Mode</button>
+      <button type="button" class="em-action-btn" onclick="openTravelSettings()" title="Manage travel tasks">
+        <i data-feather="settings" style="width:14px;height:14px"></i>
+      </button>
     </form>
   </div>
 
@@ -221,6 +259,44 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
         <option value="weekly">Weekly</option>
         <option value="monthly">Monthly</option>
       </select>
+    </div>
+  </div>
+
+  <!-- ═══════════ TRAVEL SETTINGS MODAL ═══════════ -->
+  <div id="tv-overlay" class="tv-overlay hidden" onclick="if(event.target===this)closeTravelSettings()">
+    <div class="tv-modal" role="dialog" aria-label="Manage travel tasks">
+      <div class="tv-head">
+        <h3>Travel Templates</h3>
+        <button class="tv-close" onclick="closeTravelSettings()"><i data-feather="x"></i></button>
+      </div>
+      <div class="tv-body">
+
+        <!-- Category switcher -->
+        <div class="tv-cat-row">
+          <label style="font-size:12px;font-weight:600;color:var(--em-text2);">Category:</label>
+          <select id="tv-cat-picker" onchange="loadTravelTasks()"></select>
+          <input type="text" id="tv-new-cat" placeholder="New category name" maxlength="40" style="flex:1;min-width:140px;">
+          <button type="button" onclick="createTravelCategory()">+ Add category</button>
+          <button type="button" onclick="renameTravelCategory()">Rename</button>
+          <button type="button" class="danger" onclick="deleteTravelCategory()">Delete</button>
+        </div>
+
+        <!-- Task list -->
+        <div id="tv-task-list"></div>
+
+        <!-- Add task -->
+        <div class="tv-add">
+          <input type="text" id="tv-new-text" placeholder="Task description" maxlength="120">
+          <select id="tv-new-quad">
+            <option value="do">🔴 Do</option>
+            <option value="schedule">🔵 Schedule</option>
+            <option value="delegate">🟡 Delegate</option>
+            <option value="eliminate">⚪ Eliminate</option>
+          </select>
+          <input type="text" id="tv-new-subcat" placeholder="Subcategory" maxlength="40" value="General">
+          <button type="button" onclick="createTravelTask()">Add task</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -532,8 +608,198 @@ async function bulkAddEisenhower() {
   setTimeout(() => location.reload(), 500);
 }
 
-document.getElementById("quick-task")?.focus();
+// Only auto-focus the quick-add input on non-touch / wider screens,
+// otherwise the mobile keyboard pops up on landing and hides the matrix.
+const _isTouchDevice =
+  ("ontouchstart" in window) ||
+  (navigator.maxTouchPoints > 0) ||
+  window.matchMedia("(max-width: 768px)").matches;
+if (!_isTouchDevice) {
+  document.getElementById("quick-task")?.focus();
+}
 if (typeof feather !== "undefined") feather.replace();
+
+/* ══════════════════════════════════════════════════════════════
+   TRAVEL TEMPLATES — category picker (header) + management modal
+   ══════════════════════════════════════════════════════════════ */
+
+function _tvCsrf() {
+  return document.querySelector('meta[name="csrf-token"]')?.content || "";
+}
+
+function _tvFetch(url, opts = {}) {
+  opts.headers = Object.assign({
+    "Content-Type": "application/json",
+    "X-CSRFToken": _tvCsrf(),
+  }, opts.headers || {});
+  return fetch(url, opts).then(r => r.json());
+}
+
+async function loadTravelCategoriesIntoHeader() {
+  const sel = document.getElementById("travel-category-select");
+  if (!sel) return;
+  const res = await _tvFetch("/travel/categories");
+  const cats = res.categories || [];
+  sel.innerHTML = `<option value="">All templates</option>` +
+    cats.map(c => `<option value="${_esc(c.name)}">${_esc(c.name)} (${c.count})</option>`).join("");
+}
+
+function _esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+// Kick off header population
+loadTravelCategoriesIntoHeader();
+
+// ── Modal ──
+async function openTravelSettings() {
+  document.getElementById("tv-overlay").classList.remove("hidden");
+  await refreshTravelCategoryPicker();
+  await loadTravelTasks();
+  if (typeof feather !== "undefined") feather.replace();
+}
+
+function closeTravelSettings() {
+  document.getElementById("tv-overlay").classList.add("hidden");
+  // Refresh header dropdown in case categories changed
+  loadTravelCategoriesIntoHeader();
+}
+
+async function refreshTravelCategoryPicker() {
+  const picker = document.getElementById("tv-cat-picker");
+  const res = await _tvFetch("/travel/categories");
+  const cats = res.categories || [];
+  const prev = picker.value;
+  if (cats.length === 0) {
+    picker.innerHTML = `<option value="Default">Default (0)</option>`;
+  } else {
+    picker.innerHTML = cats.map(c =>
+      `<option value="${_esc(c.name)}">${_esc(c.name)} (${c.count})</option>`
+    ).join("");
+    if (prev && cats.some(c => c.name === prev)) picker.value = prev;
+  }
+}
+
+async function loadTravelTasks() {
+  const category = document.getElementById("tv-cat-picker").value;
+  const listEl = document.getElementById("tv-task-list");
+  const res = await _tvFetch(`/travel/tasks?category=${encodeURIComponent(category)}`);
+  const tasks = res.tasks || [];
+
+  if (!tasks.length) {
+    listEl.innerHTML = `<div class="tv-empty">No tasks in this category yet. Add one below.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = tasks.map(t => `
+    <div class="tv-task" data-id="${t.id}">
+      <input type="text" value="${_esc(t.task_text)}" onchange="updateTravelTask(${t.id},'task_text',this.value)">
+      <select onchange="updateTravelTask(${t.id},'quadrant',this.value)">
+        <option value="do"         ${t.quadrant === 'do' ? 'selected' : ''}>🔴 Do</option>
+        <option value="schedule"   ${t.quadrant === 'schedule' ? 'selected' : ''}>🔵 Schedule</option>
+        <option value="delegate"   ${t.quadrant === 'delegate' ? 'selected' : ''}>🟡 Delegate</option>
+        <option value="eliminate"  ${t.quadrant === 'eliminate' ? 'selected' : ''}>⚪ Eliminate</option>
+      </select>
+      <input type="text" value="${_esc(t.subcategory || '')}" placeholder="Subcategory" onchange="updateTravelTask(${t.id},'subcategory',this.value)">
+      <button type="button" class="tv-del" title="Delete" onclick="deleteTravelTask(${t.id})">✕</button>
+    </div>
+  `).join("");
+}
+
+async function createTravelTask() {
+  const text = document.getElementById("tv-new-text").value.trim();
+  if (!text) { showToast("Enter task text", "error"); return; }
+  const category = document.getElementById("tv-cat-picker").value || "Default";
+  const quadrant = document.getElementById("tv-new-quad").value;
+  const subcategory = document.getElementById("tv-new-subcat").value.trim() || "General";
+
+  const res = await _tvFetch("/travel/tasks", {
+    method: "POST",
+    body: JSON.stringify({ category, quadrant, subcategory, task_text: text }),
+  });
+  if (res.status === "ok") {
+    document.getElementById("tv-new-text").value = "";
+    await refreshTravelCategoryPicker();
+    document.getElementById("tv-cat-picker").value = category;
+    await loadTravelTasks();
+  } else {
+    showToast(res.error || "Failed to add", "error");
+  }
+}
+
+async function updateTravelTask(id, field, value) {
+  const res = await _tvFetch(`/travel/tasks/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ [field]: value }),
+  });
+  if (res.status !== "ok") showToast(res.error || "Update failed", "error");
+}
+
+async function deleteTravelTask(id) {
+  if (!confirm("Delete this travel task?")) return;
+  await _tvFetch(`/travel/tasks/${id}`, { method: "DELETE" });
+  await refreshTravelCategoryPicker();
+  await loadTravelTasks();
+}
+
+async function createTravelCategory() {
+  const name = document.getElementById("tv-new-cat").value.trim();
+  if (!name) { showToast("Enter a category name", "error"); return; }
+  // Create a seed row so the category materializes; user can edit/delete it
+  const res = await _tvFetch("/travel/tasks", {
+    method: "POST",
+    body: JSON.stringify({
+      category: name,
+      quadrant: "do",
+      subcategory: "General",
+      task_text: "New travel task (edit me)",
+    }),
+  });
+  if (res.status === "ok") {
+    document.getElementById("tv-new-cat").value = "";
+    await refreshTravelCategoryPicker();
+    document.getElementById("tv-cat-picker").value = name;
+    await loadTravelTasks();
+  } else {
+    showToast(res.error || "Failed", "error");
+  }
+}
+
+async function renameTravelCategory() {
+  const old_name = document.getElementById("tv-cat-picker").value;
+  if (!old_name) return;
+  const new_name = prompt(`Rename category "${old_name}" to:`, old_name);
+  if (!new_name || new_name.trim() === old_name) return;
+  const res = await _tvFetch("/travel/categories/rename", {
+    method: "POST",
+    body: JSON.stringify({ old_name, new_name: new_name.trim() }),
+  });
+  if (res.status === "ok") {
+    await refreshTravelCategoryPicker();
+    document.getElementById("tv-cat-picker").value = new_name.trim();
+    await loadTravelTasks();
+  } else {
+    showToast(res.error || "Rename failed", "error");
+  }
+}
+
+async function deleteTravelCategory() {
+  const name = document.getElementById("tv-cat-picker").value;
+  if (!name) return;
+  if (!confirm(`Delete category "${name}" and ALL its tasks?`)) return;
+  const res = await _tvFetch("/travel/categories/delete", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  if (res.status === "ok") {
+    await refreshTravelCategoryPicker();
+    await loadTravelTasks();
+  } else {
+    showToast(res.error || "Delete failed", "error");
+  }
+}
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
 </body>

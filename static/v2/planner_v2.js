@@ -1237,27 +1237,174 @@ async function onColumnDrop(e) {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   16. DRAG-TO-CREATE (pointer events on columns)
+   16. DRAG-TO-CREATE
+   ──────────────────────────────────────────────────────────────
+   Desktop (mouse/pen): immediate drag on pointerdown.
+   Touch: long-press (450ms) to enter create mode — otherwise the
+   browser's native vertical scroll wins and create never fires.
+   Once committed, a non-passive touchmove handler preventDefault()s
+   scroll so dragging the ghost event works.
    ══════════════════════════════════════════════════════════════ */
+
+let holdTimer = null;
+let activePointerId = null;
 
 function onColumnPointerDown(e) {
   // Ignore if on an event chip or button
   if (e.target.closest(".event-chip")) return;
   if (e.target.closest("button")) return;
 
+  // Only the primary pointer
+  if (e.isPrimary === false) return;
+
   const col = e.currentTarget;
   createColDate = col.dataset.date;
-  pendingCreate = true;
-  creatingEvent = false;
   createStartY = e.clientY;
   createStartX = e.clientX;
+  activePointerId = e.pointerId;
 
-  document.addEventListener("pointermove", onCreatePointerMove);
-  document.addEventListener("pointerup", onCreatePointerUp);
+  if (e.pointerType === "touch") {
+    // Long-press model on touch so normal scrolls aren't hijacked
+    pendingCreate = false;
+    creatingEvent = false;
+
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => {
+      holdTimer = null;
+      _beginTouchCreate();
+    }, 450);
+
+    // Short-press cancellers — if the finger moves or lifts before
+    // the timeout, treat it as a scroll/tap and abort.
+    document.addEventListener("pointermove", _preHoldMove, { passive: true });
+    document.addEventListener("pointerup", _preHoldEnd, { passive: true });
+    document.addEventListener("pointercancel", _preHoldEnd, { passive: true });
+  } else {
+    // Mouse/pen — original immediate-drag behavior
+    pendingCreate = true;
+    creatingEvent = false;
+    document.addEventListener("pointermove", onCreatePointerMove);
+    document.addEventListener("pointerup", onCreatePointerUp);
+    document.addEventListener("pointercancel", cancelCreate);
+  }
+}
+
+function _preHoldMove(e) {
+  if (e.pointerId !== activePointerId) return;
+  const dX = Math.abs(e.clientX - createStartX);
+  const dY = Math.abs(e.clientY - createStartY);
+  // Any meaningful movement before hold fires = user scrolling, abort
+  if (dX > 10 || dY > 10) {
+    _clearPreHoldListeners();
+    clearTimeout(holdTimer); holdTimer = null;
+  }
+}
+
+function _preHoldEnd() {
+  _clearPreHoldListeners();
+  clearTimeout(holdTimer); holdTimer = null;
+}
+
+function _clearPreHoldListeners() {
+  document.removeEventListener("pointermove", _preHoldMove);
+  document.removeEventListener("pointerup", _preHoldEnd);
+  document.removeEventListener("pointercancel", _preHoldEnd);
+}
+
+function _beginTouchCreate() {
+  _clearPreHoldListeners();
+
+  const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
+  if (!col) return;
+
+  // Haptic cue where supported
+  if (navigator.vibrate) { try { navigator.vibrate(25); } catch {} }
+
+  // Create the ghost at the pressed position
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const y = createStartY - rect.top + scrollTop;
+  const minutesFromTop = (y / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const top = (snapped / 60) * HOUR_HEIGHT;
+
+  ghostEvent = document.createElement("div");
+  ghostEvent.className = "event-chip ghost-event";
+  ghostEvent.style.top = top + "px";
+  ghostEvent.style.height = (HOUR_HEIGHT / 2) + "px"; // default 30-min preview
+  ghostEvent.style.left = "2px";
+  ghostEvent.style.width = "calc(100% - 4px)";
+  col.appendChild(ghostEvent);
+
+  creatingEvent = true;
+  pendingCreate = false;
+
+  // Block scroll + attach resize handlers
+  document.addEventListener("touchmove", _touchCreateMove, { passive: false });
+  document.addEventListener("touchend", _touchCreateEnd, { passive: true });
+  document.addEventListener("touchcancel", _touchCreateCancel, { passive: true });
+}
+
+function _touchCreateMove(e) {
+  if (!creatingEvent || !ghostEvent) return;
+  e.preventDefault(); // stop the scroll
+
+  const t = e.touches[0];
+  if (!t) return;
+
+  const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
+  if (!col) return;
+
+  const rect = col.getBoundingClientRect();
+  const scrollTop = col.closest("#gcal-scroll").scrollTop;
+  const startY = createStartY - rect.top + scrollTop;
+  const currentY = t.clientY - rect.top + scrollTop;
+  const delta = currentY - startY;
+
+  if (delta < 0) return;
+
+  const mins = (delta / HOUR_HEIGHT) * 60;
+  const snapped = Math.round(mins / SNAP) * SNAP;
+  const height = (snapped / 60) * HOUR_HEIGHT;
+  ghostEvent.style.height = Math.max(height, HOUR_HEIGHT / 4) + "px";
+}
+
+function _touchCreateEnd(e) {
+  if (!creatingEvent) return;
+
+  const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
+  if (!col) { _touchCreateCancel(); return; }
+
+  // Compute from current ghost height (more reliable than the touch end coord)
+  const ghostTop = parseFloat(ghostEvent.style.top || "0");
+  const ghostH = parseFloat(ghostEvent.style.height || "0");
+  const startMinutes = Math.round(((ghostTop / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+  const endMinutes = Math.round((((ghostTop + ghostH) / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+
+  _touchCreateCleanup();
+
+  // Default to a 30-min event if the finger never moved
+  const finalEnd = endMinutes > startMinutes ? endMinutes : startMinutes + 30;
+  currentDate = createColDate;
+  openCreateModal(createColDate, toTime(startMinutes), toTime(finalEnd));
+}
+
+function _touchCreateCancel() {
+  _touchCreateCleanup();
+}
+
+function _touchCreateCleanup() {
+  if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
+  creatingEvent = false;
+  pendingCreate = false;
+  document.removeEventListener("touchmove", _touchCreateMove);
+  document.removeEventListener("touchend", _touchCreateEnd);
+  document.removeEventListener("touchcancel", _touchCreateCancel);
 }
 
 function onCreatePointerMove(e) {
   if (!pendingCreate && !creatingEvent) return;
+  if (e.pointerId !== activePointerId) return;
 
   const dY = e.clientY - createStartY;
   const dX = Math.abs(e.clientX - createStartX);
@@ -1269,13 +1416,7 @@ function onCreatePointerMove(e) {
       return;
     }
 
-    const threshold = e.pointerType === "touch" ? 20 : 8;
-    if (Math.abs(dY) < threshold) return;
-
-    if (e.pointerType === "touch" && dX >= Math.abs(dY)) {
-      cancelCreate();
-      return;
-    }
+    if (Math.abs(dY) < 8) return;
 
     // Commit to creating
     creatingEvent = true;
@@ -1330,6 +1471,7 @@ function onCreatePointerUp(e) {
 
   document.removeEventListener("pointermove", onCreatePointerMove);
   document.removeEventListener("pointerup", onCreatePointerUp);
+  document.removeEventListener("pointercancel", cancelCreate);
 
   if (!wasCreating) return;
 
@@ -1361,6 +1503,7 @@ function cancelCreate() {
   creatingEvent = false;
   document.removeEventListener("pointermove", onCreatePointerMove);
   document.removeEventListener("pointerup", onCreatePointerUp);
+  document.removeEventListener("pointercancel", cancelCreate);
 }
 
 /* ══════════════════════════════════════════════════════════════

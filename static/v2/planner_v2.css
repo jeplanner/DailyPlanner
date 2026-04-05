@@ -467,6 +467,7 @@ body {
   width: var(--gutter-width);
   flex-shrink: 0;
   position: relative;
+  background: var(--gcal-bg);
 }
 .gcal-hour-label {
   position: absolute;
@@ -953,10 +954,20 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 /* ═══════════ RESPONSIVE ═══════════ */
 @media (max-width: 768px) {
   :root {
-    --gutter-width: 58px;
+    --gutter-width: 62px;
     --hour-height: 72px;
     --header-height: 52px;
     --col-header-height: 64px;
+  }
+
+  /* Tinted time-gutter background + clear separator for legibility */
+  .gcal-gutter {
+    background: var(--gcal-surface);
+    border-right: 1px solid var(--gcal-border);
+  }
+  .gcal-gutter-header {
+    background: var(--gcal-surface);
+    border-right: 1px solid var(--gcal-border);
   }
 
   .gcal-sidebar { display: none; }
@@ -975,20 +986,21 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   .gcal-view-switcher { display: none; }
 
   /* Day headers */
-  .gcal-gutter-header, .gcal-gutter { width: 58px; }
+  .gcal-gutter-header, .gcal-gutter { width: 62px; }
   .gcal-day-header { padding: 6px 0 4px; }
   .gcal-day-name, .day-name { font-size: 13px; font-weight: 600; }
   .gcal-day-number, .day-number {
     width: 38px; height: 38px; font-size: 21px; font-weight: 500;
   }
 
-  /* Time gutter labels — bumped up so they're readable at arm's length */
+  /* Time gutter labels — high contrast, larger, slight left-padding buffer */
   .gcal-hour-label, .hour-label {
-    font-size: 14px;
-    font-weight: 600;
-    right: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    right: 10px;
     color: var(--gcal-text);
-    opacity: 0.85;
+    opacity: 1;
+    letter-spacing: -0.2px;
   }
 
   /* Event chips — readable on phones, bold like GCal */
@@ -1065,10 +1077,11 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 }
 
 @media (max-width: 480px) {
-  :root { --gutter-width: 54px; }
+  :root { --gutter-width: 58px; }
+  .gcal-gutter-header, .gcal-gutter { width: 58px; }
   .gcal-title { font-size: 18px; }
   .gcal-today-btn { padding: 5px 10px; font-size: 13px; }
-  .gcal-hour-label, .hour-label { font-size: 13px; right: 6px; }
+  .gcal-hour-label, .hour-label { font-size: 14px; font-weight: 700; right: 8px; }
   /* Keep event time visible but slightly smaller */
   .event-chip .event-time, .chip-time { font-size: 11px; }
   .gcal-day-number, .day-number { width: 34px; height: 34px; font-size: 19px; }
