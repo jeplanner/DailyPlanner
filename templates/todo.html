@@ -362,6 +362,154 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
 }
 #em-filter-btn.has-filters svg{stroke:#fff;}
 
+/* ═══════════════════════════════════════════════════════════════
+   DAILY MOTIVATIONAL QUOTE — hero card with gradient + serif
+   Shown at the top of the Eisenhower matrix (home page).
+   ═══════════════════════════════════════════════════════════════ */
+.em-quote {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  padding: 22px 24px 22px 28px;
+  margin-bottom: 18px;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 300px at 0% 0%, rgba(147, 197, 253, 0.35) 0%, transparent 50%),
+    radial-gradient(1000px 260px at 100% 100%, rgba(251, 191, 36, 0.25) 0%, transparent 55%),
+    linear-gradient(135deg, #1e3a8a 0%, #2563eb 45%, #0ea5e9 100%);
+  color: #f8fafc;
+  box-shadow: 0 14px 40px rgba(37, 99, 235, 0.22), 0 2px 6px rgba(0, 0, 0, 0.1);
+  isolation: isolate;
+}
+.em-quote::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, 0.08) 50%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+.em-quote::after {
+  content: "";
+  position: absolute;
+  top: -40px; right: -40px;
+  width: 180px; height: 180px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.18) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+html.dark .em-quote {
+  background:
+    radial-gradient(1200px 300px at 0% 0%, rgba(59, 130, 246, 0.28) 0%, transparent 50%),
+    radial-gradient(1000px 260px at 100% 100%, rgba(217, 119, 6, 0.22) 0%, transparent 55%),
+    linear-gradient(135deg, #0b1e4a 0%, #1e3a8a 45%, #0f766e 100%);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.em-quote-mark {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 96px;
+  line-height: 0.75;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.32);
+  flex-shrink: 0;
+  align-self: flex-start;
+  z-index: 1;
+  margin-top: -4px;
+  user-select: none;
+}
+.em-quote-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  border: none;
+  padding: 0;
+}
+.em-quote-text {
+  margin: 0;
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 20px;
+  line-height: 1.45;
+  font-weight: 500;
+  font-style: italic;
+  letter-spacing: -0.1px;
+  color: #f8fafc;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  animation: emQuoteFade 0.45s ease;
+}
+.em-quote-author {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: rgba(248, 250, 252, 0.82);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.em-quote-author::before {
+  content: "";
+  width: 22px;
+  height: 2px;
+  background: rgba(248, 250, 252, 0.55);
+  border-radius: 2px;
+}
+@keyframes emQuoteFade {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.em-quote-shuffle {
+  z-index: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  color: #f8fafc;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  flex-shrink: 0;
+  transition: all 0.25s ease;
+}
+.em-quote-shuffle:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: rotate(90deg);
+}
+.em-quote-shuffle:active { transform: rotate(180deg); }
+.em-quote-shuffle svg { width: 16px; height: 16px; stroke-width: 2.5; }
+@media (max-width: 768px) {
+  .em-quote {
+    padding: 18px 18px 18px 20px;
+    gap: 12px;
+    border-radius: 16px;
+    margin-bottom: 16px;
+  }
+  .em-quote-mark { font-size: 72px; }
+  .em-quote-text { font-size: 17px; line-height: 1.45; }
+  .em-quote-author { font-size: 11px; letter-spacing: 1px; }
+  .em-quote-author::before { width: 16px; }
+  .em-quote-shuffle { width: 34px; height: 34px; }
+}
+@media (max-width: 480px) {
+  .em-quote {
+    padding: 16px 16px 16px 18px;
+    border-radius: 14px;
+  }
+  .em-quote-mark { font-size: 58px; }
+  .em-quote-text { font-size: 15.5px; }
+}
+
 /* Active-filters chip bar */
 .em-filter-chips{
   display:flex;flex-wrap:wrap;gap:6px;align-items:center;
@@ -843,6 +991,20 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
       <button class="em-today-btn" onclick="goToDate('{{ today }}')">Today</button>
     </div>
   </div>
+
+  <!-- ═══════════ DAILY MOTIVATIONAL QUOTE ═══════════
+       Deterministic by date so it's stable all day; the 🔄 button
+       on the right reshuffles to any of ~40 curated quotes. -->
+  <section class="em-quote" id="em-quote-hero" aria-live="polite">
+    <div class="em-quote-mark" aria-hidden="true">“</div>
+    <blockquote class="em-quote-body">
+      <p class="em-quote-text" id="em-quote-text">Loading…</p>
+      <footer class="em-quote-author" id="em-quote-author"></footer>
+    </blockquote>
+    <button type="button" class="em-quote-shuffle" onclick="shuffleQuote()" title="New quote" aria-label="Show another quote">
+      <i data-feather="refresh-cw"></i>
+    </button>
+  </section>
 
   <!-- Active filter chips (shown only when filters are applied) -->
   <div id="em-filter-chips" class="em-filter-chips" style="display:none;"></div>
@@ -2417,6 +2579,93 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("DOMContentLoaded", loadEmOkrFilter);
+
+// ═════════════════════════════════════════════════════════════
+// DAILY MOTIVATIONAL QUOTE — curated, date-stable, one-click reshuffle
+// ═════════════════════════════════════════════════════════════
+const EM_QUOTES = [
+  { t: "The secret of getting ahead is getting started.", a: "Mark Twain" },
+  { t: "It always seems impossible until it's done.", a: "Nelson Mandela" },
+  { t: "Discipline is choosing between what you want now and what you want most.", a: "Abraham Lincoln" },
+  { t: "Well done is better than well said.", a: "Benjamin Franklin" },
+  { t: "What we do every day matters more than what we do once in a while.", a: "Gretchen Rubin" },
+  { t: "Amateurs sit and wait for inspiration. The rest of us just get up and go to work.", a: "Stephen King" },
+  { t: "You do not rise to the level of your goals. You fall to the level of your systems.", a: "James Clear" },
+  { t: "Focus is a matter of deciding what things you're not going to do.", a: "John Carmack" },
+  { t: "Small daily improvements are the key to staggering long-term results.", a: "Robin Sharma" },
+  { t: "A year from now you will wish you had started today.", a: "Karen Lamb" },
+  { t: "Perfection is the enemy of progress.", a: "Winston Churchill" },
+  { t: "Do the hard jobs first. The easy jobs will take care of themselves.", a: "Dale Carnegie" },
+  { t: "The best way out is always through.", a: "Robert Frost" },
+  { t: "Success is the sum of small efforts, repeated day in and day out.", a: "Robert Collier" },
+  { t: "Don't watch the clock; do what it does. Keep going.", a: "Sam Levenson" },
+  { t: "Action is the foundational key to all success.", a: "Pablo Picasso" },
+  { t: "If you want to improve, be content to be thought foolish and stupid.", a: "Epictetus" },
+  { t: "Motivation is what gets you started. Habit is what keeps you going.", a: "Jim Rohn" },
+  { t: "The man who moves a mountain begins by carrying away small stones.", a: "Confucius" },
+  { t: "You don't have to be great to start, but you have to start to be great.", a: "Zig Ziglar" },
+  { t: "What you do every day matters more than what you do every once in a while.", a: "James Clear" },
+  { t: "Start where you are. Use what you have. Do what you can.", a: "Arthur Ashe" },
+  { t: "The expert in anything was once a beginner.", a: "Helen Hayes" },
+  { t: "Either you run the day, or the day runs you.", a: "Jim Rohn" },
+  { t: "Concentrate all your thoughts upon the work at hand. The sun's rays do not burn until brought to a focus.", a: "Alexander Graham Bell" },
+  { t: "The only way to do great work is to love what you do.", a: "Steve Jobs" },
+  { t: "Quality is not an act, it is a habit.", a: "Aristotle" },
+  { t: "We are what we repeatedly do. Excellence, then, is not an act, but a habit.", a: "Will Durant" },
+  { t: "If you spend too much time thinking about a thing, you'll never get it done.", a: "Bruce Lee" },
+  { t: "It does not matter how slowly you go as long as you do not stop.", a: "Confucius" },
+  { t: "Courage doesn't always roar. Sometimes courage is the quiet voice at the end of the day saying, 'I will try again tomorrow.'", a: "Mary Anne Radmacher" },
+  { t: "Done is better than perfect.", a: "Sheryl Sandberg" },
+  { t: "Energy and persistence conquer all things.", a: "Benjamin Franklin" },
+  { t: "The journey of a thousand miles begins with a single step.", a: "Lao Tzu" },
+  { t: "Great things are done by a series of small things brought together.", a: "Vincent Van Gogh" },
+  { t: "Simplicity is the ultimate sophistication.", a: "Leonardo da Vinci" },
+  { t: "He who is not courageous enough to take risks will accomplish nothing in life.", a: "Muhammad Ali" },
+  { t: "You miss 100% of the shots you don't take.", a: "Wayne Gretzky" },
+  { t: "The harder I work, the luckier I get.", a: "Samuel Goldwyn" },
+  { t: "Fall seven times, stand up eight.", a: "Japanese Proverb" },
+  { t: "Make each day your masterpiece.", a: "John Wooden" },
+  { t: "In the middle of difficulty lies opportunity.", a: "Albert Einstein" },
+];
+
+// Hash a date string to a stable index so the same day shows the
+// same quote on every refresh; a new day brings a new quote.
+function _emDailyQuoteIndex() {
+  const d = new Date();
+  const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return Math.abs(h) % EM_QUOTES.length;
+}
+
+let _emQuoteIdx = null;
+
+function renderQuote(idx) {
+  const q = EM_QUOTES[idx];
+  const textEl = document.getElementById("em-quote-text");
+  const authorEl = document.getElementById("em-quote-author");
+  if (!q || !textEl || !authorEl) return;
+  // Retrigger CSS fade animation
+  textEl.style.animation = "none";
+  void textEl.offsetWidth;
+  textEl.style.animation = "";
+  textEl.textContent = q.t;
+  authorEl.textContent = q.a;
+  _emQuoteIdx = idx;
+}
+
+function shuffleQuote() {
+  let next = Math.floor(Math.random() * EM_QUOTES.length);
+  // Avoid repeating the current one
+  if (EM_QUOTES.length > 1) {
+    while (next === _emQuoteIdx) next = Math.floor(Math.random() * EM_QUOTES.length);
+  }
+  renderQuote(next);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  renderQuote(_emDailyQuoteIndex());
+});
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
 </body>
