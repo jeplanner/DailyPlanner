@@ -411,12 +411,48 @@ body {
 
 /* ═══════════ ADD TASK ═══════════ */
 .add-task-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px; background: var(--pt-surface);
-  border-radius: 10px; border: 1px solid var(--pt-border);
-  margin-bottom: 16px; box-shadow: var(--pt-shadow);
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--pt-surface);
+  border-radius: 12px;
+  border: 1.5px solid var(--pt-border);
+  margin-bottom: 16px;
+  box-shadow: var(--pt-shadow);
+  transition: border-color .15s, box-shadow .15s;
+  position: relative;
 }
-.prio-picker { display: flex; gap: 4px; }
+/* Leading "+" icon that makes it obvious this is an input you can type into */
+.add-task-row::before {
+  content: "+";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--pt-primary-light);
+  color: var(--pt-primary);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: transform .15s;
+}
+.add-task-row:hover {
+  border-color: var(--pt-primary);
+  box-shadow: 0 2px 14px rgba(37, 99, 235, 0.12);
+}
+.add-task-row:hover::before { transform: scale(1.06); }
+.add-task-row:focus-within {
+  border-color: var(--pt-primary);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
+}
+.add-task-row:focus-within::before {
+  background: var(--pt-primary);
+  color: #fff;
+}
+
+.prio-picker { display: flex; gap: 4px; flex-shrink: 0; }
 .pp-btn {
   width: 28px; height: 28px; border: 2px solid transparent;
   border-radius: 50%; background: none; cursor: pointer;
@@ -430,23 +466,58 @@ body {
 .pp-low { background: var(--pt-low); }
 
 .add-task-input {
-  flex: 1; border: none; outline: none; font-size: 14px;
-  font-family: inherit; background: transparent; color: var(--pt-text); min-width: 0;
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+  background: transparent;
+  color: var(--pt-text);
+  min-width: 0;
+  padding: 4px 0;
 }
-.add-task-input::placeholder { color: var(--pt-text3); }
+.add-task-input::placeholder {
+  color: var(--pt-text2);
+  font-weight: 500;
+  opacity: 0.85;
+}
+
 .add-task-date {
-  border: 1px solid var(--pt-border); border-radius: 6px;
-  padding: 4px 8px; font-size: 12px; font-family: inherit;
-  background: var(--pt-surface); color: var(--pt-text); outline: none; width: 130px;
+  border: 1px solid var(--pt-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--pt-bg);
+  color: var(--pt-text);
+  outline: none;
+  width: 130px;
+  transition: border-color .15s;
 }
+.add-task-date:focus { border-color: var(--pt-primary); }
+
 .add-task-btn {
-  width: 34px; height: 34px; border: none;
-  background: var(--pt-primary); color: #fff; border-radius: 8px;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: opacity 0.15s; flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: var(--pt-primary);
+  color: #fff;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }
-.add-task-btn:hover { opacity: 0.9; }
-.add-task-btn svg { width: 18px; height: 18px; }
+.add-task-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+}
+.add-task-btn:active { transform: translateY(0); }
+.add-task-btn svg { width: 20px; height: 20px; }
 
 /* ═══════════ TASK TABLE ═══════════ */
 .task-table-wrap {
@@ -755,16 +826,23 @@ html.dark .pt-action-popover button:hover { background: #374151; }
   cursor: pointer;
   color: var(--pt-text);
   transition: color 0.15s;
-  /* Wrap long titles to a readable max of 2 lines with ellipsis.
-     Full text is always available in the side panel / tooltip. */
+  /* Full wrap — long titles flow to as many lines as needed.
+     flex:1 1 auto + min-width:0 lets the span shrink-to-fit and wrap
+     instead of forcing the row to scroll. overflow-wrap:anywhere
+     handles extremely long unbroken strings (URLs, identifiers). */
   flex: 1 1 auto;
   min-width: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.45;
+  display: block;
+  white-space: normal;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  line-height: 1.45;
+  /* Explicitly reset the legacy line-clamp properties so the browser
+     doesn't silently inherit them from any earlier cached rule. */
+  -webkit-line-clamp: none;
+  -webkit-box-orient: initial;
+  max-height: none;
 }
 .task-text:hover { color: var(--pt-primary); }
 .pin-icon { width: 14px; height: 14px; color: var(--pt-warning); flex-shrink: 0; }
@@ -1118,19 +1196,12 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
     gap: 6px 8px;
   }
   .task-text {
-    flex: 1 1 100%;
+    /* Inherits full-wrap from the base rule; only size/weight change on mobile */
     font-size: 15px;
     font-weight: 600;
     line-height: 1.45;
     color: var(--pt-text);
-    /* No clamp on mobile — long titles wrap to as many lines as needed.
-       overflow-wrap handles extremely long unbroken strings. */
-    display: block;
-    white-space: normal;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    overflow: visible;
-    text-overflow: initial;
+    flex: 1 1 100%;   /* on mobile cards, give title its own row under the checkbox */
   }
 
   /* Priority shown as a colored left border instead of a dot column */
@@ -1252,12 +1323,31 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .task-row.done { opacity: 0.5; }
   .task-row.done .task-text { text-decoration: line-through; }
 
-  /* Add task row adjustments */
-  .add-task-row { flex-wrap: wrap; }
-  .prio-picker { order: 2; }
-  .add-task-input { order: 1; flex-basis: 100%; }
-  .add-task-date { order: 3; }
-  .add-task-btn { order: 4; }
+  /* Add task row: on mobile, stack into two rows
+     Row 1: [+] icon + text input (flex together)
+     Row 2: priority picker + date + submit button
+     This keeps the input obvious and typeable without cramping. */
+  .add-task-row {
+    flex-wrap: wrap;
+    padding: 14px 14px;
+    gap: 10px 12px;
+  }
+  .add-task-row::before { order: 0; }
+  .add-task-input {
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 16px;  /* 16px to prevent iOS auto-zoom on focus */
+  }
+  .prio-picker { order: 2; flex-basis: 100%; padding-left: 40px; }
+  .add-task-date { order: 3; flex: 1 1 auto; }
+  .add-task-btn {
+    order: 4;
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+  }
+  .add-task-btn svg { width: 22px; height: 22px; }
 
   /* Side panel → bottom sheet on mobile */
   .task-panel {

@@ -58,8 +58,11 @@
   <div class="proj-toolbar">
     <div class="toolbar-left">
       <div class="view-toggle">
-        <button class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="Table view">
+        <button class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="Full table view">
           <i data-feather="list"></i>
+        </button>
+        <button class="vt-btn" data-view="compact" onclick="setTaskView('compact')" title="Compact view — title, due date & status only">
+          <i data-feather="align-justify"></i>
         </button>
         <button class="vt-btn" data-view="board" onclick="setTaskView('board')" title="Board view">
           <i data-feather="columns"></i>
@@ -125,7 +128,7 @@
     </div>
     <input type="text" id="add-task-input" class="add-task-input"
            data-project-id="{{ project.project_id }}"
-           placeholder="Add a task…" autocomplete="off">
+           placeholder="Type a task and press Enter…" autocomplete="off">
     <input type="date" id="add-task-date" class="add-task-date" value="{{ selected_date }}">
     <button class="add-task-btn" id="add-task-btn" title="Add task">
       <i data-feather="plus"></i>
