@@ -166,6 +166,17 @@ def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _soft_delete(table, params):
+    """Soft-delete rows by flipping is_deleted=true and stamping deleted_at.
+
+    Never falls back to a hard DELETE — if the schema is missing the
+    soft-delete columns the exception will propagate and the caller
+    returns a 500 with a real error message. The migration in the
+    header docstring of this file must be run before soft-delete works.
+    """
+    update(table, params=params, json={"is_deleted": True, "deleted_at": _now_iso()})
+
+
 # ──────────────────────────────────────────────────────────────────────
 # PAGE RENDER
 # ──────────────────────────────────────────────────────────────────────
@@ -467,48 +478,48 @@ def delete_objective(objective_id):
     Row data is preserved — restore via PATCH {is_deleted: false}.
     """
     user_id = session["user_id"]
-    now = _now_iso()
 
-    # 1) Soft-delete the objective itself
-    update(
-        "objectives",
-        params={"id": f"eq.{objective_id}", "user_id": f"eq.{user_id}"},
-        json={"is_deleted": True, "deleted_at": now},
-    )
+    try:
+        # 1) Fetch live KRs under this objective so we can cascade
+        #    the soft-delete down to initiatives.
+        krs = get(
+            "key_results",
+            params={
+                "user_id": f"eq.{user_id}",
+                "objective_id": f"eq.{objective_id}",
+                "is_deleted": "eq.false",
+                "select": "id",
+                "limit": 500,
+            },
+        ) or []
+        kr_ids = [k["id"] for k in krs]
 
-    # 2) Fetch live KRs under this objective (to cascade)
-    krs = get(
-        "key_results",
-        params={
-            "user_id": f"eq.{user_id}",
-            "objective_id": f"eq.{objective_id}",
-            "is_deleted": "eq.false",
-            "select": "id",
-            "limit": 500,
-        },
-    ) or []
-    if not krs:
-        return jsonify({"status": "ok"})
+        # 2) Cascade: initiatives under those KRs
+        if kr_ids:
+            _soft_delete(
+                "initiatives",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "key_result_id": f"in.({','.join(kr_ids)})",
+                },
+            )
+            # 3) Cascade: the KRs themselves
+            _soft_delete(
+                "key_results",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "id": f"in.({','.join(kr_ids)})",
+                },
+            )
 
-    kr_ids = [k["id"] for k in krs]
-    update(
-        "key_results",
-        params={
-            "user_id": f"eq.{user_id}",
-            "id": f"in.({','.join(kr_ids)})",
-        },
-        json={"is_deleted": True, "deleted_at": now},
-    )
-
-    # 3) Soft-delete all initiatives under those KRs
-    update(
-        "initiatives",
-        params={
-            "user_id": f"eq.{user_id}",
-            "key_result_id": f"in.({','.join(kr_ids)})",
-        },
-        json={"is_deleted": True, "deleted_at": now},
-    )
+        # 4) Finally, the objective itself
+        _soft_delete(
+            "objectives",
+            params={"id": f"eq.{objective_id}", "user_id": f"eq.{user_id}"},
+        )
+    except Exception as e:
+        logger.exception("delete_objective failed")
+        return jsonify({"error": f"Delete failed: {e}"}), 500
 
     return jsonify({"status": "ok"})
 
@@ -592,21 +603,23 @@ def update_key_result(kr_id):
 def delete_key_result(kr_id):
     """Soft delete. Cascades to initiatives under this KR."""
     user_id = session["user_id"]
-    now = _now_iso()
 
-    update(
-        "key_results",
-        params={"id": f"eq.{kr_id}", "user_id": f"eq.{user_id}"},
-        json={"is_deleted": True, "deleted_at": now},
-    )
-    update(
-        "initiatives",
-        params={
-            "user_id": f"eq.{user_id}",
-            "key_result_id": f"eq.{kr_id}",
-        },
-        json={"is_deleted": True, "deleted_at": now},
-    )
+    try:
+        # Cascade to initiatives FIRST, then the KR itself.
+        _soft_delete(
+            "initiatives",
+            params={
+                "user_id": f"eq.{user_id}",
+                "key_result_id": f"eq.{kr_id}",
+            },
+        )
+        _soft_delete(
+            "key_results",
+            params={"id": f"eq.{kr_id}", "user_id": f"eq.{user_id}"},
+        )
+    except Exception as e:
+        logger.exception("delete_key_result failed")
+        return jsonify({"error": f"Delete failed: {e}"}), 500
     return jsonify({"status": "ok"})
 
 
@@ -663,9 +676,12 @@ def delete_initiative(initiative_id):
     """Soft delete a single initiative. Linked tasks keep their
     initiative_id pointer so that if the initiative is restored, the
     task linkage is automatically intact again."""
-    update(
-        "initiatives",
-        params={"id": f"eq.{initiative_id}", "user_id": f"eq.{session['user_id']}"},
-        json={"is_deleted": True, "deleted_at": _now_iso()},
-    )
+    try:
+        _soft_delete(
+            "initiatives",
+            params={"id": f"eq.{initiative_id}", "user_id": f"eq.{session['user_id']}"},
+        )
+    except Exception as e:
+        logger.exception("delete_initiative failed")
+        return jsonify({"error": f"Delete failed: {e}"}), 500
     return jsonify({"status": "ok"})

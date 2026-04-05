@@ -19,14 +19,16 @@ projects_bp = Blueprint("projects", __name__)
 def projects():
     user_id = session["user_id"]
 
-    projects = get(
-        "projects",
-        params={
-            "user_id": f"eq.{user_id}",
-            "is_archived": "eq.false",
-            "order": "created_at.asc",
-        },
-    ) or []
+    include_archived = request.args.get("include_archived", "0") == "1"
+
+    params = {
+        "user_id": f"eq.{user_id}",
+        "order": "created_at.asc",
+    }
+    if not include_archived:
+        params["is_archived"] = "eq.false"
+
+    projects = get("projects", params=params) or []
 
     # Batch-fetch task counts for all projects in one query
     if projects:
@@ -55,6 +57,7 @@ def projects():
     return render_template(
         "projects.html",
         projects=projects,
+        include_archived=include_archived,
     )
 
 @projects_bp.route("/projects/<project_id>/set-sort", methods=["POST"])

@@ -354,6 +354,274 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
 .em-okr-filter-label{font-size:12px;font-weight:600;color:var(--em-text2);}
 .em-okr-filter-row .em-quad-select{max-width:180px;}
 .em-task.em-okr-hidden{display:none!important;}
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE — readable type, generous touch targets, clearer layout
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  :root {
+    --em-text: #0f172a;
+    --em-text2: #475569;
+    --em-text3: #64748b;
+    --em-bg: #f4f6fb;
+  }
+  html.dark {
+    --em-text2: #cbd5e1;
+    --em-text3: #94a3b8;
+  }
+
+  body { -webkit-text-size-adjust: 100%; font-size: 15px; }
+
+  .em-app { padding: 14px 14px 100px; }
+
+  /* ── Header: title on top, date nav full-width below ── */
+  .em-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .em-header h1 {
+    font-size: 26px;
+    letter-spacing: -0.5px;
+    line-height: 1.15;
+  }
+  .em-date-nav {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+    background: var(--em-surface);
+    border: 1px solid var(--em-border);
+    border-radius: 12px;
+    padding: 6px 8px;
+    box-shadow: var(--em-shadow);
+  }
+  .em-nav-btn { width: 40px; height: 40px; }
+  .em-nav-btn svg { width: 20px !important; height: 20px !important; }
+  .em-date-pick {
+    flex: 1;
+    font-size: 15px;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    text-align: center;
+    min-height: 40px;
+  }
+  .em-today-btn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 14px;
+    min-height: 40px;
+    border-radius: 8px;
+    color: var(--q-schedule);
+    border-color: var(--q-schedule);
+  }
+
+  /* ── OKR filter bar: horizontal scroller on narrow screens ── */
+  .em-okr-filter-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .em-okr-filter-row::-webkit-scrollbar { display: none; }
+  .em-okr-filter-label { flex-shrink: 0; font-size: 13px; }
+  .em-okr-filter-row .em-quad-select {
+    flex: 0 0 auto;
+    min-width: 140px;
+    max-width: 200px;
+    font-size: 14px;
+    padding: 10px 12px;
+    min-height: 42px;
+    border-radius: 9px;
+  }
+
+  /* ── Quick actions: wrap with bigger touch targets ── */
+  .em-actions { gap: 8px; margin-bottom: 14px; }
+  .em-action-btn {
+    font-size: 13px;
+    padding: 10px 14px;
+    min-height: 42px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .em-action-btn svg { width: 16px !important; height: 16px !important; }
+
+  /* ── Quick add: stack into two rows ── */
+  .em-quick-add {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px;
+    background: var(--em-surface);
+    border: 1px solid var(--em-border);
+    border-radius: 14px;
+    box-shadow: var(--em-shadow);
+    margin-bottom: 14px;
+  }
+  .em-quick-input {
+    flex: 1 1 100%;
+    font-size: 16px; /* prevent iOS zoom */
+    padding: 13px 14px;
+    border-radius: 11px;
+    min-height: 48px;
+  }
+  .em-quad-select {
+    flex: 1 1 calc(50% - 5px);
+    font-size: 14px;
+    padding: 11px 12px;
+    min-height: 44px;
+    border-radius: 9px;
+  }
+  .em-add-btn {
+    flex: 1 1 100%;
+    font-size: 15px;
+    padding: 13px 18px;
+    min-height: 48px;
+    border-radius: 11px;
+    font-weight: 700;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+  }
+  .em-quick-extra {
+    gap: 10px;
+    padding: 12px;
+    border-radius: 11px;
+    margin-bottom: 14px;
+    margin-top: 0;
+  }
+  .em-extra-row { flex: 1 1 100%; justify-content: space-between; }
+  .em-extra-row label { font-size: 12px; }
+  .em-extra-input {
+    flex: 1;
+    font-size: 15px;
+    padding: 10px 12px;
+    min-height: 42px;
+    border-radius: 8px;
+  }
+
+  /* ── Matrix grid: single column with more vertical rhythm ── */
+  .em-matrix { grid-template-columns: 1fr; gap: 14px; }
+
+  .em-quad { border-radius: 16px; }
+  .em-quad-header {
+    padding: 16px 18px;
+    min-height: 56px;
+  }
+  .em-quad-title { font-size: 17px; font-weight: 800; gap: 10px; }
+  .em-quad-dot { width: 12px; height: 12px; }
+  .em-quad-count {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--em-text2);
+    padding: 4px 10px;
+    background: var(--em-bg);
+    border-radius: 10px;
+  }
+  .em-quad-body { padding: 4px 12px 14px; }
+
+  /* ── Task cards: much more readable ── */
+  .em-task {
+    gap: 12px;
+    padding: 14px 14px;
+    margin-top: 10px;
+    border-radius: 12px;
+    align-items: flex-start;
+  }
+  .em-task input[type=checkbox] {
+    width: 22px;
+    height: 22px;
+    margin-top: 1px;
+  }
+  .em-task-title {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--em-text);
+  }
+  .em-task-meta { gap: 8px; margin-top: 8px; }
+  .em-source-badge {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 700;
+  }
+  .em-project-name { font-size: 12px; font-weight: 500; }
+
+  /* Pills (priority / recurring / KR / status) — bigger and clearer */
+  .em-prio-pill {
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 12px;
+  }
+  .em-prio-pill::before { width: 7px; height: 7px; }
+  .em-recur-pill { font-size: 10px; padding: 3px 8px; border-radius: 12px; }
+  .em-kr-pill {
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 12px;
+    max-width: 140px;
+  }
+  .em-status-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+
+  /* Row actions — bigger targets */
+  .em-task-actions { gap: 4px; }
+  .em-move-select {
+    padding: 8px 10px;
+    font-size: 12px;
+    border-radius: 8px;
+    min-height: 36px;
+  }
+  .em-more-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    font-size: 20px;
+  }
+  .em-more-menu {
+    right: 0;
+    min-width: 180px;
+    padding: 6px;
+    border-radius: 12px;
+  }
+  .em-more-menu button {
+    padding: 12px 14px;
+    font-size: 14px;
+    border-radius: 8px;
+    min-height: 44px;
+  }
+
+  .em-empty {
+    padding: 28px 12px;
+    font-size: 14px;
+    color: var(--em-text2);
+    font-weight: 500;
+  }
+
+  /* Selection mode — bigger check + dock */
+  .em-sel-check { width: 26px; height: 26px; }
+  .em-select-bar {
+    padding: 12px 16px;
+    border-radius: 14px;
+  }
+  .em-select-bar .em-sel-count { font-size: 15px; }
+  .em-select-bar button { padding: 8px 14px; font-size: 13px; min-height: 38px; }
+  .em-select-bar .em-sel-exit { width: 36px; height: 36px; font-size: 20px; }
+}
+
+/* Very narrow phones (≤380px) — tighten further */
+@media (max-width: 380px) {
+  .em-app { padding: 12px 10px 100px; }
+  .em-header h1 { font-size: 24px; }
+  .em-quad-title { font-size: 16px; }
+  .em-task-title { font-size: 14px; }
+  .em-quad-select { flex-basis: 100%; }
+}
 </style>
 </head>
 <body>
