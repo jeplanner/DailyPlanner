@@ -771,6 +771,39 @@ body {
   font-size: 18px;
   font-weight: 600;
 }
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Google Calendar quick-export pill */
+.modal-gcal {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px 7px 10px;
+  border: 1.5px solid var(--gcal-border);
+  background: var(--gcal-bg);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gcal-text);
+  transition: all 0.15s;
+  letter-spacing: 0.1px;
+}
+.modal-gcal:hover {
+  border-color: var(--gcal-primary);
+  background: rgba(26, 115, 232, 0.06);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(26, 115, 232, 0.18);
+}
+.modal-gcal:active { transform: translateY(0); }
+.modal-gcal svg { flex-shrink: 0; }
+.modal-gcal-label { white-space: nowrap; }
+
 .modal-close {
   width: 36px;
   height: 36px;
@@ -786,6 +819,12 @@ body {
 }
 .modal-close:hover { background: var(--gcal-surface); }
 .modal-close svg { width: 20px; height: 20px; }
+
+/* On narrow phones, hide the label so just the Google Cal icon stays */
+@media (max-width: 480px) {
+  .modal-gcal { padding: 7px; }
+  .modal-gcal-label { display: none; }
+}
 
 .modal-time-row {
   display: flex;
