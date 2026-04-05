@@ -200,7 +200,12 @@ body {
   border: 1px solid var(--pt-border); box-shadow: var(--pt-shadow);
   overflow-x: auto;
 }
-.task-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.task-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;   /* fixed layout so col widths are respected and long titles can't blow out the row */
+}
 .task-table thead { position: sticky; top: 0; z-index: 5; }
 .task-table th {
   padding: 8px 10px; text-align: left;
@@ -209,17 +214,19 @@ body {
   background: var(--pt-bg); border-bottom: 1px solid var(--pt-border); white-space: nowrap;
 }
 .task-table td {
-  padding: 6px 10px; border-bottom: 1px solid var(--pt-border-light); vertical-align: middle;
+  padding: 10px 10px; border-bottom: 1px solid var(--pt-border-light); vertical-align: top;
 }
 
-.col-check { width: 36px; text-align: center; }
-.col-prio { width: 30px; text-align: center; }
-.col-name { min-width: 200px; }
-.col-status { width: 110px; }
-.col-start, .col-due { width: 120px; }
-.col-dur { width: 70px; }
-.col-progress { width: 100px; }
-.col-actions { width: 72px; text-align: right; }
+/* Column widths — tuned to leave the name column as the fluid (auto) one */
+.col-check    { width: 36px;  text-align: center; }
+.col-prio     { width: 28px;  text-align: center; }
+.col-name     { width: auto;  min-width: 0; }     /* fluid — takes the slack */
+.col-status   { width: 108px; }
+.col-start    { width: 112px; }
+.col-dur      { width: 68px;  }
+.col-due      { width: 130px; }
+.col-progress { width: 92px;  }
+.col-actions  { width: 72px;  text-align: right; }
 
 /* Group rows */
 .group-row td {
@@ -436,7 +443,13 @@ html.dark .pt-action-popover button:hover { background: #374151; }
 .prio-medium { background: var(--pt-medium); }
 .prio-low { background: var(--pt-low); }
 
-.task-name-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.task-name-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;   /* allow children to shrink and wrap inside the fixed table cell */
+}
 
 /* Subtask expand button */
 .subtask-expand-btn {
@@ -483,7 +496,22 @@ html.dark .pt-action-popover button:hover { background: #374151; }
   padding: 4px 0;
 }
 .inline-subtask-input::placeholder { color: var(--pt-text3); }
-.task-text { font-weight: 500; cursor: pointer; color: var(--pt-text); transition: color 0.15s; }
+.task-text {
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--pt-text);
+  transition: color 0.15s;
+  /* Wrap long titles to a readable max of 2 lines with ellipsis.
+     Full text is always available in the side panel / tooltip. */
+  flex: 1 1 auto;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.45;
+  word-break: break-word;
+}
 .task-text:hover { color: var(--pt-primary); }
 .pin-icon { width: 14px; height: 14px; color: var(--pt-warning); flex-shrink: 0; }
 .recur-badge, .delegate-badge {
@@ -772,66 +800,202 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .board-col { min-width: 200px; }
   .view-toggle { display: none; }
 
-  /* Hide table header */
+  /* ═══════════ MOBILE TASK CARDS — Todoist-style two-row layout ═══════════
+     Top row : checkbox + priority bar + title (wraps up to 2 lines)
+     Bottom  : status pill + due date + subtask count + quick actions
+     Full text and long titles breathe; metadata is never inline with title. */
+
   .task-table thead { display: none; }
-  .task-table-wrap { border: none; box-shadow: none; background: transparent; overflow: visible; }
-  .task-table { display: block; }
-  .task-table tbody { display: flex; flex-direction: column; gap: 8px; }
-
-  /* Group rows stay as-is */
-  .group-row { display: block; }
-  .group-row td { display: block; padding: 8px 4px; border-radius: 8px; }
-
-  /* Convert each task row to a single-line card */
-  .task-row {
-    display: flex; flex-wrap: nowrap; align-items: center;
-    gap: 6px; padding: 10px 12px;
-    background: var(--pt-surface); border-radius: 10px;
-    border: 1px solid var(--pt-border); box-shadow: var(--pt-shadow);
+  .task-table-wrap {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    overflow: visible;
   }
-  .task-row td { display: contents; border: none; padding: 0; }
+  .task-table { display: block; table-layout: auto; }
+  .task-table tbody { display: flex; flex-direction: column; gap: 10px; }
 
-  /* Hide columns not needed on mobile */
+  /* Group headers */
+  .group-row { display: block; }
+  .group-row td {
+    display: block;
+    padding: 14px 4px 6px;
+    border-radius: 8px;
+    background: transparent !important;
+    border: none !important;
+  }
+  .group-toggle { font-size: 11px; letter-spacing: 0.8px; }
+  .group-count { font-size: 11px; }
+
+  /* Task card = CSS grid. Columns and row assignments are defined
+     further down (one consolidated declaration); this block sets the
+     shared card styles. */
+  .task-row {
+    display: grid;
+    grid-template-rows: auto auto;
+    column-gap: 12px;
+    row-gap: 8px;
+    padding: 14px 14px;
+    background: var(--pt-surface);
+    border-radius: 12px;
+    border: 1px solid var(--pt-border);
+    box-shadow: var(--pt-shadow);
+    align-items: start;
+  }
+  /* Each <td> becomes a regular grid item (we can't use display:contents
+     here because that would skip the td and our grid-column assignments
+     would be ignored). */
+  .task-row td {
+    display: block;
+    border: none;
+    padding: 0;
+    min-width: 0;
+  }
+
+  .task-check { width: 22px; height: 22px; }
+
+  .col-name {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .task-name-cell {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px 8px;
+  }
+  .task-text {
+    flex: 1 1 100%;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--pt-text);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;       /* allow up to 3 lines on mobile */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    white-space: normal;
+    text-overflow: initial;
+  }
+
+  /* Priority shown as a colored left border instead of a dot column */
+  .col-prio { display: none; }
+
+  /* Final grid layout (4 columns, 2 rows):
+     Col 1: checkbox (fixed 28px, spans both rows)
+     Col 2: status pill (auto width, row 2)
+     Col 3: due pill (auto width, row 2)
+     Col 4: 1fr spacer — absorbs slack; actions pinned to its right edge
+     Row 1: title spans the whole right side (cols 2-4) */
+  .task-row {
+    grid-template-columns: 28px auto auto 1fr;
+  }
+  .col-check   { grid-column: 1;      grid-row: 1 / span 2; padding-top: 4px; }
+  .col-name    { grid-column: 2 / -1; grid-row: 1; }
+  .col-status  { grid-column: 2;      grid-row: 2; justify-self: start; margin-right: 8px; }
+  .col-due     { grid-column: 3;      grid-row: 2; justify-self: start; }
+  .col-actions { grid-column: 4;      grid-row: 2; justify-self: end; }
+
+  /* Hide low-value columns on mobile */
   .col-start, .col-dur, .col-progress { display: none; }
 
-  /* All items in ONE row: check | prio | name... | status | due | actions */
-  .col-check { order: 1; flex-shrink: 0; }
-  .col-prio { order: 2; flex-shrink: 0; }
-  .col-name { order: 3; flex: 1; min-width: 0; overflow: hidden; }
-  .col-status { order: 4; flex-shrink: 0; width: auto; }
-  .col-due { order: 5; flex-shrink: 0; width: auto; }
-  .col-actions { order: 6; flex-shrink: 0; width: auto; }
-
-  /* Task name truncates to fit single line */
-  .task-name-cell { flex-wrap: nowrap; }
-  .task-text {
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    font-size: 13px; display: block;
+  /* Meta styling — muted, compact, readable */
+  .status-select {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    min-height: 28px;
+    line-height: 1;
   }
 
-  /* Compact status/due/actions */
-  .status-select { font-size: 10px; padding: 2px 4px; }
-  .due-cell { flex-direction: column; gap: 0; align-items: flex-end; }
-  .cell-date { width: 90px; font-size: 10px; }
-  .due-label { font-size: 9px; }
+  .due-cell {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+  }
+  .due-cell .cell-date {
+    width: auto;
+    max-width: 110px;
+    font-size: 12px;
+    color: var(--pt-text2);
+    font-weight: 500;
+  }
+  .due-label {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--pt-border-light);
+    color: var(--pt-text2);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .overdue-label {
+    background: #fef2f2;
+    color: var(--pt-danger);
+  }
+  html.dark .due-label { background: #334155; color: #cbd5e1; }
+  html.dark .overdue-label { background: #3b1111; color: #fca5a5; }
 
-  .row-action-btn { width: 28px; height: 28px; }
+  /* Priority shown as a colored left border on the entire card */
+  .task-row {
+    position: relative;
+    overflow: hidden;
+    border-left: 4px solid transparent;
+  }
+  .task-row[data-priority="high"]   { border-left-color: var(--pt-high); }
+  .task-row[data-priority="medium"] { border-left-color: var(--pt-medium); }
+  .task-row[data-priority="low"]    { border-left-color: var(--pt-low); }
+
+  /* Actions */
+  .row-action-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+  .row-action-btn svg { width: 18px; height: 18px; }
   .col-actions .gcal-btn { display: none; }
 
-  /* Subtask badge + expand stay inline */
-  .subtask-badge { font-size: 9px; padding: 0 4px; }
-  .subtask-expand-btn { width: 16px; height: 16px; }
-  .recur-badge, .delegate-badge { display: none; }
+  /* Subtask pill */
+  .subtask-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+  .subtask-expand-btn {
+    width: 22px;
+    height: 22px;
+  }
+  .subtask-expand-btn svg { width: 16px; height: 16px; }
 
-  /* Inline subtasks full width below */
-  .inline-subtasks { padding-left: 20px; }
-  .inline-subtask { font-size: 12px; }
+  /* Recurrence + delegate pills — now visible on mobile alongside title */
+  .recur-badge, .delegate-badge {
+    display: inline-flex;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+
+  /* Inline subtasks section — sits inside the col-name td, below the title */
+  .inline-subtasks {
+    padding-left: 0;
+    margin-top: 8px;
+  }
+  .inline-subtask { font-size: 13px; padding: 5px 0; }
+  .inline-subtask input[type=checkbox] { width: 16px; height: 16px; }
 
   /* Overdue card highlight */
-  .task-row.overdue { border-left: 3px solid var(--pt-danger); }
+  .task-row.overdue {
+    background: var(--pt-surface);
+    border-left-color: var(--pt-danger) !important;
+    box-shadow: 0 1px 3px rgba(239, 68, 68, 0.15);
+  }
 
   /* Done card fade */
-  .task-row.done { opacity: 0.4; }
+  .task-row.done { opacity: 0.5; }
+  .task-row.done .task-text { text-decoration: line-through; }
 
   /* Add task row adjustments */
   .add-task-row { flex-wrap: wrap; }
@@ -857,6 +1021,15 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .proj-stats { font-size: 11px; }
   .filter-pill { font-size: 11px; padding: 3px 8px; }
   .proj-header { flex-direction: column; align-items: flex-start; }
-  .task-text { font-size: 13px; }
-  .add-task-row { padding: 8px 10px; }
+  .proj-app { padding: 10px 12px 80px; }
+  .add-task-row { padding: 10px 12px; }
+  /* Tighten the card grid on very narrow phones so long titles get max room */
+  .task-row {
+    padding: 12px 12px;
+    grid-template-columns: 26px 1fr auto auto;
+    column-gap: 10px;
+  }
+  .col-actions { grid-column: 3 / 5; }
+  .task-text { font-size: 14.5px; }
+  .row-action-btn { width: 34px; height: 34px; }
 }

@@ -257,7 +257,7 @@
                     <i data-feather="chevron-right" class="expand-chevron"></i>
                   </button>
                 {% endif %}
-                <span class="task-text" onclick="openTaskDetail('{{ t.task_id }}')">{{ t.task_text }}</span>
+                <span class="task-text" onclick="openTaskDetail('{{ t.task_id }}')" title="{{ t.task_text }}">{{ t.task_text }}</span>
                 {% if t.subtasks %}
                   <span class="subtask-badge">{{ t.subtasks|selectattr('is_done')|list|length }}/{{ t.subtasks|length }}</span>
                 {% endif %}
