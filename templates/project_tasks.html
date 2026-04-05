@@ -78,6 +78,10 @@
         <input type="checkbox" id="filter-overdue" {{ 'checked' if overdue_only }}>
         <span>Overdue only</span>
       </label>
+      <button type="button" class="filter-pill" onclick="ptEnterSelectMode()" title="Select multiple tasks to bulk-edit" style="border:none;cursor:pointer;font:inherit;">
+        <i data-feather="check-square" style="width:13px;height:13px"></i>
+        <span>Select</span>
+      </button>
     </div>
 
     <div class="toolbar-right">
@@ -142,6 +146,43 @@
     </div>
   </div>
 
+  <!-- ═══════════ BULK SELECTION UI ═══════════ -->
+  <div id="pt-select-bar" class="pt-select-bar" role="toolbar" aria-label="Bulk selection">
+    <button type="button" class="pt-sel-exit" onclick="ptExitSelectMode()" title="Exit selection (Esc)">×</button>
+    <span class="pt-sel-count" id="pt-sel-count">0 selected</span>
+    <button type="button" onclick="ptSelectAllVisible()">Select all visible</button>
+    <button type="button" onclick="ptClearSelection()">Clear</button>
+  </div>
+
+  <div id="pt-action-dock" class="pt-action-dock" role="toolbar" aria-label="Bulk actions">
+    <button type="button" onclick="ptOpenBulkPopover('status', this)" title="Change status">
+      <i data-feather="flag" style="width:16px;height:16px"></i>
+      <span class="pt-dock-label">Status</span>
+    </button>
+    <button type="button" onclick="ptOpenBulkPopover('priority', this)" title="Change priority">
+      <i data-feather="bar-chart-2" style="width:16px;height:16px"></i>
+      <span class="pt-dock-label">Priority</span>
+    </button>
+    <div class="sep"></div>
+    <button type="button" class="danger" onclick="ptBulkDelete()" title="Delete (soft)">
+      <i data-feather="trash-2" style="width:16px;height:16px"></i>
+      <span class="pt-dock-label">Delete</span>
+    </button>
+  </div>
+
+  <div id="pt-status-popover" class="pt-action-popover">
+    <button type="button" onclick="ptBulkApplyStatus('open')">☐ Open</button>
+    <button type="button" onclick="ptBulkApplyStatus('in_progress')">◐ In Progress</button>
+    <button type="button" onclick="ptBulkApplyStatus('done')">✓ Done</button>
+    <button type="button" onclick="ptBulkApplyStatus('skipped')">⏭ Skipped</button>
+    <button type="button" onclick="ptBulkApplyStatus('deleted')">🗑 Delete</button>
+  </div>
+  <div id="pt-priority-popover" class="pt-action-popover">
+    <button type="button" onclick="ptBulkApplyPriority('high')">🔴 High</button>
+    <button type="button" onclick="ptBulkApplyPriority('medium')">🟠 Medium</button>
+    <button type="button" onclick="ptBulkApplyPriority('low')">🟢 Low</button>
+  </div>
+
   <!-- ═══════════ TABLE VIEW ═══════════ -->
   <div class="task-table-wrap" id="table-view">
     <table class="task-table">
@@ -178,8 +219,9 @@
               data-pinned="{{ t.is_pinned|int }}"
               data-group="{{ group_name }}">
 
-            <!-- Checkbox -->
+            <!-- Checkbox / selection overlay -->
             <td class="col-check">
+              <span class="pt-sel-check" aria-hidden="true"></span>
               <input type="checkbox" class="task-check"
                      {{ 'checked' if t.done }}
                      onchange="toggleTaskDone(this, '{{ t.task_id }}', '{{ t.occurrence_date }}')">

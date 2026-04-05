@@ -315,6 +315,85 @@ def update_project_task_status():
 
     return jsonify({"status": "ok"})
 
+
+# ==========================================================
+# BULK UPDATE (selection mode)
+# ==========================================================
+
+_PT_VALID_PRIORITIES = {"low", "medium", "high"}
+_PT_PRIORITY_RANK = {"high": 1, "medium": 2, "low": 3}
+_PT_OPEN_STATUSES = {"open", "in_progress"}
+_PT_RESOLVED_STATUSES = {"done", "skipped", "deleted"}
+_PT_ALL_STATUSES = _PT_OPEN_STATUSES | _PT_RESOLVED_STATUSES
+
+@projects_bp.route("/projects/tasks/bulk-update", methods=["POST"])
+@login_required
+def bulk_update_project_tasks():
+    """
+    Apply a patch to many project_tasks rows at once.
+
+    Body: { ids: [task_id, ...], patch: { status?, priority? } }
+
+    Soft-delete semantics: status='deleted' also sets is_eliminated=true.
+    Setting priority also updates priority_rank (1=high, 2=medium, 3=low).
+    All writes are scoped to the authenticated user.
+    """
+    data = request.get_json(force=True) or {}
+    ids = data.get("ids") or []
+    patch = data.get("patch") or {}
+
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": "ids required"}), 400
+    if not isinstance(patch, dict) or not patch:
+        return jsonify({"error": "patch required"}), 400
+
+    user_id = session["user_id"]
+
+    # Build the DB patch
+    db_patch = {}
+
+    if "status" in patch:
+        status = (patch["status"] or "").strip().lower()
+        # Legacy alias
+        if status == "not_required":
+            status = "deleted"
+        if status not in _PT_ALL_STATUSES:
+            return jsonify({"error": "invalid status"}), 400
+        db_patch["status"] = status
+        if status == "deleted":
+            db_patch["is_eliminated"] = True
+        elif status == "open":
+            # Reopening un-eliminates (symmetric with per-row update)
+            db_patch["is_eliminated"] = False
+
+    if "priority" in patch:
+        priority = (patch["priority"] or "").strip().lower()
+        if priority not in _PT_VALID_PRIORITIES:
+            return jsonify({"error": "invalid priority"}), 400
+        db_patch["priority"] = priority
+        db_patch["priority_rank"] = _PT_PRIORITY_RANK[priority]
+
+    if not db_patch:
+        return jsonify({"error": "no valid fields in patch"}), 400
+
+    # Sanitize IDs: keep non-empty strings only
+    clean_ids = [str(i) for i in ids if isinstance(i, (str, int)) and str(i)]
+    if not clean_ids:
+        return jsonify({"error": "no valid ids"}), 400
+
+    # Single bulk UPDATE scoped to the user
+    update(
+        "project_tasks",
+        params={
+            "user_id": f"eq.{user_id}",
+            "task_id": f"in.({','.join(clean_ids)})",
+        },
+        json=db_patch,
+    )
+
+    return jsonify({"status": "ok", "updated": len(clean_ids)})
+
+
 @projects_bp.route("/projects/tasks/unsend", methods=["POST"])
 @login_required
 def unsend_task_from_eisenhower():

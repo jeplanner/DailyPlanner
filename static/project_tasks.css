@@ -245,6 +245,186 @@ body.pt-hide-closed .task-row[data-status="skipped"],
 body.pt-hide-closed .task-row[data-status="deleted"],
 body.pt-hide-closed .task-row[data-status="not_required"] { display: none !important; }
 
+/* ═══════════ SELECTION MODE (bulk update) ═══════════ */
+
+.pt-select-bar {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin: 10px 0 14px;
+  background: var(--pt-primary, #2563eb);
+  color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(37,99,235,.25);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+body.pt-select-mode .pt-select-bar { display: flex; animation: ptSlideDown .18s ease; }
+@keyframes ptSlideDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+.pt-select-bar .pt-sel-count { font-size: 14px; font-weight: 700; flex: 1; }
+.pt-select-bar button {
+  border: 1px solid rgba(255,255,255,.5);
+  background: transparent;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.pt-select-bar button:hover { background: rgba(255,255,255,.15); border-color: #fff; }
+.pt-select-bar .pt-sel-exit {
+  width: 32px; height: 32px; padding: 0;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; line-height: 1;
+}
+
+/* Selection checkbox overlay (circle with optional checkmark) — hidden outside select mode */
+.pt-sel-check {
+  display: none;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--pt-border, #e5e7eb);
+  background: var(--pt-surface, #fff);
+  vertical-align: middle;
+  align-items: center; justify-content: center;
+  color: #fff; font-size: 13px; font-weight: 900;
+  transition: all .15s;
+  box-sizing: border-box;
+}
+body.pt-select-mode .pt-sel-check { display: inline-flex; }
+body.pt-select-mode .task-check { display: none; }
+body.pt-select-mode .task-row { cursor: pointer; user-select: none; }
+body.pt-select-mode .task-row input,
+body.pt-select-mode .task-row select,
+body.pt-select-mode .task-row .prio-dot,
+body.pt-select-mode .task-row .task-text,
+body.pt-select-mode .task-row .subtask-expand-btn,
+body.pt-select-mode .task-row .inline-subtasks { pointer-events: none !important; }
+body.pt-select-mode .task-row.pt-selected {
+  background: #eff6ff !important;
+  box-shadow: inset 3px 0 0 var(--pt-primary, #2563eb);
+}
+body.pt-select-mode .task-row.pt-selected .pt-sel-check {
+  background: var(--pt-primary, #2563eb);
+  border-color: var(--pt-primary, #2563eb);
+}
+body.pt-select-mode .task-row.pt-selected .pt-sel-check::after { content: "✓"; }
+html.dark body.pt-select-mode .task-row.pt-selected { background: #172554 !important; }
+
+/* Board view cards — same treatment */
+body.pt-select-mode .board-card { cursor: pointer; }
+body.pt-select-mode .board-card.pt-selected {
+  outline: 2px solid var(--pt-primary, #2563eb);
+  background: #eff6ff;
+  box-shadow: 0 2px 10px rgba(37,99,235,.2);
+}
+html.dark body.pt-select-mode .board-card.pt-selected { background: #172554; }
+
+/* Bottom floating action dock */
+.pt-action-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%) translateY(14px);
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background: rgba(30,41,59,.96);
+  color: #fff;
+  backdrop-filter: blur(10px);
+  padding: 8px;
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.35);
+  z-index: 999;
+  opacity: 0;
+  transition: all .22s ease;
+  max-width: 96vw;
+}
+body.pt-select-mode .pt-action-dock {
+  display: flex;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.pt-action-dock button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background .12s;
+  white-space: nowrap;
+}
+.pt-action-dock button:hover { background: rgba(255,255,255,.12); }
+.pt-action-dock button.danger:hover { background: #b91c1c; }
+.pt-action-dock .sep { width: 1px; height: 22px; background: rgba(255,255,255,.2); margin: 0 2px; }
+
+/* Action popovers (Status / Priority) */
+.pt-action-popover {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--pt-surface, #fff);
+  border: 1px solid var(--pt-border, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.25);
+  padding: 6px;
+  z-index: 1000;
+  min-width: 180px;
+  display: none;
+}
+.pt-action-popover.open { display: block; animation: ptFadeUp .15s ease; }
+@keyframes ptFadeUp { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+.pt-action-popover button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: none;
+  color: var(--pt-text, #111);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pt-action-popover button:hover { background: var(--pt-border, #e5e7eb); }
+html.dark .pt-action-popover { background: #1f2937; color: #f9fafb; }
+html.dark .pt-action-popover button { color: #f9fafb; }
+html.dark .pt-action-popover button:hover { background: #374151; }
+
+@media (max-width: 640px) {
+  .pt-action-dock {
+    left: 0; right: 0; bottom: 0;
+    transform: translateY(14px);
+    width: 100%;
+    max-width: 100%;
+    border-radius: 14px 14px 0 0;
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0));
+    justify-content: space-around;
+  }
+  body.pt-select-mode .pt-action-dock { transform: translateY(0); }
+  .pt-action-dock button { padding: 10px 12px; font-size: 13px; }
+  .pt-action-dock .pt-dock-label { display: none; }
+  .pt-action-popover { left: 10px; right: 10px; transform: none; min-width: 0; }
+  .pt-action-popover.open { animation: ptFadeUpMobile .15s ease; }
+  @keyframes ptFadeUpMobile { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+}
+
 .task-check { width: 18px; height: 18px; cursor: pointer; accent-color: var(--pt-success); }
 
 .prio-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; cursor: pointer; }

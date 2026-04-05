@@ -322,7 +322,15 @@ function populateBoard() {
     const card = document.createElement("div");
     card.className = `board-card prio-border-${prio}`;
     card.dataset.id = id;
-    card.onclick = () => openTaskDetail(id);
+    // Only wire the click-to-open handler when NOT in select mode.
+    // In select mode, the document-level capture handler below intercepts
+    // clicks and toggles selection instead.
+    if (!PT_SEL || !PT_SEL.active) {
+      card.onclick = () => openTaskDetail(id);
+    }
+    if (PT_SEL && PT_SEL.ids.has(id)) {
+      card.classList.add("pt-selected");
+    }
 
     card.innerHTML = `
       <div class="board-card-title">${_escHtml(text)}</div>
@@ -1137,3 +1145,262 @@ document.addEventListener("DOMContentLoaded", () => {
 
   feather.replace();
 });
+
+/* =========================================================
+   BULK SELECTION MODE (Project Tasks)
+   ========================================================= */
+
+const PT_SEL = {
+  active: false,
+  ids: new Set(),
+};
+
+function ptEnterSelectMode(prefillId = null) {
+  if (PT_SEL.active) return;
+  PT_SEL.active = true;
+  PT_SEL.ids.clear();
+  document.body.classList.add("pt-select-mode");
+  if (prefillId) ptToggleSelection(prefillId);
+  ptUpdateSelCount();
+  if (window.feather) feather.replace();
+  if (navigator.vibrate) { try { navigator.vibrate(15); } catch {} }
+  // Re-render the board so cards lose their click-to-open handlers
+  if (!_id("board-view")?.classList.contains("hidden")) populateBoard();
+}
+
+function ptExitSelectMode() {
+  PT_SEL.active = false;
+  PT_SEL.ids.clear();
+  document.body.classList.remove("pt-select-mode");
+  _qa(".task-row.pt-selected").forEach(r => r.classList.remove("pt-selected"));
+  _qa(".board-card.pt-selected").forEach(c => c.classList.remove("pt-selected"));
+  ptCloseAllPopovers();
+  // Re-render board to restore click-to-open handlers
+  if (!_id("board-view")?.classList.contains("hidden")) populateBoard();
+}
+
+function ptClearSelection() {
+  PT_SEL.ids.clear();
+  _qa(".task-row.pt-selected").forEach(r => r.classList.remove("pt-selected"));
+  _qa(".board-card.pt-selected").forEach(c => c.classList.remove("pt-selected"));
+  ptUpdateSelCount();
+}
+
+function ptToggleSelection(id) {
+  if (PT_SEL.ids.has(id)) {
+    PT_SEL.ids.delete(id);
+  } else {
+    PT_SEL.ids.add(id);
+  }
+  // Sync the visual state in both table and board views
+  const row = document.querySelector(`.task-row[data-id="${id}"]`);
+  if (row) row.classList.toggle("pt-selected", PT_SEL.ids.has(id));
+  const card = document.querySelector(`.board-card[data-id="${id}"]`);
+  if (card) card.classList.toggle("pt-selected", PT_SEL.ids.has(id));
+  ptUpdateSelCount();
+}
+
+function ptUpdateSelCount() {
+  const el = _id("pt-sel-count");
+  if (el) el.textContent = `${PT_SEL.ids.size} selected`;
+}
+
+function ptSelectAllVisible() {
+  _qa(".task-row").forEach(row => {
+    const style = getComputedStyle(row);
+    if (style.display === "none") return;
+    const id = row.dataset.id;
+    if (!id) return;
+    if (!PT_SEL.ids.has(id)) {
+      PT_SEL.ids.add(id);
+      row.classList.add("pt-selected");
+      const card = document.querySelector(`.board-card[data-id="${id}"]`);
+      if (card) card.classList.add("pt-selected");
+    }
+  });
+  ptUpdateSelCount();
+}
+
+// ── Click handler: in select mode, taps anywhere on a row/card toggle selection ──
+// Registered in capture phase on document so it fires BEFORE any onclick
+// handlers on target elements (like the board card's openTaskDetail).
+document.addEventListener("click", (e) => {
+  if (!PT_SEL.active) return;
+  const row = e.target.closest(".task-row");
+  const card = e.target.closest(".board-card");
+  const hit = row || card;
+  if (!hit) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const id = hit.dataset.id;
+  if (id) ptToggleSelection(id);
+}, true);
+
+// ── Long-press to enter select mode ──
+let _ptLpTimer = null;
+let _ptLpStart = null;
+document.addEventListener("pointerdown", (e) => {
+  if (PT_SEL.active) return;
+  const hit = e.target.closest(".task-row, .board-card");
+  if (!hit) return;
+  // Skip long-press when pressing inside a form control
+  if (e.target.closest("select, input, button, a")) return;
+  _ptLpStart = { x: e.clientX, y: e.clientY, id: hit.dataset.id };
+  clearTimeout(_ptLpTimer);
+  _ptLpTimer = setTimeout(() => {
+    _ptLpTimer = null;
+    if (_ptLpStart) ptEnterSelectMode(_ptLpStart.id);
+  }, 500);
+});
+document.addEventListener("pointermove", (e) => {
+  if (!_ptLpStart || !_ptLpTimer) return;
+  if (Math.abs(e.clientX - _ptLpStart.x) > 10 || Math.abs(e.clientY - _ptLpStart.y) > 10) {
+    clearTimeout(_ptLpTimer); _ptLpTimer = null;
+  }
+});
+["pointerup", "pointercancel", "pointerleave"].forEach(ev => {
+  document.addEventListener(ev, () => {
+    clearTimeout(_ptLpTimer); _ptLpTimer = null; _ptLpStart = null;
+  });
+});
+
+// Escape exits select mode (only when nothing else higher priority is open)
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && PT_SEL.active) {
+    // Don't double-handle when the task sheet is open — sheet handler runs first
+    const sheet = _id("task-sheet-panel");
+    if (sheet && !sheet.classList.contains("hidden")) return;
+    ptExitSelectMode();
+  }
+});
+
+// ── Action popovers ──
+function ptCloseAllPopovers() {
+  _qa(".pt-action-popover.open").forEach(p => p.classList.remove("open"));
+}
+
+function ptOpenBulkPopover(kind, anchorBtn) {
+  ptCloseAllPopovers();
+  if (PT_SEL.ids.size === 0) {
+    showToast("Select at least one task first", "error");
+    return;
+  }
+  const pop = _id(kind === "status" ? "pt-status-popover" : "pt-priority-popover");
+  if (!pop) return;
+  if (window.innerWidth > 640) {
+    const rect = anchorBtn.getBoundingClientRect();
+    pop.style.bottom = (window.innerHeight - rect.top + 8) + "px";
+    pop.style.top = "auto";
+  } else {
+    pop.style.bottom = "86px";
+    pop.style.top = "auto";
+  }
+  pop.classList.add("open");
+}
+
+// Dismiss popovers on outside click
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".pt-action-popover") || e.target.closest(".pt-action-dock")) return;
+  ptCloseAllPopovers();
+});
+
+// ── Bulk apply helpers ──
+async function _ptBulkApply(patch, optimistic) {
+  const ids = Array.from(PT_SEL.ids);
+  if (!ids.length) return;
+
+  // Snapshot each row's current state for rollback
+  const snapshot = ids.map(id => {
+    const row = document.querySelector(`.task-row[data-id="${id}"]`);
+    if (!row) return null;
+    return {
+      id,
+      row,
+      status: row.dataset.status,
+      priority: row.dataset.priority,
+      done: row.classList.contains("done"),
+    };
+  }).filter(Boolean);
+
+  // Optimistic apply
+  snapshot.forEach(s => optimistic(s.row, s));
+
+  // Keep the board view in sync with table row data changes
+  if (!_id("board-view")?.classList.contains("hidden")) populateBoard();
+
+  ptCloseAllPopovers();
+
+  try {
+    const r = await fetch("/projects/tasks/bulk-update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+      },
+      body: JSON.stringify({ ids, patch }),
+    });
+    const res = await r.json();
+    if (res.status !== "ok") throw new Error(res.error || "Update failed");
+    showToast(
+      `Updated ${res.updated || snapshot.length} task${(res.updated || snapshot.length) === 1 ? "" : "s"}`,
+      "success"
+    );
+    ptClearSelection();
+  } catch (err) {
+    console.error(err);
+    // Roll back
+    snapshot.forEach(s => {
+      s.row.dataset.status = s.status;
+      s.row.dataset.priority = s.priority;
+      s.row.classList.toggle("done", s.done);
+      // Restore the priority dot class
+      const dot = _q(".prio-dot", s.row);
+      if (dot) {
+        dot.className = `prio-dot prio-${s.priority}`;
+      }
+      // Restore the status select value
+      const sel = _q(".status-select", s.row);
+      if (sel) sel.value = s.status;
+    });
+    if (!_id("board-view")?.classList.contains("hidden")) populateBoard();
+    showToast("Bulk update failed — reverted", "error");
+  }
+}
+
+function ptBulkApplyStatus(status) {
+  const CLOSED = new Set(["done", "skipped", "deleted"]);
+  const isDone = CLOSED.has(status);
+
+  _ptBulkApply({ status }, (row, snap) => {
+    row.classList.toggle("done", isDone);
+    row.dataset.status = status;
+    // Sync the visible status-select element inside the row
+    const sel = _q(".status-select", row);
+    if (sel) {
+      sel.value = status;
+      // Re-apply the status-* class so coloring updates
+      sel.className = `status-select status-${status}`;
+    }
+    // Sync the native done-checkbox too (hidden in select mode but
+    // visible once the user exits)
+    const cb = _q(".task-check", row);
+    if (cb) cb.checked = isDone;
+  });
+}
+
+function ptBulkApplyPriority(priority) {
+  _ptBulkApply({ priority }, (row, snap) => {
+    row.dataset.priority = priority;
+    const dot = _q(".prio-dot", row);
+    if (dot) {
+      dot.className = `prio-dot prio-${priority}`;
+      dot.setAttribute("title", priority);
+    }
+  });
+}
+
+function ptBulkDelete() {
+  // Soft delete — reversible via the status dropdown or Eisenhower resolve menu.
+  // No confirmation prompt, consistent with the Eisenhower bulk delete pattern.
+  ptBulkApplyStatus("deleted");
+}
