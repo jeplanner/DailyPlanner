@@ -105,11 +105,11 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-status-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
 .em-status-badge.done{background:#d1fae5;color:#059669;}
 .em-status-badge.in_progress{background:#dbeafe;color:#2563eb;}
-.em-status-badge.not_required{background:#fef3c7;color:#b45309;}
+.em-status-badge.deleted{background:#fee2e2;color:#b91c1c;}
 .em-status-badge.skipped{background:#e0e7ff;color:#4f46e5;}
 html.dark .em-status-badge.done{background:#064e3b;color:#6ee7b7;}
 html.dark .em-status-badge.in_progress{background:#1e3a8a;color:#93c5fd;}
-html.dark .em-status-badge.not_required{background:#451a03;color:#fbbf24;}
+html.dark .em-status-badge.deleted{background:#3b1111;color:#fca5a5;}
 html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 
 .em-more-wrap{position:relative;}
@@ -124,6 +124,13 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 /* Recurring pill next to title */
 .em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;background:#dbeafe;color:#1e40af;margin-left:6px;text-transform:uppercase;letter-spacing:.3px;}
 html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
+
+/* Hide skipped/deleted rows when em-hide-closed is on the wrapper */
+.em-hide-closed .em-task[data-status="skipped"],
+.em-hide-closed .em-task[data-status="deleted"]{display:none !important;}
+
+/* Filter toggle button — sticky alongside other em-action buttons */
+.em-action-btn.active{background:var(--q-schedule)!important;color:#fff!important;border-color:var(--q-schedule)!important;}
 
 /* ── Priority indicators (visually consistent w/ Planner V2) ── */
 .em-task.prio-high{border-left:4px solid #dc2626;}
@@ -224,7 +231,7 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
 
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-<div class="em-app">
+<div class="em-app em-hide-closed" id="em-app-root">
   <div class="em-header">
     <h1>Eisenhower Matrix</h1>
     <div class="em-date-nav">
@@ -237,6 +244,9 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
 
   <!-- Quick Actions -->
   <div class="em-actions">
+    <button type="button" id="em-toggle-closed" class="em-action-btn" onclick="toggleClosedVisibility()" title="Show/hide skipped and deleted tasks">
+      <i data-feather="eye-off" style="width:14px;height:14px"></i> <span id="em-toggle-closed-label">Show skipped/deleted</span>
+    </button>
     <form method="post" action="/todo/copy-prev" style="display:contents;">
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
@@ -413,7 +423,7 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
         {% set tasks = todo[q]["tasks"] %}
         {% if tasks %}
           {% for t in tasks %}
-          <div class="em-task prio-{{ t.priority or 'medium' }} {{ 'done' if t.is_done }}" data-id="{{ t.id }}" data-quadrant="{{ q }}" data-priority="{{ t.priority or 'medium' }}">
+          <div class="em-task prio-{{ t.priority or 'medium' }} {{ 'done' if t.is_done }}" data-id="{{ t.id }}" data-quadrant="{{ q }}" data-priority="{{ t.priority or 'medium' }}" data-status="{{ t.status or 'open' }}">
             {% if t.source != 'event' and t.source != 'project' %}
             <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
             {% else %}
@@ -428,8 +438,8 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
                   <span class="em-status-badge done">Done</span>
                 {% elif t.status == 'in_progress' %}
                   <span class="em-status-badge in_progress">In Progress</span>
-                {% elif t.status == 'not_required' %}
-                  <span class="em-status-badge not_required">N/A</span>
+                {% elif t.status in ('deleted', 'not_required') %}
+                  <span class="em-status-badge deleted">Deleted</span>
                 {% elif t.status == 'skipped' %}
                   <span class="em-status-badge skipped">Skipped</span>
                 {% endif %}
@@ -466,8 +476,8 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
                   <button type="button" onclick="resolveTask('{{ t.id }}','in_progress')">◐ In Progress</button>
                   <div class="sep"></div>
                   <button type="button" onclick="resolveTask('{{ t.id }}','done')">✓ Done</button>
-                  <button type="button" onclick="resolveTask('{{ t.id }}','not_required')">∅ Not required</button>
                   <button type="button" onclick="resolveTask('{{ t.id }}','skipped')">⏭ Skipped</button>
+                  <button type="button" onclick="resolveTask('{{ t.id }}','deleted')">🗑 Delete</button>
                 </div>
               </div>
               {% endif %}
@@ -529,11 +539,14 @@ document.addEventListener("click", () => {
 });
 
 function resolveTask(taskId, status) {
-  // Closed states: done | not_required | skipped. Open states: open | in_progress
-  const CLOSED = new Set(["done", "not_required", "skipped"]);
+  // Closed states: done | skipped | deleted. Open states: open | in_progress
+  const CLOSED = new Set(["done", "skipped", "deleted"]);
   const isDone = CLOSED.has(status);
   const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
-  if (task) task.classList.toggle("done", isDone);
+  if (task) {
+    task.classList.toggle("done", isDone);
+    task.dataset.status = status;
+  }
   const cb = task?.querySelector('input[type=checkbox]');
   if (cb) cb.checked = isDone;
 
@@ -702,6 +715,33 @@ async function bulkAddEisenhower() {
   document.getElementById("em-bulk-text").value = "";
   setTimeout(() => location.reload(), 500);
 }
+
+/* ── Hide/show skipped & deleted toggle ── */
+const EM_HIDE_KEY = "em_hide_closed";
+function toggleClosedVisibility() {
+  const root = document.getElementById("em-app-root");
+  const hidden = root.classList.toggle("em-hide-closed");
+  localStorage.setItem(EM_HIDE_KEY, hidden ? "1" : "0");
+  _syncClosedToggleUI(hidden);
+}
+function _syncClosedToggleUI(hidden) {
+  const btn = document.getElementById("em-toggle-closed");
+  const label = document.getElementById("em-toggle-closed-label");
+  if (!btn || !label) return;
+  btn.classList.toggle("active", !hidden);
+  label.textContent = hidden ? "Show skipped/deleted" : "Hide skipped/deleted";
+  const icon = btn.querySelector("[data-feather]");
+  if (icon) icon.setAttribute("data-feather", hidden ? "eye-off" : "eye");
+  if (window.feather) feather.replace();
+}
+// Apply persisted preference on load (default: hidden)
+(function(){
+  const pref = localStorage.getItem(EM_HIDE_KEY);
+  const hidden = pref === null ? true : pref === "1";
+  const root = document.getElementById("em-app-root");
+  if (root) root.classList.toggle("em-hide-closed", hidden);
+  _syncClosedToggleUI(hidden);
+})();
 
 // Only auto-focus the quick-add input on non-touch / wider screens,
 // otherwise the mobile keyboard pops up on landing and hides the matrix.

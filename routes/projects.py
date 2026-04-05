@@ -295,10 +295,22 @@ def update_project_task_status():
     # ------------------------------------------------
     # CASE 2: normal (non-recurring) task
     # ------------------------------------------------
+    # Normalize legacy "not_required" → "deleted"
+    if status == "not_required":
+        status = "deleted"
+
+    patch = {"status": status}
+    if status == "deleted":
+        # Soft delete: flip is_eliminated so filtered listings stop showing it
+        patch["is_eliminated"] = True
+    elif status == "open":
+        # Undo path — reopen also un-eliminates
+        patch["is_eliminated"] = False
+
     update(
         "project_tasks",
-        params={"task_id": f"eq.{task_id}"},
-        json={"status": status}
+        params={"task_id": f"eq.{task_id}", "user_id": f"eq.{user_id}"},
+        json=patch,
     )
 
     return jsonify({"status": "ok"})

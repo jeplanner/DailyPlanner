@@ -71,6 +71,10 @@
         <span>Hide done</span>
       </label>
       <label class="filter-pill">
+        <input type="checkbox" id="filter-hide-closed" checked>
+        <span>Hide skipped/deleted</span>
+      </label>
+      <label class="filter-pill">
         <input type="checkbox" id="filter-overdue" {{ 'checked' if overdue_only }}>
         <span>Overdue only</span>
       </label>
@@ -233,8 +237,8 @@
                 <option value="open"         {{ 'selected' if t.status=='open' }}>Open</option>
                 <option value="in_progress"  {{ 'selected' if t.status=='in_progress' }}>In Progress</option>
                 <option value="done"         {{ 'selected' if t.status=='done' }}>Done</option>
-                <option value="not_required" {{ 'selected' if t.status=='not_required' }}>Not required</option>
                 <option value="skipped"      {{ 'selected' if t.status=='skipped' }}>Skipped</option>
+                <option value="deleted"      {{ 'selected' if t.status in ('deleted','not_required') }}>Delete</option>
               </select>
             </td>
 
@@ -325,8 +329,8 @@
       <option value="open">Open</option>
       <option value="in_progress">In Progress</option>
       <option value="done">Done</option>
-      <option value="not_required">Not required</option>
       <option value="skipped">Skipped</option>
+      <option value="deleted">Delete</option>
     </select>
     <select id="sheet-priority" class="quick-select prio-select"
             onchange="autoSaveField('priority', this.value)">

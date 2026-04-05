@@ -4,8 +4,17 @@ from datetime import date, datetime, timedelta
 
 # Unified status set (matches project_tasks status dropdowns)
 _OPEN_STATUSES = {"open", "in_progress"}
-_RESOLVED_STATUSES = {"done", "not_required", "skipped"}
+_RESOLVED_STATUSES = {"done", "skipped", "deleted"}
 _ALL_STATUSES = _OPEN_STATUSES | _RESOLVED_STATUSES
+
+# Legacy alias — any historical rows stored under the old label are surfaced
+# as "deleted" to callers, and inbound "not_required" requests get mapped to
+# "deleted" for backward compat.
+def _normalize_status(s):
+    s = (s or "").strip().lower()
+    if s == "not_required":
+        return "deleted"
+    return s if s in _ALL_STATUSES else ""
 
 # Priority vocabulary shared with project_tasks
 _VALID_PRIORITIES = {"low", "medium", "high"}
@@ -241,15 +250,17 @@ def toggle_todo_done():
     if not task_id:
         return jsonify({"error": "Missing task id"}), 400
 
-    # Unified status: open | in_progress | done | not_required | skipped
-    req_status = (data.get("status") or "").strip().lower()
-    if req_status in _ALL_STATUSES:
+    # Unified status: open | in_progress | done | skipped | deleted
+    # "not_required" is accepted for backward compatibility and mapped to "deleted".
+    req_status = _normalize_status(data.get("status"))
+    if req_status:
         status = req_status
     else:
         # Legacy checkbox path: is_done flag decides
         status = "done" if bool(data.get("is_done")) else "open"
 
     is_done = status in _RESOLVED_STATUSES
+    is_soft_delete = (status == "deleted")
 
     # 1️⃣ Fetch task (need source_task_id + recurring_id before update)
     rows = get(
@@ -261,23 +272,36 @@ def toggle_todo_done():
     )
     task_row = rows[0] if rows else None
 
-    # 2️⃣ Update Eisenhower task
+    # 2️⃣ Update Eisenhower task — soft-delete flips is_deleted too
+    todo_patch = {"is_done": is_done, "status": status}
+    if is_soft_delete:
+        todo_patch["is_deleted"] = True
+    elif status == "open":
+        # Re-opening a task should also undelete it (used by the undo path)
+        todo_patch["is_deleted"] = False
     update(
         "todo_matrix",
         params={"id": f"eq.{task_id}"},
-        json={"is_done": is_done, "status": status},
+        json=todo_patch,
     )
 
     # 3️⃣ Sync back to project task (non-recurring only)
-    if is_done and task_row:
+    if task_row:
         source_task_id = task_row.get("source_task_id")
         recurring_id = task_row.get("recurring_id")
         if source_task_id and not recurring_id:
-            update(
-                "project_tasks",
-                params={"task_id": f"eq.{source_task_id}"},
-                json={"status": "done"},
-            )
+            if is_soft_delete:
+                update(
+                    "project_tasks",
+                    params={"task_id": f"eq.{source_task_id}"},
+                    json={"status": "deleted", "is_eliminated": True},
+                )
+            elif is_done:
+                update(
+                    "project_tasks",
+                    params={"task_id": f"eq.{source_task_id}"},
+                    json={"status": status},
+                )
 
     # 4️⃣ Recurring: pre-create the next occurrence so it appears on the next matching date
     next_occurrence_iso = None

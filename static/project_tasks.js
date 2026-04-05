@@ -300,11 +300,15 @@ function populateBoard() {
     if (col) col.innerHTML = "";
   });
 
-  // Closed-but-not-"done" statuses live in the Done column visually
-  const CLOSED_ALIAS = { not_required: "done", skipped: "done" };
+  // Closed-but-not-"done" statuses live in the Done column visually.
+  // Legacy "not_required" maps to "done" as well (treated as a deleted alias).
+  const CLOSED_ALIAS = { skipped: "done", deleted: "done", not_required: "done" };
+  const hideClosed = document.body.classList.contains("pt-hide-closed");
+  const HIDDEN_STATUSES = new Set(["skipped", "deleted", "not_required"]);
 
   _qa(".task-row").forEach(row => {
     const rawStatus = row.dataset.status || "open";
+    if (hideClosed && HIDDEN_STATUSES.has(rawStatus)) return;
     const status = CLOSED_ALIAS[rawStatus] || rawStatus;
     const col = _id(`board-${status}`);
     if (!col) return;
@@ -340,6 +344,7 @@ function _escHtml(str) {
 function initFilters() {
   const hideDone = _id("filter-hide-done");
   const overdue  = _id("filter-overdue");
+  const hideClosed = _id("filter-hide-closed");
 
   if (hideDone) {
     hideDone.addEventListener("change", () => {
@@ -355,6 +360,33 @@ function initFilters() {
       url.searchParams.set("overdue_only", overdue.checked ? "1" : "0");
       location.href = url.toString();
     });
+  }
+
+  if (hideClosed) {
+    // Client-side filter — toggles a body class, persisted in localStorage.
+    // Deleted rows are already filtered server-side (is_eliminated=false),
+    // so this really gates skipped rows, but the class also covers any
+    // deleted rows that might slip through future server changes.
+    const KEY = "pt_hide_closed";
+    const stored = localStorage.getItem(KEY);
+    const on = stored === null ? true : stored === "1";
+    hideClosed.checked = on;
+    applyHideClosed(on);
+
+    hideClosed.addEventListener("change", () => {
+      localStorage.setItem(KEY, hideClosed.checked ? "1" : "0");
+      applyHideClosed(hideClosed.checked);
+    });
+  }
+}
+
+function applyHideClosed(on) {
+  document.body.classList.toggle("pt-hide-closed", on);
+  // Also refresh the board if it's currently visible, so rows hidden/shown
+  // in the table mirror correctly into the kanban.
+  if (typeof populateBoard === "function" &&
+      !_id("board-view")?.classList.contains("hidden")) {
+    populateBoard();
   }
 }
 

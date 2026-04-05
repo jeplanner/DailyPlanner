@@ -240,6 +240,11 @@ body {
 html.dark .task-row.overdue { background: #3b1111; }
 .task-row.hidden-group { display: none; }
 
+/* Hide skipped/deleted rows when body.pt-hide-closed is active (client-side filter) */
+body.pt-hide-closed .task-row[data-status="skipped"],
+body.pt-hide-closed .task-row[data-status="deleted"],
+body.pt-hide-closed .task-row[data-status="not_required"] { display: none !important; }
+
 .task-check { width: 18px; height: 18px; cursor: pointer; accent-color: var(--pt-success); }
 
 .prio-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; cursor: pointer; }
