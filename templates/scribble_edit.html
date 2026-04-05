@@ -2,385 +2,468 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>
-    {% if note %}Edit Note{% else %}New Note{% endif %} – Scribble
-  </title>
-
   <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  <!-- Scribble styles -->
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% if note %}{{ note.title or 'Untitled' }}{% else %}New note{% endif %} – Scribble</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='scribble.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 </head>
 <body>
 
-  <div class="scribble-editor">
-    <div class="meta editor-top">
-      <a href="{{ url_for('notes.scribble_list') }}">← Back</a>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
 
+<div class="scribble-editor-shell">
+
+  <!-- ═══════════ EDITOR TOP BAR ═══════════ -->
+  <div class="editor-topbar">
+    <a href="{{ url_for('notes.scribble_list') }}" class="editor-back" title="Back to notes">
+      <i data-feather="arrow-left"></i>
+      <span>Notes</span>
+    </a>
+
+    <div class="editor-status">
+      <span class="save-indicator" id="save-indicator" aria-live="polite">
+        <i data-feather="check-circle" class="si-icon si-icon-saved"></i>
+        <i data-feather="loader" class="si-icon si-icon-saving"></i>
+        <i data-feather="alert-circle" class="si-icon si-icon-error"></i>
+        <span class="si-text">Saved</span>
+      </span>
+    </div>
+
+    <div class="editor-actions">
       {% if note and note.id %}
-      <button class="delete-note" onclick="deleteNote()">
-        🗑 Delete
+      <button type="button" class="icon-btn danger" onclick="showDeleteConfirm()" title="Delete note">
+        <i data-feather="trash-2"></i>
       </button>
       {% endif %}
     </div>
+  </div>
 
-    <h1>
-      {% if note %}
-        Edit Note
-      {% else %}
-        New Note
-      {% endif %}
-    </h1>
+  <!-- ═══════════ INLINE DELETE CONFIRM ═══════════ -->
+  <div id="delete-confirm" class="delete-confirm hidden">
+    <i data-feather="alert-triangle" class="dc-icon"></i>
+    <span class="dc-text">Delete this note? This can't be undone.</span>
+    <div class="dc-actions">
+      <button type="button" class="dc-btn dc-cancel" onclick="hideDeleteConfirm()">Cancel</button>
+      <button type="button" class="dc-btn dc-confirm" onclick="deleteNote()">Delete</button>
+    </div>
+  </div>
 
-    <!-- Title -->
+  <!-- ═══════════ EDITOR BODY ═══════════ -->
+  <div class="editor-paper">
     <input
       type="text"
       id="title"
+      class="editor-title"
       placeholder="Note title"
-      value="{{ note.title if note else '' }}"
-      autofocus
-    >
+      value="{{ (note.title if note else '')|e }}"
+      autocomplete="off"
+      spellcheck="true">
 
-    <!-- Content -->
     <textarea
       id="content"
-      placeholder="Start writing…"
-    >{{ note.content if note else '' }}</textarea>
-    <div id="note-task-suggestions"></div>
-    <!-- Save status -->
-    <div id="status" class="meta"></div>
+      class="editor-content"
+      placeholder="Start writing… Markdown-ish: - [ ] checklist, **bold**, new line after a checkbox auto-continues.">{{ (note.content if note else '')|e }}</textarea>
 
-    <!-- Manual save (optional safety) -->
-    <button onclick="saveNote()">Save</button>
+    <!-- Rendered checklist preview below editor -->
+    <div id="note-task-suggestions"></div>
   </div>
 
+  <!-- ═══════════ EDITOR FOOTER (stats + hints) ═══════════ -->
+  <div class="editor-footer">
+    <span class="editor-stat">
+      <i data-feather="type" style="width:12px;height:12px"></i>
+      <span id="word-count">0</span> words
+    </span>
+    <span class="editor-stat">
+      <i data-feather="align-left" style="width:12px;height:12px"></i>
+      <span id="char-count">0</span> characters
+    </span>
+    <span class="editor-stat editor-hint">
+      <kbd>Ctrl</kbd>+<kbd>S</kbd> save · <kbd>Esc</kbd> back · <kbd>Ctrl</kbd>+<kbd>B</kbd> bold
+    </span>
+  </div>
+</div>
+
+<!-- ═══════════ SELECTION TOOLBAR ═══════════ -->
+<div id="textToolbar" class="text-toolbar hidden" aria-hidden="true">
+  <button type="button" onclick="wrapSelection('**','**')" title="Bold"><strong>B</strong></button>
+  <button type="button" onclick="wrapSelection('_','_')" title="Italic"><em>I</em></button>
+  <button type="button" onclick="insertChecklist()" title="Checklist">☑</button>
+  <button type="button" onclick="convertSelectionToTask()" title="Send to project as task">
+    <i data-feather="send" style="width:14px;height:14px"></i>
+  </button>
+  <button type="button" onclick="copySelection()" title="Copy">
+    <i data-feather="copy" style="width:14px;height:14px"></i>
+  </button>
+</div>
+
+<!-- ═══════════ PROJECT PICKER MODAL ═══════════ -->
 <div id="projectPicker" class="modal hidden">
   <div class="modal-content">
-
-    <h3>Add task to project</h3>
-
-    <select id="projectSelect"></select>
-    <div id="taskPreview"></div>
-    <div class="modal-actions">
-      <button onclick="confirmAddTasks()">Add Task</button>
-      <button onclick="closeProjectPicker()">Cancel</button>
+    <div class="modal-header">
+      <h3>Add to project</h3>
+      <button class="modal-close" onclick="closeProjectPicker()" aria-label="Close">
+        <i data-feather="x"></i>
+      </button>
     </div>
 
+    <label class="modal-label">Project</label>
+    <select id="projectSelect" class="modal-input"></select>
+
+    <label class="modal-label">Task</label>
+    <div id="taskPreview" class="modal-task-preview"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeProjectPicker()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmAddTasks()">
+        <i data-feather="plus" style="width:14px;height:14px"></i> Add task
+      </button>
+    </div>
   </div>
 </div>
-<div id="textToolbar" class="text-toolbar hidden">
-  <button onclick="wrapSelection('**','**')"><b>B</b></button>
-  <button onclick="insertChecklist()">☑</button>
-  <button onclick="convertSelectionToTask()">➕ Task</button>
-  <button onclick="copySelection()">📋</button>
-</div>
 
-  <script>
-    let savingIndicatorTimer = null;
-    let noteId = {{ note.id|tojson if note else "null" }};
-    let saveTimer = null;
-    let dirty = false;
+<script>
+let noteId = {{ note.id|tojson if note else "null" }};
+let saveTimer = null;
+let dirty = false;
+let pendingTasks = [];
 
-    const titleEl = document.getElementById("title");
-    const contentEl = document.getElementById("content");
-    const statusEl = document.getElementById("status");
+const titleEl = document.getElementById("title");
+const contentEl = document.getElementById("content");
+const saveIndicator = document.getElementById("save-indicator");
+const wordCountEl = document.getElementById("word-count");
+const charCountEl = document.getElementById("char-count");
+const toolbar = document.getElementById("textToolbar");
+const suggestionBox = document.getElementById("note-task-suggestions");
 
-    function markDirty() {
-      dirty = true;
-      savingIndicatorTimer = setTimeout(() => {
-        statusEl.textContent = "Saving…";
-      }, 200);
-
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(saveNote, 800);
-    }
-
-    titleEl.addEventListener("input", () => {
-      if (noteId === null) return; // ❌ don't autosave on new note
-      markDirty();
-    });
-
-    contentEl.addEventListener("input", () => {
-      if (noteId === null) return; // ❌ don't autosave on new note
-      markDirty();
-    });
-async function deleteNote() {
-
-  if (!noteId) return;
-
-  const ok = confirm("Delete this note?");
-
-  if (!ok) return;
-
-  await fetch(`/notes/scribble/${noteId}/delete`, {
-    method: "POST"
-  });
-
-  window.location.href = "/notes/scribble";
+// ─── Save indicator state machine ─────────────────────────────
+function setSaveState(state, text) {
+  if (!saveIndicator) return;
+  saveIndicator.classList.remove("is-saved", "is-saving", "is-error", "is-dirty");
+  saveIndicator.classList.add(`is-${state}`);
+  const textEl = saveIndicator.querySelector(".si-text");
+  if (textEl) textEl.textContent = text;
 }
-async function saveNote() {
-  // 🚫 Prevent autosave creating new notes repeatedly
-  if (noteId === null && !titleEl.value.trim() && !contentEl.value.trim()) {
+
+// ─── Auto-resizing textarea ───────────────────────────────────
+function autoGrow() {
+  contentEl.style.height = "auto";
+  contentEl.style.height = Math.max(contentEl.scrollHeight, 300) + "px";
+}
+
+// ─── Word / char counts ───────────────────────────────────────
+function updateCounts() {
+  const text = contentEl.value || "";
+  charCountEl.textContent = text.length.toLocaleString();
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  wordCountEl.textContent = words.toLocaleString();
+}
+
+// ─── Dirty-mark + debounced save ──────────────────────────────
+function markDirty() {
+  dirty = true;
+  setSaveState("dirty", "Editing…");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNote, 700);
+}
+
+titleEl.addEventListener("input", () => { markDirty(); });
+contentEl.addEventListener("input", () => {
+  autoGrow();
+  updateCounts();
+  renderChecklistPreview();
+  markDirty();
+});
+
+// ─── Save ────────────────────────────────────────────────────
+async function saveNote(options = {}) {
+  const title = titleEl.value;
+  const content = contentEl.value;
+
+  // Don't create empty notes
+  if (!noteId && !title.trim() && !content.trim()) {
+    setSaveState("saved", "Empty");
     return;
   }
 
-  const payload = {
-    id: noteId,
-    title: titleEl.value,
-    content: contentEl.value
-  };
-
-  statusEl.textContent = "Saving…";
+  setSaveState("saving", "Saving…");
 
   try {
     const res = await fetch("/notes/scribble/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ id: noteId, title, content }),
     });
-
-    if (!res.ok) throw new Error("Save failed");
-
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
-    // ✅ FIRST SAVE ONLY: lock the note ID
-    if (noteId === null && data.id) {
+    // First save for a new note — lock in the ID and update the URL
+    if (!noteId && data.id) {
       noteId = data.id;
       history.replaceState(null, "", `/notes/scribble/${data.id}`);
     }
-
     dirty = false;
-    clearTimeout(savingIndicatorTimer);
-    statusEl.textContent = "Saved ✓";
-  } catch (e) {
-    console.error(e);
-    statusEl.textContent = "Error saving";
+    setSaveState("saved", "Saved");
+  } catch (err) {
+    console.error("saveNote:", err);
+    setSaveState("error", "Save failed");
+    if (window.showToast) showToast("Failed to save note", "error");
   }
 }
-const notesBox = document.getElementById("content");
-const suggestionBox = document.getElementById("note-task-suggestions");
 
-if (notesBox) {
-
-  notesBox.addEventListener("input", () => {
-
-  renderChecklistPreview();
-
-});
-
+// ─── Delete (inline confirm, no native confirm()) ─────────────
+function showDeleteConfirm() {
+  document.getElementById("delete-confirm")?.classList.remove("hidden");
 }
-function removeTaskLine(text) {
-
-  const lines = contentEl.value.split("\n");
-
-  contentEl.value = lines
-    .filter(line => !line.includes(text))
-    .join("\n");
-
-  renderChecklistPreview();
+function hideDeleteConfirm() {
+  document.getElementById("delete-confirm")?.classList.add("hidden");
+}
+async function deleteNote() {
+  if (!noteId) return;
+  try {
+    const res = await fetch(`/notes/scribble/${noteId}/delete`, { method: "POST" });
+    if (!res.ok) throw new Error("Delete failed");
+    if (window.showToast) showToast("Note deleted", "success");
+    window.location.href = "/notes/scribble";
+  } catch (err) {
+    console.error(err);
+    if (window.showToast) showToast("Delete failed", "error");
+  }
 }
 
+// ─── Checklist preview + toggle ──────────────────────────────
 function renderChecklistPreview() {
-
+  if (!suggestionBox) return;
   const lines = contentEl.value.split("\n");
-
-  suggestionBox.innerHTML = "";
-
+  const rows = [];
   lines.forEach((line, i) => {
-
-    const match = line.match(/^- \[( |x)\] (.*)/i);
+    const match = line.match(/^\s*-\s*\[( |x)\]\s*(.*)/i);
     if (!match) return;
-
     const checked = match[1].toLowerCase() === "x";
     const text = match[2];
-
-    const row = document.createElement("div");
-    row.className = "note-task-row";
-
-    row.innerHTML = `
-      <input type="checkbox" ${checked ? "checked" : ""}>
-      <span>${text}</span>
-      <button>+</button>
-    `;
-
-    row.querySelector("input").onclick = () =>
-      toggleChecklist(i, checked);
-
-    row.querySelector("button").onclick = () =>
-      openProjectPicker(text);
-
-    suggestionBox.appendChild(row);
-
+    rows.push({ i, checked, text });
   });
 
+  if (!rows.length) { suggestionBox.innerHTML = ""; return; }
+
+  suggestionBox.innerHTML = `
+    <div class="checklist-panel">
+      <div class="checklist-panel-head">
+        <i data-feather="check-square" style="width:13px;height:13px"></i>
+        Checklist · ${rows.filter(r => r.checked).length}/${rows.length} done
+      </div>
+      <div class="checklist-items">
+        ${rows.map(r => `
+          <div class="checklist-item ${r.checked ? 'done' : ''}" data-index="${r.i}">
+            <input type="checkbox" ${r.checked ? "checked" : ""}
+                   onchange="toggleChecklist(${r.i}, ${r.checked})">
+            <span>${escapeHtml(r.text)}</span>
+            <button type="button" class="checklist-send" onclick="openProjectPicker(${JSON.stringify(r.text).replace(/"/g, '&quot;')})" title="Send to project">
+              <i data-feather="send" style="width:12px;height:12px"></i>
+            </button>
+          </div>
+        `).join("")}
+      </div>
+    </div>`;
+  if (window.feather) feather.replace();
 }
+function escapeHtml(str) {
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 function toggleChecklist(lineIndex, checked) {
-
   const lines = contentEl.value.split("\n");
-
-  lines[lineIndex] = lines[lineIndex]
-    .replace(checked ? "[x]" : "[ ]", checked ? "[ ]" : "[x]");
-
+  lines[lineIndex] = lines[lineIndex].replace(
+    checked ? /\[x\]/i : /\[ \]/,
+    checked ? "[ ]" : "[x]"
+  );
   contentEl.value = lines.join("\n");
-
+  autoGrow();
+  updateCounts();
   renderChecklistPreview();
+  markDirty();
 }
-function insertAtCursor(field, value) {
 
-  const start = field.selectionStart;
-  const end = field.selectionEnd;
-
-  field.value =
-    field.value.substring(0, start) +
-    value +
-    field.value.substring(end);
-
-  field.selectionStart = field.selectionEnd =
-    start + value.length;
+function removeTaskLine(text) {
+  contentEl.value = contentEl.value
+    .split("\n")
+    .filter(line => !line.includes(text))
+    .join("\n");
+  autoGrow();
+  updateCounts();
+  renderChecklistPreview();
+  markDirty();
 }
-notesBox.addEventListener("keydown", e => {
 
+// ─── Smart Enter: continue checklist / bullet ────────────────
+contentEl.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
-
-  const cursor = notesBox.selectionStart;
-  const textBefore = notesBox.value.slice(0, cursor);
+  const cursor = contentEl.selectionStart;
+  const textBefore = contentEl.value.slice(0, cursor);
   const currentLine = textBefore.split("\n").pop();
 
-  if (currentLine.startsWith("- [ ]") || currentLine.startsWith("- [x]")) {
+  if (/^\s*-\s*\[( |x)\]/i.test(currentLine)) {
     e.preventDefault();
-    insertAtCursor(notesBox, "\n- [ ] ");
+    insertAtCursor(contentEl, "\n- [ ] ");
     return;
   }
-
-  if (currentLine.startsWith("- ") && !currentLine.startsWith("- [")) {
-
+  if (/^\s*-\s/.test(currentLine) && !/\[/.test(currentLine)) {
     e.preventDefault();
-
-    const text = currentLine.replace("- ", "");
-
-    insertAtCursor(notesBox, `\n- [ ] ${text}`);
-
+    insertAtCursor(contentEl, "\n- ");
   }
-
 });
+
+function insertAtCursor(field, value) {
+  const start = field.selectionStart;
+  const end = field.selectionEnd;
+  field.value = field.value.substring(0, start) + value + field.value.substring(end);
+  field.selectionStart = field.selectionEnd = start + value.length;
+  autoGrow();
+  updateCounts();
+  renderChecklistPreview();
+  markDirty();
+}
+
 function insertChecklist() {
   insertAtCursor(contentEl, "- [ ] ");
 }
-document.addEventListener("scroll", () => {
-  if (toolbar) toolbar.classList.add("hidden");
-});
 
-let pendingTasks = [];
+// ─── Selection toolbar ───────────────────────────────────────
+contentEl.addEventListener("mouseup", showToolbar);
+contentEl.addEventListener("keyup", showToolbar);
+contentEl.addEventListener("blur", () => setTimeout(() => toolbar.classList.add("hidden"), 150));
+document.addEventListener("scroll", () => toolbar?.classList.add("hidden"));
 
+function showToolbar() {
+  const sel = contentEl.value.substring(contentEl.selectionStart, contentEl.selectionEnd);
+  if (!sel) { toolbar.classList.add("hidden"); return; }
+  const rect = contentEl.getBoundingClientRect();
+  toolbar.style.top = window.scrollY + rect.top + 8 + "px";
+  toolbar.style.left = Math.max(8, rect.left + rect.width / 2 - 100) + "px";
+  toolbar.classList.remove("hidden");
+}
+
+function wrapSelection(prefix, suffix) {
+  const start = contentEl.selectionStart;
+  const end = contentEl.selectionEnd;
+  const selected = contentEl.value.substring(start, end);
+  contentEl.value = contentEl.value.substring(0, start) + prefix + selected + suffix + contentEl.value.substring(end);
+  contentEl.selectionStart = start + prefix.length;
+  contentEl.selectionEnd = end + prefix.length;
+  autoGrow();
+  updateCounts();
+  markDirty();
+}
+
+function convertSelectionToTask() {
+  const selected = contentEl.value.substring(contentEl.selectionStart, contentEl.selectionEnd).trim();
+  if (!selected) return;
+  openProjectPicker(selected);
+}
+
+function copySelection() {
+  const selected = contentEl.value.substring(contentEl.selectionStart, contentEl.selectionEnd);
+  if (!selected) return;
+  navigator.clipboard.writeText(selected).then(() => {
+    if (window.showToast) showToast("Copied", "success");
+  });
+}
+
+// ─── Project picker ──────────────────────────────────────────
 async function openProjectPicker(taskText) {
-
   pendingTasks = [taskText];
-
-  const modal = document.getElementById("projectPicker");
-  const select = document.getElementById("projectSelect");
   document.getElementById("taskPreview").textContent = taskText;
-
-  const res = await fetch("/projects/list");
-  const projects = await res.json();
-
-  select.innerHTML = projects
-    .map(p => `<option value="${p.project_id}">${p.name}</option>`)
-    .join("");
-
-  modal.classList.remove("hidden");
+  try {
+    const res = await fetch("/projects/list");
+    const projects = await res.json();
+    const sel = document.getElementById("projectSelect");
+    if (!projects.length) {
+      sel.innerHTML = `<option value="">— No projects yet —</option>`;
+    } else {
+      sel.innerHTML = projects.map(p => `<option value="${p.project_id}">${escapeHtml(p.name)}</option>`).join("");
+    }
+    document.getElementById("projectPicker").classList.remove("hidden");
+  } catch (err) {
+    console.error(err);
+    if (window.showToast) showToast("Failed to load projects", "error");
+  }
 }
 
 async function confirmAddTasks() {
-
-  const projectId =
-    document.getElementById("projectSelect").value;
-
+  const projectId = document.getElementById("projectSelect").value;
+  if (!projectId) { closeProjectPicker(); return; }
   for (const task of pendingTasks) {
-
-    await fetch(`/projects/${projectId}/tasks/add`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        task_text: task
-      })
-    });
-     removeTaskLine(task);
-     statusEl.textContent = "Task added ✓";
-     setTimeout(() => statusEl.textContent = "", 2000);
+    try {
+      await fetch(`/projects/${projectId}/tasks/add-ajax`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_text: task }),
+      });
+      removeTaskLine(task);
+      if (window.showToast) showToast("Task added to project", "success");
+    } catch (err) {
+      console.error(err);
+      if (window.showToast) showToast("Failed to add task", "error");
+    }
   }
- 
   closeProjectPicker();
 }
 
 function closeProjectPicker() {
-
-  document
-    .getElementById("projectPicker")
-    .classList.add("hidden");
-
+  document.getElementById("projectPicker").classList.add("hidden");
   pendingTasks = [];
 }
-const toolbar = document.getElementById("textToolbar");
 
-contentEl.addEventListener("mouseup", showToolbar);
-contentEl.addEventListener("keyup", showToolbar);
-
-function showToolbar() {
-
-  const selection = window.getSelection().toString();
-
-  if (!selection) {
-    toolbar.classList.add("hidden");
+// ─── Keyboard shortcuts ──────────────────────────────────────
+document.addEventListener("keydown", (e) => {
+  // Ctrl/Cmd+S → force save
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    clearTimeout(saveTimer);
+    saveNote();
     return;
   }
+  // Ctrl/Cmd+B → bold
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b" && document.activeElement === contentEl) {
+    e.preventDefault();
+    wrapSelection("**", "**");
+    return;
+  }
+  // Esc → close modals, or navigate back
+  if (e.key === "Escape") {
+    const modal = document.getElementById("projectPicker");
+    if (modal && !modal.classList.contains("hidden")) { closeProjectPicker(); return; }
+    const dc = document.getElementById("delete-confirm");
+    if (dc && !dc.classList.contains("hidden")) { hideDeleteConfirm(); return; }
+  }
+});
 
-  const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
+// ─── Warn before leaving with unsaved changes ────────────────
+window.addEventListener("beforeunload", (e) => {
+  if (dirty) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
 
-  toolbar.style.top = window.scrollY + rect.top - 40 + "px";
-  toolbar.style.left = rect.left + rect.width / 2 + "px";
-
-  toolbar.classList.remove("hidden");
-}
-function wrapSelection(prefix, suffix) {
-
-  const start = contentEl.selectionStart;
-  const end = contentEl.selectionEnd;
-
-  const text = contentEl.value;
-
-  const selected = text.substring(start, end);
-
-  contentEl.value =
-    text.substring(0, start) +
-    prefix + selected + suffix +
-    text.substring(end);
-
-}
-function convertSelectionToTask() {
-
-  const selected =
-    contentEl.value.substring(
-      contentEl.selectionStart,
-      contentEl.selectionEnd
-    );
-
-  if (!selected) return;
-
-  openProjectPicker(selected);
-
-}
-function copySelection() {
-
-  const selected =
-    contentEl.value.substring(
-      contentEl.selectionStart,
-      contentEl.selectionEnd
-    );
-
-  navigator.clipboard.writeText(selected);
-
-}
-renderChecklistPreview();
+// ─── Init ────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  if (window.feather) feather.replace();
+  autoGrow();
+  updateCounts();
+  renderChecklistPreview();
+  setSaveState("saved", noteId ? "Saved" : "New note");
+  // Focus: if new, the title; if editing, the content so you can keep writing
+  (noteId ? contentEl : titleEl)?.focus();
+});
 </script>
 </body>
 </html>

@@ -1,53 +1,128 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Scribble Notes</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Notes – Scribble</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='scribble.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 </head>
 
 <body>
-<div class="nav-icons">  {% include "_top_nav.html" %}  </div>
 
-<form method="get" style="margin-bottom: 16px;">
-  <input
-    type="text"
-    name="q"
-    placeholder="Search notes…"
-    value="{{ q or '' }}"
-    style="
-      width: 100%;
-      max-width: 420px;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #e5e7eb;
-      font-size: 0.95rem;
-    "
-  >
-</form>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-<div class="container">
-  <div class="header">
-    <h2>📝 Scribble Notes</h2>
-    <a href="/notes/scribble/new" class="primary-btn">＋ New note</a>
-  </div>
+<div class="scribble-app">
+
+  <header class="scribble-header">
+    <div>
+      <h1>📝 Notes</h1>
+      <p class="scribble-sub">
+        {% if notes %}
+          {{ notes|length }} note{{ 's' if notes|length != 1 }}
+        {% else %}
+          Your scribble workspace
+        {% endif %}
+      </p>
+    </div>
+    <a href="/notes/scribble/new" class="btn-new" title="Create a new note (N)">
+      <i data-feather="plus"></i>
+      <span>New note</span>
+    </a>
+  </header>
+
+  <form method="get" class="scribble-search" role="search" autocomplete="off">
+    <i data-feather="search" class="scribble-search-icon" aria-hidden="true"></i>
+    <input
+      type="text"
+      name="q"
+      id="scribble-search-input"
+      placeholder="Search by title or content…"
+      value="{{ q or '' }}"
+      autofocus
+    >
+    {% if q %}
+      <a href="/notes/scribble" class="scribble-search-clear" title="Clear search">
+        <i data-feather="x"></i>
+      </a>
+    {% endif %}
+  </form>
 
   {% if notes %}
-    <ul class="note-list">
+    <div class="note-grid">
       {% for note in notes %}
-        <li>
-          <a href="/notes/scribble/{{ note.id }}">
-            <strong>{{ note.title or "Untitled note" }}</strong>
-            <div class="preview">
-              {{ note.content[:120] }}{% if note.content|length > 120 %}…{% endif %}
-            </div>
-          </a>
-        </li>
+        {% set title = note.title or "Untitled note" %}
+        {% set preview = (note.content or '')|trim %}
+        <a class="note-card" href="/notes/scribble/{{ note.id }}">
+          <div class="note-card-title">{{ title }}</div>
+          {% if preview %}
+            <div class="note-card-preview">{{ preview[:240] }}{% if preview|length > 240 %}…{% endif %}</div>
+          {% else %}
+            <div class="note-card-preview empty">Empty note — tap to start writing</div>
+          {% endif %}
+          <div class="note-card-footer">
+            <span class="note-card-meta">
+              <i data-feather="clock" style="width:11px;height:11px"></i>
+              {% if note.updated_at %}{{ note.updated_at[:10] }}{% else %}—{% endif %}
+            </span>
+            {% if preview %}
+              <span class="note-card-meta">
+                <i data-feather="type" style="width:11px;height:11px"></i>
+                {{ preview.split()|length }} word{{ 's' if preview.split()|length != 1 }}
+              </span>
+            {% endif %}
+          </div>
+        </a>
       {% endfor %}
-    </ul>
+    </div>
   {% else %}
-    <p class="empty">No notes yet.</p>
+    <div class="scribble-empty">
+      <div class="scribble-empty-icon">
+        <i data-feather="book-open"></i>
+      </div>
+      <h2>{% if q %}No matches{% else %}No notes yet{% endif %}</h2>
+      <p>
+        {% if q %}
+          Nothing matched "<strong>{{ q }}</strong>". Try a different search term, or
+          <a href="/notes/scribble">clear the search</a>.
+        {% else %}
+          Create your first scribble note to capture thoughts, meeting notes, ideas,
+          and quick tasks. Everything saves automatically.
+        {% endif %}
+      </p>
+      <a href="/notes/scribble/new" class="btn-new">
+        <i data-feather="plus"></i>
+        <span>Create your first note</span>
+      </a>
+    </div>
   {% endif %}
 </div>
 
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+
+  // Keyboard shortcut: press "N" (not in input) to create a new note
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "n" || e.key === "N") {
+      e.preventDefault();
+      window.location.href = "/notes/scribble/new";
+    }
+    // "/" focuses the search
+    if (e.key === "/") {
+      e.preventDefault();
+      document.getElementById("scribble-search-input")?.focus();
+    }
+  });
+</script>
 </body>
 </html>
