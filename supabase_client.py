@@ -133,9 +133,14 @@ def post(path, data, prefer="return=representation"):
         json=data,
     )
 
-    r.raise_for_status()
+    if not r.ok:
+        # 🔥 Log full error context (status + URL + Supabase's own error message)
+        logger.error("SUPABASE POST ERROR %s on %s", r.status_code, path)
+        logger.error("SUPABASE POST URL → %s", r.url)
+        logger.error("SUPABASE POST PAYLOAD → %s", data)
+        logger.error("SUPABASE POST RESPONSE → %s", r.text)
+        r.raise_for_status()
 
-    # 🔥 Important change
     if r.text:
         return r.json()
 
@@ -146,7 +151,10 @@ def delete(path, params):
         f"{SUPABASE_URL}/rest/v1/{path}",
         params=params,
     )
-    r.raise_for_status()
+    if not r.ok:
+        logger.error("SUPABASE DELETE ERROR %s on %s", r.status_code, path)
+        logger.error("SUPABASE DELETE RESPONSE → %s", r.text)
+        r.raise_for_status()
 def update(table, params, json):
     """
     Update rows in a Supabase table.

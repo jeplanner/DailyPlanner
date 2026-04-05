@@ -1026,14 +1026,23 @@ def todo_autosave():
             except Exception as e:
                 logger.warning("Failed to create project task from Eisenhower: %s", e)
 
+        # Match the shape that _create_next_recurring_instance uses (which
+        # is the only Supabase insert path proven to work against the live
+        # schema). The `category` / `subcategory` / `status` fields are
+        # NOT-NULL in the current todo_matrix schema — omitting them on the
+        # direct autosave path caused a 400 ("null value in column ...
+        # violates not-null constraint").
         row_data = {
             "user_id": user_id,
             "plan_date": data["plan_date"],
+            "task_date": due_date,
             "quadrant": quadrant,
             "task_text": text,
+            "category": data.get("category") or "General",
+            "subcategory": data.get("subcategory") or "General",
             "is_done": bool(data.get("is_done", False)),
             "is_deleted": False,
-            "task_date": due_date,
+            "status": "done" if bool(data.get("is_done", False)) else "open",
             "priority": priority,
         }
         if task_time:
@@ -1068,7 +1077,17 @@ def todo_autosave():
             except Exception as e:
                 logger.warning("Failed to create recurring rule from Eisenhower: %s", e)
 
-        rows = post("todo_matrix", row_data)
+        try:
+            rows = post("todo_matrix", row_data)
+        except Exception as e:
+            # Don't crash the worker on a schema mismatch — return a clean
+            # JSON error so the client can show a toast instead of a blank 500.
+            logger.exception("todo_autosave: insert failed")
+            return jsonify({
+                "error": f"Failed to save task: {e}",
+                "hint": "Check the server log for the exact Supabase error "
+                        "(the response body is now captured in supabase_client.post)."
+            }), 500
         new_row = rows[0] if rows else None
         new_id = new_row.get("id") if new_row else None
 
