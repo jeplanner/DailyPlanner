@@ -14,8 +14,11 @@
 <script src="/static/js/toast.js"></script>
 
 <style>
+/* ═══════════════════════════════════════════════════════════
+   TOP NAV / SIDEBAR — grouped, mobile-friendly
+   ═══════════════════════════════════════════════════════════ */
 
-/* ===== HEADER ===== */
+/* ── Top header bar ── */
 .top-context{
   width:100%;
   padding:10px 18px;
@@ -24,11 +27,11 @@
   gap:16px;
   background:#ffffff;
   border-bottom:1px solid #e5e7eb;
+  position:sticky;
+  top:0;
+  z-index:900;
 }
-.date-row{
-  border-left:1px solid #e5e7eb;
-  padding-left:12px;
-}
+html.dark .top-context{background:#1e293b;border-bottom-color:#334155;}
 
 .hamburger{
   display:flex;
@@ -36,142 +39,161 @@
   gap:6px;
   font-size:18px;
   cursor:pointer;
-  border:none;
+  border:1px solid transparent;
   background:none;
   color:#111827;
-  font-weight:500;
-  padding:4px 8px;
-  border-radius:6px;
+  font-weight:600;
+  padding:8px 12px;
+  border-radius:8px;
+  min-height:40px;
+  transition:all .15s;
 }
-
-.hamburger:hover{
-  background:#f3f4f6;
-}
-
-/* DATE ROW */
+.hamburger:hover{background:#f3f4f6;border-color:#e5e7eb;}
+html.dark .hamburger{color:#f1f5f9;}
+html.dark .hamburger:hover{background:#334155;border-color:#475569;}
 
 .date-row{
+  border-left:1px solid #e5e7eb;
+  padding-left:12px;
   display:flex;
-  gap:12px;
+  gap:10px;
   align-items:center;
   font-size:14px;
   color:#374151;
+  flex-wrap:wrap;
 }
+html.dark .date-row{border-left-color:#334155;color:#cbd5e1;}
+.date-row .time{font-weight:600;color:#2563eb;}
 
-.date-row .time{
-  font-weight:600;
-  color:#2563eb;
-}
-
-/* ===== SIDEBAR ===== */
-
+/* ── Sidebar drawer ── */
 .sidebar{
   position:fixed;
   top:0;
   left:0;
-  width:270px;
+  width:288px;
   height:100%;
   background:#ffffff;
-  box-shadow:4px 0 18px rgba(0,0,0,.12);
-  padding:20px 16px;
+  box-shadow:4px 0 28px rgba(0,0,0,.18);
+  padding:18px 14px calc(24px + env(safe-area-inset-bottom,0));
   transform:translateX(-100%);
   transition:transform .25s ease;
   z-index:1100;
   overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  display:flex;
+  flex-direction:column;
 }
+html.dark .sidebar{background:#1e293b;box-shadow:4px 0 28px rgba(0,0,0,.45);}
+.sidebar.open{transform:translateX(0);}
+body.menu-open{overflow:hidden;}
 
-/* OPEN STATE */
-
-.sidebar.open{
-  transform:translateX(0);
+.sidebar-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:4px 6px 14px;
+  border-bottom:1px solid #f1f3f5;
+  margin-bottom:10px;
 }
-
-/* HEADER */
-
+html.dark .sidebar-header{border-bottom-color:#334155;}
 .sidebar-title{
-  font-size:18px;
-  font-weight:600;
-  margin-bottom:18px;
+  font-size:17px;
+  font-weight:800;
+  color:#111827;
+  letter-spacing:-0.3px;
 }
+html.dark .sidebar-title{color:#f1f5f9;}
+.sidebar-close{
+  width:36px;
+  height:36px;
+  border:none;
+  background:none;
+  border-radius:8px;
+  cursor:pointer;
+  color:#6b7280;
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+.sidebar-close:hover{background:#f3f4f6;color:#111827;}
+html.dark .sidebar-close{color:#94a3b8;}
+html.dark .sidebar-close:hover{background:#334155;color:#f1f5f9;}
 
-/* NAV LINKS */
-
+/* ── Nav groups ── */
 .sidebar-nav{
   display:flex;
   flex-direction:column;
   gap:4px;
+  flex:1;
 }
+.nav-group{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  margin-bottom:10px;
+}
+.nav-group-title{
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:1px;
+  color:#9ca3af;
+  padding:6px 10px 4px;
+}
+html.dark .nav-group-title{color:#64748b;}
+.nav-footer{margin-top:auto;padding-top:10px;border-top:1px solid #f1f3f5;}
+html.dark .nav-footer{border-top-color:#334155;}
 
 .sidebar-nav a{
   display:flex;
   align-items:center;
-  gap:10px;
+  gap:12px;
   text-decoration:none;
   color:#374151;
   font-size:14px;
-  padding:8px 10px;
-  border-radius:8px;
+  font-weight:500;
+  padding:10px 12px;
+  border-radius:9px;
+  min-height:42px;
+  transition:background .12s,color .12s;
 }
-
-.sidebar-nav a:hover{
-  background:#f3f4f6;
-}
-
-.sidebar-nav svg{
-  width:18px;
-  height:18px;
-}
-
-/* ACTIVE PAGE */
+.sidebar-nav a:hover{background:#f3f4f6;color:#111827;}
+html.dark .sidebar-nav a{color:#cbd5e1;}
+html.dark .sidebar-nav a:hover{background:#334155;color:#f1f5f9;}
+.sidebar-nav svg{width:18px;height:18px;flex-shrink:0;}
 
 .sidebar-nav a.active{
-  background:#2563eb;
-  color:white;
+  background:#eff6ff;
+  color:#2563eb;
+  font-weight:700;
 }
+.sidebar-nav a.active svg{stroke:#2563eb;}
+html.dark .sidebar-nav a.active{background:#172554;color:#60a5fa;}
+html.dark .sidebar-nav a.active svg{stroke:#60a5fa;}
 
-.sidebar-nav a.active svg{
-  stroke:white;
-}
-
-/* DIVIDER */
-
-.sidebar hr{
-  border:none;
-  border-top:1px solid #e5e7eb;
-  margin:14px 0;
-}
-body.menu-open{
-  overflow:hidden;
-}
-/* OVERLAY */
-
+/* ── Overlay ── */
 .overlay{
   position:fixed;
-  top:0;
-  left:0;
-  width:100%;
-  height:100%;
-  background:rgba(0,0,0,.25);
-  backdrop-filter:blur(2px);
+  inset:0;
+  background:rgba(0,0,0,.35);
+  backdrop-filter:blur(3px);
   opacity:0;
   pointer-events:none;
   transition:opacity .2s ease;
   z-index:1050;
 }
+.overlay.show{opacity:1;pointer-events:auto;}
 
-.overlay.show{
-  opacity:1;
-  pointer-events:auto;
-}
-
-/* SECTION TITLE */
-
+/* ── Section title under header (contextual page title) ── */
 .section-title{
   font-size:15px;
   font-weight:600;
   color:#111827;
   margin-top:6px;
 }
+html.dark .section-title{color:#f1f5f9;}
+
+/* ── Legacy planner toggle kept for pages that use it ── */
 .planner-toggle{
   display:flex;
   gap:6px;
@@ -181,7 +203,6 @@ body.menu-open{
   border-radius:10px;
   width:fit-content;
 }
-
 .toggle-btn{
   text-decoration:none;
   font-size:13px;
@@ -190,11 +211,49 @@ body.menu-open{
   border-radius:8px;
   color:#6b7280;
 }
-
 .toggle-btn.active{
   background:#ffffff;
   color:#2563eb;
   box-shadow:0 2px 6px rgba(0,0,0,0.08);
+}
+
+/* ═══ MOBILE ═══ */
+@media (max-width:768px){
+  .top-context{padding:10px 14px;gap:10px;}
+  .hamburger{font-size:17px;padding:9px 13px;}
+  .date-row{
+    font-size:13px;
+    padding-left:10px;
+    gap:8px;
+  }
+  .date-row .time{font-size:13px;}
+
+  .sidebar{
+    width:min(92vw,340px);
+    padding:16px 12px calc(24px + env(safe-area-inset-bottom,0));
+  }
+  .sidebar-close{display:flex;}
+  .sidebar-title{font-size:18px;}
+
+  .nav-group-title{
+    font-size:11px;
+    padding:10px 12px 6px;
+  }
+  .sidebar-nav a{
+    font-size:15px;
+    padding:13px 14px;
+    min-height:48px;
+    border-radius:11px;
+    gap:14px;
+  }
+  .sidebar-nav svg{width:20px;height:20px;}
+}
+
+/* ═══ VERY NARROW PHONES ═══ */
+@media (max-width:380px){
+  .top-context{padding:8px 10px;gap:8px;}
+  .hamburger span{display:none;}
+  .date-row{font-size:12px;padding-left:8px;}
 }
 </style>
 
@@ -208,106 +267,128 @@ body.menu-open{
 
 <div id="sidebar" class="sidebar">
 
-  <div class="sidebar-title">
-    Planner
+  <div class="sidebar-header">
+    <div class="sidebar-title">Planner</div>
+    <button type="button" class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">
+      <i data-feather="x"></i>
+    </button>
   </div>
 
-  <div class="sidebar-nav">
+  <nav class="sidebar-nav">
 
-    <a href="/" title="Priorities — Eisenhower matrix">
-      <i data-feather="grid"></i>
-      Priorities
-    </a>
+    <!-- ══ WORK ══════════════════════════════════════════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Work</div>
 
-    <a href="/calendar" title="Calendar — day / week view">
-      <i data-feather="calendar"></i>
-      Calendar
-    </a>
+      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects">
+        <i data-feather="briefcase"></i>
+        Projects
+      </a>
 
-    <a href="/goals" title="OKRs — Project → Objective → Key Result → Initiative → Task">
-      <i data-feather="target"></i>
-      OKRs
-    </a>
+      <a href="/goals" data-match="^/goals" title="OKRs — Project → Objective → Key Result → Initiative → Task">
+        <i data-feather="target"></i>
+        OKRs
+      </a>
 
-    <a href="/health" title="Health tracking">
-      <i data-feather="heart"></i>
-      Health
-    </a>
+      <a href="/projects/timeline" data-match="^/projects/timeline" title="Roadmap — projects over time">
+        <i data-feather="git-branch"></i>
+        Roadmap
+      </a>
 
-    <a href="/projects" title="All projects">
-      <i data-feather="briefcase"></i>
-      Projects
-    </a>
+      {% if project is defined %}
+      <a href="/projects/{{ project.project_id }}/tasks" title="Tasks for this project">
+        <i data-feather="trello"></i>
+        Project Tasks
+      </a>
+      <a href="/projects/{{ project.project_id }}/gantt" title="Gantt chart for this project">
+        <i data-feather="bar-chart"></i>
+        Gantt Chart
+      </a>
+      {% endif %}
+    </div>
 
-    <a href="/projects/timeline" title="Roadmap — projects over time">
-      <i data-feather="git-branch"></i>
-      Roadmap
-    </a>
+    <!-- ══ DAILY ═════════════════════════════════════════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Daily</div>
 
-    <hr>
+      <a href="/" data-match="^/$" title="Priorities — Eisenhower matrix">
+        <i data-feather="grid"></i>
+        Priorities
+      </a>
 
-    <a href="/summary?view=daily" title="Daily review">
-      <i data-feather="calendar"></i>
-      Daily Review
-    </a>
+      <a href="/calendar" data-match="^/calendar" title="Calendar — day / week view">
+        <i data-feather="calendar"></i>
+        Calendar
+      </a>
 
-    <a href="/summary?view=weekly" title="Weekly review">
-      <i data-feather="bar-chart-2"></i>
-      Weekly Review
-    </a>
-    {% if project is defined %}
+      <a href="/inbox" data-match="^/inbox" title="Inbox">
+        <i data-feather="inbox"></i>
+        Inbox
+      </a>
+    </div>
 
-    <a href="/projects/{{ project.project_id }}/gantt" title="Gantt chart for this project">
-      <i data-feather="bar-chart"></i>
-      Gantt Chart
-    </a>
+    <!-- ══ REVIEW ════════════════════════════════════════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Review</div>
 
-    <a href="/projects/{{ project.project_id }}/tasks" title="Tasks for this project">
-      <i data-feather="trello"></i>
-      Tasks
-    </a>
+      <a href="/summary?view=daily" data-match="^/summary.*view=daily" title="Daily review">
+        <i data-feather="sun"></i>
+        Daily Review
+      </a>
 
-    {% endif %}
+      <a href="/summary?view=weekly" data-match="^/summary.*view=weekly" title="Weekly review">
+        <i data-feather="bar-chart-2"></i>
+        Weekly Review
+      </a>
+    </div>
 
-    <hr>
+    <!-- ══ KNOWLEDGE ═════════════════════════════════════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Knowledge</div>
 
-    <a href="/notes/scribble" title="Notes">
-      <i data-feather="edit-3"></i>
-      Notes
-    </a>
+      <a href="/notes/scribble" data-match="^/notes" title="Notes">
+        <i data-feather="edit-3"></i>
+        Notes
+      </a>
 
-    <a href="/references" title="Knowledge base — articles, links, AI-answerable content">
-      <i data-feather="book-open"></i>
-      Knowledge Base
-    </a>
+      <a href="/references" data-match="^/references" title="Knowledge base — articles, links, AI-answerable content">
+        <i data-feather="book-open"></i>
+        Knowledge Base
+      </a>
 
-    <a href="/refcards" title="Playbook — SOPs, credentials, checklists, cheat sheets">
-      <i data-feather="clipboard"></i>
-      Playbook
-    </a>
+      <a href="/refcards" data-match="^/refcards" title="Playbook — SOPs, credentials, checklists, cheat sheets">
+        <i data-feather="clipboard"></i>
+        Playbook
+      </a>
+    </div>
 
-    <a href="/portfolio" title="Investments — stocks, MFs, bonds, gold">
-      <i data-feather="trending-up"></i>
-      Investments
-    </a>
+    <!-- ══ LIFE ══════════════════════════════════════════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Life</div>
 
-    <a href="/inbox" title="Inbox">
-      <i data-feather="inbox"></i>
-      Inbox
-    </a>
+      <a href="/health" data-match="^/health" title="Health tracking">
+        <i data-feather="heart"></i>
+        Health
+      </a>
 
-    <hr>
+      <a href="/portfolio" data-match="^/portfolio" title="Investments — stocks, MFs, bonds, gold">
+        <i data-feather="trending-up"></i>
+        Investments
+      </a>
+    </div>
 
-    <a href="javascript:void(0)" onclick="toggleDarkMode()" style="display:flex;align-items:center;gap:8px;">
-      <i data-feather="moon" id="dark-mode-icon"></i>
-      Dark Mode
-    </a>
-
-    <a href="/logout">
-      <i data-feather="log-out"></i>
-      Logout
-    </a>
-  </div>
+    <!-- ══ FOOTER ════════════════════════════════════════ -->
+    <div class="nav-group nav-footer">
+      <a href="javascript:void(0)" onclick="toggleDarkMode()">
+        <i data-feather="moon" id="dark-mode-icon"></i>
+        Dark Mode
+      </a>
+      <a href="/logout">
+        <i data-feather="log-out"></i>
+        Logout
+      </a>
+    </div>
+  </nav>
 
 </div>
 
@@ -391,6 +472,36 @@ function updateDateTime(){
 
 updateDateTime()
 setInterval(updateDateTime,1000)
+
+/* ACTIVE-LINK HIGHLIGHT — match current URL against each nav link's
+   data-match regex (or fall back to exact href match). */
+(function highlightActiveNav(){
+  const path = window.location.pathname + window.location.search;
+  const links = document.querySelectorAll('.sidebar-nav a[href]');
+  let bestMatch = null;
+  let bestLen = -1;
+
+  links.forEach(a => {
+    const pattern = a.getAttribute('data-match');
+    let matched = false;
+    if (pattern) {
+      try {
+        if (new RegExp(pattern).test(path)) matched = true;
+      } catch {}
+    } else {
+      const href = a.getAttribute('href');
+      if (href && href !== '#' && href !== 'javascript:void(0)' && path.startsWith(href)) {
+        matched = true;
+      }
+    }
+    if (matched) {
+      const len = (pattern || a.getAttribute('href') || '').length;
+      if (len > bestLen) { bestLen = len; bestMatch = a; }
+    }
+  });
+
+  if (bestMatch) bestMatch.classList.add('active');
+})();
 
 /* FEATHER ICONS */
 
