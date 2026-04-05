@@ -649,16 +649,18 @@ def project_gantt(project_id):
             "user_id": f"eq.{session['user_id']}",
             "is_eliminated": "eq.false",
             "select": "task_id,task_text,start_date,duration_days,planned_hours,actual_hours",
+            "order": "start_date.asc",
             "limit": 500,
-        }
+        },
     ) or []
 
     gantt_tasks = build_gantt_tasks(tasks)
 
+    # Pass the list directly; the template renders it via `| tojson`.
     return render_template(
         "project_gantt.html",
         project_id=project_id,
-        gantt_tasks=json.dumps(gantt_tasks)
+        gantt_tasks=gantt_tasks,
     )
 @projects_bp.route("/projects/tasks/update-planned", methods=["POST"])
 @login_required
