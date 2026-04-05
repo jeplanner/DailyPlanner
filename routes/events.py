@@ -439,7 +439,12 @@ def google_login():
     prompt='consent'
     )
 
+    # Persist BOTH the state token AND the PKCE code_verifier so the
+    # callback can rebuild the Flow correctly. Modern google-auth-oauthlib
+    # (>=1.0) enables PKCE by default — without restoring code_verifier,
+    # Google's token endpoint returns: "invalid_grant: Missing code verifier".
     session['state'] = state
+    session['google_oauth_code_verifier'] = flow.code_verifier
     return redirect(authorization_url)
 
 def credentials_to_dict(credentials):
@@ -465,11 +470,37 @@ def oauth2callback():
             }
         },
         scopes=SCOPES,
-        state=session["state"],
+        state=session.get("state"),
         redirect_uri=url_for("events.oauth2callback", _external=True)
     )
 
-    flow.fetch_token(authorization_response=request.url)
+    # Restore the PKCE code_verifier that was generated when the auth URL
+    # was built in /google-login. Without this, Google rejects the token
+    # exchange with: "invalid_grant: Missing code verifier".
+    code_verifier = session.pop("google_oauth_code_verifier", None)
+    if code_verifier:
+        flow.code_verifier = code_verifier
+
+    # Google's redirect URL may come in over HTTP behind Render's proxy even
+    # though the actual public URL is HTTPS. Rewrite it so oauthlib's strict
+    # HTTPS check doesn't fail, and so the state/PKCE validation sees the
+    # canonical URL.
+    authorization_response = request.url
+    if authorization_response.startswith("http://"):
+        authorization_response = "https://" + authorization_response[len("http://"):]
+
+    try:
+        flow.fetch_token(authorization_response=authorization_response)
+    except Exception as e:
+        logger.exception("oauth2callback: token exchange failed")
+        return (
+            "<h2>Google Calendar connection failed</h2>"
+            f"<p>{e}</p>"
+            "<p><a href='/google-login'>Try again</a> or "
+            "<a href='/calendar'>back to calendar</a>.</p>",
+            400,
+        )
+
     credentials = flow.credentials
 
     creds_dict = credentials_to_dict(credentials)
