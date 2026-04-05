@@ -122,7 +122,25 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 .em-more-menu .sep{height:1px;background:var(--em-border);margin:4px 0;}
 
 /* Recurring pill next to title */
-.em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:600;padding:1px 5px;border-radius:4px;background:var(--em-border);color:var(--em-text2);margin-left:4px;text-transform:uppercase;}
+.em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;background:#dbeafe;color:#1e40af;margin-left:6px;text-transform:uppercase;letter-spacing:.3px;}
+html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
+
+/* ── Priority indicators (visually consistent w/ Planner V2) ── */
+.em-task.prio-high{border-left:4px solid #dc2626;}
+.em-task.prio-medium{border-left:4px solid #f59e0b;}
+.em-task.prio-low{border-left:4px solid #10b981;}
+
+.em-prio-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:6px;text-transform:uppercase;letter-spacing:.4px;}
+.em-prio-pill::before{content:"";width:6px;height:6px;border-radius:50%;display:inline-block;}
+.em-prio-pill.high{background:#fee2e2;color:#b91c1c;}
+.em-prio-pill.high::before{background:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.25);}
+.em-prio-pill.medium{background:#fef3c7;color:#b45309;}
+.em-prio-pill.medium::before{background:#f59e0b;box-shadow:0 0 0 2px rgba(245,158,11,.25);}
+.em-prio-pill.low{background:#d1fae5;color:#047857;}
+.em-prio-pill.low::before{background:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.25);}
+html.dark .em-prio-pill.high{background:#3b1111;color:#fca5a5;}
+html.dark .em-prio-pill.medium{background:#451a03;color:#fcd34d;}
+html.dark .em-prio-pill.low{background:#064e3b;color:#6ee7b7;}
 
 /* ── Travel settings modal ── */
 .tv-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(2px);}
@@ -203,6 +221,11 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
       <option value="delegate">🟡 Delegate</option>
       <option value="eliminate">⚪ Eliminate</option>
     </select>
+    <select id="quick-priority" class="em-quad-select" title="Priority">
+      <option value="high">🔴 High</option>
+      <option value="medium" selected>🟠 Medium</option>
+      <option value="low">🟢 Low</option>
+    </select>
     <select id="quick-project" class="em-quad-select" style="max-width:140px;">
       <option value="">No project</option>
       {% for p in projects %}
@@ -275,10 +298,31 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
         <div class="tv-cat-row">
           <label style="font-size:12px;font-weight:600;color:var(--em-text2);">Category:</label>
           <select id="tv-cat-picker" onchange="loadTravelTasks()"></select>
-          <input type="text" id="tv-new-cat" placeholder="New category name" maxlength="40" style="flex:1;min-width:140px;">
-          <button type="button" onclick="createTravelCategory()">+ Add category</button>
+          <button type="button" onclick="openNewCategoryPicker()">+ New category…</button>
           <button type="button" onclick="renameTravelCategory()">Rename</button>
           <button type="button" class="danger" onclick="deleteTravelCategory()">Delete</button>
+        </div>
+
+        <!-- New-category picker sub-panel (hidden until + New category… is clicked) -->
+        <div id="tv-new-panel" style="display:none;border:1px solid var(--em-border);border-radius:10px;padding:12px 14px;margin-bottom:14px;background:var(--em-bg);">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            <label style="font-size:12px;font-weight:600;color:var(--em-text2);">Name</label>
+            <input type="text" id="tv-new-name" placeholder="e.g. Short Trip, International…" maxlength="40" style="flex:1;min-width:150px;padding:7px 10px;border:1px solid var(--em-border);border-radius:7px;font-size:13px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;">
+            <label style="font-size:12px;font-weight:600;color:var(--em-text2);">Copy from</label>
+            <select id="tv-new-source" onchange="refreshNewCategoryPickList()" style="padding:7px 10px;border:1px solid var(--em-border);border-radius:7px;font-size:13px;font-family:inherit;background:var(--em-surface);color:var(--em-text);"></select>
+          </div>
+          <div style="font-size:11px;color:var(--em-text3);margin-bottom:6px;">
+            Uncheck any tasks you don't want. At least one must stay checked — or leave all unchecked to start with just a placeholder.
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <button type="button" onclick="toggleAllNewCategoryTasks(true)" style="padding:4px 10px;border:1px solid var(--em-border);border-radius:6px;background:var(--em-surface);color:var(--em-text2);font-size:11px;font-family:inherit;cursor:pointer;">Select all</button>
+            <button type="button" onclick="toggleAllNewCategoryTasks(false)" style="padding:4px 10px;border:1px solid var(--em-border);border-radius:6px;background:var(--em-surface);color:var(--em-text2);font-size:11px;font-family:inherit;cursor:pointer;">Clear all</button>
+          </div>
+          <div id="tv-new-picklist" style="max-height:280px;overflow-y:auto;border:1px solid var(--em-border);border-radius:8px;padding:6px 8px;background:var(--em-surface);"></div>
+          <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:10px;">
+            <button type="button" onclick="closeNewCategoryPicker()" style="padding:7px 14px;border:1px solid var(--em-border);border-radius:7px;background:var(--em-surface);color:var(--em-text2);font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;">Cancel</button>
+            <button type="button" onclick="saveNewCategory()" style="padding:7px 16px;border:none;border-radius:7px;background:var(--q-schedule);color:#fff;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;">Save category</button>
+          </div>
         </div>
 
         <!-- Task list -->
@@ -321,7 +365,7 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
         {% set tasks = todo[q]["tasks"] %}
         {% if tasks %}
           {% for t in tasks %}
-          <div class="em-task {{ 'done' if t.is_done }}" data-id="{{ t.id }}" data-quadrant="{{ q }}">
+          <div class="em-task prio-{{ t.priority or 'medium' }} {{ 'done' if t.is_done }}" data-id="{{ t.id }}" data-quadrant="{{ q }}" data-priority="{{ t.priority or 'medium' }}">
             {% if t.source != 'event' and t.source != 'project' %}
             <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
             {% else %}
@@ -331,6 +375,7 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
             <div class="em-task-body">
               <div class="em-task-title">
                 {{ t.task_text }}
+                <span class="em-prio-pill {{ t.priority or 'medium' }}" title="{{ (t.priority or 'medium')|capitalize }} priority">{{ (t.priority or 'medium')|upper }}</span>
                 {% if t.status == 'done' %}
                   <span class="em-status-badge done">Done</span>
                 {% elif t.status == 'in_progress' %}
@@ -519,6 +564,7 @@ function quickAdd() {
   const quadrant = document.getElementById("quick-quad").value;
   const projectId = document.getElementById("quick-project").value || null;
   const recurrence = document.getElementById("quick-recurrence")?.value || null;
+  const priority = document.getElementById("quick-priority")?.value || "medium";
 
   // Determine dates/time/delegate based on quadrant
   let dueDate = PLAN_DATE;
@@ -556,6 +602,7 @@ function quickAdd() {
       task_time: taskTime,
       delegated_to: delegatedTo,
       recurrence: recurrence,
+      priority: priority,
       is_done: false
     })
   }).then(() => {
@@ -744,26 +791,96 @@ async function deleteTravelTask(id) {
   await loadTravelTasks();
 }
 
-async function createTravelCategory() {
-  const name = document.getElementById("tv-new-cat").value.trim();
+// ── New-category picker ──
+let _tvPickCache = []; // cached tasks of the currently-chosen source category
+
+async function openNewCategoryPicker() {
+  document.getElementById("tv-new-panel").style.display = "block";
+  document.getElementById("tv-new-name").value = "";
+  document.getElementById("tv-new-name").focus();
+
+  // Populate the source dropdown from existing categories
+  const catRes = await _tvFetch("/travel/categories");
+  const cats = catRes.categories || [];
+  const srcSel = document.getElementById("tv-new-source");
+  if (cats.length === 0) {
+    srcSel.innerHTML = `<option value="Default">Default</option>`;
+  } else {
+    srcSel.innerHTML = cats.map(c =>
+      `<option value="${_esc(c.name)}">${_esc(c.name)} (${c.count})</option>`
+    ).join("");
+    // Prefer "Default" when it exists
+    if (cats.some(c => c.name === "Default")) srcSel.value = "Default";
+  }
+
+  await refreshNewCategoryPickList();
+}
+
+function closeNewCategoryPicker() {
+  document.getElementById("tv-new-panel").style.display = "none";
+  _tvPickCache = [];
+}
+
+async function refreshNewCategoryPickList() {
+  const source = document.getElementById("tv-new-source").value;
+  const res = await _tvFetch(`/travel/tasks?category=${encodeURIComponent(source)}`);
+  _tvPickCache = res.tasks || [];
+
+  const listEl = document.getElementById("tv-new-picklist");
+  if (!_tvPickCache.length) {
+    listEl.innerHTML = `<div style="text-align:center;padding:18px 8px;color:var(--em-text3);font-size:12px;">No tasks in "${_esc(source)}" to copy. You can still save an empty category — a placeholder task will be added.</div>`;
+    return;
+  }
+
+  // Group by subcategory for readability
+  const groups = {};
+  _tvPickCache.forEach(t => {
+    const sc = t.subcategory || "General";
+    (groups[sc] = groups[sc] || []).push(t);
+  });
+
+  let html = "";
+  Object.keys(groups).sort().forEach(sc => {
+    html += `<div style="font-size:10px;font-weight:700;color:var(--em-text3);text-transform:uppercase;letter-spacing:.4px;padding:6px 2px 2px;">${_esc(sc)}</div>`;
+    groups[sc].forEach(t => {
+      const qEmoji = { do: "🔴", schedule: "🔵", delegate: "🟡", eliminate: "⚪" }[t.quadrant] || "⚪";
+      html += `
+        <label style="display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;font-size:12px;color:var(--em-text);">
+          <input type="checkbox" class="tv-pick-cb" data-id="${t.id}" checked style="width:15px;height:15px;accent-color:var(--q-schedule);cursor:pointer;">
+          <span style="flex:1;">${qEmoji} ${_esc(t.task_text)}</span>
+        </label>
+      `;
+    });
+  });
+  listEl.innerHTML = html;
+}
+
+function toggleAllNewCategoryTasks(checked) {
+  document.querySelectorAll("#tv-new-picklist .tv-pick-cb").forEach(cb => {
+    cb.checked = checked;
+  });
+}
+
+async function saveNewCategory() {
+  const name = document.getElementById("tv-new-name").value.trim();
   if (!name) { showToast("Enter a category name", "error"); return; }
-  // Create a seed row so the category materializes; user can edit/delete it
-  const res = await _tvFetch("/travel/tasks", {
+  const source_category = document.getElementById("tv-new-source").value || "Default";
+  const template_ids = Array.from(document.querySelectorAll("#tv-new-picklist .tv-pick-cb:checked"))
+    .map(cb => parseInt(cb.dataset.id, 10))
+    .filter(n => !Number.isNaN(n));
+
+  const res = await _tvFetch("/travel/categories", {
     method: "POST",
-    body: JSON.stringify({
-      category: name,
-      quadrant: "do",
-      subcategory: "General",
-      task_text: "New travel task (edit me)",
-    }),
+    body: JSON.stringify({ name, source_category, template_ids }),
   });
   if (res.status === "ok") {
-    document.getElementById("tv-new-cat").value = "";
+    showToast(`Category "${name}" created (${res.copied} tasks)`, "success");
+    closeNewCategoryPicker();
     await refreshTravelCategoryPicker();
     document.getElementById("tv-cat-picker").value = name;
     await loadTravelTasks();
   } else {
-    showToast(res.error || "Failed", "error");
+    showToast(res.error || "Failed to create category", "error");
   }
 }
 

@@ -1154,6 +1154,29 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   opacity: 0.9;
 }
 
+/* Recurring badge on chips */
+.chip-recur {
+  display: inline-block;
+  font-size: 10px;
+  margin-right: 2px;
+  filter: saturate(1.3);
+  vertical-align: baseline;
+}
+
+/* Priority dot indicator (small, high-contrast) */
+.chip-prio-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+  box-shadow: 0 0 0 1.5px rgba(255,255,255,0.7);
+}
+.chip-prio-dot.prio-high { background: #dc2626; }
+.chip-prio-dot.prio-medium { background: #f59e0b; }
+.chip-prio-dot.prio-low { background: #10b981; }
+
 /* ═══════════ SCROLLBAR ═══════════ */
 /* Scrollbar */
 .gcal-scroll::-webkit-scrollbar { width: 8px; }

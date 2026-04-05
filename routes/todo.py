@@ -7,6 +7,12 @@ _OPEN_STATUSES = {"open", "in_progress"}
 _RESOLVED_STATUSES = {"done", "not_required", "skipped"}
 _ALL_STATUSES = _OPEN_STATUSES | _RESOLVED_STATUSES
 
+# Priority vocabulary shared with project_tasks
+_VALID_PRIORITIES = {"low", "medium", "high"}
+
+# Schema note — run once in Supabase if not already present:
+#   alter table todo_matrix add column if not exists priority text default 'medium';
+
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
 
 from auth import login_required
@@ -86,6 +92,7 @@ def todo():
             "quadrant": t["quadrant"],
             "is_done": t.get("is_done", False),
             "status": t.get("status") or ("done" if t.get("is_done") else "open"),
+            "priority": (t.get("priority") or "medium"),
             "recurrence": recurrence_map.get(t.get("recurring_id")),
             "project_id": t.get("project_id"),
             "project_name": project_map.get(t.get("project_id")),
@@ -99,7 +106,7 @@ def todo():
         "plan_date": f"eq.{plan_date.isoformat()}",
         "is_deleted": "eq.false",
         "quadrant": "neq.",
-        "select": "id,title,quadrant,status,start_time,end_time",
+        "select": "id,title,quadrant,status,start_time,end_time,priority",
     }) or []
 
     for e in events_with_q:
@@ -109,6 +116,9 @@ def todo():
                 "task_text": f"📅 {e.get('start_time','')[:5]} {e['title']}",
                 "quadrant": e["quadrant"],
                 "is_done": e.get("status") == "done",
+                "status": e.get("status") or "open",
+                "priority": (e.get("priority") or "medium"),
+                "recurrence": None,
                 "project_id": None,
                 "project_name": None,
                 "source_task_id": None,
@@ -186,9 +196,12 @@ def todo():
 
         tasks.append({
             "id": f"pt-{t['task_id']}",
-            "task_text": f"📋 {recur_badge}{t['task_text']}",
+            "task_text": f"📋 {t['task_text']}",
             "quadrant": t["quadrant"],
             "is_done": t.get("status") == "done",
+            "status": t.get("status") or "open",
+            "priority": (t.get("priority") or "medium"),
+            "recurrence": t.get("recurrence_type") if is_recurring else None,
             "project_id": t.get("project_id"),
             "project_name": project_map.get(t.get("project_id")),
             "source_task_id": None,
@@ -535,6 +548,99 @@ def travel_tasks_delete(task_id):
     return jsonify({"status": "ok"})
 
 
+@todo_bp.route("/travel/categories", methods=["POST"])
+@login_required
+def travel_categories_create():
+    """
+    Create a new travel category by copying tasks from a source category.
+    Body: { name, source_category?, template_ids? }
+      - name:            required, the new category's label
+      - source_category: optional, defaults to "Default". Ignored if template_ids is provided.
+      - template_ids:    optional list[int] of source travel_tasks.id values to copy.
+                         When omitted, copies every task from source_category.
+    The new rows get a fresh order_index starting at 0.
+    """
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+
+    user_id = session["user_id"]
+
+    # Refuse if category already exists for this user
+    existing_same = get(
+        "travel_tasks",
+        params={
+            "user_id": f"eq.{user_id}",
+            "category": f"eq.{name}",
+            "select": "id",
+            "limit": 1,
+        },
+    ) or []
+    if existing_same:
+        return jsonify({"error": f'Category "{name}" already exists'}), 409
+
+    # Ensure Default is seeded for first-run users
+    from services.eisenhower_service import _seed_travel_tasks_if_empty
+    _seed_travel_tasks_if_empty(user_id)
+
+    template_ids = data.get("template_ids")
+    source_category = (data.get("source_category") or "Default").strip() or "Default"
+
+    # Fetch the source tasks to copy
+    if isinstance(template_ids, list) and template_ids:
+        ids_csv = ",".join(str(int(i)) for i in template_ids if str(i).isdigit())
+        if not ids_csv:
+            return jsonify({"error": "template_ids must be integers"}), 400
+        src = get(
+            "travel_tasks",
+            params={
+                "user_id": f"eq.{user_id}",
+                "id": f"in.({ids_csv})",
+                "select": "quadrant,task_text,subcategory,order_index",
+                "order": "order_index.asc,id.asc",
+                "limit": 5000,
+            },
+        ) or []
+    else:
+        src = get(
+            "travel_tasks",
+            params={
+                "user_id": f"eq.{user_id}",
+                "category": f"eq.{source_category}",
+                "select": "quadrant,task_text,subcategory,order_index",
+                "order": "order_index.asc,id.asc",
+                "limit": 5000,
+            },
+        ) or []
+
+    if not src:
+        # Create an empty category so the user can still add tasks to it
+        post("travel_tasks", {
+            "user_id": user_id,
+            "category": name,
+            "quadrant": "do",
+            "task_text": "New travel task (edit me)",
+            "subcategory": "General",
+            "order_index": 0,
+        })
+        return jsonify({"status": "ok", "copied": 0, "placeholder": True})
+
+    payload = []
+    for idx, t in enumerate(src):
+        payload.append({
+            "user_id": user_id,
+            "category": name,
+            "quadrant": t.get("quadrant") or "do",
+            "task_text": (t.get("task_text") or "").strip(),
+            "subcategory": t.get("subcategory") or "General",
+            "order_index": idx,
+        })
+
+    post("travel_tasks", payload)
+    return jsonify({"status": "ok", "copied": len(payload)})
+
+
 @todo_bp.route("/travel/categories/rename", methods=["POST"])
 @login_required
 def travel_categories_rename():
@@ -593,6 +699,9 @@ def todo_autosave():
         due_date = data.get("due_date") or data["plan_date"]
         task_time = data.get("task_time") or None
         delegated_to = data.get("delegated_to") or None
+        priority = (data.get("priority") or "medium").strip().lower()
+        if priority not in _VALID_PRIORITIES:
+            priority = "medium"
 
         # Quadrant-specific date logic
         if quadrant == "eliminate":
@@ -601,13 +710,14 @@ def todo_autosave():
         # If project selected, also create a project_tasks row
         if project_id:
             try:
+                _PRIO_RANK = {"high": 1, "medium": 2, "low": 3}
                 pt_rows = post("project_tasks", {
                     "project_id": project_id,
                     "user_id": user_id,
                     "task_text": text,
                     "status": "open",
-                    "priority": "medium",
-                    "priority_rank": 2,
+                    "priority": priority,
+                    "priority_rank": _PRIO_RANK.get(priority, 2),
                     "start_date": data["plan_date"],
                     "due_date": due_date,
                     "due_time": task_time,
@@ -628,6 +738,7 @@ def todo_autosave():
             "is_done": bool(data.get("is_done", False)),
             "is_deleted": False,
             "task_date": due_date,
+            "priority": priority,
         }
         if task_time:
             row_data["task_time"] = task_time
@@ -753,6 +864,7 @@ def build_eisenhower_view(tasks, plan_date):
             "task_text": t["task_text"],
             "is_done": t.get("is_done", False),
             "status": t.get("status"),
+            "priority": t.get("priority") or "medium",
             "recurrence": t.get("recurrence"),
             "source": t.get("source", "matrix"),
             "project_id": t.get("project_id"),

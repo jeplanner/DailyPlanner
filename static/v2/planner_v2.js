@@ -337,7 +337,9 @@ async function loadAllEvents() {
         title: t.task_text,
         end_time: calculateEndTime(t.start_time, 30),
         type: "project",
-        priority: t.priority || "medium"
+        priority: t.priority || "medium",
+        is_recurring: !!t.is_recurring,
+        recurrence_type: t.recurrence_type || null
       }))
     ];
 
@@ -397,12 +399,18 @@ function renderAllColumns() {
       const title = ev.task_text || ev.title || "";
       const isSmall = ev.height < 36;
       const qBadge = ev.quadrant ? `<span class="chip-quadrant cq-${ev.quadrant}">${ev.quadrant}</span>` : "";
+      const recurBadge = ev.is_recurring
+        ? `<span class="chip-recur" title="Repeats${ev.recurrence_type ? ' (' + ev.recurrence_type + ')' : ''}">🔁</span>`
+        : "";
+      const prioDot = ev.type === "project"
+        ? `<span class="chip-prio-dot prio-${ev.priority || 'medium'}" title="${(ev.priority || 'medium').toUpperCase()} priority"></span>`
+        : "";
 
       if (isSmall) {
-        chip.innerHTML = `<span class="chip-title">${qBadge} ${timeStr} ${title}</span>`;
+        chip.innerHTML = `<span class="chip-title">${prioDot}${recurBadge} ${qBadge} ${timeStr} ${title}</span>`;
       } else {
         chip.innerHTML = `
-          <div class="chip-time">${timeStr} ${qBadge}</div>
+          <div class="chip-time">${prioDot}${recurBadge} ${timeStr} ${qBadge}</div>
           <div class="chip-title">${title}</div>
         `;
       }

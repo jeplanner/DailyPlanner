@@ -906,7 +906,8 @@ def get_project_tasks():
                 "is_eliminated": "eq.false",
                 "status": "neq.done",
                 "or": f"(due_date.is.null,due_date.lte.{date})",
-                "select": "task_id,task_text,priority,project_id,start_time,due_date",
+                "select": "task_id,task_text,priority,project_id,start_time,due_date,"
+                          "is_recurring,recurrence_type",
                 "limit": 200,
             }
         ) or []
