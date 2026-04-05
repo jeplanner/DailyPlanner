@@ -342,8 +342,38 @@ def save_habit_value():
 @health_bp.route("/api/v2/heatmap", methods=["GET"])
 @login_required
 def heatmap():
+    """Habit-completion percentage per day across an arbitrary window.
+
+    Query params (both optional):
+      start=YYYY-MM-DD   Start date (inclusive). Defaults to 29 days ago.
+      end=YYYY-MM-DD     End date (inclusive). Defaults to today.
+
+    Falls back to the legacy "last 30 days" behaviour when neither param
+    is supplied, so older clients keep working.
+    """
+    from flask import request
+
     user_id = session["user_id"]
     today = datetime.now(IST).date()
+
+    # Parse optional range params; clamp and sanity-check.
+    raw_end = (request.args.get("end") or "").strip()
+    raw_start = (request.args.get("start") or "").strip()
+
+    try:
+        end = datetime.fromisoformat(raw_end).date() if raw_end else today
+    except ValueError:
+        end = today
+    try:
+        start = datetime.fromisoformat(raw_start).date() if raw_start else (end - timedelta(days=29))
+    except ValueError:
+        start = end - timedelta(days=29)
+
+    if start > end:
+        start, end = end, start
+    # Cap at a reasonable one-year window to avoid accidental huge reads.
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
 
     habits = get("habit_master", params={
         "user_id": f"eq.{user_id}",
@@ -352,17 +382,18 @@ def heatmap():
     if not habits:
         return jsonify({})
 
-    habit_ids = [h["id"] for h in habits]
-    total_habits = len(habit_ids)
+    total_habits = len(habits)
 
-    start = (today - timedelta(days=29)).isoformat()
+    # Use PostgREST's combined filter syntax so gte AND lte both apply.
+    # The previous code had two `plan_date` keys in the same dict which
+    # Python silently collapsed to the second one — only the upper bound
+    # actually reached Supabase.
     entries = get("habit_entries", params={
         "user_id": f"eq.{user_id}",
-        "plan_date": f"gte.{start}",
-        "plan_date": f"lte.{today.isoformat()}"
-    })
+        "plan_date": f"gte.{start.isoformat()}",
+        "and": f"(plan_date.lte.{end.isoformat()})",
+    }) or []
 
-    # Build a map: date -> count of entries with value > 0
     day_counts = {}
     for e in entries:
         d = e["plan_date"]
@@ -370,8 +401,9 @@ def heatmap():
             day_counts[d] = day_counts.get(d, 0) + 1
 
     result = {}
-    for i in range(30):
-        d = (today - timedelta(days=29 - i)).isoformat()
+    span = (end - start).days + 1
+    for i in range(span):
+        d = (start + timedelta(days=i)).isoformat()
         count = day_counts.get(d, 0)
         result[d] = round((count / total_habits) * 100) if total_habits else 0
 

@@ -54,40 +54,126 @@ body {
 /* ═══════════ DATE STRIP ═══════════ */
 .date-strip {
   display: flex;
-  justify-content: center;
+  align-items: center;
   gap: 6px;
   margin-bottom: 20px;
-  overflow-x: auto;
   padding: 4px 0;
-  -webkit-overflow-scrolling: touch;
 }
-.date-strip::-webkit-scrollbar { display: none; }
+.date-strip-scroll {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  overflow-x: auto;
+  padding: 4px 2px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+.date-strip-scroll::-webkit-scrollbar { display: none; }
+.date-strip-scroll { scrollbar-width: none; }
 
+/* Prev/Next navigation arrows on either side of the scroller */
+.date-nav-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 44px;
+  border: 1px solid var(--hab-border);
+  background: var(--hab-surface);
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--hab-text2);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+  font-family: inherit;
+}
+.date-nav-btn:hover:not(:disabled) {
+  background: var(--hab-primary-light);
+  border-color: var(--hab-primary);
+  color: var(--hab-primary);
+}
+.date-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* "Today" jump button */
+.date-today-btn {
+  flex-shrink: 0;
+  padding: 0 14px;
+  height: 44px;
+  border: 1px solid var(--hab-primary);
+  background: var(--hab-surface);
+  color: var(--hab-primary);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  transition: all 0.12s;
+}
+.date-today-btn:hover {
+  background: var(--hab-primary);
+  color: #fff;
+}
+
+/* Date pill */
 .date-pill {
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 52px;
+  justify-content: center;
+  min-width: 54px;
+  min-height: 64px;
   padding: 8px 6px;
   border-radius: 14px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.18s;
   border: 2px solid transparent;
   background: var(--hab-surface);
+  scroll-snap-align: center;
+  position: relative;
+  font-family: inherit;
 }
-.date-pill:hover { border-color: var(--hab-border); }
+.date-pill:hover {
+  border-color: var(--hab-border);
+  transform: translateY(-1px);
+}
 .date-pill .dp-day {
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--hab-text3);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .date-pill .dp-num {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--hab-text);
-  line-height: 1.2;
+  line-height: 1.15;
+}
+.date-pill .dp-month {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--hab-text2);
+  background: var(--hab-bg);
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--hab-border);
+  white-space: nowrap;
 }
 .date-pill .dp-dot {
   width: 6px;
@@ -96,15 +182,24 @@ body {
   margin-top: 4px;
   background: transparent;
 }
-.date-pill.has-data .dp-dot { background: var(--hab-success); }
+.date-pill.has-data .dp-dot,
+.date-pill .dp-dot.has-data { background: var(--hab-success); }
 .date-pill.active {
   background: var(--hab-primary);
   border-color: var(--hab-primary);
+  box-shadow: 0 3px 12px rgba(99, 102, 241, 0.3);
 }
 .date-pill.active .dp-day,
 .date-pill.active .dp-num { color: #fff; }
-.date-pill.active .dp-dot { background: rgba(255,255,255,0.6); }
-.date-pill.today:not(.active) { border-color: var(--hab-primary); }
+.date-pill.active .dp-dot { background: rgba(255, 255, 255, 0.7); }
+.date-pill.active .dp-month {
+  background: var(--hab-primary);
+  color: #fff;
+  border-color: #fff;
+}
+.date-pill.today:not(.active) {
+  border-color: var(--hab-primary);
+}
 .date-pill.today:not(.active) .dp-num { color: var(--hab-primary); }
 
 /* ═══════════ OVERVIEW ROW ═══════════ */
@@ -540,6 +635,12 @@ html.dark .heatmap-cell.level-4 { background: #10b981; }
   .stat-value { font-size: 20px; }
   .ring-container { width: 80px; height: 80px; }
   .ring-percent { font-size: 18px; }
+
+  .date-strip { gap: 4px; }
+  .date-nav-btn { width: 30px; height: 40px; font-size: 20px; }
+  .date-today-btn { height: 40px; padding: 0 10px; font-size: 11px; }
+  .date-pill { min-width: 48px; min-height: 58px; padding: 6px 4px; }
+  .date-pill .dp-num { font-size: 17px; }
 }
 
 @media (max-width: 480px) {

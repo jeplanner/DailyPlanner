@@ -36,34 +36,66 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ============================================================
-//  DATE STRIP
+//  DATE STRIP — 30-day scrollable window with nav arrows and
+//  optional "jump to any date" picker.
 // ============================================================
+const STRIP_DAYS = 30;           // how many days to render at once
+const STRIP_STEP = 14;           // how many days each ◀ / ▶ shifts
+let stripOffsetDays = 0;         // 0 = window ends today; positive = older window
+
+function _stripEndDate() {
+  // The latest date visible in the strip (right edge). Offset 0 = today.
+  const today = getISTDateObj();
+  today.setDate(today.getDate() - stripOffsetDays);
+  return today;
+}
+
 function renderDateStrip() {
   const strip = document.getElementById("date-strip");
   if (!strip) return;
-  strip.innerHTML = "";
 
-  const today = getISTDateObj();
+  const endDate = _stripEndDate();
   const todayStr = getISTDate();
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(today);
+  // Wrapper with nav arrows + scroller inside. Rebuild on every call so
+  // shifting the offset redraws cleanly.
+  strip.innerHTML = `
+    <button type="button" class="date-nav-btn" id="date-nav-prev"
+            aria-label="Earlier dates" title="Earlier (${STRIP_STEP} days back)">‹</button>
+    <div class="date-strip-scroll" id="date-strip-scroll"></div>
+    <button type="button" class="date-nav-btn" id="date-nav-next"
+            aria-label="Later dates" title="Later (${STRIP_STEP} days forward)"
+            ${stripOffsetDays === 0 ? "disabled" : ""}>›</button>
+    <button type="button" class="date-today-btn" id="date-today-btn"
+            title="Jump to today">Today</button>
+  `;
+
+  const scroll = document.getElementById("date-strip-scroll");
+
+  // Render STRIP_DAYS pills ending at endDate
+  for (let i = STRIP_DAYS - 1; i >= 0; i--) {
+    const d = new Date(endDate);
     d.setDate(d.getDate() - i);
     const dateStr = d.toLocaleDateString("en-CA");
     const dayName = dayNames[d.getDay()];
     const dayNum = d.getDate();
+    const monthName = monthNames[d.getMonth()];
+    const isFirstOfMonth = d.getDate() === 1 || i === STRIP_DAYS - 1;
 
     const pill = document.createElement("button");
+    pill.type = "button";
     pill.className = "date-pill";
     if (dateStr === todayStr) pill.classList.add("today");
     if (dateStr === currentDate) pill.classList.add("active");
     pill.dataset.date = dateStr;
 
     pill.innerHTML = `
-      <span class="date-pill-day">${dayName}</span>
-      <span class="date-pill-num">${dayNum}</span>
-      <span class="date-pill-dot"></span>
+      <span class="dp-day">${dayName}</span>
+      <span class="dp-num">${dayNum}</span>
+      ${isFirstOfMonth ? `<span class="dp-month">${monthName}</span>` : ""}
+      <span class="dp-dot"></span>
     `;
 
     pill.addEventListener("click", () => {
@@ -74,17 +106,52 @@ function renderDateStrip() {
       loadHeatmap();
     });
 
-    strip.appendChild(pill);
+    scroll.appendChild(pill);
   }
+
+  // Nav button wiring
+  document.getElementById("date-nav-prev")?.addEventListener("click", () => {
+    stripOffsetDays += STRIP_STEP;
+    renderDateStrip();
+    loadHeatmap();
+  });
+  document.getElementById("date-nav-next")?.addEventListener("click", () => {
+    stripOffsetDays = Math.max(0, stripOffsetDays - STRIP_STEP);
+    renderDateStrip();
+    loadHeatmap();
+  });
+  document.getElementById("date-today-btn")?.addEventListener("click", () => {
+    stripOffsetDays = 0;
+    currentDate = getISTDate();
+    renderDateStrip();
+    loadHealth(currentDate);
+    loadHeatmap();
+  });
+
+  // After render, ensure the current-date pill is visible. For the default
+  // window (offset=0), scroll all the way to the right so "today" sits
+  // at the visible edge.
+  requestAnimationFrame(() => {
+    const active = scroll.querySelector(".date-pill.active");
+    if (active) {
+      active.scrollIntoView({ block: "nearest", inline: "center", behavior: "auto" });
+    } else if (stripOffsetDays === 0) {
+      scroll.scrollLeft = scroll.scrollWidth;
+    }
+  });
 }
 
 // Mark dots for dates that have data (called after heatmap loads)
 function markDateStripDots(heatmapData) {
   document.querySelectorAll(".date-pill").forEach(pill => {
     const d = pill.dataset.date;
-    const dot = pill.querySelector(".date-pill-dot");
-    if (dot && heatmapData[d] && heatmapData[d] > 0) {
-      dot.classList.add("has-data");
+    const dot = pill.querySelector(".dp-dot");
+    if (dot) {
+      if (heatmapData[d] && heatmapData[d] > 0) {
+        dot.classList.add("has-data");
+      } else {
+        dot.classList.remove("has-data");
+      }
     }
   });
 }
@@ -204,26 +271,45 @@ async function loadWeeklyStats() {
 // ============================================================
 async function loadHeatmap() {
   try {
-    const res = await fetch("/api/v2/heatmap");
+    // Pass the current strip window so dots populate for the visible range
+    // (including when the user has shifted back in time with the nav arrows).
+    const end = _stripEndDate();
+    const endStr = end.toLocaleDateString("en-CA");
+    const start = new Date(end);
+    start.setDate(start.getDate() - (STRIP_DAYS - 1));
+    const startStr = start.toLocaleDateString("en-CA");
+
+    const res = await fetch(`/api/v2/heatmap?start=${startStr}&end=${endStr}`);
     if (!res.ok) return;
     const data = await res.json();
-    renderHeatmap(data);
+    renderHeatmap(data, startStr, endStr);
     markDateStripDots(data);
   } catch (err) {
     console.error("loadHeatmap error:", err);
   }
 }
 
-function renderHeatmap(data) {
+function renderHeatmap(data, startStr, endStr) {
   const container = document.getElementById("heatmap");
   if (!container) return;
   container.innerHTML = "";
 
-  const today = getISTDateObj();
+  // If the caller didn't supply a range, fall back to "last 30 days from
+  // today" — matches the original behaviour on older code paths.
+  let end, start;
+  if (endStr && startStr) {
+    end = new Date(endStr + "T00:00:00");
+    start = new Date(startStr + "T00:00:00");
+  } else {
+    end = getISTDateObj();
+    start = new Date(end);
+    start.setDate(start.getDate() - 29);
+  }
 
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
+  const days = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
     const dateStr = d.toLocaleDateString("en-CA");
     const pct = data[dateStr] || 0;
 
