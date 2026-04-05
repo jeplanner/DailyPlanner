@@ -249,7 +249,10 @@ html.dark .em-select-mode .em-task.em-selected{background:#172554;}
 .em-task.prio-medium{border-left:4px solid #f59e0b;}
 .em-task.prio-low{border-left:4px solid #10b981;}
 
-.em-prio-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:6px;text-transform:uppercase;letter-spacing:.4px;}
+.em-prio-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:6px;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;user-select:none;transition:transform .1s,filter .1s;}
+.em-prio-pill:hover{filter:brightness(1.05) saturate(1.1);transform:scale(1.06);}
+.em-prio-pill:active{transform:scale(.94);}
+.em-prio-pill::after{content:"⇅";font-size:8px;opacity:.5;margin-left:2px;font-weight:700;}
 .em-prio-pill::before{content:"";width:6px;height:6px;border-radius:50%;display:inline-block;}
 .em-prio-pill.high{background:#fee2e2;color:#b91c1c;}
 .em-prio-pill.high::before{background:#dc2626;box-shadow:0 0 0 2px rgba(220,38,38,.25);}
@@ -694,6 +697,65 @@ function _updateStatusBadge(taskEl, status) {
     titleEl.appendChild(badge);
   } else {
     titleEl.appendChild(badge);
+  }
+}
+
+// ── Click priority pill to cycle low → medium → high → low ──
+const _PRIO_CYCLE = { low: "medium", medium: "high", high: "low" };
+
+function cycleTaskPriority(event, taskId) {
+  // In select mode, the capture-phase click handler on em-app-root already
+  // intercepts this click to toggle selection. We still short-circuit here
+  // defensively in case something re-orders event listeners.
+  if (EM_SEL?.active) return;
+
+  // Don't let this bubble up to any parent click handlers (e.g. card-level)
+  event?.stopPropagation?.();
+
+  const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
+  if (!task) return;
+
+  const prevPriority = task.dataset.priority || "medium";
+  const nextPriority = _PRIO_CYCLE[prevPriority] || "medium";
+
+  // Optimistic DOM update
+  _applyPriorityToRow(task, nextPriority);
+
+  // Persist via the bulk endpoint with a single ID
+  fetch("/todo/bulk-update", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+    },
+    body: JSON.stringify({ ids: [taskId], patch: { priority: nextPriority } }),
+  })
+    .then(r => r.json())
+    .then(res => {
+      if (res.status !== "ok") throw new Error(res.error || "Update failed");
+    })
+    .catch(err => {
+      console.error(err);
+      // Roll back
+      _applyPriorityToRow(task, prevPriority);
+      showToast("Failed to update priority", "error");
+    });
+}
+
+function _applyPriorityToRow(taskEl, priority) {
+  taskEl.classList.remove("prio-high", "prio-medium", "prio-low");
+  taskEl.classList.add("prio-" + priority);
+  taskEl.dataset.priority = priority;
+  const pill = taskEl.querySelector(".em-prio-pill");
+  if (pill) {
+    pill.className = "em-prio-pill " + priority;
+    // Preserve first text node (the "HIGH"/"MEDIUM"/"LOW" label).
+    // The ::after pseudo-element with the arrows is pure CSS, no markup to preserve.
+    pill.textContent = priority.toUpperCase();
+    pill.setAttribute(
+      "title",
+      "Click to cycle priority — currently " + priority.charAt(0).toUpperCase() + priority.slice(1)
+    );
   }
 }
 
@@ -1144,14 +1206,12 @@ async function _bulkApply(patch, optimistic) {
     clearSelection();
   } catch (err) {
     console.error(err);
-    // Roll back
+    // Roll back — restore status/done state AND the priority pill
+    // (the old code only restored the border class, leaving the pill stale).
     snapshot.forEach(s => {
       s.el.dataset.status = s.status;
-      s.el.dataset.priority = s.priority;
       s.el.classList.toggle("done", s.done);
-      // Restore the priority border class
-      s.el.classList.remove("prio-high", "prio-medium", "prio-low");
-      s.el.classList.add("prio-" + s.priority);
+      _applyPriorityToRow(s.el, s.priority);
     });
     showToast("Bulk update failed — reverted", "error");
   }
@@ -1174,18 +1234,7 @@ function bulkApplyStatus(status) {
 }
 
 function bulkApplyPriority(priority) {
-  _bulkApply({ priority }, (el, snap) => {
-    el.classList.remove("prio-high", "prio-medium", "prio-low");
-    el.classList.add("prio-" + priority);
-    el.dataset.priority = priority;
-    // Update the pill label
-    const pill = el.querySelector(".em-prio-pill");
-    if (pill) {
-      pill.className = "em-prio-pill " + priority;
-      pill.textContent = priority.toUpperCase();
-      pill.setAttribute("title", priority.charAt(0).toUpperCase() + priority.slice(1) + " priority");
-    }
-  });
+  _bulkApply({ priority }, (el) => _applyPriorityToRow(el, priority));
 }
 
 function bulkDelete() {

@@ -27,7 +27,9 @@
   <div class="em-task-body">
     <div class="em-task-title">
       {{ t.task_text }}
-      <span class="em-prio-pill {{ t.priority or 'medium' }}" title="{{ (t.priority or 'medium')|capitalize }} priority">{{ (t.priority or 'medium')|upper }}</span>
+      <span class="em-prio-pill {{ t.priority or 'medium' }}"
+            title="Click to cycle priority — currently {{ (t.priority or 'medium')|capitalize }}"
+            onclick="cycleTaskPriority(event, '{{ t.id }}')">{{ (t.priority or 'medium')|upper }}</span>
       {% if t.status == 'done' %}
         <span class="em-status-badge done">Done</span>
       {% elif t.status == 'in_progress' %}
