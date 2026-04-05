@@ -344,16 +344,203 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
   border-radius:0 0 12px 12px;transition:width linear;
 }
 
-/* OKR filter row */
-.em-okr-filter-row{
-  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
-  padding:8px 12px;margin-bottom:12px;
-  background:var(--em-surface);border:1px solid var(--em-border);
-  border-radius:10px;
-}
-.em-okr-filter-label{font-size:12px;font-weight:600;color:var(--em-text2);}
-.em-okr-filter-row .em-quad-select{max-width:180px;}
+/* ═══════════════ OKR FILTER — redesigned ═══════════════ */
 .em-task.em-okr-hidden{display:none!important;}
+
+/* Filter button badge (shows count of active filters) */
+#em-filter-btn{position:relative;}
+.em-filter-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:18px;height:18px;padding:0 5px;
+  background:var(--q-schedule);color:#fff;
+  font-size:10px;font-weight:800;border-radius:10px;margin-left:2px;
+}
+#em-filter-btn.has-filters{
+  background:var(--q-schedule)!important;
+  color:#fff!important;
+  border-color:var(--q-schedule)!important;
+}
+#em-filter-btn.has-filters svg{stroke:#fff;}
+
+/* Active-filters chip bar */
+.em-filter-chips{
+  display:flex;flex-wrap:wrap;gap:6px;align-items:center;
+  padding:10px 12px;margin-bottom:12px;
+  background:var(--em-surface);border:1px solid var(--em-border);
+  border-radius:12px;
+}
+.em-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:5px 6px 5px 10px;
+  background:color-mix(in srgb,var(--q-schedule) 10%,transparent);
+  color:var(--q-schedule);
+  border:1px solid color-mix(in srgb,var(--q-schedule) 25%,transparent);
+  border-radius:999px;
+  font-size:12px;font-weight:600;
+  max-width:260px;
+}
+.em-chip-label{
+  font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;
+  opacity:.7;margin-right:2px;
+}
+.em-chip-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;}
+.em-chip button{
+  border:none;background:transparent;color:inherit;
+  cursor:pointer;padding:2px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  width:20px;height:20px;
+}
+.em-chip button:hover{background:color-mix(in srgb,var(--q-schedule) 20%,transparent);}
+.em-chip-clear-all{
+  margin-left:auto;font-size:12px;font-weight:600;color:var(--em-text2);
+  background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:6px;
+}
+.em-chip-clear-all:hover{color:var(--em-text);background:var(--em-border);}
+
+/* Filter sheet + overlay */
+.em-filter-overlay{
+  position:fixed;inset:0;
+  background:rgba(15,23,42,.5);
+  backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;
+  transition:opacity .2s ease;
+  z-index:9990;
+}
+.em-filter-overlay.open{opacity:1;pointer-events:auto;}
+
+.em-filter-sheet{
+  position:fixed;
+  left:50%;top:50%;
+  transform:translate(-50%,-50%) scale(.96);
+  width:min(520px,94vw);
+  max-height:min(82vh,720px);
+  background:var(--em-surface);
+  border:1px solid var(--em-border);
+  border-radius:16px;
+  box-shadow:0 30px 80px rgba(0,0,0,.35);
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;
+  transition:opacity .2s ease,transform .22s ease;
+  z-index:9991;
+  overflow:hidden;
+}
+.em-filter-sheet.open{
+  opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1);
+}
+.em-fs-handle{display:none;}
+
+.em-fs-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 18px 12px;
+  border-bottom:1px solid var(--em-border);
+  flex-shrink:0;
+}
+.em-fs-header h3{
+  font-size:17px;font-weight:800;color:var(--em-text);
+  letter-spacing:-.2px;
+}
+.em-fs-close{
+  width:36px;height:36px;
+  border:none;background:transparent;
+  border-radius:8px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--em-text2);
+}
+.em-fs-close:hover{background:var(--em-border);color:var(--em-text);}
+.em-fs-close svg{width:20px;height:20px;}
+
+.em-fs-body{
+  flex:1;overflow-y:auto;
+  padding:14px 18px 18px;
+  -webkit-overflow-scrolling:touch;
+}
+
+.em-fs-section{margin-bottom:18px;}
+.em-fs-section:last-child{margin-bottom:0;}
+.em-fs-section.disabled{opacity:.5;pointer-events:none;}
+.em-fs-section-title{
+  display:flex;align-items:center;gap:8px;
+  font-size:11px;font-weight:800;
+  text-transform:uppercase;letter-spacing:.8px;
+  color:var(--em-text2);
+  margin-bottom:10px;
+}
+.em-fs-section-title svg{width:14px;height:14px;}
+
+.em-fs-chips{
+  display:flex;flex-wrap:wrap;gap:8px;
+}
+.em-fs-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:10px 14px;
+  background:var(--em-bg);
+  border:1.5px solid var(--em-border);
+  border-radius:999px;
+  font-size:13px;font-weight:600;font-family:inherit;
+  color:var(--em-text);
+  cursor:pointer;
+  transition:all .12s;
+  min-height:40px;
+  max-width:100%;
+}
+.em-fs-chip:hover{
+  border-color:var(--q-schedule);
+  background:color-mix(in srgb,var(--q-schedule) 6%,transparent);
+}
+.em-fs-chip.selected{
+  background:var(--q-schedule);
+  border-color:var(--q-schedule);
+  color:#fff;
+  box-shadow:0 2px 10px rgba(37,99,235,.3);
+}
+.em-fs-chip-text{
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:260px;
+}
+.em-fs-chip-meta{
+  font-size:10px;font-weight:700;opacity:.7;
+  padding:2px 6px;border-radius:10px;
+  background:color-mix(in srgb,currentColor 12%,transparent);
+}
+.em-fs-chip.selected .em-fs-chip-meta{background:rgba(255,255,255,.2);}
+.em-fs-empty{
+  font-size:13px;color:var(--em-text3);font-style:italic;
+  padding:10px 0;
+}
+
+.em-fs-footer{
+  display:flex;gap:10px;
+  padding:12px 18px calc(14px + env(safe-area-inset-bottom,0));
+  border-top:1px solid var(--em-border);
+  background:var(--em-surface);
+  flex-shrink:0;
+}
+.em-fs-btn{
+  flex:1;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  padding:13px 16px;
+  border-radius:11px;
+  font-size:15px;font-weight:700;font-family:inherit;
+  cursor:pointer;
+  min-height:48px;
+  transition:all .15s;
+}
+.em-fs-btn-ghost{
+  background:var(--em-bg);
+  border:1.5px solid var(--em-border);
+  color:var(--em-text2);
+}
+.em-fs-btn-ghost:hover{
+  background:var(--em-border);color:var(--em-text);
+}
+.em-fs-btn-primary{
+  background:var(--q-schedule);
+  border:1.5px solid var(--q-schedule);
+  color:#fff;
+  box-shadow:0 4px 14px rgba(37,99,235,.3);
+}
+.em-fs-btn-primary:hover{filter:brightness(1.05);}
 
 /* ═══════════════════════════════════════════════════════════════
    MOBILE — readable type, generous touch targets, clearer layout
@@ -417,27 +604,45 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
     border-color: var(--q-schedule);
   }
 
-  /* ── OKR filter bar: horizontal scroller on narrow screens ── */
-  .em-okr-filter-row {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 12px;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+  /* ── Filter bottom sheet: slides up from bottom on mobile ── */
+  .em-filter-sheet {
+    left: 0; right: 0; top: auto; bottom: 0;
+    width: 100%; max-width: 100%;
+    max-height: 88vh;
+    border-radius: 20px 20px 0 0;
+    transform: translateY(100%);
   }
-  .em-okr-filter-row::-webkit-scrollbar { display: none; }
-  .em-okr-filter-label { flex-shrink: 0; font-size: 13px; }
-  .em-okr-filter-row .em-quad-select {
-    flex: 0 0 auto;
-    min-width: 140px;
-    max-width: 200px;
+  .em-filter-sheet.open {
+    transform: translateY(0);
+  }
+  .em-fs-handle {
+    display: block;
+    width: 42px; height: 4px;
+    background: var(--em-border);
+    border-radius: 3px;
+    margin: 8px auto 4px;
+  }
+  .em-fs-header { padding: 6px 18px 14px; }
+  .em-fs-header h3 { font-size: 19px; }
+  .em-fs-body { padding: 16px 18px 20px; }
+  .em-fs-section-title { font-size: 12px; }
+  .em-fs-chip {
     font-size: 14px;
-    padding: 10px 12px;
-    min-height: 42px;
-    border-radius: 9px;
+    padding: 12px 16px;
+    min-height: 46px;
   }
+  .em-fs-chip-text { max-width: 220px; }
+  .em-fs-footer { padding: 14px 18px calc(16px + env(safe-area-inset-bottom, 0)); }
+  .em-fs-btn { font-size: 15px; min-height: 50px; }
+
+  /* Active-filter chip bar — denser on mobile */
+  .em-filter-chips {
+    padding: 10px;
+    border-radius: 14px;
+    gap: 8px;
+  }
+  .em-chip { font-size: 13px; padding: 7px 8px 7px 12px; }
+  .em-chip-text { max-width: 140px; }
 
   /* ── Quick actions: wrap with bigger touch targets ── */
   .em-actions { gap: 8px; margin-bottom: 14px; }
@@ -639,25 +844,16 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
     </div>
   </div>
 
-  <!-- OKR filter row: Objective → Key Result → Initiative (cascading) -->
-  <div class="em-okr-filter-row">
-    <span class="em-okr-filter-label">Filter by:</span>
-    <select id="em-filter-objective" class="em-quad-select" title="Filter by Objective / Goal">
-      <option value="">All objectives</option>
-    </select>
-    <select id="em-filter-kr" class="em-quad-select" title="Filter by Key Result">
-      <option value="">All key results</option>
-    </select>
-    <select id="em-filter-initiative" class="em-quad-select" title="Filter by Initiative">
-      <option value="">All initiatives</option>
-    </select>
-    <button type="button" class="em-action-btn" id="em-filter-clear" onclick="clearOkrFilter()" style="display:none;">
-      <i data-feather="x" style="width:14px;height:14px"></i> Clear
-    </button>
-  </div>
+  <!-- Active filter chips (shown only when filters are applied) -->
+  <div id="em-filter-chips" class="em-filter-chips" style="display:none;"></div>
 
   <!-- Quick Actions -->
   <div class="em-actions">
+    <button type="button" class="em-action-btn" id="em-filter-btn" onclick="openFilterSheet()" title="Filter by Objective / Key Result / Initiative">
+      <i data-feather="filter" style="width:14px;height:14px"></i>
+      <span>Filter</span>
+      <span class="em-filter-badge" id="em-filter-badge" style="display:none;">0</span>
+    </button>
     <button type="button" class="em-action-btn" onclick="enterSelectMode()" title="Select multiple tasks to bulk-edit">
       <i data-feather="check-square" style="width:14px;height:14px"></i> Select
     </button>
@@ -857,6 +1053,52 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
     <button type="button" onclick="bulkApplyPriority('medium')">🟠 Medium</button>
     <button type="button" onclick="bulkApplyPriority('low')">🟢 Low</button>
   </div>
+
+  <!-- ═══════════ FILTER BOTTOM SHEET ═══════════ -->
+  <div id="em-filter-overlay" class="em-filter-overlay" onclick="if(event.target===this)closeFilterSheet()"></div>
+  <aside id="em-filter-sheet" class="em-filter-sheet" role="dialog" aria-label="Filter tasks" aria-modal="true">
+    <div class="em-fs-handle" aria-hidden="true"></div>
+    <div class="em-fs-header">
+      <h3>Filter</h3>
+      <button type="button" class="em-fs-close" onclick="closeFilterSheet()" aria-label="Close">
+        <i data-feather="x"></i>
+      </button>
+    </div>
+
+    <div class="em-fs-body">
+      <div class="em-fs-section">
+        <div class="em-fs-section-title">
+          <i data-feather="target"></i> Objective
+        </div>
+        <div class="em-fs-chips" id="em-fs-objectives">
+          <!-- Pill buttons injected by JS -->
+        </div>
+      </div>
+
+      <div class="em-fs-section" id="em-fs-kr-section">
+        <div class="em-fs-section-title">
+          <i data-feather="trending-up"></i> Key Result
+        </div>
+        <div class="em-fs-chips" id="em-fs-krs"></div>
+      </div>
+
+      <div class="em-fs-section" id="em-fs-init-section">
+        <div class="em-fs-section-title">
+          <i data-feather="zap"></i> Initiative
+        </div>
+        <div class="em-fs-chips" id="em-fs-initiatives"></div>
+      </div>
+    </div>
+
+    <div class="em-fs-footer">
+      <button type="button" class="em-fs-btn em-fs-btn-ghost" onclick="clearOkrFilter()">
+        <i data-feather="rotate-ccw" style="width:15px;height:15px"></i> Clear all
+      </button>
+      <button type="button" class="em-fs-btn em-fs-btn-primary" onclick="closeFilterSheet()">
+        <span id="em-fs-apply-label">Show all tasks</span>
+      </button>
+    </div>
+  </aside>
 
   <!-- Matrix Grid -->
   <div class="em-matrix">
@@ -1915,18 +2157,19 @@ function showTvUndoToast(message, onUndo, duration = 6000) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// OKR filter: Objective → Key Result → Initiative (cascading)
+// OKR filter — bottom-sheet picker with cascading chips
+// (Objective → Key Result → Initiative)
 // ═════════════════════════════════════════════════════════════
 let _emOkrData = null;
+const _emFilter = { objectiveId: "", krId: "", initiativeId: "" };
 
 async function loadEmOkrFilter() {
   try {
-    // include_unassigned=1 surfaces personal/cross-project objectives too,
-    // since the matrix is not scoped to a single project.
     const res = await fetch("/api/goals/picker?include_unassigned=1");
     if (!res.ok) return;
     _emOkrData = await res.json();
-    populateEmOkrFilters();
+    renderFilterSheet();
+    applyEmOkrFilter();
   } catch (err) {
     console.warn("OKR filter fetch failed:", err);
   }
@@ -1938,55 +2181,136 @@ function _emEsc(str) {
   return el.innerHTML;
 }
 
-function populateEmOkrFilters() {
-  const objSel  = document.getElementById("em-filter-objective");
-  const krSel   = document.getElementById("em-filter-kr");
-  const initSel = document.getElementById("em-filter-initiative");
-  if (!objSel || !krSel || !initSel || !_emOkrData) return;
+function _emLabelFor(kind, id) {
+  const objs = _emOkrData?.objectives || [];
+  if (kind === "objective") return objs.find(o => o.id === id)?.title;
+  if (kind === "kr") {
+    for (const o of objs) {
+      const k = (o.key_results || []).find(k => k.id === id);
+      if (k) return k.title;
+    }
+  }
+  if (kind === "initiative") {
+    for (const o of objs) for (const k of (o.key_results || [])) {
+      const i = (k.initiatives || []).find(i => i.id === id);
+      if (i) return i.title;
+    }
+  }
+  return null;
+}
 
+// Build the pill-chip sections inside the sheet from _emFilter state
+function renderFilterSheet() {
+  if (!_emOkrData) return;
   const objectives = _emOkrData.objectives || [];
 
-  objSel.innerHTML = `<option value="">All objectives</option>` +
-    objectives.map(o => `<option value="${o.id}">${_emEsc(o.title)}</option>`).join("");
+  const objWrap  = document.getElementById("em-fs-objectives");
+  const krWrap   = document.getElementById("em-fs-krs");
+  const initWrap = document.getElementById("em-fs-initiatives");
+  if (!objWrap || !krWrap || !initWrap) return;
 
-  const rebuildKrAndInit = () => {
-    const objId = objSel.value;
-    const krs = objId
-      ? (objectives.find(o => o.id === objId)?.key_results || [])
-      : objectives.flatMap(o => o.key_results || []);
-    const prevKr = krSel.value;
-    krSel.innerHTML = `<option value="">All key results</option>` +
-      krs.map(k => `<option value="${k.id}">${_emEsc(k.title)}</option>`).join("");
-    krSel.value = krs.some(k => k.id === prevKr) ? prevKr : "";
+  // ── Objectives ──
+  if (!objectives.length) {
+    objWrap.innerHTML = `<div class="em-fs-empty">No objectives yet. Create one on the OKRs page.</div>`;
+  } else {
+    objWrap.innerHTML = objectives.map(o => {
+      const count = (o.key_results || []).reduce(
+        (n, k) => n + (k.initiatives || []).length, 0
+      );
+      const sel = o.id === _emFilter.objectiveId ? " selected" : "";
+      return `<button type="button" class="em-fs-chip${sel}"
+                      data-kind="objective" data-id="${o.id}">
+        <span class="em-fs-chip-text">${_emEsc(o.title)}</span>
+        ${count ? `<span class="em-fs-chip-meta">${count}</span>` : ""}
+      </button>`;
+    }).join("");
+  }
 
-    const krId = krSel.value;
-    const inits = krId
-      ? (krs.find(k => k.id === krId)?.initiatives || [])
-      : krs.flatMap(k => k.initiatives || []);
-    const prevInit = initSel.value;
-    initSel.innerHTML = `<option value="">All initiatives</option>` +
-      inits.map(i => `<option value="${i.id}">${_emEsc(i.title)}</option>`).join("");
-    initSel.value = inits.some(i => i.id === prevInit) ? prevInit : "";
-  };
+  // ── Key Results (scoped to selected objective, or all) ──
+  const krs = _emFilter.objectiveId
+    ? (objectives.find(o => o.id === _emFilter.objectiveId)?.key_results || [])
+    : objectives.flatMap(o => o.key_results || []);
+  const krSection = document.getElementById("em-fs-kr-section");
+  if (!krs.length) {
+    krWrap.innerHTML = `<div class="em-fs-empty">${_emFilter.objectiveId
+      ? "This objective has no key results."
+      : "Pick an objective to narrow down."}</div>`;
+  } else {
+    krWrap.innerHTML = krs.map(k => {
+      const sel = k.id === _emFilter.krId ? " selected" : "";
+      const count = (k.initiatives || []).length;
+      return `<button type="button" class="em-fs-chip${sel}"
+                      data-kind="kr" data-id="${k.id}">
+        <span class="em-fs-chip-text">${_emEsc(k.title)}</span>
+        ${count ? `<span class="em-fs-chip-meta">${count}</span>` : ""}
+      </button>`;
+    }).join("");
+  }
+  krSection?.classList.toggle("disabled", !objectives.length);
 
-  rebuildKrAndInit();
+  // ── Initiatives (scoped to selected KR, or all under current scope) ──
+  let inits = [];
+  if (_emFilter.krId) {
+    for (const k of krs) if (k.id === _emFilter.krId) inits = k.initiatives || [];
+  } else {
+    inits = krs.flatMap(k => k.initiatives || []);
+  }
+  const initSection = document.getElementById("em-fs-init-section");
+  if (!inits.length) {
+    initWrap.innerHTML = `<div class="em-fs-empty">${_emFilter.krId
+      ? "No initiatives under this key result."
+      : "Pick a key result to narrow further."}</div>`;
+  } else {
+    initWrap.innerHTML = inits.map(i => {
+      const sel = i.id === _emFilter.initiativeId ? " selected" : "";
+      return `<button type="button" class="em-fs-chip${sel}"
+                      data-kind="initiative" data-id="${i.id}">
+        <span class="em-fs-chip-text">${_emEsc(i.title)}</span>
+      </button>`;
+    }).join("");
+  }
+  initSection?.classList.toggle("disabled", !krs.length);
+
+  // Update apply-button label
+  const n = _emActiveCount();
+  const lbl = document.getElementById("em-fs-apply-label");
+  if (lbl) lbl.textContent = n ? `Apply ${n} filter${n > 1 ? "s" : ""}` : "Show all tasks";
+}
+
+// Event delegation: chip click updates state
+document.addEventListener("click", (ev) => {
+  const chip = ev.target.closest(".em-fs-chip");
+  if (!chip) return;
+  const kind = chip.dataset.kind;
+  const id = chip.dataset.id;
+  if (kind === "objective") {
+    _emFilter.objectiveId = (_emFilter.objectiveId === id) ? "" : id;
+    // Clear downstream if parent changed
+    _emFilter.krId = "";
+    _emFilter.initiativeId = "";
+  } else if (kind === "kr") {
+    _emFilter.krId = (_emFilter.krId === id) ? "" : id;
+    _emFilter.initiativeId = "";
+  } else if (kind === "initiative") {
+    _emFilter.initiativeId = (_emFilter.initiativeId === id) ? "" : id;
+  }
+  renderFilterSheet();
   applyEmOkrFilter();
+});
 
-  objSel.onchange  = () => { rebuildKrAndInit(); applyEmOkrFilter(); };
-  krSel.onchange   = () => { rebuildKrAndInit(); applyEmOkrFilter(); };
-  initSel.onchange = applyEmOkrFilter;
+function _emActiveCount() {
+  return (_emFilter.objectiveId ? 1 : 0)
+       + (_emFilter.krId ? 1 : 0)
+       + (_emFilter.initiativeId ? 1 : 0);
 }
 
 function applyEmOkrFilter() {
-  const objId  = document.getElementById("em-filter-objective")?.value || "";
-  const krId   = document.getElementById("em-filter-kr")?.value || "";
-  const initId = document.getElementById("em-filter-initiative")?.value || "";
+  const { objectiveId: objId, krId, initiativeId: initId } = _emFilter;
   const active = !!(objId || krId || initId);
 
   document.querySelectorAll(".em-task").forEach(card => {
     let show = true;
     if (active) {
-      // Unlinked tasks (no OKR refs) are hidden once any filter is active
       if (!card.dataset.objectiveId && !card.dataset.krId && !card.dataset.initiativeId) {
         show = false;
       }
@@ -1997,15 +2321,100 @@ function applyEmOkrFilter() {
     card.classList.toggle("em-okr-hidden", !show);
   });
 
-  const clearBtn = document.getElementById("em-filter-clear");
-  if (clearBtn) clearBtn.style.display = active ? "" : "none";
+  // Filter button badge
+  const btn = document.getElementById("em-filter-btn");
+  const badge = document.getElementById("em-filter-badge");
+  const n = _emActiveCount();
+  if (btn) btn.classList.toggle("has-filters", n > 0);
+  if (badge) {
+    if (n > 0) { badge.textContent = n; badge.style.display = ""; }
+    else { badge.style.display = "none"; }
+  }
+
+  renderFilterChips();
+}
+
+function renderFilterChips() {
+  const bar = document.getElementById("em-filter-chips");
+  if (!bar) return;
+  const n = _emActiveCount();
+  if (!n) { bar.style.display = "none"; bar.innerHTML = ""; return; }
+
+  const chips = [];
+  if (_emFilter.objectiveId) chips.push({
+    kind: "objective", label: "Objective",
+    text: _emLabelFor("objective", _emFilter.objectiveId) || "—",
+  });
+  if (_emFilter.krId) chips.push({
+    kind: "kr", label: "Key Result",
+    text: _emLabelFor("kr", _emFilter.krId) || "—",
+  });
+  if (_emFilter.initiativeId) chips.push({
+    kind: "initiative", label: "Initiative",
+    text: _emLabelFor("initiative", _emFilter.initiativeId) || "—",
+  });
+
+  bar.innerHTML = chips.map(c => `
+    <span class="em-chip">
+      <span class="em-chip-label">${c.label}</span>
+      <span class="em-chip-text">${_emEsc(c.text)}</span>
+      <button type="button" onclick="removeFilterChip('${c.kind}')" aria-label="Remove ${c.label} filter">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </span>
+  `).join("") + `<button type="button" class="em-chip-clear-all" onclick="clearOkrFilter()">Clear all</button>`;
+  bar.style.display = "flex";
+}
+
+function removeFilterChip(kind) {
+  if (kind === "objective") {
+    _emFilter.objectiveId = "";
+    _emFilter.krId = "";
+    _emFilter.initiativeId = "";
+  } else if (kind === "kr") {
+    _emFilter.krId = "";
+    _emFilter.initiativeId = "";
+  } else if (kind === "initiative") {
+    _emFilter.initiativeId = "";
+  }
+  renderFilterSheet();
+  applyEmOkrFilter();
 }
 
 function clearOkrFilter() {
-  const ids = ["em-filter-objective", "em-filter-kr", "em-filter-initiative"];
-  ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
-  populateEmOkrFilters();
+  _emFilter.objectiveId = "";
+  _emFilter.krId = "";
+  _emFilter.initiativeId = "";
+  renderFilterSheet();
+  applyEmOkrFilter();
 }
+
+function openFilterSheet() {
+  const sheet = document.getElementById("em-filter-sheet");
+  const overlay = document.getElementById("em-filter-overlay");
+  if (!sheet || !overlay) return;
+  renderFilterSheet();
+  sheet.classList.add("open");
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeFilterSheet() {
+  const sheet = document.getElementById("em-filter-sheet");
+  const overlay = document.getElementById("em-filter-overlay");
+  sheet?.classList.remove("open");
+  overlay?.classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+// Close sheet on Escape
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const sheet = document.getElementById("em-filter-sheet");
+    if (sheet?.classList.contains("open")) closeFilterSheet();
+  }
+});
 
 document.addEventListener("DOMContentLoaded", loadEmOkrFilter);
 </script>
