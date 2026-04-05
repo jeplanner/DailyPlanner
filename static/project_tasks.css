@@ -1309,16 +1309,113 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
    ══════════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
   /* Base screen adjustments */
-  .proj-app { padding: 8px 0 32px; }
-  .proj-header { padding: 8px 14px 12px; }
+  .proj-app { padding: 6px 0 32px; }
   .proj-progress-row { padding: 0 14px; }
   .proj-toolbar { padding: 0 14px; }
   .add-task-row { margin: 0 14px 16px; }
   .pt-filter-chips { margin: 0 14px 12px; }
 
-  .proj-name { font-size: 18px; }
+  /* ═══ PROJECT HEADER — mobile-friendly ═══
+     Row 1 : [back] [title (wraps 2 lines)]           [Gantt] [Timeline]
+     Row 2 :        description (wraps, muted, 2-line clamp)
+     Clean stacking; long names never get cut off with ellipsis. */
+  .proj-header {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px 8px;
+    margin-bottom: 4px;
+  }
+  .proj-header-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .proj-header-left > div {
+    min-width: 0;
+    flex: 1 1 auto;
+    padding-top: 2px;
+  }
+  .back-btn {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    margin-left: -6px;  /* hug the left edge */
+    border-radius: 10px;
+  }
+  .back-btn svg { width: 22px; height: 22px; }
+
+  .proj-name {
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1.25;
+    letter-spacing: -0.3px;
+    /* Wrap freely, clamp to 2 lines so the header can't take over the screen */
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: initial;
+  }
+  .proj-desc {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--pt-text2);
+    margin-top: 3px;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .proj-header-right {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .header-action {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 10px;
+    background: var(--pt-bg);
+  }
   .header-action span { display: none; }
-  .header-action { padding: 6px 8px; }
+  .header-action svg { width: 18px; height: 18px; }
+
+  /* ═══ PROGRESS ROW — bar takes full width on mobile, stats below ═══ */
+  .proj-progress-row {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    margin-bottom: 14px;
+  }
+  .proj-progress-bar {
+    flex: 1 1 100%;
+    order: 1;
+    height: 8px;
+    border-radius: 999px;
+  }
+  .proj-stats {
+    flex: 1 1 auto;
+    order: 2;
+    font-size: 12px;
+    font-weight: 500;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   .add-task-date { width: 100px; }
   .sheet-row { grid-template-columns: 1fr; }
   .board-col { min-width: 200px; }
@@ -1608,7 +1705,25 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
 @media (max-width: 480px) {
   .proj-stats { font-size: 11px; }
   .filter-pill { font-size: 11px; padding: 3px 8px; }
-  .proj-header { flex-direction: column; align-items: flex-start; }
+
+  /* Keep header on one row (back+title+actions) but tighten everything.
+     Long names still wrap to 2 lines via the base mobile rule. */
+  .proj-header {
+    padding: 10px 12px 6px;
+    gap: 8px;
+  }
+  .proj-name { font-size: 17px; }
+  .proj-desc { font-size: 11.5px; }
+  .back-btn,
+  .header-action {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+  }
+  .back-btn svg { width: 20px; height: 20px; }
+  .header-action svg { width: 17px; height: 17px; }
+  .proj-header-right { gap: 4px; }
+
   .add-task-row { padding: 12px 14px; }
   .task-row { padding: 14px 14px; }
   .task-text { font-size: 14.5px; }
@@ -1616,4 +1731,10 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .status-select { margin-left: 34px; }
   .inline-subtasks { margin-left: 34px; }
   .group-row td { padding: 16px 14px 4px; }
+}
+
+/* Ultra-narrow phones (≤360px): drop Timeline button, keep only Gantt
+   so the header doesn't fight with long project names. */
+@media (max-width: 360px) {
+  .proj-header-right .header-action:nth-child(2) { display: none; }
 }
