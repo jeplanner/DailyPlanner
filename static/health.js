@@ -287,8 +287,8 @@ function createHabitCard(habit) {
         <span class="habit-card-goal">${escapeHtml(goalText)}</span>
       </div>
       <div class="habit-card-actions">
-        <button class="habit-action-btn" onclick="editHabit(${habit.id})" title="Edit">&#9998;</button>
-        <button class="habit-action-btn habit-delete-btn" onclick="deleteHabit(${habit.id})" title="Delete">&#128465;</button>
+        <button class="habit-action-btn" onclick="editHabit('${habit.id}')" title="Edit">&#9998;</button>
+        <button class="habit-action-btn habit-delete-btn" onclick="deleteHabit('${habit.id}')" title="Delete">&#128465;</button>
       </div>
     </div>
 
@@ -321,23 +321,26 @@ function createHabitCard(habit) {
 function buildNumericInput(habit, step) {
   const value = parseFloat(habit.value) || 0;
   const goal = parseFloat(habit.goal) || 1;
+  // NOTE: every habit.id interpolation is wrapped in single quotes so
+  // UUID IDs like "abc12345-6789-def" don't get parsed as JavaScript
+  // subtraction by the inline onclick/onchange handlers.
   return `
     <div class="habit-input-row">
-      <button class="habit-adjust-btn" onclick="stepHabit(${habit.id}, -${step})">&#8722;</button>
+      <button class="habit-adjust-btn" onclick="stepHabit('${habit.id}', -${step})">&#8722;</button>
       <div class="habit-value-wrap">
         <input type="number" class="habit-value-input" id="habit-val-${habit.id}"
                value="${value}" min="0" step="${step}"
                data-habit-id="${habit.id}"
                inputmode="decimal"
-               onchange="onHabitValueChange(${habit.id})"
+               onchange="onHabitValueChange('${habit.id}')"
                onfocus="this.select()">
         <span class="habit-value-unit">${escapeHtml((habit.unit || "").toLowerCase())}</span>
       </div>
-      <button class="habit-adjust-btn" onclick="stepHabit(${habit.id}, ${step})">&#43;</button>
+      <button class="habit-adjust-btn" onclick="stepHabit('${habit.id}', ${step})">&#43;</button>
     </div>
     <div class="habit-slider-row">
       <input type="range" class="habit-slider" min="0" max="${goal * 1.5}" step="${step}" value="${value}"
-             oninput="onSliderChange(${habit.id}, this.value)">
+             oninput="onSliderChange('${habit.id}', this.value)">
     </div>
   `;
 }
@@ -350,7 +353,7 @@ function buildBooleanInput(habit) {
       <button class="habit-toggle ${isOn ? "on" : ""}"
               id="habit-val-${habit.id}"
               data-habit-id="${habit.id}"
-              onclick="toggleBooleanHabit(${habit.id})">
+              onclick="toggleBooleanHabit('${habit.id}')">
       </button>
       <span class="habit-toggle-label">${isOn ? "Done" : "Not yet"}</span>
     </div>
