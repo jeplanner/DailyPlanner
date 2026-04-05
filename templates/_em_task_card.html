@@ -22,10 +22,12 @@
      data-kr-id="{{ t.key_result_id or '' }}"
      data-initiative-id="{{ t.initiative_id or '' }}">
   <span class="em-sel-check" aria-hidden="true"></span>
-  {% if t.source != 'event' and t.source != 'project' %}
-  <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
-  {% else %}
+  {% if t.source == 'event' %}
+  {# Calendar events are read-only in the matrix — the tick stays disabled #}
   <input type="checkbox" {{ 'checked' if t.is_done }} disabled style="opacity:0.4;">
+  {% else %}
+  {# Matrix tasks AND project tasks are both completable from here #}
+  <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
   {% endif %}
 
   <div class="em-task-body">
@@ -69,7 +71,10 @@
   </div>
 
   <div class="em-task-actions">
-    {% if t.source == 'matrix' or not t.source %}
+    {% if t.source != 'event' %}
+    {# Quadrant select + ⋯ menu available for both matrix and project tasks.
+       The client handlers detect the `pt-` id prefix and route to the
+       project_tasks endpoint instead of the todo_matrix one. #}
     <select class="em-move-select" onchange="moveQuadrant('{{ t.id }}', this.value)">
       <option value="do" {{ 'selected' if q=='do' }}>Do</option>
       <option value="schedule" {{ 'selected' if q=='schedule' }}>Schedule</option>

@@ -54,7 +54,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 @media(max-width:768px){.em-matrix{grid-template-columns:1fr;}}
 
 /* Quadrant Card */
-.em-quad{background:var(--em-surface);border-radius:14px;border:1px solid var(--em-border);box-shadow:var(--em-shadow);overflow:hidden;}
+/* overflow:visible so the ⋯ menu popover isn't clipped by the quadrant card */
+.em-quad{background:var(--em-surface);border-radius:14px;border:1px solid var(--em-border);box-shadow:var(--em-shadow);overflow:visible;}
 .em-quad-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer;user-select:none;}
 .em-quad-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;}
 .em-quad-dot{width:10px;height:10px;border-radius:50%;}
@@ -115,7 +116,10 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 .em-more-wrap{position:relative;}
 .em-more-btn{width:22px;height:22px;border:1px solid transparent;background:none;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--em-text3);font-size:14px;font-weight:700;line-height:1;padding:0;}
 .em-more-btn:hover{background:var(--em-border);color:var(--em-text);}
-.em-more-menu{position:absolute;right:0;top:26px;min-width:140px;background:var(--em-surface);border:1px solid var(--em-border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);padding:4px;z-index:50;display:none;}
+.em-more-menu{position:absolute;right:0;top:28px;min-width:150px;background:var(--em-surface);border:1px solid var(--em-border);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.22);padding:5px;z-index:1000;display:none;}
+/* When a ⋯ menu is open, lift the host card above siblings so the
+   popover stacks above adjacent cards as well. */
+.em-task:has(.em-more-menu.open){z-index:100;position:relative;}
 .em-more-menu.open{display:block;}
 .em-more-menu button{display:flex;align-items:center;gap:6px;width:100%;padding:7px 10px;border:none;background:none;border-radius:6px;font-size:12px;font-family:inherit;color:var(--em-text);cursor:pointer;text-align:left;}
 .em-more-menu button:hover{background:var(--em-border);}
@@ -1466,6 +1470,30 @@ function goToDate(dateStr) {
   location.href = `/todo?year=${d.getFullYear()}&month=${d.getMonth()+1}&day=${d.getDate()}`;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Task ID routing: task cards in the Eisenhower matrix come from
+// three sources and their IDs are prefixed so the client can tell
+// them apart without a lookup:
+//   • matrix-owned rows → raw UUID
+//   • project tasks     → "pt-<task_uuid>"
+//   • calendar events   → "ev-<event_id>"  (read-only)
+// ─────────────────────────────────────────────────────────────
+function _taskKind(id) {
+  const s = String(id || "");
+  if (s.startsWith("pt-")) return "project";
+  if (s.startsWith("ev-")) return "event";
+  return "matrix";
+}
+function _realTaskId(id) {
+  const s = String(id || "");
+  if (s.startsWith("pt-")) return s.slice(3);
+  if (s.startsWith("ev-")) return s.slice(3);
+  return s;
+}
+function _csrf() {
+  return document.querySelector('meta[name="csrf-token"]')?.content || "";
+}
+
 // Checkbox click delegates to resolveTask so the badge, quadrant counter,
 // optimistic UI, and error rollback all behave identically whether the user
 // clicks the checkbox or picks a status from the ⋯ menu.
@@ -1493,10 +1521,13 @@ function resolveTask(taskId, status) {
   const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
   if (!task) return;
 
+  const kind = _taskKind(taskId);
+  if (kind === "event") return; // events are read-only
+
   const wasDone = task.classList.contains("done");
   const quadrant = task.dataset.quadrant;
 
-  // ── Optimistic UI: apply the visual change immediately ──
+  // ── Optimistic UI ──
   task.classList.toggle("done", isDone);
   task.dataset.status = status;
 
@@ -1506,29 +1537,38 @@ function resolveTask(taskId, status) {
   _updateStatusBadge(task, status);
   if (wasDone !== isDone) _bumpQuadrantCount(quadrant, isDone ? +1 : -1);
 
-  // Close any open resolve menu
   document.getElementById("menu-" + taskId)?.classList.remove("open");
 
-  // ── Fire-and-forget network call. No reload, no setTimeout. ──
-  fetch("/todo/toggle-done", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({id: taskId, is_done: isDone, status: status})
-  })
-  .then(r => r.json())
-  .then(res => {
-    if (res && res.next_occurrence) {
-      showToast("Next occurrence: " + res.next_occurrence, "success");
-    }
-  })
-  .catch(err => {
-    // Roll back the optimistic UI on failure so the user sees the truth
-    console.error(err);
-    task.classList.toggle("done", wasDone);
-    if (cb) cb.checked = wasDone;
-    if (wasDone !== isDone) _bumpQuadrantCount(quadrant, wasDone ? +1 : -1);
-    showToast("Failed to update task", "error");
-  });
+  // ── Route to the right endpoint based on source ──
+  const realId = _realTaskId(taskId);
+  const req = (kind === "project")
+    ? fetch(`/projects/tasks/${realId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ status }),
+      })
+    : fetch("/todo/toggle-done", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: taskId, is_done: isDone, status }),
+      });
+
+  req
+    .then(r => r.ok ? r.json().catch(() => ({})) : Promise.reject(new Error(`HTTP ${r.status}`)))
+    .then(res => {
+      if (res && res.next_occurrence) {
+        showToast("Next occurrence: " + res.next_occurrence, "success");
+      }
+    })
+    .catch(err => {
+      console.error(err);
+      // Roll back
+      task.classList.toggle("done", wasDone);
+      if (cb) cb.checked = wasDone;
+      task.dataset.status = wasDone ? "done" : "open";
+      if (wasDone !== isDone) _bumpQuadrantCount(quadrant, wasDone ? +1 : -1);
+      showToast("Failed to update task", "error");
+    });
 }
 
 // Replace the status badge inside a task card without re-rendering the whole row
@@ -1565,16 +1605,14 @@ function _updateStatusBadge(taskEl, status) {
 const _PRIO_CYCLE = { low: "medium", medium: "high", high: "low" };
 
 function cycleTaskPriority(event, taskId) {
-  // In select mode, the capture-phase click handler on em-app-root already
-  // intercepts this click to toggle selection. We still short-circuit here
-  // defensively in case something re-orders event listeners.
   if (EM_SEL?.active) return;
-
-  // Don't let this bubble up to any parent click handlers (e.g. card-level)
   event?.stopPropagation?.();
 
   const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
   if (!task) return;
+
+  const kind = _taskKind(taskId);
+  if (kind === "event") return; // events are read-only
 
   const prevPriority = task.dataset.priority || "medium";
   const nextPriority = _PRIO_CYCLE[prevPriority] || "medium";
@@ -1582,22 +1620,29 @@ function cycleTaskPriority(event, taskId) {
   // Optimistic DOM update
   _applyPriorityToRow(task, nextPriority);
 
-  // Persist via the bulk endpoint with a single ID
-  fetch("/todo/bulk-update", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
-    },
-    body: JSON.stringify({ ids: [taskId], patch: { priority: nextPriority } }),
-  })
-    .then(r => r.json())
-    .then(res => {
-      if (res.status !== "ok") throw new Error(res.error || "Update failed");
+  // Route by source: matrix → /todo/bulk-update, project → /projects/tasks/<id>/update
+  const realId = _realTaskId(taskId);
+  const req = (kind === "project")
+    ? fetch(`/projects/tasks/${realId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ priority: nextPriority }),
+      })
+    : fetch("/todo/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ ids: [taskId], patch: { priority: nextPriority } }),
+      });
+
+  req
+    .then(async r => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.error || (body.status && body.status !== "ok")) {
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
     })
     .catch(err => {
-      console.error(err);
-      // Roll back
+      console.error("cycleTaskPriority:", err);
       _applyPriorityToRow(task, prevPriority);
       showToast("Failed to update priority", "error");
     });
@@ -1635,19 +1680,46 @@ function _bumpQuadrantCount(quadrant, delta) {
 }
 
 function moveQuadrant(taskId, newQ) {
-  fetch("/todo/move", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({id: taskId, quadrant: newQ})
-  }).then(() => {
-    const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
-    const target = document.querySelector(`.em-quad[data-quadrant="${newQ}"] .em-quad-body`);
-    if (task && target) {
-      const empty = target.querySelector('.em-empty');
-      if (empty) empty.remove();
-      target.appendChild(task);
-    }
-  }).catch(console.error);
+  const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
+  if (!task) return;
+
+  const kind = _taskKind(taskId);
+  if (kind === "event") return; // events can't be moved between quadrants
+
+  const prevQ = task.dataset.quadrant;
+
+  // Optimistic move
+  const target = document.querySelector(`.em-quad[data-quadrant="${newQ}"] .em-quad-body`);
+  if (target) {
+    const empty = target.querySelector('.em-empty');
+    if (empty) empty.remove();
+    target.appendChild(task);
+    task.dataset.quadrant = newQ;
+  }
+
+  const realId = _realTaskId(taskId);
+  const req = (kind === "project")
+    ? fetch(`/projects/tasks/${realId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ quadrant: newQ }),
+      })
+    : fetch("/todo/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ id: taskId, quadrant: newQ }),
+      });
+
+  req
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
+    .catch(err => {
+      console.error("moveQuadrant:", err);
+      // Roll back the move
+      const prev = document.querySelector(`.em-quad[data-quadrant="${prevQ}"] .em-quad-body`);
+      if (prev) prev.appendChild(task);
+      task.dataset.quadrant = prevQ;
+      showToast("Failed to move task", "error");
+    });
 }
 
 function onQuadrantChange() {
@@ -2122,6 +2194,14 @@ document.getElementById("em-app-root")?.addEventListener("click", (e) => {
   if (!EM_SEL.active) return;
   const card = e.target.closest(".em-task");
   if (!card) return;
+  // Only matrix-owned rows can be bulk-updated via /todo/bulk-update.
+  // Project tasks need per-row calls to /projects/tasks/<id>/update and
+  // events are read-only — ignore taps on either in select mode.
+  if (card.dataset.source && card.dataset.source !== "matrix") {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
   _toggleSelection(card.dataset.id);
@@ -2195,8 +2275,15 @@ document.addEventListener("click", (e) => {
 
 // ── Bulk actions ──
 async function _bulkApply(patch, optimistic) {
-  const ids = Array.from(EM_SEL.ids);
-  if (!ids.length) return;
+  // Only matrix-owned ids can go through /todo/bulk-update. Strip any
+  // project/event ids defensively in case they snuck into the selection
+  // (they shouldn't, because the click handler blocks them, but this is
+  // a cheap safety net).
+  const ids = Array.from(EM_SEL.ids).filter(id => _taskKind(id) === "matrix");
+  if (!ids.length) {
+    showToast("Only matrix tasks can be bulk-updated. Open the project to edit project tasks.", "info");
+    return;
+  }
 
   // Snapshot current state so we can roll back on failure
   const snapshot = ids.map(id => {
