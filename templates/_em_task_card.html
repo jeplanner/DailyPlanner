@@ -42,6 +42,13 @@
       {% if t.recurrence %}
         <span class="em-recur-pill" title="Repeats {{ t.recurrence }}">🔁 {{ t.recurrence }}</span>
       {% endif %}
+      {% if t.kr_title %}
+        <span class="em-kr-pill"
+              style="--kr-color: {{ t.kr_color or '#10b981' }};"
+              title="{% if t.kr_goal_title %}Objective: {{ t.kr_goal_title }} · {% endif %}Key Result: {{ t.kr_title }}{% if t.kr_initiative_title %} · Initiative: {{ t.kr_initiative_title }}{% endif %}">
+          🎯 {{ t.kr_title }}
+        </span>
+      {% endif %}
     </div>
     <div class="em-task-meta">
       {% if t.source == 'event' %}

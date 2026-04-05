@@ -141,9 +141,105 @@ def todo():
         "is_eliminated": "eq.false",
         "quadrant": "neq.",
         "select": "task_id,task_text,quadrant,status,priority,project_id,"
-                  "due_date,is_recurring,recurrence_type,recurrence_days",
+                  "due_date,is_recurring,recurrence_type,recurrence_days,"
+                  "initiative_id,key_result_id",
         "limit": 200,
     }) or []
+
+    # 5b️⃣ Build an OKR display map for each task. The canonical path is
+    # task → initiative → key_result → objective. Legacy rows that still
+    # have only `key_result_id` set (pre-Initiative layer) get handled as
+    # a fallback so no task loses its pill.
+    initiative_ids = {t["initiative_id"] for t in proj_tasks_q if t.get("initiative_id")}
+    legacy_kr_ids = {
+        t["key_result_id"] for t in proj_tasks_q
+        if t.get("key_result_id") and not t.get("initiative_id")
+    }
+
+    # task_id → {title (KR), goal_title (objective), color}
+    okr_display_map = {}
+
+    try:
+        initiative_rows = []
+        if initiative_ids:
+            initiative_rows = get(
+                "initiatives",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "id": f"in.({','.join(str(i) for i in initiative_ids)})",
+                    "select": "id,title,key_result_id",
+                    "limit": 500,
+                },
+            ) or []
+
+        # All KR ids we need — from initiatives AND from legacy direct links
+        kr_ids_needed = {r["key_result_id"] for r in initiative_rows if r.get("key_result_id")}
+        kr_ids_needed.update(legacy_kr_ids)
+
+        kr_rows = []
+        if kr_ids_needed:
+            kr_rows = get(
+                "key_results",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "id": f"in.({','.join(str(i) for i in kr_ids_needed)})",
+                    "select": "id,title,objective_id",
+                    "limit": 500,
+                },
+            ) or []
+        kr_by_id = {r["id"]: r for r in kr_rows}
+
+        objective_ids_needed = {r["objective_id"] for r in kr_rows if r.get("objective_id")}
+        objective_rows = []
+        if objective_ids_needed:
+            objective_rows = get(
+                "objectives",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "id": f"in.({','.join(str(i) for i in objective_ids_needed)})",
+                    "select": "id,title,color",
+                    "limit": 500,
+                },
+            ) or []
+        objective_by_id = {r["id"]: r for r in objective_rows}
+
+        # Map initiative → {kr, objective, initiative_title}
+        initiative_meta = {}
+        for i in initiative_rows:
+            kr = kr_by_id.get(i.get("key_result_id")) or {}
+            obj = objective_by_id.get(kr.get("objective_id")) or {}
+            initiative_meta[i["id"]] = {
+                "kr_title": kr.get("title"),
+                "initiative_title": i.get("title"),
+                "objective_title": obj.get("title"),
+                "color": obj.get("color") or "#10b981",
+            }
+
+        # Map legacy kr → {kr, objective}
+        legacy_meta = {}
+        for kr_id in legacy_kr_ids:
+            kr = kr_by_id.get(kr_id)
+            if not kr:
+                continue
+            obj = objective_by_id.get(kr.get("objective_id")) or {}
+            legacy_meta[kr_id] = {
+                "kr_title": kr.get("title"),
+                "initiative_title": None,
+                "objective_title": obj.get("title"),
+                "color": obj.get("color") or "#10b981",
+            }
+
+        # Stamp each task's row
+        for t in proj_tasks_q:
+            meta = None
+            if t.get("initiative_id"):
+                meta = initiative_meta.get(t["initiative_id"])
+            elif t.get("key_result_id"):
+                meta = legacy_meta.get(t["key_result_id"])
+            if meta:
+                okr_display_map[t["task_id"]] = meta
+    except Exception as e:
+        logger.warning("OKR display lookup failed: %s", e)
 
     target_weekday = plan_date.weekday()
 
@@ -203,6 +299,7 @@ def todo():
             icons = {"daily": "🔁", "weekly": "🔁", "monthly": "🔁"}
             recur_badge = icons.get(t.get("recurrence_type"), "🔁") + " "
 
+        okr_info = okr_display_map.get(t.get("task_id"))
         tasks.append({
             "id": f"pt-{t['task_id']}",
             "task_text": f"📋 {t['task_text']}",
@@ -215,6 +312,13 @@ def todo():
             "project_name": project_map.get(t.get("project_id")),
             "source_task_id": None,
             "source": "project",
+            # OKR pill: show the KR as the primary label, objective title in the tooltip.
+            # When an initiative is present, it's also surfaced in the tooltip so the user
+            # can distinguish two tasks under different initiatives of the same KR.
+            "kr_title": okr_info["kr_title"] if okr_info else None,
+            "kr_goal_title": okr_info["objective_title"] if okr_info else None,
+            "kr_initiative_title": okr_info.get("initiative_title") if okr_info else None,
+            "kr_color": okr_info["color"] if okr_info else None,
         })
 
     # 4️⃣ Build Eisenhower view (NO due-date logic here)
@@ -1100,6 +1204,10 @@ def build_eisenhower_view(tasks, plan_date):
             "project_id": t.get("project_id"),
             "project_name": t.get("project_name"),
             "source_task_id": t.get("source_task_id"),
+            "kr_title": t.get("kr_title"),
+            "kr_goal_title": t.get("kr_goal_title"),
+            "kr_initiative_title": t.get("kr_initiative_title"),
+            "kr_color": t.get("kr_color"),
         }
 
         # Each quadrant has a single bucket

@@ -111,7 +111,8 @@ def project_tasks(project_id):
         "select": "task_id,task_text,status,due_date,due_time,priority,start_date,"
                   "duration_days,delegated_to,is_pinned,planned_hours,actual_hours,"
                   "is_recurring,recurrence_type,recurrence_days,recurrence_interval,"
-                  "recurrence_end,auto_advance,order_index,created_at",
+                  "recurrence_end,auto_advance,order_index,created_at,"
+                  "key_result_id,initiative_id",
         "order": order,
         "limit": 500,
     }
@@ -474,6 +475,8 @@ def update_task(task_id):
         "recurrence_end",
         "auto_advance",
         "quadrant",
+        "key_result_id",
+        "initiative_id",
     ]
 
     for field in allowed_fields:
@@ -491,6 +494,11 @@ def update_task(task_id):
         return jsonify({"status": "noop"})
     if "start_time" in updates and updates["start_time"] == "":
         updates["start_time"] = None
+    # Empty string → NULL for key_result_id so the FK doesn't blow up
+    if "key_result_id" in updates and updates["key_result_id"] == "":
+        updates["key_result_id"] = None
+    if "initiative_id" in updates and updates["initiative_id"] == "":
+        updates["initiative_id"] = None
 
     update(
         "project_tasks",
@@ -1228,6 +1236,8 @@ def _build_task_dict(t, project, today):
         "eisenhower_sent": False,
         "missed_eisenhower": False,
         "eisenhower_plan_date": None,
+        "key_result_id": t.get("key_result_id"),
+        "initiative_id": t.get("initiative_id"),
     }
 
 

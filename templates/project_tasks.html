@@ -380,6 +380,11 @@
       <option value="medium">🟡 Medium</option>
       <option value="low">🟢 Low</option>
     </select>
+    <select id="sheet-key-result" class="quick-select kr-picker"
+            onchange="autoSaveField('initiative_id', this.value)"
+            title="Link to an Initiative">
+      <option value="">🎯 No initiative</option>
+    </select>
     <button class="quick-action-btn" onclick="addSheetTaskToGCal()" title="Add to Calendar">
       <i data-feather="calendar"></i>
     </button>

@@ -125,6 +125,9 @@ html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
 .em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;background:#dbeafe;color:#1e40af;margin-left:6px;text-transform:uppercase;letter-spacing:.3px;}
 html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
 
+/* Key Result pill — tinted with the parent goal's color */
+.em-kr-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:6px;letter-spacing:.2px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--kr-color,#10b981);background:color-mix(in srgb,var(--kr-color,#10b981) 12%,transparent);border:1px solid color-mix(in srgb,var(--kr-color,#10b981) 30%,transparent);}
+
 /* Hide skipped/deleted rows when em-hide-closed is on the wrapper */
 .em-hide-closed .em-task[data-status="skipped"],
 .em-hide-closed .em-task[data-status="deleted"]{display:none !important;}

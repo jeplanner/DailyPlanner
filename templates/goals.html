@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>OKRs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='goals.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="goals-app">
+
+  <!-- Header -->
+  <div class="goals-header">
+    <div>
+      <h1>OKRs</h1>
+      <p class="goals-sub">Projects → <strong>Objectives</strong> → <strong>Key Results</strong> → <strong>Initiatives</strong> → <strong>Tasks</strong>. Strategy flows down, progress rolls up.</p>
+    </div>
+    <div class="goals-header-actions">
+      <select id="project-filter" class="project-filter" onchange="loadGoals()" title="Filter by project">
+        <option value="">All projects</option>
+      </select>
+      <label class="pill-toggle">
+        <input type="checkbox" id="include-archived">
+        <span>Show archived</span>
+      </label>
+      <button class="btn-primary" onclick="openNewObjectiveModal()">
+        <i data-feather="plus"></i> New Objective
+      </button>
+    </div>
+  </div>
+
+  <!-- Goals container -->
+  <div id="goals-list"></div>
+
+  <!-- Empty state -->
+  <div id="goals-empty" class="goals-empty" style="display:none;">
+    <i data-feather="target"></i>
+    <h2>No objectives yet</h2>
+    <p>Start with a strategic objective for one of your projects. Then add key results to measure success, and initiatives to group the tasks that move them forward.</p>
+    <button class="btn-primary" onclick="openNewObjectiveModal()">Create your first objective</button>
+  </div>
+</div>
+
+<!-- ═══════════ NEW/EDIT OBJECTIVE MODAL ═══════════ -->
+<div id="objective-modal" class="goal-modal hidden" onclick="if(event.target===this)closeObjectiveModal()">
+  <div class="goal-modal-card">
+    <div class="goal-modal-header">
+      <h3 id="objective-modal-title">New Objective</h3>
+      <button class="modal-close" onclick="closeObjectiveModal()">✕</button>
+    </div>
+    <div class="goal-modal-body">
+      <label>Project <span class="hint">(optional — leave empty for a personal objective)</span></label>
+      <select id="om-project">
+        <option value="">— Unassigned —</option>
+      </select>
+
+      <label>Title <span class="req">*</span></label>
+      <input type="text" id="om-title" maxlength="200" placeholder="e.g. Launch v2 with premium experience">
+
+      <label>Description</label>
+      <textarea id="om-description" rows="2" placeholder="Optional: what does achieving this objective look like?"></textarea>
+
+      <div class="row-2">
+        <div>
+          <label>Category</label>
+          <input type="text" id="om-category" list="cat-suggest" placeholder="product, growth, quality…">
+          <datalist id="cat-suggest"></datalist>
+        </div>
+        <div>
+          <label>Time horizon</label>
+          <select id="om-horizon">
+            <option value="annual">Annual</option>
+            <option value="quarterly" selected>Quarterly</option>
+            <option value="monthly">Monthly</option>
+            <option value="ongoing">Ongoing</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div>
+          <label>Start date <span class="hint">(optional)</span></label>
+          <input type="date" id="om-start">
+        </div>
+        <div>
+          <label>Target date <span class="hint">(optional)</span></label>
+          <input type="date" id="om-target">
+        </div>
+      </div>
+
+      <label>Accent color</label>
+      <div class="color-picker" id="om-color">
+        <button type="button" data-color="#2563eb" style="background:#2563eb"></button>
+        <button type="button" data-color="#10b981" style="background:#10b981"></button>
+        <button type="button" data-color="#f59e0b" style="background:#f59e0b"></button>
+        <button type="button" data-color="#dc2626" style="background:#dc2626"></button>
+        <button type="button" data-color="#8b5cf6" style="background:#8b5cf6"></button>
+        <button type="button" data-color="#ec4899" style="background:#ec4899"></button>
+        <button type="button" data-color="#06b6d4" style="background:#06b6d4"></button>
+        <button type="button" data-color="#6b7280" style="background:#6b7280"></button>
+      </div>
+    </div>
+    <div class="goal-modal-footer">
+      <button class="btn-ghost" onclick="closeObjectiveModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveObjectiveModal()" id="om-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ NEW/EDIT INITIATIVE MODAL ═══════════ -->
+<div id="initiative-modal" class="goal-modal hidden" onclick="if(event.target===this)closeInitiativeModal()">
+  <div class="goal-modal-card">
+    <div class="goal-modal-header">
+      <h3 id="initiative-modal-title">New Initiative</h3>
+      <button class="modal-close" onclick="closeInitiativeModal()">✕</button>
+    </div>
+    <div class="goal-modal-body">
+      <label>Title <span class="req">*</span></label>
+      <input type="text" id="im-title" maxlength="200" placeholder="e.g. Onboarding flow redesign">
+
+      <label>Description</label>
+      <textarea id="im-description" rows="2" placeholder="Optional: the workstream's approach"></textarea>
+    </div>
+    <div class="goal-modal-footer">
+      <button class="btn-ghost" onclick="closeInitiativeModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveInitiativeModal()" id="im-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ NEW/EDIT KEY RESULT MODAL ═══════════ -->
+<div id="kr-modal" class="goal-modal hidden" onclick="if(event.target===this)closeKrModal()">
+  <div class="goal-modal-card">
+    <div class="goal-modal-header">
+      <h3 id="kr-modal-title">New Key Result</h3>
+      <button class="modal-close" onclick="closeKrModal()">✕</button>
+    </div>
+    <div class="goal-modal-body">
+      <label>Title <span class="req">*</span></label>
+      <input type="text" id="km-title" maxlength="200" placeholder="e.g. Save $5,000">
+
+      <div class="row-3">
+        <div>
+          <label>Start</label>
+          <input type="number" id="km-start" step="any" value="0">
+        </div>
+        <div>
+          <label>Current</label>
+          <input type="number" id="km-current" step="any" value="0">
+        </div>
+        <div>
+          <label>Target <span class="req">*</span></label>
+          <input type="number" id="km-target" step="any" placeholder="5000">
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div>
+          <label>Unit <span class="hint">(optional)</span></label>
+          <input type="text" id="km-unit" maxlength="16" placeholder="$, books, kg, %…">
+        </div>
+        <div>
+          <label>Direction</label>
+          <select id="km-direction">
+            <option value="up" selected>Higher is better ▲</option>
+            <option value="down">Lower is better ▼</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="goal-modal-footer">
+      <button class="btn-ghost" onclick="closeKrModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveKrModal()" id="km-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='goals.js') }}" defer></script>
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
+</body>
+</html>

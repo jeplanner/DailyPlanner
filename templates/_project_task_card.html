@@ -162,6 +162,23 @@
       </div>
     </div>
 
+    <!-- Section 2b: OKR alignment -->
+    <div class="detail-section">
+      <div class="section-label">OKR alignment</div>
+      <div class="fields-row">
+        <div class="field" style="flex:1;">
+          <label>Initiative</label>
+          <select class="kr-picker"
+                  data-task-id="{{ task.task_id }}"
+                  data-current="{{ task.initiative_id or '' }}"
+                  onchange="updateTaskInitiative('{{ task.task_id }}', this.value, this)">
+            <option value="">— Not linked —</option>
+          </select>
+          <span class="field-fb"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- Section 3: Recurrence -->
     <div class="detail-section">
       <div class="section-label">Recurrence</div>

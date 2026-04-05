@@ -1404,3 +1404,101 @@ function ptBulkDelete() {
   // No confirmation prompt, consistent with the Eisenhower bulk delete pattern.
   ptBulkApplyStatus("deleted");
 }
+
+/* =========================================================
+   GOAL / KR picker integration
+   Populates every .kr-picker <select> on the page with the
+   user's active goals → objectives → key results.
+   ========================================================= */
+
+let _krPickerOptionsHtml = null;
+
+async function loadKrPickerOptions() {
+  try {
+    // Scope to the current project — tasks can only link to initiatives
+    // under objectives that belong to their own project. include_unassigned=1
+    // also surfaces personal/ungrouped objectives so you can link a project
+    // task to a cross-cutting objective (e.g. "Learning").
+    const projectId = (typeof PROJECT_ID !== "undefined" && PROJECT_ID) ? PROJECT_ID : "";
+    const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}&include_unassigned=1` : "";
+    const res = await fetch(`/api/goals/picker${qs}`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const objectives = data.objectives || [];
+
+    // Build Objective › KR › Initiative option groups. Tasks link to
+    // initiatives (the innermost grouping); the objective + KR context
+    // is shown in the label so users can navigate visually.
+    if (!objectives.length) {
+      _krPickerOptionsHtml = `<option value="">🎯 No initiative (define one on the OKRs page)</option>`;
+    } else {
+      let html = `<option value="">— Not linked —</option>`;
+      let anyInitiative = false;
+      for (const o of objectives) {
+        for (const kr of (o.key_results || [])) {
+          for (const init of (kr.initiatives || [])) {
+            const label = `${o.title} › ${kr.title} › ${init.title}`;
+            html += `<option value="${init.id}">${_escHtml(label)}</option>`;
+            anyInitiative = true;
+          }
+        }
+      }
+      if (!anyInitiative) {
+        _krPickerOptionsHtml =
+          `<option value="">🎯 No initiative yet — add one on the OKRs page under a Key Result</option>`;
+      } else {
+        _krPickerOptionsHtml = html;
+      }
+    }
+    // Paint all existing pickers
+    document.querySelectorAll(".kr-picker").forEach(paintKrPicker);
+  } catch (err) {
+    console.warn("Initiative picker fetch failed:", err);
+  }
+}
+
+function paintKrPicker(selectEl) {
+  if (!_krPickerOptionsHtml) return;
+  const currentValue = selectEl.dataset.current || selectEl.value || "";
+  selectEl.innerHTML = _krPickerOptionsHtml;
+  if (currentValue) selectEl.value = currentValue;
+}
+
+// Inline card initiative picker — called from _project_task_card.html onchange
+function updateTaskInitiative(taskId, initiativeId, el) {
+  const fb = el?.parentElement?.querySelector(".field-fb");
+  _post(`/projects/tasks/${taskId}/update`, { initiative_id: initiativeId || null })
+    .then(() => {
+      if (fb) { fb.textContent = "✓ saved"; setTimeout(() => fb.textContent = "", 1500); }
+      if (el) el.dataset.current = initiativeId || "";
+    })
+    .catch(() => {
+      if (fb) fb.textContent = "save failed";
+    });
+}
+
+// Hook picker population into openTaskDetail flow:
+// ensure the sheet's dropdown is painted AND preselected whenever the sheet opens.
+(function hookSheetKrPicker() {
+  const origOpen = typeof openTaskDetail === "function" ? openTaskDetail : null;
+  if (!origOpen) return;
+  window.openTaskDetail = async function (taskId) {
+    await origOpen(taskId);
+    try {
+      const res = await fetch(`/api/v2/project-tasks/${taskId}`);
+      if (!res.ok) return;
+      const t = await res.json();
+      const sel = _id("sheet-key-result");
+      if (sel) {
+        if (!_krPickerOptionsHtml) await loadKrPickerOptions();
+        sel.innerHTML = _krPickerOptionsHtml || `<option value="">🎯 No initiative</option>`;
+        sel.value = t.initiative_id || "";
+      }
+    } catch {}
+  };
+})();
+
+// Initial load once the DOM is ready
+document.addEventListener("DOMContentLoaded", () => {
+  loadKrPickerOptions();
+});
