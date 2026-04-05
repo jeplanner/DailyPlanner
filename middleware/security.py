@@ -5,12 +5,22 @@ def apply_security_headers(app):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # CDN allow-list:
+        #   unpkg.com            → feather-icons
+        #   cdn.jsdelivr.net     → @yaireo/tagify (JS + CSS + sourcemap)
+        #   cdn.quilljs.com      → Quill rich-text editor (JS + Snow theme CSS)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "script-src 'self' 'unsafe-inline' "
+            "  https://unpkg.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
+            "style-src 'self' 'unsafe-inline' "
+            "  https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
+            "style-src-elem 'self' 'unsafe-inline' "
+            "  https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: https://www.google.com; "
-            "connect-src 'self' https://unpkg.com https://query1.finance.yahoo.com https://api.mfapi.in;"
+            "connect-src 'self' "
+            "  https://unpkg.com https://cdn.jsdelivr.net https://cdn.quilljs.com "
+            "  https://query1.finance.yahoo.com https://api.mfapi.in;"
         )
         return response
