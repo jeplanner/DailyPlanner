@@ -1290,10 +1290,32 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
 .btn-ghost { background: transparent; color: var(--pt-text2); }
 .btn-ghost:hover { background: var(--pt-border-light); color: var(--pt-text); }
 
-/* ═══════════ MOBILE CARD VIEW ═══════════ */
-/* On mobile, convert table rows to stacked cards */
+/* ══════════════════════════════════════════════════════════════
+   MOBILE TASK LIST — Todoist-inspired
+   ──────────────────────────────────────────────────────────────
+   Design language:
+   • Flat list, NO card shadows, NO per-row borders.
+   • Hairline 1px divider between rows (#eceef0).
+   • Pure white row background.
+   • Checkbox is a 22px hollow circle with a priority-colored border.
+     Checked state fills with the priority color + white tick.
+   • Title: 15px / 400 weight / 1.45 line-height, color near-black.
+     Wraps freely to as many lines as needed (overflow-wrap:anywhere).
+   • Due date: tiny muted pill on the right of row 1, same baseline.
+   • Status pill: row 2, indented under the title.
+   • Subtask count + recur + delegate: small muted chips on row 2.
+   • Whole row is tappable — tap opens the detail panel.
+   • No per-row action buttons (⋯ / 📅) on mobile — all actions in panel.
+   ══════════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
-  .proj-app { padding: 8px 12px 32px; }
+  /* Base screen adjustments */
+  .proj-app { padding: 8px 0 32px; }
+  .proj-header { padding: 8px 14px 12px; }
+  .proj-progress-row { padding: 0 14px; }
+  .proj-toolbar { padding: 0 14px; }
+  .add-task-row { margin: 0 14px 16px; }
+  .pt-filter-chips { margin: 0 14px 12px; }
+
   .proj-name { font-size: 18px; }
   .header-action span { display: none; }
   .header-action { padding: 6px 8px; }
@@ -1302,201 +1324,251 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .board-col { min-width: 200px; }
   .view-toggle { display: none; }
 
-  /* ═══════════ MOBILE TASK CARDS — Todoist-style two-row layout ═══════════
-     Top row : checkbox + priority bar + title (wraps up to 2 lines)
-     Bottom  : status pill + due date + subtask count + quick actions
-     Full text and long titles breathe; metadata is never inline with title. */
-
-  .task-table thead { display: none; }
+  /* ── Remove the outer card chrome on the task list ── */
   .task-table-wrap {
     border: none;
     box-shadow: none;
-    background: transparent;
+    background: var(--pt-surface);
     overflow: visible;
+    border-radius: 0;
+    margin: 0;
   }
-  .task-table { display: block; table-layout: auto; }
-  .task-table tbody { display: flex; flex-direction: column; gap: 10px; }
+  .task-table thead { display: none; }
+  .task-table { display: block; table-layout: auto; width: 100%; }
+  .task-table tbody { display: flex; flex-direction: column; gap: 0; }
 
-  /* Group headers */
+  /* Group headers — small uppercase label, flat */
   .group-row { display: block; }
   .group-row td {
     display: block;
-    padding: 14px 4px 6px;
-    border-radius: 8px;
+    padding: 18px 16px 6px;
     background: transparent !important;
     border: none !important;
   }
-  .group-toggle { font-size: 11px; letter-spacing: 0.8px; }
-  .group-count { font-size: 11px; }
+  .group-toggle {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--pt-text3);
+  }
+  .group-chevron { width: 14px; height: 14px; }
+  .group-count {
+    font-size: 10px;
+    padding: 1px 8px;
+    background: var(--pt-border-light);
+    color: var(--pt-text3);
+    font-weight: 700;
+  }
 
-  /* Task card = CSS grid. Columns and row assignments are defined
-     further down (one consolidated declaration); this block sets the
-     shared card styles. */
+  /* ── Task row: FLAT flex container. Each <td> vanishes via
+       display:contents so its inner elements become direct flex
+       items of the row. This guarantees wrapping and gives full
+       control over ordering without grid-track sizing surprises. ── */
   .task-row {
-    display: grid;
-    grid-template-rows: auto auto;
-    column-gap: 12px;
-    row-gap: 8px;
-    padding: 14px 14px;
-    background: var(--pt-surface);
-    border-radius: 12px;
-    border: 1px solid var(--pt-border);
-    box-shadow: var(--pt-shadow);
-    align-items: start;
-  }
-  /* Each <td> becomes a regular grid item (we can't use display:contents
-     here because that would skip the td and our grid-column assignments
-     would be ignored). */
-  .task-row td {
-    display: block;
-    border: none;
-    padding: 0;
-    min-width: 0;
-  }
-
-  .task-check { width: 22px; height: 22px; }
-
-  .col-name {
-    min-width: 0;
-    max-width: 100%;
-  }
-  .task-name-cell {
+    display: flex !important;
     flex-wrap: wrap;
     align-items: flex-start;
-    gap: 6px 8px;
-  }
-  .task-text {
-    /* Inherits full-wrap from the base rule; only size/weight change on mobile */
-    font-size: 15px;
-    font-weight: 600;
-    line-height: 1.45;
-    color: var(--pt-text);
-    flex: 1 1 100%;   /* on mobile cards, give title its own row under the checkbox */
-  }
-
-  /* Priority shown as a colored left border instead of a dot column */
-  .col-prio { display: none; }
-
-  /* Final grid layout (4 columns, 2 rows):
-     Col 1: checkbox (fixed 28px, spans both rows)
-     Col 2: status pill (auto width, row 2)
-     Col 3: due pill (auto width, row 2)
-     Col 4: 1fr spacer — absorbs slack; actions pinned to its right edge
-     Row 1: title spans the whole right side (cols 2-4) */
-  .task-row {
-    grid-template-columns: 28px auto auto 1fr;
-  }
-  .col-check   { grid-column: 1;      grid-row: 1 / span 2; padding-top: 4px; }
-  .col-name    { grid-column: 2 / -1; grid-row: 1; }
-  .col-status  { grid-column: 2;      grid-row: 2; justify-self: start; margin-right: 8px; }
-  .col-due     { grid-column: 3;      grid-row: 2; justify-self: start; }
-  .col-actions { grid-column: 4;      grid-row: 2; justify-self: end; }
-
-  /* Hide low-value columns on mobile */
-  .col-start, .col-dur, .col-progress { display: none; }
-
-  /* Meta styling — muted, compact, readable */
-  .status-select {
-    font-size: 11px;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 999px;
-    min-height: 28px;
-    line-height: 1;
-  }
-
-  .due-cell {
-    flex-direction: row;
-    align-items: center;
-    gap: 4px;
-  }
-  .due-cell .cell-date {
-    width: auto;
-    max-width: 110px;
-    font-size: 12px;
-    color: var(--pt-text2);
-    font-weight: 500;
-  }
-  .due-label {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--pt-border-light);
-    color: var(--pt-text2);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .overdue-label {
-    background: #fef2f2;
-    color: var(--pt-danger);
-  }
-  html.dark .due-label { background: #334155; color: #cbd5e1; }
-  html.dark .overdue-label { background: #3b1111; color: #fca5a5; }
-
-  /* Priority shown as a colored left border on the entire card */
-  .task-row {
+    gap: 0;
+    padding: 14px 16px 14px 16px;
+    background: var(--pt-surface);
+    border: none;
+    border-bottom: 1px solid var(--pt-border-light);
+    border-radius: 0;
+    box-shadow: none;
     position: relative;
-    overflow: hidden;
-    border-left: 4px solid transparent;
+    cursor: pointer;
   }
-  .task-row[data-priority="high"]   { border-left-color: var(--pt-high); }
-  .task-row[data-priority="medium"] { border-left-color: var(--pt-medium); }
-  .task-row[data-priority="low"]    { border-left-color: var(--pt-low); }
+  .task-row:first-of-type { border-top: 1px solid var(--pt-border-light); }
+  .task-row:hover { background: color-mix(in srgb, var(--pt-primary) 3%, var(--pt-surface)); }
 
-  /* Actions */
-  .row-action-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 9px;
+  .task-row td {
+    display: contents;
   }
-  .row-action-btn svg { width: 18px; height: 18px; }
-  .col-actions .gcal-btn { display: none; }
 
-  /* Subtask pill */
-  .subtask-badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-weight: 700;
+  /* Hide every cell we don't want to see on the mobile list */
+  .task-row .col-prio,
+  .task-row .col-start,
+  .task-row .col-dur,
+  .task-row .col-progress,
+  .task-row .col-actions,
+  .task-row .prio-dot,
+  .task-row .cell-date,
+  .task-row .cell-num,
+  .task-row .mini-progress,
+  .task-row .progress-text,
+  .task-row .row-action-btn {
+    display: none !important;
   }
-  .subtask-expand-btn {
+
+  /* ── Checkbox: hollow circle with priority-colored border ── */
+  .task-check {
+    order: 1;
+    -webkit-appearance: none;
+    appearance: none;
     width: 22px;
     height: 22px;
+    min-width: 22px;
+    border-radius: 50%;
+    border: 2px solid var(--pt-text3);
+    background: var(--pt-surface);
+    cursor: pointer;
+    flex-shrink: 0;
+    margin: 1px 14px 0 0;
+    position: relative;
+    transition: all .15s;
   }
-  .subtask-expand-btn svg { width: 16px; height: 16px; }
+  .task-check:hover { border-color: var(--pt-text2); }
+  .task-row[data-priority="high"]   .task-check { border-color: var(--pt-high); }
+  .task-row[data-priority="medium"] .task-check { border-color: var(--pt-medium); }
+  .task-row[data-priority="low"]    .task-check { border-color: var(--pt-low); }
+  .task-check:checked {
+    background: var(--pt-text3);
+    border-color: var(--pt-text3);
+  }
+  .task-row[data-priority="high"]   .task-check:checked { background: var(--pt-high);   border-color: var(--pt-high); }
+  .task-row[data-priority="medium"] .task-check:checked { background: var(--pt-medium); border-color: var(--pt-medium); }
+  .task-row[data-priority="low"]    .task-check:checked { background: var(--pt-low);    border-color: var(--pt-low); }
+  .task-check:checked::after {
+    content: '';
+    position: absolute;
+    left: 5px; top: 1px;
+    width: 5px; height: 10px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
 
-  /* Recurrence + delegate pills — now visible on mobile alongside title */
-  .recur-badge, .delegate-badge {
+  /* Select-mode overlay check sits in the checkbox slot */
+  .pt-sel-check {
+    order: 1;
+    margin: 1px 14px 0 0;
+    flex-shrink: 0;
+  }
+
+  /* ── Title area: wraps freely, takes all remaining space in row 1 ── */
+  .task-name-cell {
+    order: 2;
+    flex: 1 1 0%;
+    min-width: 0;
+    display: block;
+    padding: 0;
+  }
+  .task-text {
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--pt-text);
+    display: block;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    overflow: visible;
+    max-height: none;
+    -webkit-line-clamp: none;
+    -webkit-box-orient: initial;
+  }
+  .task-row.done .task-text {
+    text-decoration: line-through;
+    color: var(--pt-text3);
+  }
+
+  /* Inline badges (pin, expand, subtask count, recur, delegate) in the
+     title cell — Todoist shows these as small muted items inline with or
+     right after the title. We hide them from row 1 and render the counts
+     on row 2 instead. */
+  .task-name-cell .pin-icon,
+  .task-name-cell .subtask-expand-btn {
+    display: none;
+  }
+  .task-name-cell .subtask-badge,
+  .task-name-cell .recur-badge,
+  .task-name-cell .delegate-badge {
     display: inline-flex;
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--pt-text2);
+    background: transparent;
+    padding: 0;
+    margin-top: 6px;
+    margin-right: 12px;
+    white-space: nowrap;
+  }
+  .task-name-cell .subtask-badge::before { content: "✓ "; opacity: .8; }
+  .task-name-cell .recur-badge::before { content: "🔁 "; }
+  .task-name-cell .delegate-badge::before { content: ""; }
+
+  /* ── Due date: tiny muted label on the right of row 1 ── */
+  .due-cell {
+    order: 3;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    margin-left: 12px;
+    padding-top: 2px;
+  }
+  .due-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--pt-text2);
+    background: transparent;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    white-space: nowrap;
+  }
+  .due-label.overdue-label {
+    color: var(--pt-danger);
     font-weight: 600;
+    background: transparent;
   }
 
-  /* Inline subtasks section — sits inside the col-name td, below the title */
+  /* ── Status pill: own row under the title, indented to align ── */
+  .status-select {
+    order: 4;
+    flex: 0 0 auto;
+    margin: 8px 0 0 36px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    min-height: 0;
+    line-height: 1.2;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  /* Don't show the Open status on mobile — it's the default, visual noise */
+  .status-select.status-open { display: none; }
+
+  /* Inline subtasks expansion — sits below everything */
   .inline-subtasks {
+    order: 5;
+    flex: 1 1 100%;
+    margin: 10px 0 0 36px;
     padding-left: 0;
-    margin-top: 8px;
   }
   .inline-subtask { font-size: 13px; padding: 5px 0; }
   .inline-subtask input[type=checkbox] { width: 16px; height: 16px; }
 
-  /* Overdue card highlight */
-  .task-row.overdue {
-    background: var(--pt-surface);
-    border-left-color: var(--pt-danger) !important;
-    box-shadow: 0 1px 3px rgba(239, 68, 68, 0.15);
+  /* Overdue row: subtle red left edge */
+  .task-row.overdue::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--pt-danger);
   }
+  .task-row.overdue { background: var(--pt-surface); }
 
-  /* Done card fade */
-  .task-row.done { opacity: 0.5; }
-  .task-row.done .task-text { text-decoration: line-through; }
+  /* Done: whole row dims */
+  .task-row.done { opacity: 0.55; }
 
-  /* Add task row: on mobile, stack into two rows
-     Row 1: [+] icon + text input (flex together)
-     Row 2: priority picker + date + submit button
-     This keeps the input obvious and typeable without cramping. */
+  /* Hide legacy mobile leftovers */
+  .col-actions .gcal-btn { display: none; }
+
+  /* ── Add-task composer (sits above the list) ── */
   .add-task-row {
     flex-wrap: wrap;
     padding: 14px 14px;
@@ -1507,7 +1579,7 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
     order: 1;
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 16px;  /* 16px to prevent iOS auto-zoom on focus */
+    font-size: 16px; /* prevent iOS zoom */
   }
   .prio-picker { order: 2; flex-basis: 100%; padding-left: 40px; }
   .add-task-date { order: 3; flex: 1 1 auto; }
@@ -1532,19 +1604,16 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   .task-panel.open { transform: translateY(0); }
 }
 
+/* Very narrow phones */
 @media (max-width: 480px) {
   .proj-stats { font-size: 11px; }
   .filter-pill { font-size: 11px; padding: 3px 8px; }
   .proj-header { flex-direction: column; align-items: flex-start; }
-  .proj-app { padding: 10px 12px 80px; }
-  .add-task-row { padding: 10px 12px; }
-  /* Tighten the card grid on very narrow phones so long titles get max room */
-  .task-row {
-    padding: 12px 12px;
-    grid-template-columns: 26px 1fr auto auto;
-    column-gap: 10px;
-  }
-  .col-actions { grid-column: 3 / 5; }
+  .add-task-row { padding: 12px 14px; }
+  .task-row { padding: 14px 14px; }
   .task-text { font-size: 14.5px; }
-  .row-action-btn { width: 34px; height: 34px; }
+  .task-check { margin-right: 12px; }
+  .status-select { margin-left: 34px; }
+  .inline-subtasks { margin-left: 34px; }
+  .group-row td { padding: 16px 14px 4px; }
 }

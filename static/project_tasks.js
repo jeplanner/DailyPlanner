@@ -310,6 +310,34 @@ function setTaskView(view) {
 })();
 
 /* ---------------------------------------------------------
+   Mobile row tap-anywhere: whole row opens the detail panel
+   (except for clicks on the checkbox or status <select>).
+   Matches Todoist's "tap anywhere on the row to open" pattern.
+   --------------------------------------------------------- */
+(function wireRowTapToOpen() {
+  document.addEventListener("click", (ev) => {
+    // Only engage on mobile widths
+    if (window.matchMedia("(min-width: 769px)").matches) return;
+    // Skip when in select mode — selection handler owns clicks
+    if (window.PT_SEL && PT_SEL.active) return;
+
+    const row = ev.target.closest(".task-row");
+    if (!row) return;
+
+    // Don't hijack clicks on interactive controls inside the row
+    const interactive = ev.target.closest(
+      ".task-check, .status-select, select, input, button, a, .inline-subtask"
+    );
+    if (interactive) return;
+
+    const taskId = row.dataset.id;
+    if (!taskId) return;
+    ev.preventDefault();
+    if (typeof openTaskDetail === "function") openTaskDetail(taskId);
+  }, true);
+})();
+
+/* ---------------------------------------------------------
    Board View (Kanban)
    --------------------------------------------------------- */
 function populateBoard() {
