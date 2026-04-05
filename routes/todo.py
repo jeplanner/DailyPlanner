@@ -552,13 +552,18 @@ def travel_tasks_delete(task_id):
 @login_required
 def travel_categories_create():
     """
-    Create a new travel category by copying tasks from a source category.
-    Body: { name, source_category?, template_ids? }
-      - name:            required, the new category's label
-      - source_category: optional, defaults to "Default". Ignored if template_ids is provided.
-      - template_ids:    optional list[int] of source travel_tasks.id values to copy.
-                         When omitted, copies every task from source_category.
-    The new rows get a fresh order_index starting at 0.
+    Create a new travel category.
+
+    Body accepts three shapes:
+      1) { name, tasks: [{quadrant, task_text, subcategory}, ...] }
+         Creates the category with exactly these rows (used by the Undo flow
+         after a category delete).
+      2) { name, source_category, template_ids: [int, ...] }
+         Copies the specific IDs from any of the user's existing rows.
+      3) { name, source_category }
+         Copies every task from source_category (defaults to "Default").
+
+    The new rows always get a fresh order_index starting at 0.
     """
     data = request.get_json(force=True) or {}
     name = (data.get("name") or "").strip()
@@ -580,6 +585,31 @@ def travel_categories_create():
     if existing_same:
         return jsonify({"error": f'Category "{name}" already exists'}), 409
 
+    # --- Shape 1: raw tasks (undo restore) ---
+    raw_tasks = data.get("tasks")
+    if isinstance(raw_tasks, list):
+        payload = []
+        for idx, t in enumerate(raw_tasks):
+            text = (t.get("task_text") or "").strip()
+            if not text:
+                continue
+            q = (t.get("quadrant") or "do").strip().lower()
+            if q not in ("do", "schedule", "delegate", "eliminate"):
+                q = "do"
+            payload.append({
+                "user_id": user_id,
+                "category": name,
+                "quadrant": q,
+                "task_text": text,
+                "subcategory": (t.get("subcategory") or "General").strip() or "General",
+                "order_index": idx,
+            })
+        if not payload:
+            return jsonify({"error": "tasks list is empty"}), 400
+        post("travel_tasks", payload)
+        return jsonify({"status": "ok", "copied": len(payload)})
+
+    # --- Shapes 2 & 3: copy from an existing category ---
     # Ensure Default is seeded for first-run users
     from services.eisenhower_service import _seed_travel_tasks_if_empty
     _seed_travel_tasks_if_empty(user_id)
@@ -587,7 +617,6 @@ def travel_categories_create():
     template_ids = data.get("template_ids")
     source_category = (data.get("source_category") or "Default").strip() or "Default"
 
-    # Fetch the source tasks to copy
     if isinstance(template_ids, list) and template_ids:
         ids_csv = ",".join(str(int(i)) for i in template_ids if str(i).isdigit())
         if not ids_csv:

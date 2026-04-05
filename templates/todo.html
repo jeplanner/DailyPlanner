@@ -173,6 +173,51 @@ html.dark .em-prio-pill.low{background:#064e3b;color:#6ee7b7;}
   .tv-task select{grid-column:1 / -1;}
   .tv-add{grid-template-columns:1fr;gap:8px;}
 }
+
+/* Inline confirm banner (replaces native confirm()) */
+.tv-confirm{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;
+  border-radius:10px;padding:10px 14px;margin-bottom:14px;
+  animation:tvSlideDown .18s ease;
+}
+html.dark .tv-confirm{background:#3b1111;border-color:#7f1d1d;border-left-color:#ef4444;}
+.tv-confirm-icon{font-size:18px;line-height:1;}
+.tv-confirm-text{flex:1;font-size:13px;color:var(--em-text);min-width:180px;}
+.tv-confirm-text strong{color:#b91c1c;}
+html.dark .tv-confirm-text strong{color:#fca5a5;}
+.tv-confirm-actions{display:flex;gap:6px;}
+.tv-confirm-actions button{padding:7px 14px;border-radius:7px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:1px solid var(--em-border);}
+.tv-confirm-actions .cancel{background:var(--em-surface);color:var(--em-text2);}
+.tv-confirm-actions .cancel:hover{background:var(--em-border);color:var(--em-text);}
+.tv-confirm-actions .confirm{background:#dc2626;border-color:#dc2626;color:#fff;}
+.tv-confirm-actions .confirm:hover{background:#b91c1c;border-color:#b91c1c;}
+@keyframes tvSlideDown{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
+
+/* Undo toast (custom, distinct from standard toast.js ones because we need an action button) */
+.tv-undo-toast{
+  position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(12px);
+  background:rgba(30,41,59,.96);color:#fff;
+  padding:12px 14px 12px 18px;border-radius:12px;
+  font-size:13px;font-weight:500;font-family:'Inter',system-ui,sans-serif;
+  display:flex;align-items:center;gap:12px;
+  box-shadow:0 12px 32px rgba(0,0,0,.3);backdrop-filter:blur(10px);
+  z-index:10001;opacity:0;transition:all .25s ease;pointer-events:auto;
+  max-width:92vw;
+}
+.tv-undo-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.tv-undo-toast .tv-undo-msg{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tv-undo-toast button{
+  background:transparent;border:1px solid rgba(255,255,255,.35);
+  color:#fff;padding:6px 14px;border-radius:7px;
+  font-size:12px;font-weight:700;font-family:inherit;cursor:pointer;
+  text-transform:uppercase;letter-spacing:.5px;flex-shrink:0;
+}
+.tv-undo-toast button:hover{background:rgba(255,255,255,.12);border-color:#fff;}
+.tv-undo-toast .tv-undo-progress{
+  position:absolute;left:0;bottom:0;height:3px;background:#60a5fa;
+  border-radius:0 0 12px 12px;transition:width linear;
+}
 </style>
 </head>
 <body>
@@ -324,6 +369,9 @@ html.dark .em-prio-pill.low{background:#064e3b;color:#6ee7b7;}
             <button type="button" onclick="saveNewCategory()" style="padding:7px 16px;border:none;border-radius:7px;background:var(--q-schedule);color:#fff;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;">Save category</button>
           </div>
         </div>
+
+        <!-- Inline confirm host (for category delete, etc.) -->
+        <div id="tv-confirm-host"></div>
 
         <!-- Task list -->
         <div id="tv-task-list"></div>
@@ -785,10 +833,43 @@ async function updateTravelTask(id, field, value) {
 }
 
 async function deleteTravelTask(id) {
-  if (!confirm("Delete this travel task?")) return;
-  await _tvFetch(`/travel/tasks/${id}`, { method: "DELETE" });
+  // Snapshot the row so we can restore it on undo
+  const rowEl = document.querySelector(`.tv-task[data-id="${id}"]`);
+  let snapshot = null;
+  if (rowEl) {
+    const inputs = rowEl.querySelectorAll("input, select");
+    snapshot = {
+      category: document.getElementById("tv-cat-picker").value || "Default",
+      task_text: inputs[0]?.value || "",
+      quadrant: inputs[1]?.value || "do",
+      subcategory: inputs[2]?.value || "General",
+    };
+  }
+
+  const res = await _tvFetch(`/travel/tasks/${id}`, { method: "DELETE" });
+  if (res.status !== "ok") {
+    showToast(res.error || "Delete failed", "error");
+    return;
+  }
+
   await refreshTravelCategoryPicker();
   await loadTravelTasks();
+
+  if (snapshot && snapshot.task_text) {
+    showTvUndoToast(`Task deleted`, async () => {
+      const r = await _tvFetch("/travel/tasks", {
+        method: "POST",
+        body: JSON.stringify(snapshot),
+      });
+      if (r.status === "ok") {
+        showToast("Task restored", "success");
+        await refreshTravelCategoryPicker();
+        await loadTravelTasks();
+      } else {
+        showToast(r.error || "Restore failed", "error");
+      }
+    });
+  }
 }
 
 // ── New-category picker ──
@@ -905,17 +986,131 @@ async function renameTravelCategory() {
 async function deleteTravelCategory() {
   const name = document.getElementById("tv-cat-picker").value;
   if (!name) return;
-  if (!confirm(`Delete category "${name}" and ALL its tasks?`)) return;
-  const res = await _tvFetch("/travel/categories/delete", {
-    method: "POST",
-    body: JSON.stringify({ name }),
-  });
-  if (res.status === "ok") {
+
+  // Fetch the tasks first so we can (a) show an accurate count in the confirm banner
+  // and (b) snapshot them for the undo flow.
+  const listRes = await _tvFetch(`/travel/tasks?category=${encodeURIComponent(name)}`);
+  const snapshot = listRes.tasks || [];
+  const count = snapshot.length;
+
+  // Render an inline confirm banner (no browser popup)
+  const host = document.getElementById("tv-confirm-host");
+  host.innerHTML = `
+    <div class="tv-confirm" role="alertdialog" aria-labelledby="tv-confirm-title">
+      <span class="tv-confirm-icon">⚠️</span>
+      <div class="tv-confirm-text" id="tv-confirm-title">
+        Delete category <strong>"${_esc(name)}"</strong>
+        and its ${count} task${count === 1 ? "" : "s"}?
+      </div>
+      <div class="tv-confirm-actions">
+        <button type="button" class="cancel" onclick="cancelDeleteTravelCategory()">Cancel</button>
+        <button type="button" class="confirm" id="tv-confirm-delete-btn">Delete</button>
+      </div>
+    </div>
+  `;
+  host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  document.getElementById("tv-confirm-delete-btn").onclick = async () => {
+    cancelDeleteTravelCategory();
+
+    const res = await _tvFetch("/travel/categories/delete", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    if (res.status !== "ok") {
+      showToast(res.error || "Delete failed", "error");
+      return;
+    }
+
     await refreshTravelCategoryPicker();
     await loadTravelTasks();
-  } else {
-    showToast(res.error || "Delete failed", "error");
+
+    // Offer undo
+    showTvUndoToast(
+      `Category "${name}" deleted`,
+      async () => {
+        const restorePayload = {
+          name,
+          tasks: snapshot.map(t => ({
+            quadrant: t.quadrant,
+            task_text: t.task_text,
+            subcategory: t.subcategory,
+          })),
+        };
+        // Empty categories: skip tasks, backend will create a placeholder
+        if (!restorePayload.tasks.length) delete restorePayload.tasks;
+
+        const r = await _tvFetch("/travel/categories", {
+          method: "POST",
+          body: JSON.stringify(restorePayload),
+        });
+        if (r.status === "ok") {
+          showToast(`Category "${name}" restored`, "success");
+          await refreshTravelCategoryPicker();
+          document.getElementById("tv-cat-picker").value = name;
+          await loadTravelTasks();
+        } else {
+          showToast(r.error || "Restore failed", "error");
+        }
+      },
+      8000
+    );
+  };
+}
+
+function cancelDeleteTravelCategory() {
+  const host = document.getElementById("tv-confirm-host");
+  if (host) host.innerHTML = "";
+}
+
+/* ── Undo toast (custom because standard showToast has no action button) ── */
+let _tvActiveUndoToast = null;
+function showTvUndoToast(message, onUndo, duration = 6000) {
+  // Dismiss any prior undo toast
+  if (_tvActiveUndoToast) {
+    _tvActiveUndoToast.dismiss(true);
   }
+
+  const toast = document.createElement("div");
+  toast.className = "tv-undo-toast";
+  toast.innerHTML = `
+    <span class="tv-undo-msg">${_esc(message)}</span>
+    <button type="button">Undo</button>
+    <div class="tv-undo-progress" style="width:100%"></div>
+  `;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("show"));
+
+  let dismissed = false;
+  let timeoutId = null;
+  const progressEl = toast.querySelector(".tv-undo-progress");
+
+  const dismiss = (skipAnim = false) => {
+    if (dismissed) return;
+    dismissed = true;
+    clearTimeout(timeoutId);
+    if (skipAnim) {
+      toast.remove();
+    } else {
+      toast.classList.remove("show");
+      setTimeout(() => toast.remove(), 300);
+    }
+    if (_tvActiveUndoToast?.el === toast) _tvActiveUndoToast = null;
+  };
+
+  toast.querySelector("button").addEventListener("click", async () => {
+    dismiss();
+    try { await onUndo(); } catch (e) { console.error(e); }
+  });
+
+  // Countdown bar
+  requestAnimationFrame(() => {
+    progressEl.style.transition = `width ${duration}ms linear`;
+    progressEl.style.width = "0%";
+  });
+
+  timeoutId = setTimeout(dismiss, duration);
+  _tvActiveUndoToast = { el: toast, dismiss };
 }
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
