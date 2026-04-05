@@ -951,22 +951,84 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 
 /* ═══════════ RESPONSIVE ═══════════ */
 @media (max-width: 768px) {
+  :root {
+    --gutter-width: 52px;
+    --hour-height: 68px;
+    --header-height: 52px;
+    --col-header-height: 64px;
+  }
+
   .gcal-sidebar { display: none; }
+
+  /* Header */
   .gcal-header { padding: 6px 10px; }
-  .gcal-title { font-size: 16px; }
+  .gcal-header-left { gap: 6px; }
+  .gcal-header-right { gap: 6px; }
+  .gcal-title { font-size: 18px; }
+  .gcal-today-btn { padding: 6px 14px; font-size: 14px; }
+  .gcal-nav-arrows button { width: 38px; height: 38px; }
+  .gcal-nav-arrows button svg { width: 22px; height: 22px; }
   .gcal-create-btn span { display: none; }
-  .gcal-create-btn { padding: 8px 12px; border-radius: 50%; }
+  .gcal-create-btn { padding: 10px; border-radius: 50%; }
+  .gcal-create-btn svg { width: 20px; height: 20px; }
   .gcal-view-switcher { display: none; }
-  .gcal-gutter-header, .gcal-gutter { width: 40px; }
-  :root { --gutter-width: 40px; }
-  .gcal-hour-label { font-size: 9px; right: 4px; }
-  .event-chip { font-size: 11px; padding: 1px 4px; }
-  .modal-card { padding: 16px; border-radius: 12px; }
-  .modal-time-row { flex-direction: column; gap: 8px; }
+
+  /* Day headers */
+  .gcal-gutter-header, .gcal-gutter { width: 52px; }
+  .gcal-day-header { padding: 6px 0 4px; }
+  .gcal-day-name, .day-name { font-size: 12px; }
+  .gcal-day-number, .day-number {
+    width: 36px; height: 36px; font-size: 20px;
+  }
+
+  /* Time gutter labels */
+  .gcal-hour-label, .hour-label { font-size: 12px; right: 6px; }
+
+  /* Event chips — readable on phones */
+  .event-chip {
+    font-size: 13px;
+    padding: 3px 6px;
+    border-left-width: 3px;
+    min-height: 22px;
+  }
+  .event-chip .event-title, .chip-title { font-size: 13px; }
+  .event-chip .event-time, .chip-time { font-size: 12px; }
+
+  /* Modal — larger, more tappable */
+  .modal-card { padding: 18px; border-radius: 14px; max-width: 96vw; }
+  .modal-header { margin-bottom: 14px; }
+  .modal-header h3 { font-size: 20px; }
+  .modal-time-row { flex-direction: column; gap: 10px; }
+  .form-group label { font-size: 13px; }
+  /* 16px prevents iOS auto-zoom on focus */
+  .form-input { font-size: 16px; padding: 10px 12px; }
+  .duration-label { font-size: 15px; }
+  .dur-btn { padding: 6px 12px; font-size: 13px; }
+  .quad-btn { padding: 7px 12px; font-size: 13px; }
+  .btn { padding: 10px 16px; font-size: 15px; }
+  .btn-sm { padding: 7px 12px; font-size: 13px; }
+  .modal-close { width: 40px; height: 40px; }
+  .modal-close svg { width: 22px; height: 22px; }
+
+  /* Popover */
+  .event-popover { width: min(92vw, 320px); padding: 14px; }
+  .popover-header strong { font-size: 17px; }
+  .popover-time, .popover-desc { font-size: 14px; }
+
+  /* Task modal grid collapses to single column */
+  .task-grid { grid-template-columns: 1fr; gap: 10px; }
+  .number-control button { width: 40px; height: 42px; font-size: 18px; }
+  .number-control input { font-size: 16px; padding: 8px 4px; }
 }
 
 @media (max-width: 480px) {
-  .event-chip .event-time { display: none; }
+  :root { --gutter-width: 46px; }
+  .gcal-title { font-size: 17px; }
+  .gcal-today-btn { padding: 5px 10px; font-size: 13px; }
+  .gcal-hour-label, .hour-label { font-size: 11px; right: 4px; }
+  /* Keep event time visible but slightly smaller */
+  .event-chip .event-time, .chip-time { font-size: 11px; }
+  .gcal-day-number, .day-number { width: 32px; height: 32px; font-size: 18px; }
 }
 
 /* ═══════════ JS-GENERATED CLASS ALIASES ═══════════ */
