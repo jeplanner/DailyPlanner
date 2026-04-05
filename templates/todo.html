@@ -1575,23 +1575,113 @@ function quickAdd() {
       is_done: false
     })
   })
-  .then(r => r.json())
-  .then(res => {
-    if (res && res.html) {
-      _insertTaskCardHtml(res.quadrant || quadrant, res.html);
-      input.value = "";
-      // Re-focus the input so the user can keep typing (desktop only)
-      if (!_isTouchDevice) input.focus();
-    } else {
-      // Server didn't return the partial for some reason — fall back
-      // to a full reload so the user still sees their task.
-      showToast("Added (refreshing…)", "info");
-      location.reload();
-    }
+  .then(async r => {
+    const body = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, body };
   })
-  .catch(() => {
+  .then(({ ok, status, body }) => {
+    if (!ok) {
+      const msg = (body && (body.error || body.message)) || `Save failed (${status})`;
+      console.error("quickAdd failed:", msg, body);
+      showToast(msg, "error");
+      return;
+    }
+
+    // Prefer the server-rendered partial, but fall back to a client-built
+    // card so we never reload the page (that wipes the typed inputs and
+    // hid newly added rows in practice).
+    const html = (body && body.html) ? body.html : _buildClientTaskCard({
+      id: body && body.id,
+      task_text: text,
+      quadrant: body?.quadrant || quadrant,
+      priority: priority,
+      project_name: _projectNameFor(projectId),
+      recurrence: recurrence,
+    });
+
+    _insertTaskCardHtml(body?.quadrant || quadrant, html);
+    input.value = "";
+    if (!_isTouchDevice) input.focus();
+    showToast("Task added", "success");
+  })
+  .catch((err) => {
+    console.error("quickAdd network error:", err);
     showToast("Failed to add task", "error");
   });
+}
+
+// Lookup project name from the <select> so the client-side fallback card
+// can show the project label.
+function _projectNameFor(projectId) {
+  if (!projectId) return null;
+  const sel = document.getElementById("quick-project");
+  if (!sel) return null;
+  const opt = sel.querySelector(`option[value="${projectId}"]`);
+  return opt ? opt.textContent : null;
+}
+
+// Build a task card HTML string from scratch — used when the server
+// couldn't render the partial. Mirrors the shape of _em_task_card.html
+// closely enough that the existing event handlers (toggleDone, moveQuadrant,
+// resolveTask, cycleTaskPriority) pick it up.
+function _buildClientTaskCard(t) {
+  const esc = (s) => {
+    const d = document.createElement("div");
+    d.textContent = s ?? "";
+    return d.innerHTML;
+  };
+  const id = esc(t.id || "");
+  const prio = esc(t.priority || "medium");
+  const quadrant = esc(t.quadrant || "schedule");
+  const title = esc(t.task_text || "");
+  const projectName = t.project_name ? `<span class="em-project-name">${esc(t.project_name)}</span>` : "";
+  const recurPill = t.recurrence
+    ? `<span class="em-recur-pill" title="Repeats ${esc(t.recurrence)}">🔁 ${esc(t.recurrence)}</span>`
+    : "";
+  return `
+    <div class="em-task prio-${prio}"
+         data-id="${id}"
+         data-quadrant="${quadrant}"
+         data-priority="${prio}"
+         data-status="open"
+         data-source="matrix">
+      <span class="em-sel-check" aria-hidden="true"></span>
+      <input type="checkbox" onchange="toggleDone('${id}', this.checked)">
+      <div class="em-task-body">
+        <div class="em-task-title">
+          ${title}
+          <span class="em-prio-pill ${prio}"
+                title="Click to cycle priority — currently ${prio}"
+                onclick="cycleTaskPriority(event, '${id}')">${prio.toUpperCase()}</span>
+          ${recurPill}
+        </div>
+        <div class="em-task-meta">
+          <span class="em-source-badge em-src-matrix">Task</span>
+          ${projectName}
+        </div>
+      </div>
+      <div class="em-task-actions">
+        <select class="em-move-select" onchange="moveQuadrant('${id}', this.value)">
+          <option value="do"${quadrant==='do'?' selected':''}>Do</option>
+          <option value="schedule"${quadrant==='schedule'?' selected':''}>Schedule</option>
+          <option value="delegate"${quadrant==='delegate'?' selected':''}>Delegate</option>
+          <option value="eliminate"${quadrant==='eliminate'?' selected':''}>Eliminate</option>
+        </select>
+        <div class="em-more-wrap">
+          <button type="button" class="em-more-btn" title="Set status…"
+                  onclick="toggleResolveMenu(event,'${id}')">⋯</button>
+          <div class="em-more-menu" id="menu-${id}">
+            <button type="button" onclick="resolveTask('${id}','open')">☐ Open</button>
+            <button type="button" onclick="resolveTask('${id}','in_progress')">◐ In Progress</button>
+            <div class="sep"></div>
+            <button type="button" onclick="resolveTask('${id}','done')">✓ Done</button>
+            <button type="button" onclick="resolveTask('${id}','skipped')">⏭ Skipped</button>
+            <button type="button" onclick="resolveTask('${id}','deleted')">🗑 Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ── Insert a server-rendered task card into the right quadrant body ──

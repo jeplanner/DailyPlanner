@@ -1124,6 +1124,16 @@ def todo_autosave():
                 "project_name": project_name,
                 "source_task_id": source_task_id,
                 "source": "matrix",
+                # Defensive defaults for fields the template may reference
+                # via `{% if t.xxx %}` — keeps Jinja's Undefined out of the
+                # picture entirely.
+                "objective_id": None,
+                "key_result_id": None,
+                "initiative_id": None,
+                "kr_title": None,
+                "kr_goal_title": None,
+                "kr_initiative_title": None,
+                "kr_color": None,
             }
             try:
                 rendered_html = render_template(
@@ -1132,7 +1142,7 @@ def todo_autosave():
                     q=quadrant,
                 )
             except Exception as e:
-                logger.warning("Failed to render _em_task_card.html: %s", e)
+                logger.exception("Failed to render _em_task_card.html: %s", e)
 
         return jsonify({
             "status": "ok",
