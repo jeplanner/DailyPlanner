@@ -230,10 +230,11 @@
             <td class="col-status">
               <select class="status-select status-{{ t.status }}"
                       onchange="updateStatus('{{ t.task_id }}', this.value, '{{ t.occurrence_date }}')">
-                <option value="backlog" {{ 'selected' if t.status=='backlog' }}>Backlog</option>
-                <option value="open" {{ 'selected' if t.status=='open' }}>Open</option>
-                <option value="in_progress" {{ 'selected' if t.status=='in_progress' }}>In Progress</option>
-                <option value="done" {{ 'selected' if t.status=='done' }}>Done</option>
+                <option value="open"         {{ 'selected' if t.status=='open' }}>Open</option>
+                <option value="in_progress"  {{ 'selected' if t.status=='in_progress' }}>In Progress</option>
+                <option value="done"         {{ 'selected' if t.status=='done' }}>Done</option>
+                <option value="not_required" {{ 'selected' if t.status=='not_required' }}>Not required</option>
+                <option value="skipped"      {{ 'selected' if t.status=='skipped' }}>Skipped</option>
               </select>
             </td>
 
@@ -321,10 +322,11 @@
   <div class="panel-quick-actions">
     <select id="sheet-status" class="quick-select status-select"
             onchange="autoSaveField('status', this.value)">
-      <option value="backlog">Backlog</option>
       <option value="open">Open</option>
       <option value="in_progress">In Progress</option>
       <option value="done">Done</option>
+      <option value="not_required">Not required</option>
+      <option value="skipped">Skipped</option>
     </select>
     <select id="sheet-priority" class="quick-select prio-select"
             onchange="autoSaveField('priority', this.value)">

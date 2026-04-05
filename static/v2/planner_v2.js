@@ -656,22 +656,31 @@ function showPopover(ev, chipEl, dateStr) {
   document.getElementById("popover-time").textContent = formatTimeRange(ev.start_time, ev.end_time);
   document.getElementById("popover-desc").textContent = ev.description || ev.notes || "";
 
-  // Position near chip
-  const rect = chipEl.getBoundingClientRect();
-  popover.style.top = (rect.top + window.scrollY) + "px";
-  popover.style.left = (rect.right + 8) + "px";
-  popover.classList.remove("hidden");
+  // On mobile, let CSS render the popover as a bottom-sheet (see planner_v2.css @media).
+  // Clear any inline positioning from a previous desktop-view invocation.
+  const isMobile = window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile) {
+    popover.style.top = "";
+    popover.style.left = "";
+    popover.classList.remove("hidden");
+  } else {
+    // Position near chip (desktop)
+    const rect = chipEl.getBoundingClientRect();
+    popover.style.top = (rect.top + window.scrollY) + "px";
+    popover.style.left = (rect.right + 8) + "px";
+    popover.classList.remove("hidden");
 
-  // Adjust if offscreen right
-  requestAnimationFrame(() => {
-    const pr = popover.getBoundingClientRect();
-    if (pr.right > window.innerWidth - 10) {
-      popover.style.left = (rect.left - pr.width - 8) + "px";
-    }
-    if (pr.bottom > window.innerHeight - 10) {
-      popover.style.top = (window.innerHeight - pr.height - 10 + window.scrollY) + "px";
-    }
-  });
+    // Adjust if offscreen right
+    requestAnimationFrame(() => {
+      const pr = popover.getBoundingClientRect();
+      if (pr.right > window.innerWidth - 10) {
+        popover.style.left = (rect.left - pr.width - 8) + "px";
+      }
+      if (pr.bottom > window.innerHeight - 10) {
+        popover.style.top = (window.innerHeight - pr.height - 10 + window.scrollY) + "px";
+      }
+    });
+  }
 
   if (window.feather) feather.replace();
 }

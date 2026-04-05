@@ -54,6 +54,8 @@
       <span class="status-chip status-{{ task.status }}">
         {% if task.status == 'done' %}Done
         {% elif task.status == 'in_progress' %}In Progress
+        {% elif task.status == 'not_required' %}Not required
+        {% elif task.status == 'skipped' %}Skipped
         {% else %}Open{% endif %}
       </span>
 
@@ -120,9 +122,11 @@
         <div class="field">
           <label>Status</label>
           <select onchange="updateStatus('{{ task.task_id }}', this.value, this.closest('.task').dataset.date, this)">
-            <option value="open"        {% if task.status=='open'        %}selected{% endif %}>Open</option>
-            <option value="in_progress" {% if task.status=='in_progress' %}selected{% endif %}>In Progress</option>
-            <option value="done"        {% if task.status=='done'        %}selected{% endif %}>Done</option>
+            <option value="open"         {% if task.status=='open'         %}selected{% endif %}>Open</option>
+            <option value="in_progress"  {% if task.status=='in_progress'  %}selected{% endif %}>In Progress</option>
+            <option value="done"         {% if task.status=='done'         %}selected{% endif %}>Done</option>
+            <option value="not_required" {% if task.status=='not_required' %}selected{% endif %}>Not required</option>
+            <option value="skipped"      {% if task.status=='skipped'      %}selected{% endif %}>Skipped</option>
           </select>
           <span class="field-fb"></span>
         </div>

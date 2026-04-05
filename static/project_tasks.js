@@ -300,8 +300,12 @@ function populateBoard() {
     if (col) col.innerHTML = "";
   });
 
+  // Closed-but-not-"done" statuses live in the Done column visually
+  const CLOSED_ALIAS = { not_required: "done", skipped: "done" };
+
   _qa(".task-row").forEach(row => {
-    const status = row.dataset.status || "open";
+    const rawStatus = row.dataset.status || "open";
+    const status = CLOSED_ALIAS[rawStatus] || rawStatus;
     const col = _id(`board-${status}`);
     if (!col) return;
 

@@ -553,7 +553,7 @@ body {
   left: 2px;
   right: 2px;
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: 3px 6px;
   font-size: 12px;
   line-height: 1.3;
   overflow: hidden;
@@ -569,14 +569,15 @@ body {
 }
 
 .event-chip .event-title {
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .event-chip .event-time {
   font-size: 11px;
-  opacity: 0.85;
+  font-weight: 500;
+  opacity: 0.9;
 }
 .event-chip .event-description {
   font-size: 11px;
@@ -952,8 +953,8 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 /* ═══════════ RESPONSIVE ═══════════ */
 @media (max-width: 768px) {
   :root {
-    --gutter-width: 52px;
-    --hour-height: 68px;
+    --gutter-width: 58px;
+    --hour-height: 72px;
     --header-height: 52px;
     --col-header-height: 64px;
   }
@@ -964,7 +965,7 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   .gcal-header { padding: 6px 10px; }
   .gcal-header-left { gap: 6px; }
   .gcal-header-right { gap: 6px; }
-  .gcal-title { font-size: 18px; }
+  .gcal-title { font-size: 19px; font-weight: 500; }
   .gcal-today-btn { padding: 6px 14px; font-size: 14px; }
   .gcal-nav-arrows button { width: 38px; height: 38px; }
   .gcal-nav-arrows button svg { width: 22px; height: 22px; }
@@ -974,28 +975,56 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   .gcal-view-switcher { display: none; }
 
   /* Day headers */
-  .gcal-gutter-header, .gcal-gutter { width: 52px; }
+  .gcal-gutter-header, .gcal-gutter { width: 58px; }
   .gcal-day-header { padding: 6px 0 4px; }
-  .gcal-day-name, .day-name { font-size: 12px; }
+  .gcal-day-name, .day-name { font-size: 13px; font-weight: 600; }
   .gcal-day-number, .day-number {
-    width: 36px; height: 36px; font-size: 20px;
+    width: 38px; height: 38px; font-size: 21px; font-weight: 500;
   }
 
-  /* Time gutter labels */
-  .gcal-hour-label, .hour-label { font-size: 12px; right: 6px; }
+  /* Time gutter labels — bumped up so they're readable at arm's length */
+  .gcal-hour-label, .hour-label {
+    font-size: 14px;
+    font-weight: 600;
+    right: 8px;
+    color: var(--gcal-text);
+    opacity: 0.85;
+  }
 
-  /* Event chips — readable on phones */
+  /* Event chips — readable on phones, bold like GCal */
   .event-chip {
-    font-size: 13px;
-    padding: 3px 6px;
-    border-left-width: 3px;
-    min-height: 22px;
+    font-size: 14px;
+    padding: 4px 7px;
+    border-left-width: 4px;
+    min-height: 24px;
   }
-  .event-chip .event-title, .chip-title { font-size: 13px; }
-  .event-chip .event-time, .chip-time { font-size: 12px; }
+  .event-chip .event-title, .chip-title {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .event-chip .event-time, .chip-time {
+    font-size: 12px;
+    font-weight: 600;
+  }
 
-  /* Modal — larger, more tappable */
-  .modal-card { padding: 18px; border-radius: 14px; max-width: 96vw; }
+  /* ── Modals as bottom sheets on mobile (fix off-screen / left-clipped edit modal) ── */
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  .modal-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0));
+    border-radius: 16px 16px 0 0;
+    animation: modalSlideUp 0.25s ease;
+  }
+  @keyframes modalSlideUp {
+    from { transform: translateY(100%); opacity: 0.4; }
+    to   { transform: translateY(0); opacity: 1; }
+  }
+
   .modal-header { margin-bottom: 14px; }
   .modal-header h3 { font-size: 20px; }
   .modal-time-row { flex-direction: column; gap: 10px; }
@@ -1003,17 +1032,31 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
   /* 16px prevents iOS auto-zoom on focus */
   .form-input { font-size: 16px; padding: 10px 12px; }
   .duration-label { font-size: 15px; }
-  .dur-btn { padding: 6px 12px; font-size: 13px; }
-  .quad-btn { padding: 7px 12px; font-size: 13px; }
-  .btn { padding: 10px 16px; font-size: 15px; }
+  .dur-btn { padding: 7px 13px; font-size: 14px; }
+  .quad-btn { padding: 8px 13px; font-size: 14px; }
+  .btn { padding: 11px 18px; font-size: 15px; }
   .btn-sm { padding: 7px 12px; font-size: 13px; }
   .modal-close { width: 40px; height: 40px; }
   .modal-close svg { width: 22px; height: 22px; }
+  .modal-actions { flex-wrap: wrap; }
 
-  /* Popover */
-  .event-popover { width: min(92vw, 320px); padding: 14px; }
-  .popover-header strong { font-size: 17px; }
-  .popover-time, .popover-desc { font-size: 14px; }
+  /* ── Popover → also render as bottom sheet on mobile ── */
+  .event-popover {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 16px 16px 0 0;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0));
+    box-shadow: 0 -8px 28px rgba(0,0,0,0.22);
+    animation: modalSlideUp 0.25s ease;
+  }
+  .popover-header strong { font-size: 18px; }
+  .popover-time, .popover-desc { font-size: 15px; }
+  .popover-actions .btn { flex: 1; justify-content: center; }
 
   /* Task modal grid collapses to single column */
   .task-grid { grid-template-columns: 1fr; gap: 10px; }
@@ -1022,13 +1065,13 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 }
 
 @media (max-width: 480px) {
-  :root { --gutter-width: 46px; }
-  .gcal-title { font-size: 17px; }
+  :root { --gutter-width: 54px; }
+  .gcal-title { font-size: 18px; }
   .gcal-today-btn { padding: 5px 10px; font-size: 13px; }
-  .gcal-hour-label, .hour-label { font-size: 11px; right: 4px; }
+  .gcal-hour-label, .hour-label { font-size: 13px; right: 6px; }
   /* Keep event time visible but slightly smaller */
   .event-chip .event-time, .chip-time { font-size: 11px; }
-  .gcal-day-number, .day-number { width: 32px; height: 32px; font-size: 18px; }
+  .gcal-day-number, .day-number { width: 34px; height: 34px; font-size: 19px; }
 }
 
 /* ═══════════ JS-GENERATED CLASS ALIASES ═══════════ */
@@ -1086,7 +1129,7 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 
 /* Event chip inner content */
 .chip-title {
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1094,7 +1137,8 @@ html.dark .conflict-box { background: #3b1111; border-color: #7f1d1d; }
 }
 .chip-time {
   font-size: 11px;
-  opacity: 0.85;
+  font-weight: 500;
+  opacity: 0.9;
 }
 
 /* ═══════════ SCROLLBAR ═══════════ */

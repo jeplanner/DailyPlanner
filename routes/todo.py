@@ -2,6 +2,11 @@ import calendar
 from collections import OrderedDict
 from datetime import date, datetime, timedelta
 
+# Unified status set (matches project_tasks status dropdowns)
+_OPEN_STATUSES = {"open", "in_progress"}
+_RESOLVED_STATUSES = {"done", "not_required", "skipped"}
+_ALL_STATUSES = _OPEN_STATUSES | _RESOLVED_STATUSES
+
 from flask import Blueprint, jsonify, redirect, render_template, render_template_string, request, session, url_for
 
 from auth import login_required
@@ -52,6 +57,19 @@ def todo():
     projects = get("projects", params={"user_id": f"eq.{user_id}"})
     project_map = {p["project_id"]: p["name"] for p in projects}
 
+    # 2b️⃣ Build recurrence map for badge display
+    recurring_ids = {t.get("recurring_id") for t in raw_tasks if t.get("recurring_id")}
+    recurrence_map = {}
+    if recurring_ids:
+        rules = get(
+            "recurring_tasks",
+            params={
+                "id": f"in.({','.join(str(r) for r in recurring_ids)})",
+                "select": "id,recurrence",
+            },
+        ) or []
+        recurrence_map = {r["id"]: r.get("recurrence") for r in rules}
+
     # 3️⃣ Normalize standalone tasks
     tasks = []
     for t in raw_tasks:
@@ -60,6 +78,8 @@ def todo():
             "task_text": t["task_text"],
             "quadrant": t["quadrant"],
             "is_done": t.get("is_done", False),
+            "status": t.get("status") or ("done" if t.get("is_done") else "open"),
+            "recurrence": recurrence_map.get(t.get("recurring_id")),
             "project_id": t.get("project_id"),
             "project_name": project_map.get(t.get("project_id")),
             "source_task_id": t.get("source_task_id"),
@@ -197,22 +217,29 @@ def toggle_todo_done():
     data = request.get_json()
 
     task_id = data.get("id")
-    is_done = bool(data.get("is_done"))
 
     if not task_id:
         return jsonify({"error": "Missing task id"}), 400
 
-    status = "done" if is_done else "open"
+    # Unified status: open | in_progress | done | not_required | skipped
+    req_status = (data.get("status") or "").strip().lower()
+    if req_status in _ALL_STATUSES:
+        status = req_status
+    else:
+        # Legacy checkbox path: is_done flag decides
+        status = "done" if bool(data.get("is_done")) else "open"
 
-    # 1️⃣ Fetch source_task_id BEFORE update (avoids extra fetch after)
-    source_task_id = None
-    if is_done:
-        rows = get(
-            "todo_matrix",
-            params={"id": f"eq.{task_id}", "select": "source_task_id"},
-        )
-        if rows:
-            source_task_id = rows[0].get("source_task_id")
+    is_done = status in _RESOLVED_STATUSES
+
+    # 1️⃣ Fetch task (need source_task_id + recurring_id before update)
+    rows = get(
+        "todo_matrix",
+        params={
+            "id": f"eq.{task_id}",
+            "select": "source_task_id,recurring_id,plan_date,quadrant,task_text,category,subcategory,project_id",
+        },
+    )
+    task_row = rows[0] if rows else None
 
     # 2️⃣ Update Eisenhower task
     update(
@@ -221,15 +248,133 @@ def toggle_todo_done():
         json={"is_done": is_done, "status": status},
     )
 
-    # 3️⃣ Sync back to project task (using pre-fetched source_task_id)
-    if source_task_id:
-        update(
-            "project_tasks",
-            params={"task_id": f"eq.{source_task_id}"},
-            json={"status": "done"},
-        )
+    # 3️⃣ Sync back to project task (non-recurring only)
+    if is_done and task_row:
+        source_task_id = task_row.get("source_task_id")
+        recurring_id = task_row.get("recurring_id")
+        if source_task_id and not recurring_id:
+            update(
+                "project_tasks",
+                params={"task_id": f"eq.{source_task_id}"},
+                json={"status": "done"},
+            )
 
-    return jsonify({"status": "ok"})
+    # 4️⃣ Recurring: pre-create the next occurrence so it appears on the next matching date
+    next_occurrence_iso = None
+    if is_done and task_row and task_row.get("recurring_id"):
+        try:
+            next_occurrence_iso = _create_next_recurring_instance(
+                user_id=session["user_id"],
+                recurring_id=task_row["recurring_id"],
+                current_plan_date=date.fromisoformat(str(task_row["plan_date"])),
+                fallback_quadrant=task_row.get("quadrant"),
+                fallback_text=task_row.get("task_text"),
+                fallback_category=task_row.get("category"),
+                fallback_subcategory=task_row.get("subcategory"),
+                fallback_project_id=task_row.get("project_id"),
+            )
+        except Exception as e:
+            logger.warning("Failed to pre-create next recurring occurrence: %s", e)
+
+    return jsonify({"status": "ok", "next_occurrence": next_occurrence_iso})
+
+
+def _next_recurrence_date(rule, from_date):
+    """Return the first date strictly after `from_date` that matches the rule, or None."""
+    rtype = rule.get("recurrence")
+    end = rule.get("end_date")
+    end_date = date.fromisoformat(end) if end else None
+
+    # Daily: next day
+    if rtype == "daily":
+        nxt = from_date + timedelta(days=1)
+        return nxt if (not end_date or nxt <= end_date) else None
+
+    # Weekly: scan next 7 days for matching weekday
+    if rtype == "weekly":
+        days = rule.get("days_of_week") or []
+        if not days:
+            return None
+        for i in range(1, 8):
+            nxt = from_date + timedelta(days=i)
+            if nxt.weekday() in days:
+                return nxt if (not end_date or nxt <= end_date) else None
+        return None
+
+    # Monthly: same day_of_month next month (clamped to last day of that month)
+    if rtype == "monthly":
+        dom = rule.get("day_of_month") or from_date.day
+        year = from_date.year
+        month = from_date.month + 1
+        if month > 12:
+            month = 1
+            year += 1
+        last_day = calendar.monthrange(year, month)[1]
+        nxt = date(year, month, min(dom, last_day))
+        return nxt if (not end_date or nxt <= end_date) else None
+
+    return None
+
+
+def _create_next_recurring_instance(user_id, recurring_id, current_plan_date,
+                                    fallback_quadrant, fallback_text,
+                                    fallback_category, fallback_subcategory,
+                                    fallback_project_id):
+    """
+    Look up the recurring rule and insert a todo_matrix row for the next
+    matching date. Idempotent — skips if a row already exists for that rule+date.
+    Returns the ISO date of the next occurrence (or None).
+    """
+    rule_rows = get(
+        "recurring_tasks",
+        params={"id": f"eq.{recurring_id}", "is_active": "eq.true"},
+    ) or []
+    if not rule_rows:
+        return None
+    rule = rule_rows[0]
+
+    next_date = _next_recurrence_date(rule, current_plan_date)
+    if not next_date:
+        return None
+
+    # Idempotency guard
+    existing = get(
+        "todo_matrix",
+        params={
+            "user_id": f"eq.{user_id}",
+            "recurring_id": f"eq.{recurring_id}",
+            "plan_date": f"eq.{next_date.isoformat()}",
+            "is_deleted": "eq.false",
+            "select": "id",
+            "limit": 1,
+        },
+    ) or []
+    if existing:
+        return next_date.isoformat()
+
+    payload = {
+        "user_id": user_id,
+        "plan_date": next_date.isoformat(),
+        "task_date": next_date.isoformat(),
+        "quadrant": rule.get("quadrant") or fallback_quadrant,
+        "task_text": rule.get("task_text") or fallback_text,
+        "category": rule.get("category") or fallback_category or "General",
+        "subcategory": rule.get("subcategory") or fallback_subcategory or "General",
+        "is_done": False,
+        "is_deleted": False,
+        "status": "open",
+        "recurring_id": recurring_id,
+    }
+    if fallback_project_id:
+        payload["project_id"] = fallback_project_id
+
+    try:
+        post("todo_matrix", payload)
+    except Exception as e:
+        logger.warning("Insert next recurring instance failed: %s", e)
+        return None
+
+    return next_date.isoformat()
 
 
 @todo_bp.route("/todo/copy-prev", methods=["POST"])
@@ -344,6 +489,29 @@ def todo_autosave():
         if source_task_id:
             row_data["source_task_id"] = source_task_id
 
+        # 🔁 Recurring rule — create if specified
+        recurrence = (data.get("recurrence") or "").strip().lower() or None
+        if recurrence in ("daily", "weekly", "monthly"):
+            try:
+                plan_d = date.fromisoformat(data["plan_date"])
+                rule_payload = {
+                    "user_id": user_id,
+                    "quadrant": quadrant,
+                    "task_text": text,
+                    "recurrence": recurrence,
+                    "start_date": data["plan_date"],
+                    "is_active": True,
+                    "category": "General",
+                    "subcategory": "General",
+                    "day_of_month": plan_d.day if recurrence == "monthly" else None,
+                    "days_of_week": [plan_d.weekday()] if recurrence == "weekly" else None,
+                }
+                rule_rows = post("recurring_tasks", rule_payload)
+                if rule_rows:
+                    row_data["recurring_id"] = rule_rows[0]["id"]
+            except Exception as e:
+                logger.warning("Failed to create recurring rule from Eisenhower: %s", e)
+
         rows = post("todo_matrix", row_data)
         return jsonify({"status": "ok", "id": rows[0]["id"] if rows else None})
 
@@ -435,6 +603,9 @@ def build_eisenhower_view(tasks, plan_date):
             "id": t["id"],
             "task_text": t["task_text"],
             "is_done": t.get("is_done", False),
+            "status": t.get("status"),
+            "recurrence": t.get("recurrence"),
+            "source": t.get("source", "matrix"),
             "project_id": t.get("project_id"),
             "project_name": t.get("project_name"),
             "source_task_id": t.get("source_task_id"),

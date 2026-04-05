@@ -100,6 +100,29 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-extra-row label{font-size:11px;font-weight:600;color:var(--em-text3);white-space:nowrap;}
 .em-extra-input{padding:5px 8px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
 .em-extra-input:focus{border-color:var(--q-schedule);}
+
+/* Status badge + resolution menu */
+.em-status-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
+.em-status-badge.done{background:#d1fae5;color:#059669;}
+.em-status-badge.in_progress{background:#dbeafe;color:#2563eb;}
+.em-status-badge.not_required{background:#fef3c7;color:#b45309;}
+.em-status-badge.skipped{background:#e0e7ff;color:#4f46e5;}
+html.dark .em-status-badge.done{background:#064e3b;color:#6ee7b7;}
+html.dark .em-status-badge.in_progress{background:#1e3a8a;color:#93c5fd;}
+html.dark .em-status-badge.not_required{background:#451a03;color:#fbbf24;}
+html.dark .em-status-badge.skipped{background:#1e1b4b;color:#a5b4fc;}
+
+.em-more-wrap{position:relative;}
+.em-more-btn{width:22px;height:22px;border:1px solid transparent;background:none;border-radius:5px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--em-text3);font-size:14px;font-weight:700;line-height:1;padding:0;}
+.em-more-btn:hover{background:var(--em-border);color:var(--em-text);}
+.em-more-menu{position:absolute;right:0;top:26px;min-width:140px;background:var(--em-surface);border:1px solid var(--em-border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);padding:4px;z-index:50;display:none;}
+.em-more-menu.open{display:block;}
+.em-more-menu button{display:flex;align-items:center;gap:6px;width:100%;padding:7px 10px;border:none;background:none;border-radius:6px;font-size:12px;font-family:inherit;color:var(--em-text);cursor:pointer;text-align:left;}
+.em-more-menu button:hover{background:var(--em-border);}
+.em-more-menu .sep{height:1px;background:var(--em-border);margin:4px 0;}
+
+/* Recurring pill next to title */
+.em-recur-pill{display:inline-flex;align-items:center;gap:2px;font-size:9px;font-weight:600;padding:1px 5px;border-radius:4px;background:var(--em-border);color:var(--em-text2);margin-left:4px;text-transform:uppercase;}
 </style>
 </head>
 <body>
@@ -175,7 +198,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
     </div>
   </div>
   <!-- Context fields that show based on quadrant -->
-  <div id="quick-extra" class="em-quick-extra" style="display:none;">
+  <div id="quick-extra" class="em-quick-extra">
     <div id="extra-do" style="display:none;" class="em-extra-row">
       <label>Time</label>
       <input type="time" id="quick-do-time" class="em-extra-input" step="300">
@@ -189,6 +212,15 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
       <input type="text" id="quick-delegate" class="em-extra-input" placeholder="Person name" maxlength="25">
       <label style="margin-left:10px;">Due Date</label>
       <input type="date" id="quick-delegate-due" class="em-extra-input">
+    </div>
+    <div class="em-extra-row">
+      <label>Repeat</label>
+      <select id="quick-recurrence" class="em-extra-input">
+        <option value="">Once</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
     </div>
   </div>
 
@@ -221,7 +253,21 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
             {% endif %}
 
             <div class="em-task-body">
-              <div class="em-task-title">{{ t.task_text }}</div>
+              <div class="em-task-title">
+                {{ t.task_text }}
+                {% if t.status == 'done' %}
+                  <span class="em-status-badge done">Done</span>
+                {% elif t.status == 'in_progress' %}
+                  <span class="em-status-badge in_progress">In Progress</span>
+                {% elif t.status == 'not_required' %}
+                  <span class="em-status-badge not_required">N/A</span>
+                {% elif t.status == 'skipped' %}
+                  <span class="em-status-badge skipped">Skipped</span>
+                {% endif %}
+                {% if t.recurrence %}
+                  <span class="em-recur-pill" title="Repeats {{ t.recurrence }}">🔁 {{ t.recurrence }}</span>
+                {% endif %}
+              </div>
               <div class="em-task-meta">
                 {% if t.source == 'event' %}
                   <span class="em-source-badge em-src-event">Event</span>
@@ -244,6 +290,17 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
                 <option value="delegate" {{ 'selected' if q=='delegate' }}>Delegate</option>
                 <option value="eliminate" {{ 'selected' if q=='eliminate' }}>Eliminate</option>
               </select>
+              <div class="em-more-wrap">
+                <button type="button" class="em-more-btn" title="Set status…" onclick="toggleResolveMenu(event,'{{ t.id }}')">⋯</button>
+                <div class="em-more-menu" id="menu-{{ t.id }}">
+                  <button type="button" onclick="resolveTask('{{ t.id }}','open')">☐ Open</button>
+                  <button type="button" onclick="resolveTask('{{ t.id }}','in_progress')">◐ In Progress</button>
+                  <div class="sep"></div>
+                  <button type="button" onclick="resolveTask('{{ t.id }}','done')">✓ Done</button>
+                  <button type="button" onclick="resolveTask('{{ t.id }}','not_required')">∅ Not required</button>
+                  <button type="button" onclick="resolveTask('{{ t.id }}','skipped')">⏭ Skipped</button>
+                </div>
+              </div>
               {% endif %}
             </div>
           </div>
@@ -278,8 +335,55 @@ function toggleDone(taskId, isDone) {
   fetch("/todo/toggle-done", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({id: taskId, is_done: isDone})
-  }).catch(console.error);
+    body: JSON.stringify({id: taskId, is_done: isDone, status: isDone ? "done" : "open"})
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res && res.next_occurrence) {
+      showToast("Next occurrence: " + res.next_occurrence, "success");
+    }
+  })
+  .catch(console.error);
+}
+
+function toggleResolveMenu(ev, taskId) {
+  ev.stopPropagation();
+  document.querySelectorAll(".em-more-menu.open").forEach(m => {
+    if (m.id !== "menu-" + taskId) m.classList.remove("open");
+  });
+  const menu = document.getElementById("menu-" + taskId);
+  if (menu) menu.classList.toggle("open");
+}
+
+document.addEventListener("click", () => {
+  document.querySelectorAll(".em-more-menu.open").forEach(m => m.classList.remove("open"));
+});
+
+function resolveTask(taskId, status) {
+  // Closed states: done | not_required | skipped. Open states: open | in_progress
+  const CLOSED = new Set(["done", "not_required", "skipped"]);
+  const isDone = CLOSED.has(status);
+  const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
+  if (task) task.classList.toggle("done", isDone);
+  const cb = task?.querySelector('input[type=checkbox]');
+  if (cb) cb.checked = isDone;
+
+  fetch("/todo/toggle-done", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id: taskId, is_done: isDone, status: status})
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res && res.next_occurrence) {
+      showToast("Next occurrence: " + res.next_occurrence, "success");
+    }
+    // Reload to refresh the badge display cleanly
+    setTimeout(() => location.reload(), 400);
+  })
+  .catch(console.error);
+
+  document.getElementById("menu-" + taskId)?.classList.remove("open");
 }
 
 function moveQuadrant(taskId, newQ) {
@@ -328,6 +432,8 @@ function onQuadrantChange() {
 }
 
 document.getElementById("quick-quad")?.addEventListener("change", onQuadrantChange);
+// Trigger once on load so defaults (e.g. "Schedule" → due date) render immediately
+onQuadrantChange();
 
 function quickAdd() {
   const input = document.getElementById("quick-task");
@@ -336,6 +442,7 @@ function quickAdd() {
 
   const quadrant = document.getElementById("quick-quad").value;
   const projectId = document.getElementById("quick-project").value || null;
+  const recurrence = document.getElementById("quick-recurrence")?.value || null;
 
   // Determine dates/time/delegate based on quadrant
   let dueDate = PLAN_DATE;
@@ -372,6 +479,7 @@ function quickAdd() {
       due_date: dueDate,
       task_time: taskTime,
       delegated_to: delegatedTo,
+      recurrence: recurrence,
       is_done: false
     })
   }).then(() => {
