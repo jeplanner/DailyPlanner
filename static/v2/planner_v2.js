@@ -70,6 +70,19 @@ function toTime(mins) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// Clamp a column-local y-coordinate into the grid's valid range so
+// a pointer captured above the column or past midnight can't produce
+// negative or out-of-day time offsets. The grid is 24 * HOUR_HEIGHT
+// tall — anything outside that is clipped.
+function _clampColY(y) {
+  if (typeof HOUR_HEIGHT !== "number" || !HOUR_HEIGHT) return Math.max(0, y);
+  const max = 24 * HOUR_HEIGHT - 1;
+  return Math.min(max, Math.max(0, y));
+}
+function _clampMinutes(m) {
+  return Math.max(0, Math.min(1439, m));
+}
+
 function calculateEndTime(start, duration) {
   return toTime(minutes(start) + parseInt(duration));
 }
@@ -1176,9 +1189,11 @@ function onColumnDragOver(e) {
 
   const col = e.currentTarget;
   const rect = col.getBoundingClientRect();
-  const y = e.clientY - rect.top + col.closest("#gcal-scroll").scrollTop;
+  // getBoundingClientRect already reflects the current scroll position —
+  // don't add scrollTop on top of it.
+  const y = _clampColY(e.clientY - rect.top);
   const minutesFromTop = (y / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
   const top = (snapped / 60) * HOUR_HEIGHT;
 
   // Show snap line
@@ -1209,10 +1224,9 @@ async function onColumnDrop(e) {
   if (line) line.remove();
 
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const y = e.clientY - rect.top + scrollTop;
+  const y = _clampColY(e.clientY - rect.top);
   const minutesFromTop = (y / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
 
   const newStart = toTime(snapped);
 
@@ -1328,12 +1342,14 @@ function _beginTouchCreate() {
   // Haptic cue where supported
   if (navigator.vibrate) { try { navigator.vibrate(25); } catch {} }
 
-  // Create the ghost at the pressed position
+  // Create the ghost at the pressed position.
+  // getBoundingClientRect() already accounts for the scroll container's
+  // scrollTop — do NOT add it again. The column-local y is simply
+  // pointerClientY − col.rect.top.
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const y = createStartY - rect.top + scrollTop;
+  const y = _clampColY(createStartY - rect.top);
   const minutesFromTop = (y / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
   const top = (snapped / 60) * HOUR_HEIGHT;
 
   ghostEvent = document.createElement("div");
@@ -1364,9 +1380,8 @@ function _touchCreateMove(e) {
   if (!col) return;
 
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const startY = createStartY - rect.top + scrollTop;
-  const currentY = t.clientY - rect.top + scrollTop;
+  const startY = _clampColY(createStartY - rect.top);
+  const currentY = _clampColY(t.clientY - rect.top);
   const delta = currentY - startY;
 
   if (delta < 0) return;
@@ -1434,10 +1449,9 @@ function onCreatePointerMove(e) {
     if (!col) return;
 
     const rect = col.getBoundingClientRect();
-    const scrollTop = col.closest("#gcal-scroll").scrollTop;
-    const y = createStartY - rect.top + scrollTop;
+    const y = _clampColY(createStartY - rect.top);
     const minutesFromTop = (y / HOUR_HEIGHT) * 60;
-    const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+    const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
     const top = (snapped / 60) * HOUR_HEIGHT;
 
     ghostEvent = document.createElement("div");
@@ -1455,9 +1469,8 @@ function onCreatePointerMove(e) {
   if (!col) return;
 
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const startY = createStartY - rect.top + scrollTop;
-  const currentY = e.clientY - rect.top + scrollTop;
+  const startY = _clampColY(createStartY - rect.top);
+  const currentY = _clampColY(e.clientY - rect.top);
   const delta = currentY - startY;
 
   if (delta < 0) return;
@@ -1486,18 +1499,22 @@ function onCreatePointerUp(e) {
   const col = document.querySelector(`.gcal-day-col[data-date="${createColDate}"]`);
   if (!col) return;
 
+  // getBoundingClientRect().top already includes the scroll container's
+  // scrollTop offset — don't add it a second time (classic double-counting
+  // bug that produced startMinutes > 1440 and an invalid time string).
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const startY = createStartY - rect.top + scrollTop;
-  const endY = e.clientY - rect.top + scrollTop;
+  const startY = _clampColY(createStartY - rect.top);
+  const endY   = _clampColY(e.clientY - rect.top);
 
-  const startMinutes = Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
-  const endMinutes = Math.round(((endY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
-
-  if (endMinutes <= startMinutes) return;
+  const startMinutes = _clampMinutes(Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP);
+  const rawEnd       = Math.round(((endY / HOUR_HEIGHT) * 60) / SNAP) * SNAP;
+  // If the pointer barely moved, treat it as a click → default 30-min event.
+  const endMinutes   = rawEnd > startMinutes
+    ? _clampMinutes(rawEnd)
+    : _clampMinutes(startMinutes + 30);
 
   const startTime = toTime(startMinutes);
-  const endTime = toTime(endMinutes);
+  const endTime   = toTime(endMinutes);
 
   // Set currentDate to the column's date for new event creation
   currentDate = createColDate;
@@ -1648,10 +1665,9 @@ function attachFloatingTouchDrag(div, task) {
     const col = getColumnUnderPoint(x, y);
     if (col) {
       const rect = col.getBoundingClientRect();
-      const scrollTop = col.closest("#gcal-scroll").scrollTop;
-      const relY = y - rect.top + scrollTop;
+      const relY = _clampColY(y - rect.top);
       const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
-      const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+      const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
       const start = toTime(snapped);
       const end = calculateEndTime(start, 30);
       const targetDate = col.dataset.date;
@@ -1690,10 +1706,9 @@ function showTouchSnapLine(x, y) {
   if (!col) return;
 
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const relY = y - rect.top + scrollTop;
+  const relY = _clampColY(y - rect.top);
   const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
   const top = (snapped / 60) * HOUR_HEIGHT;
 
   const line = document.createElement("div");
@@ -1712,10 +1727,9 @@ async function handleTouchDrop(x, y, ev) {
 
   const targetDate = col.dataset.date;
   const rect = col.getBoundingClientRect();
-  const scrollTop = col.closest("#gcal-scroll").scrollTop;
-  const relY = y - rect.top + scrollTop;
+  const relY = _clampColY(y - rect.top);
   const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
-  const snapped = Math.round(minutesFromTop / SNAP) * SNAP;
+  const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
 
   const duration = minutes(ev.end_time) - minutes(ev.start_time);
   const newStart = toTime(snapped);
