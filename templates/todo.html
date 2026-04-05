@@ -873,43 +873,16 @@ async function updateTravelTask(id, field, value) {
 }
 
 async function deleteTravelTask(id) {
-  // Snapshot the row so we can restore it on undo
-  const rowEl = document.querySelector(`.tv-task[data-id="${id}"]`);
-  let snapshot = null;
-  if (rowEl) {
-    const inputs = rowEl.querySelectorAll("input, select");
-    snapshot = {
-      category: document.getElementById("tv-cat-picker").value || "Default",
-      task_text: inputs[0]?.value || "",
-      quadrant: inputs[1]?.value || "do",
-      subcategory: inputs[2]?.value || "General",
-    };
-  }
-
+  // No undo toast here — rapid cleanup should stay fluid. Users can
+  // re-add a mistakenly-removed template task in a few seconds via the
+  // "Add task" row below the list.
   const res = await _tvFetch(`/travel/tasks/${id}`, { method: "DELETE" });
   if (res.status !== "ok") {
     showToast(res.error || "Delete failed", "error");
     return;
   }
-
   await refreshTravelCategoryPicker();
   await loadTravelTasks();
-
-  if (snapshot && snapshot.task_text) {
-    showTvUndoToast(`Task deleted`, async () => {
-      const r = await _tvFetch("/travel/tasks", {
-        method: "POST",
-        body: JSON.stringify(snapshot),
-      });
-      if (r.status === "ok") {
-        showToast("Task restored", "success");
-        await refreshTravelCategoryPicker();
-        await loadTravelTasks();
-      } else {
-        showToast(r.error || "Restore failed", "error");
-      }
-    });
-  }
 }
 
 // ── New-category picker ──
