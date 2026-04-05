@@ -185,6 +185,11 @@ def update(table, params, json):
     Update rows in a Supabase table.
     params example: {"id": "eq.123"}
     json example: {"is_done": True}
+
+    Schema-resilient: if Supabase reports PGRST204 ("column not in schema
+    cache") — e.g. a pending migration — the offending field is stripped
+    and the PATCH retried, up to 3 times. A warning is logged telling you
+    which ALTER TABLE to run.
     """
     # 🛑 Guard: params must already be operator-based
     for k, v in params.items():
@@ -194,23 +199,46 @@ def update(table, params, json):
                 "Filters must include operators like eq., gt., lt."
             )
     url = f"{SUPABASE_URL}/rest/v1/{table}"
-    # 🔍 Log intent
-    logger.debug("SUPABASE UPDATE → %s | params=%s", url, params)
-    response = _request(
-        "PATCH",
-        url,
-        params=params,
-        json=json,
-    )
-    # 🔑 Log final URL (THIS IS WHAT SUPABASE SEES)
-    logger.debug("SUPABASE FINAL URL → %s", response.url)
-    if not response.ok:
-        logger.error("SUPABASE RESPONSE → %s", response.text)
-        raise Exception(
-            f"UPDATE failed {response.status_code}: {response.text}",
-        )
+    logger.debug("SUPABASE UPDATE → %s | params=%s | body=%s", url, params, json)
 
-    return response.json() if response.text else None
+    import re as _re
+    patch_body = dict(json) if isinstance(json, dict) else json
+    for _ in range(4):
+        response = _request("PATCH", url, params=params, json=patch_body)
+        logger.debug("SUPABASE FINAL URL → %s", response.url)
+        if response.ok:
+            return response.json() if response.text else None
+
+        # Schema-drift recovery: strip the missing column and retry
+        if response.status_code == 400 and isinstance(patch_body, dict):
+            try:
+                err = response.json()
+            except Exception:
+                err = {}
+            if err.get("code") == "PGRST204":
+                msg = err.get("message") or ""
+                m = _re.search(r"'([^']+)'\s+column", msg)
+                missing = m.group(1) if m else None
+                if missing and missing in patch_body:
+                    logger.warning(
+                        "SUPABASE UPDATE: '%s.%s' missing — retrying without it. "
+                        "Run: ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s ...;",
+                        table, missing, table, missing
+                    )
+                    patch_body = {k: v for k, v in patch_body.items() if k != missing}
+                    if not patch_body:
+                        # Nothing left to update — treat as a no-op rather than 500
+                        return None
+                    continue
+
+        # Unrecoverable error
+        logger.error("SUPABASE UPDATE ERROR %s on %s", response.status_code, table)
+        logger.error("SUPABASE UPDATE URL → %s", response.url)
+        logger.error("SUPABASE UPDATE PAYLOAD → %s", patch_body)
+        logger.error("SUPABASE UPDATE RESPONSE → %s", response.text)
+        raise Exception(f"UPDATE failed {response.status_code}: {response.text}")
+
+    raise Exception("UPDATE exceeded retries")
 
 
 def get_for_user(path, user_id, params=None):

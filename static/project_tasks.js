@@ -943,14 +943,71 @@ async function loadSubtasks(taskId) {
 }
 
 function _renderSubtask(container, st) {
-  const item = document.createElement("label");
+  const item = document.createElement("div");
   item.className = "subtask-item";
+  item.dataset.id = st.id;
   item.innerHTML = `
-    <input type="checkbox" ${st.is_done ? "checked" : ""}
-           onchange="toggleSubtask('${st.id}', this.checked)">
-    <span class="${st.is_done ? "st-done" : ""}">${_escHtml(st.title)}</span>
+    <label class="subtask-item-label">
+      <input type="checkbox" ${st.is_done ? "checked" : ""}
+             onchange="toggleSubtask('${st.id}', this.checked, this)">
+      <span class="${st.is_done ? "st-done" : ""}">${_escHtml(st.title)}</span>
+    </label>
+    <button type="button" class="subtask-del-btn" title="Delete subtask"
+            onclick="deleteSubtask('${st.id}', this)" aria-label="Delete subtask">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
+    </button>
   `;
   container.appendChild(item);
+}
+
+async function deleteSubtask(subId, btn) {
+  if (!subId) return;
+  // Quick confirm only for non-empty subtasks
+  const row = btn?.closest(".subtask-item");
+  const title = row?.querySelector("span")?.textContent?.trim() || "this subtask";
+  if (!confirm(`Delete "${title}"?`)) return;
+
+  // Optimistic remove
+  if (row) {
+    row.style.transition = "opacity .2s, transform .2s";
+    row.style.opacity = "0";
+    row.style.transform = "translateX(12px)";
+  }
+
+  try {
+    const res = await _post("/subtask/delete", { id: subId });
+    if (!res.ok) {
+      let msg = `Delete failed (${res.status})`;
+      try { const p = await res.json(); if (p.error) msg = p.error; } catch {}
+      throw new Error(msg);
+    }
+    setTimeout(() => row?.remove(), 200);
+    // Update the subtask count badge in the panel
+    const list = _id("subtask-list");
+    const countEl = _id("subtask-count");
+    if (countEl && list) {
+      // -1 because the optimistic row is still in the DOM for the fade
+      const remaining = Math.max(0, list.querySelectorAll(".subtask-item").length - 1);
+      countEl.textContent = remaining || "";
+    }
+    // Sync the background table row's subtask badge
+    if (_sheetTaskId) {
+      const tr = document.querySelector(`.task-row[data-id="${_sheetTaskId}"]`);
+      if (tr) updateSubtaskBadges();
+    }
+    showToast("Subtask deleted", "success");
+  } catch (err) {
+    console.error("deleteSubtask:", err);
+    // Roll back the optimistic fade
+    if (row) {
+      row.style.opacity = "1";
+      row.style.transform = "";
+    }
+    showToast(err.message || "Failed to delete subtask", "error");
+  }
 }
 
 async function addSubtask() {
@@ -988,7 +1045,12 @@ async function addSubtask() {
   }
 }
 
-function toggleSubtask(id, isDone) {
+function toggleSubtask(id, isDone, cb) {
+  // Optimistic strike-through on the label text
+  if (cb) {
+    const span = cb.parentElement?.querySelector("span");
+    if (span) span.classList.toggle("st-done", isDone);
+  }
   _post("/subtask/toggle", { id, is_done: isDone }).catch(console.error);
 
   // Update badge count if visible
@@ -1087,12 +1149,22 @@ function onRecurrenceChange() {
 }
 
 async function _saveRecurrence() {
-  if (!_sheetTaskId) return;
+  if (!_sheetTaskId) {
+    console.warn("_saveRecurrence: no _sheetTaskId");
+    return;
+  }
   const recurrence = _id("sheet-recurrence")?.value || "none";
   const isRecurring = recurrence !== "none";
   const recurrenceDays = isRecurring && recurrence === "weekly"
     ? Array.from(_qa("#recurrence-days .day-chip.active")).map(c => parseInt(c.dataset.day))
     : [];
+
+  const payload = {
+    is_recurring: isRecurring,
+    recurrence_type: isRecurring ? recurrence : null,
+    recurrence_days: recurrenceDays.length ? recurrenceDays : null,
+  };
+  console.log("[recurrence] saving", _sheetTaskId, payload);
 
   const indicator = _id("saved-indicator");
   if (indicator) {
@@ -1102,16 +1174,16 @@ async function _saveRecurrence() {
   }
 
   try {
-    const res = await _post(`/projects/tasks/${_sheetTaskId}/update`, {
-      is_recurring: isRecurring,
-      recurrence_type: isRecurring ? recurrence : null,
-      recurrence_days: recurrenceDays.length ? recurrenceDays : null,
-    });
+    const res = await _post(`/projects/tasks/${_sheetTaskId}/update`, payload);
     if (!res.ok) {
       let msg = `Save failed (${res.status})`;
-      try { const p = await res.json(); if (p.error || p.message) msg = p.error || p.message; } catch {}
+      try {
+        const p = await res.json();
+        if (p.error || p.message) msg = p.error || p.message;
+      } catch {}
       throw new Error(msg);
     }
+    console.log("[recurrence] saved ✓");
     // Keep the background row's data in sync
     const row = document.querySelector(`.task-row[data-id="${_sheetTaskId}"]`);
     if (row) {
@@ -1126,7 +1198,7 @@ async function _saveRecurrence() {
       _saveTimer = setTimeout(() => indicator.classList.remove("show"), 1800);
     }
   } catch (err) {
-    console.error("_saveRecurrence:", err);
+    console.error("[recurrence] _saveRecurrence failed:", err);
     if (indicator) {
       indicator.textContent = "Save failed";
       indicator.classList.add("show", "error");

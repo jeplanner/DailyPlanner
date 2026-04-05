@@ -1182,14 +1182,21 @@ def complete_task(task_id):
 @projects_bp.route("/subtask/list/<task_id>")
 @login_required
 def list_subtasks(task_id):
-    rows = get(
-        "project_subtasks",
-        params={
-            "parent_task_id": f"eq.{task_id}",
-            "select": "id,title,is_done",
-            "order": "id.asc",
-        }
-    ) or []
+    params = {
+        "parent_task_id": f"eq.{task_id}",
+        "select": "id,title,is_done",
+        "order": "id.asc",
+    }
+    # Hide soft-deleted rows when that column exists; if it doesn't, the
+    # filter silently matches everything (PostgREST ignores missing cols
+    # in some cases — harmless fallback).
+    params["is_deleted"] = "eq.false"
+    try:
+        rows = get("project_subtasks", params=params) or []
+    except Exception:
+        # Fallback for environments where is_deleted hasn't been migrated yet
+        params.pop("is_deleted", None)
+        rows = get("project_subtasks", params=params) or []
     return jsonify(rows)
 
 
@@ -1238,8 +1245,44 @@ def toggle_subtask():
         params={"id": f"eq.{data['id']}"},
         json={"is_done": bool(data.get("is_done"))},
     )
-    
+
     return ("", 204)
+
+
+@projects_bp.route("/subtask/delete", methods=["POST"])
+@login_required
+def delete_subtask():
+    """Soft-delete a subtask by flipping is_deleted=true.
+
+    Per project policy (see user feedback memory): all deletes are soft,
+    never hard. If the `is_deleted` column is missing on project_subtasks,
+    run this migration:
+        ALTER TABLE project_subtasks
+          ADD COLUMN IF NOT EXISTS is_deleted boolean DEFAULT false,
+          ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+        NOTIFY pgrst, 'reload schema';
+    """
+    from datetime import datetime, timezone
+
+    data = request.get_json(force=True) or {}
+    sub_id = data.get("id")
+    if not sub_id:
+        return jsonify({"error": "Subtask id required"}), 400
+
+    try:
+        update(
+            "project_subtasks",
+            params={"id": f"eq.{sub_id}"},
+            json={
+                "is_deleted": True,
+                "deleted_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.exception("delete_subtask failed")
+        return jsonify({"error": f"Delete failed: {e}"}), 500
+
+    return jsonify({"status": "ok"})
 
 def _stamp_okr_ids(tasks, user_id):
     """Resolve and attach objective_id / key_result_id / initiative_id to each task.
