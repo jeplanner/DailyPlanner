@@ -129,6 +129,118 @@ html.dark .em-recur-pill{background:#1e3a8a;color:#bfdbfe;}
 .em-hide-closed .em-task[data-status="skipped"],
 .em-hide-closed .em-task[data-status="deleted"]{display:none !important;}
 
+/* ══════════ SELECTION MODE ══════════ */
+.em-select-bar{
+  position:sticky;top:0;z-index:50;
+  display:flex;align-items:center;gap:10px;padding:10px 16px;
+  background:var(--q-schedule);color:#fff;
+  border-radius:12px;margin-bottom:14px;
+  box-shadow:0 4px 14px rgba(37,99,235,.25);
+  animation:emSlideDown .18s ease;
+}
+@keyframes emSlideDown{from{opacity:0;transform:translateY(-6px);}to{opacity:1;transform:translateY(0);}}
+.em-select-bar .em-sel-count{font-size:14px;font-weight:700;flex:1;}
+.em-select-bar button{
+  border:1px solid rgba(255,255,255,.5);background:transparent;color:#fff;
+  padding:6px 12px;border-radius:7px;font-size:12px;font-weight:600;
+  font-family:inherit;cursor:pointer;
+}
+.em-select-bar button:hover{background:rgba(255,255,255,.15);border-color:#fff;}
+.em-select-bar .em-sel-exit{
+  width:32px;height:32px;padding:0;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:18px;line-height:1;
+}
+
+/* Selection checkbox overlay — appears only in select mode */
+.em-sel-check{
+  display:none;
+  width:22px;height:22px;border-radius:50%;
+  border:2px solid var(--em-border);
+  background:var(--em-surface);
+  flex-shrink:0;margin-top:1px;
+  align-items:center;justify-content:center;
+  color:#fff;font-size:13px;font-weight:900;
+  transition:all .15s;
+}
+.em-select-mode .em-task .em-sel-check{display:inline-flex;}
+.em-select-mode .em-task input[type=checkbox],
+.em-select-mode .em-task .em-task-actions{display:none !important;}
+.em-select-mode .em-task{cursor:pointer;user-select:none;}
+.em-select-mode .em-task.em-selected{
+  background:#eff6ff;
+  border-color:var(--q-schedule);
+  box-shadow:0 0 0 2px rgba(37,99,235,.25);
+}
+.em-select-mode .em-task.em-selected .em-sel-check{
+  background:var(--q-schedule);
+  border-color:var(--q-schedule);
+}
+.em-select-mode .em-task.em-selected .em-sel-check::after{content:"✓";}
+html.dark .em-select-mode .em-task.em-selected{background:#172554;}
+
+/* Non-matrix rows (events, project tasks) can't be bulk-edited — dim them */
+.em-select-mode .em-task[data-source="event"],
+.em-select-mode .em-task[data-source="project"]{
+  opacity:.4;pointer-events:none;
+}
+.em-select-mode .em-task[data-source="event"] .em-sel-check,
+.em-select-mode .em-task[data-source="project"] .em-sel-check{
+  border-style:dashed;
+}
+
+/* Bottom floating action bar */
+.em-action-dock{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(14px);
+  display:none;align-items:center;gap:6px;
+  background:rgba(30,41,59,.96);color:#fff;backdrop-filter:blur(10px);
+  padding:8px;border-radius:14px;
+  box-shadow:0 16px 40px rgba(0,0,0,.35);
+  z-index:999;opacity:0;transition:all .22s ease;
+  max-width:96vw;
+}
+.em-select-mode .em-action-dock{display:flex;opacity:1;transform:translateX(-50%) translateY(0);}
+.em-action-dock button{
+  display:flex;align-items:center;gap:6px;
+  padding:9px 14px;border:none;background:transparent;color:#fff;
+  border-radius:9px;font-size:13px;font-weight:600;font-family:inherit;
+  cursor:pointer;transition:background .12s;white-space:nowrap;
+}
+.em-action-dock button:hover{background:rgba(255,255,255,.12);}
+.em-action-dock button.danger:hover{background:#b91c1c;}
+.em-action-dock .sep{width:1px;height:22px;background:rgba(255,255,255,.2);margin:0 2px;}
+
+/* Action popover (Status / Priority) — appears above the dock */
+.em-action-popover{
+  position:fixed;left:50%;transform:translateX(-50%);
+  background:var(--em-surface);border:1px solid var(--em-border);
+  border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.25);
+  padding:6px;z-index:1000;min-width:180px;
+  display:none;
+}
+.em-action-popover.open{display:block;animation:emFadeUp .15s ease;}
+@keyframes emFadeUp{from{opacity:0;transform:translateX(-50%) translateY(8px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+.em-action-popover button{
+  display:flex;align-items:center;gap:8px;width:100%;
+  padding:9px 12px;border:none;background:none;color:var(--em-text);
+  border-radius:8px;font-size:13px;font-family:inherit;text-align:left;cursor:pointer;
+}
+.em-action-popover button:hover{background:var(--em-border);}
+
+@media(max-width:640px){
+  .em-action-dock{
+    left:0;right:0;bottom:0;transform:translateY(14px);
+    width:100%;max-width:100%;border-radius:14px 14px 0 0;
+    padding:10px 10px calc(10px + env(safe-area-inset-bottom,0));
+    justify-content:space-around;
+  }
+  .em-select-mode .em-action-dock{transform:translateY(0);}
+  .em-action-dock button{padding:10px 12px;font-size:13px;}
+  .em-action-dock .em-dock-label{display:none;}
+  .em-action-popover{left:10px;right:10px;transform:none;min-width:0;}
+  .em-action-popover.open{animation:emFadeUpMobile .15s ease;}
+  @keyframes emFadeUpMobile{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+}
+
 /* Filter toggle button — sticky alongside other em-action buttons */
 .em-action-btn.active{background:var(--q-schedule)!important;color:#fff!important;border-color:var(--q-schedule)!important;}
 
@@ -244,6 +356,9 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
 
   <!-- Quick Actions -->
   <div class="em-actions">
+    <button type="button" class="em-action-btn" onclick="enterSelectMode()" title="Select multiple tasks to bulk-edit">
+      <i data-feather="check-square" style="width:14px;height:14px"></i> Select
+    </button>
     <button type="button" id="em-toggle-closed" class="em-action-btn" onclick="toggleClosedVisibility()" title="Show/hide skipped and deleted tasks">
       <i data-feather="eye-off" style="width:14px;height:14px"></i> <span id="em-toggle-closed-label">Show skipped/deleted</span>
     </button>
@@ -400,6 +515,45 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Selection top bar (hidden unless em-select-mode is active on em-app-root) -->
+  <div id="em-select-bar" class="em-select-bar" style="display:none;" role="toolbar" aria-label="Bulk selection">
+    <button type="button" class="em-sel-exit" onclick="exitSelectMode()" title="Exit selection (Esc)">×</button>
+    <span class="em-sel-count" id="em-sel-count">0 selected</span>
+    <button type="button" onclick="selectAllVisible()">Select all visible</button>
+    <button type="button" onclick="clearSelection()">Clear</button>
+  </div>
+
+  <!-- Floating action dock at bottom (visible in select mode) -->
+  <div id="em-action-dock" class="em-action-dock" role="toolbar" aria-label="Bulk actions">
+    <button type="button" onclick="openBulkPopover('status', this)" title="Change status">
+      <i data-feather="flag" style="width:16px;height:16px"></i>
+      <span class="em-dock-label">Status</span>
+    </button>
+    <button type="button" onclick="openBulkPopover('priority', this)" title="Change priority">
+      <i data-feather="bar-chart-2" style="width:16px;height:16px"></i>
+      <span class="em-dock-label">Priority</span>
+    </button>
+    <div class="sep"></div>
+    <button type="button" class="danger" onclick="bulkDelete()" title="Delete (soft)">
+      <i data-feather="trash-2" style="width:16px;height:16px"></i>
+      <span class="em-dock-label">Delete</span>
+    </button>
+  </div>
+
+  <!-- Popovers opened by the dock -->
+  <div id="em-status-popover" class="em-action-popover">
+    <button type="button" onclick="bulkApplyStatus('open')">☐ Open</button>
+    <button type="button" onclick="bulkApplyStatus('in_progress')">◐ In Progress</button>
+    <button type="button" onclick="bulkApplyStatus('done')">✓ Done</button>
+    <button type="button" onclick="bulkApplyStatus('skipped')">⏭ Skipped</button>
+    <button type="button" onclick="bulkApplyStatus('deleted')">🗑 Delete</button>
+  </div>
+  <div id="em-priority-popover" class="em-action-popover">
+    <button type="button" onclick="bulkApplyPriority('high')">🔴 High</button>
+    <button type="button" onclick="bulkApplyPriority('medium')">🟠 Medium</button>
+    <button type="button" onclick="bulkApplyPriority('low')">🟢 Low</button>
   </div>
 
   <!-- Matrix Grid -->
@@ -803,6 +957,242 @@ if (!_isTouchDevice) {
   document.getElementById("quick-task")?.focus();
 }
 if (typeof feather !== "undefined") feather.replace();
+
+/* ══════════════════════════════════════════════════════════════
+   BULK SELECTION MODE (Eisenhower)
+   ══════════════════════════════════════════════════════════════ */
+
+const EM_SEL = {
+  active: false,
+  ids: new Set(),
+};
+
+function enterSelectMode(prefillId = null) {
+  if (EM_SEL.active) return;
+  EM_SEL.active = true;
+  EM_SEL.ids.clear();
+  document.getElementById("em-app-root")?.classList.add("em-select-mode");
+  document.getElementById("em-select-bar").style.display = "flex";
+  if (prefillId) _toggleSelection(prefillId);
+  _updateSelCount();
+  if (window.feather) feather.replace();
+  if (navigator.vibrate) { try { navigator.vibrate(15); } catch {} }
+}
+
+function exitSelectMode() {
+  EM_SEL.active = false;
+  EM_SEL.ids.clear();
+  document.getElementById("em-app-root")?.classList.remove("em-select-mode");
+  document.getElementById("em-select-bar").style.display = "none";
+  document.querySelectorAll(".em-task.em-selected").forEach(t => t.classList.remove("em-selected"));
+  _closeAllBulkPopovers();
+}
+
+function clearSelection() {
+  EM_SEL.ids.clear();
+  document.querySelectorAll(".em-task.em-selected").forEach(t => t.classList.remove("em-selected"));
+  _updateSelCount();
+}
+
+function _toggleSelection(id) {
+  const el = document.querySelector(`.em-task[data-id="${id}"]`);
+  if (!el) return;
+  // Block selection on non-matrix rows
+  if (el.dataset.source !== "matrix" && el.dataset.source) return;
+  if (EM_SEL.ids.has(id)) {
+    EM_SEL.ids.delete(id);
+    el.classList.remove("em-selected");
+  } else {
+    EM_SEL.ids.add(id);
+    el.classList.add("em-selected");
+  }
+  _updateSelCount();
+}
+
+function _updateSelCount() {
+  const n = EM_SEL.ids.size;
+  document.getElementById("em-sel-count").textContent = `${n} selected`;
+}
+
+function selectAllVisible() {
+  // Everything currently rendered AND visible AND source=matrix
+  document.querySelectorAll('.em-task[data-source="matrix"]').forEach(el => {
+    const style = getComputedStyle(el);
+    if (style.display === "none") return;
+    const id = el.dataset.id;
+    if (!EM_SEL.ids.has(id)) {
+      EM_SEL.ids.add(id);
+      el.classList.add("em-selected");
+    }
+  });
+  _updateSelCount();
+}
+
+// ── Tap / click handlers for select mode ──
+// Delegate on the app root so new cards from quickAdd also work.
+document.getElementById("em-app-root")?.addEventListener("click", (e) => {
+  if (!EM_SEL.active) return;
+  const card = e.target.closest(".em-task");
+  if (!card) return;
+  e.preventDefault();
+  e.stopPropagation();
+  _toggleSelection(card.dataset.id);
+}, true); // capture phase so we beat the checkbox/resolve-menu handlers
+
+// Long-press on a task card enters select mode (desktop + mobile).
+let _lpTimer = null;
+let _lpStart = null;
+document.getElementById("em-app-root")?.addEventListener("pointerdown", (e) => {
+  if (EM_SEL.active) return;
+  const card = e.target.closest(".em-task");
+  if (!card || card.dataset.source !== "matrix") return;
+  // Don't long-press when clicking inside a form control
+  if (e.target.closest("select, input, button")) return;
+  _lpStart = { x: e.clientX, y: e.clientY, id: card.dataset.id };
+  clearTimeout(_lpTimer);
+  _lpTimer = setTimeout(() => {
+    _lpTimer = null;
+    if (_lpStart) enterSelectMode(_lpStart.id);
+  }, 500);
+});
+document.getElementById("em-app-root")?.addEventListener("pointermove", (e) => {
+  if (!_lpStart || !_lpTimer) return;
+  if (Math.abs(e.clientX - _lpStart.x) > 10 || Math.abs(e.clientY - _lpStart.y) > 10) {
+    clearTimeout(_lpTimer); _lpTimer = null;
+  }
+});
+["pointerup", "pointercancel", "pointerleave"].forEach(ev => {
+  document.getElementById("em-app-root")?.addEventListener(ev, () => {
+    clearTimeout(_lpTimer); _lpTimer = null; _lpStart = null;
+  });
+});
+
+// Escape exits selection mode
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && EM_SEL.active) {
+    exitSelectMode();
+  }
+});
+
+// ── Bulk action popovers ──
+function _closeAllBulkPopovers() {
+  document.querySelectorAll(".em-action-popover.open").forEach(p => p.classList.remove("open"));
+}
+
+function openBulkPopover(kind, anchorBtn) {
+  _closeAllBulkPopovers();
+  if (EM_SEL.ids.size === 0) {
+    showToast("Select at least one task first", "error");
+    return;
+  }
+  const pop = document.getElementById(kind === "status" ? "em-status-popover" : "em-priority-popover");
+  if (!pop) return;
+  // Position above the anchor button on desktop (mobile uses sticky CSS)
+  if (window.innerWidth > 640) {
+    const rect = anchorBtn.getBoundingClientRect();
+    pop.style.bottom = (window.innerHeight - rect.top + 8) + "px";
+    pop.style.top = "auto";
+  } else {
+    pop.style.bottom = "86px";
+    pop.style.top = "auto";
+  }
+  pop.classList.add("open");
+}
+
+// Dismiss popovers on outside click
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".em-action-popover") || e.target.closest(".em-action-dock")) return;
+  _closeAllBulkPopovers();
+});
+
+// ── Bulk actions ──
+async function _bulkApply(patch, optimistic) {
+  const ids = Array.from(EM_SEL.ids);
+  if (!ids.length) return;
+
+  // Snapshot current state so we can roll back on failure
+  const snapshot = ids.map(id => {
+    const el = document.querySelector(`.em-task[data-id="${id}"]`);
+    if (!el) return null;
+    return {
+      id,
+      el,
+      status: el.dataset.status,
+      priority: el.dataset.priority,
+      done: el.classList.contains("done"),
+      quadrant: el.dataset.quadrant,
+    };
+  }).filter(Boolean);
+
+  // Optimistic apply
+  snapshot.forEach(s => optimistic(s.el, s));
+
+  _closeAllBulkPopovers();
+
+  try {
+    const r = await fetch("/todo/bulk-update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+      },
+      body: JSON.stringify({ ids, patch }),
+    });
+    const res = await r.json();
+    if (res.status !== "ok") throw new Error(res.error || "Update failed");
+    showToast(`Updated ${res.updated || snapshot.length} task${(res.updated || snapshot.length) === 1 ? "" : "s"}`, "success");
+    clearSelection();
+  } catch (err) {
+    console.error(err);
+    // Roll back
+    snapshot.forEach(s => {
+      s.el.dataset.status = s.status;
+      s.el.dataset.priority = s.priority;
+      s.el.classList.toggle("done", s.done);
+      // Restore the priority border class
+      s.el.classList.remove("prio-high", "prio-medium", "prio-low");
+      s.el.classList.add("prio-" + s.priority);
+    });
+    showToast("Bulk update failed — reverted", "error");
+  }
+}
+
+function bulkApplyStatus(status) {
+  const CLOSED = new Set(["done", "skipped", "deleted"]);
+  const isDone = CLOSED.has(status);
+
+  _bulkApply({ status }, (el, snap) => {
+    const wasDone = snap.done;
+    el.classList.toggle("done", isDone);
+    el.dataset.status = status;
+    _updateStatusBadge(el, status);
+    if (wasDone !== isDone) _bumpQuadrantCount(snap.quadrant, isDone ? +1 : -1);
+    // Sync the checkbox inside the card too (for when they exit select mode)
+    const cb = el.querySelector('input[type=checkbox]:not([disabled])');
+    if (cb) cb.checked = isDone;
+  });
+}
+
+function bulkApplyPriority(priority) {
+  _bulkApply({ priority }, (el, snap) => {
+    el.classList.remove("prio-high", "prio-medium", "prio-low");
+    el.classList.add("prio-" + priority);
+    el.dataset.priority = priority;
+    // Update the pill label
+    const pill = el.querySelector(".em-prio-pill");
+    if (pill) {
+      pill.className = "em-prio-pill " + priority;
+      pill.textContent = priority.toUpperCase();
+      pill.setAttribute("title", priority.charAt(0).toUpperCase() + priority.slice(1) + " priority");
+    }
+  });
+}
+
+function bulkDelete() {
+  // No confirmation — soft delete is reversible via the resolve menu,
+  // and the "show skipped/deleted" toggle makes recovered items visible.
+  bulkApplyStatus("deleted");
+}
 
 /* ══════════════════════════════════════════════════════════════
    TRAVEL TEMPLATES — category picker (header) + management modal

@@ -475,6 +475,132 @@ def travel_mode():
 
 
 # ==========================================================
+# ROUTES – BULK UPDATE (selection mode)
+# ==========================================================
+
+@todo_bp.route("/todo/bulk-update", methods=["POST"])
+@login_required
+def todo_bulk_update():
+    """
+    Apply a patch to many todo_matrix rows at once.
+
+    Body: { ids: [uuid, ...], patch: { status?, priority? } }
+
+    Only the Eisenhower matrix owns these rows (source='matrix' on the
+    client side). Event/project-sourced cards render read-only in the
+    matrix and are rejected here by the user_id scope — their IDs are
+    prefixed ('ev-', 'pt-') so the lookup naturally finds nothing.
+
+    Soft-delete (status='deleted') also flips is_deleted=true and
+    cascades is_eliminated=true to any linked project_tasks rows.
+    """
+    data = request.get_json(force=True) or {}
+    ids = data.get("ids") or []
+    patch = data.get("patch") or {}
+
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": "ids required"}), 400
+    if not isinstance(patch, dict) or not patch:
+        return jsonify({"error": "patch required"}), 400
+
+    user_id = session["user_id"]
+
+    # Build the actual DB patch from the validated fields
+    db_patch = {}
+
+    if "status" in patch:
+        status = _normalize_status(patch["status"])
+        if not status:
+            return jsonify({"error": "invalid status"}), 400
+        db_patch["status"] = status
+        db_patch["is_done"] = status in _RESOLVED_STATUSES
+        if status == "deleted":
+            db_patch["is_deleted"] = True
+        elif status == "open":
+            # Reopening also un-deletes (used by undo from trash)
+            db_patch["is_deleted"] = False
+
+    if "priority" in patch:
+        priority = (patch["priority"] or "").strip().lower()
+        if priority not in _VALID_PRIORITIES:
+            return jsonify({"error": "invalid priority"}), 400
+        db_patch["priority"] = priority
+
+    if not db_patch:
+        return jsonify({"error": "no valid fields in patch"}), 400
+
+    # Sanitize IDs — only keep non-empty strings and strip client-side prefixes
+    # we know are not matrix rows (ev-, pt-).
+    clean_ids = [
+        str(i) for i in ids
+        if isinstance(i, (str, int)) and str(i) and not str(i).startswith(("ev-", "pt-"))
+    ]
+    if not clean_ids:
+        return jsonify({"error": "no valid matrix ids"}), 400
+
+    # Fetch the rows BEFORE updating so we can cascade soft-deletes to
+    # linked project tasks (only non-recurring ones get cascaded).
+    existing = get(
+        "todo_matrix",
+        params={
+            "user_id": f"eq.{user_id}",
+            "id": f"in.({','.join(clean_ids)})",
+            "is_deleted": "eq.false",
+            "select": "id,source_task_id,recurring_id",
+            "limit": len(clean_ids),
+        },
+    ) or []
+
+    if not existing:
+        return jsonify({"status": "ok", "updated": 0})
+
+    matrix_ids = [r["id"] for r in existing]
+
+    # Single bulk update
+    update(
+        "todo_matrix",
+        params={
+            "user_id": f"eq.{user_id}",
+            "id": f"in.({','.join(str(i) for i in matrix_ids)})",
+        },
+        json=db_patch,
+    )
+
+    # Cascade soft-delete to linked project tasks (non-recurring only)
+    if db_patch.get("status") == "deleted":
+        cascade_ids = [
+            str(r["source_task_id"]) for r in existing
+            if r.get("source_task_id") and not r.get("recurring_id")
+        ]
+        if cascade_ids:
+            update(
+                "project_tasks",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "task_id": f"in.({','.join(cascade_ids)})",
+                },
+                json={"status": "deleted", "is_eliminated": True},
+            )
+    elif db_patch.get("status") in _RESOLVED_STATUSES and db_patch["status"] != "deleted":
+        # Also cascade plain done/skipped to the linked project_tasks row
+        cascade_ids = [
+            str(r["source_task_id"]) for r in existing
+            if r.get("source_task_id") and not r.get("recurring_id")
+        ]
+        if cascade_ids:
+            update(
+                "project_tasks",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "task_id": f"in.({','.join(cascade_ids)})",
+                },
+                json={"status": db_patch["status"]},
+            )
+
+    return jsonify({"status": "ok", "updated": len(matrix_ids)})
+
+
+# ==========================================================
 # ROUTES – TRAVEL TEMPLATE CRUD
 # ==========================================================
 
