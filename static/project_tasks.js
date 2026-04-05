@@ -56,31 +56,48 @@ function initPrioPicker() {
 function initAddTask() {
   const input = _id("add-task-input");
   const btn   = _id("add-task-btn");
+  const initSel = _id("add-task-initiative");
   if (!input) return;
 
   input.addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); addTask(); }
   });
   if (btn) btn.addEventListener("click", addTask);
+
+  // Keep data-current in sync with the active option so the CSS tint
+  // (see .add-task-initiative:not([data-current=""]) in project_tasks.css)
+  // reflects the user's choice the moment they pick, not after save.
+  if (initSel) {
+    initSel.addEventListener("change", () => {
+      initSel.dataset.current = initSel.value || "";
+    });
+  }
 }
 
 async function addTask() {
   const input = _id("add-task-input");
   const dateInput = _id("add-task-date");
+  const initSel = _id("add-task-initiative");
   const text = (input?.value || "").trim();
   if (!text) return;
+
+  // Empty string → leave the task tied to the project only (no initiative).
+  const initiativeId = (initSel?.value || "").trim() || null;
 
   try {
     const res = await _post(`/projects/${PROJECT_ID}/tasks/add-ajax`, {
       task_text: text,
       priority: _addPriority,
       start_date: dateInput?.value || "",
+      initiative_id: initiativeId,
     });
 
     if (!res.ok) throw new Error("Add failed");
 
     input.value = "";
-    showToast("Task added", "success");
+    // Remember the initiative choice for the next task so rapid adds stay fast.
+    if (initSel) initSel.dataset.current = initiativeId || "";
+    showToast(initiativeId ? "Task added to initiative" : "Task added", "success");
     location.reload();
   } catch (err) {
     console.error(err);

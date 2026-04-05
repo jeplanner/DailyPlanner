@@ -139,6 +139,11 @@
     <input type="text" id="add-task-input" class="add-task-input"
            data-project-id="{{ project.project_id }}"
            placeholder="Type a task and press Enter…" autocomplete="off">
+    <select id="add-task-initiative" class="add-task-initiative kr-picker"
+            data-current=""
+            title="Link this task to an Initiative (optional). Leave empty to tie it directly to the project.">
+      <option value="">— Not linked —</option>
+    </select>
     <input type="date" id="add-task-date" class="add-task-date" value="{{ selected_date }}">
     <button class="add-task-btn" id="add-task-btn" title="Add task">
       <i data-feather="plus"></i>

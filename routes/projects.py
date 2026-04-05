@@ -1344,7 +1344,12 @@ def _build_task_dict(t, project, today):
 @projects_bp.route("/projects/<project_id>/tasks/add-ajax", methods=["POST"])
 @login_required
 def add_project_task_ajax(project_id):
-    """Async task add — returns rendered card HTML + task_id."""
+    """Async task add — returns rendered card HTML + task_id.
+
+    Accepts an optional `initiative_id`. When empty/null the task is tied
+    only to the project (no initiative linkage) — valid by design so users
+    can add quick tasks without forcing them into an OKR hierarchy.
+    """
     data = request.get_json() or {}
     text = (data.get("task_text") or "").strip()
     if not text:
@@ -1353,8 +1358,12 @@ def add_project_task_ajax(project_id):
     priority = data.get("priority", "medium")
     start_date = data.get("start_date") or date.today().isoformat()
 
+    # Normalize the initiative id: empty string / "null" / None → NULL
+    raw_init = data.get("initiative_id")
+    initiative_id = raw_init if (raw_init and str(raw_init).strip() not in ("", "null")) else None
+
     max_order = get_max_order_index(project_id)
-    result = post("project_tasks", {
+    payload = {
         "project_id": project_id,
         "user_id": session["user_id"],
         "task_text": text,
@@ -1363,7 +1372,11 @@ def add_project_task_ajax(project_id):
         "priority_rank": PRIORITY_MAP.get(priority, 2),
         "start_date": start_date,
         "order_index": (max_order or 0) + 1,
-    })
+    }
+    if initiative_id:
+        payload["initiative_id"] = initiative_id
+
+    result = post("project_tasks", payload)
 
     if not result:
         return jsonify({"error": "Insert failed"}), 500
