@@ -893,7 +893,13 @@ function updateDurationLabel() {
   const start = document.getElementById("start-time").value;
   const end = document.getElementById("end-time").value;
   const label = document.getElementById("duration-label");
-  if (!start || !end || !label) return;
+  if (!label) return;
+
+  if (!start || !end) {
+    label.textContent = "—";
+    document.getElementById("duration").value = 30;
+    return;
+  }
 
   const dur = minutes(end) - minutes(start);
   if (dur <= 0) { label.textContent = "Invalid"; return; }
@@ -910,11 +916,14 @@ function updateDurationLabel() {
   // Update hidden duration select for backward compat
   document.getElementById("duration").value = dur;
 
-  // Highlight matching preset button
-  document.querySelectorAll(".dur-btn").forEach(btn => {
-    const val = parseInt(btn.getAttribute("onclick").match(/\d+/)?.[0] || 0);
+  // Highlight matching duration preset chip inside the End field
+  document.querySelectorAll("#duration-presets .time-chip").forEach(btn => {
+    const val = parseInt(btn.getAttribute("onclick")?.match(/\d+/)?.[0] || 0);
     btn.classList.toggle("active", val === dur);
   });
+
+  // Also highlight the Start preset chip if it matches an exact preset
+  _syncStartPresetChips(start);
 }
 
 function setDuration(mins) {
@@ -925,6 +934,66 @@ function setDuration(mins) {
   }
   document.getElementById("end-time").value = toTime(minutes(start) + mins);
   updateDurationLabel();
+}
+
+// ─── New helpers for the pill-style time control ──────────────
+function openTimePicker(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  try {
+    if (typeof el.showPicker === "function") { el.showPicker(); return; }
+  } catch (err) { console.warn("showPicker:", err); }
+  el.focus();
+  try { el.click(); } catch {}
+}
+
+function clearTimeField(inputId) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  el.value = "";
+  // If start is cleared, clear end too (end without start is meaningless)
+  if (inputId === "start-time") {
+    const endEl = document.getElementById("end-time");
+    if (endEl) endEl.value = "";
+  }
+  updateDurationLabel();
+  _syncStartPresetChips("");
+}
+
+function setTimeFromPreset(btn) {
+  const field = btn.dataset.field;
+  const time = btn.dataset.time;
+  if (!field || !time) return;
+
+  const input = document.getElementById(field);
+  if (!input) return;
+
+  const prevEnd = document.getElementById("end-time")?.value || "";
+  const prevStart = document.getElementById("start-time")?.value || "";
+  input.value = time;
+
+  // If setting Start and an End already exists, slide End to maintain the
+  // same duration (Google Calendar behavior). If no End yet, default to +30.
+  if (field === "start-time") {
+    const endEl = document.getElementById("end-time");
+    if (endEl) {
+      if (prevStart && prevEnd) {
+        const dur = Math.max(15, minutes(prevEnd) - minutes(prevStart));
+        endEl.value = toTime(minutes(time) + dur);
+      } else {
+        endEl.value = toTime(minutes(time) + 30);
+      }
+    }
+  }
+
+  updateDurationLabel();
+}
+
+// Highlight a Start preset chip if the current start-time matches it
+function _syncStartPresetChips(startValue) {
+  document.querySelectorAll('.time-chip[data-field="start-time"]').forEach(c => {
+    c.classList.toggle("active", startValue && c.dataset.time === startValue.slice(0, 5));
+  });
 }
 
 // Legacy compat

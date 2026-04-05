@@ -128,37 +128,60 @@
       </div>
     </div>
 
-    <!-- Time controls — Google Calendar style: Start + End + Duration display -->
-    <div class="modal-time-row">
-      <div class="form-group">
+    <!-- ═══════════ TIME CONTROLS ═══════════
+         Start / End as large tappable pills with inline clock icon,
+         clear (×) button, and quick-set preset chips underneath. -->
+    <div class="time-row">
+      <div class="time-field">
         <label>Start</label>
-        <input type="time" id="start-time" step="300" class="form-input">
+        <div class="time-pill" onclick="openTimePicker('start-time')">
+          <svg class="time-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <input type="time" id="start-time" step="300" class="time-pill-input">
+          <button type="button" class="time-pill-clear" title="Clear" aria-label="Clear start time"
+                  onclick="event.stopPropagation(); clearTimeField('start-time')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div class="time-presets">
+          <button type="button" class="time-chip" data-field="start-time" data-time="09:00" onclick="setTimeFromPreset(this)">🌅 9 AM</button>
+          <button type="button" class="time-chip" data-field="start-time" data-time="12:00" onclick="setTimeFromPreset(this)">☀️ Noon</button>
+          <button type="button" class="time-chip" data-field="start-time" data-time="15:00" onclick="setTimeFromPreset(this)">🕒 3 PM</button>
+          <button type="button" class="time-chip" data-field="start-time" data-time="18:00" onclick="setTimeFromPreset(this)">🌆 6 PM</button>
+          <button type="button" class="time-chip" data-field="start-time" data-time="21:00" onclick="setTimeFromPreset(this)">🌙 9 PM</button>
+        </div>
       </div>
-      <div class="form-group">
+
+      <div class="time-field">
         <label>End</label>
-        <input type="time" id="end-time" step="300" class="form-input">
+        <div class="time-pill" onclick="openTimePicker('end-time')">
+          <svg class="time-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <input type="time" id="end-time" step="300" class="time-pill-input">
+          <button type="button" class="time-pill-clear" title="Clear" aria-label="Clear end time"
+                  onclick="event.stopPropagation(); clearTimeField('end-time')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <!-- End time uses duration presets instead — they compute end from start -->
+        <div class="time-presets duration-presets" id="duration-presets">
+          <span class="duration-label" id="duration-label">30 min</span>
+          <button type="button" class="time-chip" onclick="setDuration(15)">15m</button>
+          <button type="button" class="time-chip active" onclick="setDuration(30)">30m</button>
+          <button type="button" class="time-chip" onclick="setDuration(60)">1h</button>
+          <button type="button" class="time-chip" onclick="setDuration(90)">1.5h</button>
+          <button type="button" class="time-chip" onclick="setDuration(120)">2h</button>
+          <button type="button" class="time-chip" onclick="setDuration(180)">3h</button>
+          <button type="button" class="time-chip" onclick="setDuration(240)">4h</button>
+          <button type="button" class="time-chip" onclick="setDuration(480)">8h</button>
+        </div>
       </div>
-      <div class="form-group">
+
+      <div class="form-group priority-field">
         <label>Priority</label>
         <select id="event-priority" class="form-input">
           <option value="low">Low</option>
           <option value="medium" selected>Medium</option>
           <option value="high">High</option>
         </select>
-      </div>
-    </div>
-
-    <!-- Duration display + quick presets -->
-    <div class="duration-row">
-      <span class="duration-label" id="duration-label">30 min</span>
-      <div class="duration-presets">
-        <button type="button" class="dur-btn" onclick="setDuration(15)">15m</button>
-        <button type="button" class="dur-btn active" onclick="setDuration(30)">30m</button>
-        <button type="button" class="dur-btn" onclick="setDuration(60)">1h</button>
-        <button type="button" class="dur-btn" onclick="setDuration(120)">2h</button>
-        <button type="button" class="dur-btn" onclick="setDuration(180)">3h</button>
-        <button type="button" class="dur-btn" onclick="setDuration(240)">4h</button>
-        <button type="button" class="dur-btn" onclick="setDuration(480)">8h</button>
       </div>
     </div>
     <!-- Hidden select kept for backward compat with saveEvent -->
