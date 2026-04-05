@@ -126,15 +126,40 @@ def post(path, data, prefer="return=representation"):
 
     logger.debug("SUPABASE Post → %s | params=%s", path, data)
 
-    r = _request(
-        "POST",
-        f"{SUPABASE_URL}/rest/v1/{path}",
-        headers=headers,
-        json=data,
-    )
+    def _do_post(payload):
+        return _request(
+            "POST",
+            f"{SUPABASE_URL}/rest/v1/{path}",
+            headers=headers,
+            json=payload,
+        )
+
+    r = _do_post(data)
+
+    # Resilience: if Supabase complains that a column doesn't exist in the
+    # schema cache (PGRST204), strip that column from the payload and retry
+    # once. This keeps inserts working when a migration is pending — the
+    # row just misses the new field — instead of 500-ing the whole request.
+    if not r.ok and r.status_code == 400 and isinstance(data, dict):
+        try:
+            err = r.json()
+        except Exception:
+            err = {}
+        if err.get("code") == "PGRST204":
+            msg = err.get("message") or ""
+            import re
+            m = re.search(r"'([^']+)'\s+column", msg)
+            missing = m.group(1) if m else None
+            if missing and missing in data:
+                logger.warning(
+                    "SUPABASE POST: '%s.%s' missing in schema cache — retrying without it. "
+                    "Run: ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s ...;",
+                    path, missing, path, missing
+                )
+                retry_payload = {k: v for k, v in data.items() if k != missing}
+                r = _do_post(retry_payload)
 
     if not r.ok:
-        # 🔥 Log full error context (status + URL + Supabase's own error message)
         logger.error("SUPABASE POST ERROR %s on %s", r.status_code, path)
         logger.error("SUPABASE POST URL → %s", r.url)
         logger.error("SUPABASE POST PAYLOAD → %s", data)

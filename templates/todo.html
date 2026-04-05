@@ -510,6 +510,120 @@ html.dark .em-quote {
   .em-quote-text { font-size: 15.5px; }
 }
 
+/* ═══════════════ MULTI-SELECT PROJECT PICKER (quick-add) ═══════════════ */
+.em-proj-picker { position: relative; max-width: 200px; }
+.em-proj-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: inherit;
+}
+.em-proj-trigger #em-proj-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.em-proj-trigger.has-selection {
+  border-color: var(--q-schedule);
+  color: var(--q-schedule);
+  font-weight: 600;
+}
+.em-proj-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--em-surface);
+  border: 1px solid var(--em-border);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  z-index: 500;
+  display: none;
+  -webkit-overflow-scrolling: touch;
+}
+.em-proj-menu.open { display: block; animation: emProjFade .15s ease; }
+@keyframes emProjFade { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
+.em-proj-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--em-text3);
+  border-bottom: 1px solid var(--em-border);
+  margin-bottom: 4px;
+}
+.em-proj-clear {
+  border: none;
+  background: transparent;
+  color: var(--em-text2);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 5px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.em-proj-clear:hover { background: var(--em-border); color: var(--em-text); }
+.em-proj-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--em-text);
+  transition: background .1s;
+}
+.em-proj-item:hover { background: var(--em-border); }
+.em-proj-item input[type=checkbox] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--q-schedule);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.em-proj-item span {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.em-proj-item.em-proj-none span { color: var(--em-text2); font-style: italic; }
+.em-proj-divider {
+  height: 1px;
+  background: var(--em-border);
+  margin: 4px 2px;
+}
+@media (max-width: 768px) {
+  .em-proj-picker { max-width: 100%; width: 100%; flex: 1 1 100%; }
+  .em-proj-menu {
+    left: 0; right: 0;
+    min-width: 0;
+    max-width: 100%;
+    max-height: 50vh;
+  }
+  .em-proj-item { font-size: 14px; padding: 11px 12px; }
+  .em-proj-item input[type=checkbox] { width: 18px; height: 18px; }
+}
+
 /* Active-filters chip bar */
 .em-filter-chips{
   display:flex;flex-wrap:wrap;gap:6px;align-items:center;
@@ -1056,12 +1170,47 @@ html.dark .em-quote {
       <option value="medium" selected>🟠 Medium</option>
       <option value="low">🟢 Low</option>
     </select>
-    <select id="quick-project" class="em-quad-select" style="max-width:140px;">
+    <!-- Hidden legacy select — kept so other code (filter sheet etc.)
+         can still read the project list from its options. JS reads
+         selection from the custom picker below instead. -->
+    <select id="quick-project" class="em-quad-select" style="display:none;">
       <option value="">No project</option>
       {% for p in projects %}
       <option value="{{ p.project_id }}">{{ p.name }}</option>
       {% endfor %}
     </select>
+
+    <!-- Multi-select project picker (Todoist-style popover).
+         Selecting multiple projects creates one task per project.
+         "(No project)" creates a single task with no project link. -->
+    <div class="em-proj-picker" id="em-proj-picker">
+      <button type="button" class="em-quad-select em-proj-trigger" id="em-proj-trigger"
+              onclick="toggleProjPicker(event)"
+              aria-haspopup="listbox" aria-expanded="false">
+        <i data-feather="briefcase" style="width:13px;height:13px"></i>
+        <span id="em-proj-label">No project</span>
+        <i data-feather="chevron-down" style="width:13px;height:13px;opacity:.6;"></i>
+      </button>
+      <div class="em-proj-menu" id="em-proj-menu" role="listbox" aria-multiselectable="true">
+        <div class="em-proj-menu-head">
+          <span>Project</span>
+          <button type="button" class="em-proj-clear" onclick="clearProjPicker()">Clear</button>
+        </div>
+        <label class="em-proj-item em-proj-none">
+          <input type="checkbox" data-proj-id="" checked onchange="onProjPickerChange()">
+          <span>(No project)</span>
+        </label>
+        {% if projects %}
+          <div class="em-proj-divider"></div>
+          {% for p in projects %}
+          <label class="em-proj-item">
+            <input type="checkbox" data-proj-id="{{ p.project_id }}" onchange="onProjPickerChange()">
+            <span>{{ p.name }}</span>
+          </label>
+          {% endfor %}
+        {% endif %}
+      </div>
+    </div>
     <button class="em-add-btn" onclick="quickAdd()">Add</button>
     <button class="em-action-btn" onclick="toggleBulkPanel()" title="Bulk add / Voice" style="padding:8px;">
       <i data-feather="mic" style="width:14px;height:14px"></i>
@@ -1228,6 +1377,15 @@ html.dark .em-quote {
     </div>
 
     <div class="em-fs-body">
+      <div class="em-fs-section">
+        <div class="em-fs-section-title">
+          <i data-feather="briefcase"></i> Project
+        </div>
+        <div class="em-fs-chips" id="em-fs-projects">
+          <!-- Project chips injected by JS; includes a "(No project)" chip -->
+        </div>
+      </div>
+
       <div class="em-fs-section">
         <div class="em-fs-section-title">
           <i data-feather="target"></i> Objective
@@ -1525,13 +1683,75 @@ document.getElementById("quick-quad")?.addEventListener("change", onQuadrantChan
 // Trigger once on load so defaults (e.g. "Schedule" → due date) render immediately
 onQuadrantChange();
 
+// ── Multi-select project picker helpers ──
+function toggleProjPicker(ev) {
+  ev?.stopPropagation();
+  const menu = document.getElementById("em-proj-menu");
+  const trigger = document.getElementById("em-proj-trigger");
+  if (!menu || !trigger) return;
+  const willOpen = !menu.classList.contains("open");
+  menu.classList.toggle("open", willOpen);
+  trigger.setAttribute("aria-expanded", willOpen ? "true" : "false");
+}
+function _closeProjPicker() {
+  const menu = document.getElementById("em-proj-menu");
+  const trigger = document.getElementById("em-proj-trigger");
+  menu?.classList.remove("open");
+  trigger?.setAttribute("aria-expanded", "false");
+}
+document.addEventListener("click", (ev) => {
+  const picker = document.getElementById("em-proj-picker");
+  if (picker && !picker.contains(ev.target)) _closeProjPicker();
+});
+function _getSelectedProjectIds() {
+  // Returns array of ids from the picker. "" means "no project".
+  // If nothing is checked, default to [""] so the task saves as unlinked.
+  const boxes = document.querySelectorAll('#em-proj-menu input[type=checkbox]:checked');
+  if (!boxes.length) return [""];
+  return Array.from(boxes).map(b => b.dataset.projId ?? "");
+}
+function onProjPickerChange() {
+  const ids = _getSelectedProjectIds();
+  const label = document.getElementById("em-proj-label");
+  const trigger = document.getElementById("em-proj-trigger");
+  if (!label || !trigger) return;
+
+  const noneChecked = ids.length === 1 && ids[0] === "";
+  if (noneChecked) {
+    label.textContent = "No project";
+    trigger.classList.remove("has-selection");
+    return;
+  }
+
+  // One or more real projects selected
+  const realIds = ids.filter(i => i !== "");
+  const includesNone = ids.includes("");
+  if (realIds.length === 1 && !includesNone) {
+    // Single project — show its name
+    const opt = document.querySelector(`#quick-project option[value="${realIds[0]}"]`);
+    label.textContent = opt ? opt.textContent : "1 project";
+  } else {
+    const total = realIds.length + (includesNone ? 1 : 0);
+    label.textContent = `${total} selected`;
+  }
+  trigger.classList.add("has-selection");
+}
+function clearProjPicker() {
+  document.querySelectorAll('#em-proj-menu input[type=checkbox]').forEach(b => {
+    b.checked = (b.dataset.projId === "");  // reset to only "No project"
+  });
+  onProjPickerChange();
+}
+
 function quickAdd() {
   const input = document.getElementById("quick-task");
   const text = input.value.trim();
   if (!text) return;
 
   const quadrant = document.getElementById("quick-quad").value;
-  const projectId = document.getElementById("quick-project").value || null;
+  // Multi-select: creates one task per selected project (or a single
+  // unlinked task if only "(No project)" is ticked).
+  const projectIds = _getSelectedProjectIds();
   const recurrence = document.getElementById("quick-recurrence")?.value || null;
   const priority = document.getElementById("quick-priority")?.value || "medium";
 
@@ -1559,14 +1779,16 @@ function quickAdd() {
     dueDate = null;
   }
 
-  fetch("/todo/autosave", {
+  // Fire one autosave per selected project. On the happy path we insert
+  // a card per response; failures are surfaced per-project with a toast.
+  const postOne = (projectId) => fetch("/todo/autosave", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
       plan_date: PLAN_DATE,
       task_text: text,
       quadrant: quadrant,
-      project_id: projectId,
+      project_id: projectId || null,
       due_date: dueDate,
       task_time: taskTime,
       delegated_to: delegatedTo,
@@ -1574,40 +1796,49 @@ function quickAdd() {
       priority: priority,
       is_done: false
     })
-  })
-  .then(async r => {
+  }).then(async r => {
     const body = await r.json().catch(() => ({}));
-    return { ok: r.ok, status: r.status, body };
-  })
-  .then(({ ok, status, body }) => {
-    if (!ok) {
-      const msg = (body && (body.error || body.message)) || `Save failed (${status})`;
-      console.error("quickAdd failed:", msg, body);
-      showToast(msg, "error");
-      return;
-    }
-
-    // Prefer the server-rendered partial, but fall back to a client-built
-    // card so we never reload the page (that wipes the typed inputs and
-    // hid newly added rows in practice).
-    const html = (body && body.html) ? body.html : _buildClientTaskCard({
-      id: body && body.id,
-      task_text: text,
-      quadrant: body?.quadrant || quadrant,
-      priority: priority,
-      project_name: _projectNameFor(projectId),
-      recurrence: recurrence,
-    });
-
-    _insertTaskCardHtml(body?.quadrant || quadrant, html);
-    input.value = "";
-    if (!_isTouchDevice) input.focus();
-    showToast("Task added", "success");
-  })
-  .catch((err) => {
-    console.error("quickAdd network error:", err);
-    showToast("Failed to add task", "error");
+    return { ok: r.ok, status: r.status, body, projectId };
   });
+
+  Promise.all(projectIds.map(postOne))
+    .then(results => {
+      let added = 0;
+      let lastError = null;
+
+      for (const { ok, status, body, projectId } of results) {
+        if (!ok) {
+          lastError = (body && (body.error || body.message)) || `Save failed (${status})`;
+          console.error("quickAdd failed:", lastError, body);
+          continue;
+        }
+        const html = (body && body.html) ? body.html : _buildClientTaskCard({
+          id: body && body.id,
+          task_text: text,
+          quadrant: body?.quadrant || quadrant,
+          priority: priority,
+          project_id: projectId || null,
+          project_name: _projectNameFor(projectId),
+          recurrence: recurrence,
+        });
+        _insertTaskCardHtml(body?.quadrant || quadrant, html);
+        added++;
+      }
+
+      if (added > 0) {
+        input.value = "";
+        if (!_isTouchDevice) input.focus();
+        const msg = added === 1
+          ? "Task added"
+          : `Added to ${added} projects`;
+        showToast(msg, "success");
+      }
+      if (lastError) showToast(lastError, "error");
+    })
+    .catch((err) => {
+      console.error("quickAdd network error:", err);
+      showToast("Failed to add task", "error");
+    });
 }
 
 // Lookup project name from the <select> so the client-side fallback card
@@ -1638,13 +1869,15 @@ function _buildClientTaskCard(t) {
   const recurPill = t.recurrence
     ? `<span class="em-recur-pill" title="Repeats ${esc(t.recurrence)}">🔁 ${esc(t.recurrence)}</span>`
     : "";
+  const projId = esc(t.project_id || "");
   return `
     <div class="em-task prio-${prio}"
          data-id="${id}"
          data-quadrant="${quadrant}"
          data-priority="${prio}"
          data-status="open"
-         data-source="matrix">
+         data-source="matrix"
+         data-project-id="${projId}">
       <span class="em-sel-check" aria-hidden="true"></span>
       <input type="checkbox" onchange="toggleDone('${id}', this.checked)">
       <div class="em-task-body">
@@ -2409,11 +2642,29 @@ function showTvUndoToast(message, onUndo, duration = 6000) {
 }
 
 // ═════════════════════════════════════════════════════════════
-// OKR filter — bottom-sheet picker with cascading chips
-// (Objective → Key Result → Initiative)
+// Filter — bottom-sheet picker with MULTI-SELECT across 4 dimensions
+// (Project · Objective · Key Result · Initiative). Each dimension is
+// a Set of ids; a task passes iff, for every non-empty set, the task's
+// id is in it. Within a dimension it's OR; across dimensions it's AND.
+// The Project set may contain the sentinel "" meaning "no project".
 // ═════════════════════════════════════════════════════════════
 let _emOkrData = null;
-const _emFilter = { objectiveId: "", krId: "", initiativeId: "" };
+const _emFilter = {
+  projectIds:    new Set(),   // "" sentinel = "No project"
+  objectiveIds:  new Set(),
+  krIds:         new Set(),
+  initiativeIds: new Set(),
+};
+
+// Pull project list from the quick-add <select> that the server already
+// populated for us — no extra fetch needed.
+function _emProjectList() {
+  const sel = document.getElementById("quick-project");
+  if (!sel) return [];
+  return Array.from(sel.options)
+    .filter(o => o.value) // skip the "No project" option; we add it back explicitly
+    .map(o => ({ id: o.value, name: o.textContent }));
+}
 
 async function loadEmOkrFilter() {
   try {
@@ -2434,6 +2685,11 @@ function _emEsc(str) {
 }
 
 function _emLabelFor(kind, id) {
+  if (kind === "project") {
+    if (id === "") return "(No project)";
+    const p = _emProjectList().find(p => p.id === id);
+    return p ? p.name : null;
+  }
   const objs = _emOkrData?.objectives || [];
   if (kind === "objective") return objs.find(o => o.id === id)?.title;
   if (kind === "kr") {
@@ -2453,75 +2709,103 @@ function _emLabelFor(kind, id) {
 
 // Build the pill-chip sections inside the sheet from _emFilter state
 function renderFilterSheet() {
-  if (!_emOkrData) return;
-  const objectives = _emOkrData.objectives || [];
+  const objectives = (_emOkrData && _emOkrData.objectives) || [];
+  const projects = _emProjectList();
 
+  const projWrap = document.getElementById("em-fs-projects");
   const objWrap  = document.getElementById("em-fs-objectives");
   const krWrap   = document.getElementById("em-fs-krs");
   const initWrap = document.getElementById("em-fs-initiatives");
-  if (!objWrap || !krWrap || !initWrap) return;
 
-  // ── Objectives ──
-  if (!objectives.length) {
-    objWrap.innerHTML = `<div class="em-fs-empty">No objectives yet. Create one on the OKRs page.</div>`;
-  } else {
-    objWrap.innerHTML = objectives.map(o => {
-      const count = (o.key_results || []).reduce(
-        (n, k) => n + (k.initiatives || []).length, 0
-      );
-      const sel = o.id === _emFilter.objectiveId ? " selected" : "";
+  // ── Projects (always render; includes "No project" sentinel) ──
+  if (projWrap) {
+    const noProjSel = _emFilter.projectIds.has("") ? " selected" : "";
+    const noProjChip =
+      `<button type="button" class="em-fs-chip${noProjSel}"
+               data-kind="project" data-id="">
+        <span class="em-fs-chip-check" aria-hidden="true"></span>
+        <span class="em-fs-chip-text">(No project)</span>
+      </button>`;
+    const projChips = projects.map(p => {
+      const sel = _emFilter.projectIds.has(p.id) ? " selected" : "";
       return `<button type="button" class="em-fs-chip${sel}"
-                      data-kind="objective" data-id="${o.id}">
-        <span class="em-fs-chip-text">${_emEsc(o.title)}</span>
-        ${count ? `<span class="em-fs-chip-meta">${count}</span>` : ""}
+                      data-kind="project" data-id="${_emEsc(p.id)}">
+        <span class="em-fs-chip-check" aria-hidden="true"></span>
+        <span class="em-fs-chip-text">${_emEsc(p.name)}</span>
       </button>`;
     }).join("");
+    projWrap.innerHTML = noProjChip + projChips;
   }
 
-  // ── Key Results (scoped to selected objective, or all) ──
-  const krs = _emFilter.objectiveId
-    ? (objectives.find(o => o.id === _emFilter.objectiveId)?.key_results || [])
-    : objectives.flatMap(o => o.key_results || []);
-  const krSection = document.getElementById("em-fs-kr-section");
-  if (!krs.length) {
-    krWrap.innerHTML = `<div class="em-fs-empty">${_emFilter.objectiveId
-      ? "This objective has no key results."
-      : "Pick an objective to narrow down."}</div>`;
-  } else {
-    krWrap.innerHTML = krs.map(k => {
-      const sel = k.id === _emFilter.krId ? " selected" : "";
-      const count = (k.initiatives || []).length;
-      return `<button type="button" class="em-fs-chip${sel}"
-                      data-kind="kr" data-id="${k.id}">
-        <span class="em-fs-chip-text">${_emEsc(k.title)}</span>
-        ${count ? `<span class="em-fs-chip-meta">${count}</span>` : ""}
-      </button>`;
-    }).join("");
+  // ── Objectives (multi-select, always the full list) ──
+  if (objWrap) {
+    if (!objectives.length) {
+      objWrap.innerHTML = `<div class="em-fs-empty">No objectives yet. Create one on the OKRs page.</div>`;
+    } else {
+      objWrap.innerHTML = objectives.map(o => {
+        const count = (o.key_results || []).reduce(
+          (n, k) => n + (k.initiatives || []).length, 0
+        );
+        const sel = _emFilter.objectiveIds.has(o.id) ? " selected" : "";
+        return `<button type="button" class="em-fs-chip${sel}"
+                        data-kind="objective" data-id="${o.id}">
+          <span class="em-fs-chip-check" aria-hidden="true"></span>
+          <span class="em-fs-chip-text">${_emEsc(o.title)}</span>
+          ${count ? `<span class="em-fs-chip-meta">${count}</span>` : ""}
+        </button>`;
+      }).join("");
+    }
   }
-  krSection?.classList.toggle("disabled", !objectives.length);
 
-  // ── Initiatives (scoped to selected KR, or all under current scope) ──
-  let inits = [];
-  if (_emFilter.krId) {
-    for (const k of krs) if (k.id === _emFilter.krId) inits = k.initiatives || [];
-  } else {
-    inits = krs.flatMap(k => k.initiatives || []);
+  // ── Key Results (scoped to selected objectives, or all) ──
+  const scopedObjs = _emFilter.objectiveIds.size
+    ? objectives.filter(o => _emFilter.objectiveIds.has(o.id))
+    : objectives;
+  const krs = scopedObjs.flatMap(o => (o.key_results || []).map(k => ({
+    ...k, _objTitle: o.title
+  })));
+  if (krWrap) {
+    if (!krs.length) {
+      krWrap.innerHTML = `<div class="em-fs-empty">${_emFilter.objectiveIds.size
+        ? "Selected objectives have no key results."
+        : "No key results in scope."}</div>`;
+    } else {
+      krWrap.innerHTML = krs.map(k => {
+        const sel = _emFilter.krIds.has(k.id) ? " selected" : "";
+        const count = (k.initiatives || []).length;
+        return `<button type="button" class="em-fs-chip${sel}"
+                        data-kind="kr" data-id="${k.id}">
+          <span class="em-fs-chip-check" aria-hidden="true"></span>
+          <span class="em-fs-chip-text">${_emEsc(k.title)}</span>
+          ${count ? `<span class="em-fs-chip-meta">${count}</span>` : ""}
+        </button>`;
+      }).join("");
+    }
   }
-  const initSection = document.getElementById("em-fs-init-section");
-  if (!inits.length) {
-    initWrap.innerHTML = `<div class="em-fs-empty">${_emFilter.krId
-      ? "No initiatives under this key result."
-      : "Pick a key result to narrow further."}</div>`;
-  } else {
-    initWrap.innerHTML = inits.map(i => {
-      const sel = i.id === _emFilter.initiativeId ? " selected" : "";
-      return `<button type="button" class="em-fs-chip${sel}"
-                      data-kind="initiative" data-id="${i.id}">
-        <span class="em-fs-chip-text">${_emEsc(i.title)}</span>
-      </button>`;
-    }).join("");
+
+  // ── Initiatives (scoped to selected KRs, or all in-scope) ──
+  const scopedKrs = _emFilter.krIds.size
+    ? krs.filter(k => _emFilter.krIds.has(k.id))
+    : krs;
+  const inits = scopedKrs.flatMap(k => (k.initiatives || []).map(i => ({
+    ...i, _krTitle: k.title
+  })));
+  if (initWrap) {
+    if (!inits.length) {
+      initWrap.innerHTML = `<div class="em-fs-empty">${_emFilter.krIds.size
+        ? "Selected key results have no initiatives."
+        : "No initiatives in scope."}</div>`;
+    } else {
+      initWrap.innerHTML = inits.map(i => {
+        const sel = _emFilter.initiativeIds.has(i.id) ? " selected" : "";
+        return `<button type="button" class="em-fs-chip${sel}"
+                        data-kind="initiative" data-id="${i.id}">
+          <span class="em-fs-chip-check" aria-hidden="true"></span>
+          <span class="em-fs-chip-text">${_emEsc(i.title)}</span>
+        </button>`;
+      }).join("");
+    }
   }
-  initSection?.classList.toggle("disabled", !krs.length);
 
   // Update apply-button label
   const n = _emActiveCount();
@@ -2529,46 +2813,92 @@ function renderFilterSheet() {
   if (lbl) lbl.textContent = n ? `Apply ${n} filter${n > 1 ? "s" : ""}` : "Show all tasks";
 }
 
-// Event delegation: chip click updates state
+// Event delegation: chip click toggles membership in the matching set
 document.addEventListener("click", (ev) => {
   const chip = ev.target.closest(".em-fs-chip");
-  if (!chip) return;
+  if (!chip || !chip.dataset.kind) return;
   const kind = chip.dataset.kind;
-  const id = chip.dataset.id;
-  if (kind === "objective") {
-    _emFilter.objectiveId = (_emFilter.objectiveId === id) ? "" : id;
-    // Clear downstream if parent changed
-    _emFilter.krId = "";
-    _emFilter.initiativeId = "";
-  } else if (kind === "kr") {
-    _emFilter.krId = (_emFilter.krId === id) ? "" : id;
-    _emFilter.initiativeId = "";
-  } else if (kind === "initiative") {
-    _emFilter.initiativeId = (_emFilter.initiativeId === id) ? "" : id;
-  }
+  const id = chip.dataset.id ?? "";
+
+  const setFor = {
+    project:    _emFilter.projectIds,
+    objective:  _emFilter.objectiveIds,
+    kr:         _emFilter.krIds,
+    initiative: _emFilter.initiativeIds,
+  }[kind];
+  if (!setFor) return;
+
+  if (setFor.has(id)) setFor.delete(id);
+  else                setFor.add(id);
+
+  // Cascade cleanup: dropping an objective also drops any KR/initiative
+  // whose parent chain is no longer in scope.
+  if (kind === "objective") _emCleanupDownstream();
+  if (kind === "kr")        _emCleanupInitiatives();
+
   renderFilterSheet();
   applyEmOkrFilter();
 });
 
+function _emCleanupDownstream() {
+  const objectives = (_emOkrData && _emOkrData.objectives) || [];
+  if (!_emFilter.objectiveIds.size) return;
+  const liveKrIds = new Set(
+    objectives
+      .filter(o => _emFilter.objectiveIds.has(o.id))
+      .flatMap(o => (o.key_results || []).map(k => k.id))
+  );
+  for (const k of Array.from(_emFilter.krIds)) {
+    if (!liveKrIds.has(k)) _emFilter.krIds.delete(k);
+  }
+  _emCleanupInitiatives();
+}
+function _emCleanupInitiatives() {
+  const objectives = (_emOkrData && _emOkrData.objectives) || [];
+  const scopedObjs = _emFilter.objectiveIds.size
+    ? objectives.filter(o => _emFilter.objectiveIds.has(o.id))
+    : objectives;
+  const scopedKrs = scopedObjs.flatMap(o => o.key_results || []);
+  const filteredKrs = _emFilter.krIds.size
+    ? scopedKrs.filter(k => _emFilter.krIds.has(k.id))
+    : scopedKrs;
+  const liveInitIds = new Set(filteredKrs.flatMap(k => (k.initiatives || []).map(i => i.id)));
+  for (const i of Array.from(_emFilter.initiativeIds)) {
+    if (!liveInitIds.has(i)) _emFilter.initiativeIds.delete(i);
+  }
+}
+
 function _emActiveCount() {
-  return (_emFilter.objectiveId ? 1 : 0)
-       + (_emFilter.krId ? 1 : 0)
-       + (_emFilter.initiativeId ? 1 : 0);
+  return _emFilter.projectIds.size
+       + _emFilter.objectiveIds.size
+       + _emFilter.krIds.size
+       + _emFilter.initiativeIds.size;
 }
 
 function applyEmOkrFilter() {
-  const { objectiveId: objId, krId, initiativeId: initId } = _emFilter;
-  const active = !!(objId || krId || initId);
+  const pSet = _emFilter.projectIds;
+  const oSet = _emFilter.objectiveIds;
+  const kSet = _emFilter.krIds;
+  const iSet = _emFilter.initiativeIds;
+  const okrActive = oSet.size || kSet.size || iSet.size;
+  const anyActive = pSet.size || okrActive;
 
   document.querySelectorAll(".em-task").forEach(card => {
     let show = true;
-    if (active) {
-      if (!card.dataset.objectiveId && !card.dataset.krId && !card.dataset.initiativeId) {
-        show = false;
+    if (anyActive) {
+      // Project filter: empty string represents "no project"
+      if (pSet.size) {
+        const rawProj = card.dataset.projectId || "";
+        if (!pSet.has(rawProj)) show = false;
       }
-      if (show && objId  && card.dataset.objectiveId  !== objId)  show = false;
-      if (show && krId   && card.dataset.krId         !== krId)   show = false;
-      if (show && initId && card.dataset.initiativeId !== initId) show = false;
+      // OKR dimensions: hide unlinked tasks as soon as any OKR filter is on
+      if (show && okrActive) {
+        const hasAnyOkr = card.dataset.objectiveId || card.dataset.krId || card.dataset.initiativeId;
+        if (!hasAnyOkr) show = false;
+        if (show && oSet.size && !oSet.has(card.dataset.objectiveId  || "")) show = false;
+        if (show && kSet.size && !kSet.has(card.dataset.krId         || "")) show = false;
+        if (show && iSet.size && !iSet.has(card.dataset.initiativeId || "")) show = false;
+      }
     }
     card.classList.toggle("em-okr-hidden", !show);
   });
@@ -2589,28 +2919,19 @@ function applyEmOkrFilter() {
 function renderFilterChips() {
   const bar = document.getElementById("em-filter-chips");
   if (!bar) return;
-  const n = _emActiveCount();
-  if (!n) { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  if (_emActiveCount() === 0) { bar.style.display = "none"; bar.innerHTML = ""; return; }
 
   const chips = [];
-  if (_emFilter.objectiveId) chips.push({
-    kind: "objective", label: "Objective",
-    text: _emLabelFor("objective", _emFilter.objectiveId) || "—",
-  });
-  if (_emFilter.krId) chips.push({
-    kind: "kr", label: "Key Result",
-    text: _emLabelFor("kr", _emFilter.krId) || "—",
-  });
-  if (_emFilter.initiativeId) chips.push({
-    kind: "initiative", label: "Initiative",
-    text: _emLabelFor("initiative", _emFilter.initiativeId) || "—",
-  });
+  for (const id of _emFilter.projectIds)   chips.push({ kind: "project",    label: "Project",    text: _emLabelFor("project", id) || "—", id });
+  for (const id of _emFilter.objectiveIds) chips.push({ kind: "objective",  label: "Objective",  text: _emLabelFor("objective", id) || "—", id });
+  for (const id of _emFilter.krIds)        chips.push({ kind: "kr",         label: "Key Result", text: _emLabelFor("kr", id) || "—", id });
+  for (const id of _emFilter.initiativeIds) chips.push({ kind: "initiative", label: "Initiative", text: _emLabelFor("initiative", id) || "—", id });
 
   bar.innerHTML = chips.map(c => `
     <span class="em-chip">
       <span class="em-chip-label">${c.label}</span>
-      <span class="em-chip-text">${_emEsc(c.text)}</span>
-      <button type="button" onclick="removeFilterChip('${c.kind}')" aria-label="Remove ${c.label} filter">
+      <span class="em-chip-text" title="${_emEsc(c.text)}">${_emEsc(c.text)}</span>
+      <button type="button" onclick="removeFilterChip('${c.kind}','${_emEsc(c.id)}')" aria-label="Remove ${c.label}">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
@@ -2619,25 +2940,26 @@ function renderFilterChips() {
   bar.style.display = "flex";
 }
 
-function removeFilterChip(kind) {
-  if (kind === "objective") {
-    _emFilter.objectiveId = "";
-    _emFilter.krId = "";
-    _emFilter.initiativeId = "";
-  } else if (kind === "kr") {
-    _emFilter.krId = "";
-    _emFilter.initiativeId = "";
-  } else if (kind === "initiative") {
-    _emFilter.initiativeId = "";
-  }
+function removeFilterChip(kind, id) {
+  const setFor = {
+    project:    _emFilter.projectIds,
+    objective:  _emFilter.objectiveIds,
+    kr:         _emFilter.krIds,
+    initiative: _emFilter.initiativeIds,
+  }[kind];
+  if (!setFor) return;
+  setFor.delete(id);
+  if (kind === "objective") _emCleanupDownstream();
+  if (kind === "kr")        _emCleanupInitiatives();
   renderFilterSheet();
   applyEmOkrFilter();
 }
 
 function clearOkrFilter() {
-  _emFilter.objectiveId = "";
-  _emFilter.krId = "";
-  _emFilter.initiativeId = "";
+  _emFilter.projectIds.clear();
+  _emFilter.objectiveIds.clear();
+  _emFilter.krIds.clear();
+  _emFilter.initiativeIds.clear();
   renderFilterSheet();
   applyEmOkrFilter();
 }
