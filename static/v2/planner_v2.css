@@ -1005,6 +1005,251 @@ body {
    End field's presets area. */
 .duration-row { display: none; }
 
+/* ═══════════════════════════════════════════════════════════
+   CLOCK PICKER — Material-style hour/minute picker that
+   replaces the native <input type="time"> mini picker.
+   ═══════════════════════════════════════════════════════════ */
+.clock-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 99990;
+}
+.clock-picker-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.clock-picker {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.95);
+  width: min(340px, 94vw);
+  background: var(--gcal-surface);
+  border: 1px solid var(--gcal-border);
+  border-radius: 20px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.24s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  z-index: 99991;
+  overflow: hidden;
+  color: var(--gcal-text);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.clock-picker.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+/* Header */
+.cp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid var(--gcal-border);
+}
+.cp-title {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--gcal-text-secondary);
+}
+.cp-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--gcal-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+}
+.cp-close:hover { background: var(--gcal-bg); color: var(--gcal-text); }
+
+/* Big display — the editable HH : MM readout */
+.cp-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px 18px 8px;
+}
+.cp-big {
+  font-size: 48px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--gcal-text-secondary);
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.cp-big:hover { background: var(--gcal-bg); }
+.cp-big.active {
+  background: rgba(26, 115, 232, 0.12);
+  color: var(--gcal-primary);
+  font-weight: 500;
+}
+.cp-colon {
+  font-size: 48px;
+  font-weight: 300;
+  color: var(--gcal-text-secondary);
+  line-height: 1;
+  padding-bottom: 6px;
+}
+.cp-ampm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 8px;
+}
+.cp-ampm-btn {
+  padding: 6px 12px;
+  border: 1.5px solid var(--gcal-border);
+  background: transparent;
+  color: var(--gcal-text-secondary);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.12s;
+  letter-spacing: 0.3px;
+}
+.cp-ampm-btn:hover {
+  border-color: var(--gcal-primary);
+  color: var(--gcal-primary);
+}
+.cp-ampm-btn.active {
+  background: var(--gcal-primary);
+  border-color: var(--gcal-primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.35);
+}
+
+/* Clock face */
+.cp-face-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 18px 18px;
+}
+.cp-face {
+  user-select: none;
+  touch-action: manipulation;
+}
+.cp-face-bg {
+  fill: var(--gcal-bg);
+  stroke: var(--gcal-border);
+  stroke-width: 1.5;
+}
+.cp-hand {
+  stroke: var(--gcal-primary);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: x2 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              y2 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cp-hand-end {
+  fill: rgba(26, 115, 232, 0.15);
+  stroke: var(--gcal-primary);
+  stroke-width: 2;
+  transition: cx 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              cy 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cp-hand-center {
+  fill: var(--gcal-primary);
+  stroke: none;
+}
+
+/* Number nodes — each hour or minute-5 marker */
+.cp-num {
+  cursor: pointer;
+}
+.cp-num circle {
+  fill: transparent;
+  transition: fill 0.12s;
+}
+.cp-num text {
+  fill: var(--gcal-text);
+  pointer-events: none;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.cp-num:hover circle {
+  fill: rgba(26, 115, 232, 0.12);
+}
+.cp-num.selected circle {
+  fill: var(--gcal-primary);
+}
+.cp-num.selected text {
+  fill: #ffffff;
+}
+
+/* Footer actions */
+.cp-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--gcal-border);
+  background: var(--gcal-bg);
+}
+.cp-btn {
+  flex: 1;
+  padding: 11px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.12s;
+  min-height: 44px;
+}
+.cp-btn-ghost {
+  background: transparent;
+  color: var(--gcal-text-secondary);
+  border-color: var(--gcal-border);
+}
+.cp-btn-ghost:hover {
+  background: var(--gcal-surface);
+  color: var(--gcal-text);
+}
+.cp-btn-primary {
+  background: var(--gcal-primary);
+  color: #ffffff;
+  border-color: var(--gcal-primary);
+  box-shadow: 0 3px 12px rgba(26, 115, 232, 0.35);
+}
+.cp-btn-primary:hover { filter: brightness(0.95); }
+
+/* Mobile — center modal sits cleanly on phones */
+@media (max-width: 480px) {
+  .clock-picker { width: 94vw; max-width: 340px; }
+  .cp-big { font-size: 42px; }
+  .cp-colon { font-size: 42px; }
+  .cp-face { width: 240px; height: 240px; }
+}
+
+/* Dark theme compatibility (the tokens already swap via --gcal-*) */
+html.dark .cp-face-bg { fill: #0f172a; }
+html.dark .cp-num text { fill: #f1f5f9; }
+
 /* Quadrant Picker */
 .quadrant-picker {
   display: flex; gap: 4px; flex-wrap: wrap;

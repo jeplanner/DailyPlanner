@@ -937,15 +937,241 @@ function setDuration(mins) {
 }
 
 // ─── New helpers for the pill-style time control ──────────────
+// The pills now open a **custom clock-face popover** (openClockPicker)
+// instead of the native <input type="time"> mini picker. The native
+// picker is kept available for keyboard accessibility — typing into
+// the input directly still works, and pressing Esc closes the clock.
 function openTimePicker(inputId) {
-  const el = document.getElementById(inputId);
-  if (!el) return;
-  try {
-    if (typeof el.showPicker === "function") { el.showPicker(); return; }
-  } catch (err) { console.warn("showPicker:", err); }
-  el.focus();
-  try { el.click(); } catch {}
+  openClockPicker(inputId);
 }
+
+// ═════════════════════════════════════════════════════════════
+// CLOCK PICKER — Material-style two-phase picker (hour → minute)
+// Renders as an SVG clock face with numbered hour positions, a
+// draggable hand, and an AM/PM toggle. Lightweight, keyboard-safe,
+// and mobile-friendly.
+// ═════════════════════════════════════════════════════════════
+let _clockState = {
+  inputId: null,
+  hour12: 9,       // 1..12
+  minute: 0,       // 0..59
+  ampm: "AM",
+  mode: "hour",    // "hour" | "minute"
+};
+
+function openClockPicker(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  // Seed from the input's current value if present
+  const existing = (input.value || "").trim();
+  if (existing && /^\d{1,2}:\d{2}/.test(existing)) {
+    const [hh, mm] = existing.split(":").map(Number);
+    _clockState.ampm = hh >= 12 ? "PM" : "AM";
+    _clockState.hour12 = ((hh + 11) % 12) + 1;
+    _clockState.minute = mm || 0;
+  } else {
+    // Sensible default: 9:00 AM for start, 9:30 AM for end
+    if (inputId === "end-time") {
+      _clockState.hour12 = 9;
+      _clockState.minute = 30;
+    } else {
+      _clockState.hour12 = 9;
+      _clockState.minute = 0;
+    }
+    _clockState.ampm = "AM";
+  }
+  _clockState.inputId = inputId;
+  _clockState.mode = "hour";
+
+  _renderClockPicker();
+}
+
+function closeClockPicker() {
+  const el = document.getElementById("clock-picker");
+  const overlay = document.getElementById("clock-picker-overlay");
+  el?.classList.remove("open");
+  overlay?.classList.remove("open");
+  _clockState.inputId = null;
+}
+
+function _renderClockPicker() {
+  let overlay = document.getElementById("clock-picker-overlay");
+  let host = document.getElementById("clock-picker");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "clock-picker-overlay";
+    overlay.className = "clock-picker-overlay";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeClockPicker();
+    });
+    document.body.appendChild(overlay);
+  }
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "clock-picker";
+    host.className = "clock-picker";
+    host.setAttribute("role", "dialog");
+    host.setAttribute("aria-label", "Time picker");
+    document.body.appendChild(host);
+  }
+
+  const { hour12, minute, ampm, mode, inputId } = _clockState;
+  const label = inputId === "end-time" ? "Set end time" : "Set start time";
+  const hourStr = String(hour12);
+  const minStr = String(minute).padStart(2, "0");
+
+  host.innerHTML = `
+    <div class="cp-header">
+      <div class="cp-title">${label}</div>
+      <button type="button" class="cp-close" onclick="closeClockPicker()" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M6 6l12 12M18 6L6 18"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="cp-display">
+      <button type="button" class="cp-big ${mode === 'hour' ? 'active' : ''}"
+              onclick="_clockSetMode('hour')">${hourStr}</button>
+      <span class="cp-colon">:</span>
+      <button type="button" class="cp-big ${mode === 'minute' ? 'active' : ''}"
+              onclick="_clockSetMode('minute')">${minStr}</button>
+      <div class="cp-ampm">
+        <button type="button" class="cp-ampm-btn ${ampm === 'AM' ? 'active' : ''}"
+                onclick="_clockSetAmPm('AM')">AM</button>
+        <button type="button" class="cp-ampm-btn ${ampm === 'PM' ? 'active' : ''}"
+                onclick="_clockSetAmPm('PM')">PM</button>
+      </div>
+    </div>
+
+    <div class="cp-face-wrap">
+      ${_renderClockFace()}
+    </div>
+
+    <div class="cp-actions">
+      <button type="button" class="cp-btn cp-btn-ghost" onclick="closeClockPicker()">Cancel</button>
+      <button type="button" class="cp-btn cp-btn-primary" onclick="_clockConfirm()">
+        ${mode === 'hour' ? 'Next' : 'Done'}
+      </button>
+    </div>
+  `;
+
+  overlay.classList.add("open");
+  host.classList.add("open");
+
+  // Wire up number-node clicks
+  host.querySelectorAll(".cp-num").forEach(node => {
+    node.addEventListener("click", () => {
+      const val = parseInt(node.dataset.val, 10);
+      if (_clockState.mode === "hour") {
+        _clockState.hour12 = val === 0 ? 12 : val;
+      } else {
+        _clockState.minute = val;
+      }
+      _renderClockPicker();
+    });
+  });
+}
+
+function _renderClockFace() {
+  const { mode, hour12, minute } = _clockState;
+  const size = 260;
+  const cx = size / 2;
+  const cy = size / 2;
+  const rOuter = 108;   // where hour numbers sit
+  const rMinor = 84;    // inner ring for 13-24 (unused here, 12-hour mode)
+
+  // Build hour numbers (1..12) arranged around the circle
+  const hourNodes = [];
+  for (let h = 1; h <= 12; h++) {
+    const angle = ((h - 3) * 2 * Math.PI) / 12; // 12 at top
+    const x = cx + rOuter * Math.cos(angle);
+    const y = cy + rOuter * Math.sin(angle);
+    const selected = mode === "hour" && hour12 === h;
+    hourNodes.push(`
+      <g class="cp-num ${selected ? 'selected' : ''}" data-val="${h}">
+        <circle cx="${x}" cy="${y}" r="18" />
+        <text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central"
+              font-size="17" font-weight="700">${h}</text>
+      </g>
+    `);
+  }
+
+  // Build minute markers (0, 5, 10, ... 55) — only labeled at 5-min steps
+  const minuteNodes = [];
+  for (let m = 0; m < 60; m += 5) {
+    const angle = ((m / 5 - 3) * 2 * Math.PI) / 12;
+    const x = cx + rOuter * Math.cos(angle);
+    const y = cy + rOuter * Math.sin(angle);
+    const selected = mode === "minute" && minute === m;
+    minuteNodes.push(`
+      <g class="cp-num ${selected ? 'selected' : ''}" data-val="${m}">
+        <circle cx="${x}" cy="${y}" r="18" />
+        <text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="central"
+              font-size="15" font-weight="700">${String(m).padStart(2, '0')}</text>
+      </g>
+    `);
+  }
+
+  // Hand: line from center to the selected number
+  let handAngle = 0;
+  let handReach = rOuter;
+  if (mode === "hour") {
+    handAngle = ((hour12 - 3) * 2 * Math.PI) / 12;
+  } else {
+    handAngle = ((minute / 5 - 3) * 2 * Math.PI) / 12;
+  }
+  const hx = cx + handReach * Math.cos(handAngle);
+  const hy = cy + handReach * Math.sin(handAngle);
+
+  const nodes = mode === "hour" ? hourNodes : minuteNodes;
+
+  return `
+    <svg class="cp-face" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+      <circle class="cp-face-bg" cx="${cx}" cy="${cy}" r="${size / 2 - 4}" />
+      <line class="cp-hand" x1="${cx}" y1="${cy}" x2="${hx}" y2="${hy}" />
+      <circle class="cp-hand-end" cx="${hx}" cy="${hy}" r="18" />
+      <circle class="cp-hand-center" cx="${cx}" cy="${cy}" r="4" />
+      ${nodes.join("")}
+    </svg>
+  `;
+}
+
+function _clockSetMode(mode) {
+  _clockState.mode = mode;
+  _renderClockPicker();
+}
+function _clockSetAmPm(v) {
+  _clockState.ampm = v;
+  _renderClockPicker();
+}
+function _clockConfirm() {
+  if (_clockState.mode === "hour") {
+    _clockState.mode = "minute";
+    _renderClockPicker();
+    return;
+  }
+  // Minute mode → commit and close
+  const input = document.getElementById(_clockState.inputId);
+  if (input) {
+    let h24 = _clockState.hour12 % 12;        // 12 AM → 0, 1..11 AM → 1..11
+    if (_clockState.ampm === "PM") h24 += 12; // 1 PM → 13, 12 PM → 12
+    const hhmm = `${String(h24).padStart(2, "0")}:${String(_clockState.minute).padStart(2, "0")}`;
+    input.value = hhmm;
+    // Fire the change event so existing listeners run (updateDurationLabel,
+    // updateEndFromStart, etc.)
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  closeClockPicker();
+}
+
+// Close on Escape
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.getElementById("clock-picker")?.classList.contains("open")) {
+    closeClockPicker();
+  }
+});
 
 function clearTimeField(inputId) {
   const el = document.getElementById(inputId);
