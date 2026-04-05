@@ -31,6 +31,230 @@
   top:0;
   z-index:900;
 }
+
+/* ── Help button in top bar ── */
+.help-btn{
+  margin-left:auto;
+  width:38px;
+  height:38px;
+  border-radius:10px;
+  border:1px solid transparent;
+  background:transparent;
+  color:#6b7280;
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  transition:all .15s;
+  flex-shrink:0;
+}
+.help-btn:hover{
+  background:#eff6ff;
+  border-color:#bfdbfe;
+  color:#2563eb;
+}
+.help-btn svg{width:20px;height:20px;}
+html.dark .help-btn{color:#94a3b8;}
+html.dark .help-btn:hover{background:#172554;border-color:#1e3a8a;color:#60a5fa;}
+
+/* ── Help modal overlay + card ── */
+.help-overlay{
+  position:fixed;inset:0;
+  background:rgba(15,23,42,.5);
+  backdrop-filter:blur(3px);
+  opacity:0;pointer-events:none;
+  transition:opacity .2s ease;
+  z-index:9990;
+}
+.help-overlay.open{opacity:1;pointer-events:auto;}
+
+.help-modal{
+  position:fixed;
+  left:50%;top:50%;
+  transform:translate(-50%,-50%) scale(.96);
+  width:min(560px,94vw);
+  max-height:min(85vh,780px);
+  background:#ffffff;
+  border:1px solid #e5e7eb;
+  border-radius:18px;
+  box-shadow:0 30px 80px rgba(0,0,0,.35);
+  display:flex;flex-direction:column;
+  opacity:0;pointer-events:none;
+  transition:opacity .2s ease,transform .22s ease;
+  z-index:9991;
+  overflow:hidden;
+  color:#111827;
+}
+.help-modal.open{
+  opacity:1;pointer-events:auto;
+  transform:translate(-50%,-50%) scale(1);
+}
+html.dark .help-modal{
+  background:#1e293b;
+  border-color:#334155;
+  color:#f1f5f9;
+}
+.help-handle{display:none;}
+
+.help-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding:20px 22px 16px;
+  border-bottom:1px solid #f1f3f5;
+  flex-shrink:0;
+  background:linear-gradient(135deg,#eff6ff 0%,#f0fdf4 100%);
+}
+html.dark .help-header{
+  border-bottom-color:#334155;
+  background:linear-gradient(135deg,#172554 0%,#052e16 100%);
+}
+.help-eyebrow{
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:1.2px;
+  color:#2563eb;
+  margin-bottom:4px;
+}
+html.dark .help-eyebrow{color:#60a5fa;}
+.help-header h3{
+  font-size:20px;
+  font-weight:800;
+  letter-spacing:-.3px;
+  color:inherit;
+  line-height:1.25;
+}
+.help-close{
+  width:36px;height:36px;
+  border:none;background:transparent;
+  border-radius:9px;cursor:pointer;
+  color:#6b7280;
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+  transition:background .12s;
+}
+.help-close:hover{background:rgba(0,0,0,.06);color:#111827;}
+html.dark .help-close{color:#94a3b8;}
+html.dark .help-close:hover{background:rgba(255,255,255,.08);color:#f1f5f9;}
+.help-close svg{width:20px;height:20px;}
+
+.help-body{
+  flex:1;
+  overflow-y:auto;
+  padding:18px 22px 20px;
+  -webkit-overflow-scrolling:touch;
+}
+.help-body p.help-lead{
+  font-size:14px;
+  line-height:1.55;
+  color:#4b5563;
+  margin-bottom:14px;
+}
+html.dark .help-body p.help-lead{color:#cbd5e1;}
+.help-section{margin-top:16px;}
+.help-section:first-child{margin-top:0;}
+.help-section-title{
+  font-size:11px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.8px;
+  color:#6b7280;
+  margin-bottom:8px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+html.dark .help-section-title{color:#94a3b8;}
+.help-section-title svg{width:14px;height:14px;}
+.help-list{
+  list-style:none;
+  padding:0;
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.help-list li{
+  font-size:14px;
+  line-height:1.5;
+  color:#1f2937;
+  padding-left:22px;
+  position:relative;
+}
+html.dark .help-list li{color:#e2e8f0;}
+.help-list li::before{
+  content:"";
+  position:absolute;
+  left:6px;
+  top:8px;
+  width:6px;height:6px;
+  border-radius:50%;
+  background:#2563eb;
+}
+.help-list li b{color:#111827;font-weight:700;}
+html.dark .help-list li b{color:#f1f5f9;}
+.help-list li code,
+.help-kbd{
+  display:inline-block;
+  padding:1px 7px;
+  font-family:'SF Mono',Menlo,Consolas,monospace;
+  font-size:11px;
+  font-weight:600;
+  background:#eef2f7;
+  color:#334155;
+  border:1px solid #cbd5e1;
+  border-radius:5px;
+  box-shadow:0 1px 0 #cbd5e1;
+}
+html.dark .help-list li code,
+html.dark .help-kbd{
+  background:#334155;
+  color:#e2e8f0;
+  border-color:#475569;
+  box-shadow:0 1px 0 #0f172a;
+}
+
+.help-footer{
+  padding:12px 22px calc(14px + env(safe-area-inset-bottom,0));
+  border-top:1px solid #f1f3f5;
+  font-size:12px;
+  color:#6b7280;
+  flex-shrink:0;
+  background:#f9fafb;
+}
+html.dark .help-footer{
+  border-top-color:#334155;
+  background:#0f172a;
+  color:#94a3b8;
+}
+
+/* Mobile — bottom sheet */
+@media(max-width:768px){
+  .help-modal{
+    left:0;right:0;top:auto;bottom:0;
+    width:100%;max-width:100%;
+    max-height:90vh;
+    border-radius:20px 20px 0 0;
+    transform:translateY(100%);
+  }
+  .help-modal.open{transform:translateY(0);}
+  .help-handle{
+    display:block;
+    width:42px;height:4px;
+    background:#d1d5db;
+    border-radius:3px;
+    margin:8px auto 0;
+  }
+  html.dark .help-handle{background:#475569;}
+  .help-header{padding:6px 20px 14px;}
+  .help-header h3{font-size:19px;}
+  .help-body{padding:16px 20px 18px;}
+  .help-list li{font-size:14.5px;}
+  .help-btn{width:36px;height:36px;}
+  .help-btn svg{width:18px;height:18px;}
+}
 html.dark .top-context{background:#1e293b;border-bottom-color:#334155;}
 
 .hamburger{
@@ -406,7 +630,32 @@ html.dark .section-title{color:#f1f5f9;}
     <span class="time" id="live-time"></span>
   </div>
 
+  <button type="button" class="help-btn" onclick="openHelpModal()" title="Help & tips for this page (press ? anywhere)" aria-label="Help">
+    <i data-feather="help-circle"></i>
+  </button>
+
 </div>
+
+<!-- ═══════════ HELP MODAL ═══════════ -->
+<div id="help-overlay" class="help-overlay" onclick="if(event.target===this)closeHelpModal()"></div>
+<aside id="help-modal" class="help-modal" role="dialog" aria-label="Help" aria-modal="true">
+  <div class="help-handle" aria-hidden="true"></div>
+  <div class="help-header">
+    <div>
+      <div class="help-eyebrow">Help · this page</div>
+      <h3 id="help-title">Help</h3>
+    </div>
+    <button type="button" class="help-close" onclick="closeHelpModal()" aria-label="Close">
+      <i data-feather="x"></i>
+    </button>
+  </div>
+  <div class="help-body" id="help-body">
+    <!-- content injected by JS -->
+  </div>
+  <div class="help-footer">
+    <span class="help-kbd">?</span> to open anywhere · <span class="help-kbd">Esc</span> to close
+  </div>
+</aside>
 
 
 <div class="section-title">
@@ -502,6 +751,337 @@ setInterval(updateDateTime,1000)
 
   if (bestMatch) bestMatch.classList.add('active');
 })();
+
+/* ═══════════════════════════════════════════════════════════
+   CONTEXTUAL HELP MODAL — content keyed by URL path
+   ═══════════════════════════════════════════════════════════ */
+
+const HELP_PAGES = [
+  {
+    match: /^\/$|^\/todo/,
+    title: "Eisenhower Matrix — your daily priorities",
+    lead: "Every task goes into one of four quadrants so you know what to attack first. Urgency on one axis, importance on the other.",
+    sections: [
+      {
+        title: "The four quadrants",
+        items: [
+          "<b>🔥 Do Now</b> — urgent AND important. Do these today, no excuses.",
+          "<b>📅 Schedule</b> — important but not urgent. Block time for them this week.",
+          "<b>🤝 Delegate</b> — urgent but not important. Hand them off if you can.",
+          "<b>🗑 Eliminate</b> — neither. Drop them or archive them."
+        ]
+      },
+      {
+        title: "What you can do here",
+        items: [
+          "Type in the <b>quick-add</b> bar and pick a quadrant + priority + project.",
+          "Click the <b>🔁</b> button above to get a fresh motivational quote.",
+          "Use the <b>Filter</b> button to show only tasks under a specific Objective / KR / Initiative.",
+          "Use the <b>Select</b> button to bulk-change status or priority on many tasks at once.",
+          "Tasks coming from your projects (📋 badge) can't be edited here — open them in their project for full editing.",
+          "The date nav at the top lets you plan any day; <b>Copy Previous Day</b> clones yesterday's matrix."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/calendar/,
+    title: "Calendar — schedule your day",
+    lead: "Google-Calendar-style day and week view for your planner events.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Click any empty slot to create a new event.",
+          "Drag events to reschedule them.",
+          "Each event can have a title, time range, category, and linked project.",
+          "Untimed tasks appear in the sidebar — drag them onto the grid to schedule."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/goals/,
+    title: "OKRs — Objectives, Key Results & Initiatives",
+    lead: "Strategy flows down, progress rolls up. <b>Projects → Objectives → Key Results → Initiatives → Tasks.</b>",
+    sections: [
+      {
+        title: "The hierarchy",
+        items: [
+          "<b>Objective</b> — a strategic intent. What outcome matters this quarter / year?",
+          "<b>Key Result</b> — a measurable target that proves the objective (e.g. 'Read 12 books', 'Save ₹50,000').",
+          "<b>Initiative</b> — a workstream under a KR that groups related tasks.",
+          "<b>Task</b> — individual work items in a project, optionally linked to one initiative."
+        ]
+      },
+      {
+        title: "What you can do",
+        items: [
+          "Click <b>New Objective</b> to start. Attach it to a project or leave it unassigned for personal goals.",
+          "Add <b>Key Results</b> under each objective with a start value, current value, target, and direction (up/down).",
+          "Add <b>Initiatives</b> under each KR to group tasks.",
+          "Progress <b>rolls up</b> automatically from KR current-value edits into the objective progress bar.",
+          "Use the <b>Show archived</b> toggle to see paused or achieved objectives."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/projects\/[^\/]+\/tasks/,
+    title: "Project Tasks",
+    lead: "All tasks for this project. Three views, strong filters, bulk actions, and a task detail sheet.",
+    sections: [
+      {
+        title: "Views",
+        items: [
+          "<b>Table</b> (default) — every column. Best on desktop.",
+          "<b>Compact</b> — title + due + status only. Great on mobile for scanning.",
+          "<b>Board</b> — Kanban by status (Backlog / Open / In Progress / Done)."
+        ]
+      },
+      {
+        title: "Filtering & selecting",
+        items: [
+          "Tap <b>Filter</b> to pick any number of Objectives, Key Results, or Initiatives — multi-select cascades from parent to child.",
+          "Active filters show as removable chips above the table.",
+          "Tap <b>Select</b> to enter bulk mode, then tap rows to select them and use the floating dock to change status / priority / delete."
+        ]
+      },
+      {
+        title: "Adding tasks",
+        items: [
+          "Type in the composer pill at the top and hit <code>Enter</code>.",
+          "Pick a priority dot before typing (high / medium / low).",
+          "Use the mic icon for voice dictation or bulk-add multiple tasks at once.",
+          "On mobile, tap anywhere on a task row to open the detail panel."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/projects\/[^\/]+\/gantt/,
+    title: "Gantt chart",
+    lead: "Timeline view of tasks by start date and duration. Handy for seeing overlaps and the critical path.",
+    sections: [
+      {
+        title: "Tips",
+        items: [
+          "Only tasks with a <b>start date</b> show up. Set start dates in the task detail panel.",
+          "Task bars fill based on actual-hours / planned-hours progress.",
+          "Switch view mode (Day / Week / Month) using the built-in toolbar."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/projects\/timeline/,
+    title: "Roadmap",
+    lead: "Cross-project timeline of everything on your plate.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "See all projects as rows with their tasks as bars along a shared timeline.",
+          "Use the date range picker to zoom in on a specific quarter or month.",
+          "Click a bar to jump into its project."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/projects($|\/)/,
+    title: "Projects",
+    lead: "Your project list. Each card shows task count, completion %, and progress.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Tap a card to open its task list.",
+          "Tap the <b>⋮ menu</b> on any card to <b>Delete</b> (archive) the project.",
+          "Toggle <b>Show archived</b> to see hidden projects and <b>Restore</b> them.",
+          "Hit <b>New Project</b> to create one — give it a name, description, and optional category."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/summary/,
+    title: "Reviews",
+    lead: "Daily and weekly summaries so you can look back, learn, and plan the next block.",
+    sections: [
+      {
+        title: "What's in each view",
+        items: [
+          "<b>Daily Review</b> — what got done today, what slipped, habits hit, focus time spent.",
+          "<b>Weekly Review</b> — aggregate stats, top projects, KR movement, highlights.",
+          "<b>AI insight</b> — a short narrative summary when a Gemini/Groq key is configured."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/notes/,
+    title: "Notes",
+    lead: "Freeform scribble notes. Jot thoughts, meeting notes, and ideas here without thinking about structure.",
+    sections: [
+      {
+        title: "Tips",
+        items: [
+          "Each note is a title + rich body. Save happens automatically.",
+          "Use the list view to search across all notes.",
+          "Link a note to a project by tagging it (optional)."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/references/,
+    title: "Knowledge Base",
+    lead: "Articles, links, and AI-answerable content. Your personal second brain.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Save links from the web (or paste plain text) with title + tags.",
+          "Ask AI questions against your saved references.",
+          "Browse by tag or search full-text."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/refcards/,
+    title: "Playbook",
+    lead: "SOPs, credentials, checklists, cheat sheets — stuff you look up, not stuff you do.",
+    sections: [
+      {
+        title: "What's it for",
+        items: [
+          "Recurring procedures (e.g. deploy steps, monthly close).",
+          "Sensitive credentials that you want behind a lock.",
+          "Checklists you reuse (travel pack, morning routine).",
+          "Cheat sheets for tools you use occasionally."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/portfolio/,
+    title: "Investments",
+    lead: "Track stocks, mutual funds, bonds, and gold in one place.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Add holdings with buy price, quantity, and current value.",
+          "See allocation by asset class and realized / unrealized P&L.",
+          "Update current values periodically to keep the dashboard accurate."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/inbox/,
+    title: "Inbox",
+    lead: "Drop everything here first. Triage into tasks, notes, or the knowledge base later.",
+    sections: [
+      {
+        title: "How to use it",
+        items: [
+          "Capture anything as a single-line item without committing to a destination.",
+          "During weekly review, triage: convert to a task, note, or reference — or delete.",
+          "Keeping inbox empty is the goal, not the default."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/health/,
+    title: "Health",
+    lead: "Track habits, sleep, exercise, and daily wellness markers.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Check off daily habits (water, meditation, steps, etc.).",
+          "Log exercise sessions with type and duration.",
+          "See trend charts for the last 7 / 30 / 90 days."
+        ]
+      }
+    ]
+  }
+];
+
+function _currentHelpEntry(){
+  const path = window.location.pathname + window.location.search;
+  for (const e of HELP_PAGES) {
+    if (e.match.test(path)) return e;
+  }
+  return {
+    title: "DailyPlanner",
+    lead: "Your personal productivity workspace. Use the menu (top-left) to navigate between Projects, OKRs, Calendar, Reviews, and more.",
+    sections: [{
+      title: "Getting around",
+      items: [
+        "<b>Work</b> — Roadmap, OKRs, Projects.",
+        "<b>Daily</b> — Priorities (Eisenhower), Calendar, Inbox.",
+        "<b>Review</b> — Daily and Weekly Reviews.",
+        "<b>Knowledge</b> — Notes, Knowledge Base, Playbook.",
+        "<b>Life</b> — Health, Investments.",
+        "Press <code>?</code> on any page for help specific to that page."
+      ]
+    }]
+  };
+}
+
+function _renderHelpContent(entry){
+  const titleEl = document.getElementById("help-title");
+  const bodyEl = document.getElementById("help-body");
+  if (!titleEl || !bodyEl) return;
+  titleEl.textContent = entry.title;
+  let html = "";
+  if (entry.lead) html += `<p class="help-lead">${entry.lead}</p>`;
+  for (const s of (entry.sections || [])) {
+    html += `<div class="help-section">
+      <div class="help-section-title">${s.title}</div>
+      <ul class="help-list">${(s.items || []).map(i => `<li>${i}</li>`).join("")}</ul>
+    </div>`;
+  }
+  bodyEl.innerHTML = html;
+}
+
+function openHelpModal(){
+  const modal = document.getElementById("help-modal");
+  const overlay = document.getElementById("help-overlay");
+  if (!modal || !overlay) return;
+  _renderHelpContent(_currentHelpEntry());
+  modal.classList.add("open");
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closeHelpModal(){
+  const modal = document.getElementById("help-modal");
+  const overlay = document.getElementById("help-overlay");
+  modal?.classList.remove("open");
+  overlay?.classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+// Keyboard shortcuts: ? to open, Esc to close (Esc already closes sidebar too)
+document.addEventListener("keydown", (e) => {
+  const tag = (e.target && e.target.tagName) || "";
+  const isTyping = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"
+                   || (e.target && e.target.isContentEditable);
+  if (!isTyping && (e.key === "?" || (e.shiftKey && e.key === "/"))) {
+    e.preventDefault();
+    openHelpModal();
+  }
+  if (e.key === "Escape") {
+    const modal = document.getElementById("help-modal");
+    if (modal?.classList.contains("open")) closeHelpModal();
+  }
+});
 
 /* FEATHER ICONS */
 
