@@ -2,6 +2,8 @@
 import os
 import requests
 import logging
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -16,9 +18,67 @@ HEADERS = {
 }
 logger = logging.getLogger("daily_plan")
 
-# Connection-pooled session — reuses TCP connections across requests
+# ─────────────────────────────────────────────────────────────────
+# Connection-pooled session — reuses TCP connections across requests.
+#
+# We mount an HTTPAdapter with a urllib3 Retry policy that handles the
+# common "Connection reset by peer" (errno 104) that happens when
+# Supabase (or an intermediate LB) closes a pooled keep-alive socket
+# while the Flask worker was idle. `connect` retries only kick in when
+# the request never left the box, so they are safe for every HTTP
+# method including POST/PATCH/DELETE — no duplicate writes possible.
+#
+# `status_forcelist` covers transient 5xx from Supabase itself. Those
+# are retried only for idempotent methods (GET/HEAD/OPTIONS/PUT/DELETE)
+# to avoid accidentally double-inserting on a POST timeout.
+# ─────────────────────────────────────────────────────────────────
 _session = requests.Session()
 _session.headers.update(HEADERS)
+
+_retry = Retry(
+    total=3,
+    connect=3,          # retry on connection establishment errors
+    read=1,             # read errors only retried once (not safe for POST)
+    status=2,           # retry on status_forcelist responses
+    backoff_factor=0.4, # 0.4s, 0.8s, 1.6s between retries
+    status_forcelist=(502, 503, 504),
+    allowed_methods=frozenset(["GET", "HEAD", "OPTIONS", "PUT", "DELETE", "PATCH"]),
+    raise_on_status=False,
+)
+_adapter = HTTPAdapter(
+    max_retries=_retry,
+    pool_connections=10,
+    pool_maxsize=20,
+)
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
+
+# (connect, read) timeout — tighter connect so a bad DNS / SYN hang fails
+# fast, generous read so large list queries finish.
+_DEFAULT_TIMEOUT = (5, 15)
+
+
+def _request(method, url, **kwargs):
+    """Invoke _session.<method> with one application-level retry on
+    ConnectionError. The urllib3 Retry adapter already handles the
+    common case; this wrapper is a safety net for edge cases where the
+    exception surfaces above urllib3 (e.g. a pooled socket that gets
+    reset between the adapter's retry attempts).
+    """
+    kwargs.setdefault("timeout", _DEFAULT_TIMEOUT)
+    try:
+        return _session.request(method, url, **kwargs)
+    except requests.exceptions.ConnectionError as e:
+        logger.warning(
+            "SUPABASE %s connection reset, retrying once: %s", method, e
+        )
+        # Drop the (possibly poisoned) pool so the retry uses a fresh socket
+        try:
+            _session.close()
+        except Exception:
+            pass
+        return _session.request(method, url, **kwargs)
+
 
 def _strip_eq(value):
     if isinstance(value, str) and value.startswith("eq."):
@@ -32,11 +92,7 @@ def get(path, params=None):
     # 🔍 Log intent
     logger.debug("SUPABASE GET → %s | params=%s", url, params)
 
-    r = _session.get(
-        url,
-        params=params,
-        timeout=10,
-    )
+    r = _request("GET", url, params=params)
 
     # 🔑 Log final URL (THIS IS WHAT SUPABASE SEES)
     logger.debug("SUPABASE FINAL URL → %s", r.url)
@@ -70,11 +126,11 @@ def post(path, data, prefer="return=representation"):
 
     logger.debug("SUPABASE Post → %s | params=%s", path, data)
 
-    r = _session.post(
+    r = _request(
+        "POST",
         f"{SUPABASE_URL}/rest/v1/{path}",
         headers=headers,
         json=data,
-        timeout=10,
     )
 
     r.raise_for_status()
@@ -85,10 +141,10 @@ def post(path, data, prefer="return=representation"):
 
     return []
 def delete(path, params):
-    r = _session.delete(
+    r = _request(
+        "DELETE",
         f"{SUPABASE_URL}/rest/v1/{path}",
         params=params,
-        timeout=10,
     )
     r.raise_for_status()
 def update(table, params, json):
@@ -107,11 +163,11 @@ def update(table, params, json):
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     # 🔍 Log intent
     logger.debug("SUPABASE UPDATE → %s | params=%s", url, params)
-    response = _session.patch(
+    response = _request(
+        "PATCH",
         url,
         params=params,
         json=json,
-        timeout=10
     )
     # 🔑 Log final URL (THIS IS WHAT SUPABASE SEES)
     logger.debug("SUPABASE FINAL URL → %s", response.url)
