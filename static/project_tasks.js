@@ -521,6 +521,12 @@ async function openTaskDetail(taskId) {
     _val("sheet-due",       t.due_date || "");
     _val("sheet-duration",  t.duration_days || "");
     _val("sheet-due-time",  t.due_time || "");
+    // Highlight the matching Due-Time preset chip, if any
+    _qa(".time-preset-chip").forEach(c => {
+      const onClick = c.getAttribute("onclick") || "";
+      const normalized = (t.due_time || "").slice(0, 5);
+      c.classList.toggle("active", !!normalized && onClick.includes(`'${normalized}'`));
+    });
     _val("sheet-planned",   t.planned_hours || "");
     _val("sheet-actual",    t.actual_hours || "");
     _val("sheet-delegate",  t.delegated_to || "");
@@ -564,6 +570,21 @@ async function openTaskDetail(taskId) {
 function _val(id, value) {
   const el = _id(id);
   if (el) el.value = value;
+}
+
+/* Set the Due Time via a preset chip (or clear it with ""). Updates
+   the input and fires the same autoSaveField path as a manual change. */
+function quickSetTime(hhmm) {
+  const el = _id("sheet-due-time");
+  if (!el) return;
+  el.value = hhmm || "";
+  // Mark the matching preset as active so the user can see their choice
+  _qa(".time-preset-chip").forEach(c => {
+    const onClick = c.getAttribute("onclick") || "";
+    const matches = hhmm && onClick.includes(`'${hhmm}'`);
+    c.classList.toggle("active", !!matches);
+  });
+  autoSaveField("due_time", el.value);
 }
 
 /* Open the native date/time picker for a given input id.
@@ -963,51 +984,81 @@ function _renderSubtask(container, st) {
   container.appendChild(item);
 }
 
-async function deleteSubtask(subId, btn) {
+// Delete confirmation is inline now — clicking × swaps the row into
+// a "Delete ?" banner with Yes/Cancel buttons. No browser confirm().
+function deleteSubtask(subId, btn) {
   if (!subId) return;
-  // Quick confirm only for non-empty subtasks
   const row = btn?.closest(".subtask-item");
-  const title = row?.querySelector("span")?.textContent?.trim() || "this subtask";
-  if (!confirm(`Delete "${title}"?`)) return;
+  if (!row) return;
 
-  // Optimistic remove
-  if (row) {
-    row.style.transition = "opacity .2s, transform .2s";
+  // If already in confirm mode, ignore repeat clicks
+  if (row.classList.contains("confirming-delete")) return;
+
+  const title = row.querySelector(".subtask-item-label span")?.textContent?.trim() || "this subtask";
+  const originalHTML = row.innerHTML;
+
+  // Swap the row to an inline confirm banner
+  row.classList.add("confirming-delete");
+  row.innerHTML = `
+    <div class="subtask-confirm">
+      <svg class="subtask-confirm-icon" viewBox="0 0 24 24" width="16" height="16"
+           fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span class="subtask-confirm-text">Delete <b>${_escHtml(title)}</b>?</span>
+      <div class="subtask-confirm-actions">
+        <button type="button" class="subtask-confirm-no">Cancel</button>
+        <button type="button" class="subtask-confirm-yes">Delete</button>
+      </div>
+    </div>
+  `;
+
+  const cleanup = () => {
+    row.classList.remove("confirming-delete");
+    row.innerHTML = originalHTML;
+  };
+
+  row.querySelector(".subtask-confirm-no").onclick = cleanup;
+
+  row.querySelector(".subtask-confirm-yes").onclick = async () => {
+    // Optimistic fade on confirmed deletion
+    row.style.transition = "opacity .2s, transform .2s, max-height .2s, margin .2s, padding .2s";
     row.style.opacity = "0";
     row.style.transform = "translateX(12px)";
-  }
+    row.style.maxHeight = "0";
+    row.style.marginTop = "0";
+    row.style.marginBottom = "0";
+    row.style.paddingTop = "0";
+    row.style.paddingBottom = "0";
 
-  try {
-    const res = await _post("/subtask/delete", { id: subId });
-    if (!res.ok) {
-      let msg = `Delete failed (${res.status})`;
-      try { const p = await res.json(); if (p.error) msg = p.error; } catch {}
-      throw new Error(msg);
+    try {
+      const res = await _post("/subtask/delete", { id: subId });
+      if (!res.ok) {
+        let msg = `Delete failed (${res.status})`;
+        try { const p = await res.json(); if (p.error) msg = p.error; } catch {}
+        throw new Error(msg);
+      }
+      setTimeout(() => row.remove(), 220);
+
+      // Update the subtask count badge in the panel
+      const list = _id("subtask-list");
+      const countEl = _id("subtask-count");
+      if (countEl && list) {
+        const remaining = Math.max(0, list.querySelectorAll(".subtask-item").length - 1);
+        countEl.textContent = remaining || "";
+      }
+      if (_sheetTaskId && typeof updateSubtaskBadges === "function") updateSubtaskBadges();
+      showToast("Subtask deleted", "success");
+    } catch (err) {
+      console.error("deleteSubtask:", err);
+      // Roll back the fade and restore the original row
+      row.style.cssText = "";
+      cleanup();
+      showToast(err.message || "Failed to delete subtask", "error");
     }
-    setTimeout(() => row?.remove(), 200);
-    // Update the subtask count badge in the panel
-    const list = _id("subtask-list");
-    const countEl = _id("subtask-count");
-    if (countEl && list) {
-      // -1 because the optimistic row is still in the DOM for the fade
-      const remaining = Math.max(0, list.querySelectorAll(".subtask-item").length - 1);
-      countEl.textContent = remaining || "";
-    }
-    // Sync the background table row's subtask badge
-    if (_sheetTaskId) {
-      const tr = document.querySelector(`.task-row[data-id="${_sheetTaskId}"]`);
-      if (tr) updateSubtaskBadges();
-    }
-    showToast("Subtask deleted", "success");
-  } catch (err) {
-    console.error("deleteSubtask:", err);
-    // Roll back the optimistic fade
-    if (row) {
-      row.style.opacity = "1";
-      row.style.transform = "";
-    }
-    showToast(err.message || "Failed to delete subtask", "error");
-  }
+  };
 }
 
 async function addSubtask() {
