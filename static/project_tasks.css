@@ -118,6 +118,176 @@ body {
 .task-row.okr-hidden, .group-row.okr-hidden { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════
+   COMPACT VIEW — minimal list: title + due date + status only
+   Triggered by body.pt-view-compact (JS toggles this on the
+   body when the compact view button is pressed). Reuses the
+   same DOM as the table view, just collapses everything else.
+   ═══════════════════════════════════════════════════════════ */
+body.pt-view-compact .add-task-row,
+body.pt-view-compact .pt-filter-chips,
+body.pt-view-compact .proj-progress-row {
+  display: none !important;
+}
+
+/* Collapse the toolbar: keep only the view-toggle visible so users
+   can still switch back to the full table or board view. */
+body.pt-view-compact .proj-toolbar {
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+body.pt-view-compact .toolbar-left > *,
+body.pt-view-compact .toolbar-right {
+  display: none !important;
+}
+body.pt-view-compact .toolbar-left > .view-toggle {
+  display: flex !important;
+}
+
+/* Unified compact row: every task becomes a tight single-line row
+   that shows just the essentials. Take the table out of native
+   table layout so the row's grid template is honored reliably
+   (same pattern the mobile card view uses). */
+body.pt-view-compact .task-table-wrap {
+  background: var(--pt-surface);
+  border-radius: 12px;
+  border: 1px solid var(--pt-border);
+  box-shadow: var(--pt-shadow);
+  overflow: hidden;
+}
+body.pt-view-compact .task-table { display: block; table-layout: auto; }
+body.pt-view-compact .task-table thead { display: none; }
+body.pt-view-compact .task-table tbody { display: flex; flex-direction: column; }
+
+body.pt-view-compact .task-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto;
+  column-gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pt-border-light);
+  background: var(--pt-surface);
+  border-radius: 0;
+  border-left: 3px solid transparent;
+  box-shadow: none;
+  border-top: none;
+  border-right: none;
+}
+body.pt-view-compact .task-row:last-child { border-bottom: none; }
+body.pt-view-compact .task-row:hover { background: var(--pt-border-light); }
+
+/* Priority is a colored left stripe (same idea as mobile card) */
+body.pt-view-compact .task-row[data-priority="high"]   { border-left-color: var(--pt-high); }
+body.pt-view-compact .task-row[data-priority="medium"] { border-left-color: var(--pt-medium); }
+body.pt-view-compact .task-row[data-priority="low"]    { border-left-color: var(--pt-low); }
+
+/* Hide every cell except checkbox, name, status, due */
+body.pt-view-compact .task-row > td { display: none; }
+body.pt-view-compact .task-row > .col-check,
+body.pt-view-compact .task-row > .col-name,
+body.pt-view-compact .task-row > .col-status,
+body.pt-view-compact .task-row > .col-due {
+  display: block;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+body.pt-view-compact .col-check   { grid-column: 1; justify-self: center; }
+body.pt-view-compact .col-name    { grid-column: 2; min-width: 0; }
+body.pt-view-compact .col-status  { grid-column: 3; width: auto; justify-self: end; }
+body.pt-view-compact .col-due     { grid-column: 4; width: auto; justify-self: end; }
+
+/* Title styling: clean single line, wraps if needed, clickable */
+body.pt-view-compact .task-name-cell {
+  display: block;
+  padding: 0;
+}
+body.pt-view-compact .task-text {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--pt-text);
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+/* Hide all the inline badges/pins in compact mode — only the title matters */
+body.pt-view-compact .pin-icon,
+body.pt-view-compact .subtask-expand-btn,
+body.pt-view-compact .subtask-badge,
+body.pt-view-compact .recur-badge,
+body.pt-view-compact .delegate-badge,
+body.pt-view-compact .inline-subtasks {
+  display: none !important;
+}
+
+/* Status pill stays visible but smaller */
+body.pt-view-compact .status-select {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  min-height: 26px;
+  line-height: 1;
+}
+
+/* Due column: show only the human label, not the native date input */
+body.pt-view-compact .due-cell { display: flex; align-items: center; gap: 0; flex-direction: row; }
+body.pt-view-compact .due-cell .cell-date { display: none; }
+body.pt-view-compact .due-label {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--pt-border-light);
+  color: var(--pt-text2);
+  white-space: nowrap;
+}
+body.pt-view-compact .overdue-label {
+  background: #fef2f2;
+  color: var(--pt-danger);
+}
+html.dark body.pt-view-compact .due-label { background: #334155; color: #cbd5e1; }
+html.dark body.pt-view-compact .overdue-label { background: #3b1111; color: #fca5a5; }
+
+/* Checkbox stays clickable; selection/cycle-priority disabled in this view */
+body.pt-view-compact .task-check { width: 18px; height: 18px; }
+
+/* Group headers compact — small uppercase dividers */
+body.pt-view-compact .group-row td {
+  padding: 16px 16px 8px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--pt-border);
+}
+body.pt-view-compact .group-row:first-of-type td { border-top: none; }
+body.pt-view-compact .group-toggle { cursor: default; font-size: 11px; }
+body.pt-view-compact .group-chevron { display: none; }
+body.pt-view-compact .group-count {
+  font-size: 10px;
+  padding: 1px 7px;
+}
+
+/* Mobile tweaks for compact view */
+@media (max-width: 768px) {
+  body.pt-view-compact .task-row {
+    grid-template-columns: 28px 1fr auto;
+    grid-template-rows: auto auto;
+    column-gap: 10px;
+    row-gap: 4px;
+    padding: 12px 14px;
+  }
+  body.pt-view-compact .col-check  { grid-column: 1; grid-row: 1 / span 2; }
+  body.pt-view-compact .col-name   { grid-column: 2 / -1; grid-row: 1; }
+  body.pt-view-compact .col-status { grid-column: 2; grid-row: 2; justify-self: start; }
+  body.pt-view-compact .col-due    { grid-column: 3; grid-row: 2; justify-self: end; }
+  body.pt-view-compact .task-text { font-size: 14.5px; }
+  body.pt-view-compact .due-label { font-size: 11px; padding: 2px 8px; }
+  body.pt-view-compact .status-select { font-size: 10px; padding: 3px 8px; }
+}
+
+/* ═══════════════════════════════════════════════════════════
    OKR FILTER — single button + bottom-sheet with multi-select
    ═══════════════════════════════════════════════════════════ */
 

@@ -280,15 +280,34 @@ function setTaskView(view) {
   const boardView = _id("board-view");
   if (!tableView || !boardView) return;
 
-  tableView.classList.toggle("hidden", view !== "table");
+  // "table" and "compact" both use the same DOM — they just toggle
+  // a body-level class that rewrites the row layout in CSS. Only the
+  // board view lives in a separate container.
+  const showTable = (view === "table" || view === "compact");
+  tableView.classList.toggle("hidden", !showTable);
   boardView.classList.toggle("hidden", view !== "board");
+
+  document.body.classList.toggle("pt-view-compact", view === "compact");
 
   _qa(".vt-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
 
+  // Persist user's choice so it survives a page refresh
+  try { localStorage.setItem("pt_view", view); } catch {}
+
   if (view === "board") populateBoard();
 }
+
+// Restore last-used view on load
+(function restoreTaskView() {
+  try {
+    const saved = localStorage.getItem("pt_view");
+    if (saved && saved !== "table") {
+      document.addEventListener("DOMContentLoaded", () => setTaskView(saved), { once: true });
+    }
+  } catch {}
+})();
 
 /* ---------------------------------------------------------
    Board View (Kanban)
