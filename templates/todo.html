@@ -343,6 +343,17 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
   position:absolute;left:0;bottom:0;height:3px;background:#60a5fa;
   border-radius:0 0 12px 12px;transition:width linear;
 }
+
+/* OKR filter row */
+.em-okr-filter-row{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:8px 12px;margin-bottom:12px;
+  background:var(--em-surface);border:1px solid var(--em-border);
+  border-radius:10px;
+}
+.em-okr-filter-label{font-size:12px;font-weight:600;color:var(--em-text2);}
+.em-okr-filter-row .em-quad-select{max-width:180px;}
+.em-task.em-okr-hidden{display:none!important;}
 </style>
 </head>
 <body>
@@ -358,6 +369,23 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
       <button class="em-nav-btn" onclick="navDate(1)"><i data-feather="chevron-right" style="width:18px;height:18px"></i></button>
       <button class="em-today-btn" onclick="goToDate('{{ today }}')">Today</button>
     </div>
+  </div>
+
+  <!-- OKR filter row: Objective → Key Result → Initiative (cascading) -->
+  <div class="em-okr-filter-row">
+    <span class="em-okr-filter-label">Filter by:</span>
+    <select id="em-filter-objective" class="em-quad-select" title="Filter by Objective / Goal">
+      <option value="">All objectives</option>
+    </select>
+    <select id="em-filter-kr" class="em-quad-select" title="Filter by Key Result">
+      <option value="">All key results</option>
+    </select>
+    <select id="em-filter-initiative" class="em-quad-select" title="Filter by Initiative">
+      <option value="">All initiatives</option>
+    </select>
+    <button type="button" class="em-action-btn" id="em-filter-clear" onclick="clearOkrFilter()" style="display:none;">
+      <i data-feather="x" style="width:14px;height:14px"></i> Clear
+    </button>
   </div>
 
   <!-- Quick Actions -->
@@ -1617,6 +1645,101 @@ function showTvUndoToast(message, onUndo, duration = 6000) {
   timeoutId = setTimeout(dismiss, duration);
   _tvActiveUndoToast = { el: toast, dismiss };
 }
+
+// ═════════════════════════════════════════════════════════════
+// OKR filter: Objective → Key Result → Initiative (cascading)
+// ═════════════════════════════════════════════════════════════
+let _emOkrData = null;
+
+async function loadEmOkrFilter() {
+  try {
+    // include_unassigned=1 surfaces personal/cross-project objectives too,
+    // since the matrix is not scoped to a single project.
+    const res = await fetch("/api/goals/picker?include_unassigned=1");
+    if (!res.ok) return;
+    _emOkrData = await res.json();
+    populateEmOkrFilters();
+  } catch (err) {
+    console.warn("OKR filter fetch failed:", err);
+  }
+}
+
+function _emEsc(str) {
+  const el = document.createElement("span");
+  el.textContent = str ?? "";
+  return el.innerHTML;
+}
+
+function populateEmOkrFilters() {
+  const objSel  = document.getElementById("em-filter-objective");
+  const krSel   = document.getElementById("em-filter-kr");
+  const initSel = document.getElementById("em-filter-initiative");
+  if (!objSel || !krSel || !initSel || !_emOkrData) return;
+
+  const objectives = _emOkrData.objectives || [];
+
+  objSel.innerHTML = `<option value="">All objectives</option>` +
+    objectives.map(o => `<option value="${o.id}">${_emEsc(o.title)}</option>`).join("");
+
+  const rebuildKrAndInit = () => {
+    const objId = objSel.value;
+    const krs = objId
+      ? (objectives.find(o => o.id === objId)?.key_results || [])
+      : objectives.flatMap(o => o.key_results || []);
+    const prevKr = krSel.value;
+    krSel.innerHTML = `<option value="">All key results</option>` +
+      krs.map(k => `<option value="${k.id}">${_emEsc(k.title)}</option>`).join("");
+    krSel.value = krs.some(k => k.id === prevKr) ? prevKr : "";
+
+    const krId = krSel.value;
+    const inits = krId
+      ? (krs.find(k => k.id === krId)?.initiatives || [])
+      : krs.flatMap(k => k.initiatives || []);
+    const prevInit = initSel.value;
+    initSel.innerHTML = `<option value="">All initiatives</option>` +
+      inits.map(i => `<option value="${i.id}">${_emEsc(i.title)}</option>`).join("");
+    initSel.value = inits.some(i => i.id === prevInit) ? prevInit : "";
+  };
+
+  rebuildKrAndInit();
+  applyEmOkrFilter();
+
+  objSel.onchange  = () => { rebuildKrAndInit(); applyEmOkrFilter(); };
+  krSel.onchange   = () => { rebuildKrAndInit(); applyEmOkrFilter(); };
+  initSel.onchange = applyEmOkrFilter;
+}
+
+function applyEmOkrFilter() {
+  const objId  = document.getElementById("em-filter-objective")?.value || "";
+  const krId   = document.getElementById("em-filter-kr")?.value || "";
+  const initId = document.getElementById("em-filter-initiative")?.value || "";
+  const active = !!(objId || krId || initId);
+
+  document.querySelectorAll(".em-task").forEach(card => {
+    let show = true;
+    if (active) {
+      // Unlinked tasks (no OKR refs) are hidden once any filter is active
+      if (!card.dataset.objectiveId && !card.dataset.krId && !card.dataset.initiativeId) {
+        show = false;
+      }
+      if (show && objId  && card.dataset.objectiveId  !== objId)  show = false;
+      if (show && krId   && card.dataset.krId         !== krId)   show = false;
+      if (show && initId && card.dataset.initiativeId !== initId) show = false;
+    }
+    card.classList.toggle("em-okr-hidden", !show);
+  });
+
+  const clearBtn = document.getElementById("em-filter-clear");
+  if (clearBtn) clearBtn.style.display = active ? "" : "none";
+}
+
+function clearOkrFilter() {
+  const ids = ["em-filter-objective", "em-filter-kr", "em-filter-initiative"];
+  ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  populateEmOkrFilters();
+}
+
+document.addEventListener("DOMContentLoaded", loadEmOkrFilter);
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
 </body>

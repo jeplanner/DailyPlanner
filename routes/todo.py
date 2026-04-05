@@ -216,6 +216,9 @@ def todo():
                 "initiative_title": i.get("title"),
                 "objective_title": obj.get("title"),
                 "color": obj.get("color") or "#10b981",
+                "initiative_id": i["id"],
+                "key_result_id": kr.get("id"),
+                "objective_id": obj.get("id"),
             }
 
         # Map legacy kr → {kr, objective}
@@ -230,6 +233,9 @@ def todo():
                 "initiative_title": None,
                 "objective_title": obj.get("title"),
                 "color": obj.get("color") or "#10b981",
+                "initiative_id": None,
+                "key_result_id": kr.get("id"),
+                "objective_id": obj.get("id"),
             }
 
         # Stamp each task's row
@@ -322,6 +328,10 @@ def todo():
             "kr_goal_title": okr_info["objective_title"] if okr_info else None,
             "kr_initiative_title": okr_info.get("initiative_title") if okr_info else None,
             "kr_color": okr_info["color"] if okr_info else None,
+            # Raw OKR ids so the client can filter by Objective/KR/Initiative
+            "objective_id": okr_info.get("objective_id") if okr_info else None,
+            "key_result_id": okr_info.get("key_result_id") if okr_info else None,
+            "initiative_id": okr_info.get("initiative_id") if okr_info else None,
         })
 
     # 4️⃣ Build Eisenhower view (NO due-date logic here)

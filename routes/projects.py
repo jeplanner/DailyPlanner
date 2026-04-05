@@ -128,6 +128,11 @@ def project_tasks(project_id):
 
     tasks = [_build_task_dict(t, project, today) for t in raw_tasks]
 
+    # Resolve OKR identifiers for each task so the client can filter by
+    # Objective / Key Result / Initiative. Walk task → initiative → KR →
+    # objective. Legacy rows with only key_result_id set still resolve.
+    _stamp_okr_ids(tasks, user_id)
+
     # Batch-load subtasks for all tasks in ONE query
     task_ids = [t["task_id"] for t in tasks]
     subtask_map = {}
@@ -1224,6 +1229,58 @@ def toggle_subtask():
     )
     
     return ("", 204)
+
+def _stamp_okr_ids(tasks, user_id):
+    """Resolve and attach objective_id / key_result_id / initiative_id to each task.
+
+    Tasks link to an Initiative; KR and Objective are resolved by walking up
+    (initiative → key_result → objective). Legacy tasks that still have a
+    direct key_result_id (pre-Initiative layer) also get objective_id filled.
+    """
+    initiative_ids = {t["initiative_id"] for t in tasks if t.get("initiative_id")}
+    legacy_kr_ids = {
+        t["key_result_id"] for t in tasks
+        if t.get("key_result_id") and not t.get("initiative_id")
+    }
+
+    initiative_rows = []
+    if initiative_ids:
+        initiative_rows = get(
+            "initiatives",
+            params={
+                "user_id": f"eq.{user_id}",
+                "id": f"in.({','.join(str(i) for i in initiative_ids)})",
+                "is_deleted": "eq.false",
+                "select": "id,key_result_id",
+                "limit": 500,
+            },
+        ) or []
+    initiative_to_kr = {r["id"]: r.get("key_result_id") for r in initiative_rows}
+
+    kr_ids_needed = set(initiative_to_kr.values()) | legacy_kr_ids
+    kr_ids_needed = {k for k in kr_ids_needed if k}
+
+    kr_to_objective = {}
+    if kr_ids_needed:
+        kr_rows = get(
+            "key_results",
+            params={
+                "user_id": f"eq.{user_id}",
+                "id": f"in.({','.join(str(i) for i in kr_ids_needed)})",
+                "is_deleted": "eq.false",
+                "select": "id,objective_id",
+                "limit": 500,
+            },
+        ) or []
+        kr_to_objective = {r["id"]: r.get("objective_id") for r in kr_rows}
+
+    for t in tasks:
+        init_id = t.get("initiative_id")
+        kr_id = initiative_to_kr.get(init_id) if init_id else t.get("key_result_id")
+        obj_id = kr_to_objective.get(kr_id) if kr_id else None
+        t["key_result_id"] = kr_id
+        t["objective_id"] = obj_id
+
 
 def _build_task_dict(t, project, today):
     """Build a normalised task dict for template rendering."""

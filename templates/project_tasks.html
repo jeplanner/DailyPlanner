@@ -82,6 +82,17 @@
         <i data-feather="check-square" style="width:13px;height:13px"></i>
         <span>Select</span>
       </button>
+
+      <!-- OKR filters: Objective → Key Result → Initiative (cascading) -->
+      <select id="filter-objective" class="sort-select okr-filter" title="Filter by Objective / Goal">
+        <option value="">All objectives</option>
+      </select>
+      <select id="filter-kr" class="sort-select okr-filter" title="Filter by Key Result">
+        <option value="">All key results</option>
+      </select>
+      <select id="filter-initiative" class="sort-select okr-filter" title="Filter by Initiative">
+        <option value="">All initiatives</option>
+      </select>
     </div>
 
     <div class="toolbar-right">
@@ -217,7 +228,10 @@
               data-status="{{ t.status }}"
               data-priority="{{ t.priority }}"
               data-pinned="{{ t.is_pinned|int }}"
-              data-group="{{ group_name }}">
+              data-group="{{ group_name }}"
+              data-objective-id="{{ t.objective_id or '' }}"
+              data-kr-id="{{ t.key_result_id or '' }}"
+              data-initiative-id="{{ t.initiative_id or '' }}">
 
             <!-- Checkbox / selection overlay -->
             <td class="col-check">

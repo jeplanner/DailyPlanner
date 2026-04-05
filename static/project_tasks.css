@@ -114,6 +114,10 @@ body {
 }
 .filter-pill input { display: none; }
 
+/* OKR filter hides task rows client-side */
+.task-row.okr-hidden, .group-row.okr-hidden { display: none !important; }
+.okr-filter { max-width: 160px; }
+
 /* Bulk Add + Voice Panel */
 .bulk-panel{background:var(--pt-surface);border:1px solid var(--pt-border);border-radius:10px;padding:12px 14px;margin-bottom:16px;box-shadow:var(--pt-shadow);}
 .bulk-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}

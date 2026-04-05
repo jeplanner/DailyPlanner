@@ -307,6 +307,7 @@ function populateBoard() {
   const HIDDEN_STATUSES = new Set(["skipped", "deleted", "not_required"]);
 
   _qa(".task-row").forEach(row => {
+    if (row.classList.contains("okr-hidden")) return;
     const rawStatus = row.dataset.status || "open";
     if (hideClosed && HIDDEN_STATUSES.has(rawStatus)) return;
     const status = CLOSED_ALIAS[rawStatus] || rawStatus;
@@ -1412,6 +1413,7 @@ function ptBulkDelete() {
    ========================================================= */
 
 let _krPickerOptionsHtml = null;
+let _okrPickerData = null;   // raw {objectives: [...]} from /api/goals/picker
 
 async function loadKrPickerOptions() {
   try {
@@ -1424,6 +1426,7 @@ async function loadKrPickerOptions() {
     const res = await fetch(`/api/goals/picker${qs}`);
     if (!res.ok) throw new Error();
     const data = await res.json();
+    _okrPickerData = data;
     const objectives = data.objectives || [];
 
     // Build Objective › KR › Initiative option groups. Tasks link to
@@ -1452,8 +1455,89 @@ async function loadKrPickerOptions() {
     }
     // Paint all existing pickers
     document.querySelectorAll(".kr-picker").forEach(paintKrPicker);
+    // Populate the OKR filter dropdowns now that data is ready
+    populateOkrFilters();
   } catch (err) {
     console.warn("Initiative picker fetch failed:", err);
+  }
+}
+
+/* ---------------------------------------------------------
+   OKR filter (Objective → KR → Initiative) — cascading,
+   client-side row filtering against data-* attributes on
+   each .task-row.
+   --------------------------------------------------------- */
+function populateOkrFilters() {
+  const objSel  = _id("filter-objective");
+  const krSel   = _id("filter-kr");
+  const initSel = _id("filter-initiative");
+  if (!objSel || !krSel || !initSel || !_okrPickerData) return;
+
+  const objectives = _okrPickerData.objectives || [];
+
+  // Objective options
+  objSel.innerHTML = `<option value="">All objectives</option>` +
+    objectives.map(o => `<option value="${o.id}">${_escHtml(o.title)}</option>`).join("");
+
+  const rebuildKrAndInit = () => {
+    const objId = objSel.value;
+    // KR options scoped to objective (or all)
+    const krs = objId
+      ? (objectives.find(o => o.id === objId)?.key_results || [])
+      : objectives.flatMap(o => o.key_results || []);
+    const prevKr = krSel.value;
+    krSel.innerHTML = `<option value="">All key results</option>` +
+      krs.map(k => `<option value="${k.id}">${_escHtml(k.title)}</option>`).join("");
+    krSel.value = krs.some(k => k.id === prevKr) ? prevKr : "";
+
+    // Initiative options scoped to KR (or all in-scope KRs)
+    const krId = krSel.value;
+    const inits = krId
+      ? (krs.find(k => k.id === krId)?.initiatives || [])
+      : krs.flatMap(k => k.initiatives || []);
+    const prevInit = initSel.value;
+    initSel.innerHTML = `<option value="">All initiatives</option>` +
+      inits.map(i => `<option value="${i.id}">${_escHtml(i.title)}</option>`).join("");
+    initSel.value = inits.some(i => i.id === prevInit) ? prevInit : "";
+  };
+
+  rebuildKrAndInit();
+  applyOkrFilter();
+
+  objSel.onchange = () => { rebuildKrAndInit(); applyOkrFilter(); };
+  krSel.onchange  = () => { rebuildKrAndInit(); applyOkrFilter(); };
+  initSel.onchange = applyOkrFilter;
+}
+
+function applyOkrFilter() {
+  const objId  = _id("filter-objective")?.value || "";
+  const krId   = _id("filter-kr")?.value || "";
+  const initId = _id("filter-initiative")?.value || "";
+  const active = !!(objId || krId || initId);
+
+  document.querySelectorAll(".task-row").forEach(row => {
+    let show = true;
+    if (active) {
+      if (objId  && row.dataset.objectiveId  !== objId)  show = false;
+      if (krId   && row.dataset.krId         !== krId)   show = false;
+      if (initId && row.dataset.initiativeId !== initId) show = false;
+    }
+    row.classList.toggle("okr-hidden", !show);
+  });
+
+  // Hide group headers whose tasks are all filtered out
+  document.querySelectorAll(".group-row").forEach(gr => {
+    const group = gr.dataset.group;
+    const anyVisible = !!document.querySelector(
+      `.task-row[data-group="${group}"]:not(.okr-hidden)`
+    );
+    gr.classList.toggle("okr-hidden", !anyVisible);
+  });
+
+  // Refresh kanban view if it's currently showing
+  if (typeof populateBoard === "function" &&
+      !_id("board-view")?.classList.contains("hidden")) {
+    populateBoard();
   }
 }
 

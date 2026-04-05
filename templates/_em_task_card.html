@@ -16,7 +16,10 @@
      data-quadrant="{{ q }}"
      data-priority="{{ t.priority or 'medium' }}"
      data-status="{{ t.status or 'open' }}"
-     data-source="{{ t.source or 'matrix' }}">
+     data-source="{{ t.source or 'matrix' }}"
+     data-objective-id="{{ t.objective_id or '' }}"
+     data-kr-id="{{ t.key_result_id or '' }}"
+     data-initiative-id="{{ t.initiative_id or '' }}">
   <span class="em-sel-check" aria-hidden="true"></span>
   {% if t.source != 'event' and t.source != 'project' %}
   <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
