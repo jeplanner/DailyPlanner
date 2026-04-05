@@ -1361,8 +1361,22 @@ async function saveEvent() {
       return;
     }
 
+    // Read the sync flag the server returned so we can tell the user
+    // whether it reached Google Calendar or not.
+    let resBody = {};
+    try { resBody = await res.json(); } catch {}
+
     closeModal();
-    showToast("Event saved", "success");
+    if (resBody.gcal_synced) {
+      showToast("Saved & synced to Google Calendar", "success");
+    } else if (resBody.gcal_error) {
+      showToast("Saved locally (Google sync failed)", "info");
+    } else if (_gcalConnected === false) {
+      // User hasn't connected Google yet — nudge them once
+      showToast("Saved. Connect Google Calendar to auto-sync", "info");
+    } else {
+      showToast("Event saved", "success");
+    }
     loadAllEvents();
 
   } catch (err) {
@@ -1370,6 +1384,56 @@ async function saveEvent() {
     showToast("Save failed", "error");
   }
 }
+
+// ═══════════════════════════════════════════════════════════
+// Google Calendar connection state — auto-checked on page load,
+// drives the "Auto-sync" status pill in the modal header.
+// ═══════════════════════════════════════════════════════════
+let _gcalConnected = null;    // null = unknown, true/false once fetched
+let _gcalLoginUrl = "/google-login";
+
+async function loadGoogleStatus() {
+  try {
+    const r = await fetch("/api/v2/google-status");
+    if (!r.ok) return;
+    const data = await r.json();
+    _gcalConnected = !!data.connected;
+    if (data.login_url) _gcalLoginUrl = data.login_url;
+    _renderGcalStatusPill();
+  } catch (err) {
+    console.warn("google-status failed:", err);
+  }
+}
+
+function _renderGcalStatusPill() {
+  const pill = document.getElementById("gcal-status-pill");
+  if (!pill) return;
+  if (_gcalConnected === true) {
+    pill.classList.add("connected");
+    pill.classList.remove("disconnected");
+    pill.title = "Google Calendar connected — events auto-sync with a 10-minute reminder";
+    pill.querySelector(".gcal-status-text").textContent = "Auto-sync on";
+  } else if (_gcalConnected === false) {
+    pill.classList.add("disconnected");
+    pill.classList.remove("connected");
+    pill.title = "Click to connect your Google Calendar for auto-sync";
+    pill.querySelector(".gcal-status-text").textContent = "Connect Google";
+  }
+}
+
+// Clicking the status pill:
+// • If not connected → starts OAuth flow
+// • If connected     → opens the manual Google Calendar export URL
+function onGcalStatusClick() {
+  if (_gcalConnected === false) {
+    window.location.href = _gcalLoginUrl;
+  } else {
+    addCurrentModalToGoogleCalendar();
+  }
+}
+
+// Kick off the check when the page loads
+document.addEventListener("DOMContentLoaded", loadGoogleStatus);
 
 async function deleteEvent() {
   if (!selected || !selected.id) return;

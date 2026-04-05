@@ -111,9 +111,18 @@
     <div class="modal-header">
       <h3 id="modal-title">New Event</h3>
       <div class="modal-header-actions">
+        <!-- Auto-sync status pill — shows current Google connection
+             state and acts as a quick "Connect" shortcut when off. -->
+        <button class="gcal-status-pill" id="gcal-status-pill" type="button"
+                onclick="onGcalStatusClick()">
+          <span class="gcal-status-dot"></span>
+          <span class="gcal-status-text">Checking…</span>
+        </button>
+        <!-- Manual Google Calendar push — opens the render-template URL
+             even when auto-sync is off (fallback, same as before). -->
         <button class="modal-gcal" type="button"
                 onclick="addCurrentModalToGoogleCalendar()"
-                title="Add to Google Calendar (with 10-minute reminder)"
+                title="Add to Google Calendar manually (with 10-minute reminder)"
                 aria-label="Add to Google Calendar">
           <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
             <rect x="8" y="8" width="32" height="32" rx="4" fill="#ffffff" stroke="#dadce0"/>

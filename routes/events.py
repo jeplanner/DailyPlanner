@@ -71,6 +71,11 @@ def create_event():
     "reminder_minutes": data.get("reminder_minutes", 10),
     })
     created_row = response1[0] if response1 else None
+
+    # Auto-sync to Google Calendar if the user has connected their account.
+    # Always returns — never blocks the local save.
+    gcal_synced = False
+    gcal_error = None
     if created_row:
         try:
             google_id = insert_google_event(created_row)
@@ -80,10 +85,39 @@ def create_event():
                     params={"id": f"eq.{created_row['id']}", "user_id": f"eq.{session['user_id']}"},
                     json={"google_event_id": google_id}
                 )
+                gcal_synced = True
         except Exception as e:
             logger.warning("Google sync failed on create: %s", e)
+            gcal_error = str(e)
 
-    return jsonify({"success": True})
+    return jsonify({
+        "success": True,
+        "gcal_synced": gcal_synced,
+        "gcal_error": gcal_error,
+    })
+
+
+# ──────────────────────────────────────────────────────────────
+# Google Calendar connection status
+# ──────────────────────────────────────────────────────────────
+@events_bp.route("/api/v2/google-status")
+@login_required
+def google_status():
+    """Tell the client whether the user has connected Google Calendar.
+
+    Returns {connected: bool, login_url: str}. The client shows a
+    "Connect Google" banner/pill when connected=false.
+    """
+    user_id = session["user_id"]
+    try:
+        rows = get("user_google_tokens", params={"user_id": f"eq.{user_id}"}) or []
+    except Exception as e:
+        logger.warning("google_status lookup failed: %s", e)
+        rows = []
+    return jsonify({
+        "connected": bool(rows),
+        "login_url": url_for("events.google_login"),
+    })
 
 
 @events_bp.route("/api/v2/events/<event_id>", methods=["PUT"])
@@ -181,15 +215,23 @@ def update_event(event_id):
                     calendarId="primary",
                     eventId=google_id,
                     body={
-                        "summary": data["title"],
-                        "description": data.get("description", ""),
+                        "summary": data.get("title") or row[0].get("title") or "Untitled",
+                        "description": data.get("description", "") or row[0].get("description", ""),
                         "start": {
-                            "dateTime": f"{data['plan_date']}T{data['start_time']}:00",
+                            "dateTime": f"{plan_date}T{data['start_time']}:00",
                             "timeZone": "Asia/Kolkata"
                         },
                         "end": {
-                            "dateTime": f"{data['plan_date']}T{data['end_time']}:00",
+                            "dateTime": f"{plan_date}T{data['end_time']}:00",
                             "timeZone": "Asia/Kolkata"
+                        },
+                        # Keep the 10-min popup reminder attached on edits too
+                        # — otherwise Google strips the override silently on PATCH/PUT.
+                        "reminders": {
+                            "useDefault": False,
+                            "overrides": [
+                                {"method": "popup", "minutes": int(data.get("reminder_minutes") or row[0].get("reminder_minutes") or 10)}
+                            ]
                         }
                     }
                 ).execute()
