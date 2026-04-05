@@ -8,7 +8,50 @@
    CONSTANTS
    ────────────────────────── */
 const HOUR_HEIGHT = 60;   // px per hour
-const SNAP = 5;           // 5-minute snap grid
+const SNAP = 15;          // 15-minute snap grid (matches Google Calendar)
+
+/* Live time badge shown during drag-to-create / drag-to-move so the user
+   can see exactly where the event will land before releasing. Created
+   lazily on first use and reused across every drag. */
+let _dragTimeBadge = null;
+function _ensureDragBadge() {
+  if (_dragTimeBadge && document.body.contains(_dragTimeBadge)) return _dragTimeBadge;
+  _dragTimeBadge = document.createElement("div");
+  _dragTimeBadge.className = "drag-time-badge";
+  document.body.appendChild(_dragTimeBadge);
+  return _dragTimeBadge;
+}
+function _showDragBadge(text, clientX, clientY) {
+  const el = _ensureDragBadge();
+  el.textContent = text;
+  el.style.display = "block";
+  // Position slightly above-right of the cursor so the badge doesn't
+  // cover the snap line or the pointer itself.
+  const pad = 14;
+  const w = el.offsetWidth || 120;
+  const x = Math.min(window.innerWidth - w - 8, clientX + pad);
+  const y = Math.max(8, clientY - 36);
+  el.style.left = x + "px";
+  el.style.top  = y + "px";
+}
+function _hideDragBadge() {
+  if (_dragTimeBadge) _dragTimeBadge.style.display = "none";
+}
+function _fmtTimeLabel(mins) {
+  // 15:30 → "3:30 PM" — more readable than 24h in a fleeting badge
+  mins = _clampMinutes(mins);
+  const h24 = Math.floor(mins / 60);
+  const m = mins % 60;
+  const h12 = ((h24 + 11) % 12) + 1;
+  const ampm = h24 < 12 ? "AM" : "PM";
+  return `${h12}:${String(m).padStart(2,"0")} ${ampm}`;
+}
+function _fmtDurLabel(mins) {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
 const TOTAL_HOURS = 24;
 const GRID_HEIGHT = HOUR_HEIGHT * TOTAL_HOURS;
 
@@ -1204,12 +1247,27 @@ function onColumnDragOver(e) {
     col.appendChild(line);
   }
   line.style.top = top + "px";
+
+  // Live time badge — shows the exact start time the drop will land at,
+  // plus the end time based on the dragged item's duration (default 30m
+  // for unscheduled tasks or if we can't infer).
+  let durMin = 30;
+  if (draggedTask.start_time && draggedTask.end_time) {
+    durMin = Math.max(SNAP, minutes(draggedTask.end_time) - minutes(draggedTask.start_time));
+  }
+  const endM = _clampMinutes(snapped + durMin);
+  _showDragBadge(
+    `${_fmtTimeLabel(snapped)} – ${_fmtTimeLabel(endM)} · ${_fmtDurLabel(endM - snapped)}`,
+    e.clientX,
+    e.clientY
+  );
 }
 
 function onColumnDragLeave(e) {
   const col = e.currentTarget;
   const line = col.querySelector(".snap-line");
   if (line) line.remove();
+  _hideDragBadge();
 }
 
 async function onColumnDrop(e) {
@@ -1219,9 +1277,10 @@ async function onColumnDrop(e) {
   const col = e.currentTarget;
   const targetDate = col.dataset.date;
 
-  // Clean snap line
+  // Clean snap line + drag badge
   const line = col.querySelector(".snap-line");
   if (line) line.remove();
+  _hideDragBadge();
 
   const rect = col.getBoundingClientRect();
   const y = _clampColY(e.clientY - rect.top);
@@ -1390,6 +1449,15 @@ function _touchCreateMove(e) {
   const snapped = Math.round(mins / SNAP) * SNAP;
   const height = (snapped / 60) * HOUR_HEIGHT;
   ghostEvent.style.height = Math.max(height, HOUR_HEIGHT / 4) + "px";
+
+  // Live time badge
+  const startMinutes = _clampMinutes(Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP);
+  const endMinutes = _clampMinutes(startMinutes + Math.max(snapped, SNAP));
+  _showDragBadge(
+    `${_fmtTimeLabel(startMinutes)} – ${_fmtTimeLabel(endMinutes)} · ${_fmtDurLabel(endMinutes - startMinutes)}`,
+    t.clientX,
+    t.clientY
+  );
 }
 
 function _touchCreateEnd(e) {
@@ -1417,6 +1485,7 @@ function _touchCreateCancel() {
 }
 
 function _touchCreateCleanup() {
+  _hideDragBadge();
   if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
   creatingEvent = false;
   pendingCreate = false;
@@ -1479,6 +1548,15 @@ function onCreatePointerMove(e) {
   const snapped = Math.round(mins / SNAP) * SNAP;
   const height = (snapped / 60) * HOUR_HEIGHT;
   ghostEvent.style.height = Math.max(height, 5) + "px";
+
+  // Live time badge: show the snapped [start – end] range + duration.
+  const startMinutes = _clampMinutes(Math.round(((startY / HOUR_HEIGHT) * 60) / SNAP) * SNAP);
+  const endMinutes = _clampMinutes(startMinutes + (snapped || SNAP));
+  _showDragBadge(
+    `${_fmtTimeLabel(startMinutes)} – ${_fmtTimeLabel(endMinutes)} · ${_fmtDurLabel(endMinutes - startMinutes)}`,
+    e.clientX,
+    e.clientY
+  );
 }
 
 function onCreatePointerUp(e) {
@@ -1486,6 +1564,7 @@ function onCreatePointerUp(e) {
 
   const wasCreating = creatingEvent;
 
+  _hideDragBadge();
   if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
   pendingCreate = false;
   creatingEvent = false;
@@ -1523,6 +1602,7 @@ function onCreatePointerUp(e) {
 }
 
 function cancelCreate() {
+  _hideDragBadge();
   if (ghostEvent) { ghostEvent.remove(); ghostEvent = null; }
   pendingCreate = false;
   creatingEvent = false;
@@ -1579,13 +1659,14 @@ function attachChipTouchDrag(chipEl, ev, dateStr) {
     clone.style.left = (x - chipEl.offsetWidth / 2) + "px";
     clone.style.top = (y - chipEl.offsetHeight / 2) + "px";
 
-    // Show snap line on the column under the touch point
-    showTouchSnapLine(x, y);
+    // Show snap line + time badge on the column under the touch point
+    showTouchSnapLine(x, y, ev);
   }, { passive: false });
 
   chipEl.addEventListener("touchend", async (e) => {
     if (clone) { clone.remove(); clone = null; }
     clearTouchSnapLines();
+    _hideDragBadge();
 
     if (!dragging || !draggedTask) {
       dragging = false;
@@ -1646,12 +1727,13 @@ function attachFloatingTouchDrag(div, task) {
     clone.style.left = (x - div.offsetWidth / 2) + "px";
     clone.style.top = (y - 30) + "px";
 
-    showTouchSnapLine(x, y);
+    showTouchSnapLine(x, y, task);
   }, { passive: false });
 
   div.addEventListener("touchend", async (e) => {
     if (clone) { clone.remove(); clone = null; }
     clearTouchSnapLines();
+    _hideDragBadge();
 
     if (!dragging || !draggedTask) {
       dragging = false;
@@ -1700,16 +1782,28 @@ function getColumnUnderPoint(x, y) {
   return null;
 }
 
-function showTouchSnapLine(x, y) {
+function showTouchSnapLine(x, y, ev) {
   clearTouchSnapLines();
   const col = getColumnUnderPoint(x, y);
-  if (!col) return;
+  if (!col) { _hideDragBadge(); return; }
 
   const rect = col.getBoundingClientRect();
   const relY = _clampColY(y - rect.top);
   const minutesFromTop = (relY / HOUR_HEIGHT) * 60;
   const snapped = _clampMinutes(Math.round(minutesFromTop / SNAP) * SNAP);
   const top = (snapped / 60) * HOUR_HEIGHT;
+
+  // Live badge next to the finger
+  let durMin = 30;
+  if (ev?.start_time && ev?.end_time) {
+    durMin = Math.max(SNAP, minutes(ev.end_time) - minutes(ev.start_time));
+  }
+  const endM = _clampMinutes(snapped + durMin);
+  _showDragBadge(
+    `${_fmtTimeLabel(snapped)} – ${_fmtTimeLabel(endM)} · ${_fmtDurLabel(endM - snapped)}`,
+    x,
+    y
+  );
 
   const line = document.createElement("div");
   line.className = "snap-line";
