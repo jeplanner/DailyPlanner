@@ -167,6 +167,7 @@ def todo():
                 params={
                     "user_id": f"eq.{user_id}",
                     "id": f"in.({','.join(str(i) for i in initiative_ids)})",
+                    "is_deleted": "eq.false",
                     "select": "id,title,key_result_id",
                     "limit": 500,
                 },
@@ -183,6 +184,7 @@ def todo():
                 params={
                     "user_id": f"eq.{user_id}",
                     "id": f"in.({','.join(str(i) for i in kr_ids_needed)})",
+                    "is_deleted": "eq.false",
                     "select": "id,title,objective_id",
                     "limit": 500,
                 },
@@ -197,6 +199,7 @@ def todo():
                 params={
                     "user_id": f"eq.{user_id}",
                     "id": f"in.({','.join(str(i) for i in objective_ids_needed)})",
+                    "is_deleted": "eq.false",
                     "select": "id,title,color",
                     "limit": 500,
                 },

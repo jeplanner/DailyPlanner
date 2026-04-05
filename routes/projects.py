@@ -693,6 +693,44 @@ def update_priority():
     return {"status": "ok"}
 
 
+@projects_bp.route("/projects/<project_id>/archive", methods=["POST"])
+@login_required
+def archive_project(project_id):
+    """
+    Soft-delete a project. The row stays in the DB with is_archived=true.
+    Listings filter by is_archived=eq.false, so an archived project
+    disappears from the UI but can be restored (see restore_project).
+
+    Tasks under the project are not cascaded — they keep their current
+    is_eliminated state. Archiving a project is reversible; a user who
+    wanted to also delete the tasks would do that step explicitly.
+    """
+    update(
+        "projects",
+        params={
+            "project_id": f"eq.{project_id}",
+            "user_id": f"eq.{session['user_id']}",
+        },
+        json={"is_archived": True},
+    )
+    return jsonify({"status": "ok"})
+
+
+@projects_bp.route("/projects/<project_id>/restore", methods=["POST"])
+@login_required
+def restore_project(project_id):
+    """Un-archive a previously soft-deleted project."""
+    update(
+        "projects",
+        params={
+            "project_id": f"eq.{project_id}",
+            "user_id": f"eq.{session['user_id']}",
+        },
+        json={"is_archived": False},
+    )
+    return jsonify({"status": "ok"})
+
+
 @projects_bp.route("/projects/new", methods=["GET", "POST"])
 @login_required
 def create_project():

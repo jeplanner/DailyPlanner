@@ -142,11 +142,11 @@ SCHEMA MIGRATION — run in Supabase
 """
 
 import logging
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, render_template, request, session
 
 from services.login_service import login_required
-from supabase_client import delete as sb_delete
 from supabase_client import get, post, update
 
 logger = logging.getLogger("daily_plan")
@@ -155,6 +155,15 @@ goals_bp = Blueprint("goals", __name__)
 _VALID_OBJECTIVE_STATUSES = {"active", "achieved", "paused", "abandoned"}
 _VALID_HORIZONS = {"annual", "quarterly", "monthly", "ongoing"}
 _VALID_DIRECTIONS = {"up", "down"}
+
+# Every read filters this out. Every "delete" is a soft delete that
+# flips this to true and stamps deleted_at. Restore is possible via
+# the normal PATCH endpoint by sending {"is_deleted": false}.
+_NOT_DELETED = {"is_deleted": "eq.false"}
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -216,6 +225,7 @@ def picker():
         params={
             "user_id": f"eq.{user_id}",
             "status": "eq.active",
+            "is_deleted": "eq.false",
             "select": "id,project_id,title,color,category,target_date",
             "order": "order_index.asc,created_at.asc",
             "limit": 500,
@@ -237,6 +247,7 @@ def picker():
         params={
             "user_id": f"eq.{user_id}",
             "objective_id": f"in.({','.join(objective_ids)})",
+            "is_deleted": "eq.false",
             "select": "id,objective_id,title,unit,current_value,target_value,direction",
             "order": "order_index.asc,created_at.asc",
             "limit": 2000,
@@ -252,6 +263,7 @@ def picker():
                 "user_id": f"eq.{user_id}",
                 "key_result_id": f"in.({','.join(kr_ids)})",
                 "status": "eq.active",
+                "is_deleted": "eq.false",
                 "select": "id,key_result_id,title",
                 "order": "order_index.asc,created_at.asc",
                 "limit": 5000,
@@ -310,6 +322,7 @@ def list_objectives():
 
     params = {
         "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
         "select": "*",
         "order": "order_index.asc,created_at.asc",
         "limit": 500,
@@ -339,6 +352,7 @@ def list_objectives():
         params={
             "user_id": f"eq.{user_id}",
             "objective_id": f"in.({','.join(objective_ids)})",
+            "is_deleted": "eq.false",
             "select": "*",
             "order": "order_index.asc,created_at.asc",
             "limit": 5000,
@@ -353,6 +367,7 @@ def list_objectives():
             params={
                 "user_id": f"eq.{user_id}",
                 "key_result_id": f"in.({','.join(kr_ids)})",
+                "is_deleted": "eq.false",
                 "select": "*",
                 "order": "order_index.asc,created_at.asc",
                 "limit": 5000,
@@ -418,6 +433,7 @@ def update_objective(objective_id):
     allowed = {
         "project_id", "title", "description", "category", "time_horizon",
         "start_date", "target_date", "status", "color", "order_index",
+        "is_deleted",  # allow restore via PATCH {is_deleted: false}
     }
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
@@ -430,6 +446,10 @@ def update_objective(objective_id):
     if "time_horizon" in patch and patch["time_horizon"] not in _VALID_HORIZONS:
         return jsonify({"error": "invalid time_horizon"}), 400
 
+    # Clear deleted_at when restoring
+    if patch.get("is_deleted") is False:
+        patch["deleted_at"] = None
+
     update(
         "objectives",
         params={"id": f"eq.{objective_id}", "user_id": f"eq.{session['user_id']}"},
@@ -441,11 +461,55 @@ def update_objective(objective_id):
 @goals_bp.route("/api/goals/<objective_id>", methods=["DELETE"])
 @login_required
 def delete_objective(objective_id):
-    """Hard delete — cascades to key_results and initiatives via FK."""
-    sb_delete(
+    """
+    Soft delete an objective. Cascades in application code to every
+    KR under the objective and every initiative under those KRs.
+    Row data is preserved — restore via PATCH {is_deleted: false}.
+    """
+    user_id = session["user_id"]
+    now = _now_iso()
+
+    # 1) Soft-delete the objective itself
+    update(
         "objectives",
-        params={"id": f"eq.{objective_id}", "user_id": f"eq.{session['user_id']}"},
+        params={"id": f"eq.{objective_id}", "user_id": f"eq.{user_id}"},
+        json={"is_deleted": True, "deleted_at": now},
     )
+
+    # 2) Fetch live KRs under this objective (to cascade)
+    krs = get(
+        "key_results",
+        params={
+            "user_id": f"eq.{user_id}",
+            "objective_id": f"eq.{objective_id}",
+            "is_deleted": "eq.false",
+            "select": "id",
+            "limit": 500,
+        },
+    ) or []
+    if not krs:
+        return jsonify({"status": "ok"})
+
+    kr_ids = [k["id"] for k in krs]
+    update(
+        "key_results",
+        params={
+            "user_id": f"eq.{user_id}",
+            "id": f"in.({','.join(kr_ids)})",
+        },
+        json={"is_deleted": True, "deleted_at": now},
+    )
+
+    # 3) Soft-delete all initiatives under those KRs
+    update(
+        "initiatives",
+        params={
+            "user_id": f"eq.{user_id}",
+            "key_result_id": f"in.({','.join(kr_ids)})",
+        },
+        json={"is_deleted": True, "deleted_at": now},
+    )
+
     return jsonify({"status": "ok"})
 
 
@@ -496,6 +560,7 @@ def update_key_result(kr_id):
         "title", "metric_type", "unit",
         "start_value", "current_value", "target_value",
         "direction", "order_index",
+        "is_deleted",
     }
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
@@ -511,6 +576,9 @@ def update_key_result(kr_id):
     if "direction" in patch and patch["direction"] not in _VALID_DIRECTIONS:
         return jsonify({"error": "invalid direction"}), 400
 
+    if patch.get("is_deleted") is False:
+        patch["deleted_at"] = None
+
     update(
         "key_results",
         params={"id": f"eq.{kr_id}", "user_id": f"eq.{session['user_id']}"},
@@ -522,9 +590,22 @@ def update_key_result(kr_id):
 @goals_bp.route("/api/key-results/<kr_id>", methods=["DELETE"])
 @login_required
 def delete_key_result(kr_id):
-    sb_delete(
+    """Soft delete. Cascades to initiatives under this KR."""
+    user_id = session["user_id"]
+    now = _now_iso()
+
+    update(
         "key_results",
-        params={"id": f"eq.{kr_id}", "user_id": f"eq.{session['user_id']}"},
+        params={"id": f"eq.{kr_id}", "user_id": f"eq.{user_id}"},
+        json={"is_deleted": True, "deleted_at": now},
+    )
+    update(
+        "initiatives",
+        params={
+            "user_id": f"eq.{user_id}",
+            "key_result_id": f"eq.{kr_id}",
+        },
+        json={"is_deleted": True, "deleted_at": now},
     )
     return jsonify({"status": "ok"})
 
@@ -558,12 +639,15 @@ def create_initiative():
 @login_required
 def update_initiative(initiative_id):
     data = request.get_json(force=True) or {}
-    allowed = {"title", "description", "status", "order_index"}
+    allowed = {"title", "description", "status", "order_index", "is_deleted"}
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
         return jsonify({"error": "no valid fields"}), 400
     if "status" in patch and patch["status"] not in _VALID_OBJECTIVE_STATUSES:
         return jsonify({"error": "invalid status"}), 400
+
+    if patch.get("is_deleted") is False:
+        patch["deleted_at"] = None
 
     update(
         "initiatives",
@@ -576,8 +660,12 @@ def update_initiative(initiative_id):
 @goals_bp.route("/api/initiatives/<initiative_id>", methods=["DELETE"])
 @login_required
 def delete_initiative(initiative_id):
-    sb_delete(
+    """Soft delete a single initiative. Linked tasks keep their
+    initiative_id pointer so that if the initiative is restored, the
+    task linkage is automatically intact again."""
+    update(
         "initiatives",
         params={"id": f"eq.{initiative_id}", "user_id": f"eq.{session['user_id']}"},
+        json={"is_deleted": True, "deleted_at": _now_iso()},
     )
     return jsonify({"status": "ok"})
