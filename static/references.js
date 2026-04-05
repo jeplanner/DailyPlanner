@@ -361,7 +361,50 @@
   // ==========================================================
 
   async function deleteReference(id, el) {
-    if (!confirm("Delete this reference?")) return;
+    // Inline confirm: swap the card into a red "Delete?" banner instead
+    // of using the native browser confirm() dialog.
+    if (el && !el.classList.contains("confirming-delete")) {
+      const prevHTML = el.innerHTML;
+      el.classList.add("confirming-delete");
+      el.style.border = "1.5px solid #fecaca";
+      el.style.background = "#fef2f2";
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+               stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <strong style="font-size:13px;color:#991b1b;flex:1;min-width:160px;">Delete this entry? This can't be undone.</strong>
+          <div style="display:flex;gap:6px;flex-shrink:0;">
+            <button type="button" class="kb-btn kb-btn-ghost" id="kb-del-cancel-${id}" style="padding:6px 12px;font-size:12px;">Cancel</button>
+            <button type="button" class="kb-btn" id="kb-del-yes-${id}"
+                    style="padding:6px 12px;font-size:12px;background:#dc2626;color:#fff;border-color:#dc2626;">
+              Delete
+            </button>
+          </div>
+        </div>`;
+      document.getElementById(`kb-del-cancel-${id}`)?.addEventListener("click", () => {
+        el.classList.remove("confirming-delete");
+        el.style.border = "";
+        el.style.background = "";
+        el.innerHTML = prevHTML;
+        // Re-attach handlers on the restored content
+        const newStudy = el.querySelector(".btn-study");
+        const newDel = el.querySelector(".btn-delete");
+        if (newStudy) newStudy.addEventListener("click", () => openStudyModal(id, el.querySelector(".ref-title-link")?.textContent));
+        if (newDel) newDel.addEventListener("click", () => deleteReference(id, el));
+      });
+      document.getElementById(`kb-del-yes-${id}`)?.addEventListener("click", () => _kbConfirmDelete(id, el));
+      return;
+    }
+    // Fallback path — continue to server call
+    _kbConfirmDelete(id, el);
+    return;
+  }
+
+  async function _kbConfirmDelete(id, el) {
     try {
       const res = await fetch(`/references/${id}`, { method: "DELETE" });
       if (res.ok) {
@@ -399,47 +442,47 @@
     const container = $("tagCloud");
     if (!container) return;
 
-    const res = await fetch("/references/tags");
-    const groupedTags = await res.json();
-    container.innerHTML = "";
+    try {
+      const res = await fetch("/references/tags");
+      const groupedTags = await res.json();
+      container.innerHTML = "";
 
-    Object.keys(groupedTags).sort().forEach(groupName => {
-      const groupWrapper = document.createElement("div");
-      groupWrapper.className = "tag-group";
-
-      const header = document.createElement("div");
-      header.className = "tag-group-header";
-      header.textContent = `📁 ${groupName}`;
-
-      const content = document.createElement("div");
-      content.className = "tag-group-content";
-
-      const groupTags = Object.keys(groupedTags[groupName]);
-      if (groupTags.some(tag => state.selectedTags.includes(tag)))
-        content.classList.add("open");
-
-      header.addEventListener("click", () => content.classList.toggle("open"));
-
-      groupTags.sort().forEach(tag => {
-        const span = document.createElement("span");
-        span.className = "tag-cloud-item" + (state.selectedTags.includes(tag) ? " active" : "");
-        span.textContent = `# ${tag} (${groupedTags[groupName][tag]})`;
-        span.onclick = function (e) {
-          e.stopPropagation();
-          span.classList.toggle("active");
-          if (state.selectedTags.includes(tag))
-            state.selectedTags = state.selectedTags.filter(t => t !== tag);
-          else
-            state.selectedTags.push(tag);
-          resetAndReload();
-        };
-        content.appendChild(span);
+      // Flatten all tags into a single sorted list showing only the top
+      // most-used tags — the new sidebar is compact so group headers are
+      // more clutter than help.
+      const flat = [];
+      Object.keys(groupedTags).forEach(group => {
+        Object.entries(groupedTags[group]).forEach(([tag, count]) => {
+          flat.push({ tag, count });
+        });
       });
+      flat.sort((a, b) => b.count - a.count);
 
-      groupWrapper.appendChild(header);
-      groupWrapper.appendChild(content);
-      container.appendChild(groupWrapper);
-    });
+      if (!flat.length) {
+        container.innerHTML = `<div class="kb-facet-empty">No tags yet</div>`;
+        return;
+      }
+
+      flat.slice(0, 40).forEach(({ tag, count }) => {
+        const span = document.createElement("span");
+        span.className = "tag" + (state.selectedTags.includes(tag) ? " active" : "");
+        span.textContent = `#${tag}${count > 1 ? ' · ' + count : ''}`;
+        span.title = `Filter by #${tag}`;
+        span.addEventListener("click", () => {
+          if (state.selectedTags.includes(tag)) {
+            state.selectedTags = state.selectedTags.filter(t => t !== tag);
+          } else {
+            state.selectedTags.push(tag);
+          }
+          resetAndReload();
+          loadTagCloud();
+        });
+        container.appendChild(span);
+      });
+    } catch (err) {
+      console.error("loadTagCloud:", err);
+      container.innerHTML = `<div class="kb-facet-empty">Failed to load tags</div>`;
+    }
   }
 
   // ==========================================================
