@@ -214,79 +214,79 @@ body.menu-open{
 
   <div class="sidebar-nav">
 
-    <a href="/" title="Matrix (home)">
+    <a href="/" title="Priorities — Eisenhower matrix">
       <i data-feather="target"></i>
-      Matrix
+      Priorities
     </a>
 
-    <a href="/calendar" title="Planner">
+    <a href="/calendar" title="Calendar — day / week view">
       <i data-feather="calendar"></i>
-      Planner
+      Calendar
     </a>
 
-    <a href="/health">
+    <a href="/health" title="Health tracking">
       <i data-feather="heart"></i>
       Health
     </a>
 
-    <a href="/projects" title="Projects">
+    <a href="/projects" title="All projects">
       <i data-feather="briefcase"></i>
       Projects
     </a>
 
-    <a href="/projects/timeline" title="Project Timeline">
+    <a href="/projects/timeline" title="Roadmap — projects over time">
       <i data-feather="git-branch"></i>
-      Timeline
+      Roadmap
     </a>
 
     <hr>
 
-    <a href="/summary?view=daily" title="Daily Summary">
+    <a href="/summary?view=daily" title="Daily review">
       <i data-feather="calendar"></i>
-      Daily
+      Daily Review
     </a>
 
-    <a href="/summary?view=weekly" title="Weekly Review">
+    <a href="/summary?view=weekly" title="Weekly review">
       <i data-feather="bar-chart-2"></i>
-      Weekly
+      Weekly Review
     </a>
     {% if project is defined %}
 
-    <a href="/projects/{{ project.project_id }}/gantt" title="Gantt">
+    <a href="/projects/{{ project.project_id }}/gantt" title="Gantt chart for this project">
       <i data-feather="bar-chart"></i>
-      Gantt
+      Gantt Chart
     </a>
 
-    <a href="/projects/{{ project.project_id }}/tasks" title="Project Planner">
+    <a href="/projects/{{ project.project_id }}/tasks" title="Tasks for this project">
       <i data-feather="trello"></i>
-      Planner
+      Tasks
     </a>
 
     {% endif %}
 
     <hr>
 
-    <a href="/notes/scribble">
+    <a href="/notes/scribble" title="Notes">
       <i data-feather="edit-3"></i>
       Notes
     </a>
 
-    <a href="/references">
+    <a href="/references" title="Knowledge base — articles, links, AI-answerable content">
       <i data-feather="book-open"></i>
       Knowledge Base
     </a>
 
-    <a href="/refcards">
-      <i data-feather="database"></i>
-      Reference Cards
+    <a href="/refcards" title="Playbook — SOPs, credentials, checklists, cheat sheets">
+      <i data-feather="clipboard"></i>
+      Playbook
     </a>
 
-    <a href="/portfolio">
+    <a href="/portfolio" title="Investments — stocks, MFs, bonds, gold">
       <i data-feather="trending-up"></i>
-      Portfolio
+      Investments
     </a>
 
-    <a href="/inbox">
+    <a href="/inbox" title="Inbox">
       <i data-feather="inbox"></i>
       Inbox
     </a>
