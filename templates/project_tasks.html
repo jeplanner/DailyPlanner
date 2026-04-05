@@ -83,16 +83,15 @@
         <span>Select</span>
       </button>
 
-      <!-- OKR filters: Objective → Key Result → Initiative (cascading) -->
-      <select id="filter-objective" class="sort-select okr-filter" title="Filter by Objective / Goal">
-        <option value="">All objectives</option>
-      </select>
-      <select id="filter-kr" class="sort-select okr-filter" title="Filter by Key Result">
-        <option value="">All key results</option>
-      </select>
-      <select id="filter-initiative" class="sort-select okr-filter" title="Filter by Initiative">
-        <option value="">All initiatives</option>
-      </select>
+      <!-- OKR filter trigger — opens a bottom-sheet picker with multi-select -->
+      <button type="button" class="filter-pill pt-filter-btn" id="pt-filter-btn"
+              onclick="openPtFilterSheet()"
+              title="Filter by Objective / Key Result / Initiative"
+              style="border:1px solid var(--pt-border);cursor:pointer;font:inherit;">
+        <i data-feather="filter" style="width:13px;height:13px"></i>
+        <span>Filter</span>
+        <span class="pt-filter-badge" id="pt-filter-badge" style="display:none;">0</span>
+      </button>
     </div>
 
     <div class="toolbar-right">
@@ -193,6 +192,59 @@
     <button type="button" onclick="ptBulkApplyPriority('medium')">🟠 Medium</button>
     <button type="button" onclick="ptBulkApplyPriority('low')">🟢 Low</button>
   </div>
+
+  <!-- Active filter chips (rendered only when filters are applied) -->
+  <div id="pt-filter-chips" class="pt-filter-chips" style="display:none;"></div>
+
+  <!-- ═══════════ FILTER BOTTOM SHEET ═══════════ -->
+  <div id="pt-filter-overlay" class="pt-filter-overlay" onclick="if(event.target===this)closePtFilterSheet()"></div>
+  <aside id="pt-filter-sheet" class="pt-filter-sheet" role="dialog" aria-label="Filter tasks" aria-modal="true">
+    <div class="pt-fs-handle" aria-hidden="true"></div>
+    <div class="pt-fs-header">
+      <h3>Filter</h3>
+      <button type="button" class="pt-fs-close" onclick="closePtFilterSheet()" aria-label="Close">
+        <i data-feather="x"></i>
+      </button>
+    </div>
+
+    <div class="pt-fs-body">
+      <div class="pt-fs-section">
+        <div class="pt-fs-section-title">
+          <i data-feather="target"></i>
+          <span>Objectives</span>
+          <span class="pt-fs-section-hint" id="pt-fs-obj-count"></span>
+        </div>
+        <div class="pt-fs-chips" id="pt-fs-objectives"></div>
+      </div>
+
+      <div class="pt-fs-section" id="pt-fs-kr-section">
+        <div class="pt-fs-section-title">
+          <i data-feather="trending-up"></i>
+          <span>Key Results</span>
+          <span class="pt-fs-section-hint" id="pt-fs-kr-count"></span>
+        </div>
+        <div class="pt-fs-chips" id="pt-fs-krs"></div>
+      </div>
+
+      <div class="pt-fs-section" id="pt-fs-init-section">
+        <div class="pt-fs-section-title">
+          <i data-feather="zap"></i>
+          <span>Initiatives</span>
+          <span class="pt-fs-section-hint" id="pt-fs-init-count"></span>
+        </div>
+        <div class="pt-fs-chips" id="pt-fs-initiatives"></div>
+      </div>
+    </div>
+
+    <div class="pt-fs-footer">
+      <button type="button" class="pt-fs-btn pt-fs-btn-ghost" onclick="clearOkrFilter()">
+        <i data-feather="rotate-ccw" style="width:15px;height:15px"></i> Clear all
+      </button>
+      <button type="button" class="pt-fs-btn pt-fs-btn-primary" onclick="closePtFilterSheet()">
+        <span id="pt-fs-apply-label">Show all tasks</span>
+      </button>
+    </div>
+  </aside>
 
   <!-- ═══════════ TABLE VIEW ═══════════ -->
   <div class="task-table-wrap" id="table-view">

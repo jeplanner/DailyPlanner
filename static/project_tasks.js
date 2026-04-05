@@ -1463,64 +1463,226 @@ async function loadKrPickerOptions() {
 }
 
 /* ---------------------------------------------------------
-   OKR filter (Objective → KR → Initiative) — cascading,
-   client-side row filtering against data-* attributes on
-   each .task-row.
+   OKR filter — multi-select bottom sheet
+   State holds Sets of selected ids per dimension; tasks pass
+   the filter iff their parent ids intersect each non-empty set.
    --------------------------------------------------------- */
-function populateOkrFilters() {
-  const objSel  = _id("filter-objective");
-  const krSel   = _id("filter-kr");
-  const initSel = _id("filter-initiative");
-  if (!objSel || !krSel || !initSel || !_okrPickerData) return;
+const _ptFilter = {
+  objectiveIds:  new Set(),
+  krIds:         new Set(),
+  initiativeIds: new Set(),
+};
 
+function populateOkrFilters() {
+  // Kept for backward compatibility. The filter now lives in the sheet.
+  renderPtFilterSheet();
+  applyOkrFilter();
+}
+
+function _ptLabelFor(kind, id) {
+  const objs = _okrPickerData?.objectives || [];
+  if (kind === "objective") return objs.find(o => o.id === id)?.title;
+  if (kind === "kr") {
+    for (const o of objs) {
+      const k = (o.key_results || []).find(k => k.id === id);
+      if (k) return k.title;
+    }
+  }
+  if (kind === "initiative") {
+    for (const o of objs) for (const k of (o.key_results || [])) {
+      const i = (k.initiatives || []).find(i => i.id === id);
+      if (i) return i.title;
+    }
+  }
+  return null;
+}
+
+function _ptActiveCount() {
+  return _ptFilter.objectiveIds.size
+       + _ptFilter.krIds.size
+       + _ptFilter.initiativeIds.size;
+}
+
+function renderPtFilterSheet() {
+  if (!_okrPickerData) return;
   const objectives = _okrPickerData.objectives || [];
 
-  // Objective options
-  objSel.innerHTML = `<option value="">All objectives</option>` +
-    objectives.map(o => `<option value="${o.id}">${_escHtml(o.title)}</option>`).join("");
+  const objWrap  = _id("pt-fs-objectives");
+  const krWrap   = _id("pt-fs-krs");
+  const initWrap = _id("pt-fs-initiatives");
+  if (!objWrap || !krWrap || !initWrap) return;
 
-  const rebuildKrAndInit = () => {
-    const objId = objSel.value;
-    // KR options scoped to objective (or all)
-    const krs = objId
-      ? (objectives.find(o => o.id === objId)?.key_results || [])
-      : objectives.flatMap(o => o.key_results || []);
-    const prevKr = krSel.value;
-    krSel.innerHTML = `<option value="">All key results</option>` +
-      krs.map(k => `<option value="${k.id}">${_escHtml(k.title)}</option>`).join("");
-    krSel.value = krs.some(k => k.id === prevKr) ? prevKr : "";
+  // ── Objectives (always the full list) ──
+  if (!objectives.length) {
+    objWrap.innerHTML = `<div class="pt-fs-empty">No objectives yet. Create one on the OKRs page.</div>`;
+  } else {
+    objWrap.innerHTML = objectives.map(o => {
+      const count = (o.key_results || []).reduce(
+        (n, k) => n + (k.initiatives || []).length, 0
+      );
+      const sel = _ptFilter.objectiveIds.has(o.id) ? " selected" : "";
+      return `<button type="button" class="pt-fs-chip${sel}"
+                      data-kind="objective" data-id="${o.id}">
+        <span class="pt-fs-chip-check" aria-hidden="true"></span>
+        <span class="pt-fs-chip-text">${_escHtml(o.title)}</span>
+        ${count ? `<span class="pt-fs-chip-meta">${count}</span>` : ""}
+      </button>`;
+    }).join("");
+  }
+  _updatePtSectionHint("pt-fs-obj-count", _ptFilter.objectiveIds.size, objectives.length);
 
-    // Initiative options scoped to KR (or all in-scope KRs)
-    const krId = krSel.value;
-    const inits = krId
-      ? (krs.find(k => k.id === krId)?.initiatives || [])
-      : krs.flatMap(k => k.initiatives || []);
-    const prevInit = initSel.value;
-    initSel.innerHTML = `<option value="">All initiatives</option>` +
-      inits.map(i => `<option value="${i.id}">${_escHtml(i.title)}</option>`).join("");
-    initSel.value = inits.some(i => i.id === prevInit) ? prevInit : "";
-  };
+  // ── Key Results (scoped to selected objectives, or all) ──
+  const scopedObjs = _ptFilter.objectiveIds.size
+    ? objectives.filter(o => _ptFilter.objectiveIds.has(o.id))
+    : objectives;
+  const krs = scopedObjs.flatMap(o => (o.key_results || []).map(k => ({
+    ...k, _objTitle: o.title
+  })));
 
-  rebuildKrAndInit();
+  if (!krs.length) {
+    krWrap.innerHTML = `<div class="pt-fs-empty">${_ptFilter.objectiveIds.size
+      ? "Selected objectives have no key results."
+      : "No key results yet."}</div>`;
+  } else {
+    krWrap.innerHTML = krs.map(k => {
+      const sel = _ptFilter.krIds.has(k.id) ? " selected" : "";
+      const count = (k.initiatives || []).length;
+      return `<button type="button" class="pt-fs-chip${sel}"
+                      data-kind="kr" data-id="${k.id}"
+                      title="${_escHtml(k._objTitle)} › ${_escHtml(k.title)}">
+        <span class="pt-fs-chip-check" aria-hidden="true"></span>
+        <span class="pt-fs-chip-text">${_escHtml(k.title)}</span>
+        ${count ? `<span class="pt-fs-chip-meta">${count}</span>` : ""}
+      </button>`;
+    }).join("");
+  }
+  _updatePtSectionHint("pt-fs-kr-count", _ptFilter.krIds.size, krs.length);
+
+  // ── Initiatives (scoped to selected KRs, or all in-scope) ──
+  const scopedKrs = _ptFilter.krIds.size
+    ? krs.filter(k => _ptFilter.krIds.has(k.id))
+    : krs;
+  const inits = scopedKrs.flatMap(k => (k.initiatives || []).map(i => ({
+    ...i, _krTitle: k.title
+  })));
+
+  if (!inits.length) {
+    initWrap.innerHTML = `<div class="pt-fs-empty">${_ptFilter.krIds.size
+      ? "Selected key results have no initiatives."
+      : "No initiatives in scope."}</div>`;
+  } else {
+    initWrap.innerHTML = inits.map(i => {
+      const sel = _ptFilter.initiativeIds.has(i.id) ? " selected" : "";
+      return `<button type="button" class="pt-fs-chip${sel}"
+                      data-kind="initiative" data-id="${i.id}"
+                      title="${_escHtml(i._krTitle)} › ${_escHtml(i.title)}">
+        <span class="pt-fs-chip-check" aria-hidden="true"></span>
+        <span class="pt-fs-chip-text">${_escHtml(i.title)}</span>
+      </button>`;
+    }).join("");
+  }
+  _updatePtSectionHint("pt-fs-init-count", _ptFilter.initiativeIds.size, inits.length);
+
+  // Footer apply label
+  const n = _ptActiveCount();
+  const lbl = _id("pt-fs-apply-label");
+  if (lbl) lbl.textContent = n ? `Apply ${n} filter${n > 1 ? "s" : ""}` : "Show all tasks";
+}
+
+function _updatePtSectionHint(hintId, selected, total) {
+  const el = _id(hintId);
+  if (!el) return;
+  if (selected > 0) {
+    el.textContent = `${selected} of ${total} selected`;
+    el.classList.add("active");
+  } else {
+    el.textContent = `${total} available`;
+    el.classList.remove("active");
+  }
+}
+
+// Chip click handler — delegated on document
+document.addEventListener("click", (ev) => {
+  const chip = ev.target.closest(".pt-fs-chip");
+  if (!chip) return;
+  const kind = chip.dataset.kind;
+  const id = chip.dataset.id;
+  const set = kind === "objective"  ? _ptFilter.objectiveIds
+            : kind === "kr"         ? _ptFilter.krIds
+            : kind === "initiative" ? _ptFilter.initiativeIds
+            : null;
+  if (!set) return;
+
+  if (set.has(id)) set.delete(id);
+  else             set.add(id);
+
+  // Cascade cleanup: if an objective is deselected, drop any KRs/initiatives
+  // that no longer have a live parent in scope. (Applies only if the user
+  // has narrowed at that level.)
+  if (kind === "objective") _ptCleanupDownstream();
+  if (kind === "kr")        _ptCleanupInitiatives();
+
+  renderPtFilterSheet();
   applyOkrFilter();
+});
 
-  objSel.onchange = () => { rebuildKrAndInit(); applyOkrFilter(); };
-  krSel.onchange  = () => { rebuildKrAndInit(); applyOkrFilter(); };
-  initSel.onchange = applyOkrFilter;
+function _ptCleanupDownstream() {
+  if (!_okrPickerData) return;
+  const objectives = _okrPickerData.objectives || [];
+  const liveObjSet = _ptFilter.objectiveIds;
+  if (!liveObjSet.size) return;  // no scope → nothing to clean
+
+  const liveKrIds = new Set(
+    objectives
+      .filter(o => liveObjSet.has(o.id))
+      .flatMap(o => (o.key_results || []).map(k => k.id))
+  );
+  // Remove any selected KR that is no longer in scope
+  for (const krId of Array.from(_ptFilter.krIds)) {
+    if (!liveKrIds.has(krId)) _ptFilter.krIds.delete(krId);
+  }
+  _ptCleanupInitiatives();
+}
+
+function _ptCleanupInitiatives() {
+  if (!_okrPickerData) return;
+  const objectives = _okrPickerData.objectives || [];
+  const liveObjSet = _ptFilter.objectiveIds;
+  const liveKrSet  = _ptFilter.krIds;
+
+  // Build the set of initiative ids that are currently in scope
+  const scopedObjs = liveObjSet.size
+    ? objectives.filter(o => liveObjSet.has(o.id))
+    : objectives;
+  const scopedKrs = scopedObjs.flatMap(o => o.key_results || []);
+  const filteredKrs = liveKrSet.size
+    ? scopedKrs.filter(k => liveKrSet.has(k.id))
+    : scopedKrs;
+  const liveInitIds = new Set(
+    filteredKrs.flatMap(k => (k.initiatives || []).map(i => i.id))
+  );
+
+  for (const initId of Array.from(_ptFilter.initiativeIds)) {
+    if (!liveInitIds.has(initId)) _ptFilter.initiativeIds.delete(initId);
+  }
 }
 
 function applyOkrFilter() {
-  const objId  = _id("filter-objective")?.value || "";
-  const krId   = _id("filter-kr")?.value || "";
-  const initId = _id("filter-initiative")?.value || "";
-  const active = !!(objId || krId || initId);
+  const { objectiveIds, krIds, initiativeIds } = _ptFilter;
+  const active = _ptActiveCount() > 0;
 
   document.querySelectorAll(".task-row").forEach(row => {
     let show = true;
     if (active) {
-      if (objId  && row.dataset.objectiveId  !== objId)  show = false;
-      if (krId   && row.dataset.krId         !== krId)   show = false;
-      if (initId && row.dataset.initiativeId !== initId) show = false;
+      // Tasks with no OKR linkage at all are hidden as soon as any filter is active
+      const hasAny = row.dataset.objectiveId || row.dataset.krId || row.dataset.initiativeId;
+      if (!hasAny) {
+        show = false;
+      } else {
+        if (objectiveIds.size  && !objectiveIds.has(row.dataset.objectiveId))   show = false;
+        if (show && krIds.size && !krIds.has(row.dataset.krId))                 show = false;
+        if (show && initiativeIds.size && !initiativeIds.has(row.dataset.initiativeId)) show = false;
+      }
     }
     row.classList.toggle("okr-hidden", !show);
   });
@@ -1534,12 +1696,107 @@ function applyOkrFilter() {
     gr.classList.toggle("okr-hidden", !anyVisible);
   });
 
+  // Filter button badge
+  const btn = _id("pt-filter-btn");
+  const badge = _id("pt-filter-badge");
+  const n = _ptActiveCount();
+  if (btn) btn.classList.toggle("has-filters", n > 0);
+  if (badge) {
+    if (n > 0) { badge.textContent = n; badge.style.display = ""; }
+    else { badge.style.display = "none"; }
+  }
+
+  renderPtFilterChips();
+
   // Refresh kanban view if it's currently showing
   if (typeof populateBoard === "function" &&
       !_id("board-view")?.classList.contains("hidden")) {
     populateBoard();
   }
 }
+
+function renderPtFilterChips() {
+  const bar = _id("pt-filter-chips");
+  if (!bar) return;
+  if (_ptActiveCount() === 0) {
+    bar.style.display = "none";
+    bar.innerHTML = "";
+    return;
+  }
+
+  const chips = [];
+  for (const id of _ptFilter.objectiveIds) {
+    chips.push({ kind: "objective", label: "Objective",
+                 text: _ptLabelFor("objective", id) || "—", id });
+  }
+  for (const id of _ptFilter.krIds) {
+    chips.push({ kind: "kr", label: "Key Result",
+                 text: _ptLabelFor("kr", id) || "—", id });
+  }
+  for (const id of _ptFilter.initiativeIds) {
+    chips.push({ kind: "initiative", label: "Initiative",
+                 text: _ptLabelFor("initiative", id) || "—", id });
+  }
+
+  bar.innerHTML = chips.map(c => `
+    <span class="pt-chip">
+      <span class="pt-chip-label">${c.label}</span>
+      <span class="pt-chip-text" title="${_escHtml(c.text)}">${_escHtml(c.text)}</span>
+      <button type="button" onclick="removePtFilterChip('${c.kind}','${c.id}')" aria-label="Remove">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </span>
+  `).join("") + `<button type="button" class="pt-chip-clear-all" onclick="clearOkrFilter()">Clear all</button>`;
+  bar.style.display = "flex";
+}
+
+function removePtFilterChip(kind, id) {
+  const set = kind === "objective"  ? _ptFilter.objectiveIds
+            : kind === "kr"         ? _ptFilter.krIds
+            : kind === "initiative" ? _ptFilter.initiativeIds
+            : null;
+  if (!set) return;
+  set.delete(id);
+  if (kind === "objective") _ptCleanupDownstream();
+  if (kind === "kr")        _ptCleanupInitiatives();
+  renderPtFilterSheet();
+  applyOkrFilter();
+}
+
+function clearOkrFilter() {
+  _ptFilter.objectiveIds.clear();
+  _ptFilter.krIds.clear();
+  _ptFilter.initiativeIds.clear();
+  renderPtFilterSheet();
+  applyOkrFilter();
+}
+
+function openPtFilterSheet() {
+  const sheet = _id("pt-filter-sheet");
+  const overlay = _id("pt-filter-overlay");
+  if (!sheet || !overlay) return;
+  renderPtFilterSheet();
+  sheet.classList.add("open");
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+}
+
+function closePtFilterSheet() {
+  const sheet = _id("pt-filter-sheet");
+  const overlay = _id("pt-filter-overlay");
+  sheet?.classList.remove("open");
+  overlay?.classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+// Close sheet on Escape
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const sheet = _id("pt-filter-sheet");
+    if (sheet?.classList.contains("open")) closePtFilterSheet();
+  }
+});
 
 function paintKrPicker(selectEl) {
   if (!_krPickerOptionsHtml) return;
