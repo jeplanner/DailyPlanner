@@ -304,24 +304,100 @@ body {
 
 /* Progress Bar */
 .habit-progress, .habit-progress-bar {
-  height: 6px; background: var(--hab-ring-bg);
-  border-radius: 3px; overflow: hidden; margin-bottom: 4px; flex: 1;
+  height: 8px;
+  background: var(--hab-ring-bg);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 4px;
+  flex: 1;
 }
 .habit-progress-fill {
-  height: 100%; border-radius: 3px;
-  background: var(--hab-primary); transition: width 0.4s ease; max-width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--hab-primary);
+  transition: width 0.4s ease;
+  max-width: 100%;
 }
-.habit-card.completed .habit-progress-fill { background: var(--hab-success); }
+
+/* ═══════════════════════════════════════════════════════════
+   Completed state — strong visual signals so "goal reached"
+   is obvious. The old tokens made the fill and percent text
+   disappear into the pale-mint card background.
+   ═══════════════════════════════════════════════════════════ */
+.habit-card.completed .habit-progress-bar {
+  /* White track with a green border stands out against the mint card */
+  background: #ffffff;
+  border: 1px solid #a7f3d0;
+  height: 10px;
+}
+html.dark .habit-card.completed .habit-progress-bar {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #065f46;
+}
+.habit-card.completed .habit-progress-fill {
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+}
 
 .habit-progress-row {
-  display: flex; align-items: center; gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .habit-percent, .habit-progress-pct {
-  font-size: 11px; font-weight: 600; color: var(--hab-text3); text-align: right; min-width: 32px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--hab-text3);
+  text-align: right;
+  min-width: 36px;
+  transition: all 0.2s ease;
 }
+
+/* On completion, the percent becomes a white-on-green pill — high contrast */
 .habit-card.completed .habit-percent,
-.habit-card.completed .habit-progress-pct { color: var(--hab-success); }
+.habit-card.completed .habit-progress-pct {
+  background: var(--hab-success);
+  color: #ffffff;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 800;
+  text-align: center;
+  min-width: 46px;
+  font-size: 11px;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.35);
+  letter-spacing: 0.2px;
+}
+
+/* Completion badge — hidden by default, shown only on .completed cards */
+.habit-complete-badge {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+  animation: habitBadgePop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.habit-card.completed .habit-complete-badge {
+  display: inline-flex;
+}
+.habit-complete-badge svg {
+  flex-shrink: 0;
+}
+@keyframes habitBadgePop {
+  0%   { opacity: 0; transform: scale(0.6); }
+  60%  { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
 
 /* Weekly Dots */
 .habit-weekly-dots {
