@@ -1,12 +1,18 @@
 
 from datetime import date, timedelta
 import json
+import logging
 
 from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 
 from config import PRIORITY_MAP, SORT_PRESETS
-import logger
 from routes.todo import group_tasks_smart
+
+# Module-level logger. The project has a `logger.py` module that exports a
+# setup_logger() factory, so we can't `import logger` and call logger.info()
+# — that'd be calling a method on the module itself. Use Python's stdlib
+# logging directly against the shared "daily_plan" name.
+logger = logging.getLogger("daily_plan")
 from services.gantt_service import build_gantt_tasks
 from services.login_service import login_required
 from services.task_service import complete_task_occurrence, compute_next_occurrence
