@@ -1890,3 +1890,319 @@ function updateTaskInitiative(taskId, initiativeId, el) {
 document.addEventListener("DOMContentLoaded", () => {
   loadKrPickerOptions();
 });
+
+/* ═══════════════════════════════════════════════════════════
+   OKR MANAGER — create Objectives / Key Results / Initiatives
+   scoped to the current project, without leaving this page.
+   Uses the existing /api/goals, /api/key-results, /api/initiatives
+   endpoints plus the picker API for the live tree.
+   ═══════════════════════════════════════════════════════════ */
+
+// Current form target — holds what we're creating and its parent id
+let _ptOkrFormMode = null; // "objective" | "kr" | "initiative"
+let _ptOkrFormParent = null; // parent id (objective id for kr, kr id for initiative)
+
+async function openPtOkrManager() {
+  const sheet = _id("pt-okr-sheet");
+  const overlay = _id("pt-okr-overlay");
+  if (!sheet || !overlay) return;
+  sheet.classList.add("open");
+  overlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+  await renderPtOkrTree();
+  if (window.feather) feather.replace();
+}
+
+function closePtOkrManager() {
+  _id("pt-okr-sheet")?.classList.remove("open");
+  _id("pt-okr-overlay")?.classList.remove("open");
+  document.body.style.overflow = "";
+}
+
+async function renderPtOkrTree() {
+  const host = _id("pt-okr-tree");
+  if (!host) return;
+  host.innerHTML = `<div class="pt-okr-loading">Loading…</div>`;
+
+  try {
+    // Fetch fresh OKR tree scoped to this project (include unassigned too
+    // so a personal objective the user might want to scope here is visible).
+    const qs = new URLSearchParams({
+      project_id: PROJECT_ID,
+      include_unassigned: "0",
+    });
+    const res = await fetch(`/api/goals/picker?${qs.toString()}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // Keep the PT-level cache in sync so the filter sheet reflects new OKRs
+    _okrPickerData = data;
+    populateOkrFilters();
+
+    const objs = data.objectives || [];
+    if (!objs.length) {
+      host.innerHTML = `
+        <div class="pt-okr-empty">
+          <i data-feather="target"></i>
+          <h4>No objectives yet</h4>
+          <p>Create your first objective to start grouping tasks into measurable outcomes.</p>
+          <button type="button" class="pt-fs-btn pt-fs-btn-primary" onclick="openPtNewObjectiveForm()">
+            <i data-feather="plus" style="width:16px;height:16px"></i> New Objective
+          </button>
+        </div>`;
+      if (window.feather) feather.replace();
+      return;
+    }
+
+    host.innerHTML = objs.map(o => _ptRenderObjective(o)).join("");
+    if (window.feather) feather.replace();
+  } catch (err) {
+    console.error("OKR tree load failed:", err);
+    host.innerHTML = `<div class="pt-okr-empty"><p>Failed to load OKRs: ${err.message}</p></div>`;
+  }
+}
+
+function _ptRenderObjective(o) {
+  const krs = (o.key_results || []).map(k => _ptRenderKr(k)).join("");
+  const krListOrEmpty = krs
+    || `<div class="pt-okr-kr" style="background:transparent;border:1px dashed var(--pt-border);text-align:center;color:var(--pt-text3);font-size:12px;">No key results yet</div>`;
+  return `
+    <div class="pt-okr-obj">
+      <div class="pt-okr-obj-head">
+        <div style="flex:1;min-width:0;">
+          <div class="pt-okr-obj-title">${_escHtml(o.title)}</div>
+          ${o.category ? `<div class="pt-okr-obj-desc">${_escHtml(o.category)}${o.target_date ? " · target " + _escHtml(o.target_date) : ""}</div>` : ""}
+        </div>
+      </div>
+      <div class="pt-okr-kr-list">
+        ${krListOrEmpty}
+      </div>
+      <button type="button" class="pt-okr-add-inline" onclick="openPtNewKrForm('${o.id}')">
+        <i data-feather="plus"></i> Add Key Result
+      </button>
+    </div>
+  `;
+}
+
+function _ptRenderKr(k) {
+  const inits = (k.initiatives || []).map(i =>
+    `<span class="pt-okr-init">${_escHtml(i.title)}</span>`
+  ).join("");
+  const progress = (k.current_value != null && k.target_value)
+    ? `${k.current_value} / ${k.target_value}${k.unit ? " " + _escHtml(k.unit) : ""}`
+    : "";
+  return `
+    <div class="pt-okr-kr">
+      <div class="pt-okr-kr-head">
+        <div style="flex:1;min-width:0;">
+          <div class="pt-okr-kr-title">${_escHtml(k.title)}</div>
+          ${progress ? `<div class="pt-okr-kr-meta">${progress}</div>` : ""}
+        </div>
+      </div>
+      ${inits ? `<div class="pt-okr-init-list">${inits}</div>` : ""}
+      <button type="button" class="pt-okr-add-inline" onclick="openPtNewInitiativeForm('${k.id}')">
+        <i data-feather="plus"></i> Add Initiative
+      </button>
+    </div>
+  `;
+}
+
+// ── Form modal: shared shell used for Objective, KR, Initiative ──
+function _ptOpenOkrForm(mode, parentId) {
+  _ptOkrFormMode = mode;
+  _ptOkrFormParent = parentId;
+
+  const titleEl = _id("pt-okr-form-title");
+  const bodyEl = _id("pt-okr-form-body");
+  const submitLbl = _id("pt-okr-form-submit");
+  if (!titleEl || !bodyEl || !submitLbl) return;
+
+  if (mode === "objective") {
+    titleEl.textContent = "New Objective";
+    submitLbl.textContent = "Create Objective";
+    bodyEl.innerHTML = `
+      <div class="pt-okr-field">
+        <label>Title <span class="req">*</span></label>
+        <input type="text" id="pt-f-title" maxlength="200"
+               placeholder="e.g. Launch v2 with premium experience" autofocus>
+      </div>
+      <div class="pt-okr-field">
+        <label>Description</label>
+        <textarea id="pt-f-desc" rows="2"
+                  placeholder="Optional — what does success look like?"></textarea>
+      </div>
+      <div class="pt-okr-row">
+        <div class="pt-okr-field">
+          <label>Category</label>
+          <input type="text" id="pt-f-category"
+                 placeholder="product, growth, quality…">
+        </div>
+        <div class="pt-okr-field">
+          <label>Time horizon</label>
+          <select id="pt-f-horizon">
+            <option value="annual">Annual</option>
+            <option value="quarterly" selected>Quarterly</option>
+            <option value="monthly">Monthly</option>
+            <option value="ongoing">Ongoing</option>
+          </select>
+        </div>
+      </div>
+      <div class="pt-okr-field">
+        <label>Target date</label>
+        <input type="date" id="pt-f-target">
+      </div>
+    `;
+  } else if (mode === "kr") {
+    titleEl.textContent = "New Key Result";
+    submitLbl.textContent = "Create Key Result";
+    bodyEl.innerHTML = `
+      <div class="pt-okr-field">
+        <label>Title <span class="req">*</span></label>
+        <input type="text" id="pt-f-title" maxlength="200"
+               placeholder="e.g. Save $5,000" autofocus>
+      </div>
+      <div class="pt-okr-row">
+        <div class="pt-okr-field">
+          <label>Start value</label>
+          <input type="number" id="pt-f-start" step="any" value="0">
+        </div>
+        <div class="pt-okr-field">
+          <label>Target <span class="req">*</span></label>
+          <input type="number" id="pt-f-target-val" step="any" placeholder="5000">
+        </div>
+      </div>
+      <div class="pt-okr-row">
+        <div class="pt-okr-field">
+          <label>Unit</label>
+          <input type="text" id="pt-f-unit" maxlength="16"
+                 placeholder="$, books, kg, %…">
+        </div>
+        <div class="pt-okr-field">
+          <label>Direction</label>
+          <select id="pt-f-direction">
+            <option value="up" selected>Higher is better ▲</option>
+            <option value="down">Lower is better ▼</option>
+          </select>
+        </div>
+      </div>
+    `;
+  } else if (mode === "initiative") {
+    titleEl.textContent = "New Initiative";
+    submitLbl.textContent = "Create Initiative";
+    bodyEl.innerHTML = `
+      <div class="pt-okr-field">
+        <label>Title <span class="req">*</span></label>
+        <input type="text" id="pt-f-title" maxlength="200"
+               placeholder="e.g. Onboarding flow redesign" autofocus>
+      </div>
+      <div class="pt-okr-field">
+        <label>Description</label>
+        <textarea id="pt-f-desc" rows="2"
+                  placeholder="Optional — the workstream's approach"></textarea>
+      </div>
+    `;
+  }
+
+  _id("pt-okr-form-sheet")?.classList.add("open");
+  _id("pt-okr-form-overlay")?.classList.add("open");
+  document.body.style.overflow = "hidden";
+  setTimeout(() => _id("pt-f-title")?.focus(), 60);
+}
+
+function openPtNewObjectiveForm() { _ptOpenOkrForm("objective", null); }
+function openPtNewKrForm(objId)  { _ptOpenOkrForm("kr", objId); }
+function openPtNewInitiativeForm(krId) { _ptOpenOkrForm("initiative", krId); }
+
+function closePtOkrForm() {
+  _id("pt-okr-form-sheet")?.classList.remove("open");
+  _id("pt-okr-form-overlay")?.classList.remove("open");
+  // Keep overflow:hidden if the main OKR manager is still open
+  if (!_id("pt-okr-sheet")?.classList.contains("open")) {
+    document.body.style.overflow = "";
+  }
+  _ptOkrFormMode = null;
+  _ptOkrFormParent = null;
+}
+
+async function submitPtOkrForm() {
+  const mode = _ptOkrFormMode;
+  if (!mode) return;
+
+  const csrfHeader = {
+    "Content-Type": "application/json",
+    "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+  };
+
+  try {
+    if (mode === "objective") {
+      const title = _id("pt-f-title")?.value.trim();
+      if (!title) { showToast && showToast("Title is required", "error"); return; }
+      const payload = {
+        title,
+        description: _id("pt-f-desc")?.value.trim() || null,
+        category: _id("pt-f-category")?.value.trim() || null,
+        time_horizon: _id("pt-f-horizon")?.value || "quarterly",
+        target_date: _id("pt-f-target")?.value || null,
+        project_id: PROJECT_ID,
+      };
+      const res = await fetch("/api/goals", {
+        method: "POST", headers: csrfHeader, body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+      _toast("Objective created", "success");
+
+    } else if (mode === "kr") {
+      const title = _id("pt-f-title")?.value.trim();
+      const target = _id("pt-f-target-val")?.value;
+      if (!title) { _toast("Title is required", "error"); return; }
+      if (target === "" || target == null) { _toast("Target value is required", "error"); return; }
+      const payload = {
+        title,
+        objective_id: _ptOkrFormParent,
+        start_value: parseFloat(_id("pt-f-start")?.value || 0),
+        target_value: parseFloat(target),
+        unit: _id("pt-f-unit")?.value.trim() || null,
+        direction: _id("pt-f-direction")?.value || "up",
+      };
+      const res = await fetch("/api/key-results", {
+        method: "POST", headers: csrfHeader, body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+      _toast("Key result created", "success");
+
+    } else if (mode === "initiative") {
+      const title = _id("pt-f-title")?.value.trim();
+      if (!title) { _toast("Title is required", "error"); return; }
+      const payload = {
+        title,
+        description: _id("pt-f-desc")?.value.trim() || null,
+        key_result_id: _ptOkrFormParent,
+      };
+      const res = await fetch("/api/initiatives", {
+        method: "POST", headers: csrfHeader, body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+      _toast("Initiative created", "success");
+    }
+
+    closePtOkrForm();
+    await renderPtOkrTree();     // refresh the tree
+    await loadKrPickerOptions(); // refresh the task sheet's initiative picker
+  } catch (err) {
+    console.error("OKR form submit:", err);
+    _toast("Failed to create: " + err.message, "error");
+  }
+}
+
+function _toast(msg, kind) {
+  if (typeof showToast === "function") return showToast(msg, kind);
+  console.log(`[${kind}]`, msg);
+}
+
+// Escape-to-close for the manager and form
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const form = _id("pt-okr-form-sheet");
+  if (form?.classList.contains("open")) { closePtOkrForm(); return; }
+  const sheet = _id("pt-okr-sheet");
+  if (sheet?.classList.contains("open")) { closePtOkrManager(); }
+});

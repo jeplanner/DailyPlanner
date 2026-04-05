@@ -118,6 +118,232 @@ body {
 .task-row.okr-hidden, .group-row.okr-hidden { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════
+   OKR MANAGER — create Objectives · Key Results · Initiatives
+   from within a project. Reuses the filter-sheet shell for
+   consistent look; adds tree + inline forms.
+   ═══════════════════════════════════════════════════════════ */
+.pt-okr-btn.active {
+  background: var(--pt-primary) !important;
+  color: #fff !important;
+  border-color: var(--pt-primary) !important;
+}
+
+.pt-okr-sheet {
+  width: min(640px, 94vw);
+  max-height: min(88vh, 820px);
+}
+.pt-okr-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--pt-primary);
+  margin-bottom: 4px;
+}
+.pt-okr-lead {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--pt-text2);
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  background: var(--pt-bg);
+  border-radius: 10px;
+  border-left: 3px solid var(--pt-primary);
+}
+.pt-okr-loading {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--pt-text3);
+  font-size: 13px;
+}
+
+/* Objective card */
+.pt-okr-obj {
+  background: var(--pt-surface);
+  border: 1px solid var(--pt-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--pt-shadow);
+}
+.pt-okr-obj-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.pt-okr-obj-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--pt-text);
+  line-height: 1.3;
+  word-break: break-word;
+  flex: 1;
+}
+.pt-okr-obj-desc {
+  font-size: 12px;
+  color: var(--pt-text2);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+.pt-okr-kr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px dashed var(--pt-border);
+}
+.pt-okr-kr {
+  background: var(--pt-bg);
+  border: 1px solid var(--pt-border-light);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.pt-okr-kr-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pt-okr-kr-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pt-text);
+  flex: 1;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.pt-okr-kr-meta {
+  font-size: 11px;
+  color: var(--pt-text3);
+  margin-top: 2px;
+}
+
+.pt-okr-init-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 4px;
+}
+.pt-okr-init {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--pt-primary-light);
+  color: var(--pt-primary);
+  border: 1px solid color-mix(in srgb, var(--pt-primary) 25%, transparent);
+}
+
+/* Inline "+ Add" buttons inside the tree */
+.pt-okr-add-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pt-primary);
+  background: transparent;
+  border: 1px dashed var(--pt-primary);
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-top: 6px;
+  transition: all 0.15s;
+}
+.pt-okr-add-inline:hover {
+  background: var(--pt-primary-light);
+  border-style: solid;
+}
+.pt-okr-add-inline svg { width: 12px; height: 12px; }
+
+/* Empty state */
+.pt-okr-empty {
+  text-align: center;
+  padding: 36px 20px;
+  color: var(--pt-text3);
+}
+.pt-okr-empty svg {
+  width: 48px;
+  height: 48px;
+  color: var(--pt-text3);
+  margin-bottom: 10px;
+  opacity: 0.6;
+}
+.pt-okr-empty h4 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--pt-text);
+  margin-bottom: 6px;
+}
+.pt-okr-empty p {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+/* Form modal (Objective / KR / Initiative creator) */
+.pt-okr-form-sheet {
+  width: min(480px, 94vw);
+}
+.pt-okr-field {
+  margin-bottom: 14px;
+}
+.pt-okr-field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--pt-text2);
+  margin-bottom: 6px;
+}
+.pt-okr-field label .req { color: #dc2626; }
+.pt-okr-field input,
+.pt-okr-field textarea,
+.pt-okr-field select {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1.5px solid var(--pt-border);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--pt-surface);
+  color: var(--pt-text);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pt-okr-field input:focus,
+.pt-okr-field textarea:focus,
+.pt-okr-field select:focus {
+  border-color: var(--pt-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.pt-okr-field textarea { resize: vertical; min-height: 70px; }
+.pt-okr-field .hint {
+  font-size: 11px;
+  color: var(--pt-text3);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.pt-okr-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 480px) {
+  .pt-okr-row { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════
    COMPACT VIEW — minimal list: title + due date + status only
    Triggered by body.pt-view-compact (JS toggles this on the
    body when the compact view button is pressed). Reuses the
