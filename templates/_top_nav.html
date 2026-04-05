@@ -719,11 +719,14 @@ function updateDateTime(){
     }) + " IST"
 }
 
-updateDateTime()
-setInterval(updateDateTime,1000)
+updateDateTime();
+setInterval(updateDateTime, 1000);
 
 /* ACTIVE-LINK HIGHLIGHT — match current URL against each nav link's
-   data-match regex (or fall back to exact href match). */
+   data-match regex (or fall back to exact href match).
+   NOTE: the explicit semicolons above are load-bearing. Without them
+   JavaScript's ASI merges `setInterval(...)` with the IIFE below into
+   a single statement, trying to call the timer id as a function. */
 (function highlightActiveNav(){
   const path = window.location.pathname + window.location.search;
   const links = document.querySelectorAll('.sidebar-nav a[href]');
