@@ -423,66 +423,7 @@ html.dark .tv-confirm-text strong{color:#fca5a5;}
         {% set tasks = todo[q]["tasks"] %}
         {% if tasks %}
           {% for t in tasks %}
-          <div class="em-task prio-{{ t.priority or 'medium' }} {{ 'done' if t.is_done }}" data-id="{{ t.id }}" data-quadrant="{{ q }}" data-priority="{{ t.priority or 'medium' }}" data-status="{{ t.status or 'open' }}">
-            {% if t.source != 'event' and t.source != 'project' %}
-            <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
-            {% else %}
-            <input type="checkbox" {{ 'checked' if t.is_done }} disabled style="opacity:0.4;">
-            {% endif %}
-
-            <div class="em-task-body">
-              <div class="em-task-title">
-                {{ t.task_text }}
-                <span class="em-prio-pill {{ t.priority or 'medium' }}" title="{{ (t.priority or 'medium')|capitalize }} priority">{{ (t.priority or 'medium')|upper }}</span>
-                {% if t.status == 'done' %}
-                  <span class="em-status-badge done">Done</span>
-                {% elif t.status == 'in_progress' %}
-                  <span class="em-status-badge in_progress">In Progress</span>
-                {% elif t.status in ('deleted', 'not_required') %}
-                  <span class="em-status-badge deleted">Deleted</span>
-                {% elif t.status == 'skipped' %}
-                  <span class="em-status-badge skipped">Skipped</span>
-                {% endif %}
-                {% if t.recurrence %}
-                  <span class="em-recur-pill" title="Repeats {{ t.recurrence }}">🔁 {{ t.recurrence }}</span>
-                {% endif %}
-              </div>
-              <div class="em-task-meta">
-                {% if t.source == 'event' %}
-                  <span class="em-source-badge em-src-event">Event</span>
-                {% elif t.source == 'project' %}
-                  <span class="em-source-badge em-src-project">Project</span>
-                {% else %}
-                  <span class="em-source-badge em-src-matrix">Task</span>
-                {% endif %}
-                {% if t.project_name %}
-                  <span class="em-project-name">{{ t.project_name }}</span>
-                {% endif %}
-              </div>
-            </div>
-
-            <div class="em-task-actions">
-              {% if t.source == 'matrix' %}
-              <select class="em-move-select" onchange="moveQuadrant('{{ t.id }}', this.value)">
-                <option value="do" {{ 'selected' if q=='do' }}>Do</option>
-                <option value="schedule" {{ 'selected' if q=='schedule' }}>Schedule</option>
-                <option value="delegate" {{ 'selected' if q=='delegate' }}>Delegate</option>
-                <option value="eliminate" {{ 'selected' if q=='eliminate' }}>Eliminate</option>
-              </select>
-              <div class="em-more-wrap">
-                <button type="button" class="em-more-btn" title="Set status…" onclick="toggleResolveMenu(event,'{{ t.id }}')">⋯</button>
-                <div class="em-more-menu" id="menu-{{ t.id }}">
-                  <button type="button" onclick="resolveTask('{{ t.id }}','open')">☐ Open</button>
-                  <button type="button" onclick="resolveTask('{{ t.id }}','in_progress')">◐ In Progress</button>
-                  <div class="sep"></div>
-                  <button type="button" onclick="resolveTask('{{ t.id }}','done')">✓ Done</button>
-                  <button type="button" onclick="resolveTask('{{ t.id }}','skipped')">⏭ Skipped</button>
-                  <button type="button" onclick="resolveTask('{{ t.id }}','deleted')">🗑 Delete</button>
-                </div>
-              </div>
-              {% endif %}
-            </div>
-          </div>
+            {% include '_em_task_card.html' %}
           {% endfor %}
         {% else %}
           <div class="em-empty">No tasks in this quadrant</div>
@@ -507,22 +448,11 @@ function goToDate(dateStr) {
   location.href = `/todo?year=${d.getFullYear()}&month=${d.getMonth()+1}&day=${d.getDate()}`;
 }
 
+// Checkbox click delegates to resolveTask so the badge, quadrant counter,
+// optimistic UI, and error rollback all behave identically whether the user
+// clicks the checkbox or picks a status from the ⋯ menu.
 function toggleDone(taskId, isDone) {
-  const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
-  if (task) task.classList.toggle("done", isDone);
-
-  fetch("/todo/toggle-done", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({id: taskId, is_done: isDone, status: isDone ? "done" : "open"})
-  })
-  .then(r => r.json())
-  .then(res => {
-    if (res && res.next_occurrence) {
-      showToast("Next occurrence: " + res.next_occurrence, "success");
-    }
-  })
-  .catch(console.error);
+  resolveTask(taskId, isDone ? "done" : "open");
 }
 
 function toggleResolveMenu(ev, taskId) {
@@ -539,17 +469,29 @@ document.addEventListener("click", () => {
 });
 
 function resolveTask(taskId, status) {
-  // Closed states: done | skipped | deleted. Open states: open | in_progress
+  // Closed states: done | skipped | deleted. Open states: open | in_progress.
   const CLOSED = new Set(["done", "skipped", "deleted"]);
   const isDone = CLOSED.has(status);
   const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
-  if (task) {
-    task.classList.toggle("done", isDone);
-    task.dataset.status = status;
-  }
-  const cb = task?.querySelector('input[type=checkbox]');
+  if (!task) return;
+
+  const wasDone = task.classList.contains("done");
+  const quadrant = task.dataset.quadrant;
+
+  // ── Optimistic UI: apply the visual change immediately ──
+  task.classList.toggle("done", isDone);
+  task.dataset.status = status;
+
+  const cb = task.querySelector('input[type=checkbox]');
   if (cb) cb.checked = isDone;
 
+  _updateStatusBadge(task, status);
+  if (wasDone !== isDone) _bumpQuadrantCount(quadrant, isDone ? +1 : -1);
+
+  // Close any open resolve menu
+  document.getElementById("menu-" + taskId)?.classList.remove("open");
+
+  // ── Fire-and-forget network call. No reload, no setTimeout. ──
   fetch("/todo/toggle-done", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -560,12 +502,59 @@ function resolveTask(taskId, status) {
     if (res && res.next_occurrence) {
       showToast("Next occurrence: " + res.next_occurrence, "success");
     }
-    // Reload to refresh the badge display cleanly
-    setTimeout(() => location.reload(), 400);
   })
-  .catch(console.error);
+  .catch(err => {
+    // Roll back the optimistic UI on failure so the user sees the truth
+    console.error(err);
+    task.classList.toggle("done", wasDone);
+    if (cb) cb.checked = wasDone;
+    if (wasDone !== isDone) _bumpQuadrantCount(quadrant, wasDone ? +1 : -1);
+    showToast("Failed to update task", "error");
+  });
+}
 
-  document.getElementById("menu-" + taskId)?.classList.remove("open");
+// Replace the status badge inside a task card without re-rendering the whole row
+function _updateStatusBadge(taskEl, status) {
+  const titleEl = taskEl.querySelector(".em-task-title");
+  if (!titleEl) return;
+  const existing = titleEl.querySelector(".em-status-badge");
+  if (existing) existing.remove();
+
+  const LABELS = {
+    done: "Done",
+    in_progress: "In Progress",
+    skipped: "Skipped",
+    deleted: "Deleted",
+  };
+  if (!LABELS[status]) return; // no badge for "open"
+
+  const badge = document.createElement("span");
+  badge.className = "em-status-badge " + status;
+  badge.textContent = LABELS[status];
+
+  // Insert right after the priority pill so ordering matches server render
+  const prio = titleEl.querySelector(".em-prio-pill");
+  if (prio && prio.nextSibling) {
+    titleEl.insertBefore(badge, prio.nextSibling);
+  } else if (prio) {
+    titleEl.appendChild(badge);
+  } else {
+    titleEl.appendChild(badge);
+  }
+}
+
+// Nudge the "N/M done" counter in the quadrant header by ±1
+function _bumpQuadrantCount(quadrant, delta) {
+  if (!quadrant || !delta) return;
+  const counter = document.querySelector(
+    `.em-quad[data-quadrant="${quadrant}"] .em-quad-count`
+  );
+  if (!counter) return;
+  const m = counter.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+  if (!m) return;
+  const done = Math.max(0, parseInt(m[1], 10) + delta);
+  const total = parseInt(m[2], 10);
+  counter.textContent = `${done}/${total} done`;
 }
 
 function moveQuadrant(taskId, newQ) {
@@ -666,13 +655,58 @@ function quickAdd() {
       priority: priority,
       is_done: false
     })
-  }).then(() => {
-    location.reload();
-  }).catch(() => {
+  })
+  .then(r => r.json())
+  .then(res => {
+    if (res && res.html) {
+      _insertTaskCardHtml(res.quadrant || quadrant, res.html);
+      input.value = "";
+      // Re-focus the input so the user can keep typing (desktop only)
+      if (!_isTouchDevice) input.focus();
+    } else {
+      // Server didn't return the partial for some reason — fall back
+      // to a full reload so the user still sees their task.
+      showToast("Added (refreshing…)", "info");
+      location.reload();
+    }
+  })
+  .catch(() => {
     showToast("Failed to add task", "error");
   });
+}
 
-  input.value = "";
+// ── Insert a server-rendered task card into the right quadrant body ──
+function _insertTaskCardHtml(quadrant, html) {
+  const body = document.querySelector(
+    `.em-quad[data-quadrant="${quadrant}"] .em-quad-body`
+  );
+  if (!body) return;
+
+  // If this quadrant was empty, it's showing the "No tasks" placeholder — remove it.
+  const empty = body.querySelector(".em-empty");
+  if (empty) empty.remove();
+
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html.trim();
+  const card = tmp.firstElementChild;
+  if (!card) return;
+  body.appendChild(card);
+
+  // Nudge the quadrant count: the new task is always open, so total ++.
+  const counter = document.querySelector(
+    `.em-quad[data-quadrant="${quadrant}"] .em-quad-count`
+  );
+  if (counter) {
+    const m = counter.textContent.match(/(\d+)\s*\/\s*(\d+)/);
+    if (m) {
+      const done = parseInt(m[1], 10);
+      const total = parseInt(m[2], 10) + 1;
+      counter.textContent = `${done}/${total} done`;
+    }
+  }
+
+  // Re-run feather for any icons inside the new card (resolve menu etc.)
+  if (window.feather) feather.replace();
 }
 
 function toggleBulkPanel() {
@@ -686,6 +720,7 @@ async function bulkAddEisenhower() {
 
   const quadrant = document.getElementById("quick-quad").value;
   const projectId = document.getElementById("quick-project").value || null;
+  const priority = document.getElementById("quick-priority")?.value || "medium";
 
   const lines = text.split("\n")
     .map(l => l.trim().replace(/^[-•*]\s*/, "").trim())
@@ -693,10 +728,11 @@ async function bulkAddEisenhower() {
 
   if (!lines.length) { showToast("No tasks found", "error"); return; }
 
-  let added = 0;
-  for (const line of lines) {
-    try {
-      await fetch("/todo/autosave", {
+  // Fire all POSTs in parallel, consume the returned HTML fragments, and
+  // append them to the right quadrants — no page reload.
+  const results = await Promise.all(
+    lines.map(line =>
+      fetch("/todo/autosave", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
@@ -704,16 +740,30 @@ async function bulkAddEisenhower() {
           task_text: line,
           quadrant: quadrant,
           project_id: projectId,
+          priority: priority,
           is_done: false
         })
-      });
+      }).then(r => r.json()).catch(() => null)
+    )
+  );
+
+  let added = 0;
+  let fellBackToReload = false;
+  for (const res of results) {
+    if (res && res.html) {
+      _insertTaskCardHtml(res.quadrant || quadrant, res.html);
       added++;
-    } catch {}
+    } else if (res && res.status === "ok") {
+      // Succeeded but no HTML returned — at least count it, we'll
+      // reload at the end so nothing appears missing.
+      added++;
+      fellBackToReload = true;
+    }
   }
 
-  showToast(`Added ${added} tasks`, "success");
+  showToast(`Added ${added} task${added === 1 ? "" : "s"}`, "success");
   document.getElementById("em-bulk-text").value = "";
-  setTimeout(() => location.reload(), 500);
+  if (fellBackToReload) location.reload();
 }
 
 /* ── Hide/show skipped & deleted toggle ── */

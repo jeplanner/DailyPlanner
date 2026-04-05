@@ -826,7 +826,58 @@ def todo_autosave():
                 logger.warning("Failed to create recurring rule from Eisenhower: %s", e)
 
         rows = post("todo_matrix", row_data)
-        return jsonify({"status": "ok", "id": rows[0]["id"] if rows else None})
+        new_row = rows[0] if rows else None
+        new_id = new_row.get("id") if new_row else None
+
+        # Render the new row into the shared task-card partial so the client
+        # can drop the HTML straight into the DOM (no reload required).
+        rendered_html = None
+        if new_row:
+            project_name = None
+            if project_id:
+                try:
+                    proj_rows = get(
+                        "projects",
+                        params={
+                            "project_id": f"eq.{project_id}",
+                            "user_id": f"eq.{user_id}",
+                            "select": "name",
+                            "limit": 1,
+                        },
+                    ) or []
+                    if proj_rows:
+                        project_name = proj_rows[0].get("name")
+                except Exception as e:
+                    logger.warning("project lookup for quick-add failed: %s", e)
+
+            normalized = {
+                "id": new_id,
+                "task_text": text,
+                "quadrant": quadrant,
+                "is_done": bool(row_data.get("is_done", False)),
+                "status": row_data.get("status") or "open",
+                "priority": priority,
+                "recurrence": recurrence if recurrence in ("daily", "weekly", "monthly") else None,
+                "project_id": project_id,
+                "project_name": project_name,
+                "source_task_id": source_task_id,
+                "source": "matrix",
+            }
+            try:
+                rendered_html = render_template(
+                    "_em_task_card.html",
+                    t=normalized,
+                    q=quadrant,
+                )
+            except Exception as e:
+                logger.warning("Failed to render _em_task_card.html: %s", e)
+
+        return jsonify({
+            "status": "ok",
+            "id": new_id,
+            "quadrant": quadrant,
+            "html": rendered_html,
+        })
 
     task_id = data["id"]
 
