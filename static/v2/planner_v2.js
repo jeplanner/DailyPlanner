@@ -791,6 +791,7 @@ function openCreateModal(prefillDate, prefillStart, prefillEnd) {
   document.getElementById("modal-title").textContent = "New Event";
   document.getElementById("start-time").value = prefillStart || "";
   document.getElementById("end-time").value = prefillEnd || (prefillStart ? toTime(minutes(prefillStart) + 30) : "");
+  _refreshAllTimePillDisplays();
   document.getElementById("event-priority").value = "medium";
   document.getElementById("event-title").value = "";
   document.getElementById("event-desc").value = "";
@@ -826,6 +827,7 @@ function openModal(ev) {
   document.getElementById("modal-title").textContent = "Edit Event";
   document.getElementById("start-time").value = formatTime(ev.start_time) || "";
   document.getElementById("end-time").value = formatTime(ev.end_time) || "";
+  _refreshAllTimePillDisplays();
   document.getElementById("event-priority").value = ev.priority || "medium";
   document.getElementById("event-title").value = ev.task_text || ev.title || "";
   document.getElementById("event-desc").value = ev.description || "";
@@ -881,6 +883,7 @@ function updateEndFromStart() {
   if (dur <= 0) dur = 30; // If end is before start, default 30min
 
   document.getElementById("end-time").value = toTime(startMin + dur);
+  _refreshAllTimePillDisplays();
   updateDurationLabel();
 }
 
@@ -933,16 +936,48 @@ function setDuration(mins) {
     return;
   }
   document.getElementById("end-time").value = toTime(minutes(start) + mins);
+  _syncTimePillDisplay("end-time");
   updateDurationLabel();
 }
 
 // ─── New helpers for the pill-style time control ──────────────
-// The pills now open a **custom clock-face popover** (openClockPicker)
-// instead of the native <input type="time"> mini picker. The native
-// picker is kept available for keyboard accessibility — typing into
-// the input directly still works, and pressing Esc closes the clock.
+// The pills are now display-only — backed by a hidden <input>. The
+// clock face popover (openClockPicker) is the sole time-entry UI.
+// The native <input type="time"> has been removed entirely to stop
+// browsers from opening their own mini picker in parallel.
 function openTimePicker(inputId) {
   openClockPicker(inputId);
+}
+
+// Update the visible .time-pill-display span whenever the hidden
+// input's value changes. Called from the clock picker, presets,
+// clearTimeField, openCreateModal, and openModal.
+function _syncTimePillDisplay(inputId) {
+  const input = document.getElementById(inputId);
+  const display = document.getElementById(inputId + "-display");
+  if (!input || !display) return;
+  const raw = (input.value || "").trim();
+  if (!raw) {
+    display.textContent = display.dataset.placeholder || "Set time";
+    display.classList.add("empty");
+    return;
+  }
+  // Render as "3:00 PM" for readability
+  const [h, m] = raw.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) {
+    display.textContent = raw;
+    display.classList.remove("empty");
+    return;
+  }
+  const ampm = h < 12 ? "AM" : "PM";
+  const h12 = ((h + 11) % 12) + 1;
+  display.textContent = `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  display.classList.remove("empty");
+}
+// Expose via a helper the modal/reset flows can call
+function _refreshAllTimePillDisplays() {
+  _syncTimePillDisplay("start-time");
+  _syncTimePillDisplay("end-time");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1211,6 +1246,7 @@ function _clockConfirm() {
     if (_clockState.ampm === "PM") h24 += 12; // 1 PM → 13, 12 PM → 12
     const hhmm = `${String(h24).padStart(2, "0")}:${String(_clockState.minute).padStart(2, "0")}`;
     input.value = hhmm;
+    _syncTimePillDisplay(_clockState.inputId);
     // Fire the change event so existing listeners run (updateDurationLabel,
     // updateEndFromStart, etc.)
     input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1234,6 +1270,7 @@ function clearTimeField(inputId) {
     const endEl = document.getElementById("end-time");
     if (endEl) endEl.value = "";
   }
+  _refreshAllTimePillDisplays();
   updateDurationLabel();
   _syncStartPresetChips("");
 }
@@ -1264,6 +1301,7 @@ function setTimeFromPreset(btn) {
     }
   }
 
+  _refreshAllTimePillDisplays();
   updateDurationLabel();
 }
 

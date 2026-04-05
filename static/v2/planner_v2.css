@@ -1013,31 +1013,30 @@ html.dark .gcal-status-pill.disconnected { background: #451a03; border-color: #7
   pointer-events: none;
   display: block;
 }
-.time-pill-input {
+/* Read-only display span inside the time pill. Replaces the old
+   <input type="time"> so the browser's native time picker can never
+   fire alongside our custom clock popover. */
+.time-pill-display {
   flex: 1;
-  border: none;
-  background: transparent;
-  padding: 0;
   font-size: 15px;
   font-weight: 600;
   font-family: inherit;
   color: var(--gcal-text);
-  outline: none;
-  cursor: pointer;
   min-width: 0;
-  color-scheme: light;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  pointer-events: none;   /* clicks pass through to the wrapper */
 }
-@media (prefers-color-scheme: dark) {
-  .time-pill-input { color-scheme: dark; }
+.time-pill-display.empty {
+  color: var(--gcal-text-secondary);
+  font-weight: 500;
+  font-style: italic;
 }
-.time-pill-input::-webkit-calendar-picker-indicator {
-  opacity: 0;
-  cursor: pointer;
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
+/* Legacy class kept so existing saveEvent/getter code that reads by
+   class name (if any) still finds something. No native picker here. */
+.time-pill-input { display: none; }
 .time-pill-clear {
   flex-shrink: 0;
   width: 24px;

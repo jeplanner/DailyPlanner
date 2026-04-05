@@ -159,9 +159,15 @@
     <div class="time-row">
       <div class="time-field">
         <label>Start</label>
-        <div class="time-pill" onclick="openTimePicker('start-time')">
+        <!-- The pill is now a pure display element backed by a hidden input
+             (#start-time). Tapping it opens the custom clock picker. There
+             is NO <input type="time"> in the DOM, so the native browser
+             time picker can never fire. -->
+        <div class="time-pill" onclick="openClockPicker('start-time')" role="button" tabindex="0"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClockPicker('start-time');}">
           <svg class="time-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-          <input type="time" id="start-time" step="300" class="time-pill-input">
+          <span class="time-pill-display" id="start-time-display" data-placeholder="Set start">Set start</span>
+          <input type="hidden" id="start-time">
           <button type="button" class="time-pill-clear" title="Clear" aria-label="Clear start time"
                   onclick="event.stopPropagation(); clearTimeField('start-time')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -178,9 +184,11 @@
 
       <div class="time-field">
         <label>End</label>
-        <div class="time-pill" onclick="openTimePicker('end-time')">
+        <div class="time-pill" onclick="openClockPicker('end-time')" role="button" tabindex="0"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openClockPicker('end-time');}">
           <svg class="time-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-          <input type="time" id="end-time" step="300" class="time-pill-input">
+          <span class="time-pill-display" id="end-time-display" data-placeholder="Set end">Set end</span>
+          <input type="hidden" id="end-time">
           <button type="button" class="time-pill-clear" title="Clear" aria-label="Clear end time"
                   onclick="event.stopPropagation(); clearTimeField('end-time')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
