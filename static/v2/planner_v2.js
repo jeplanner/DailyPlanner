@@ -1504,21 +1504,42 @@ function showConflictDialog(conflicts, payload) {
      </div>`
   ).join("");
 
-  section.style.display = "block";
+  section.style.display = "flex";
 
-  document.getElementById("accept-conflict").onclick = async () => {
+  document.getElementById("accept-conflict").onclick = async (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
     payload.force = true;
 
-    await fetch("/api/v2/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
+    // Mirror saveEvent()'s URL/method logic so editing doesn't create a duplicate
+    let url, method;
+    if (selected) {
+      if (selected.type === "project") {
+        url = `/api/v2/project-tasks/${selected.task_id}`;
+        method = "PUT";
+      } else {
+        url = `/api/v2/events/${selected.id}`;
+        method = "PUT";
+      }
+    } else {
+      url = "/api/v2/events";
+      method = "POST";
+    }
 
-    hideConflict();
-    closeModal();
-    showToast("Event saved (conflict accepted)", "success");
-    loadAllEvents();
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      hideConflict();
+      closeModal();
+      showToast("Event saved (conflict accepted)", "success");
+      loadAllEvents();
+    } catch (err) {
+      console.error("Accept conflict failed:", err);
+      showToast("Failed to save", "error");
+    }
   };
 
   if (window.feather) feather.replace();
