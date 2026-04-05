@@ -536,13 +536,19 @@
       <div class="section-fields">
         <div class="field-row">
           <label>Start</label>
-          <input type="date" id="sheet-start" class="panel-input"
-                 onchange="autoSaveField('start_date', this.value)">
+          <div class="panel-date-wrap" onclick="openDatePicker('sheet-start')">
+            <i data-feather="calendar" class="panel-date-icon"></i>
+            <input type="date" id="sheet-start" class="panel-input panel-date"
+                   onchange="autoSaveField('start_date', this.value)">
+          </div>
         </div>
         <div class="field-row">
           <label>Due</label>
-          <input type="date" id="sheet-due" class="panel-input"
-                 onchange="autoSaveField('due_date', this.value)">
+          <div class="panel-date-wrap" onclick="openDatePicker('sheet-due')">
+            <i data-feather="calendar" class="panel-date-icon"></i>
+            <input type="date" id="sheet-due" class="panel-input panel-date"
+                   onchange="autoSaveField('due_date', this.value)">
+          </div>
         </div>
         <div class="field-row">
           <label>Duration</label>
@@ -556,8 +562,11 @@
         </div>
         <div class="field-row">
           <label>Due Time</label>
-          <input type="time" id="sheet-due-time" class="panel-input"
-                 onchange="autoSaveField('due_time', this.value)">
+          <div class="panel-date-wrap" onclick="openDatePicker('sheet-due-time')">
+            <i data-feather="clock" class="panel-date-icon"></i>
+            <input type="time" id="sheet-due-time" class="panel-input panel-date"
+                   onchange="autoSaveField('due_time', this.value)">
+          </div>
         </div>
         <div class="field-row">
           <label>Eisenhower</label>

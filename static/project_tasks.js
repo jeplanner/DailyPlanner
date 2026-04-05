@@ -531,10 +531,11 @@ async function openTaskDetail(taskId) {
     // Hours progress bar
     updateHoursProgress();
 
-    // Recurrence
+    // Recurrence — use the UI-only initializer so loading the panel
+    // doesn't fire a spurious save.
     const recType = t.is_recurring ? (t.recurrence_type || "daily") : "none";
     _val("sheet-recurrence", recType);
-    onRecurrenceChange();
+    _initRecurrenceUI();
 
     if (recType === "weekly" && Array.isArray(t.recurrence_days)) {
       _qa("#recurrence-days .day-chip").forEach(chip => {
@@ -563,6 +564,27 @@ async function openTaskDetail(taskId) {
 function _val(id, value) {
   const el = _id(id);
   if (el) el.value = value;
+}
+
+/* Open the native date/time picker for a given input id.
+   Uses HTMLInputElement.showPicker() where available (modern Chrome,
+   Safari, Edge, Firefox 101+), and falls back to focus() + click()
+   for older browsers. Called from the wrapper <div> so the whole pill
+   — icon + field — is tappable. */
+function openDatePicker(inputId) {
+  const el = _id(inputId);
+  if (!el) return;
+  try {
+    if (typeof el.showPicker === "function") {
+      el.showPicker();
+      return;
+    }
+  } catch (err) {
+    // Some browsers throw if called without a user gesture; fall through.
+    console.warn("showPicker failed, falling back:", err);
+  }
+  el.focus();
+  try { el.click(); } catch {}
 }
 
 function closeTaskSheet() {
@@ -1042,17 +1064,75 @@ function updateSubtaskBadges() {
 /* ---------------------------------------------------------
    Recurrence Change
    --------------------------------------------------------- */
-function onRecurrenceChange() {
+// Visibility + chip bindings only — safe to call on panel open (no save).
+function _initRecurrenceUI() {
   const sel = _id("sheet-recurrence");
   const daysEl = _id("recurrence-days");
   if (!sel || !daysEl) return;
 
   daysEl.classList.toggle("hidden", sel.value !== "weekly");
 
-  // Bind day chip toggles
   _qa(".day-chip", daysEl).forEach(chip => {
-    chip.onclick = () => chip.classList.toggle("active");
+    chip.onclick = () => {
+      chip.classList.toggle("active");
+      _saveRecurrence();     // save on every day-chip toggle
+    };
   });
+}
+
+// Fired only by the select's onchange (user action) — updates UI then persists.
+function onRecurrenceChange() {
+  _initRecurrenceUI();
+  _saveRecurrence();
+}
+
+async function _saveRecurrence() {
+  if (!_sheetTaskId) return;
+  const recurrence = _id("sheet-recurrence")?.value || "none";
+  const isRecurring = recurrence !== "none";
+  const recurrenceDays = isRecurring && recurrence === "weekly"
+    ? Array.from(_qa("#recurrence-days .day-chip.active")).map(c => parseInt(c.dataset.day))
+    : [];
+
+  const indicator = _id("saved-indicator");
+  if (indicator) {
+    indicator.textContent = "Saving…";
+    indicator.classList.remove("error");
+    indicator.classList.add("show");
+  }
+
+  try {
+    const res = await _post(`/projects/tasks/${_sheetTaskId}/update`, {
+      is_recurring: isRecurring,
+      recurrence_type: isRecurring ? recurrence : null,
+      recurrence_days: recurrenceDays.length ? recurrenceDays : null,
+    });
+    if (!res.ok) {
+      let msg = `Save failed (${res.status})`;
+      try { const p = await res.json(); if (p.error || p.message) msg = p.error || p.message; } catch {}
+      throw new Error(msg);
+    }
+    // Keep the background row's data in sync
+    const row = document.querySelector(`.task-row[data-id="${_sheetTaskId}"]`);
+    if (row) {
+      row.dataset.isRecurring = isRecurring ? "1" : "0";
+      row.dataset.recurrenceType = isRecurring ? recurrence : "";
+    }
+    if (indicator) {
+      indicator.textContent = "Saved";
+      indicator.classList.remove("error");
+      indicator.classList.add("show");
+      clearTimeout(_saveTimer);
+      _saveTimer = setTimeout(() => indicator.classList.remove("show"), 1800);
+    }
+  } catch (err) {
+    console.error("_saveRecurrence:", err);
+    if (indicator) {
+      indicator.textContent = "Save failed";
+      indicator.classList.add("show", "error");
+    }
+    showToast(err.message || "Failed to save recurrence", "error");
+  }
 }
 
 /* ---------------------------------------------------------

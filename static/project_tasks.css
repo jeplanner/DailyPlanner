@@ -1443,14 +1443,71 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
 .field-row.full label { min-width: 0; margin-bottom: 4px; }
 
 .panel-input {
-  flex: 1; padding: 6px 10px; border: 1px solid var(--pt-border);
-  border-radius: 6px; font-size: 13px; font-family: inherit;
+  flex: 1; padding: 9px 12px; border: 1px solid var(--pt-border);
+  border-radius: 8px; font-size: 14px; font-family: inherit;
   background: var(--pt-bg); color: var(--pt-text); outline: none;
   min-width: 0;
 }
 .panel-input:focus {
   border-color: var(--pt-primary);
-  box-shadow: 0 0 0 2px rgba(37,99,235,0.1);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+}
+
+/* ── Date / time picker pill ──
+   Wraps an <input type="date|time"> and a leading calendar / clock icon
+   so the whole thing looks like a tappable pill. Tapping anywhere in the
+   wrapper calls HTMLInputElement.showPicker() via openDatePicker(). */
+.panel-date-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--pt-border);
+  border-radius: 10px;
+  background: var(--pt-bg);
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+  min-height: 42px;
+}
+.panel-date-wrap:hover {
+  border-color: var(--pt-primary);
+  background: var(--pt-primary-light);
+}
+.panel-date-wrap:focus-within {
+  border-color: var(--pt-primary);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+}
+.panel-date-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--pt-primary);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.panel-date {
+  flex: 1;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--pt-text);
+  outline: none;
+  cursor: pointer;
+  min-height: 0;
+  min-width: 0;
+}
+.panel-date:focus { box-shadow: none !important; }
+/* Hide the native calendar icon on the right side — our own icon on the
+   left is the visual affordance. Keep the click-to-pick behaviour intact. */
+.panel-date::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  cursor: pointer;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 .panel-textarea { resize: vertical; min-height: 60px; }
 
