@@ -1499,10 +1499,30 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
   flex-shrink: 0;
 }
 .panel-saved-indicator {
-  margin-left: auto; font-size: 11px; color: var(--pt-success);
-  font-weight: 500; opacity: 0; transition: opacity 0.3s;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pt-success);
+  background: #ecfdf5;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #a7f3d0;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity .25s, transform .25s;
+  white-space: nowrap;
 }
-.panel-saved-indicator.show { opacity: 1; }
+.panel-saved-indicator.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.panel-saved-indicator.error {
+  color: var(--pt-danger);
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+html.dark .panel-saved-indicator { background: #064e3b; border-color: #065f46; color: #6ee7b7; }
+html.dark .panel-saved-indicator.error { background: #3b1111; border-color: #7f1d1d; color: #fca5a5; }
 
 .form-input {
   padding: 8px 10px; border: 1px solid var(--pt-border); border-radius: 6px;

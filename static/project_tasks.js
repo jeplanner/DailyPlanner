@@ -577,55 +577,166 @@ function closeTaskSheet() {
   _sheetTaskId = null;
 }
 
-/* Auto-save individual field on blur/change */
+/* ---------------------------------------------------------
+   Auto-save a single field from the task detail panel.
+   • Routes to the correct endpoint per field.
+   • Verifies the HTTP response is OK and parses Supabase's own error.
+   • Updates the background task row visually on success, so closing
+     the panel immediately shows the new value.
+   • Surfaces errors via a toast and the inline "Save failed" indicator.
+   --------------------------------------------------------- */
 let _saveTimer = null;
+
 async function autoSaveField(field, value) {
   if (!_sheetTaskId) return;
 
-  // Show saving indicator
   const indicator = _id("saved-indicator");
+  const taskId = _sheetTaskId;
+
+  if (indicator) {
+    indicator.textContent = "Saving…";
+    indicator.classList.remove("error");
+    indicator.classList.add("show");
+  }
+
+  // Decide endpoint + payload per field
+  let url, body;
+  switch (field) {
+    case "due_date":
+      url = "/projects/tasks/update-date";
+      body = { task_id: taskId, due_date: value };
+      break;
+    case "start_date":
+    case "duration_days":
+      url = "/projects/tasks/update-planning";
+      body = {
+        task_id: taskId,
+        start_date: _id("sheet-start")?.value || null,
+        duration_days: _id("sheet-duration")?.value || null,
+      };
+      break;
+    case "planned_hours":
+      url = "/projects/tasks/update-planned";
+      body = { task_id: taskId, planned_hours: value };
+      break;
+    case "actual_hours":
+      url = "/projects/tasks/update-actual";
+      body = { task_id: taskId, actual_hours: value };
+      break;
+    case "due_time":
+      url = "/projects/tasks/update-time";
+      body = { id: taskId, due_time: value };
+      break;
+    case "delegated_to":
+      url = `/projects/tasks/${taskId}/update`;
+      body = { delegated_to: value };
+      break;
+    case "status":
+      url = "/projects/tasks/status";
+      body = { task_id: taskId, status: value };
+      break;
+    case "priority":
+      url = "/projects/tasks/update-priority";
+      body = { task_id: taskId, priority: value };
+      break;
+    default:
+      url = `/projects/tasks/${taskId}/update`;
+      body = { [field]: value };
+  }
 
   try {
-    // Route field to correct endpoint
-    if (field === "due_date") {
-      await _post("/projects/tasks/update-date", { task_id: _sheetTaskId, due_date: value });
-    } else if (field === "start_date" || field === "duration_days") {
-      const start = _id("sheet-start")?.value || null;
-      const dur = _id("sheet-duration")?.value || null;
-      await _post("/projects/tasks/update-planning", {
-        task_id: _sheetTaskId, start_date: start, duration_days: dur
-      });
-    } else if (field === "planned_hours") {
-      await _post("/projects/tasks/update-planned", { task_id: _sheetTaskId, planned_hours: value });
-      updateHoursProgress();
-    } else if (field === "actual_hours") {
-      await _post("/projects/tasks/update-actual", { task_id: _sheetTaskId, actual_hours: value });
-      updateHoursProgress();
-    } else if (field === "due_time") {
-      await _post("/projects/tasks/update-time", { id: _sheetTaskId, due_time: value });
-    } else if (field === "delegated_to") {
-      await _post(`/projects/tasks/${_sheetTaskId}/update`, { delegated_to: value });
-    } else if (field === "status") {
-      await _post("/projects/tasks/status", { task_id: _sheetTaskId, status: value });
-    } else if (field === "priority") {
-      await _post("/projects/tasks/update-priority", { task_id: _sheetTaskId, priority: value });
-    } else {
-      await _post(`/projects/tasks/${_sheetTaskId}/update`, { [field]: value });
+    const res = await _post(url, body);
+    if (!res.ok) {
+      // Try to extract a server-provided error message
+      let msg = `Save failed (${res.status})`;
+      try {
+        const payload = await res.json();
+        if (payload && (payload.error || payload.message)) {
+          msg = payload.error || payload.message;
+        }
+      } catch {}
+      throw new Error(msg);
     }
 
-    // Show saved indicator
+    // Success — sync background row, panel internals, and stats
+    _syncBackgroundRow(taskId, field, value);
+    if (field === "planned_hours" || field === "actual_hours") updateHoursProgress();
+    if (field === "status" || field === "task_text" || field === "due_date") updateProjectStats();
+
     if (indicator) {
       indicator.textContent = "Saved";
+      indicator.classList.remove("error");
       indicator.classList.add("show");
       clearTimeout(_saveTimer);
-      _saveTimer = setTimeout(() => indicator.classList.remove("show"), 2000);
+      _saveTimer = setTimeout(() => indicator.classList.remove("show"), 1800);
     }
   } catch (err) {
-    console.error("Auto-save failed:", err);
+    console.error("autoSaveField failed:", field, "→", err);
     if (indicator) {
       indicator.textContent = "Save failed";
-      indicator.classList.add("show");
+      indicator.classList.add("show", "error");
     }
+    showToast(err.message || "Failed to save", "error");
+  }
+}
+
+/* Update the task row in the table behind the panel so closing the
+   panel immediately reflects the panel's edits. */
+function _syncBackgroundRow(taskId, field, value) {
+  const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+  if (!row) return;
+
+  if (field === "status") {
+    const isDone = value === "done";
+    row.classList.toggle("done", isDone);
+    row.dataset.status = value;
+    const cb = _q(".task-check", row);
+    if (cb) cb.checked = isDone;
+    const sel = _q(".status-select", row);
+    if (sel) {
+      sel.value = value;
+      sel.className = "status-select status-" + value;
+    }
+    // If soft-deleted from the panel, drop the row (matches the toast/close flow)
+    if (value === "deleted") {
+      row.style.transition = "opacity .3s, transform .3s";
+      row.style.opacity = "0";
+      row.style.transform = "translateX(20px)";
+      setTimeout(() => row.remove(), 320);
+    }
+  } else if (field === "priority") {
+    row.dataset.priority = value;
+    const dot = _q(".prio-dot", row);
+    if (dot) {
+      dot.classList.remove("prio-high", "prio-medium", "prio-low");
+      dot.classList.add("prio-" + value);
+      dot.setAttribute("title", value);
+    }
+  } else if (field === "task_text") {
+    const textEl = _q(".task-text", row);
+    if (textEl) {
+      textEl.textContent = value;
+      textEl.setAttribute("title", value);
+    }
+  } else if (field === "due_date") {
+    const dateInput = _q(".col-due input.cell-date", row);
+    if (dateInput) dateInput.value = value || "";
+    if (typeof updateDueLabel === "function") updateDueLabel(row, value);
+  } else if (field === "start_date") {
+    const dateInput = _q(".col-start input.cell-date", row);
+    if (dateInput) dateInput.value = value || "";
+  } else if (field === "duration_days") {
+    const numInput = _q(".col-dur input.cell-num", row);
+    if (numInput) numInput.value = value || 0;
+  } else if (field === "planned_hours" || field === "actual_hours") {
+    // Mini progress bar lives in .col-progress — recompute from the
+    // hidden cells we can reach. Planned/actual aren't rendered in the
+    // table row's visible cells, so the bar will refresh on next page
+    // load. Not strictly necessary to re-draw it here.
+  } else if (field === "initiative_id") {
+    row.dataset.initiativeId = value || "";
+  } else if (field === "notes" || field === "delegated_to" || field === "due_time") {
+    // These aren't shown in the compact row; nothing to update.
   }
 }
 
