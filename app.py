@@ -91,6 +91,7 @@ def create_app():
     csrf.exempt(notes_bp)
     csrf.exempt(refcards_bp)
     csrf.exempt(portfolio_bp)
+    csrf.exempt(references_bp)
 
     # ── OAuth dev override ──────────────────────────────
     if env == "development":
