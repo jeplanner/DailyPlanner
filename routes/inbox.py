@@ -1,8 +1,13 @@
 import uuid
+import os
+import requests as http_requests
+import logging
 from flask import Blueprint, request, jsonify, session, render_template
 from supabase_client import get, post, update, delete
 from services.login_service import login_required
 from services.inbox_service import detect_type, fetch_meta, auto_categorize
+
+logger = logging.getLogger("daily_plan")
 
 inbox_bp = Blueprint("inbox_bp", __name__)
 
@@ -138,3 +143,48 @@ def delete_inbox(item_id):
     user_id = session["user_id"]
     delete("inbox_links", params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"})
     return jsonify({"success": True})
+
+
+@inbox_bp.route("/api/inbox/search", methods=["GET"])
+@login_required
+def search_web():
+    """Search YouTube for videos matching a query."""
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "Search not configured"}), 503
+
+    try:
+        r = http_requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params={
+                "part": "snippet",
+                "q": query,
+                "type": "video",
+                "maxResults": 6,
+                "key": api_key,
+            },
+            timeout=6,
+        )
+        if r.status_code != 200:
+            logger.warning("YouTube search failed: %s %s", r.status_code, r.text[:200])
+            return jsonify({"error": "YouTube search unavailable"}), 503
+
+        results = []
+        for item in r.json().get("items", []):
+            vid = item["id"].get("videoId", "")
+            snip = item.get("snippet", {})
+            results.append({
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "title": snip.get("title", ""),
+                "description": snip.get("description", "")[:200],
+                "thumbnail": snip.get("thumbnails", {}).get("medium", {}).get("url", ""),
+                "channel": snip.get("channelTitle", ""),
+            })
+        return jsonify(results)
+    except Exception as e:
+        logger.warning("YouTube search error: %s", e)
+        return jsonify({"error": "Search failed"}), 500

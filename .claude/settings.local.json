@@ -5,7 +5,9 @@
       "Bash(python3:*)",
       "Bash(wc -l /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/routes/*.py /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/services/*.py /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/*.js)",
       "Bash(ls Procfile* gunicorn* nginx* render*)",
-      "Bash(find . -name \"*.html\" -path \"*/templates/*\" -exec grep -l \"habit\" {} \\\\;)"
+      "Bash(find . -name \"*.html\" -path \"*/templates/*\" -exec grep -l \"habit\" {} \\\\;)",
+      "Bash(find:*)",
+      "Bash(grep:*)"
     ]
   }
 }
