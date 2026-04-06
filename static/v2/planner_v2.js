@@ -2088,20 +2088,39 @@ function cancelCreate() {
 function attachChipTouchDrag(chipEl, ev, dateStr) {
   let clone = null;
   let dragging = false;
+  let holdFired = false;
+  let holdTimer = null;
   let startX, startY;
-  const DRAG_THRESHOLD = 10;
+  const HOLD_MS = 400;
+  const CANCEL_THRESHOLD = 10;
 
   chipEl.addEventListener("touchstart", (e) => {
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
     dragging = false;
+    holdFired = false;
+    holdTimer = setTimeout(() => {
+      holdFired = true;
+      chipEl.style.opacity = "0.5";
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, HOLD_MS);
   }, { passive: true });
 
   chipEl.addEventListener("touchmove", (e) => {
     const dx = Math.abs(e.touches[0].clientX - startX);
     const dy = Math.abs(e.touches[0].clientY - startY);
 
-    if (!dragging && (dx > DRAG_THRESHOLD || dy > DRAG_THRESHOLD)) {
+    // If long-press hasn't fired yet, cancel on movement (user is scrolling)
+    if (!holdFired && (dx > CANCEL_THRESHOLD || dy > CANCEL_THRESHOLD)) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      return;                // let the browser scroll normally
+    }
+
+    if (!holdFired) return;  // still waiting for long-press
+
+    // Long-press fired — activate drag on first move
+    if (!dragging) {
       dragging = true;
       draggedTask = { ...ev, _sourceDate: dateStr };
 
@@ -2119,7 +2138,6 @@ function attachChipTouchDrag(chipEl, ev, dateStr) {
       document.body.appendChild(clone);
     }
 
-    if (!dragging) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -2134,12 +2152,16 @@ function attachChipTouchDrag(chipEl, ev, dateStr) {
   }, { passive: false });
 
   chipEl.addEventListener("touchend", async (e) => {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+    chipEl.style.opacity = "";
     if (clone) { clone.remove(); clone = null; }
     clearTouchSnapLines();
     _hideDragBadge();
 
     if (!dragging || !draggedTask) {
       dragging = false;
+      holdFired = false;
       return;
     }
 
@@ -2149,6 +2171,7 @@ function attachChipTouchDrag(chipEl, ev, dateStr) {
     await handleTouchDrop(x, y, ev);
     draggedTask = null;
     dragging = false;
+    holdFired = false;
   });
 }
 
@@ -2159,19 +2182,38 @@ function attachChipTouchDrag(chipEl, ev, dateStr) {
 function attachFloatingTouchDrag(div, task) {
   let clone = null;
   let dragging = false;
+  let holdFired = false;
+  let holdTimer = null;
   let startX, startY;
+  const HOLD_MS = 400;
+  const CANCEL_THRESHOLD = 10;
 
   div.addEventListener("touchstart", (e) => {
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
     dragging = false;
+    holdFired = false;
+    holdTimer = setTimeout(() => {
+      holdFired = true;
+      div.style.opacity = "0.5";
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, HOLD_MS);
   }, { passive: true });
 
   div.addEventListener("touchmove", (e) => {
     const dx = Math.abs(e.touches[0].clientX - startX);
     const dy = Math.abs(e.touches[0].clientY - startY);
 
-    if (!dragging && (dx > 8 || dy > 8)) {
+    // If long-press hasn't fired yet, cancel on movement (user is scrolling)
+    if (!holdFired && (dx > CANCEL_THRESHOLD || dy > CANCEL_THRESHOLD)) {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      return;
+    }
+
+    if (!holdFired) return;
+
+    if (!dragging) {
       dragging = true;
       draggedTask = { ...task, type: "project" };
 
@@ -2188,7 +2230,6 @@ function attachFloatingTouchDrag(div, task) {
       document.body.appendChild(clone);
     }
 
-    if (!dragging) return;
     e.preventDefault();
 
     const x = e.touches[0].clientX;
@@ -2201,12 +2242,16 @@ function attachFloatingTouchDrag(div, task) {
   }, { passive: false });
 
   div.addEventListener("touchend", async (e) => {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+    div.style.opacity = "";
     if (clone) { clone.remove(); clone = null; }
     clearTouchSnapLines();
     _hideDragBadge();
 
     if (!dragging || !draggedTask) {
       dragging = false;
+      holdFired = false;
       return;
     }
 
@@ -2236,6 +2281,7 @@ function attachFloatingTouchDrag(div, task) {
 
     draggedTask = null;
     dragging = false;
+    holdFired = false;
   });
 }
 
