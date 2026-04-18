@@ -343,178 +343,10 @@ body {
   .pt-okr-row { grid-template-columns: 1fr; }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COMPACT VIEW — minimal list: title + due date + status only
-   Triggered by body.pt-view-compact (JS toggles this on the
-   body when the compact view button is pressed). Reuses the
-   same DOM as the table view, just collapses everything else.
-   ═══════════════════════════════════════════════════════════ */
-body.pt-view-compact .add-task-row,
-body.pt-view-compact .pt-filter-chips,
-body.pt-view-compact .proj-progress-row {
-  display: none !important;
-}
-
-/* Collapse the toolbar: keep only the view-toggle visible so users
-   can still switch back to the full table or board view. */
-body.pt-view-compact .proj-toolbar {
-  justify-content: flex-end;
-  margin-bottom: 8px;
-}
-body.pt-view-compact .toolbar-left > *,
-body.pt-view-compact .toolbar-right {
-  display: none !important;
-}
-body.pt-view-compact .toolbar-left > .view-toggle {
-  display: flex !important;
-}
-
-/* Unified compact row: every task becomes a tight single-line row
-   that shows just the essentials. Take the table out of native
-   table layout so the row's grid template is honored reliably
-   (same pattern the mobile card view uses). */
-body.pt-view-compact .task-table-wrap {
-  background: var(--pt-surface);
-  border-radius: 12px;
-  border: 1px solid var(--pt-border);
-  box-shadow: var(--pt-shadow);
-  overflow: hidden;
-}
-body.pt-view-compact .task-table { display: block; table-layout: auto; }
-body.pt-view-compact .task-table thead { display: none; }
-body.pt-view-compact .task-table tbody { display: flex; flex-direction: column; }
-
-body.pt-view-compact .task-row {
-  display: grid;
-  grid-template-columns: 32px 1fr auto auto;
-  column-gap: 12px;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--pt-border-light);
-  background: var(--pt-surface);
-  border-radius: 0;
-  border-left: 3px solid transparent;
-  box-shadow: none;
-  border-top: none;
-  border-right: none;
-}
-body.pt-view-compact .task-row:last-child { border-bottom: none; }
-body.pt-view-compact .task-row:hover { background: var(--pt-border-light); }
-
-/* Priority is a colored left stripe (same idea as mobile card) */
-/* Retired compact-view priority stripes — left here for documentation
-   only. The compact view is off; JS strips `pt-view-compact` from the
-   body on every view-set call. Monochrome is now the policy. */
-body.pt-view-compact .task-row[data-priority="high"],
-body.pt-view-compact .task-row[data-priority="medium"],
-body.pt-view-compact .task-row[data-priority="low"] { border-left-color: transparent; }
-
-/* Hide every cell except checkbox, name, status, due */
-body.pt-view-compact .task-row > td { display: none; }
-body.pt-view-compact .task-row > .col-check,
-body.pt-view-compact .task-row > .col-name,
-body.pt-view-compact .task-row > .col-status,
-body.pt-view-compact .task-row > .col-due {
-  display: block;
-  padding: 0;
-  border: none;
-  min-width: 0;
-}
-
-body.pt-view-compact .col-check   { grid-column: 1; justify-self: center; }
-body.pt-view-compact .col-name    { grid-column: 2; min-width: 0; }
-body.pt-view-compact .col-status  { grid-column: 3; width: auto; justify-self: end; }
-body.pt-view-compact .col-due     { grid-column: 4; width: auto; justify-self: end; }
-
-/* Title styling: clean single line, wraps if needed, clickable */
-body.pt-view-compact .task-name-cell {
-  display: block;
-  padding: 0;
-}
-body.pt-view-compact .task-text {
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--pt-text);
-  display: block;
-  white-space: normal;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-/* Hide all the inline badges/pins in compact mode — only the title matters */
-body.pt-view-compact .pin-icon,
-body.pt-view-compact .subtask-expand-btn,
-body.pt-view-compact .subtask-badge,
-body.pt-view-compact .recur-badge,
-body.pt-view-compact .delegate-badge,
-body.pt-view-compact .inline-subtasks {
-  display: none !important;
-}
-
-/* Status pill stays visible but smaller */
-body.pt-view-compact .status-select {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: 999px;
-  min-height: 26px;
-  line-height: 1;
-}
-
-/* Due column: show only the human label, not the native date input */
-body.pt-view-compact .due-cell { display: flex; align-items: center; gap: 0; flex-direction: row; }
-body.pt-view-compact .due-cell .cell-date { display: none; }
-body.pt-view-compact .due-label {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--pt-border-light);
-  color: var(--pt-text2);
-  white-space: nowrap;
-}
-body.pt-view-compact .overdue-label {
-  background: #fef2f2;
-  color: var(--pt-danger);
-}
-html.dark body.pt-view-compact .due-label { background: #334155; color: #cbd5e1; }
-html.dark body.pt-view-compact .overdue-label { background: #3b1111; color: #fca5a5; }
-
-/* Checkbox stays clickable; selection/cycle-priority disabled in this view */
-body.pt-view-compact .task-check { width: 18px; height: 18px; }
-
-/* Group headers compact — small uppercase dividers */
-body.pt-view-compact .group-row td {
-  padding: 16px 16px 8px;
-  background: transparent;
-  border: none;
-  border-top: 1px solid var(--pt-border);
-}
-body.pt-view-compact .group-row:first-of-type td { border-top: none; }
-body.pt-view-compact .group-toggle { cursor: default; font-size: 11px; }
-body.pt-view-compact .group-chevron { display: none; }
-body.pt-view-compact .group-count {
-  font-size: 10px;
-  padding: 1px 7px;
-}
-
-/* Mobile tweaks for compact view */
-@media (max-width: 768px) {
-  body.pt-view-compact .task-row {
-    grid-template-columns: 28px 1fr auto;
-    grid-template-rows: auto auto;
-    column-gap: 10px;
-    row-gap: 4px;
-    padding: 12px 14px;
-  }
-  body.pt-view-compact .col-check  { grid-column: 1; grid-row: 1 / span 2; }
-  body.pt-view-compact .col-name   { grid-column: 2 / -1; grid-row: 1; }
-  body.pt-view-compact .col-status { grid-column: 2; grid-row: 2; justify-self: start; }
-  body.pt-view-compact .col-due    { grid-column: 3; grid-row: 2; justify-self: end; }
-  body.pt-view-compact .task-text { font-size: 14.5px; }
-  body.pt-view-compact .due-label { font-size: 11px; padding: 2px 8px; }
-  body.pt-view-compact .status-select { font-size: 10px; padding: 3px 8px; }
-}
+/* Retired compact-view CSS was here (~170 lines). The compact view is
+   off; JS normalizes any saved "compact" preference back to "table"
+   and strips pt-view-compact from the body on every view switch. The
+   minimal list IS the new default, so compact was redundant. */
 
 /* ═══════════════════════════════════════════════════════════
    OKR FILTER — single button + bottom-sheet with multi-select
@@ -2479,4 +2311,257 @@ body.pt-view-compact .task-table.pt-minimal thead.pt-minimal-head { display: non
     -webkit-line-clamp: 3; /* allow up to 3 lines on phones */
   }
   .task-table.pt-minimal .due-chip { font-size: 10.5px; padding: 2px 7px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   BATCH-A POLISH (2026-04): celebration pulse · sticky group headers ·
+   density toggle · due-chip tooltip. Each rule is named and scoped
+   narrowly so future contributors can find/remove it cleanly.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Celebration pulse on task complete ───────────────────────────
+   Added by JS when a checkbox is checked. 200ms total.
+   Pure CSS, no dependencies. */
+@keyframes pt-check-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(16,185,129,.45); background: color-mix(in srgb, #10b981 8%, transparent); }
+  60%  { box-shadow: 0 0 0 8px rgba(16,185,129,0);  background: color-mix(in srgb, #10b981 5%, transparent); }
+  100% { box-shadow: 0 0 0 0 rgba(16,185,129,0);    background: transparent; }
+}
+.task-row.pt-pulse,
+.em-task.pt-pulse {
+  animation: pt-check-pulse 420ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-row.pt-pulse,
+  .em-task.pt-pulse { animation: none; }
+}
+
+/* ── Sticky group headers ─────────────────────────────────────────
+   Keeps the group title visible while scrolling long sections. */
+.task-table.pt-minimal .group-row {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--pt-surface);
+}
+.task-table.pt-minimal .group-row td {
+  background: var(--pt-surface);
+  box-shadow: inset 0 -1px 0 var(--pt-border);
+}
+
+/* ── Density toggle ───────────────────────────────────────────────
+   Three modes via body class:
+     .pt-density-comfortable (default) — spacious
+     .pt-density-cozy                  — current default spacing
+     .pt-density-compact               — tight rows
+   Controlled by a toolbar picker, persisted in localStorage. */
+body.pt-density-comfortable .task-table.pt-minimal td { padding: 16px 12px; }
+body.pt-density-comfortable .task-table.pt-minimal .col-name .task-text { font-size: 15px; line-height: 1.5; }
+
+body.pt-density-compact .task-table.pt-minimal td { padding: 6px 10px; }
+body.pt-density-compact .task-table.pt-minimal .col-name .task-text {
+  font-size: 13px; line-height: 1.3; -webkit-line-clamp: 1;
+}
+body.pt-density-compact .task-table.pt-minimal .due-chip { font-size: 10px; padding: 2px 6px; }
+body.pt-density-compact .task-table.pt-minimal .row-details-btn { width: 26px; height: 26px; }
+
+.pt-density-picker {
+  display: inline-flex; border: 1px solid var(--pt-border); border-radius: 8px;
+  overflow: hidden; background: var(--pt-surface);
+}
+.pt-density-picker button {
+  padding: 6px 10px; border: none; background: transparent; cursor: pointer;
+  font-size: 11px; font-weight: 600; color: var(--pt-text2); font-family: inherit;
+}
+.pt-density-picker button + button { border-left: 1px solid var(--pt-border); }
+.pt-density-picker button.active { background: var(--pt-primary); color: #fff; }
+
+/* ── Due-chip absolute-date tooltip ────────────────────────────────
+   Shows on hover (desktop) — long-press handled by the browser's
+   default title behavior on mobile. The .title attribute is added
+   via JS (see openTaskDetail / data-task-date attrs). */
+.task-table.pt-minimal .due-chip[title]:hover::after {
+  content: attr(title);
+  position: absolute;
+  transform: translateY(26px) translateX(-50%);
+  left: 50%;
+  background: #111827; color: #fff;
+  font-size: 10.5px; font-weight: 500;
+  padding: 4px 8px; border-radius: 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+  opacity: .96;
+}
+.task-table.pt-minimal .due-chip { position: relative; }
+
+/* ── Global saved indicator ───────────────────────────────────────
+   Appears top-right on any auto-save. JS-driven via pt-save-ping(state). */
+#pt-global-saved {
+  position: fixed; top: 14px; right: 18px; z-index: 5000;
+  display: none;
+  padding: 6px 12px;
+  font-size: 11.5px; font-weight: 600;
+  border-radius: 999px;
+  background: color-mix(in srgb, #10b981 14%, var(--pt-surface));
+  color: #047857;
+  border: 1px solid color-mix(in srgb, #10b981 28%, transparent);
+  box-shadow: 0 4px 14px rgba(0,0,0,.08);
+  transition: opacity .2s, transform .2s;
+  pointer-events: none;
+}
+#pt-global-saved.show { display: inline-flex; align-items: center; gap: 5px; }
+#pt-global-saved.saving {
+  background: color-mix(in srgb, #2563eb 12%, var(--pt-surface));
+  color: #1d4ed8;
+  border-color: color-mix(in srgb, #2563eb 28%, transparent);
+}
+#pt-global-saved.error {
+  background: color-mix(in srgb, #dc2626 12%, var(--pt-surface));
+  color: #b91c1c;
+  border-color: color-mix(in srgb, #dc2626 30%, transparent);
+}
+html.dark #pt-global-saved { background: #064e3b; color: #6ee7b7; border-color: #065f46; }
+html.dark #pt-global-saved.saving { background: #1e3a8a; color: #bfdbfe; border-color: #1d4ed8; }
+html.dark #pt-global-saved.error  { background: #3b1111; color: #fca5a5; border-color: #7f1d1d; }
+
+/* ── Undo toast action button ─────────────────────────────────────
+   Matches the existing toast styling; adds an inline Undo control. */
+.toast.toast-undo { display: flex; align-items: center; gap: 10px; padding-right: 14px; }
+.toast.toast-undo .toast-undo-btn {
+  margin-left: 6px; padding: 4px 10px;
+  border: 1px solid rgba(255,255,255,.35);
+  background: transparent; color: inherit;
+  border-radius: 6px; font-size: 11.5px; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+}
+.toast.toast-undo .toast-undo-btn:hover { background: rgba(255,255,255,.12); }
+
+/* ── Bottom-nav on mobile (fixed-bottom tab bar) ─────────────────
+   Rendered from _top_nav or base.html on screens ≤ 560px. */
+#pt-bottom-nav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 500;
+  display: none;
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0));
+  background: var(--pt-surface);
+  border-top: 1px solid var(--pt-border);
+  box-shadow: 0 -4px 20px rgba(0,0,0,.06);
+  justify-content: space-around;
+}
+#pt-bottom-nav a {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2px; padding: 6px 10px;
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--pt-text3); text-decoration: none;
+  border-radius: 8px;
+  min-width: 56px;
+}
+#pt-bottom-nav a svg { width: 20px; height: 20px; }
+#pt-bottom-nav a.active { color: var(--pt-primary); }
+#pt-bottom-nav a:hover { color: var(--pt-text); background: var(--pt-border-light); }
+
+@media (max-width: 560px) {
+  #pt-bottom-nav { display: flex; }
+  body { padding-bottom: 64px; } /* reserve room for the bar */
+}
+
+/* ── Global new-task FAB ─────────────────────────────────────────
+   Tiny round button bottom-right on mobile; also available as a
+   button in base.html so desktop users can click it. Activated by
+   `n` keyboard shortcut on desktop. */
+#pt-new-fab {
+  position: fixed; right: 18px; bottom: 18px; z-index: 450;
+  width: 54px; height: 54px; border-radius: 50%;
+  background: var(--pt-primary); color: #fff;
+  border: none; box-shadow: 0 10px 22px rgba(37,99,235,.32);
+  display: none; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 28px; font-weight: 400; line-height: 1;
+}
+#pt-new-fab:hover { filter: brightness(1.08); }
+#pt-new-fab:active { transform: scale(.95); }
+@media (max-width: 560px) {
+  #pt-new-fab { display: flex; bottom: calc(76px + env(safe-area-inset-bottom, 0)); }
+}
+
+/* ── Keyboard shortcuts cheatsheet overlay ─────────────────────── */
+#pt-kbd-cheatsheet {
+  position: fixed; inset: 0; z-index: 4000;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.5); padding: 20px;
+}
+#pt-kbd-cheatsheet.show { display: flex; }
+#pt-kbd-cheatsheet .pt-kbd-sheet {
+  width: 100%; max-width: 440px;
+  background: var(--pt-surface); color: var(--pt-text);
+  border: 1px solid var(--pt-border); border-radius: 14px;
+  padding: 18px 20px; box-shadow: 0 24px 60px rgba(0,0,0,.28);
+}
+#pt-kbd-cheatsheet h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+#pt-kbd-cheatsheet dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; }
+#pt-kbd-cheatsheet kbd {
+  display: inline-block; padding: 2px 8px; min-width: 22px; text-align: center;
+  background: var(--pt-border-light); border: 1px solid var(--pt-border);
+  border-bottom-width: 2px; border-radius: 5px;
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px; font-weight: 600; color: var(--pt-text);
+}
+#pt-kbd-cheatsheet dd { font-size: 12.5px; color: var(--pt-text2); align-self: center; }
+
+/* ── Bottom-sheet drag handle (mobile detail panel) ──────────────
+   Shows only on narrow screens. JS wires pointer drag to translate-Y
+   the panel; past a threshold triggers closeTaskSheet(). */
+@media (max-width: 560px) {
+  .task-panel::before {
+    content: "";
+    display: block;
+    width: 40px; height: 4px;
+    margin: 8px auto 2px;
+    background: var(--pt-border);
+    border-radius: 2px;
+    cursor: grab;
+  }
+  .task-panel { touch-action: pan-y; }
+  .task-panel.pt-sheet-dragging { transition: none !important; }
+}
+
+/* ── Swipe-gesture action rails (mobile) ─────────────────────────
+   Behind each row, two action zones (done on left, delete on right)
+   that show as the row slides. JS tracks pointer drag, applies
+   transform, and triggers the action past the threshold. */
+@media (max-width: 560px) {
+  .task-row {
+    position: relative;
+    background: var(--pt-surface);
+  }
+  .task-row.pt-swiping { transition: none !important; }
+  .task-row.pt-swiping-done::after {
+    content: "✓ Done";
+    position: absolute; left: 0; top: 0; bottom: 0;
+    display: flex; align-items: center; padding-left: 22px;
+    font-size: 13px; font-weight: 700; color: #fff; background: #059669;
+    width: 100%;
+    z-index: -1;
+  }
+  .task-row.pt-swiping-delete::after {
+    content: "🗑 Delete";
+    position: absolute; right: 0; top: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 22px;
+    font-size: 13px; font-weight: 700; color: #fff; background: #dc2626;
+    width: 100%;
+    z-index: -1;
+  }
+}
+
+/* ── Empty-state teaching copy ─────────────────────────────────── */
+.em-empty, .empty-msg {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--pt-text3);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.em-empty-hint, .empty-msg-hint {
+  display: block; margin-top: 6px;
+  color: var(--pt-text3); font-size: 11.5px;
 }

@@ -335,11 +335,13 @@ html.dark .em-select-mode .em-task.em-selected{background:#172554;}
 .em-action-btn.active{background:var(--q-schedule)!important;color:#fff!important;border-color:var(--q-schedule)!important;}
 
 /* ── Priority indicators (visually consistent w/ Planner V2) ── */
-/* Priority stripe — 3px, slightly desaturated. Single calm signal per
-   card; won't compete with the due chip or status cues. */
-.em-task.prio-high{border-left:3px solid #e11d48;}
-.em-task.prio-medium{border-left:3px solid #d97706;}
-.em-task.prio-low{border-left:3px solid #059669;}
+/* Priority stripe retired for the matrix cards too (unified with the
+   project-task list's monochrome policy). Border stays at 3px to
+   preserve layout rhythm, but transparent — no color. Priority is
+   a sort key, not an action signal; the due chip carries urgency. */
+.em-task.prio-high,
+.em-task.prio-medium,
+.em-task.prio-low { border-left: 3px solid transparent; }
 
 .em-prio-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:6px;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;user-select:none;transition:transform .1s,filter .1s;}
 .em-prio-pill:hover{filter:brightness(1.05) saturate(1.1);transform:scale(1.06);}
@@ -1556,7 +1558,16 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
             {% include '_em_task_card.html' %}
           {% endfor %}
         {% else %}
-          <div class="em-empty">No tasks in this quadrant</div>
+          <div class="em-empty">
+            Nothing here yet.
+            <span class="em-empty-hint">
+              {% if q == 'do' %}Urgent-important work lands here first.
+              {% elif q == 'schedule' %}Important work you'll plan for later.
+              {% elif q == 'delegate' %}Urgent tasks someone else can own.
+              {% else %}Things you probably shouldn't be doing at all.
+              {% endif %}
+            </span>
+          </div>
         {% endif %}
       </div>
     </div>
@@ -3585,5 +3596,6 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pt-shared.js') }}" defer></script>
 </body>
 </html>

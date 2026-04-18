@@ -175,6 +175,61 @@ def project_tasks(project_id):
     )
 
 
+@projects_bp.route("/projects/<project_id>/trash")
+@login_required
+def project_tasks_trash(project_id):
+    """Recycle bin: soft-deleted, skipped, or eliminated tasks within
+    this project. Actions: restore (→ status=open), permanently archive
+    (→ is_eliminated=true). Per project policy, no hard delete from here."""
+    user_id = session["user_id"]
+
+    rows = get(
+        "projects",
+        params={"project_id": f"eq.{project_id}", "user_id": f"eq.{user_id}"},
+    )
+    if not rows:
+        return "Project not found", 404
+    project = rows[0]
+
+    # Soft-deleted + skipped + eliminated rows, most recent first.
+    # Status values that represent "not live": deleted, skipped, not_required.
+    deleted_rows = get(
+        "project_tasks",
+        params={
+            "project_id": f"eq.{project_id}",
+            "user_id": f"eq.{user_id}",
+            "or": "(status.eq.deleted,status.eq.skipped,status.eq.not_required,is_eliminated.eq.true)",
+            "select": "task_id,task_text,status,due_date,priority,is_eliminated,updated_at",
+            "order": "updated_at.desc",
+            "limit": 500,
+        },
+    ) or []
+
+    return render_template(
+        "project_trash.html",
+        project=project,
+        rows=deleted_rows,
+    )
+
+
+@projects_bp.route("/projects/tasks/<task_id>/restore", methods=["POST"])
+@login_required
+def restore_project_task(task_id):
+    """Restore a soft-deleted/skipped task. Sets status=open and
+    is_eliminated=false. Idempotent."""
+    user_id = session["user_id"]
+    try:
+        update(
+            "project_tasks",
+            params={"task_id": f"eq.{task_id}", "user_id": f"eq.{user_id}"},
+            json={"status": "open", "is_eliminated": False},
+        )
+    except Exception as e:
+        logger.exception("restore_project_task failed: %s", e)
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok"})
+
+
 @projects_bp.route("/projects/<project_id>/tasks/add", methods=["POST"])
 @login_required
 def add_project_task(project_id):

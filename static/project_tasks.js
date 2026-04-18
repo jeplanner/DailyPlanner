@@ -122,6 +122,8 @@ function toggleTaskDone(checkbox, taskId, date) {
         // update the status select in the same row
         const sel = _q(".status-select", row);
         if (sel) sel.value = status;
+        // Celebrate completions with a brief pulse (batch-A polish)
+        if (status === "done" && window.ptPulse) ptPulse(row);
       }
 
       // If hide-done filter is active, fade out
@@ -1727,10 +1729,45 @@ async function _ptBulkApply(patch, optimistic) {
     });
     const res = await r.json();
     if (res.status !== "ok") throw new Error(res.error || "Update failed");
-    showToast(
-      `Updated ${res.updated || snapshot.length} task${(res.updated || snapshot.length) === 1 ? "" : "s"}`,
-      "success"
-    );
+    const n = res.updated || snapshot.length;
+    // Offer Undo for destructive or closed-state bulk changes
+    const isDestructive = patch && ["deleted", "skipped", "done"].includes(patch.status);
+    if (isDestructive && typeof window.ptShowUndo === "function") {
+      const verb = patch.status === "deleted" ? "Deleted"
+                 : patch.status === "skipped" ? "Skipped"
+                 : "Completed";
+      ptShowUndo(`${verb} ${n} task${n === 1 ? "" : "s"}`, () => {
+        // Restore to each row's prior status in one bulk call per distinct status
+        const byStatus = new Map();
+        snapshot.forEach(s => {
+          const k = s.status || "open";
+          if (!byStatus.has(k)) byStatus.set(k, []);
+          byStatus.get(k).push(s);
+        });
+        byStatus.forEach((snaps, st) => {
+          fetch("/projects/tasks/bulk-update", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+            },
+            body: JSON.stringify({ ids: snaps.map(s => s.id), patch: { status: st } }),
+          }).then(() => {
+            snaps.forEach(s => {
+              s.row.dataset.status = s.status;
+              s.row.classList.toggle("done", s.done);
+              const cb = _q(".task-check", s.row);
+              if (cb) cb.checked = s.done;
+              const sel = _q(".status-select", s.row);
+              if (sel) sel.value = s.status || "open";
+            });
+            if (!_id("board-view")?.classList.contains("hidden")) populateBoard();
+          }).catch(e => console.error("bulk undo failed:", e));
+        });
+      });
+    } else {
+      showToast(`Updated ${n} task${n === 1 ? "" : "s"}`, "success");
+    }
     ptClearSelection();
   } catch (err) {
     console.error(err);
@@ -2543,4 +2580,166 @@ document.addEventListener("keydown", (e) => {
   if (form?.classList.contains("open")) { closePtOkrForm(); return; }
   const sheet = _id("pt-okr-sheet");
   if (sheet?.classList.contains("open")) { closePtOkrManager(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   BATCH-A WIRING (2026-04): page-specific keyboard shortcuts,
+   swipe-delete fallback, ptNewTask override, natural-language
+   quick-add, saved-indicator hooks.
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── ptNewTask: focus the quick-add input on this page ───────────
+window.ptNewTask = function () {
+  const input = _id("add-task-input");
+  if (input) { input.focus(); input.scrollIntoView({ block: "center", behavior: "smooth" }); }
+};
+
+// ── Keyboard shortcuts scoped to this page ─────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  if (typeof ptRegisterShortcut !== "function") return;
+
+  ptRegisterShortcut("/", () => {
+    _id("add-task-input")?.focus();
+  }, "Focus quick-add");
+
+  ptRegisterShortcut("e", () => {
+    const row = document.querySelector(".task-row:hover, .task-row.pt-kb-active") ||
+                document.querySelector(".task-row");
+    if (row?.dataset?.id) openTaskDetail(row.dataset.id);
+  }, "Open task details");
+
+  ptRegisterShortcut("x", () => {
+    const row = document.querySelector(".task-row.pt-kb-active") ||
+                document.querySelector(".task-row:hover");
+    const cb = row?.querySelector('input[type="checkbox"].task-check');
+    if (cb) {
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }, "Toggle done on focused row");
+
+  ptRegisterShortcut("j", () => _ptKbMoveRow(+1), "Next row");
+  ptRegisterShortcut("k", () => _ptKbMoveRow(-1), "Previous row");
+
+  ptRegisterShortcut("Escape", () => closeTaskSheet?.(), "Close panel");
+});
+
+function _ptKbMoveRow(delta) {
+  const rows = _qa(".task-row");
+  if (!rows.length) return;
+  const curIdx = rows.findIndex(r => r.classList.contains("pt-kb-active"));
+  const nextIdx = Math.max(0, Math.min(rows.length - 1, (curIdx < 0 ? 0 : curIdx + delta)));
+  rows.forEach(r => r.classList.remove("pt-kb-active"));
+  rows[nextIdx].classList.add("pt-kb-active");
+  rows[nextIdx].scrollIntoView({ block: "nearest" });
+}
+
+// ── Swipe-delete → soft-delete with undo ───────────────────────
+document.addEventListener("pt-swipe-delete", (e) => {
+  const id = e.detail?.id;
+  const row = id ? document.querySelector(`.task-row[data-id="${id}"]`) : null;
+  if (!row) return;
+  const prevStatus = row.dataset.status || "open";
+  row.dataset.status = "deleted";
+  row.classList.add("done");
+  row.style.transition = "opacity .3s";
+  row.style.opacity = "0";
+  fetch("/projects/tasks/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: id, status: "deleted" }),
+  }).then(() => {
+    updateProjectStats?.();
+    if (typeof ptShowUndo === "function") {
+      ptShowUndo("Task deleted", () => {
+        row.dataset.status = prevStatus;
+        row.classList.remove("done");
+        row.style.opacity = "";
+        fetch("/projects/tasks/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task_id: id, status: prevStatus }),
+        });
+      });
+    }
+  });
+});
+
+// ── Natural-language parse on Enter in quick-add ───────────────
+// Uses parseTaskLine from voice.js (shared parser). Pre-fills the
+// visible priority/date pickers from parsed tokens, so users see
+// what the app interpreted.
+document.addEventListener("DOMContentLoaded", () => {
+  const input = _id("add-task-input");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    if (typeof parseTaskLine !== "function") return;
+    const parsed = parseTaskLine(input.value, new Date().toISOString().slice(0, 10));
+    if (parsed.due_date) {
+      const dateInput = _id("add-task-date");
+      if (dateInput) dateInput.value = parsed.due_date;
+    }
+    if (parsed.quadrant === "do") _setAddPriority("high");
+  });
+});
+
+function _setAddPriority(p) {
+  const picker = _id("prio-picker");
+  if (!picker) return;
+  _qa(".pp-btn", picker).forEach(b => b.classList.toggle("active", b.dataset.p === p));
+  _addPriority = p;
+}
+
+// ── Saved indicator hook in autoSaveField ──────────────────────
+// Wrap the existing autoSaveField to ping the global saved indicator.
+(function wrapAutoSave() {
+  if (typeof autoSaveField !== "function") return;
+  const orig = autoSaveField;
+  window.autoSaveField = async function (field, value) {
+    if (window.ptSavePing) ptSavePing("saving");
+    try {
+      const ret = await orig.apply(this, arguments);
+      if (window.ptSavePing) ptSavePing("saved");
+      return ret;
+    } catch (e) {
+      if (window.ptSavePing) ptSavePing("error");
+      throw e;
+    }
+  };
+})();
+
+// ── Escape audit — ensure every modal on this page closes on Esc ──
+// Centralized so we don't sprinkle listeners throughout the file.
+// LIFO-ish: the topmost/most recently opened is handled first.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+
+  // 1. Import modal
+  const importModal = _id("pt-import-modal") || _id("import-modal");
+  if (importModal && !importModal.classList.contains("hidden") && importModal.style.display !== "none") {
+    if (typeof closeImportModal === "function") { closeImportModal(); e.stopPropagation(); return; }
+  }
+  // 2. OKR form sheet (managed by its own handler at bottom of file; kept as fallback)
+  const okrForm = _id("pt-okr-form-sheet");
+  if (okrForm?.classList.contains("open")) {
+    if (typeof closePtOkrForm === "function") { closePtOkrForm(); e.stopPropagation(); return; }
+  }
+  // 3. OKR manager sheet
+  const okrMgr = _id("pt-okr-sheet");
+  if (okrMgr?.classList.contains("open")) {
+    if (typeof closePtOkrManager === "function") { closePtOkrManager(); e.stopPropagation(); return; }
+  }
+  // 4. Bulk popovers
+  if (document.querySelector(".pt-action-popover.open")) {
+    if (typeof ptCloseAllPopovers === "function") { ptCloseAllPopovers(); e.stopPropagation(); return; }
+  }
+  // 5. Select mode
+  if (window.PT_SEL && PT_SEL.active) {
+    if (typeof ptExitSelectMode === "function") { ptExitSelectMode(); e.stopPropagation(); return; }
+  }
+  // 6. Task detail panel (only if nothing else was open)
+  const panel = _id("task-panel");
+  if (panel && !panel.classList.contains("hidden")) {
+    if (typeof closeTaskSheet === "function") { closeTaskSheet(); }
+  }
 });

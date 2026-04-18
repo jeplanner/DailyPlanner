@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Trash — {{ project.name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='project_tasks.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pt-shared.js') }}" defer></script>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="proj-app">
+  <header class="proj-header">
+    <div class="proj-header-left">
+      <a href="/projects/{{ project.project_id }}/tasks" class="back-btn" aria-label="Back to tasks">
+        <i data-feather="arrow-left"></i>
+      </a>
+      <div>
+        <h1 class="proj-name">{{ project.name }} — Trash</h1>
+        <p class="proj-desc">Soft-deleted and skipped tasks. Nothing here is permanently gone — restore what you still need.</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="task-table-wrap" style="margin-top: 14px;">
+    {% if rows %}
+    <table class="task-table pt-minimal" aria-label="Deleted and skipped tasks">
+      <thead class="pt-minimal-head">
+        <tr>
+          <th class="col-name">Task</th>
+          <th style="width:110px;">Status</th>
+          <th style="width:120px;">Due</th>
+          <th style="width:110px; text-align:right;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="task-row" data-id="{{ r.task_id }}" data-status="{{ r.status }}">
+          <td class="col-name">
+            <span class="task-text">{{ r.task_text }}</span>
+          </td>
+          <td>
+            <span class="due-chip" style="text-transform:capitalize;">
+              {% if r.is_eliminated %}Eliminated
+              {% else %}{{ r.status|replace('_', ' ') }}
+              {% endif %}
+            </span>
+          </td>
+          <td>
+            {% if r.due_date %}
+              <span class="due-chip" title="Due {{ r.due_date }}">{{ r.due_date }}</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right;">
+            <button type="button" class="import-btn" onclick="restoreTask('{{ r.task_id }}', this)"
+                    title="Restore this task">
+              <i data-feather="rotate-ccw" style="width:13px;height:13px"></i> Restore
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-msg">
+      Nothing in the trash.
+      <span class="empty-msg-hint">Tasks you delete, skip, or eliminate land here. They're soft-deleted — restorable.</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+async function restoreTask(taskId, btn) {
+  btn.disabled = true;
+  const row = btn.closest("tr");
+  try {
+    const r = await fetch(`/projects/tasks/${taskId}/restore`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').content,
+      },
+    });
+    if (!r.ok) throw new Error();
+    if (row) {
+      row.style.transition = "opacity .3s";
+      row.style.opacity = "0";
+      setTimeout(() => row.remove(), 320);
+    }
+    showToast("Restored", "success", 1800);
+  } catch (e) {
+    btn.disabled = false;
+    showToast("Restore failed", "error");
+  }
+}
+if (window.feather) feather.replace();
+</script>
+</body>
+</html>

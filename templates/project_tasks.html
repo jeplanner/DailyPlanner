@@ -12,6 +12,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pt-shared.js') }}" defer></script>
 </head>
 <body>
 
@@ -105,11 +106,19 @@
     </div>
 
     <div class="toolbar-right">
+      <div class="pt-density-picker" role="radiogroup" aria-label="Row density" title="Row density">
+        <button type="button" data-density="comfortable" aria-label="Comfortable density">C</button>
+        <button type="button" data-density="cozy" aria-label="Cozy density">·</button>
+        <button type="button" data-density="compact" aria-label="Compact density">≡</button>
+      </div>
       <button class="import-btn" onclick="exportCSV()" title="Export CSV">
         <i data-feather="download" style="width:14px;height:14px"></i> Export
       </button>
       <button class="import-btn" onclick="openImportModal()" title="Import CSV">
         <i data-feather="upload" style="width:14px;height:14px"></i> Import
+      </button>
+      <button class="import-btn" onclick="window.location.href = window.location.pathname + '/trash'" title="Recycle bin — restore deleted tasks">
+        <i data-feather="trash-2" style="width:14px;height:14px"></i> Trash
       </button>
       <select class="sort-select" id="sort-select" title="Sort order">
         <option value="smart" {{ 'selected' if sort=='smart' }}>Smart</option>
@@ -363,7 +372,8 @@
             <!-- Due chip (relative label served by backend) -->
             <td class="col-due" onclick="openTaskDetail('{{ t.task_id }}')">
               {% if t.due_label %}
-                <span class="due-chip {{ 'overdue-label' if 'overdue' in t.due_label }}">{{ t.due_label }}</span>
+                <span class="due-chip {{ 'overdue-label' if 'overdue' in t.due_label }}"
+                      {% if t.due_date %}title="Due {{ t.due_date }}"{% endif %}>{{ t.due_label }}</span>
               {% endif %}
             </td>
 
@@ -412,11 +422,14 @@
 
 <!-- ═══════════ TASK DETAIL SIDE PANEL (Asana/Linear style) ═══════════ -->
 <div id="task-panel-overlay" class="panel-overlay hidden" onclick="closeTaskSheet()"></div>
-<aside id="task-panel" class="task-panel hidden">
+<aside id="task-panel" class="task-panel hidden"
+       role="dialog" aria-modal="true" aria-labelledby="sheet-name"
+       aria-label="Task details">
   <div class="panel-header">
     <input type="text" id="sheet-name" class="panel-title-input" placeholder="Task name"
+           aria-label="Task title"
            onblur="autoSaveField('task_text', this.value)">
-    <button class="panel-close" onclick="closeTaskSheet()"><i data-feather="x"></i></button>
+    <button class="panel-close" onclick="closeTaskSheet()" aria-label="Close task details"><i data-feather="x"></i></button>
   </div>
 
   <!-- Quick Actions Bar -->
