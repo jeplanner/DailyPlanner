@@ -207,12 +207,8 @@ summary::-webkit-details-marker { display:none; }
 
 <h2 style="margin:12px 0;">📋 Eisenhower Matrix – {{ plan_date }}</h2>
 
-<form method="post" action="/todo/copy-prev" style="margin-bottom:12px;">
-  <input type="hidden" name="year" value="{{ year }}">
-  <input type="hidden" name="month" value="{{ month }}">
-  <input type="hidden" name="day" value="{{ plan_date.day }}">
-  <button type="submit">📥 Copy open tasks from previous day</button>
-</form>
+<!-- Copy Previous Day retired (2026). Morning Dashboard surfaces
+     overdue items as a read-through view instead. -->
 
 <form method="post" action="/todo/travel-mode" style="margin-bottom:12px;">
   <input type="hidden" name="year" value="{{ year }}">

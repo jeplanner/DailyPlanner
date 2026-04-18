@@ -28,7 +28,6 @@ from auth import login_required
 from config import IST
 from services.eisenhower_service import (
     autosave_task,
-    copy_open_tasks_from_previous_day,
     enable_travel_mode,
     list_travel_categories,
     list_travel_tasks,
@@ -576,20 +575,11 @@ def _create_next_recurring_instance(user_id, recurring_id, current_plan_date,
     return next_date.isoformat()
 
 
-@todo_bp.route("/todo/copy-prev", methods=["POST"])
-@login_required
-def copy_prev_todo():
-    today = datetime.now(IST).date()
-
-    year = int(request.form.get("year", today.year))
-    month = int(request.form.get("month", today.month))
-    day = int(request.form.get("day", today.day))
-    plan_date = date(year, month, day)
-
-    copied = copy_open_tasks_from_previous_day(plan_date)
-    logger.info(f"Copied {copied} Eisenhower tasks from previous day")
-
-    return redirect(url_for("todo.todo", year=plan_date.year, month=plan_date.month, day=plan_date.day, copied=1))
+# Retired: POST /todo/copy-prev. It duplicated yesterday's unfinished
+# rows into today, which distorted historical analytics and had two
+# bugs (NameError + missing user_id scope). The Morning Dashboard
+# (/summary?view=daily) now surfaces overdue items as a read-through
+# view — no duplication required.
 @todo_bp.route("/todo/move", methods=["POST"])
 @login_required
 def move_eisenhower_task():

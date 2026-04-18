@@ -1249,12 +1249,9 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     <button type="button" id="em-toggle-closed" class="em-action-btn" onclick="toggleClosedVisibility()" title="Show/hide skipped and deleted tasks">
       <i data-feather="eye-off" style="width:14px;height:14px"></i> <span id="em-toggle-closed-label">Show skipped/deleted</span>
     </button>
-    <form method="post" action="/todo/copy-prev" style="display:contents;">
-      <input type="hidden" name="year" value="{{ year }}">
-      <input type="hidden" name="month" value="{{ month }}">
-      <input type="hidden" name="day" value="{{ plan_date.day }}">
-      <button type="submit" class="em-action-btn"><i data-feather="copy" style="width:14px;height:14px"></i> Copy Previous Day</button>
-    </form>
+    {# "Copy Previous Day" retired. The Morning Dashboard
+       (/summary?view=daily) now surfaces overdue items as a
+       read-through view — no duplication needed. #}
     {% if travel_mode_active %}
     <form method="post" action="/todo/travel-mode/disable" style="display:inline-flex;gap:4px;align-items:center;"
           onsubmit="return confirm('Remove the unchanged Travel Mode tasks for this day? Anything you\'ve edited or checked off stays put.');">

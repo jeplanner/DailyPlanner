@@ -218,6 +218,31 @@ def test_vault_status_unconfigured(auth_client, monkeypatch):
 # 6. Encryption round-trip
 # ═══════════════════════════════════════════════════
 
+def test_copy_prev_route_is_gone(client):
+    """Regression: /todo/copy-prev was retired. If somebody restores the
+    route without also restoring proper user scoping + undo UX, this
+    test fires a warning bell. 404 is the expected status.
+
+    Context: the previous impl had a NameError and a missing user_id
+    filter (data leak). Morning Dashboard replaces the feature."""
+    r = client.post("/todo/copy-prev", follow_redirects=False)
+    assert r.status_code in (404, 405), (
+        f"/todo/copy-prev returned {r.status_code} — it was retired. "
+        f"See Morning Dashboard for the replacement read-through view."
+    )
+
+
+def test_copy_prev_service_import_is_gone():
+    """The service function copy_open_tasks_from_previous_day was
+    retired along with the route. Re-introducing it without the fixes
+    (user scoping, undo, audit) would re-introduce a data-leak bug."""
+    import services.eisenhower_service as es
+    assert not hasattr(es, "copy_open_tasks_from_previous_day"), (
+        "copy_open_tasks_from_previous_day should stay retired — see "
+        "the comment block where it used to live in eisenhower_service.py"
+    )
+
+
 def test_encryption_roundtrip():
     from utils.encryption import encrypt, decrypt
     secret = "ABCDE1234F"   # a PAN-shaped string

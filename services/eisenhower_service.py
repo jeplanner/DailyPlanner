@@ -382,80 +382,18 @@ def save_todo(plan_date, form):
     )
 
 
-def copy_open_tasks_from_previous_day(plan_date):
-    prev_date = plan_date - timedelta(days=1)
-    user_id=session[user_id]
-    prev_rows = (
-        get(
-            "todo_matrix",
-            params={
-                "plan_date": f"eq.{prev_date}",
-                "is_deleted": "eq.false",
-                "select": "quadrant,task_text,is_done,task_date,task_time,category,subcategory,project_id",
-            },
-        )
-        or []
-    )
-
-    if not prev_rows:
-        return 0
-
-    today_rows = (
-        get(
-            "todo_matrix",
-            params={
-                "user_id":f"eq.{user_id}",
-                "plan_date": f"eq.{plan_date}",
-                "select": "quadrant,task_text,position",
-                "is_deleted": "eq.false",
-            },
-        )
-        or []
-    )
-
-    today_tasks = {
-        (r["quadrant"], (r["task_text"] or "").strip().lower()) for r in today_rows
-    }
-
-    # Build max position per quadrant ONCE
-    max_pos = {}
-    for r in today_rows:
-        q = r["quadrant"]
-        max_pos[q] = max(max_pos.get(q, -1), r.get("position", -1))
-
-    payload = []
-
-    for r in prev_rows:
-        if r.get("is_done"):
-            continue
-
-        key = (r["quadrant"], (r["task_text"] or "").strip().lower())
-        if key in today_tasks:
-            continue
-
-        next_pos = max_pos.get(r["quadrant"], -1) + 1
-        max_pos[r["quadrant"]] = next_pos
-
-        payload.append(
-            {
-                "plan_date": str(plan_date),
-                "quadrant": r["quadrant"],
-                "task_text": r["task_text"],
-                "is_done": False,
-                "is_deleted": False,  # 👈 REQUIRED
-                "task_date": r.get("task_date") or str(plan_date),
-                "task_time": r.get("task_time"),
-                "position": next_pos,
-                "category": r.get("category") or "General",
-                "subcategory": r.get("subcategory") or "General",
-                "user_id":user_id
-            }
-        )
-
-    if payload:
-        post("todo_matrix", payload)
-
-    return len(payload)
+# Retired: copy_open_tasks_from_previous_day. The previous implementation
+# duplicated yesterday's un-done rows forward as a mutation, which
+# distorted historical analytics (Monday's "N tasks done" became a lie
+# after Tuesday's copy-forward) and had two bugs — a NameError from
+# `user_id=session[user_id]` and a missing user_id scope on the
+# prev_rows fetch (data-leak across users).
+#
+# The replacement pattern is the Morning Dashboard (/summary?view=daily),
+# which shows overdue tasks as a READ-THROUGH view without mutation.
+# That page is now the app's default landing page, so overdue surfaces
+# naturally on first open. If you ever need the copy-forward semantics
+# back, write them with proper user scoping + audit log + undo toast.
 
 
 ### Travel mode Code Changes ###
