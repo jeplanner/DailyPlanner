@@ -108,15 +108,27 @@ def register():
 def logout():
     """Fully sign the user out.
 
-    `logout_user()` alone is not enough: when login is called with
-    `remember=True` (which we do), Flask-Login plants a persistent
-    "remember-me" cookie. After `session.clear()` the next request
-    silently re-authenticates the browser from that cookie, so the
-    user appears never to have logged out.
+    `logout_user()` by itself is not enough, because:
 
-    The fix is to (1) call logout_user(), (2) clear the server-side
-    session, then (3) explicitly delete *both* the session cookie and
-    the remember cookie on the redirect response.
+    1. Login is called with `remember=True` — Flask-Login plants a
+       persistent `remember_token` cookie that survives session loss.
+    2. Flask-Login's internal mechanism for deleting that cookie reads
+       `session['_remember'] == 'clear'` inside an after_request hook,
+       but the previous version of this route called `session.clear()`
+       right after `logout_user()`, which wiped that flag before the
+       hook could read it. Result: the cookie never got deleted, and
+       on the redirect to /login the browser silently re-authenticated
+       from the surviving remember_token.
+
+    This version:
+      - preserves the `_remember = 'clear'` flag by deleting the cookies
+        manually on the response, matching all attributes Flask used to
+        set them (path, domain, secure, samesite);
+      - nukes every known cookie this app sets (session + remember_token
+        + legacy `session` if a previous deployment used Flask's default
+        cookie name);
+      - sets no-store cache headers so the browser can't render a stale
+        authenticated page from its back-forward cache.
     """
     from flask import current_app, make_response
 
@@ -125,13 +137,34 @@ def logout():
 
     response = make_response(redirect(url_for("auth.login")))
 
-    # Session cookie name — falls back to Flask's default if config is missing.
+    # Cookie attributes must match whatever set them, or the browser
+    # ignores the deletion. Pull them from app config (same source as
+    # the login path uses).
     session_cookie = current_app.config.get("SESSION_COOKIE_NAME", "session")
-    response.delete_cookie(session_cookie, path="/")
-
-    # Flask-Login's remember cookie. Default name is "remember_token";
-    # honour an override if the app ever sets one.
     remember_cookie = current_app.config.get("REMEMBER_COOKIE_NAME", "remember_token")
+    cookie_domain = current_app.config.get("REMEMBER_COOKIE_DOMAIN") \
+                    or current_app.config.get("SESSION_COOKIE_DOMAIN")
+    session_secure = current_app.config.get("SESSION_COOKIE_SECURE", True)
+    samesite = current_app.config.get("SESSION_COOKIE_SAMESITE", "Lax")
+
+    # Primary delete — matches Secure + SameSite attrs.
+    response.delete_cookie(session_cookie, path="/", domain=cookie_domain,
+                           secure=session_secure, samesite=samesite)
+    response.delete_cookie(remember_cookie, path="/", domain=cookie_domain,
+                           secure=session_secure, samesite=samesite)
+
+    # Belt-and-braces: some proxies rewrite cookies without the Secure
+    # flag, or a previous deploy used a different cookie name. Deleting
+    # these extra variants is harmless if they don't exist.
+    response.delete_cookie(session_cookie, path="/")
     response.delete_cookie(remember_cookie, path="/")
+    response.delete_cookie("session", path="/")       # Flask default name
+    response.delete_cookie("remember_token", path="/")
+
+    # Prevent the browser from restoring the Eisenhower page from its
+    # bfcache after the redirect.
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
 
     return response
