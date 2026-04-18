@@ -1,0 +1,242 @@
+{#
+  Shared Task Detail Panel (Option B — unified detail).
+  Included by both project_tasks.html and todo.html. The same DOM serves
+  project tasks and Eisenhower matrix tasks; project-only sections opt
+  in via [data-source-show="project"] which CSS hides when the panel
+  is opened for a matrix task (data-source="matrix" on #task-panel).
+
+  JS contract:
+    - `openTaskDetail(id)` in project_tasks.js is the project entry point.
+    - `openMatrixTaskPanel(id, cardEl)` in todo.html is the matrix entry point.
+    - Both set data-source on #task-panel so the CSS knows what to hide.
+    - `autoSaveField(field, value)` reads _sheetSource and routes saves
+      to the right endpoint per source.
+#}
+<div id="task-panel-overlay" class="panel-overlay hidden" onclick="closeTaskSheet()"></div>
+<aside id="task-panel" class="task-panel hidden" data-source=""
+       role="dialog" aria-modal="true" aria-labelledby="sheet-name"
+       aria-label="Task details">
+  <div class="panel-header">
+    <input type="text" id="sheet-name" class="panel-title-input" placeholder="Task name"
+           aria-label="Task title"
+           onblur="autoSaveField('task_text', this.value)">
+    <button class="panel-close" onclick="closeTaskSheet()" aria-label="Close task details"><i data-feather="x"></i></button>
+  </div>
+
+  <!-- Quick Actions Bar -->
+  <div class="panel-quick-actions">
+    <select id="sheet-status" class="quick-select status-select"
+            aria-label="Status"
+            onchange="autoSaveField('status', this.value)">
+      <option value="open">Open</option>
+      <option value="in_progress">In Progress</option>
+      <option value="done">Done</option>
+      <option value="skipped">Skipped</option>
+      <option value="deleted">Delete</option>
+    </select>
+    <select id="sheet-priority" class="quick-select prio-select"
+            aria-label="Priority"
+            onchange="autoSaveField('priority', this.value)">
+      <option value="high">🔴 High</option>
+      <option value="medium">🟡 Medium</option>
+      <option value="low">🟢 Low</option>
+    </select>
+    <select id="sheet-key-result" class="quick-select kr-picker"
+            onchange="autoSaveField('initiative_id', this.value)"
+            aria-label="Link to initiative"
+            data-source-show="project"
+            title="Link to an Initiative">
+      <option value="">🎯 No initiative</option>
+    </select>
+    <button class="quick-action-btn" data-source-show="project"
+            onclick="addSheetTaskToGCal()" title="Add to Calendar" aria-label="Add to Calendar">
+      <i data-feather="calendar"></i>
+    </button>
+    <button class="quick-action-btn" data-source-show="project"
+            onclick="pinTask()" title="Pin" aria-label="Pin task">
+      <i data-feather="bookmark"></i>
+    </button>
+  </div>
+
+  <div class="panel-body">
+    <!-- ── Section: Schedule ── -->
+    <details class="panel-section" open>
+      <summary class="section-toggle">
+        <i data-feather="calendar" class="section-icon"></i> Schedule
+      </summary>
+      <div class="section-fields">
+        <div class="field-row" data-source-show="project">
+          <label>Start</label>
+          <div class="panel-date-wrap">
+            <svg class="panel-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <input type="date" id="sheet-start" class="panel-input panel-date"
+                   onchange="autoSaveField('start_date', this.value)">
+          </div>
+        </div>
+        <div class="field-row">
+          <label>Due</label>
+          <div class="panel-date-wrap">
+            <svg class="panel-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            <input type="date" id="sheet-due" class="panel-input panel-date"
+                   onchange="autoSaveField('due_date', this.value)">
+          </div>
+        </div>
+        <div class="field-row" data-source-show="project">
+          <label>Duration</label>
+          <div class="inline-stepper">
+            <button onclick="stepField('sheet-duration', -1)" class="step-btn">−</button>
+            <input type="number" id="sheet-duration" class="panel-input stepper-input" min="0"
+                   onchange="autoSaveField('duration_days', this.value)">
+            <button onclick="stepField('sheet-duration', 1)" class="step-btn">+</button>
+            <span class="field-unit">days</span>
+          </div>
+        </div>
+        <div class="field-row full">
+          <label>Due Time</label>
+          <div class="time-control">
+            <div class="panel-date-wrap">
+              <svg class="panel-date-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+              <input type="time" id="sheet-due-time" class="panel-input panel-date"
+                     onchange="autoSaveField('due_time', this.value)">
+              <button type="button" class="time-clear-btn" title="Clear time"
+                      onclick="event.stopPropagation(); quickSetTime('')" aria-label="Clear time">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              </button>
+            </div>
+            <div class="time-presets">
+              <button type="button" class="time-preset-chip" onclick="quickSetTime('09:00')">🌅 9 AM</button>
+              <button type="button" class="time-preset-chip" onclick="quickSetTime('12:00')">☀️ Noon</button>
+              <button type="button" class="time-preset-chip" onclick="quickSetTime('15:00')">🕒 3 PM</button>
+              <button type="button" class="time-preset-chip" onclick="quickSetTime('18:00')">🌆 6 PM</button>
+              <button type="button" class="time-preset-chip" onclick="quickSetTime('21:00')">🌙 9 PM</button>
+            </div>
+          </div>
+        </div>
+        <div class="field-row">
+          <label>Eisenhower</label>
+          <select id="sheet-quadrant" class="panel-input"
+                  onchange="autoSaveField('quadrant', this.value)">
+            <option value="">None</option>
+            <option value="do">🔴 Do (Urgent + Important)</option>
+            <option value="schedule">🔵 Schedule (Important)</option>
+            <option value="delegate">🟡 Delegate (Urgent)</option>
+            <option value="eliminate">⚪ Eliminate</option>
+          </select>
+        </div>
+        <div class="field-row" data-source-show="project">
+          <label>Reminder</label>
+          <select id="sheet-reminder" class="panel-input"
+                  onchange="autoSaveField('reminder', this.value)">
+            <option value="">None</option>
+            <option value="0">At due time</option>
+            <option value="5">5 min before</option>
+            <option value="15">15 min before</option>
+            <option value="30">30 min before</option>
+            <option value="60">1 hour before</option>
+          </select>
+        </div>
+      </div>
+    </details>
+
+    <!-- ── Section: Time Tracking (project only) ── -->
+    <details class="panel-section" data-source-show="project">
+      <summary class="section-toggle">
+        <i data-feather="clock" class="section-icon"></i> Time Tracking
+      </summary>
+      <div class="section-fields">
+        <div class="field-row">
+          <label>Planned</label>
+          <div class="inline-stepper">
+            <button onclick="stepField('sheet-planned', -0.5)" class="step-btn">−</button>
+            <input type="number" id="sheet-planned" class="panel-input stepper-input" step="0.5" min="0"
+                   onchange="autoSaveField('planned_hours', this.value)">
+            <button onclick="stepField('sheet-planned', 0.5)" class="step-btn">+</button>
+            <span class="field-unit">hrs</span>
+          </div>
+        </div>
+        <div class="field-row">
+          <label>Actual</label>
+          <div class="inline-stepper">
+            <button onclick="stepField('sheet-actual', -0.5)" class="step-btn">−</button>
+            <input type="number" id="sheet-actual" class="panel-input stepper-input" step="0.5" min="0"
+                   onchange="autoSaveField('actual_hours', this.value)">
+            <button onclick="stepField('sheet-actual', 0.5)" class="step-btn">+</button>
+            <span class="field-unit">hrs</span>
+          </div>
+        </div>
+        <div class="hours-progress" id="hours-progress"></div>
+      </div>
+    </details>
+
+    <!-- ── Section: Details ── -->
+    <details class="panel-section">
+      <summary class="section-toggle">
+        <i data-feather="file-text" class="section-icon"></i> Details
+      </summary>
+      <div class="section-fields">
+        <div class="field-row full" data-source-show="project">
+          <label>Notes</label>
+          <textarea id="sheet-notes" class="panel-input panel-textarea" rows="3"
+                    placeholder="Add notes…"
+                    onblur="autoSaveField('notes', this.value)"></textarea>
+        </div>
+        <div class="field-row">
+          <label>Delegate</label>
+          <input type="text" id="sheet-delegate" class="panel-input" placeholder="Person name"
+                 maxlength="25" onblur="autoSaveField('delegated_to', this.value)">
+        </div>
+      </div>
+    </details>
+
+    <!-- ── Section: Repeat (project only — matrix recurrence edits are out of scope for Phase 1) ── -->
+    <details class="panel-section" data-source-show="project">
+      <summary class="section-toggle">
+        <i data-feather="repeat" class="section-icon"></i> Repeat
+      </summary>
+      <div class="section-fields">
+        <div class="field-row">
+          <label>Frequency</label>
+          <select id="sheet-recurrence" class="panel-input" onchange="onRecurrenceChange()">
+            <option value="none">Never</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div id="recurrence-days" class="recur-days hidden">
+          <button class="day-chip" data-day="0">S</button>
+          <button class="day-chip" data-day="1">M</button>
+          <button class="day-chip" data-day="2">T</button>
+          <button class="day-chip" data-day="3">W</button>
+          <button class="day-chip" data-day="4">T</button>
+          <button class="day-chip" data-day="5">F</button>
+          <button class="day-chip" data-day="6">S</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- ── Section: Subtasks (project only) ── -->
+    <details class="panel-section" data-source-show="project" open>
+      <summary class="section-toggle">
+        <i data-feather="check-square" class="section-icon"></i> Subtasks
+        <span class="subtask-count" id="subtask-count"></span>
+      </summary>
+      <div class="section-fields">
+        <div id="subtask-list"></div>
+        <div class="add-subtask-row">
+          <input type="text" id="subtask-input" class="panel-input" placeholder="Add subtask…"
+                 onkeydown="if(event.key==='Enter'){addSubtask();event.preventDefault();}">
+          <button class="step-btn add-sub-btn" onclick="addSubtask()">+</button>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <!-- Bottom Actions -->
+  <div class="panel-footer">
+    <button class="btn btn-danger btn-sm" onclick="eliminateTask()">
+      <i data-feather="trash-2" style="width:14px;height:14px"></i> Delete
+    </button>
+    <span class="panel-saved-indicator" id="saved-indicator"></span>
+  </div>
+</aside>

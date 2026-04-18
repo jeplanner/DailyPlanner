@@ -2565,3 +2565,9 @@ html.dark #pt-global-saved.error  { background: #3b1111; color: #fca5a5; border-
   display: block; margin-top: 6px;
   color: var(--pt-text3); font-size: 11.5px;
 }
+
+/* ── Option B: source-aware hiding in the unified detail panel ──
+   Elements with [data-source-show="project"] render only when the
+   panel is attached to a project task. Matrix tasks use a subset of
+   the panel; project-only fields hide entirely. */
+#task-panel[data-source="matrix"] [data-source-show="project"] { display: none !important; }

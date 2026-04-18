@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='project_tasks.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
@@ -1705,50 +1706,12 @@ document.addEventListener("keydown", (e) => {
 </script>
 {% endif %}
 
-<!-- ══════════ TASK DETAILS MODAL ══════════ -->
-<div id="em-details-modal" class="em-details-modal hidden" role="dialog" aria-modal="true"
-     aria-labelledby="em-dt-title"
-     onclick="if(event.target===this)closeTaskDetails()">
-  <div class="em-details-sheet">
-    <div class="em-details-head">
-      <div class="em-details-title" id="em-dt-title">Task</div>
-      <button type="button" class="em-details-close" onclick="closeTaskDetails()" aria-label="Close">×</button>
-    </div>
-    <div class="em-details-body">
-      <div class="em-dt-row">
-        <label>Quadrant</label>
-        <div class="em-dt-btn-group" id="em-dt-quadrant-group" role="radiogroup">
-          <button type="button" data-q="do">🔴 Do</button>
-          <button type="button" data-q="schedule">🔵 Schedule</button>
-          <button type="button" data-q="delegate">🟡 Delegate</button>
-          <button type="button" data-q="eliminate">⚪ Eliminate</button>
-        </div>
-      </div>
-      <div class="em-dt-row">
-        <label>Priority</label>
-        <div class="em-dt-btn-group" id="em-dt-priority-group" role="radiogroup">
-          <button type="button" data-p="high">🔴 High</button>
-          <button type="button" data-p="medium">🟠 Medium</button>
-          <button type="button" data-p="low">🟢 Low</button>
-        </div>
-      </div>
-      <div class="em-dt-row">
-        <label>Status</label>
-        <div class="em-dt-btn-group status-group" id="em-dt-status-group" role="radiogroup">
-          <button type="button" data-s="open">☐ Open</button>
-          <button type="button" data-s="in_progress">◐ In&nbsp;Progress</button>
-          <button type="button" data-s="done">✓ Done</button>
-          <button type="button" data-s="skipped">⏭ Skipped</button>
-          <button type="button" data-s="deleted">🗑 Delete</button>
-        </div>
-      </div>
-      <div class="em-dt-row">
-        <label>Details</label>
-        <div class="em-dt-info" id="em-dt-info"></div>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- ══════════ UNIFIED TASK DETAIL PANEL (Option B) ══════════
+     Replaces the former em-details-modal. Matrix tasks now open the
+     same side panel that project tasks use, with project-only fields
+     hidden via [data-source="matrix"] rules. Entry point: the existing
+     openTaskDetails(id, ev) below delegates to openMatrixTaskPanel. -->
+{% include '_task_detail_panel.html' %}
 
 <script>
 const PLAN_DATE = "{{ plan_date.isoformat() }}";
@@ -2016,123 +1979,179 @@ function moveQuadrant(taskId, newQ) {
     });
 }
 
-// ══════════ TASK DETAILS MODAL ══════════
-// Opens a bottom-sheet / modal with the task's full context and actions.
-// Data is read from the card's data-* attributes (populated server-side
-// by _em_task_card.html). Actions route through the existing handlers
-// (moveQuadrant, cycleTaskPriority via explicit priority setter, resolveTask).
-let _emDtCurrentId = null;
+// ══════════ UNIFIED TASK DETAIL PANEL (Option B) ══════════
+// Matrix tasks now open the same side panel as project tasks (see
+// templates/_task_detail_panel.html). Project-only fields self-hide
+// via CSS [data-source-show="project"]. Saves are routed by the
+// autoSaveField shim below, which dispatches by _sheetSource.
+let _sheetTaskId = null;     // id the panel is currently editing
+let _sheetSource = null;     // "matrix" | "project"
+let _sheetCard = null;       // DOM card the panel was opened from
 
 function openTaskDetails(taskId, ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
-  if (EM_SEL?.active) return; // select-mode wins
+  if (EM_SEL?.active) return;
   const card = document.querySelector(`.em-task[data-id="${taskId}"]`);
   if (!card) return;
-  _emDtCurrentId = taskId;
 
   const ds = card.dataset;
-  const titleEl = document.getElementById("em-dt-title");
-  if (titleEl) titleEl.textContent = ds.taskText || "Task";
+  _sheetTaskId = taskId;
+  _sheetSource = ds.source === "project" ? "project" : "matrix";
+  _sheetCard = card;
 
-  // Highlight active state for each button group.
-  _emDtMarkActive("em-dt-quadrant-group", "q", ds.quadrant);
-  _emDtMarkActive("em-dt-priority-group", "p", ds.priority || "medium");
-  _emDtMarkActive("em-dt-status-group", "s", ds.status || "open");
+  const panel = document.getElementById("task-panel");
+  const overlay = document.getElementById("task-panel-overlay");
+  if (!panel) return;
 
-  // Build info list.
-  const info = document.getElementById("em-dt-info");
-  if (info) {
-    const rows = [];
-    const esc = (s) => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
-    if (ds.taskDate) {
-      rows.push(`<div><b>Due:</b><span>${esc(ds.taskDate)}${ds.taskTime ? " · " + esc(ds.taskTime) : ""}</span></div>`);
-    }
-    if (ds.recurrence) rows.push(`<div><b>Repeats:</b><span>🔁 ${esc(ds.recurrence)}</span></div>`);
-    if (ds.projectName) rows.push(`<div><b>Project:</b><span>${esc(ds.projectName)}</span></div>`);
-    if (ds.delegatedTo) rows.push(`<div><b>Delegated:</b><span>👤 ${esc(ds.delegatedTo)}</span></div>`);
-    if (ds.krTitle) {
-      const tooltip = [ds.krGoalTitle ? "Objective: " + ds.krGoalTitle : null,
-                       "Key Result: " + ds.krTitle,
-                       ds.krInitiativeTitle ? "Initiative: " + ds.krInitiativeTitle : null]
-                       .filter(Boolean).join(" · ");
-      rows.push(`<div><b>Key&nbsp;Result:</b><span title="${esc(tooltip)}">🎯 ${esc(ds.krTitle)}</span></div>`);
-    }
-    info.innerHTML = rows.join("");
+  // Mark the panel's source so CSS can hide project-only fields.
+  panel.setAttribute("data-source", _sheetSource);
+
+  // Populate fields from the card's data-* attrs. The rich project
+  // panel has more fields than matrix carries — any missing field
+  // just stays blank and is hidden by the source-show CSS.
+  _setPanelValue("sheet-name",      ds.taskText || "");
+  _setPanelValue("sheet-status",    ds.status || "open");
+  _setPanelValue("sheet-priority",  ds.priority || "medium");
+  _setPanelValue("sheet-due",       ds.taskDate || "");
+  _setPanelValue("sheet-due-time",  ds.taskTime || "");
+  _setPanelValue("sheet-delegate",  ds.delegatedTo || "");
+  _setPanelValue("sheet-quadrant",  ds.quadrant || "");
+
+  panel.classList.remove("hidden");
+  requestAnimationFrame(() => panel.classList.add("open"));
+  if (overlay) overlay.classList.remove("hidden");
+  if (window.feather) feather.replace();
+}
+
+function _setPanelValue(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.value = v;
+}
+
+// Public API retained for any code that still calls closeTaskDetails.
+function closeTaskDetails() { closeTaskSheet(); }
+
+function closeTaskSheet() {
+  const panel = document.getElementById("task-panel");
+  const overlay = document.getElementById("task-panel-overlay");
+  if (panel && document.activeElement && panel.contains(document.activeElement)) {
+    document.activeElement.blur?.();
   }
-
-  // Wire button handlers once.
-  _emDtBindGroup("em-dt-quadrant-group", "q", (val) => moveQuadrant(_emDtCurrentId, val));
-  _emDtBindGroup("em-dt-priority-group", "p", (val) => _emDtSetPriority(_emDtCurrentId, val));
-  _emDtBindGroup("em-dt-status-group",   "s", (val) => resolveTask(_emDtCurrentId, val));
-
-  document.getElementById("em-details-modal")?.classList.remove("hidden");
+  if (panel) {
+    panel.classList.remove("open");
+    setTimeout(() => panel.classList.add("hidden"), 250);
+  }
+  if (overlay) overlay.classList.add("hidden");
+  _sheetTaskId = null;
+  _sheetSource = null;
+  _sheetCard = null;
 }
 
-function closeTaskDetails() {
-  _emDtCurrentId = null;
-  document.getElementById("em-details-modal")?.classList.add("hidden");
-}
+// Save routing for the unified panel. Matrix tasks go to
+// /todo/bulk-update (extended to accept task_text, task_date,
+// task_time, quadrant, delegated_to). Status → resolveTask (which
+// already handles the recurring-tasks side effects). Priority →
+// _matrixSetPriority (preserves optimistic DOM updates).
+window.autoSaveField = async function (field, value) {
+  if (!_sheetTaskId) return;
+  const id = _sheetTaskId;
+  const source = _sheetSource;
+  const card = _sheetCard;
 
-function _emDtMarkActive(groupId, attr, value) {
-  const group = document.getElementById(groupId);
-  if (!group) return;
-  group.querySelectorAll("button").forEach(b => {
-    b.classList.toggle("active", b.getAttribute("data-" + attr) === value);
-  });
-}
+  if (window.ptSavePing) ptSavePing("saving");
 
-function _emDtBindGroup(groupId, attr, onPick) {
-  const group = document.getElementById(groupId);
-  if (!group || group.dataset.bound) return;
-  group.dataset.bound = "1";
-  group.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-" + attr + "]");
-    if (!btn) return;
-    const val = btn.getAttribute("data-" + attr);
-    _emDtMarkActive(groupId, attr, val);
-    onPick(val);
-  });
-}
+  try {
+    if (source === "matrix") {
+      if (field === "status") {
+        resolveTask(id, value);
+        // Keep the card's data-status in sync for the list render.
+        if (card) card.dataset.status = value;
+      } else if (field === "priority") {
+        _matrixSetPriority(id, value);
+      } else if (field === "quadrant") {
+        if (value) moveQuadrant(id, value);
+      } else {
+        // task_text, due_date→task_date, due_time→task_time, delegated_to
+        const patch = {};
+        if (field === "task_text")   patch.task_text = value;
+        if (field === "due_date")    patch.task_date = value || null;
+        if (field === "due_time")    patch.task_time = value || null;
+        if (field === "delegated_to") patch.delegated_to = value || null;
+        if (Object.keys(patch).length) {
+          const r = await fetch("/todo/bulk-update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+            body: JSON.stringify({ ids: [id], patch }),
+          });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          // Mirror on the card so it re-renders with fresh data
+          if (card) {
+            if ("task_text" in patch) card.dataset.taskText = patch.task_text;
+            if ("task_date" in patch) card.dataset.taskDate = patch.task_date || "";
+            if ("task_time" in patch) card.dataset.taskTime = patch.task_time || "";
+            if ("delegated_to" in patch) card.dataset.delegatedTo = patch.delegated_to || "";
+            const titleEl = card.querySelector(".em-task-text");
+            if (titleEl && "task_text" in patch) titleEl.textContent = patch.task_text;
+          }
+        }
+      }
+    } else {
+      // project source — caller's autoSaveField (defined in
+      // project_tasks.js) wins if present. If not loaded (matrix
+      // page), swallow the call since it can't be saved here.
+      console.warn("autoSaveField: project source has no handler on this page");
+    }
+    if (window.ptSavePing) ptSavePing("saved");
+  } catch (e) {
+    console.error("autoSaveField error:", e);
+    if (window.ptSavePing) ptSavePing("error");
+  }
+};
 
-// Set an explicit priority (details modal) — distinct from cycleTaskPriority
-// which was tied to the inline pill click. Uses the same endpoints.
-function _emDtSetPriority(taskId, newPriority) {
+// Matrix-only priority setter (preserves optimistic DOM updates).
+function _matrixSetPriority(taskId, newPriority) {
   const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
   if (!task) return;
-  const kind = _taskKind(taskId);
-  if (kind === "event") return;
+  if (_taskKind(taskId) === "event") return;
   const prev = task.dataset.priority || "medium";
   if (prev === newPriority) return;
   _applyPriorityToRow(task, newPriority);
   const realId = _realTaskId(taskId);
-  const req = (kind === "project")
-    ? fetch(`/projects/tasks/${realId}/update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
-        body: JSON.stringify({ priority: newPriority }),
-      })
-    : fetch("/todo/bulk-update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
-        body: JSON.stringify({ ids: [taskId], patch: { priority: newPriority } }),
-      });
-  req.then(async r => {
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok || body.error || (body.status && body.status !== "ok")) {
-        throw new Error(body.error || `HTTP ${r.status}`);
-      }
-    })
-    .catch(err => {
-      console.error("_emDtSetPriority:", err);
-      _applyPriorityToRow(task, prev);
-      showToast("Failed to update priority", "error");
-    });
+  const url = _taskKind(taskId) === "project"
+    ? `/projects/tasks/${realId}/update`
+    : "/todo/bulk-update";
+  const body = _taskKind(taskId) === "project"
+    ? { priority: newPriority }
+    : { ids: [taskId], patch: { priority: newPriority } };
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+    body: JSON.stringify(body),
+  }).catch((err) => {
+    console.error("_matrixSetPriority:", err);
+    _applyPriorityToRow(task, prev);
+    showToast("Failed to update priority", "error");
+  });
 }
 
-// Escape closes the details modal.
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && _emDtCurrentId) closeTaskDetails();
-});
+// Stubs for project-only handlers — the matrix doesn't use them, but
+// inline onchange handlers in the shared partial reference them.
+// Defining as no-ops prevents ReferenceError. Real implementations
+// live in project_tasks.js and shadow these on the project page.
+window.stepField = window.stepField || function () {};
+window.quickSetTime = window.quickSetTime || function () {};
+window.onRecurrenceChange = window.onRecurrenceChange || function () {};
+window.addSubtask = window.addSubtask || function () {};
+window.pinTask = window.pinTask || function () { showToast("Pin is only available on project tasks", "info"); };
+window.addSheetTaskToGCal = window.addSheetTaskToGCal || function () { showToast("Calendar sync is only available on project tasks", "info"); };
+window.eliminateTask = window.eliminateTask || function () {
+  if (!_sheetTaskId) return;
+  resolveTask(_sheetTaskId, "deleted");
+  closeTaskSheet();
+};
+window._csrf = window._csrf || function () {
+  return document.querySelector('meta[name="csrf-token"]')?.content || "";
+};
 
 function onQuadrantChange() {
   const q = document.getElementById("quick-quad").value;

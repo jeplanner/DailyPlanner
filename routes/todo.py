@@ -790,6 +790,28 @@ def todo_bulk_update():
             return jsonify({"error": "invalid priority"}), 400
         db_patch["priority"] = priority
 
+    # Extended fields for the unified detail panel (Option B). Matrix rows
+    # get a subset of the project-task schema so a single panel UI can
+    # edit both sources with one code path on the client.
+    if "task_text" in patch:
+        text = (patch.get("task_text") or "").strip()
+        if text:
+            db_patch["task_text"] = text
+    if "task_date" in patch:
+        # YYYY-MM-DD or null to clear
+        v = patch["task_date"]
+        db_patch["task_date"] = (v or None)
+    if "task_time" in patch:
+        v = patch["task_time"]
+        db_patch["task_time"] = (v or None)
+    if "quadrant" in patch:
+        q = (patch.get("quadrant") or "").strip().lower()
+        if q and q not in ("do", "schedule", "delegate", "eliminate"):
+            return jsonify({"error": "invalid quadrant"}), 400
+        db_patch["quadrant"] = q or None
+    if "delegated_to" in patch:
+        db_patch["delegated_to"] = (patch.get("delegated_to") or None)
+
     if not db_patch:
         return jsonify({"error": "no valid fields in patch"}), 400
 

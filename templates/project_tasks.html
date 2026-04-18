@@ -420,9 +420,13 @@
 
 </div>
 
-<!-- ═══════════ TASK DETAIL SIDE PANEL (Asana/Linear style) ═══════════ -->
-<div id="task-panel-overlay" class="panel-overlay hidden" onclick="closeTaskSheet()"></div>
-<aside id="task-panel" class="task-panel hidden"
+{# Shared task-detail panel — same DOM used by the Eisenhower matrix #}
+{% include '_task_detail_panel.html' %}
+{# ═══════════ legacy inline panel moved into _task_detail_panel.html ═══════════ #}
+{% if false %}
+<!-- START legacy inline panel (kept in-file for safety; rendered only if this block is enabled) -->
+<div id="task-panel-overlay-legacy" class="panel-overlay hidden" onclick="closeTaskSheet()"></div>
+<aside id="task-panel-legacy" class="task-panel hidden"
        role="dialog" aria-modal="true" aria-labelledby="sheet-name"
        aria-label="Task details">
   <div class="panel-header">
@@ -643,6 +647,8 @@
     <span class="panel-saved-indicator" id="saved-indicator"></span>
   </div>
 </aside>
+<!-- END legacy inline panel -->
+{% endif %}
 
 <!-- ═══════════ CSV IMPORT MODAL ═══════════ -->
 <div id="import-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeImportModal()">
