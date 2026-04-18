@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Reports — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pt-shared.js') }}" defer></script>
+<style>
+/* ══════════════════════════════════════════════════════════════════
+   REPORTS — four lenses on one page. Same visual language as the
+   morning dashboard / vault: one red for urgency, everything else
+   neutral. Mobile-first; tabs stack on narrow.
+   ══════════════════════════════════════════════════════════════════ */
+:root{
+  --r-bg: var(--color-bg, #f6f7fb);
+  --r-surface: var(--color-surface, #fff);
+  --r-surface-alt: var(--color-surface-secondary, #fafbfc);
+  --r-text: var(--color-text, #0f172a);
+  --r-text2: var(--color-text-secondary, #475569);
+  --r-text3: var(--color-text-muted, #94a3b8);
+  --r-border: var(--color-border, #e2e8f0);
+  --r-primary: var(--color-primary, #2563eb);
+  --r-primary-light: var(--color-primary-light, #eff6ff);
+  --r-success: #059669;
+  --r-warning: #d97706;
+  --r-danger: #dc2626;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--r-bg); color: var(--r-text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.hidden { display: none !important; }
+
+.r-app { max-width: 1100px; margin: 0 auto; padding: 16px 20px 80px; }
+
+/* ── Header ── */
+.r-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.r-head h1 {
+  font-size: 24px; font-weight: 800;
+  display: inline-flex; align-items: center; gap: 10px;
+}
+.r-head h1 svg { width: 22px; height: 22px; color: var(--r-primary); }
+
+.r-range-group {
+  display: inline-flex; gap: 0;
+  border: 1px solid var(--r-border); border-radius: 10px;
+  overflow: hidden; background: var(--r-surface);
+}
+.r-range-btn {
+  padding: 8px 14px; border: none; background: transparent;
+  color: var(--r-text2);
+  font-size: 12.5px; font-weight: 600; font-family: inherit;
+  cursor: pointer;
+  transition: all .12s;
+}
+.r-range-btn + .r-range-btn { border-left: 1px solid var(--r-border); }
+.r-range-btn:hover { color: var(--r-primary); background: var(--r-primary-light); }
+.r-range-btn.active { background: var(--r-primary); color: #fff; }
+
+/* ── Headline narrative ── */
+.r-headline {
+  font-size: 14.5px; color: var(--r-text2);
+  margin-bottom: 18px; line-height: 1.55;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, var(--r-primary-light) 0%, transparent 100%);
+  border: 1px solid var(--r-border);
+  border-radius: 12px;
+}
+.r-headline b { color: var(--r-text); font-weight: 700; }
+
+/* ── Tabs ── */
+.r-tabs {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--r-border);
+}
+.r-tab {
+  padding: 10px 16px; border: none;
+  background: transparent;
+  font-size: 13.5px; font-weight: 600; color: var(--r-text2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color .12s, border-color .12s;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: inherit;
+}
+.r-tab svg { width: 14px; height: 14px; }
+.r-tab:hover { color: var(--r-primary); }
+.r-tab.active { color: var(--r-primary); border-bottom-color: var(--r-primary); }
+
+.r-panel { display: none; animation: rFade .18s ease; }
+.r-panel.active { display: block; }
+@keyframes rFade { from { opacity: 0; transform: translateY(4px);} to { opacity:1; transform:translateY(0);} }
+
+/* ── KPI row ── */
+.r-kpi {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.r-kpi-card {
+  background: var(--r-surface);
+  border: 1px solid var(--r-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.r-kpi-label { font-size: 10.5px; font-weight: 700; color: var(--r-text3); text-transform: uppercase; letter-spacing: .4px; }
+.r-kpi-value { font-size: 22px; font-weight: 800; color: var(--r-text); font-variant-numeric: tabular-nums; }
+.r-kpi-sub { font-size: 11.5px; color: var(--r-text3); }
+.r-kpi-value.pos { color: var(--r-success); }
+.r-kpi-value.neg { color: var(--r-danger); }
+
+/* ── Cards ── */
+.r-card {
+  background: var(--r-surface);
+  border: 1px solid var(--r-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+}
+.r-card h3 {
+  font-size: 14px; font-weight: 700;
+  margin-bottom: 12px;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.r-card h3 svg { width: 15px; height: 15px; color: var(--r-primary); }
+
+.r-empty {
+  text-align: center; padding: 40px 20px;
+  color: var(--r-text3); font-size: 13.5px; line-height: 1.6;
+}
+
+/* Bar histogram (daily done) */
+.r-hist {
+  display: flex; align-items: flex-end; gap: 3px;
+  height: 80px;
+  padding: 4px 2px 6px;
+  border-bottom: 1px solid var(--r-border);
+}
+.r-hist-bar {
+  flex: 1;
+  min-width: 4px;
+  background: var(--r-primary-light);
+  border-radius: 2px 2px 0 0;
+  position: relative;
+}
+.r-hist-bar.done { background: var(--r-primary); }
+.r-hist-bar.zero { background: var(--r-border); height: 2px !important; }
+.r-hist-bar:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: 100%; left: 50%; transform: translate(-50%, -4px);
+  background: #0f172a; color: #fff;
+  padding: 3px 7px; border-radius: 5px;
+  font-size: 10.5px; white-space: nowrap;
+  pointer-events: none; z-index: 10;
+}
+.r-hist-labels {
+  display: flex; gap: 3px;
+  font-size: 9.5px; color: var(--r-text3);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.r-hist-labels span { flex: 1; text-align: center; }
+
+/* Quadrant mix */
+.r-quad-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+  max-width: 320px;
+  aspect-ratio: 2/1;
+}
+.r-quad-cell {
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--r-border);
+  background: var(--r-surface-alt);
+}
+.r-quad-cell .r-quad-label {
+  font-size: 10.5px; font-weight: 700; color: var(--r-text3);
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.r-quad-cell .r-quad-count {
+  font-size: 20px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.r-quad-cell.do     .r-quad-count { color: var(--r-danger); }
+.r-quad-cell.schedule .r-quad-count { color: var(--r-primary); }
+.r-quad-cell.delegate .r-quad-count { color: var(--r-warning); }
+.r-quad-cell.eliminate .r-quad-count { color: var(--r-text3); }
+
+/* Leaderboard row */
+.r-lead-row {
+  display: grid; grid-template-columns: 1fr auto;
+  align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--r-border);
+}
+.r-lead-row:last-child { border-bottom: none; }
+.r-lead-name { font-size: 13px; color: var(--r-text); font-weight: 500; }
+.r-lead-count {
+  font-size: 12px; font-weight: 700;
+  color: var(--r-primary);
+  padding: 3px 8px; border-radius: 999px;
+  background: var(--r-primary-light);
+}
+
+/* Stuck list */
+.r-stuck {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.r-stuck-row {
+  display: grid; grid-template-columns: 1fr auto;
+  align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--r-danger);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--r-danger) 5%, transparent);
+}
+.r-stuck-title { font-size: 13px; font-weight: 500; color: var(--r-text); }
+.r-stuck-meta { font-size: 11px; color: var(--r-text3); font-variant-numeric: tabular-nums; }
+
+/* Habit rows */
+.r-habit-row {
+  display: grid; grid-template-columns: 1.2fr 70px 70px 80px;
+  gap: 10px; align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--r-border);
+}
+.r-habit-row:last-child { border-bottom: none; }
+.r-habit-name { font-size: 13.5px; font-weight: 600; color: var(--r-text); }
+.r-habit-name .unit { font-size: 11px; color: var(--r-text3); font-weight: 500; margin-left: 4px; }
+.r-habit-kpi {
+  font-size: 11px; font-weight: 700;
+  color: var(--r-text2);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.r-habit-kpi .num { font-size: 15px; color: var(--r-text); display: block; line-height: 1.1; }
+.r-habit-kpi .unit { font-size: 10px; color: var(--r-text3); display: block; margin-top: 1px; }
+.r-habit-dots {
+  display: flex; gap: 2px; justify-content: flex-end;
+}
+.r-habit-dot {
+  width: 10px; height: 10px; border-radius: 2px;
+  background: var(--r-border);
+}
+.r-habit-dot.met { background: var(--r-success); }
+
+/* Bills / expirations rows */
+.r-bill-row {
+  display: grid; grid-template-columns: 1fr auto auto;
+  gap: 10px; align-items: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--r-surface-alt);
+  margin-bottom: 6px;
+}
+.r-bill-title { font-size: 13.5px; font-weight: 600; color: var(--r-text); }
+.r-bill-sub { font-size: 11px; color: var(--r-text3); }
+.r-bill-amt { font-size: 14px; font-weight: 700; color: var(--r-text); font-variant-numeric: tabular-nums; }
+.r-bill-days {
+  font-size: 11px; font-weight: 700;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--r-primary-light); color: var(--r-primary);
+  white-space: nowrap;
+}
+.r-bill-days.soon { background: color-mix(in srgb, var(--r-warning) 14%, transparent); color: var(--r-warning); }
+.r-bill-days.overdue { background: color-mix(in srgb, var(--r-danger) 14%, transparent); color: var(--r-danger); }
+
+/* Allocation row (reused from vault) */
+.r-alloc-row {
+  display: grid; grid-template-columns: 150px 1fr auto;
+  gap: 10px; align-items: center;
+  padding: 6px 0;
+}
+.r-alloc-label { font-size: 12px; font-weight: 600; color: var(--r-text2); }
+.r-alloc-track { height: 8px; border-radius: 4px; background: var(--r-border); overflow: hidden; }
+.r-alloc-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--r-primary) 0%, #4f46e5 100%);
+}
+.r-alloc-value { font-size: 11.5px; font-weight: 600; color: var(--r-text2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Warning banner */
+.r-warn {
+  padding: 10px 14px; border-radius: 8px;
+  background: color-mix(in srgb, var(--r-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--r-warning) 30%, transparent);
+  color: var(--r-text2);
+  font-size: 12.5px; line-height: 1.5;
+  margin-bottom: 10px;
+}
+.r-warn b { color: var(--r-warning); }
+
+html.dark .r-warn { background: #451a03; color: #fcd34d; border-color: #92400e; }
+html.dark .r-bill-days.overdue { background: #3b1111; color: #fca5a5; }
+
+/* Vault-locked banner */
+.r-vault-cta {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 20px;
+  background: var(--r-surface);
+  border: 1px dashed var(--r-border);
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+.r-vault-cta svg { width: 28px; height: 28px; color: var(--r-primary); flex-shrink: 0; }
+.r-vault-cta .msg { flex: 1; }
+.r-vault-cta .msg b { display: block; color: var(--r-text); font-size: 14.5px; font-weight: 700; margin-bottom: 2px; }
+.r-vault-cta .msg span { font-size: 12px; color: var(--r-text2); }
+.r-vault-cta a {
+  padding: 8px 14px; background: var(--r-primary); color: #fff;
+  border-radius: 8px; font-size: 13px; font-weight: 700;
+  text-decoration: none;
+}
+.r-vault-cta a:hover { filter: brightness(1.08); }
+
+@media (max-width: 640px) {
+  .r-habit-row { grid-template-columns: 1fr auto; gap: 6px; }
+  .r-habit-row .r-habit-dots { grid-column: 1/-1; justify-content: flex-start; padding-top: 4px; }
+  .r-range-group { width: 100%; }
+  .r-range-btn { flex: 1; padding: 10px 6px; font-size: 11.5px; }
+  .r-alloc-row { grid-template-columns: 100px 1fr auto; }
+  .r-tabs { overflow-x: auto; flex-wrap: nowrap; }
+  .r-tab { white-space: nowrap; }
+}
+</style>
+</head>
+<body>
+{% include "_top_nav.html" %}
+
+<div class="r-app">
+  <header class="r-head">
+    <h1>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/></svg>
+      Reports
+    </h1>
+    <div class="r-range-group" role="radiogroup" aria-label="Date range">
+      <button class="r-range-btn" data-range="week">Week</button>
+      <button class="r-range-btn" data-range="month">Month</button>
+      <button class="r-range-btn" data-range="quarter">Quarter</button>
+      <button class="r-range-btn" data-range="year">Year</button>
+    </div>
+  </header>
+
+  <p class="r-headline" id="r-headline">Loading…</p>
+
+  <nav class="r-tabs" role="tablist">
+    <button class="r-tab active" role="tab" data-tab="overview"><i data-feather="layout"></i> Overview</button>
+    <button class="r-tab" role="tab" data-tab="productivity"><i data-feather="check-square"></i> Productivity</button>
+    <button class="r-tab" role="tab" data-tab="habits"><i data-feather="refresh-cw"></i> Habits</button>
+    <button class="r-tab" role="tab" data-tab="financial"><i data-feather="dollar-sign"></i> Financial</button>
+  </nav>
+
+  <section class="r-panel active" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+    <div id="overview-body"></div>
+  </section>
+  <section class="r-panel" id="panel-productivity" role="tabpanel">
+    <div id="productivity-body"></div>
+  </section>
+  <section class="r-panel" id="panel-habits" role="tabpanel">
+    <div id="habits-body"></div>
+  </section>
+  <section class="r-panel" id="panel-financial" role="tabpanel">
+    <div id="financial-body"></div>
+  </section>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   REPORTS — client-side rendering. Four tabs, one fetch per tab on
+   first activation. Range change invalidates cache and re-fetches.
+   ══════════════════════════════════════════════════════════════════ */
+const state = {
+  range: "week",
+  currentTab: "overview",
+  data: {},   // keyed by tab name
+};
+
+const esc = s => { const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; };
+
+const QUAD_LABELS = { do: "Do", schedule: "Schedule", delegate: "Delegate", eliminate: "Eliminate" };
+
+function fmtMoney(v) {
+  if (v == null || isNaN(v)) return "—";
+  return "₹" + Math.round(Number(v)).toLocaleString("en-IN");
+}
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return "—";
+  const s = n > 0 ? "+" : "";
+  return `${s}${Number(n).toFixed(1)}%`;
+}
+function fmtDay(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch { return iso; }
+}
+
+/* ── Tab routing ─────────────────────────────────────── */
+document.querySelectorAll(".r-tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".r-tab").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".r-panel").forEach(p => p.classList.remove("active"));
+    const tab = btn.dataset.tab;
+    document.getElementById("panel-" + tab).classList.add("active");
+    state.currentTab = tab;
+    loadTab(tab);
+  });
+});
+
+document.querySelectorAll(".r-range-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    state.range = btn.dataset.range;
+    state.data = {};
+    document.querySelectorAll(".r-range-btn").forEach(b => b.classList.toggle("active", b === btn));
+    loadHeadline();
+    loadTab(state.currentTab);
+  });
+});
+
+function setActiveRange(r) {
+  state.range = r;
+  document.querySelectorAll(".r-range-btn").forEach(b => b.classList.toggle("active", b.dataset.range === r));
+}
+
+async function apiFetch(path) {
+  const q = new URLSearchParams({ range: state.range }).toString();
+  const r = await fetch(`${path}?${q}`);
+  if (r.status === 403) {
+    const body = await r.json().catch(() => ({}));
+    if (body.code === "vault_locked" || body.code === "vault_not_set") {
+      return { _vaultLocked: true };
+    }
+  }
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function loadHeadline() {
+  const d = await apiFetch("/api/reports/overview");
+  if (!d) return;
+  document.getElementById("r-headline").textContent = d.headline || "";
+  state.data.overview = d;
+  if (state.currentTab === "overview") renderOverview(d);
+  if (state.currentTab === "productivity" && d.productivity) renderProductivity(d.productivity);
+  if (state.currentTab === "habits" && d.habits) renderHabits(d.habits);
+}
+
+async function loadTab(tab) {
+  const host = document.getElementById(tab + "-body");
+  if (state.data[tab]) {
+    renderTab(tab, state.data[tab]);
+    return;
+  }
+  host.innerHTML = `<div class="r-empty">Loading…</div>`;
+  let data;
+  if (tab === "overview") data = await apiFetch("/api/reports/overview");
+  else if (tab === "productivity") data = await apiFetch("/api/reports/productivity");
+  else if (tab === "habits") data = await apiFetch("/api/reports/habits");
+  else if (tab === "financial") data = await apiFetch("/api/reports/financial");
+  if (!data) {
+    host.innerHTML = `<div class="r-empty">Could not load this report. Try again.</div>`;
+    return;
+  }
+  state.data[tab] = data;
+  renderTab(tab, data);
+}
+
+function renderTab(tab, d) {
+  if (tab === "overview") renderOverview(d);
+  else if (tab === "productivity") renderProductivity(d);
+  else if (tab === "habits") renderHabits(d);
+  else if (tab === "financial") renderFinancial(d);
+  if (window.feather) feather.replace();
+}
+
+/* ══════════════════════════════════════════════════════
+   OVERVIEW — compact roll-up from all three reports
+   ══════════════════════════════════════════════════════ */
+function renderOverview(d) {
+  const host = document.getElementById("overview-body");
+  const prod = d.productivity || { totals: {} };
+  const habits = d.habits || { habits: [] };
+  const fin = d.financial;
+
+  const prodTotals = prod.totals || {};
+
+  // Habit streak leader
+  let topHabit = null;
+  if (habits.habits?.length) {
+    topHabit = habits.habits.reduce((a, b) => (b.current_streak > (a?.current_streak || 0) ? b : a), null);
+  }
+
+  const finHtml = fin
+    ? `
+      <div class="r-card">
+        <h3><i data-feather="dollar-sign"></i> Financial snapshot</h3>
+        <div class="r-kpi">
+          <div class="r-kpi-card">
+            <span class="r-kpi-label">Net worth (tracked)</span>
+            <span class="r-kpi-value">${fmtMoney((fin.portfolio?.market_value || 0) + (fin.portfolio?.esop_vested || 0))}</span>
+            <span class="r-kpi-sub">${(fin.portfolio?.allocation || []).length} asset classes</span>
+          </div>
+          <div class="r-kpi-card">
+            <span class="r-kpi-label">Unrealized gain</span>
+            <span class="r-kpi-value ${fin.portfolio?.gain > 0 ? "pos" : fin.portfolio?.gain < 0 ? "neg" : ""}">${
+              fin.portfolio?.gain != null ? (fin.portfolio.gain >= 0 ? "+" : "−") + fmtMoney(Math.abs(fin.portfolio.gain)) : "—"
+            }</span>
+            <span class="r-kpi-sub">${fin.portfolio?.gain_pct != null ? fmtPct(fin.portfolio.gain_pct) : "set current prices"}</span>
+          </div>
+          <div class="r-kpi-card">
+            <span class="r-kpi-label">Monthly bills</span>
+            <span class="r-kpi-value">${fmtMoney(fin.bills?.monthly_equivalent)}</span>
+            <span class="r-kpi-sub">${(fin.bills?.upcoming_14d || []).length} due in 14d</span>
+          </div>
+        </div>
+      </div>`
+    : renderVaultCta();
+
+  host.innerHTML = `
+    <div class="r-kpi">
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Tasks done</span>
+        <span class="r-kpi-value">${prodTotals.done || 0}</span>
+        <span class="r-kpi-sub">${prodTotals.total || 0} planned · ${prodTotals.rate || 0}% rate</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Habit streak</span>
+        <span class="r-kpi-value">${topHabit?.current_streak || 0}d</span>
+        <span class="r-kpi-sub">${topHabit?.name ? "on " + esc(topHabit.name.toLowerCase()) : "no active streak yet"}</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Active habits</span>
+        <span class="r-kpi-value">${habits.habits?.length || 0}</span>
+        <span class="r-kpi-sub">${habits.habits?.filter(h => h.adherence >= 70).length || 0} above 70%</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Stuck (high priority)</span>
+        <span class="r-kpi-value ${(prod.stuck_high_priority || []).length ? "neg" : ""}">${(prod.stuck_high_priority || []).length}</span>
+        <span class="r-kpi-sub">carried over from past days</span>
+      </div>
+    </div>
+
+    ${finHtml}
+
+    ${prod.stuck_high_priority?.length ? `
+    <div class="r-card">
+      <h3><i data-feather="alert-triangle"></i> Stuck high-priority tasks</h3>
+      <div class="r-stuck">
+        ${prod.stuck_high_priority.slice(0, 6).map(s => `
+          <div class="r-stuck-row">
+            <span class="r-stuck-title">${esc(s.title)}</span>
+            <span class="r-stuck-meta">${s.days_old}d old</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>` : ""}
+  `;
+}
+
+function renderVaultCta() {
+  return `
+  <div class="r-vault-cta">
+    <i data-feather="lock"></i>
+    <div class="msg">
+      <b>Vault is locked or not set up</b>
+      <span>Financial report needs the vault unlocked. Open the vault, set a password, and come back — this page will show net worth, bills, and upcoming expirations.</span>
+    </div>
+    <a href="/refcards">Open vault</a>
+  </div>`;
+}
+
+/* ══════════════════════════════════════════════════════
+   PRODUCTIVITY
+   ══════════════════════════════════════════════════════ */
+function renderProductivity(d) {
+  const host = document.getElementById("productivity-body");
+  const t = d.totals || {};
+
+  // Daily histogram
+  const daily = d.daily || [];
+  const maxBar = Math.max(1, ...daily.map(x => x.total || 0));
+  const histBars = daily.map(x => {
+    const h = (x.total > 0) ? Math.max(4, (x.total / maxBar) * 72) : 0;
+    const doneH = (x.total > 0) ? (x.done / x.total) * h : 0;
+    return `
+      <div class="r-hist-bar ${x.total === 0 ? "zero" : ""}" style="height:${h}px;" data-tip="${esc(fmtDay(x.date))}: ${x.done}/${x.total}">
+        ${doneH > 0 ? `<div class="r-hist-bar done" style="position:absolute;bottom:0;left:0;right:0;height:${doneH}px;border-radius:2px 2px 0 0;"></div>` : ""}
+      </div>
+    `;
+  }).join("");
+
+  // Quadrant mix
+  const q = d.quadrants || {};
+  const quadHtml = ["do", "schedule", "delegate", "eliminate"].map(k => `
+    <div class="r-quad-cell ${k}">
+      <span class="r-quad-label">${QUAD_LABELS[k]}</span>
+      <span class="r-quad-count">${q[k] || 0}</span>
+    </div>
+  `).join("");
+
+  // Top projects leaderboard
+  const leadHtml = (d.top_projects || []).length
+    ? d.top_projects.map(p => `<div class="r-lead-row"><span class="r-lead-name">${esc(p.name)}</span><span class="r-lead-count">${p.count}</span></div>`).join("")
+    : `<div class="r-empty" style="padding:20px 0;">Tag tasks to projects to see a leaderboard here.</div>`;
+
+  host.innerHTML = `
+    <div class="r-kpi">
+      <div class="r-kpi-card"><span class="r-kpi-label">Completed</span><span class="r-kpi-value pos">${t.done || 0}</span><span class="r-kpi-sub">of ${t.total || 0}</span></div>
+      <div class="r-kpi-card"><span class="r-kpi-label">Completion rate</span><span class="r-kpi-value">${t.rate || 0}%</span><span class="r-kpi-sub">across the range</span></div>
+      <div class="r-kpi-card"><span class="r-kpi-label">Still open</span><span class="r-kpi-value">${t.open || 0}</span><span class="r-kpi-sub">needs attention</span></div>
+      <div class="r-kpi-card"><span class="r-kpi-label">Skipped</span><span class="r-kpi-value">${t.skipped || 0}</span><span class="r-kpi-sub">triage these</span></div>
+    </div>
+
+    ${daily.length ? `
+    <div class="r-card">
+      <h3><i data-feather="bar-chart-2"></i> Daily throughput</h3>
+      <div class="r-hist">${histBars}</div>
+      <div class="r-hist-labels">${daily.map(x => `<span>${esc(fmtDay(x.date))}</span>`).join("")}</div>
+    </div>` : ""}
+
+    <div class="r-card">
+      <h3><i data-feather="grid"></i> Eisenhower mix (completed)</h3>
+      <div class="r-quad-grid">${quadHtml}</div>
+      <div style="margin-top:10px;font-size:11.5px;color:var(--r-text3);line-height:1.5;">
+        Where your completed energy went. Ideally, <b>Schedule</b> dominates — that's the "important, not urgent" quadrant.
+        Heavy <b>Do</b> suggests firefighting; heavy <b>Delegate</b> or <b>Eliminate</b> means good triage upstream.
+      </div>
+    </div>
+
+    <div class="r-card">
+      <h3><i data-feather="folder"></i> Project leaderboard</h3>
+      ${leadHtml}
+    </div>
+
+    ${d.stuck_high_priority?.length ? `
+    <div class="r-card">
+      <h3><i data-feather="alert-triangle"></i> Stuck high-priority tasks</h3>
+      <div class="r-stuck">
+        ${d.stuck_high_priority.map(s => `
+          <div class="r-stuck-row">
+            <span class="r-stuck-title">${esc(s.title)}</span>
+            <span class="r-stuck-meta">${s.days_old}d old · ${esc(s.plan_date || "")}</span>
+          </div>
+        `).join("")}
+      </div>
+    </div>` : ""}
+  `;
+}
+
+/* ══════════════════════════════════════════════════════
+   HABITS
+   ══════════════════════════════════════════════════════ */
+function renderHabits(d) {
+  const host = document.getElementById("habits-body");
+  const habits = d.habits || [];
+  if (!habits.length) {
+    host.innerHTML = `<div class="r-empty">No habits tracked yet. <a href="/health" style="color:var(--r-primary)">Add one →</a></div>`;
+    return;
+  }
+
+  const rows = habits.map(h => {
+    const dots = (h.daily || []).slice(-Math.min(14, h.daily.length)).map(x =>
+      `<span class="r-habit-dot ${x.met ? "met" : ""}" title="${esc(fmtDay(x.date))}: ${x.met ? "✓ met" : "missed"}"></span>`
+    ).join("");
+    return `
+      <div class="r-habit-row">
+        <div class="r-habit-name">${esc(h.name || "")}${h.unit ? `<span class="unit">${esc(h.unit)}</span>` : ""}</div>
+        <div class="r-habit-kpi"><span class="num">${h.adherence}%</span><span class="unit">adhere</span></div>
+        <div class="r-habit-kpi"><span class="num">${h.current_streak}</span><span class="unit">streak</span></div>
+        <div class="r-habit-dots">${dots}</div>
+      </div>`;
+  }).join("");
+
+  const best = [...habits].sort((a, b) => b.adherence - a.adherence)[0];
+  const worst = [...habits].sort((a, b) => a.adherence - b.adherence)[0];
+
+  host.innerHTML = `
+    <div class="r-kpi">
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Tracked habits</span>
+        <span class="r-kpi-value">${habits.length}</span>
+        <span class="r-kpi-sub">over ${d.range.days} days</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Strongest</span>
+        <span class="r-kpi-value pos">${best?.adherence || 0}%</span>
+        <span class="r-kpi-sub">${esc(best?.name || "")}</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Needs love</span>
+        <span class="r-kpi-value ${worst && worst.adherence < 50 ? "neg" : ""}">${worst?.adherence || 0}%</span>
+        <span class="r-kpi-sub">${esc(worst?.name || "")}</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Active streaks</span>
+        <span class="r-kpi-value">${habits.filter(h => h.current_streak > 0).length}</span>
+        <span class="r-kpi-sub">with momentum</span>
+      </div>
+    </div>
+
+    <div class="r-card">
+      <h3><i data-feather="refresh-cw"></i> Per-habit detail</h3>
+      <div>${rows}</div>
+      <div style="margin-top:10px;font-size:11.5px;color:var(--r-text3);line-height:1.5;">
+        Dots show the last 14 days: <b>green</b> = goal met, <b>gray</b> = missed.
+        Adherence % is goal-met days over the full range.
+      </div>
+    </div>
+  `;
+}
+
+/* ══════════════════════════════════════════════════════
+   FINANCIAL
+   ══════════════════════════════════════════════════════ */
+function renderFinancial(d) {
+  const host = document.getElementById("financial-body");
+  if (d._vaultLocked) {
+    host.innerHTML = renderVaultCta();
+    if (window.feather) feather.replace();
+    return;
+  }
+  const p = d.portfolio || {};
+  const bills = d.bills || {};
+  const expiring = d.expiring || [];
+
+  const allocationHtml = (p.allocation || []).map(a => `
+    <div class="r-alloc-row">
+      <span class="r-alloc-label">${esc(a.class)}</span>
+      <div class="r-alloc-track"><div class="r-alloc-fill" style="width:${a.pct}%;"></div></div>
+      <span class="r-alloc-value">${fmtMoney(a.value)} · ${a.pct}%</span>
+    </div>
+  `).join("") || `<div class="r-empty" style="padding:20px 0;">No tracked investments yet. Add holdings in the vault.</div>`;
+
+  const billsHtml = (bills.upcoming_14d || []).length
+    ? bills.upcoming_14d.map(b => `
+        <div class="r-bill-row">
+          <div>
+            <div class="r-bill-title">${esc(b.provider || "Bill")}</div>
+            <div class="r-bill-sub">${esc(b.due_date)}${b.auto_pay ? " · auto-pay" : ""}</div>
+          </div>
+          <div class="r-bill-amt">${fmtMoney(b.amount)}</div>
+          <div class="r-bill-days ${b.days_until <= 0 ? "overdue" : b.days_until <= 3 ? "soon" : ""}">${b.days_until === 0 ? "Today" : b.days_until < 0 ? `${Math.abs(b.days_until)}d late` : `in ${b.days_until}d`}</div>
+        </div>`).join("")
+    : `<div class="r-empty" style="padding:20px 0;">No bills due in the next 14 days.</div>`;
+
+  const expiringHtml = expiring.length
+    ? expiring.map(e => `
+        <div class="r-bill-row">
+          <div>
+            <div class="r-bill-title">${esc(e.provider || "Document")}</div>
+            <div class="r-bill-sub">${esc(e.label)} · ${esc(e.date)}</div>
+          </div>
+          <div></div>
+          <div class="r-bill-days ${e.days < 0 ? "overdue" : e.days <= 30 ? "soon" : ""}">${e.days < 0 ? `${Math.abs(e.days)}d ago` : `in ${e.days}d`}</div>
+        </div>`).join("")
+    : `<div class="r-empty" style="padding:20px 0;">No expirations in the next 90 days. 🎉</div>`;
+
+  host.innerHTML = `
+    <div class="r-kpi">
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Market value</span>
+        <span class="r-kpi-value">${fmtMoney(p.market_value)}</span>
+        <span class="r-kpi-sub">invested ${fmtMoney(p.invested)}</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Unrealized gain</span>
+        <span class="r-kpi-value ${p.gain > 0 ? "pos" : p.gain < 0 ? "neg" : ""}">${p.gain != null ? (p.gain >= 0 ? "+" : "−") + fmtMoney(Math.abs(p.gain)) : "—"}</span>
+        <span class="r-kpi-sub">${p.gain_pct != null ? fmtPct(p.gain_pct) : "add current prices"}</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">ESOP vested @ FMV</span>
+        <span class="r-kpi-value pos">${fmtMoney(p.esop_vested)}</span>
+        <span class="r-kpi-sub">exercisable today</span>
+      </div>
+      <div class="r-kpi-card">
+        <span class="r-kpi-label">Monthly bills</span>
+        <span class="r-kpi-value">${fmtMoney(bills.monthly_equivalent)}</span>
+        <span class="r-kpi-sub">annualized ÷ 12</span>
+      </div>
+    </div>
+
+    ${p.concentration_warning ? `<div class="r-warn">⚠ <b>Concentration risk:</b> ${esc(p.concentration_warning)} Consider diversifying.</div>` : ""}
+
+    <div class="r-card">
+      <h3><i data-feather="pie-chart"></i> Asset allocation</h3>
+      ${allocationHtml}
+    </div>
+
+    <div class="r-card">
+      <h3><i data-feather="calendar"></i> Bills due (next 14 days)</h3>
+      ${billsHtml}
+    </div>
+
+    <div class="r-card">
+      <h3><i data-feather="alert-circle"></i> Expirations (next 90 days)</h3>
+      ${expiringHtml}
+      <div style="margin-top:10px;font-size:11.5px;color:var(--r-text3);line-height:1.5;">
+        Includes passport / DL / FD maturity / insurance renewals / ESOP lock-ups + option expiries.
+      </div>
+    </div>
+  `;
+}
+
+/* ══════════════════════════════════════════════════════
+   BOOTSTRAP
+   ══════════════════════════════════════════════════════ */
+setActiveRange("week");
+loadHeadline();
+loadTab("overview");
+if (window.feather) feather.replace();
+</script>
+</body>
+</html>

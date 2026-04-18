@@ -491,6 +491,150 @@ textarea.v-fi { resize: vertical; min-height: 70px; }
   text-transform: uppercase;
 }
 
+/* ── Financial top-bar (stocks / ESOPs) ────────────────── */
+.v-fin-bar {
+  background: var(--rc-surface-alt);
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 4px 0 2px;
+}
+.v-fin-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px;
+}
+.v-fin-label {
+  font-size: 10.5px; font-weight: 700; color: var(--rc-text3);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.v-fin-value {
+  font-size: 15px; font-weight: 700; color: var(--rc-text);
+  font-variant-numeric: tabular-nums;
+}
+.v-fin-muted { font-size: 13px; color: var(--rc-text2); font-variant-numeric: tabular-nums; }
+.v-fin-gain { padding-top: 6px; border-top: 1px dashed var(--rc-border); }
+.v-fin-sub {
+  font-size: 11px; color: var(--rc-text3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Vesting progress bar (ESOP) */
+.v-vest-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px;
+}
+.v-vest-label {
+  font-size: 11px; font-weight: 700;
+  color: var(--rc-text2);
+  letter-spacing: .2px;
+}
+.v-vest-pct {
+  font-size: 14px; font-weight: 800; color: var(--rc-primary);
+  font-variant-numeric: tabular-nums;
+}
+.v-vest-bar {
+  height: 8px; border-radius: 4px;
+  background: var(--rc-border); overflow: hidden;
+  margin-top: 2px;
+}
+.v-vest-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  border-radius: 4px;
+  transition: width .4s ease;
+}
+
+/* ── Portfolio snapshot panel ──────────────────────────── */
+.v-portfolio {
+  background: var(--rc-surface);
+  border: 1px solid var(--rc-border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--rc-shadow);
+}
+.v-port-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.v-port-head h3 {
+  font-size: 15px; font-weight: 800;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.v-port-head h3::before {
+  content: "📊"; font-size: 16px;
+}
+.v-port-hint {
+  font-size: 11px; color: var(--rc-text3);
+  font-weight: 500;
+}
+.v-port-kpi {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.v-port-stat {
+  background: var(--rc-surface-alt);
+  border: 1px solid var(--rc-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.v-port-label {
+  font-size: 10.5px; font-weight: 700; color: var(--rc-text3);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.v-port-value {
+  font-size: 18px; font-weight: 800; color: var(--rc-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Allocation mini-bars */
+.v-port-alloc {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.v-alloc-row {
+  display: grid; grid-template-columns: 110px 1fr auto;
+  gap: 10px; align-items: center;
+}
+.v-alloc-label {
+  font-size: 11.5px; font-weight: 600; color: var(--rc-text2);
+}
+.v-alloc-track {
+  height: 8px; border-radius: 4px;
+  background: var(--rc-border);
+  overflow: hidden;
+}
+.v-alloc-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--rc-primary) 0%, #4f46e5 100%);
+}
+.v-alloc-value {
+  font-size: 11.5px; font-weight: 600; color: var(--rc-text2);
+  font-variant-numeric: tabular-nums;
+}
+.v-port-warn {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--rc-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rc-warning) 30%, transparent);
+  color: var(--rc-text2);
+  font-size: 11.5px; line-height: 1.5;
+}
+html.dark .v-port-warn {
+  background: #451a03; color: #fcd34d; border-color: #92400e;
+}
+.v-port-warn b { color: var(--rc-warning); font-weight: 700; }
+
+@media (max-width: 640px) {
+  .v-alloc-row { grid-template-columns: 90px 1fr auto; }
+  .v-port-head h3 { font-size: 14px; }
+  .v-port-value { font-size: 16px; }
+}
+
 /* ── Mobile ────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .v-app { padding: 12px 12px 80px; }
@@ -782,17 +926,88 @@ const INSTRUMENT_TYPES = [
       { k: "notes",             lbl: "Notes (SIP dates, strategy)", as: "textarea" },
     ]
   },
-  { type: "stock",         group: "Investments", label: "Stocks / demat", sub: "Equities / brokerage", icon: "bar-chart-2",
+  // ── US STOCK (individual holding on a US exchange) ──
+  // Cost basis + current price drive gain/loss. Account type matters for
+  // tax treatment (Taxable vs Roth vs Traditional vs 401k).
+  { type: "us_stock",      group: "Investments", label: "US stock holding", sub: "NYSE / NASDAQ position", icon: "bar-chart-2",
+    countries: ["US","BOTH"],
+    fields: [
+      { k: "provider",               lbl: "Company *",            required: true, placeholder: "e.g., Apple Inc." },
+      { k: "details.ticker",         lbl: "Ticker",               required: true, mono: true, pattern: "^[A-Z.\\-]{1,8}$", placeholder: "AAPL", help: "Uppercase symbol. Blank for private positions." },
+      { k: "details.exchange",       lbl: "Exchange",             as: "select", options: ["NASDAQ","NYSE","ARCA","OTC","Private"] },
+      { k: "details.account_type",   lbl: "Account type",         as: "select",
+        options: ["Taxable brokerage","Roth IRA","Traditional IRA","401(k)","Roth 401(k)","HSA","Other"],
+        help: "Drives how gains are taxed on sale." },
+      { k: "details.broker",         lbl: "Broker",               placeholder: "Fidelity, Schwab, Vanguard, Robinhood…" },
+      { k: "details.shares",         lbl: "Shares held",          type: "number", help: "Number of shares (fractional OK)" },
+      { k: "details.avg_cost",       lbl: "Avg cost / share ($)", type: "number", help: "Cost basis per share" },
+      { k: "details.current_price",  lbl: "Current price ($)",    type: "number", help: "Manually updated; used to compute market value" },
+      { k: "details.purchase_date",  lbl: "First purchase date",  type: "date", help: "For LTCG/STCG determination (>1yr = LTCG in US)" },
+      { k: "details.dividend_yield", lbl: "Dividend yield (%)",   type: "number" },
+      { k: "details.account_number", lbl: "Brokerage account #",  secret: true, mono: true },
+      { k: "portal_url",             lbl: "Broker portal URL" },
+      { k: "notes",                  lbl: "Notes (tax lots, thesis, etc.)", as: "textarea" },
+    ]
+  },
+
+  // ── INDIAN STOCK (NSE/BSE via demat) ──
+  // Separate from US for DP/demat fields and cost reporting that differs
+  // (STT, brokerage breakdown, avg cost in ₹).
+  { type: "indian_stock",  group: "Investments", label: "Indian stock",     sub: "NSE / BSE via demat", icon: "bar-chart-2",
+    countries: ["IN"],
+    fields: [
+      { k: "provider",               lbl: "Company *",            required: true, placeholder: "e.g., Reliance Industries" },
+      { k: "details.ticker",         lbl: "NSE / BSE symbol",     mono: true, placeholder: "RELIANCE" },
+      { k: "details.exchange",       lbl: "Exchange",             as: "select", options: ["NSE","BSE","Both","Unlisted"] },
+      { k: "details.broker",         lbl: "Broker",               placeholder: "Zerodha, Groww, ICICI Direct…" },
+      { k: "details.demat",          lbl: "Demat account #",      secret: true, mono: true },
+      { k: "details.dp_id",          lbl: "DP ID",                mono: true },
+      { k: "details.shares",         lbl: "Shares held",          type: "number" },
+      { k: "details.avg_cost",       lbl: "Avg cost / share (₹)", type: "number" },
+      { k: "details.current_price",  lbl: "Current price (₹)",    type: "number" },
+      { k: "details.purchase_date",  lbl: "First purchase date",  type: "date", help: "For LTCG (>1yr Indian equities = 10% above ₹1L)" },
+      { k: "customer_id",            lbl: "Client ID",            secret: true },
+      { k: "portal_url",             lbl: "Broker portal URL" },
+      { k: "notes",                  lbl: "Notes",                as: "textarea" },
+    ]
+  },
+
+  // ── ESOP / RSU / OPTIONS ──
+  // The marquee instrument for compensation. Plan type drives everything:
+  //   • ISO  — US incentive options, AMT-sensitive, LTCG on qualifying
+  //            sales, strike required
+  //   • NSO  — US non-qualified, ordinary income on exercise, strike
+  //            required
+  //   • RSU  — Restricted stock units, ordinary income on vest, no
+  //            strike (= cash grant in shares)
+  //   • ESPP — Employee purchase at a discount, lookback / discount %
+  //   • Indian ESOP — perquisite at exercise, capital gains at sale
+  //                   (holding period different for listed vs unlisted)
+  //
+  // Vesting fields drive the visual progress bar on the card:
+  //   cliff_months + total_months + (vesting_frequency = monthly/quarterly)
+  { type: "esop",          group: "Investments", label: "ESOP / RSU / Options", sub: "Employer stock compensation", icon: "award",
     countries: ["IN","US","BOTH"],
     fields: [
-      { k: "provider",          lbl: "Broker / platform *",   required: true, placeholder: "e.g., Zerodha, Fidelity" },
-      { k: "details.demat",     lbl: "Demat account #",       country: "IN", secret: true, mono: true },
-      { k: "details.dp_id",     lbl: "DP ID",                 country: "IN", mono: true },
-      { k: "details.account_number", lbl: "Brokerage account #", country: "US", secret: true, mono: true },
-      { k: "customer_id",       lbl: "Client / user ID",      secret: true },
-      { k: "portal_url",        lbl: "Broker portal URL" },
-      { k: "amount",            lbl: "Current value",         type: "number" },
-      { k: "notes",             lbl: "Notes",                 as: "textarea" },
+      { k: "provider",                lbl: "Company *",             required: true, placeholder: "e.g., Microsoft, Flipkart" },
+      { k: "details.ticker",          lbl: "Ticker (if public)",    mono: true, placeholder: "MSFT / blank for private" },
+      { k: "details.plan_type",       lbl: "Plan type *",           required: true, as: "select",
+        options: ["RSU","ISO","NSO/NQSO","ESPP","Indian ESOP","Phantom / SAR","Other"] },
+      { k: "details.grant_date",      lbl: "Grant date",            type: "date" },
+      { k: "details.total_granted",   lbl: "Shares / units granted", type: "number", help: "Total award — used with vesting schedule to compute vested-to-date" },
+      { k: "details.strike",          lbl: "Strike / exercise price", type: "number", help: "Required for ISO / NSO / Indian ESOP options. N/A for RSU / ESPP." },
+      { k: "details.grant_fmv",       lbl: "Grant-date FMV",        type: "number", help: "Fair market value on grant date — for 83(b) / AMT / tax records" },
+      { k: "details.current_fmv",     lbl: "Current FMV / share",   type: "number", help: "Latest 409A valuation (private) or stock price (public)" },
+      { k: "details.vesting_cliff",   lbl: "Cliff (months)",        type: "number", placeholder: "12", help: "Typical: 12 for a 1-yr cliff. 0 = no cliff." },
+      { k: "details.vesting_total",   lbl: "Total vesting (months)", type: "number", placeholder: "48", help: "Typical: 48 for 4-year vesting" },
+      { k: "details.vesting_freq",    lbl: "Post-cliff frequency",  as: "select", options: ["monthly","quarterly","semi-annually","annually"] },
+      { k: "details.vested_override", lbl: "Vested so far (manual)", type: "number", help: "Leave blank to auto-compute from schedule" },
+      { k: "details.exercised",       lbl: "Exercised (options)",   type: "number", help: "NSO/ISO only. Shares already exercised at strike." },
+      { k: "details.expiration_date", lbl: "Expiration date",       type: "date", help: "Options expire — typically 10 years from grant. RSUs don't expire but may forfeit on termination." },
+      { k: "details.lockup_until",    lbl: "Lock-up ends",          type: "date", help: "Post-IPO lock-up or corporate blackout" },
+      { k: "details.pte_window",      lbl: "Post-termination exercise window", placeholder: "e.g., 90 days, 10 years (extended)" },
+      { k: "portal_url",              lbl: "Equity portal",         placeholder: "Shareworks, Carta, Morgan Stanley at Work…" },
+      { k: "notes",                   lbl: "Notes (83(b) filed, AMT expected, double-trigger, etc.)", as: "textarea" },
     ]
   },
   { type: "fixed_deposit", group: "Investments", label: "Fixed deposit", sub: "FD / CD / Bond", icon: "lock",
@@ -1171,8 +1386,283 @@ function renderCards() {
     return;
   }
 
-  wrap.innerHTML = `<div class="v-cards">${filtered.map(renderCardHtml).join("")}</div>`;
+  // Portfolio summary — aggregates across stocks, ESOPs, MFs, FDs, retirement.
+  // Shown when viewing the Investments tab or ALL with at least one invested row.
+  const portfolioHtml = buildPortfolioSummary(filtered);
+  wrap.innerHTML = portfolioHtml + `<div class="v-cards">${filtered.map(renderCardHtml).join("")}</div>`;
   if (window.feather) feather.replace();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   FINANCIAL HELPERS — the financial-expert layer
+   ══════════════════════════════════════════════════════════════════ */
+
+// Locale-aware currency formatter (defaults to ₹ for IN, $ for US, otherwise
+// plain number). Integer display; decimals collapse visual weight.
+function fmtMoney(value, country) {
+  if (value == null || isNaN(value)) return "—";
+  const sym = country === "US" ? "$" : country === "IN" ? "₹" : "";
+  const n = Math.round(Number(value));
+  const locale = country === "US" ? "en-US" : "en-IN";
+  return sym + n.toLocaleString(locale);
+}
+
+// Pretty percentage with sign. Positive = green, negative = red.
+function fmtPct(pct) {
+  if (pct == null || isNaN(pct)) return "—";
+  const sign = pct > 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+// Stock gain/loss: cost basis, market value, unrealized gain.
+// Returns null if required inputs missing — caller hides the section.
+function computeStockMetrics(c) {
+  const shares = parseFloat(c.details?.shares);
+  const avgCost = parseFloat(c.details?.avg_cost);
+  const price = parseFloat(c.details?.current_price);
+  if (!shares || !avgCost) return null;
+  const basis = shares * avgCost;
+  const market = price ? shares * price : null;
+  const gain = market != null ? market - basis : null;
+  const gainPct = (gain != null && basis > 0) ? (gain / basis) * 100 : null;
+  return { shares, avgCost, price, basis, market, gain, gainPct };
+}
+
+// Vesting computation. Returns vested share count based on a linear
+// schedule with cliff: before cliff → 0, after cliff → prorated by months
+// elapsed past cliff of the remaining post-cliff allocation.
+// Over-allocates when the schedule is almost exactly at cliff: cliff
+// vests the cliff's share as a single cliff jump (typical for 1yr cliff
+// = 25% of a 4yr schedule).
+function computeVesting(c) {
+  const total = parseFloat(c.details?.total_granted);
+  const grantDate = c.details?.grant_date;
+  const cliff = parseFloat(c.details?.vesting_cliff || 0);
+  const months = parseFloat(c.details?.vesting_total || 0);
+  if (!total || !grantDate || !months) return null;
+
+  const grant = new Date(grantDate);
+  if (isNaN(grant.getTime())) return null;
+  const now = new Date();
+  const monthsElapsed = (now.getFullYear() - grant.getFullYear()) * 12
+    + (now.getMonth() - grant.getMonth())
+    + ((now.getDate() >= grant.getDate()) ? 0 : -1);
+
+  let vested;
+  if (monthsElapsed < 0) {
+    vested = 0;
+  } else if (monthsElapsed < cliff) {
+    vested = 0;
+  } else if (monthsElapsed >= months) {
+    vested = total;
+  } else {
+    // Linear from cliff → full. Before cliff is 0; at cliff, vest the
+    // cliff's share proportionally (e.g. 12/48 at 1yr cliff = 25%).
+    vested = total * (monthsElapsed / months);
+  }
+
+  // Manual override takes precedence (useful when the user knows the real
+  // number from their equity portal and the linear model is wrong).
+  const override = parseFloat(c.details?.vested_override);
+  if (!isNaN(override) && override >= 0) vested = override;
+
+  vested = Math.min(Math.round(vested), total);
+  const unvested = Math.max(0, total - vested);
+  const vestedPct = total > 0 ? (vested / total) * 100 : 0;
+
+  // Next vest date — the next boundary after "now" in the schedule
+  const freq = c.details?.vesting_freq || "monthly";
+  const stepMonths = freq === "annually" ? 12 : freq === "semi-annually" ? 6 : freq === "quarterly" ? 3 : 1;
+  let nextVest = null;
+  if (monthsElapsed < months) {
+    let nextMonthOffset = Math.max(cliff, Math.floor((monthsElapsed - cliff) / stepMonths + 1) * stepMonths + cliff);
+    if (nextMonthOffset < cliff) nextMonthOffset = cliff;
+    if (monthsElapsed < cliff) nextMonthOffset = cliff;
+    nextMonthOffset = Math.min(nextMonthOffset, months);
+    const d = new Date(grant);
+    d.setMonth(d.getMonth() + nextMonthOffset);
+    nextVest = d;
+  }
+
+  const strike = parseFloat(c.details?.strike);
+  const fmv = parseFloat(c.details?.current_fmv);
+  let vestedValue = null;
+  let unvestedValue = null;
+  let unrealizedGain = null;
+  if (fmv) {
+    if (!isNaN(strike) && strike > 0) {
+      // Option: value = (FMV - strike) × shares, floored at 0
+      const spread = Math.max(0, fmv - strike);
+      vestedValue = spread * vested;
+      unvestedValue = spread * unvested;
+      unrealizedGain = spread * vested;  // what you'd clear if you exercised + sold today
+    } else {
+      // RSU / ESPP: value = FMV × shares
+      vestedValue = fmv * vested;
+      unvestedValue = fmv * unvested;
+    }
+  }
+
+  return { total, vested, unvested, vestedPct, nextVest, vestedValue, unvestedValue, unrealizedGain, fmv, strike };
+}
+
+// Header bar shown above the field list for financial instruments.
+// Stock → gain/loss; ESOP → vesting progress bar.
+function buildFinancialTopBar(c) {
+  if (c.instrument_type === "us_stock" || c.instrument_type === "indian_stock") {
+    const m = computeStockMetrics(c);
+    if (!m || m.market == null) return "";
+    const country = c.country || (c.instrument_type === "indian_stock" ? "IN" : "US");
+    const gainColor = m.gain > 0 ? "#059669" : m.gain < 0 ? "#dc2626" : "var(--rc-text2)";
+    const arrow = m.gain > 0 ? "▲" : m.gain < 0 ? "▼" : "•";
+    return `
+      <div class="v-fin-bar">
+        <div class="v-fin-row">
+          <span class="v-fin-label">Market value</span>
+          <span class="v-fin-value">${fmtMoney(m.market, country)}</span>
+        </div>
+        <div class="v-fin-row">
+          <span class="v-fin-label">Cost basis</span>
+          <span class="v-fin-muted">${fmtMoney(m.basis, country)}</span>
+        </div>
+        <div class="v-fin-row v-fin-gain" style="color:${gainColor};">
+          <span class="v-fin-label" style="color:inherit;">Unrealized</span>
+          <span class="v-fin-value" style="color:inherit;">${arrow} ${fmtMoney(Math.abs(m.gain), country)} <span style="font-size:11px;opacity:.85;">(${fmtPct(m.gainPct)})</span></span>
+        </div>
+        <div class="v-fin-sub">${m.shares} sh · avg ${fmtMoney(m.avgCost, country)}${m.price ? ` · last ${fmtMoney(m.price, country)}` : ""}</div>
+      </div>`;
+  }
+
+  if (c.instrument_type === "esop") {
+    const v = computeVesting(c);
+    if (!v) return "";
+    const country = c.country || "BOTH";
+    const planType = c.details?.plan_type || "RSU";
+    const fmv = v.fmv;
+    const value = v.vestedValue;
+    const nextVestStr = v.nextVest
+      ? `${v.nextVest.toISOString().slice(0, 10)} (${daysUntil(v.nextVest.toISOString())}d)`
+      : "Fully vested";
+    return `
+      <div class="v-fin-bar">
+        <div class="v-vest-row">
+          <span class="v-vest-label">Vested ${v.vested.toLocaleString()} / ${v.total.toLocaleString()}</span>
+          <span class="v-vest-pct">${Math.round(v.vestedPct)}%</span>
+        </div>
+        <div class="v-vest-bar" role="progressbar" aria-valuenow="${Math.round(v.vestedPct)}" aria-valuemin="0" aria-valuemax="100">
+          <div class="v-vest-fill" style="width: ${v.vestedPct}%;"></div>
+        </div>
+        <div class="v-fin-row">
+          <span class="v-fin-label">Next vest</span>
+          <span class="v-fin-value" style="font-size:12.5px;">${nextVestStr}</span>
+        </div>
+        ${value != null ? `
+        <div class="v-fin-row v-fin-gain" style="color:#059669;">
+          <span class="v-fin-label" style="color:inherit;">Vested value @ FMV</span>
+          <span class="v-fin-value" style="color:inherit;">${fmtMoney(value, country)}</span>
+        </div>` : ""}
+        <div class="v-fin-sub">${esc(planType)}${fmv ? ` · FMV ${fmtMoney(fmv, country)}` : ""}${v.strike ? ` · strike ${fmtMoney(v.strike, country)}` : ""}</div>
+      </div>`;
+  }
+
+  return "";
+}
+
+// Portfolio-level aggregation across the currently filtered set.
+function buildPortfolioSummary(filteredCards) {
+  const invested = filteredCards.filter(c => ["us_stock","indian_stock","esop","mutual_fund","fixed_deposit","retirement"].includes(c.instrument_type));
+  if (invested.length < 2) return "";  // only show when there's something to compare
+
+  let totalInvested = 0;   // cost basis
+  let totalMarket = 0;     // current value
+  let totalVestedValue = 0;
+  let esopCount = 0;
+  const byClass = {};     // asset class → market value
+
+  filteredCards.forEach(c => {
+    const t = c.instrument_type;
+    if (t === "us_stock" || t === "indian_stock") {
+      const m = computeStockMetrics(c);
+      if (m) {
+        totalInvested += m.basis;
+        if (m.market != null) totalMarket += m.market;
+        byClass["Equity"] = (byClass["Equity"] || 0) + (m.market || m.basis);
+      }
+    } else if (t === "esop") {
+      const v = computeVesting(c);
+      if (v && v.vestedValue != null) {
+        totalVestedValue += v.vestedValue;
+        byClass["ESOP / RSU"] = (byClass["ESOP / RSU"] || 0) + v.vestedValue;
+        esopCount += 1;
+      }
+    } else if (t === "mutual_fund") {
+      const val = parseFloat(c.amount || c.details?.units * c.details?.nav);
+      if (val) { totalMarket += val; byClass["Mutual Fund"] = (byClass["Mutual Fund"] || 0) + val; }
+    } else if (t === "fixed_deposit") {
+      const val = parseFloat(c.amount);
+      if (val) { totalMarket += val; byClass["Fixed Deposit"] = (byClass["Fixed Deposit"] || 0) + val; }
+    } else if (t === "retirement") {
+      const val = parseFloat(c.amount);
+      if (val) { totalMarket += val; byClass["Retirement"] = (byClass["Retirement"] || 0) + val; }
+    }
+  });
+
+  if (totalMarket + totalVestedValue === 0) return "";
+
+  const gain = totalInvested > 0 ? totalMarket - totalInvested : null;
+  const gainPct = (gain != null && totalInvested > 0) ? (gain / totalInvested) * 100 : null;
+
+  const classes = Object.entries(byClass).sort((a, b) => b[1] - a[1]);
+  const grandTotal = classes.reduce((s, [_, v]) => s + v, 0);
+
+  const allocations = classes.map(([cls, val]) => {
+    const pct = grandTotal > 0 ? (val / grandTotal) * 100 : 0;
+    return `<div class="v-alloc-row">
+      <span class="v-alloc-label">${esc(cls)}</span>
+      <div class="v-alloc-track"><div class="v-alloc-fill" style="width:${pct}%;"></div></div>
+      <span class="v-alloc-value">${fmtMoney(val)} · ${pct.toFixed(0)}%</span>
+    </div>`;
+  }).join("");
+
+  const gainStyle = gain > 0 ? "color:#059669;" : gain < 0 ? "color:#dc2626;" : "";
+
+  // Concentration warning: any single asset class > 60% of portfolio
+  const top = classes[0];
+  const concentrationPct = top && grandTotal > 0 ? (top[1] / grandTotal) * 100 : 0;
+  const concentrationWarning = concentrationPct >= 60
+    ? `<div class="v-port-warn">⚠ <b>${top[0]}</b> is ${concentrationPct.toFixed(0)}% of your tracked portfolio — consider diversification.</div>`
+    : "";
+
+  return `
+    <section class="v-portfolio" aria-label="Portfolio summary">
+      <div class="v-port-head">
+        <h3>Portfolio snapshot</h3>
+        <span class="v-port-hint">Aggregated from ${invested.length} tracked instrument${invested.length === 1 ? "" : "s"} in view</span>
+      </div>
+      <div class="v-port-kpi">
+        <div class="v-port-stat">
+          <span class="v-port-label">Invested (cost)</span>
+          <span class="v-port-value">${fmtMoney(totalInvested)}</span>
+        </div>
+        <div class="v-port-stat">
+          <span class="v-port-label">Current value</span>
+          <span class="v-port-value">${fmtMoney(totalMarket)}</span>
+        </div>
+        ${gain != null ? `
+        <div class="v-port-stat">
+          <span class="v-port-label">Unrealized</span>
+          <span class="v-port-value" style="${gainStyle}">${gain >= 0 ? "+" : "−"}${fmtMoney(Math.abs(gain))}<span style="font-size:11.5px;margin-left:4px;">(${fmtPct(gainPct)})</span></span>
+        </div>` : ""}
+        ${totalVestedValue > 0 ? `
+        <div class="v-port-stat">
+          <span class="v-port-label">ESOP vested @ FMV</span>
+          <span class="v-port-value" style="color:#059669;">${fmtMoney(totalVestedValue)}</span>
+        </div>` : ""}
+      </div>
+      ${allocations ? `<div class="v-port-alloc">${allocations}</div>` : ""}
+      ${concentrationWarning}
+    </section>
+  `;
 }
 
 /* Render one card row. Secrets default to masked. */
@@ -1225,6 +1715,7 @@ function renderCardHtml(c) {
     </div>
     <div class="v-card-title">${esc(c.provider)}</div>
     ${ctx ? `<div class="v-card-subtitle">📍 ${esc(ctx.name)}</div>` : ""}
+    ${buildFinancialTopBar(c)}
     ${fields.length ? `<div class="v-field-list">
       ${fields.map(f => renderFieldRow(c.id, f)).join("")}
     </div>` : ""}
