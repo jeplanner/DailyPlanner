@@ -180,11 +180,32 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 
 .em-empty{text-align:center;padding:20px 8px;color:var(--em-text3);font-size:13px;}
 
-.em-quick-extra{display:flex;gap:8px;margin-top:-12px;margin-bottom:16px;flex-wrap:wrap;align-items:center;padding:8px 12px;background:var(--em-surface);border:1px solid var(--em-border);border-radius:8px;}
+/* Retired (kept only for any legacy CSS selectors that referenced these) */
+.em-quick-extra{display:none;}
 .em-extra-row{display:flex;align-items:center;gap:6px;}
-.em-extra-row label{font-size:11px;font-weight:600;color:var(--em-text3);white-space:nowrap;}
-.em-extra-input{padding:5px 8px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--em-surface);color:var(--em-text);outline:none;}
-.em-extra-input:focus{border-color:var(--q-schedule);}
+
+/* Inline context fields inside the composer row — matched to .em-quad-select
+   chrome so the composer reads as one coherent row. The row wraps cleanly
+   on narrow viewports because .em-quick-add has flex-wrap:wrap. */
+.em-extra-inline{display:inline-flex;align-items:center;gap:4px;}
+.em-extra-input{
+  padding:8px 10px;
+  border:1px solid var(--em-border);
+  border-radius:8px;
+  font-size:13px;
+  font-family:inherit;
+  background:var(--em-surface);
+  color:var(--em-text);
+  outline:none;
+  cursor:pointer;
+  transition:border-color .15s, box-shadow .15s;
+}
+.em-extra-input:focus{
+  border-color:var(--q-schedule);
+  box-shadow:0 0 0 3px rgba(37,99,235,0.12);
+}
+.em-extra-input[type="date"], .em-extra-input[type="time"]{min-width:0;}
+.em-extra-input[type="text"]{max-width:160px;}
 
 /* Status badge + resolution menu */
 .em-status-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
@@ -1275,27 +1296,57 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     {% endif %}
   </div>
 
-  <!-- Quick Add Task -->
+  {# ════════════════════════════════════════════════════════════════
+     Quick Add — a single composer row.
+
+     UX design (2026): every picker is inline BEFORE the primary Add
+     button. Reads left-to-right: what to do → where it fits (quadrant,
+     priority) → when (due / time / repeat) → who (project, delegate) →
+     commit (Add) → alt input (mic). This removes the previous "fields
+     below the Add button" confusion where the second-row Due Date and
+     Repeat looked like post-submission artifacts.
+
+     On narrow screens the flex row wraps; the order stays consistent
+     so muscle-memory survives the wrap.
+     ════════════════════════════════════════════════════════════════ #}
   <div class="em-quick-add">
     <input type="text" id="quick-task" class="em-quick-input" placeholder="Add a task…" onkeydown="if(event.key==='Enter')quickAdd()">
-    <button class="em-add-btn" onclick="quickAdd()">Add</button>
-    <button class="em-action-btn" id="em-voice-mic" onclick="startBulkVoice()" title="Voice / Bulk add" style="padding:8px;">
-      <i data-feather="mic" style="width:14px;height:14px"></i>
-    </button>
-    <select id="quick-quad" class="em-quad-select">
+
+    <select id="quick-quad" class="em-quad-select" title="Eisenhower quadrant">
       <option value="do">🔴 Do</option>
       <option value="schedule" selected>🔵 Schedule</option>
       <option value="delegate">🟡 Delegate</option>
       <option value="eliminate">⚪ Eliminate</option>
     </select>
+
     <select id="quick-priority" class="em-quad-select" title="Priority">
       <option value="high">🔴 High</option>
       <option value="medium" selected>🟠 Medium</option>
       <option value="low">🟢 Low</option>
     </select>
-    <!-- Hidden legacy select — kept so other code (filter sheet etc.)
-         can still read the project list from its options. JS reads
-         selection from the custom picker below instead. -->
+
+    {# ── Context fields — shown inline, reveal per-quadrant ── #}
+    <div id="extra-do" class="em-extra-inline" style="display:none;">
+      <input type="time" id="quick-do-time" class="em-extra-input" step="300" title="Time of day" aria-label="Time">
+    </div>
+    <div id="extra-schedule" class="em-extra-inline" style="display:none;">
+      <input type="date" id="quick-due" class="em-extra-input" title="Due date" aria-label="Due date">
+    </div>
+    <div id="extra-delegate" class="em-extra-inline" style="display:none;">
+      <input type="text" id="quick-delegate" class="em-extra-input" placeholder="Delegate to…" maxlength="25" aria-label="Delegate to">
+      <input type="date" id="quick-delegate-due" class="em-extra-input" title="Due date" aria-label="Due date">
+    </div>
+
+    {# ── Recurrence — always visible, single-line 🔁 picker ── #}
+    <select id="quick-recurrence" class="em-quad-select" title="Repeat — once, daily, weekly or monthly" aria-label="Repeat">
+      <option value="">🔁 Once</option>
+      <option value="daily">🔁 Daily</option>
+      <option value="weekly">🔁 Weekly</option>
+      <option value="monthly">🔁 Monthly</option>
+    </select>
+
+    {# Hidden legacy select — other code (filter sheet etc.) still reads
+       this for the full project list; the visible UI is the picker below. #}
     <select id="quick-project" class="em-quad-select" style="display:none;">
       <option value="">No project</option>
       {% for p in projects %}
@@ -1303,9 +1354,9 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       {% endfor %}
     </select>
 
-    <!-- Multi-select project picker (Todoist-style popover).
-         Selecting multiple projects creates one task per project.
-         "(No project)" creates a single task with no project link. -->
+    {# Multi-select project picker (Todoist-style popover). Selecting
+       multiple projects creates one task per project. "(No project)"
+       creates a single task with no project link. #}
     <div class="em-proj-picker" id="em-proj-picker">
       <button type="button" class="em-quad-select em-proj-trigger" id="em-proj-trigger"
               onclick="toggleProjPicker(event)"
@@ -1334,6 +1385,12 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
         {% endif %}
       </div>
     </div>
+
+    {# ── Primary action LAST: "Add" commits the compose. ── #}
+    <button class="em-add-btn" onclick="quickAdd()">Add</button>
+    <button class="em-action-btn" id="em-voice-mic" onclick="startBulkVoice()" title="Voice / Bulk add" style="padding:8px;" aria-label="Voice / Bulk add">
+      <i data-feather="mic" style="width:14px;height:14px"></i>
+    </button>
   </div>
 
   <!-- Bulk Add + Voice -->
@@ -1352,32 +1409,11 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       Voice: say <b>add tasks</b> to submit, <b>stop</b> to end recording, <b>erase last line</b> / <b>erase all</b> to edit.
     </div>
   </div>
-  <!-- Context fields that show based on quadrant -->
-  <div id="quick-extra" class="em-quick-extra">
-    <div id="extra-do" style="display:none;" class="em-extra-row">
-      <label>Time</label>
-      <input type="time" id="quick-do-time" class="em-extra-input" step="300">
-    </div>
-    <div id="extra-schedule" style="display:none;" class="em-extra-row">
-      <label>Due Date</label>
-      <input type="date" id="quick-due" class="em-extra-input">
-    </div>
-    <div id="extra-delegate" style="display:none;" class="em-extra-row">
-      <label>Delegate To</label>
-      <input type="text" id="quick-delegate" class="em-extra-input" placeholder="Person name" maxlength="25">
-      <label style="margin-left:10px;">Due Date</label>
-      <input type="date" id="quick-delegate-due" class="em-extra-input">
-    </div>
-    <div class="em-extra-row">
-      <label>Repeat</label>
-      <select id="quick-recurrence" class="em-extra-input">
-        <option value="">Once</option>
-        <option value="daily">Daily</option>
-        <option value="weekly">Weekly</option>
-        <option value="monthly">Monthly</option>
-      </select>
-    </div>
-  </div>
+  {# Retired: the `#quick-extra` second-row container. Its contents are
+     now inline in the composer above. Kept here only for any legacy JS
+     that might still query the id — an empty no-op preserves that
+     contract without visible markup. #}
+  <div id="quick-extra" style="display:none;"></div>
 
   <!-- ═══════════ TRAVEL SETTINGS MODAL ═══════════ -->
   <div id="tv-overlay" class="tv-overlay hidden" onclick="if(event.target===this)closeTravelSettings()">
@@ -2154,31 +2190,29 @@ window._csrf = window._csrf || function () {
 };
 
 function onQuadrantChange() {
+  // Reveal the one context-field that matches the selected quadrant
+  // (time for Do, due date for Schedule, delegate+due for Delegate;
+  // Eliminate shows none). All three live inline in the composer row
+  // now — no parent wrapper to toggle.
   const q = document.getElementById("quick-quad").value;
-  const extra = document.getElementById("quick-extra");
-  const doRow = document.getElementById("extra-do");
+  const doRow       = document.getElementById("extra-do");
   const scheduleRow = document.getElementById("extra-schedule");
   const delegateRow = document.getElementById("extra-delegate");
 
-  doRow.style.display = "none";
-  scheduleRow.style.display = "none";
-  delegateRow.style.display = "none";
-  extra.style.display = "none";
+  if (doRow)       doRow.style.display       = (q === "do")       ? "inline-flex" : "none";
+  if (scheduleRow) scheduleRow.style.display = (q === "schedule") ? "inline-flex" : "none";
+  if (delegateRow) delegateRow.style.display = (q === "delegate") ? "inline-flex" : "none";
 
-  if (q === "do") {
-    doRow.style.display = "flex";
-    extra.style.display = "flex";
-  } else if (q === "schedule") {
-    scheduleRow.style.display = "flex";
-    extra.style.display = "flex";
+  if (q === "schedule") {
     const tmr = new Date(PLAN_DATE);
     tmr.setDate(tmr.getDate() + 1);
-    document.getElementById("quick-due").value = tmr.toISOString().split("T")[0];
+    const dueEl = document.getElementById("quick-due");
+    if (dueEl) dueEl.value = tmr.toISOString().split("T")[0];
   } else if (q === "delegate") {
-    delegateRow.style.display = "flex";
-    extra.style.display = "flex";
-    document.getElementById("quick-delegate").value = "";
-    document.getElementById("quick-delegate-due").value = "";
+    const d1 = document.getElementById("quick-delegate");
+    const d2 = document.getElementById("quick-delegate-due");
+    if (d1) d1.value = "";
+    if (d2) d2.value = "";
   }
 }
 
