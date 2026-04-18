@@ -53,26 +53,29 @@ def load_todo(plan_date):
     
     for r in rows:
 
-        # --------------------------------------------------
-        # 🔁 AUTO MOVE: Schedule → Do when date reaches today
-        # --------------------------------------------------
+        # The stored quadrant is the source of truth. Earlier code silently
+        # rewrote "Schedule" to "Do" when due-date arrived, which read like
+        # data corruption to users — they'd open a task in Schedule and it
+        # would have moved without warning. If the user wants today's
+        # Scheduled items surfaced in Do, they can use a "Today" filter
+        # (planned in UX_AUDIT.md #2.5) — that's a read-side projection,
+        # not a destructive write.
         effective_quadrant = r["quadrant"]
 
         task_date = r.get("task_date")
         is_done = bool(r.get("is_done"))
 
+        # Compute a cheap UX hint without mutating the quadrant: the card
+        # template can show a "Due today" badge when due_today is True.
+        due_today = False
         if not is_done and task_date:
             try:
                 task_date_val = (
                     task_date if isinstance(task_date, date)
                     else date.fromisoformat(task_date)
                 )
-                if task_date_val > plan_date:
-                    effective_quadrant = "schedule"
-                else:
-                    effective_quadrant = "do"
+                due_today = task_date_val <= plan_date
             except Exception:
-                # fallback safely to stored quadrant
                 pass
 
         data[effective_quadrant].append(
@@ -87,6 +90,7 @@ def load_todo(plan_date):
                 "category": r.get("category") or "General",
                 "subcategory": r.get("subcategory") or "General",
                 "project_id": r.get("project_id"),
+                "due_today": due_today,
                 "subtasks": [],
             }
         )

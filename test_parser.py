@@ -2,13 +2,11 @@ import pytest
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# Import the functions under test
-from app import (
-    extract_date,
-    parse_planner_input,
-    parse_time_token,
-    safe_date,
-)
+# Imports were originally `from app import ...` — those symbols moved to
+# the utils package long ago and the test file was silently failing to collect.
+from utils.planner_parser import extract_date, parse_planner_input
+from utils.time_parser import parse_time_token
+from utils.dates import safe_date
 
 IST = ZoneInfo("Asia/Kolkata")
 

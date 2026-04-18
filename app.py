@@ -112,6 +112,9 @@ def create_app():
 
     @app.errorhandler(429)
     def rate_limited(e):
+        from flask_limiter.util import get_remote_address
+        logger.warning("Rate limit exceeded for IP=%s path=%s",
+                       get_remote_address(), request.path)
         return jsonify({"status": "error", "error": "Too many requests. Please slow down."}), 429
 
     @app.errorhandler(500)
@@ -123,9 +126,9 @@ def create_app():
 
     @app.errorhandler(Exception)
     def handle_exception(e):
-        import traceback
-        logger.error("Unhandled exception: %s", str(e))
-        traceback.print_exc()
+        # logger.exception captures the traceback through the logger,
+        # avoiding stack-trace leakage to stdout in production.
+        logger.exception("Unhandled exception: %s", str(e))
         if request.path.startswith("/api/"):
             return jsonify({"status": "error", "error": "Internal server error"}), 500
         raise e

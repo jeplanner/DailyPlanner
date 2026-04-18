@@ -343,6 +343,10 @@ def update_project_task_status():
             )
 
             # 🔁 AUTO-ADVANCE (if enabled)
+            # Preserve the original `due_date - start_date` delta so a
+            # 3-day recurring task stays 3 days long every cycle. The old
+            # code set due_date = start_date, which silently collapsed
+            # multi-day recurring tasks to a single day.
             if task.get("auto_advance", True):
                 next_date = compute_next_occurrence(
                     task,
@@ -350,12 +354,21 @@ def update_project_task_status():
                 )
 
                 if next_date:
+                    duration_days = 0
+                    try:
+                        if task.get("start_date") and task.get("due_date"):
+                            d0 = date.fromisoformat(task["start_date"])
+                            d1 = date.fromisoformat(task["due_date"])
+                            duration_days = max((d1 - d0).days, 0)
+                    except (TypeError, ValueError):
+                        duration_days = 0
+                    next_due = next_date + timedelta(days=duration_days)
                     update(
                         "project_tasks",
                         params={"task_id": f"eq.{task_id}"},
                         json={
                             "start_date": next_date.isoformat(),
-                            "due_date": next_date.isoformat(),  # ✅ FIX
+                            "due_date": next_due.isoformat(),
                             "status": "open"
                         }
                     )

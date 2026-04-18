@@ -18,6 +18,38 @@ HEADERS = {
 }
 logger = logging.getLogger("daily_plan")
 
+# Fields whose value should never reach a log line. Match by case-insensitive
+# substring on the key, so e.g. `password_hash` and `client_secret` both redact.
+_REDACT_KEY_SUBSTRINGS = (
+    "password", "secret", "token", "apikey", "api_key", "auth",
+    "ciphertext", "encrypted", "private",
+)
+_MAX_LOG_PAYLOAD = 600  # chars; keeps prod logs lean
+
+
+def _safe_for_log(value):
+    """Return a copy of `value` with sensitive fields redacted and
+    overall length capped, suitable for a log line.
+    """
+    def _scrub(obj):
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                kl = str(k).lower()
+                if any(s in kl for s in _REDACT_KEY_SUBSTRINGS):
+                    out[k] = "[REDACTED]"
+                else:
+                    out[k] = _scrub(v)
+            return out
+        if isinstance(obj, list):
+            return [_scrub(x) for x in obj]
+        return obj
+    scrubbed = _scrub(value)
+    s = repr(scrubbed)
+    if len(s) > _MAX_LOG_PAYLOAD:
+        s = s[:_MAX_LOG_PAYLOAD] + "...<truncated>"
+    return s
+
 # ─────────────────────────────────────────────────────────────────
 # Connection-pooled session — reuses TCP connections across requests.
 #
@@ -98,11 +130,8 @@ def get(path, params=None):
     logger.debug("SUPABASE FINAL URL → %s", r.url)
 
     if not r.ok:
-        # 🔥 Log full error context
-        logger.error("SUPABASE ERROR %s", r.status_code)
-        logger.error("SUPABASE URL → %s", r.url)
-        logger.error("SUPABASE RESPONSE → %s", r.text)
-
+        logger.error("SUPABASE ERROR %s on %s", r.status_code, path)
+        logger.error("SUPABASE RESPONSE → %s", _safe_for_log(r.text))
         r.raise_for_status()
 
     return r.json()
@@ -161,9 +190,8 @@ def post(path, data, prefer="return=representation"):
 
     if not r.ok:
         logger.error("SUPABASE POST ERROR %s on %s", r.status_code, path)
-        logger.error("SUPABASE POST URL → %s", r.url)
-        logger.error("SUPABASE POST PAYLOAD → %s", data)
-        logger.error("SUPABASE POST RESPONSE → %s", r.text)
+        logger.error("SUPABASE POST PAYLOAD → %s", _safe_for_log(data))
+        logger.error("SUPABASE POST RESPONSE → %s", _safe_for_log(r.text))
         r.raise_for_status()
 
     if r.text:
@@ -233,10 +261,9 @@ def update(table, params, json):
 
         # Unrecoverable error
         logger.error("SUPABASE UPDATE ERROR %s on %s", response.status_code, table)
-        logger.error("SUPABASE UPDATE URL → %s", response.url)
-        logger.error("SUPABASE UPDATE PAYLOAD → %s", patch_body)
-        logger.error("SUPABASE UPDATE RESPONSE → %s", response.text)
-        raise Exception(f"UPDATE failed {response.status_code}: {response.text}")
+        logger.error("SUPABASE UPDATE PAYLOAD → %s", _safe_for_log(patch_body))
+        logger.error("SUPABASE UPDATE RESPONSE → %s", _safe_for_log(response.text))
+        raise Exception(f"UPDATE failed {response.status_code}: {_safe_for_log(response.text)}")
 
     raise Exception("UPDATE exceeded retries")
 

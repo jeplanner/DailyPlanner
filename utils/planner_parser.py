@@ -191,7 +191,13 @@ def parse_planner_input(raw_text, plan_date):
         else DEFAULT_CATEGORY
     )
     
-    title = re.sub(r"\s(@|\$|%|#|Q[1-4]).*", "", raw_text).strip()
+    # Strip metadata markers from the title. Q[1-4] only counts as a
+    # quadrant marker at the *end* of the input — otherwise "Review Q4
+    # report" lost everything after "Review". The @, $, %, # markers
+    # always introduce a metadata block that runs to end-of-string.
+    title = re.sub(r"\s(@|\$|%|#).*", "", raw_text)
+    title = re.sub(r"\s+Q[1-4]\s*$", "", title, flags=re.I)
+    title = title.strip()
     tags = extract_tags(raw_text)
 
     return {

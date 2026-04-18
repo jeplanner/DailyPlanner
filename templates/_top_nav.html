@@ -489,6 +489,10 @@ html.dark .section-title{color:#f1f5f9;}
 </style>
 
 
+<!-- ===== SKIP LINK (a11y: lets keyboard / SR users bypass the nav) ===== -->
+<a href="#main" class="skip-link">Skip to main content</a>
+
+
 <!-- ===== OVERLAY ===== -->
 
 <div id="overlay" class="overlay" onclick="closeSidebar()"></div>
@@ -716,27 +720,50 @@ document.addEventListener("keydown",function(e){
 
 })
 
-/* DATE + TIME */
+/* DATE + TIME — formats in the *user's own* timezone (was hard-coded to IST,
+   which silently misled every non-India user). Falls back to IST only if
+   the browser doesn't expose Intl resolvedOptions(). */
+
+function _userTimezone(){
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
+  } catch { return "Asia/Kolkata"; }
+}
+function _tzAbbrev(tz){
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "short",
+      hour: "2-digit",
+    }).formatToParts(new Date());
+    const tzn = parts.find(p => p.type === "timeZoneName");
+    return tzn ? tzn.value : "";
+  } catch { return ""; }
+}
+const _LOCAL_TZ = _userTimezone();
+const _TZ_LABEL = _tzAbbrev(_LOCAL_TZ);
 
 function updateDateTime(){
-
-  const now = new Date(
-    new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})
-  )
-
-  document.getElementById("live-date").textContent =
-    now.toLocaleDateString("en-GB",{
-      day:"2-digit",
-      month:"short",
-      year:"numeric"
-    })
-
-  document.getElementById("live-time").textContent =
-    now.toLocaleTimeString("en-IN",{
-      hour:"2-digit",
-      minute:"2-digit",
-      second:"2-digit"
-    }) + " IST"
+  const now = new Date();
+  const dEl = document.getElementById("live-date");
+  const tEl = document.getElementById("live-time");
+  if (dEl) {
+    dEl.textContent = new Intl.DateTimeFormat(undefined, {
+      timeZone: _LOCAL_TZ,
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(now);
+  }
+  if (tEl) {
+    const time = new Intl.DateTimeFormat(undefined, {
+      timeZone: _LOCAL_TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(now);
+    tEl.textContent = _TZ_LABEL ? (time + " " + _TZ_LABEL) : time;
+  }
 }
 
 updateDateTime();
@@ -744,6 +771,12 @@ setInterval(updateDateTime, 1000);
 
 /* ACTIVE-LINK HIGHLIGHT — match current URL against each nav link's
    data-match regex (or fall back to exact href match).
+
+   We highlight the deepest match AND the parent group, so a user on
+   `/projects/123/tasks` sees both the parent "Projects" and any
+   contextual child link active. Previously the longest-regex-wins
+   logic left the parent unhighlighted, which made the user feel lost.
+
    NOTE: the explicit semicolons above are load-bearing. Without them
    JavaScript's ASI merges `setInterval(...)` with the IIFE below into
    a single statement, trying to call the timer id as a function. */
@@ -767,11 +800,14 @@ setInterval(updateDateTime, 1000);
       }
     }
     if (matched) {
+      // Mark every match (parent + child both light up subtly).
+      a.classList.add('match');
       const len = (pattern || a.getAttribute('href') || '').length;
       if (len > bestLen) { bestLen = len; bestMatch = a; }
     }
   });
 
+  // Strongest match wins the bold "active" treatment.
   if (bestMatch) bestMatch.classList.add('active');
 })();
 

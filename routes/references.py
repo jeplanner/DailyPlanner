@@ -225,6 +225,11 @@ Return ONLY valid JSON in this exact format:
 
 Rules: No markdown, no explanation, raw JSON only."""
 
+        # Tracks why AI fell back so the UI can show a meaningful inline notice
+        # ("AI unavailable — fill in manually") instead of an empty card.
+        ai_data = {}
+        ai_status = "ok"
+        ai_error = None
         try:
             resp = requests.post(
                 GROQ_URL,
@@ -245,16 +250,24 @@ Rules: No markdown, no explanation, raw JSON only."""
                         content = content[4:]
                 ai_data = json.loads(content)
             else:
-                ai_data = {}
+                ai_status = "error"
+                ai_error = f"AI service returned {resp.status_code}"
+        except requests.Timeout:
+            ai_status = "timeout"
+            ai_error = "AI service timed out"
+            logger.warning("fetch_metadata Groq timeout for %s", url)
         except Exception as e:
+            ai_status = "error"
+            ai_error = "AI generation failed"
             logger.warning("fetch_metadata Groq call failed: %s", e)
-            ai_data = {}
 
         return jsonify({
             "title": title,
             "description": ai_data.get("description") or meta_text,
             "tags": ai_data.get("tags", []),
             "category": ai_data.get("category"),
+            "ai_status": ai_status,
+            "ai_error": ai_error,
         })
 
     except Exception as e:

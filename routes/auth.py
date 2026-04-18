@@ -2,6 +2,7 @@ from flask import Blueprint, request, render_template, redirect, url_for, flash,
 from flask_login import login_user, logout_user, current_user
 from extensions import limiter
 from models.user import User
+from urllib.parse import urlparse
 import re
 import logging
 
@@ -10,8 +11,30 @@ logger = logging.getLogger("daily_plan")
 auth_bp = Blueprint("auth", __name__)
 
 
+def _safe_next_url(target):
+    """Return `target` only if it's a same-origin relative path, else None.
+
+    Without this guard `?next=https://evil/` is an open redirect after login.
+    """
+    if not target:
+        return None
+    parsed = urlparse(target)
+    if parsed.scheme or parsed.netloc:
+        return None
+    if not target.startswith("/") or target.startswith("//"):
+        return None
+    return target
+
+
+# Per-IP limit blocks bursts; per-IP+email limit blocks distributed brute force
+# against a single account from many IPs.
 @auth_bp.route("/login", methods=["GET", "POST"])
 @limiter.limit("5 per minute", methods=["POST"])
+@limiter.limit(
+    "10 per 15 minutes",
+    methods=["POST"],
+    key_func=lambda: f"login:{(request.form.get('email') or '').strip().lower()}",
+)
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("planner.planner"))
@@ -21,17 +44,19 @@ def login():
         password = request.form.get("password") or ""
 
         if not email or not password:
-            return render_template("login.html", error="Email and password are required")
+            return render_template("login.html", error="Email and password are required",
+                                   email=email)
 
         user = User.get_by_email(email)
         if user and user.check_password(password):
             login_user(user, remember=True)
             session.permanent = True
             logger.info("User logged in: %s", email)
-            next_page = request.args.get("next")
+            next_page = _safe_next_url(request.args.get("next"))
             return redirect(next_page or url_for("planner.planner"))
 
-        return render_template("login.html", error="Invalid email or password")
+        return render_template("login.html", error="Invalid email or password",
+                               email=email)
 
     return render_template("login.html")
 

@@ -427,10 +427,11 @@ def monthly_summary():
     })
     total_habits = len(habits) if habits else 1
 
+    # PostgREST `and=()` keeps both range bounds; a duplicated dict key
+    # silently collapses to one filter and read the entire table.
     entries = get("habit_entries", params={
         "user_id": f"eq.{user_id}",
-        "plan_date": f"gte.{start}",
-        "plan_date": f"lte.{today.isoformat()}"
+        "and": f"(plan_date.gte.{start},plan_date.lte.{today.isoformat()})",
     })
 
     # Days tracked = unique dates with at least 1 entry
@@ -448,9 +449,8 @@ def monthly_summary():
     # Weight change this month
     health_rows = get("daily_health", params={
         "user_id": f"eq.{user_id}",
-        "plan_date": f"gte.{start}",
-        "plan_date": f"lte.{today.isoformat()}",
-        "order": "plan_date.asc"
+        "and": f"(plan_date.gte.{start},plan_date.lte.{today.isoformat()})",
+        "order": "plan_date.asc",
     })
     weights = [r["weight"] for r in (health_rows or []) if r.get("weight")]
     weight_change = round(weights[-1] - weights[0], 1) if len(weights) >= 2 else 0

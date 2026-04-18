@@ -14,9 +14,15 @@
         if (container) return container;
         container = document.createElement("div");
         container.id = "toast-container";
+        // Announce updates to screen readers; visually identical to before.
+        container.setAttribute("role", "status");
+        container.setAttribute("aria-live", "polite");
+        container.setAttribute("aria-atomic", "true");
         Object.assign(container.style, {
             position: "fixed",
-            bottom: "24px",
+            // Respect iOS / Android safe-area inset so toasts don't sit
+            // behind the OS gesture bar on phones.
+            bottom: "max(24px, env(safe-area-inset-bottom, 24px))",
             left: "50%",
             transform: "translateX(-50%)",
             display: "flex",
@@ -25,6 +31,7 @@
             gap: "8px",
             zIndex: "10000",
             pointerEvents: "none",
+            maxWidth: "min(560px, calc(100vw - 32px))",
         });
         document.body.appendChild(container);
         return container;

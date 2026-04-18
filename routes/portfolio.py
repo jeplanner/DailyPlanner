@@ -38,6 +38,7 @@ def portfolio_page():
 def list_holdings():
     user_id = session["user_id"]
     asset_type = request.args.get("type")
+    include_deleted = request.args.get("include_deleted") == "1"
 
     params = {
         "user_id": f"eq.{user_id}",
@@ -45,6 +46,8 @@ def list_holdings():
     }
     if asset_type:
         params["asset_type"] = f"eq.{asset_type}"
+    if not include_deleted:
+        params["is_deleted"] = "is.false"
 
     rows = get("portfolio_holdings", params=params) or []
     decrypt_rows(rows, ENCRYPTED_FIELDS)
@@ -119,8 +122,25 @@ def update_holding(hid):
 @portfolio_bp.route("/api/portfolio/holdings/<hid>", methods=["DELETE"])
 @login_required
 def delete_holding(hid):
-    delete("portfolio_holdings",
-           params={"id": f"eq.{hid}", "user_id": f"eq.{session['user_id']}"})
+    # Soft-delete: years of investment history must remain recoverable.
+    # Reads filter on `is_deleted is false` so the holding disappears from the UI.
+    update(
+        "portfolio_holdings",
+        params={"id": f"eq.{hid}", "user_id": f"eq.{session['user_id']}"},
+        json={"is_deleted": True, "deleted_at": datetime.now(IST).isoformat()},
+    )
+    return jsonify({"success": True})
+
+
+@portfolio_bp.route("/api/portfolio/holdings/<hid>/restore", methods=["POST"])
+@login_required
+def restore_holding(hid):
+    """Undo a soft-deleted holding."""
+    update(
+        "portfolio_holdings",
+        params={"id": f"eq.{hid}", "user_id": f"eq.{session['user_id']}"},
+        json={"is_deleted": False, "deleted_at": None},
+    )
     return jsonify({"success": True})
 
 
@@ -470,8 +490,12 @@ def add_transaction():
 @portfolio_bp.route("/api/portfolio/transactions/<txn_id>", methods=["DELETE"])
 @login_required
 def delete_transaction(txn_id):
-    delete("portfolio_transactions",
-           params={"id": f"eq.{txn_id}", "user_id": f"eq.{session['user_id']}"})
+    # Transactions feed XIRR; hard-deleting would silently change historical returns.
+    update(
+        "portfolio_transactions",
+        params={"id": f"eq.{txn_id}", "user_id": f"eq.{session['user_id']}"},
+        json={"is_deleted": True, "deleted_at": datetime.now(IST).isoformat()},
+    )
     return jsonify({"success": True})
 
 

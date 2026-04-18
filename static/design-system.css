@@ -1,96 +1,193 @@
 /* ================================================
    DAILYPLANNER DESIGN SYSTEM
-   Global CSS custom properties & base styles
+   Global CSS custom properties + base resets.
+
+   Goals:
+   - Single source of truth for color, typography, spacing,
+     radius, shadow, motion, focus, elevation, z-index.
+   - Token names follow the same shape across light + dark
+     so a downstream component only consults --color-text,
+     never a hex literal.
+   - First-class accessibility: visible focus, prefers-
+     reduced-motion, sane contrast.
+
+   Naming:
+     --color-*       palette + semantic
+     --font-*        typography
+     --space-*       spacing scale (4px base)
+     --radius-*      border radii
+     --shadow-*      elevation
+     --ring          focus ring
+     --motion-*      duration + easing
+     --z-*           stacking layers
    ================================================ */
 
 :root {
-    /* ── Colors ────────────────────────────────── */
+    /* ── Brand / accents ───────────────────────────── */
     --color-primary: #2563eb;
     --color-primary-hover: #1d4ed8;
+    --color-primary-active: #1e40af;
     --color-primary-light: #eff6ff;
-    --color-primary-ring: rgba(37, 99, 235, 0.15);
+    --color-primary-ring: rgba(37, 99, 235, 0.18);
+    --color-on-primary: #ffffff;
 
     --color-danger: #dc2626;
+    --color-danger-strong: #b91c1c;
     --color-danger-light: #fef2f2;
     --color-danger-border: #fecaca;
+    --color-on-danger: #ffffff;
 
-    --color-success: #16a34a;
+    --color-success: #15803d;
+    --color-success-strong: #166534;
     --color-success-light: #f0fdf4;
     --color-success-border: #bbf7d0;
+    --color-on-success: #ffffff;
 
-    --color-warning: #f59e0b;
+    --color-warning: #b45309;
+    --color-warning-strong: #92400e;
     --color-warning-light: #fffbeb;
     --color-warning-border: #fde68a;
+    --color-on-warning: #ffffff;
 
     --color-info: #2563eb;
     --color-info-light: #eff6ff;
 
-    --color-bg: #f0f2f5;
+    /* ── Surface / text ────────────────────────────── */
+    --color-bg: #f5f6f8;
     --color-surface: #ffffff;
     --color-surface-secondary: #f9fafb;
-    --color-text: #111827;
-    --color-text-secondary: #6b7280;
-    --color-text-muted: #9ca3af;
+    --color-surface-elevated: #ffffff;
+    --color-surface-sunken: #eef0f3;
+    --color-text: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-muted: #6b7280;          /* WCAG AA on --color-bg (4.6:1) */
+    --color-text-disabled: #9ca3af;
+    --color-text-inverse: #ffffff;
     --color-border: #e5e7eb;
-    --color-border-light: #f3f4f6;
-    --color-overlay: rgba(0, 0, 0, 0.4);
+    --color-border-strong: #d1d5db;
+    --color-border-light: #f1f3f5;
+    --color-overlay: rgba(15, 23, 42, 0.45);
+    --color-backdrop: rgba(15, 23, 42, 0.55);
+    --color-link: var(--color-primary);
 
-    /* ── Typography ────────────────────────────── */
-    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    --font-size-xs: 11px;
-    --font-size-sm: 13px;
-    --font-size-base: 15px;
-    --font-size-lg: 18px;
-    --font-size-xl: 22px;
-    --font-size-2xl: 28px;
+    /* ── Quadrant accents (Eisenhower / planner / etc.) ── */
+    --color-q-do:        #ef4444;   /* urgent + important */
+    --color-q-schedule:  #2563eb;   /* important, not urgent */
+    --color-q-delegate:  #f59e0b;   /* urgent, not important */
+    --color-q-eliminate: #6b7280;   /* neither */
+
+    /* ── Typography ────────────────────────────────── */
+    --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+    --font-size-2xs: 10px;
+    --font-size-xs:  11px;
+    --font-size-sm:  13px;
+    --font-size-base:15px;
+    --font-size-lg:  17px;
+    --font-size-xl:  20px;
+    --font-size-2xl: 24px;
+    --font-size-3xl: 30px;
+    --font-size-4xl: 36px;
+
     --font-weight-normal: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
-    --line-height-tight: 1.25;
-    --line-height-normal: 1.5;
 
-    /* ── Spacing ───────────────────────────────── */
+    --line-height-tight:  1.2;
+    --line-height-snug:   1.35;
+    --line-height-normal: 1.5;
+    --line-height-loose:  1.7;
+
+    --letter-spacing-tight: -0.01em;
+    --letter-spacing-snug: -0.005em;
+    --letter-spacing-normal: 0;
+    --letter-spacing-wide: 0.04em;
+
+    /* ── Spacing scale (4px base) ──────────────────── */
+    --space-0: 0px;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
     --space-4: 16px;
     --space-5: 20px;
     --space-6: 24px;
+    --space-7: 28px;
     --space-8: 32px;
     --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+    --space-20: 80px;
 
-    /* ── Radius ────────────────────────────────── */
+    /* ── Radius ────────────────────────────────────── */
+    --radius-xs: 4px;
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 14px;
     --radius-xl: 18px;
+    --radius-2xl: 24px;
     --radius-full: 999px;
 
-    /* ── Shadows ───────────────────────────────── */
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.1);
-    --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.12);
+    /* ── Shadows / elevation ───────────────────────── */
+    --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
+    --shadow-lg: 0 12px 28px rgba(15, 23, 42, 0.12), 0 4px 8px rgba(15, 23, 42, 0.05);
+    --shadow-xl: 0 24px 56px rgba(15, 23, 42, 0.18), 0 6px 12px rgba(15, 23, 42, 0.06);
+    --shadow-inset: inset 0 1px 2px rgba(15, 23, 42, 0.05);
 
-    /* ── Transitions ──────────────────────────── */
-    --transition-fast: 0.15s ease;
-    --transition-normal: 0.25s ease;
-    --transition-slow: 0.35s ease;
+    /* ── Motion ────────────────────────────────────── */
+    --motion-duration-fast: 120ms;
+    --motion-duration-base: 180ms;
+    --motion-duration-slow: 280ms;
+    --motion-duration-slower: 420ms;
+
+    --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+    --motion-easing-emphasized: cubic-bezier(0.2, 0, 0, 1);
+    --motion-easing-decelerate: cubic-bezier(0, 0, 0, 1);
+    --motion-easing-accelerate: cubic-bezier(0.3, 0, 1, 1);
+
+    /* Legacy aliases — keep both forms working ── */
+    --transition-fast:   var(--motion-duration-fast)  var(--motion-easing-standard);
+    --transition-normal: var(--motion-duration-base)  var(--motion-easing-standard);
+    --transition-slow:   var(--motion-duration-slow)  var(--motion-easing-standard);
+
+    /* ── Focus ring ────────────────────────────────── */
+    --ring-width: 2px;
+    --ring-offset: 2px;
+    --ring-color: var(--color-primary);
+    --ring: 0 0 0 var(--ring-offset) var(--color-surface),
+            0 0 0 calc(var(--ring-width) + var(--ring-offset)) var(--ring-color);
+
+    /* ── Z-index scale ─────────────────────────────── */
+    --z-base: 0;
+    --z-sticky: 100;
+    --z-nav: 900;
+    --z-overlay: 1000;
+    --z-modal: 1100;
+    --z-popover: 1200;
+    --z-tooltip: 1300;
+    --z-toast: 9000;
 }
 
-/* ── Dark Mode ─────────────────────────────────── */
+/* ── Dark mode ─────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
     :root:not(.light) {
-        --color-bg: #0f172a;
-        --color-surface: #1e293b;
-        --color-surface-secondary: #1a2332;
+        --color-bg: #0b1220;
+        --color-surface: #111a2c;
+        --color-surface-secondary: #15203a;
+        --color-surface-elevated: #1a2540;
+        --color-surface-sunken: #07101e;
         --color-text: #f1f5f9;
-        --color-text-secondary: #94a3b8;
-        --color-text-muted: #64748b;
-        --color-border: #334155;
-        --color-border-light: #1e293b;
-        --color-overlay: rgba(0, 0, 0, 0.6);
+        --color-text-secondary: #cbd5e1;
+        --color-text-muted: #94a3b8;
+        --color-text-disabled: #64748b;
+        --color-border: #28344a;
+        --color-border-strong: #3b4865;
+        --color-border-light: #1d2740;
+        --color-overlay: rgba(0, 0, 0, 0.65);
+        --color-backdrop: rgba(0, 0, 0, 0.75);
         --color-primary-light: #1e3a5f;
         --color-danger-light: #3b1111;
         --color-danger-border: #7f1d1d;
@@ -98,22 +195,31 @@
         --color-success-border: #14532d;
         --color-warning-light: #451a03;
         --color-warning-border: #78350f;
-        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
-        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
-        --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
+        --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+        --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.55);
+        --shadow-xl: 0 24px 56px rgba(0, 0, 0, 0.6);
+        --ring: 0 0 0 var(--ring-offset) var(--color-surface),
+                0 0 0 calc(var(--ring-width) + var(--ring-offset)) #60a5fa;
     }
 }
 
 html.dark {
-    --color-bg: #0f172a;
-    --color-surface: #1e293b;
-    --color-surface-secondary: #1a2332;
+    --color-bg: #0b1220;
+    --color-surface: #111a2c;
+    --color-surface-secondary: #15203a;
+    --color-surface-elevated: #1a2540;
+    --color-surface-sunken: #07101e;
     --color-text: #f1f5f9;
-    --color-text-secondary: #94a3b8;
-    --color-text-muted: #64748b;
-    --color-border: #334155;
-    --color-border-light: #1e293b;
-    --color-overlay: rgba(0, 0, 0, 0.6);
+    --color-text-secondary: #cbd5e1;
+    --color-text-muted: #94a3b8;
+    --color-text-disabled: #64748b;
+    --color-border: #28344a;
+    --color-border-strong: #3b4865;
+    --color-border-light: #1d2740;
+    --color-overlay: rgba(0, 0, 0, 0.65);
+    --color-backdrop: rgba(0, 0, 0, 0.75);
     --color-primary-light: #1e3a5f;
     --color-danger-light: #3b1111;
     --color-danger-border: #7f1d1d;
@@ -121,7 +227,68 @@ html.dark {
     --color-success-border: #14532d;
     --color-warning-light: #451a03;
     --color-warning-border: #78350f;
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.55);
+    --shadow-xl: 0 24px 56px rgba(0, 0, 0, 0.6);
+    --ring: 0 0 0 var(--ring-offset) var(--color-surface),
+            0 0 0 calc(var(--ring-width) + var(--ring-offset)) #60a5fa;
+}
+
+/* ──────────────────────────────────────────────────
+   GLOBAL BASE RESETS
+   Kept conservative to avoid regressing existing pages.
+   ────────────────────────────────────────────────── */
+
+html { color-scheme: light dark; }
+html.dark { color-scheme: dark; }
+
+/* Universal focus-visible — visible to keyboard, hidden to mouse. */
+*:focus { outline: none; }
+*:focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+    border-radius: var(--radius-sm);
+}
+
+/* Skip-link: hidden until keyboard-focused. */
+.skip-link {
+    position: fixed;
+    top: -100px;
+    left: var(--space-4);
+    background: var(--color-primary);
+    color: var(--color-on-primary);
+    padding: var(--space-3) var(--space-5);
+    border-radius: var(--radius-md);
+    font-weight: var(--font-weight-semibold);
+    text-decoration: none;
+    z-index: var(--z-toast);
+    transition: top var(--motion-duration-base) var(--motion-easing-standard);
+    box-shadow: var(--shadow-md);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+    top: var(--space-4);
+}
+
+/* Visually-hidden helper for SR-only labels. */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Reduced motion — honour the user's OS preference. */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
+    }
 }

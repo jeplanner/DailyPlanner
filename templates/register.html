@@ -4,191 +4,137 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Register — DailyPlanner</title>
+    <title>Create your account — DailyPlanner</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Inter', system-ui, sans-serif;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #f0f2f5;
-            color: #111827;
-        }
-        .auth-container {
-            width: 100%;
-            max-width: 420px;
-            padding: 20px;
-        }
-        .auth-card {
-            background: #fff;
-            border-radius: 16px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-            overflow: hidden;
-        }
-        .auth-header {
-            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-            padding: 32px 32px 28px;
-            text-align: center;
-            color: #fff;
-        }
-        .auth-header h1 {
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 4px;
-        }
-        .auth-header p {
-            font-size: 14px;
-            opacity: 0.85;
-        }
-        .auth-logo {
-            width: 48px;
-            height: 48px;
-            background: rgba(255,255,255,0.2);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 16px;
-            font-size: 24px;
-        }
-        .auth-body {
-            padding: 32px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        .form-group label {
-            display: block;
-            font-size: 13px;
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 6px;
-        }
-        .form-group input {
-            width: 100%;
-            padding: 10px 14px;
-            border: 1.5px solid #e5e7eb;
-            border-radius: 10px;
-            font-size: 15px;
-            font-family: inherit;
-            background: #f9fafb;
-            transition: all 0.2s;
-            outline: none;
-        }
-        .form-group input:focus {
-            border-color: #2563eb;
-            background: #fff;
-            box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
-        }
-        .form-hint {
-            font-size: 12px;
-            color: #9ca3af;
-            margin-top: 4px;
-        }
-        .btn-primary {
-            width: 100%;
-            padding: 12px;
-            background: #2563eb;
-            color: #fff;
-            border: none;
-            border-radius: 10px;
-            font-size: 15px;
-            font-weight: 600;
-            font-family: inherit;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .btn-primary:hover {
-            background: #1d4ed8;
-        }
-        .btn-primary:active {
-            transform: scale(0.98);
-        }
-        .error-list {
-            background: #fef2f2;
-            color: #dc2626;
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-size: 13px;
-            margin-bottom: 20px;
-            border: 1px solid #fecaca;
-            list-style: none;
-        }
-        .error-list li {
-            padding: 2px 0;
-        }
-        .error-list li::before {
-            content: "• ";
-        }
-        .auth-footer {
-            text-align: center;
-            padding: 0 32px 28px;
-            font-size: 14px;
-            color: #6b7280;
-        }
-        .auth-footer a {
-            color: #2563eb;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        .auth-footer a:hover {
-            text-decoration: underline;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='components.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth.css') }}">
 </head>
-<body>
+<body class="auth">
+    <a href="#main" class="skip-link">Skip to main content</a>
+
     <div class="auth-container">
-        <div class="auth-card">
-            <div class="auth-header">
-                <div class="auth-logo">📋</div>
-                <h1>DailyPlanner</h1>
-                <p>Create your account</p>
-            </div>
+        <div class="auth-brand" aria-hidden="true">
+            <span class="auth-brand-mark">D</span>
+            <span class="auth-brand-name">DailyPlanner</span>
+        </div>
+
+        <main id="main" class="auth-card">
+            <header class="auth-header">
+                <h1>Create your account</h1>
+                <p>One workspace for tasks, calendar, habits, money, and notes.</p>
+            </header>
+
             <div class="auth-body">
                 {% if errors %}
-                    <ul class="error-list">
-                        {% for err in errors %}
-                            <li>{{ err }}</li>
-                        {% endfor %}
-                    </ul>
+                    <div class="alert alert-danger" role="alert" style="margin-bottom: var(--space-5)">
+                        <div>
+                            <strong>Please fix the following:</strong>
+                            <ul style="margin:6px 0 0; padding-left: 18px;">
+                                {% for err in errors %}<li>{{ err }}</li>{% endfor %}
+                            </ul>
+                        </div>
+                    </div>
                 {% endif %}
 
-                <form method="POST" action="{{ url_for('auth.register') }}">
+                <form method="POST" action="{{ url_for('auth.register') }}" novalidate>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="form-group">
-                        <label for="display_name">Display Name</label>
-                        <input type="text" id="display_name" name="display_name"
+
+                    <div class="form-field">
+                        <label for="display_name" class="form-label">
+                            Display name <span class="required" aria-hidden="true">*</span>
+                        </label>
+                        <input type="text"
+                               id="display_name"
+                               name="display_name"
+                               class="form-input"
                                value="{{ display_name or '' }}"
-                               placeholder="Your name" required autofocus>
+                               placeholder="Jane Doe"
+                               autocomplete="name"
+                               minlength="2"
+                               required
+                               autofocus>
                     </div>
-                    <div class="form-group">
-                        <label for="email">Email</label>
-                        <input type="email" id="email" name="email"
+
+                    <div class="form-field">
+                        <label for="email" class="form-label">
+                            Email <span class="required" aria-hidden="true">*</span>
+                        </label>
+                        <input type="email"
+                               id="email"
+                               name="email"
+                               class="form-input"
                                value="{{ email or '' }}"
-                               placeholder="you@example.com" required>
+                               placeholder="you@example.com"
+                               autocomplete="email"
+                               inputmode="email"
+                               required>
                     </div>
-                    <div class="form-group">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" name="password"
-                               placeholder="At least 8 characters" required minlength="8">
-                        <div class="form-hint">Minimum 8 characters</div>
+
+                    <div class="form-field">
+                        <label for="password" class="form-label">
+                            Password <span class="required" aria-hidden="true">*</span>
+                        </label>
+                        <div class="input-group">
+                            <input type="password"
+                                   id="password"
+                                   name="password"
+                                   class="form-input"
+                                   placeholder="At least 8 characters"
+                                   autocomplete="new-password"
+                                   minlength="8"
+                                   required
+                                   data-strength-meter="pw-strength">
+                            <button type="button"
+                                    class="input-group-action"
+                                    aria-label="Show password"
+                                    aria-pressed="false"
+                                    data-toggle-password="password">
+                                <span aria-hidden="true">👁</span>
+                            </button>
+                        </div>
+                        <div id="pw-strength" class="pw-meter" data-score="0" aria-live="polite">
+                            <div class="pw-meter-bar" aria-hidden="true"></div>
+                            <div class="pw-meter-label">Password strength</div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="confirm_password">Confirm Password</label>
-                        <input type="password" id="confirm_password" name="confirm_password"
-                               placeholder="Re-enter your password" required>
+
+                    <div class="form-field">
+                        <label for="confirm_password" class="form-label">
+                            Confirm password <span class="required" aria-hidden="true">*</span>
+                        </label>
+                        <div class="input-group">
+                            <input type="password"
+                                   id="confirm_password"
+                                   name="confirm_password"
+                                   class="form-input"
+                                   placeholder="Re-enter your password"
+                                   autocomplete="new-password"
+                                   required
+                                   data-match="password">
+                            <button type="button"
+                                    class="input-group-action"
+                                    aria-label="Show password"
+                                    aria-pressed="false"
+                                    data-toggle-password="confirm_password">
+                                <span aria-hidden="true">👁</span>
+                            </button>
+                        </div>
+                        <div class="form-error" id="match-error" hidden>Passwords don't match.</div>
                     </div>
-                    <button type="submit" class="btn-primary">Create Account</button>
+
+                    <button type="submit" class="btn btn-primary btn-block btn-lg">Create account</button>
                 </form>
             </div>
-            <div class="auth-footer">
+
+            <footer class="auth-footer">
                 Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a>
-            </div>
-        </div>
+            </footer>
+        </main>
     </div>
+
+    <script src="{{ url_for('static', filename='js/auth.js') }}" defer></script>
 </body>
 </html>

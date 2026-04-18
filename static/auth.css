@@ -1,0 +1,162 @@
+/* ================================================
+   AUTH (login + register) — design-system-driven.
+   Replaces the inline <style> blocks that were duplicated
+   across login.html and register.html.
+   ================================================ */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+body.auth {
+    font-family: var(--font-family);
+    color: var(--color-text);
+    background:
+        radial-gradient(1200px 600px at 90% -10%, rgba(37, 99, 235, 0.10), transparent 60%),
+        radial-gradient(1000px 500px at -10% 110%, rgba(22, 163, 74, 0.08), transparent 60%),
+        var(--color-bg);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-5);
+    -webkit-font-smoothing: antialiased;
+}
+
+.auth-container {
+    width: 100%;
+    max-width: 420px;
+}
+
+.auth-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+}
+.auth-brand-mark {
+    width: 28px; height: 28px;
+    border-radius: var(--radius-md);
+    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-active));
+    color: var(--color-on-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: var(--font-weight-bold);
+    box-shadow: var(--shadow-sm);
+}
+.auth-brand-name {
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: var(--letter-spacing-snug);
+    color: var(--color-text);
+}
+
+.auth-card {
+    background: var(--color-surface-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-2xl);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+}
+
+.auth-header {
+    padding: var(--space-8) var(--space-8) var(--space-5);
+    text-align: center;
+    border-bottom: 1px solid var(--color-border-light);
+}
+.auth-header h1 {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: var(--letter-spacing-tight);
+    color: var(--color-text);
+    margin: 0 0 6px;
+    line-height: var(--line-height-tight);
+}
+.auth-header p {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+.auth-body {
+    padding: var(--space-6) var(--space-8) var(--space-8);
+}
+
+.auth-footer {
+    padding: var(--space-5) var(--space-8) var(--space-8);
+    text-align: center;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    border-top: 1px solid var(--color-border-light);
+    background: var(--color-surface-secondary);
+}
+.auth-footer a {
+    color: var(--color-link);
+    font-weight: var(--font-weight-semibold);
+    text-decoration: none;
+    border-radius: var(--radius-xs);
+}
+.auth-footer a:hover { text-decoration: underline; }
+
+.field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+.field-row .field-link {
+    font-size: var(--font-size-xs);
+    color: var(--color-link);
+    text-decoration: none;
+    font-weight: var(--font-weight-medium);
+}
+.field-row .field-link:hover { text-decoration: underline; }
+
+/* Strength meter for the register password */
+.pw-meter {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.pw-meter-bar {
+    height: 4px;
+    border-radius: var(--radius-full);
+    background: var(--color-border);
+    overflow: hidden;
+    position: relative;
+}
+.pw-meter-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0 100% 0 0;
+    background: var(--color-text-muted);
+    transition: right var(--transition-fast), background var(--transition-fast);
+}
+.pw-meter[data-score="1"] .pw-meter-bar::after { right: 75%; background: var(--color-danger); }
+.pw-meter[data-score="2"] .pw-meter-bar::after { right: 50%; background: var(--color-warning); }
+.pw-meter[data-score="3"] .pw-meter-bar::after { right: 25%; background: var(--color-warning); }
+.pw-meter[data-score="4"] .pw-meter-bar::after { right: 0%;  background: var(--color-success); }
+.pw-meter-label {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+.pw-meter[data-score="1"] .pw-meter-label,
+.pw-meter[data-score="2"] .pw-meter-label,
+.pw-meter[data-score="3"] .pw-meter-label,
+.pw-meter[data-score="4"] .pw-meter-label {
+    color: var(--color-text-secondary);
+}
+
+.auth-card .btn { width: 100%; padding: 12px; font-size: var(--font-size-base); min-height: 44px; }
+
+@media (max-width: 480px) {
+    body.auth { padding: var(--space-3); align-items: stretch; }
+    .auth-container { padding-top: var(--space-6); }
+    .auth-header { padding: var(--space-6) var(--space-5) var(--space-4); }
+    .auth-body, .auth-footer { padding-left: var(--space-5); padding-right: var(--space-5); }
+}

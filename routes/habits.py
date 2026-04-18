@@ -14,7 +14,8 @@ def add_habit():
     user_id = session["user_id"]
     data = request.get_json()
 
-    name = (data.get("name") or "").strip().upper()
+    # Trust user-chosen casing; previously force-uppercased ("WALKING" instead of "Walking").
+    name = (data.get("name") or "").strip()
     habit_type = data.get("habit_type", "number")
     start_date = data.get("start_date") or date.today().isoformat()
 
