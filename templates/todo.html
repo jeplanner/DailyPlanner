@@ -38,7 +38,36 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-today-btn:hover{background:var(--em-border);}
 
 /* Quick Actions */
-.em-actions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;}
+.em-actions{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
+/* Mobile-only / desktop-only show-hide helpers used by the toolbar
+   and composer to present a tighter, thumb-friendly UI on narrow
+   screens. Desktop keeps full labels; mobile consolidates. */
+.em-mobile-only{display:none;}
+.em-mobile-hide{}
+
+/* Overflow "⋯ More" menu on mobile. Dropdown is absolutely positioned,
+   closes on outside click + Escape. Items match the look of the
+   regular .em-action-btn row for visual continuity. */
+.em-more-menu-wrap{position:relative;display:inline-block;}
+.em-more-trigger[aria-expanded="true"]{background:var(--em-border);color:var(--em-text);border-color:var(--em-border);}
+.em-more-dropdown{
+  position:absolute;top:calc(100% + 6px);right:0;z-index:800;
+  min-width:220px;padding:6px;
+  background:var(--em-surface);border:1px solid var(--em-border);
+  border-radius:12px;box-shadow:0 14px 40px rgba(0,0,0,.22);
+  display:none;flex-direction:column;gap:2px;
+}
+.em-more-dropdown.open{display:flex;}
+.em-more-dropdown button{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;border:none;border-radius:8px;
+  background:transparent;color:var(--em-text);
+  font-size:13.5px;font-weight:500;font-family:inherit;
+  cursor:pointer;text-align:left;width:100%;
+}
+.em-more-dropdown button:hover{background:var(--em-border);}
+.em-more-dropdown button svg{width:15px;height:15px;flex-shrink:0;color:var(--em-text2);}
+.em-more-divider{height:1px;background:var(--em-border);margin:4px 0;}
 .em-action-btn{display:flex;align-items:center;gap:4px;padding:6px 12px;border:1px solid var(--em-border);border-radius:8px;font-size:12px;font-weight:500;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;transition:all .15s;}
 .em-action-btn:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
 
@@ -1019,7 +1048,12 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   .em-chip { font-size: 13px; padding: 7px 8px 7px 12px; }
   .em-chip-text { max-width: 140px; }
 
-  /* ── Quick actions: wrap with bigger touch targets ── */
+  /* ── Mobile show/hide flip — toolbar consolidates to Filter + ⋯
+       on narrow screens; the desktop-labeled buttons hide away. ── */
+  .em-mobile-hide { display: none !important; }
+  .em-mobile-only { display: inline-block; }
+
+  /* ── Quick actions: tight row — Filter + ⋯ only ── */
   .em-actions { gap: 8px; margin-bottom: 14px; }
   .em-action-btn {
     font-size: 13px;
@@ -1030,10 +1064,12 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   }
   .em-action-btn svg { width: 16px !important; height: 16px !important; }
 
-  /* ── Quick add: stack into two rows ── */
+  /* ── Composer — thumb-first layout:
+       Row 1: [input .....] [Add] [mic]   ← Add is always reachable
+       Row 2+: pickers wrap 2-per-row                                   ── */
   .em-quick-add {
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
     padding: 12px;
     background: var(--em-surface);
     border: 1px solid var(--em-border);
@@ -1042,28 +1078,42 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     margin-bottom: 14px;
   }
   .em-quick-input {
-    flex: 1 1 100%;
+    flex: 1 1 60%;
+    order: 1;
     font-size: 16px; /* prevent iOS zoom */
-    padding: 13px 14px;
+    padding: 12px 14px;
     border-radius: 11px;
-    min-height: 48px;
-  }
-  .em-quad-select {
-    flex: 1 1 calc(50% - 5px);
-    font-size: 14px;
-    padding: 11px 12px;
-    min-height: 44px;
-    border-radius: 9px;
+    min-height: 46px;
   }
   .em-add-btn {
-    flex: 1 1 100%;
-    font-size: 15px;
-    padding: 13px 18px;
-    min-height: 48px;
+    flex: 0 0 auto;
+    order: 2;
+    font-size: 14px; font-weight: 700;
+    padding: 12px 18px;
+    min-height: 46px; min-width: 72px;
     border-radius: 11px;
-    font-weight: 700;
     box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
   }
+  .em-quick-add #em-voice-mic {
+    flex: 0 0 auto;
+    order: 3;
+    min-height: 46px; min-width: 46px;
+    padding: 10px;
+  }
+  /* All pickers drop to subsequent rows, each ~50% of row width. */
+  .em-quad-select,
+  .em-extra-inline,
+  .em-proj-picker {
+    flex: 1 1 calc(50% - 4px);
+    order: 10;
+    min-width: 0;
+    font-size: 13.5px;
+    padding: 10px 12px;
+    min-height: 42px;
+    border-radius: 9px;
+  }
+  .em-extra-inline .em-extra-input { width: 100%; flex: 1 1 auto; font-size: 13.5px; }
+  .em-proj-trigger { font-size: 13.5px !important; }
   .em-quick-extra {
     gap: 10px;
     padding: 12px;
@@ -1291,8 +1341,12 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     {# "Copy Previous Day" retired. The Morning Dashboard
        (/summary?view=daily) now surfaces overdue items as a
        read-through view — no duplication needed. #}
+    {# Travel Mode controls — visible on desktop; hidden on mobile where
+       the "⋯ More" menu above reaches the same actions via an aria menu. #}
     {% if travel_mode_active %}
-    <form method="post" action="/todo/travel-mode/disable" style="display:inline-flex;gap:4px;align-items:center;"
+    <form id="em-disable-travel-form" method="post" action="/todo/travel-mode/disable"
+          class="em-mobile-hide"
+          style="display:inline-flex;gap:4px;align-items:center;"
           onsubmit="return confirm('Remove the unchanged Travel Mode tasks for this day? Anything you\'ve edited or checked off stays put.');">
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
@@ -1305,7 +1359,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       </button>
     </form>
     {% elif travel_mode_restorable_count and travel_mode_restorable_count > 0 %}
-    <div style="display:inline-flex;gap:4px;align-items:center;">
+    <div class="em-mobile-hide" style="display:inline-flex;gap:4px;align-items:center;">
       <button type="button" class="em-action-btn" onclick="openTravelRestoreModal()"
               title="You turned Travel Mode off earlier — pick up where you left off">
         <i data-feather="navigation" style="width:14px;height:14px"></i>
@@ -1317,7 +1371,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       </button>
     </div>
     {% else %}
-    <form method="post" action="/todo/travel-mode" style="display:inline-flex;gap:4px;align-items:center;">
+    <form method="post" action="/todo/travel-mode" class="em-mobile-hide" style="display:inline-flex;gap:4px;align-items:center;">
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
       <input type="hidden" name="day" value="{{ plan_date.day }}">
@@ -2609,13 +2663,46 @@ function toggleClosedVisibility() {
 function _syncClosedToggleUI(hidden) {
   const btn = document.getElementById("em-toggle-closed");
   const label = document.getElementById("em-toggle-closed-label");
-  if (!btn || !label) return;
-  btn.classList.toggle("active", !hidden);
-  label.textContent = hidden ? "Show skipped/deleted" : "Hide skipped/deleted";
-  const icon = btn.querySelector("[data-feather]");
+  if (btn) btn.classList.toggle("active", !hidden);
+  if (label) label.textContent = hidden ? "Show skipped/deleted" : "Hide skipped/deleted";
+  // Mirror the label in the mobile overflow menu too
+  const labelM = document.getElementById("em-toggle-closed-label-m");
+  if (labelM) labelM.textContent = hidden ? "Show skipped/deleted" : "Hide skipped/deleted";
+  const icon = btn?.querySelector("[data-feather]");
   if (icon) icon.setAttribute("data-feather", hidden ? "eye-off" : "eye");
   if (window.feather) feather.replace();
 }
+
+/* ══════════════════════════════════════════════════════════════
+   "⋯ More" overflow menu — mobile-only toolbar consolidation.
+   Opens/closes an absolute dropdown below the trigger. Clicks
+   outside OR Escape close it; clicks inside menu items fire the
+   handler and then close.
+   ══════════════════════════════════════════════════════════════ */
+function toggleEmMoreMenu(ev) {
+  ev?.stopPropagation?.();
+  const dd = document.getElementById("em-more-dropdown");
+  const trigger = ev?.currentTarget || document.querySelector(".em-more-trigger");
+  if (!dd) return;
+  const isOpen = dd.classList.toggle("open");
+  trigger?.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+function closeEmMoreMenu() {
+  const dd = document.getElementById("em-more-dropdown");
+  dd?.classList.remove("open");
+  document.querySelector(".em-more-trigger")?.setAttribute("aria-expanded", "false");
+}
+document.addEventListener("click", (e) => {
+  const dd = document.getElementById("em-more-dropdown");
+  if (!dd || !dd.classList.contains("open")) return;
+  if (!e.target.closest(".em-more-menu-wrap")) closeEmMoreMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const dd = document.getElementById("em-more-dropdown");
+    if (dd?.classList.contains("open")) { closeEmMoreMenu(); e.stopPropagation(); }
+  }
+});
 // Apply persisted preference on load (default: hidden)
 (function(){
   const pref = localStorage.getItem(EM_HIDE_KEY);
