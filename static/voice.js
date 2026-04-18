@@ -5,10 +5,12 @@
 let recognition;
 let isRecording = false;
 let _voiceBtn = null; // Track which button started recording
+let _voiceSubmitFn = null; // Optional "add tasks" callback per session
 
-function initVoiceDictation(textareaId, statusElId) {
+function initVoiceDictation(textareaId, statusElId, onSubmit) {
   const textarea = document.getElementById(textareaId);
   const statusEl = document.getElementById(statusElId);
+  _voiceSubmitFn = (typeof onSubmit === "function") ? onSubmit : null;
 
   if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
     if (statusEl) statusEl.textContent = "Voice not supported in this browser";
@@ -52,6 +54,14 @@ function initVoiceDictation(textareaId, statusElId) {
   recognition.onresult = (event) => {
     for (let i = event.resultIndex; i < event.results.length; i++) {
       let text = event.results[i][0].transcript.trim();
+
+      // Intercept meta voice commands (erase/submit) before appending.
+      const cmd = _interpretVoiceCommand(text);
+      if (cmd) {
+        _executeVoiceCommand(cmd, textarea, statusEl);
+        continue;
+      }
+
       text = normalizeNaturalDates(text);
 
       // Append as new line
@@ -64,7 +74,7 @@ function initVoiceDictation(textareaId, statusElId) {
   };
 }
 
-function toggleVoice(textareaId, statusElId) {
+function toggleVoice(textareaId, statusElId, onSubmit) {
   // Find the button that was clicked (for visual feedback)
   _voiceBtn = document.activeElement?.closest("button") || null;
 
@@ -73,7 +83,7 @@ function toggleVoice(textareaId, statusElId) {
     return;
   }
 
-  initVoiceDictation(textareaId, statusElId);
+  initVoiceDictation(textareaId, statusElId, onSubmit);
 
   try {
     recognition.start();
@@ -97,6 +107,105 @@ function stopVoice() {
 // parseTaskLine() so the textarea stays human-readable.
 function normalizeNaturalDates(text) {
   return text.replace(/[.!?]+$/g, "").replace(/\s{2,}/g, " ").trim();
+}
+
+// ===============================
+// 🎙 Voice meta-commands
+// ===============================
+// Spoken phrases that control the text area or submit it, rather than
+// landing as a dictated task. Recognized (case-insensitive):
+//   "erase all" / "clear all" / "delete everything"        → clear textarea
+//   "erase first line" / "erase last line"                 → drop one line
+//   "erase line <n>"  (digits or words one..twenty)        → drop that line
+//   "add tasks" / "add all" / "submit" / "done"            → fire onSubmit
+
+const _VOICE_NUM_WORDS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
+  fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20,
+};
+
+function _interpretVoiceCommand(raw) {
+  const t = (raw || "").toLowerCase().replace(/[.,!?;:]/g, "").replace(/\s{2,}/g, " ").trim();
+  if (!t) return null;
+
+  if (/^(erase|clear|delete|remove)\s+(all|everything)$/.test(t)) {
+    return { type: "clear" };
+  }
+
+  const firstLast = t.match(/^(?:erase|clear|delete|remove)\s+(?:the\s+)?(first|last)\s+line$/);
+  if (firstLast) return { type: "eraseLine", which: firstLast[1] };
+
+  const numWordAlt = Object.keys(_VOICE_NUM_WORDS).join("|");
+  const lineNum = t.match(new RegExp(`^(?:erase|clear|delete|remove)\\s+(?:the\\s+)?line\\s+(\\d+|${numWordAlt})$`));
+  if (lineNum) {
+    const tok = lineNum[1];
+    const n = /^\d+$/.test(tok) ? parseInt(tok, 10) : _VOICE_NUM_WORDS[tok];
+    if (n && n >= 1) return { type: "eraseLine", index: n - 1 };
+  }
+
+  if (/^(?:add|submit|save)(?:\s+(?:all|the))?(?:\s+tasks?|\s+everything|\s+items?)?$/.test(t)
+      || /^done$/.test(t)) {
+    return { type: "submit" };
+  }
+
+  return null;
+}
+
+function _voiceFlash(statusEl, msg, color) {
+  if (!statusEl) return;
+  statusEl.innerHTML = `<span style="color:${color || "#0ea5e9"};">✓ ${msg}</span>`;
+}
+
+function _executeVoiceCommand(cmd, textarea, statusEl) {
+  if (!textarea) return;
+
+  if (cmd.type === "clear") {
+    textarea.value = "";
+    _voiceFlash(statusEl, "Cleared");
+    return;
+  }
+
+  if (cmd.type === "eraseLine") {
+    const lines = textarea.value.split("\n");
+    if (!lines.length || (lines.length === 1 && !lines[0])) {
+      _voiceFlash(statusEl, "Nothing to erase", "#dc2626");
+      return;
+    }
+    let idx;
+    if (cmd.which === "first") {
+      idx = 0;
+      while (idx < lines.length - 1 && !lines[idx].trim()) idx++;
+    } else if (cmd.which === "last") {
+      idx = lines.length - 1;
+      while (idx > 0 && !lines[idx].trim()) idx--;
+    } else {
+      idx = cmd.index;
+    }
+    if (idx < 0 || idx >= lines.length) {
+      _voiceFlash(statusEl, `No line ${idx + 1}`, "#dc2626");
+      return;
+    }
+    lines.splice(idx, 1);
+    textarea.value = lines.join("\n");
+    textarea.scrollTop = textarea.scrollHeight;
+    _voiceFlash(statusEl, `Erased line ${idx + 1}`);
+    return;
+  }
+
+  if (cmd.type === "submit") {
+    const submit = _voiceSubmitFn;
+    if (typeof submit !== "function") {
+      _voiceFlash(statusEl, "Submit not available here", "#dc2626");
+      return;
+    }
+    _voiceFlash(statusEl, "Adding tasks…");
+    // Stop listening so the "add tasks" utterance doesn't race further input.
+    stopVoice();
+    try { submit(); } catch (e) { console.error("Voice submit failed:", e); }
+    return;
+  }
 }
 
 // ===============================

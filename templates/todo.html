@@ -1163,6 +1163,10 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   <!-- Quick Add Task -->
   <div class="em-quick-add">
     <input type="text" id="quick-task" class="em-quick-input" placeholder="Add a task…" onkeydown="if(event.key==='Enter')quickAdd()">
+    <button class="em-add-btn" onclick="quickAdd()">Add</button>
+    <button class="em-action-btn" onclick="toggleBulkPanel()" title="Bulk add / Voice" style="padding:8px;">
+      <i data-feather="mic" style="width:14px;height:14px"></i>
+    </button>
     <select id="quick-quad" class="em-quad-select">
       <option value="do">🔴 Do</option>
       <option value="schedule" selected>🔵 Schedule</option>
@@ -1215,30 +1219,25 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
         {% endif %}
       </div>
     </div>
-    <button class="em-add-btn" onclick="quickAdd()">Add</button>
-    <button class="em-action-btn" onclick="toggleBulkPanel()" title="Bulk add / Voice" style="padding:8px;">
-      <i data-feather="mic" style="width:14px;height:14px"></i>
-    </button>
   </div>
 
   <!-- Bulk Add + Voice -->
   <div id="bulk-panel" style="display:none;background:var(--em-surface);border:1px solid var(--em-border);border-radius:10px;padding:12px 14px;margin-bottom:16px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <span style="font-size:13px;font-weight:600;">Bulk Add Tasks</span>
-      <div style="display:flex;gap:6px;">
-        <button onclick="toggleVoice('em-bulk-text','em-voice-status')" style="display:flex;align-items:center;gap:4px;padding:5px 10px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;">
-          <i data-feather="mic" style="width:14px;height:14px"></i>
-          <span id="em-voice-status">Voice</span>
-        </button>
-        <button onclick="bulkAddEisenhower()" style="display:flex;align-items:center;gap:4px;padding:5px 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;background:var(--q-schedule);color:#fff;cursor:pointer;">
-          Add All
-        </button>
-      </div>
-    </div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">Bulk Add Tasks</div>
     <textarea id="em-bulk-text" rows="5" style="width:100%;border:1px solid var(--em-border);border-radius:8px;padding:10px;font-size:13px;font-family:inherit;background:var(--em-bg);color:var(--em-text);outline:none;resize:vertical;"
               placeholder="Type or dictate tasks, one per line:&#10;- Review PR&#10;- Call vendor&#10;- Update roadmap"></textarea>
-    <div style="font-size:11px;color:var(--em-text3);margin-top:4px;">
+    <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap;">
+      <button onclick="toggleVoice('em-bulk-text','em-voice-status',bulkAddEisenhower)" style="display:flex;align-items:center;gap:4px;padding:5px 10px;border:1px solid var(--em-border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;">
+        <i data-feather="mic" style="width:14px;height:14px"></i>
+        <span id="em-voice-status">Voice</span>
+      </button>
+      <button onclick="bulkAddEisenhower()" style="display:flex;align-items:center;gap:4px;padding:5px 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;background:var(--q-schedule);color:#fff;cursor:pointer;">
+        Add All
+      </button>
+    </div>
+    <div style="font-size:11px;color:var(--em-text3);margin-top:6px;">
       Tasks are added to the selected quadrant. Each line = one task.
+      Voice: say <b>erase all</b>, <b>erase last line</b>, or <b>add tasks</b> to control the box hands-free.
     </div>
   </div>
   <!-- Context fields that show based on quadrant -->
