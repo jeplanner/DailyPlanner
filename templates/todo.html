@@ -1238,17 +1238,56 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
 
   <!-- Quick Actions -->
   <div class="em-actions">
+    {# Always visible: Filter (high-frequency, consumer-valuable) #}
     <button type="button" class="em-action-btn" id="em-filter-btn" onclick="openFilterSheet()" title="Filter by Objective / Key Result / Initiative">
       <i data-feather="filter" style="width:14px;height:14px"></i>
       <span>Filter</span>
       <span class="em-filter-badge" id="em-filter-badge" style="display:none;">0</span>
     </button>
-    <button type="button" class="em-action-btn" onclick="enterSelectMode()" title="Select multiple tasks to bulk-edit">
+
+    {# On desktop: each action is its own button (room for labels).
+       On mobile: these get hidden via `.em-mobile-hide` and the user
+       reaches them through the "⋯" overflow menu below. #}
+    <button type="button" class="em-action-btn em-mobile-hide" onclick="enterSelectMode()" title="Select multiple tasks to bulk-edit">
       <i data-feather="check-square" style="width:14px;height:14px"></i> Select
     </button>
-    <button type="button" id="em-toggle-closed" class="em-action-btn" onclick="toggleClosedVisibility()" title="Show/hide skipped and deleted tasks">
+    <button type="button" id="em-toggle-closed" class="em-action-btn em-mobile-hide" onclick="toggleClosedVisibility()" title="Show/hide skipped and deleted tasks">
       <i data-feather="eye-off" style="width:14px;height:14px"></i> <span id="em-toggle-closed-label">Show skipped/deleted</span>
     </button>
+
+    {# Mobile-only "⋯ More" overflow. Same feature-set, consolidated.
+       Hidden on desktop where the full-label buttons fit. #}
+    <div class="em-more-menu-wrap em-mobile-only">
+      <button type="button" class="em-action-btn em-more-trigger" onclick="toggleEmMoreMenu(event)" aria-haspopup="menu" aria-expanded="false" title="More actions">
+        <i data-feather="more-horizontal" style="width:14px;height:14px"></i>
+        <span>More</span>
+      </button>
+      <div class="em-more-dropdown" id="em-more-dropdown" role="menu">
+        <button type="button" role="menuitem" onclick="enterSelectMode(); closeEmMoreMenu()">
+          <i data-feather="check-square"></i> Select mode
+        </button>
+        <button type="button" role="menuitem" onclick="toggleClosedVisibility(); closeEmMoreMenu()">
+          <i data-feather="eye-off"></i> <span id="em-toggle-closed-label-m">Show skipped/deleted</span>
+        </button>
+        <div class="em-more-divider"></div>
+        {% if travel_mode_active %}
+        <button type="button" role="menuitem" onclick="document.getElementById('em-disable-travel-form').submit()">
+          <i data-feather="navigation-2"></i> Disable Travel Mode
+        </button>
+        {% elif travel_mode_restorable_count and travel_mode_restorable_count > 0 %}
+        <button type="button" role="menuitem" onclick="openTravelRestoreModal(); closeEmMoreMenu()">
+          <i data-feather="navigation"></i> Travel Mode ({{ travel_mode_restorable_count }})
+        </button>
+        {% else %}
+        <button type="button" role="menuitem" onclick="document.getElementById('travel-category-select-m').focus()">
+          <i data-feather="navigation"></i> Travel Mode…
+        </button>
+        {% endif %}
+        <button type="button" role="menuitem" onclick="openTravelSettings(); closeEmMoreMenu()">
+          <i data-feather="settings"></i> Manage travel tasks
+        </button>
+      </div>
+    </div>
     {# "Copy Previous Day" retired. The Morning Dashboard
        (/summary?view=daily) now surfaces overdue items as a
        read-through view — no duplication needed. #}
