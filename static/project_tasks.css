@@ -402,9 +402,12 @@ body.pt-view-compact .task-row:last-child { border-bottom: none; }
 body.pt-view-compact .task-row:hover { background: var(--pt-border-light); }
 
 /* Priority is a colored left stripe (same idea as mobile card) */
-body.pt-view-compact .task-row[data-priority="high"]   { border-left-color: var(--pt-high); }
-body.pt-view-compact .task-row[data-priority="medium"] { border-left-color: var(--pt-medium); }
-body.pt-view-compact .task-row[data-priority="low"]    { border-left-color: var(--pt-low); }
+/* Retired compact-view priority stripes — left here for documentation
+   only. The compact view is off; JS strips `pt-view-compact` from the
+   body on every view-set call. Monochrome is now the policy. */
+body.pt-view-compact .task-row[data-priority="high"],
+body.pt-view-compact .task-row[data-priority="medium"],
+body.pt-view-compact .task-row[data-priority="low"] { border-left-color: transparent; }
 
 /* Hide every cell except checkbox, name, status, due */
 body.pt-view-compact .task-row > td { display: none; }
@@ -1456,12 +1459,20 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
 }
 
 /* ── Date / time picker pill ──
-   A <label for="input-id"> wraps an <input type="date|time"> and a
-   leading calendar / clock icon so the whole thing looks like a
-   tappable pill. Tapping anywhere on the label forwards the click
-   to the associated input natively (HTML5 label semantics), which
-   opens the native picker — exactly once, no JS involved. */
+   A <div> wraps an <input type="date|time"> and a leading calendar /
+   clock icon so the whole thing looks like a tappable pill. The whole
+   pill is click-to-open because the native ::-webkit-calendar-picker-
+   indicator pseudo-element is stretched to cover the pill (see below).
+
+   CRITICAL: `position: relative` is load-bearing. The indicator is
+   `position: absolute; inset: 0` — without a positioned ancestor
+   HERE it anchors to .task-panel (position: fixed), stretching the
+   invisible hit-target across the entire side sheet and making every
+   click in the panel open a date picker. This line keeps that overlay
+   constrained to the pill, which is the only area that should open a
+   picker. Do not remove. */
 .panel-date-wrap {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
@@ -2348,12 +2359,19 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
 
 .task-table.pt-minimal td { padding: 10px 10px; vertical-align: middle; }
 
-/* Row base: clean, card-like, with left-border priority accent */
+/* Row base: clean, card-like, no persistent shading.
+   `background: transparent !important` is a backstop against any
+   legacy selector (overdue wash, priority tint, compact stripe) that
+   might otherwise paint the row. The rule is scoped to `:not(:hover)`
+   so hover feedback still works. */
 .task-table.pt-minimal .task-row {
   border-left: 3px solid transparent;
   border-bottom: 1px solid var(--pt-border-light);
   transition: background .12s, box-shadow .12s;
   cursor: default;
+}
+.task-table.pt-minimal .task-row:not(:hover):not(.pt-selected) {
+  background: transparent !important;
 }
 .task-table.pt-minimal .task-row:hover { background: var(--pt-border-light); }
 
