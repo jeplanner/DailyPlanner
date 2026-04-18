@@ -8,7 +8,8 @@
       "Bash(find . -name \"*.html\" -path \"*/templates/*\" -exec grep -l \"habit\" {} \\\\;)",
       "Bash(find:*)",
       "Bash(grep:*)",
-      "Bash(node --check /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/voice.js)"
+      "Bash(node --check /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/voice.js)",
+      "Bash(python -c \"from jinja2 import Environment, FileSystemLoader; env = Environment\\(loader=FileSystemLoader\\('templates'\\), autoescape=True\\); env.get_template\\('_em_task_card.html'\\); print\\('partial OK'\\)\")"
     ]
   }
 }

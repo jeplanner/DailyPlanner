@@ -106,6 +106,9 @@ def todo():
             "project_id": t.get("project_id"),
             "project_name": project_map.get(t.get("project_id")),
             "source_task_id": t.get("source_task_id"),
+            "task_date": t.get("task_date"),
+            "task_time": t.get("task_time"),
+            "delegated_to": t.get("delegated_to"),
             "source": "matrix",
         })
 
@@ -141,7 +144,8 @@ def todo():
         "is_eliminated": "eq.false",
         "quadrant": "neq.",
         "select": "task_id,task_text,quadrant,status,priority,project_id,"
-                  "due_date,is_recurring,recurrence_type,recurrence_days,"
+                  "due_date,due_time,delegated_to,"
+                  "is_recurring,recurrence_type,recurrence_days,"
                   "initiative_id,key_result_id",
         "limit": 200,
     }) or []
@@ -320,6 +324,9 @@ def todo():
             "project_id": t.get("project_id"),
             "project_name": project_map.get(t.get("project_id")),
             "source_task_id": None,
+            "task_date": t.get("due_date"),
+            "task_time": t.get("due_time"),
+            "delegated_to": t.get("delegated_to"),
             "source": "project",
             # OKR pill: show the KR as the primary label, objective title in the tooltip.
             # When an initiative is present, it's also surfaced in the tooltip so the user
@@ -1124,6 +1131,9 @@ def todo_autosave():
                 "project_name": project_name,
                 "source_task_id": source_task_id,
                 "source": "matrix",
+                "task_date": row_data.get("task_date"),
+                "task_time": row_data.get("task_time"),
+                "delegated_to": delegated_to,
                 # Defensive defaults for fields the template may reference
                 # via `{% if t.xxx %}` — keeps Jinja's Undefined out of the
                 # picture entirely.
@@ -1246,6 +1256,12 @@ def build_eisenhower_view(tasks, plan_date):
             "project_id": t.get("project_id"),
             "project_name": t.get("project_name"),
             "source_task_id": t.get("source_task_id"),
+            "task_date": t.get("task_date"),
+            "task_time": t.get("task_time"),
+            "delegated_to": t.get("delegated_to"),
+            "objective_id": t.get("objective_id"),
+            "key_result_id": t.get("key_result_id"),
+            "initiative_id": t.get("initiative_id"),
             "kr_title": t.get("kr_title"),
             "kr_goal_title": t.get("kr_goal_title"),
             "kr_initiative_title": t.get("kr_initiative_title"),

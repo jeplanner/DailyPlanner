@@ -1,14 +1,17 @@
 {#
-  Eisenhower task card partial.
-  Rendered both by the main matrix loop and by quick-add POST responses,
-  so there is exactly one place to change the card markup.
+  Eisenhower task card partial — minimal card.
+
+  Visible by default: checkbox · title · due-date chip · details button.
+  Everything else (priority, status, project, recurrence, KR, quadrant move,
+  resolve actions) lives in the Task Details modal, opened via the ⓘ
+  button or a long-press on the card. Status badges and pills are kept
+  in hidden nodes so existing JS that mutates them keeps working.
 
   Expected context:
-    t  — the normalized task dict (id, task_text, quadrant, is_done, status,
-         priority, recurrence, source, project_name, ...)
-    q  — (optional) the quadrant key that the card is being rendered under.
-         Defaults to t.quadrant when omitted (used by the standalone render
-         path in /todo/autosave).
+    t  — normalized task dict (id, task_text, quadrant, is_done, status,
+         priority, recurrence, source, project_name, task_date, task_time,
+         delegated_to, kr_title, kr_color, kr_goal_title, kr_initiative_title)
+    q  — (optional) quadrant key; defaults to t.quadrant
 #}
 {% set q = q or t.quadrant %}
 <div class="em-task prio-{{ t.priority or 'medium' }} {{ 'done' if t.is_done }}"
@@ -18,80 +21,52 @@
      data-status="{{ t.status or 'open' }}"
      data-source="{{ t.source or 'matrix' }}"
      data-project-id="{{ t.project_id or '' }}"
+     data-project-name="{{ t.project_name or '' }}"
+     data-task-text="{{ t.task_text or '' }}"
+     data-task-date="{{ t.task_date or '' }}"
+     data-task-time="{{ t.task_time or '' }}"
+     data-recurrence="{{ t.recurrence or '' }}"
+     data-delegated-to="{{ t.delegated_to or '' }}"
      data-objective-id="{{ t.objective_id or '' }}"
      data-kr-id="{{ t.key_result_id or '' }}"
+     data-kr-title="{{ t.kr_title or '' }}"
+     data-kr-color="{{ t.kr_color or '' }}"
+     data-kr-goal-title="{{ t.kr_goal_title or '' }}"
+     data-kr-initiative-title="{{ t.kr_initiative_title or '' }}"
      data-initiative-id="{{ t.initiative_id or '' }}">
   <span class="em-sel-check" aria-hidden="true"></span>
   {% if t.source == 'event' %}
-  {# Calendar events are read-only in the matrix — the tick stays disabled #}
   <input type="checkbox" {{ 'checked' if t.is_done }} disabled style="opacity:0.4;">
   {% else %}
-  {# Matrix tasks AND project tasks are both completable from here #}
   <input type="checkbox" {{ 'checked' if t.is_done }} onchange="toggleDone('{{ t.id }}', this.checked)">
   {% endif %}
 
   <div class="em-task-body">
     <div class="em-task-title">
-      {{ t.task_text }}
-      <span class="em-prio-pill {{ t.priority or 'medium' }}"
-            title="Click to cycle priority — currently {{ (t.priority or 'medium')|capitalize }}"
-            onclick="cycleTaskPriority(event, '{{ t.id }}')">{{ (t.priority or 'medium')|upper }}</span>
-      {% if t.status == 'done' %}
-        <span class="em-status-badge done">Done</span>
-      {% elif t.status == 'in_progress' %}
-        <span class="em-status-badge in_progress">In Progress</span>
-      {% elif t.status in ('deleted', 'not_required') %}
-        <span class="em-status-badge deleted">Deleted</span>
-      {% elif t.status == 'skipped' %}
-        <span class="em-status-badge skipped">Skipped</span>
-      {% endif %}
-      {% if t.recurrence %}
-        <span class="em-recur-pill" title="Repeats {{ t.recurrence }}">🔁 {{ t.recurrence }}</span>
-      {% endif %}
-      {% if t.kr_title %}
-        <span class="em-kr-pill"
-              style="--kr-color: {{ t.kr_color or '#10b981' }};"
-              title="{% if t.kr_goal_title %}Objective: {{ t.kr_goal_title }} · {% endif %}Key Result: {{ t.kr_title }}{% if t.kr_initiative_title %} · Initiative: {{ t.kr_initiative_title }}{% endif %}">
-          🎯 {{ t.kr_title }}
+      <span class="em-task-text">{{ t.task_text }}</span>
+    </div>
+    {% if t.task_date or t.task_time %}
+      <div class="em-task-due">
+        <span class="em-due-chip">
+          {% if t.task_date %}📅 {{ t.task_date }}{% endif %}
+          {%- if t.task_time %} · {{ t.task_time }}{% endif %}
         </span>
-      {% endif %}
-    </div>
-    <div class="em-task-meta">
-      {% if t.source == 'event' %}
-        <span class="em-source-badge em-src-event">Event</span>
-      {% elif t.source == 'project' %}
-        <span class="em-source-badge em-src-project">Project</span>
-      {% else %}
-        <span class="em-source-badge em-src-matrix">Task</span>
-      {% endif %}
-      {% if t.project_name %}
-        <span class="em-project-name">{{ t.project_name }}</span>
-      {% endif %}
-    </div>
+      </div>
+    {% endif %}
   </div>
 
   <div class="em-task-actions">
     {% if t.source != 'event' %}
-    {# Quadrant select + ⋯ menu available for both matrix and project tasks.
-       The client handlers detect the `pt-` id prefix and route to the
-       project_tasks endpoint instead of the todo_matrix one. #}
-    <select class="em-move-select" onchange="moveQuadrant('{{ t.id }}', this.value)">
-      <option value="do" {{ 'selected' if q=='do' }}>Do</option>
-      <option value="schedule" {{ 'selected' if q=='schedule' }}>Schedule</option>
-      <option value="delegate" {{ 'selected' if q=='delegate' }}>Delegate</option>
-      <option value="eliminate" {{ 'selected' if q=='eliminate' }}>Eliminate</option>
-    </select>
-    <div class="em-more-wrap">
-      <button type="button" class="em-more-btn" title="Set status…" onclick="toggleResolveMenu(event,'{{ t.id }}')">⋯</button>
-      <div class="em-more-menu" id="menu-{{ t.id }}">
-        <button type="button" onclick="resolveTask('{{ t.id }}','open')">☐ Open</button>
-        <button type="button" onclick="resolveTask('{{ t.id }}','in_progress')">◐ In Progress</button>
-        <div class="sep"></div>
-        <button type="button" onclick="resolveTask('{{ t.id }}','done')">✓ Done</button>
-        <button type="button" onclick="resolveTask('{{ t.id }}','skipped')">⏭ Skipped</button>
-        <button type="button" onclick="resolveTask('{{ t.id }}','deleted')">🗑 Delete</button>
-      </div>
-    </div>
+    <button type="button" class="em-details-btn" title="Task details"
+            aria-label="Task details"
+            onclick="openTaskDetails('{{ t.id }}', event)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="12" y1="11.5" x2="12" y2="16.5"/>
+        <circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>
+      </svg>
+    </button>
     {% endif %}
   </div>
 </div>

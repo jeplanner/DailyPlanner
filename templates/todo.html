@@ -88,11 +88,94 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-src-matrix{background:#f3f4f6;color:#6b7280;}
 .em-project-name{font-size:11px;color:var(--em-text3);}
 
-.em-task-actions{display:flex;gap:2px;flex-shrink:0;}
+.em-task-actions{display:flex;gap:2px;flex-shrink:0;align-items:center;}
 .em-task-btn{width:26px;height:26px;border:none;background:none;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--em-text3);font-size:12px;}
 .em-task-btn:hover{background:var(--em-border);color:var(--em-text);}
 
 .em-move-select{padding:2px 4px;border:1px solid var(--em-border);border-radius:4px;font-size:10px;font-family:inherit;background:var(--em-surface);color:var(--em-text2);cursor:pointer;}
+
+/* ── Minimal-card: hide old inline pills/badges/controls by default ── */
+.em-task .em-task-meta,
+.em-task .em-prio-pill,
+.em-task .em-recur-pill,
+.em-task .em-kr-pill,
+.em-task .em-source-badge,
+.em-task .em-project-name,
+.em-task .em-move-select,
+.em-task .em-more-wrap,
+.em-task .em-status-badge{display:none !important;}
+
+/* Due-date chip on the card (secondary row under the title) */
+.em-task-due{margin-top:3px;}
+.em-due-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;color:var(--em-text3);padding:1px 2px;line-height:1.2;}
+
+/* Non-open status: subtle left-border tweak so user still sees a hint */
+.em-task[data-status="in_progress"]{box-shadow:inset 3px 0 0 0 #2563eb;}
+.em-task[data-status="skipped"]{opacity:.6;}
+.em-task[data-status="deleted"]{opacity:.5;text-decoration:line-through;}
+
+/* Details button (ⓘ) */
+.em-details-btn{
+  width:28px;height:28px;padding:0;
+  border:1px solid transparent;background:none;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--em-text3);cursor:pointer;transition:all .12s;
+}
+.em-details-btn:hover{background:var(--em-border);color:var(--em-text);}
+.em-details-btn:active{transform:scale(.94);}
+
+/* ── Task Details modal (bottom-sheet on mobile, centered on desktop) ── */
+.em-details-modal{
+  position:fixed;inset:0;z-index:2000;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(17,24,39,.48);
+  padding:20px;
+  animation:emFadeIn .15s ease;
+}
+.em-details-modal.hidden{display:none;}
+@keyframes emFadeIn{from{opacity:0;}to{opacity:1;}}
+.em-details-sheet{
+  width:100%;max-width:440px;max-height:88vh;overflow-y:auto;
+  background:var(--em-surface);color:var(--em-text);
+  border:1px solid var(--em-border);border-radius:14px;
+  box-shadow:0 24px 60px rgba(0,0,0,.28);
+  animation:emSheetIn .2s ease;
+}
+@keyframes emSheetIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.em-details-head{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:14px 16px 10px;border-bottom:1px solid var(--em-border);
+}
+.em-details-title{flex:1;font-size:15px;font-weight:600;line-height:1.35;word-break:break-word;}
+.em-details-close{
+  width:28px;height:28px;border:none;border-radius:7px;
+  background:none;color:var(--em-text3);font-size:20px;line-height:1;
+  cursor:pointer;flex-shrink:0;
+}
+.em-details-close:hover{background:var(--em-border);color:var(--em-text);}
+.em-details-body{padding:10px 16px 16px;display:flex;flex-direction:column;gap:12px;}
+.em-dt-row{display:flex;flex-direction:column;gap:6px;}
+.em-dt-row > label{font-size:11px;font-weight:700;color:var(--em-text3);text-transform:uppercase;letter-spacing:.4px;}
+.em-dt-btn-group{display:flex;gap:6px;flex-wrap:wrap;}
+.em-dt-btn-group button{
+  flex:1;min-width:90px;padding:7px 10px;border:1px solid var(--em-border);
+  background:var(--em-surface);color:var(--em-text2);border-radius:8px;
+  font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;transition:all .12s;
+}
+.em-dt-btn-group button:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
+.em-dt-btn-group button.active{background:var(--q-schedule);color:#fff;border-color:var(--q-schedule);}
+.em-dt-btn-group.status-group button.active{background:#0f766e;border-color:#0f766e;}
+.em-dt-btn-group.status-group button[data-s="deleted"].active{background:#b91c1c;border-color:#b91c1c;}
+.em-dt-btn-group.status-group button[data-s="skipped"].active{background:#4f46e5;border-color:#4f46e5;}
+.em-dt-info{font-size:12px;color:var(--em-text2);line-height:1.5;display:flex;flex-direction:column;gap:4px;}
+.em-dt-info div{display:flex;gap:6px;}
+.em-dt-info div b{min-width:74px;font-weight:600;color:var(--em-text3);}
+.em-dt-info:empty{display:none;}
+
+@media (max-width: 560px){
+  .em-details-modal{align-items:flex-end;padding:0;}
+  .em-details-sheet{max-width:none;border-radius:16px 16px 0 0;max-height:82vh;}
+}
 
 .em-empty{text-align:center;padding:20px 8px;color:var(--em-text3);font-size:13px;}
 
@@ -1452,6 +1535,51 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   </div>
 </div>
 
+<!-- ══════════ TASK DETAILS MODAL ══════════ -->
+<div id="em-details-modal" class="em-details-modal hidden" role="dialog" aria-modal="true"
+     aria-labelledby="em-dt-title"
+     onclick="if(event.target===this)closeTaskDetails()">
+  <div class="em-details-sheet">
+    <div class="em-details-head">
+      <div class="em-details-title" id="em-dt-title">Task</div>
+      <button type="button" class="em-details-close" onclick="closeTaskDetails()" aria-label="Close">×</button>
+    </div>
+    <div class="em-details-body">
+      <div class="em-dt-row">
+        <label>Quadrant</label>
+        <div class="em-dt-btn-group" id="em-dt-quadrant-group" role="radiogroup">
+          <button type="button" data-q="do">🔴 Do</button>
+          <button type="button" data-q="schedule">🔵 Schedule</button>
+          <button type="button" data-q="delegate">🟡 Delegate</button>
+          <button type="button" data-q="eliminate">⚪ Eliminate</button>
+        </div>
+      </div>
+      <div class="em-dt-row">
+        <label>Priority</label>
+        <div class="em-dt-btn-group" id="em-dt-priority-group" role="radiogroup">
+          <button type="button" data-p="high">🔴 High</button>
+          <button type="button" data-p="medium">🟠 Medium</button>
+          <button type="button" data-p="low">🟢 Low</button>
+        </div>
+      </div>
+      <div class="em-dt-row">
+        <label>Status</label>
+        <div class="em-dt-btn-group status-group" id="em-dt-status-group" role="radiogroup">
+          <button type="button" data-s="open">☐ Open</button>
+          <button type="button" data-s="in_progress">◐ In&nbsp;Progress</button>
+          <button type="button" data-s="done">✓ Done</button>
+          <button type="button" data-s="skipped">⏭ Skipped</button>
+          <button type="button" data-s="deleted">🗑 Delete</button>
+        </div>
+      </div>
+      <div class="em-dt-row">
+        <label>Details</label>
+        <div class="em-dt-info" id="em-dt-info"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const PLAN_DATE = "{{ plan_date.isoformat() }}";
 
@@ -1718,6 +1846,124 @@ function moveQuadrant(taskId, newQ) {
     });
 }
 
+// ══════════ TASK DETAILS MODAL ══════════
+// Opens a bottom-sheet / modal with the task's full context and actions.
+// Data is read from the card's data-* attributes (populated server-side
+// by _em_task_card.html). Actions route through the existing handlers
+// (moveQuadrant, cycleTaskPriority via explicit priority setter, resolveTask).
+let _emDtCurrentId = null;
+
+function openTaskDetails(taskId, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (EM_SEL?.active) return; // select-mode wins
+  const card = document.querySelector(`.em-task[data-id="${taskId}"]`);
+  if (!card) return;
+  _emDtCurrentId = taskId;
+
+  const ds = card.dataset;
+  const titleEl = document.getElementById("em-dt-title");
+  if (titleEl) titleEl.textContent = ds.taskText || "Task";
+
+  // Highlight active state for each button group.
+  _emDtMarkActive("em-dt-quadrant-group", "q", ds.quadrant);
+  _emDtMarkActive("em-dt-priority-group", "p", ds.priority || "medium");
+  _emDtMarkActive("em-dt-status-group", "s", ds.status || "open");
+
+  // Build info list.
+  const info = document.getElementById("em-dt-info");
+  if (info) {
+    const rows = [];
+    const esc = (s) => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
+    if (ds.taskDate) {
+      rows.push(`<div><b>Due:</b><span>${esc(ds.taskDate)}${ds.taskTime ? " · " + esc(ds.taskTime) : ""}</span></div>`);
+    }
+    if (ds.recurrence) rows.push(`<div><b>Repeats:</b><span>🔁 ${esc(ds.recurrence)}</span></div>`);
+    if (ds.projectName) rows.push(`<div><b>Project:</b><span>${esc(ds.projectName)}</span></div>`);
+    if (ds.delegatedTo) rows.push(`<div><b>Delegated:</b><span>👤 ${esc(ds.delegatedTo)}</span></div>`);
+    if (ds.krTitle) {
+      const tooltip = [ds.krGoalTitle ? "Objective: " + ds.krGoalTitle : null,
+                       "Key Result: " + ds.krTitle,
+                       ds.krInitiativeTitle ? "Initiative: " + ds.krInitiativeTitle : null]
+                       .filter(Boolean).join(" · ");
+      rows.push(`<div><b>Key&nbsp;Result:</b><span title="${esc(tooltip)}">🎯 ${esc(ds.krTitle)}</span></div>`);
+    }
+    info.innerHTML = rows.join("");
+  }
+
+  // Wire button handlers once.
+  _emDtBindGroup("em-dt-quadrant-group", "q", (val) => moveQuadrant(_emDtCurrentId, val));
+  _emDtBindGroup("em-dt-priority-group", "p", (val) => _emDtSetPriority(_emDtCurrentId, val));
+  _emDtBindGroup("em-dt-status-group",   "s", (val) => resolveTask(_emDtCurrentId, val));
+
+  document.getElementById("em-details-modal")?.classList.remove("hidden");
+}
+
+function closeTaskDetails() {
+  _emDtCurrentId = null;
+  document.getElementById("em-details-modal")?.classList.add("hidden");
+}
+
+function _emDtMarkActive(groupId, attr, value) {
+  const group = document.getElementById(groupId);
+  if (!group) return;
+  group.querySelectorAll("button").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-" + attr) === value);
+  });
+}
+
+function _emDtBindGroup(groupId, attr, onPick) {
+  const group = document.getElementById(groupId);
+  if (!group || group.dataset.bound) return;
+  group.dataset.bound = "1";
+  group.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-" + attr + "]");
+    if (!btn) return;
+    const val = btn.getAttribute("data-" + attr);
+    _emDtMarkActive(groupId, attr, val);
+    onPick(val);
+  });
+}
+
+// Set an explicit priority (details modal) — distinct from cycleTaskPriority
+// which was tied to the inline pill click. Uses the same endpoints.
+function _emDtSetPriority(taskId, newPriority) {
+  const task = document.querySelector(`.em-task[data-id="${taskId}"]`);
+  if (!task) return;
+  const kind = _taskKind(taskId);
+  if (kind === "event") return;
+  const prev = task.dataset.priority || "medium";
+  if (prev === newPriority) return;
+  _applyPriorityToRow(task, newPriority);
+  const realId = _realTaskId(taskId);
+  const req = (kind === "project")
+    ? fetch(`/projects/tasks/${realId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ priority: newPriority }),
+      })
+    : fetch("/todo/bulk-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf() },
+        body: JSON.stringify({ ids: [taskId], patch: { priority: newPriority } }),
+      });
+  req.then(async r => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.error || (body.status && body.status !== "ok")) {
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+    })
+    .catch(err => {
+      console.error("_emDtSetPriority:", err);
+      _applyPriorityToRow(task, prev);
+      showToast("Failed to update priority", "error");
+    });
+}
+
+// Escape closes the details modal.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _emDtCurrentId) closeTaskDetails();
+});
+
 function onQuadrantChange() {
   const q = document.getElementById("quick-quad").value;
   const extra = document.getElementById("quick-extra");
@@ -1920,9 +2166,8 @@ function _projectNameFor(projectId) {
 }
 
 // Build a task card HTML string from scratch — used when the server
-// couldn't render the partial. Mirrors the shape of _em_task_card.html
-// closely enough that the existing event handlers (toggleDone, moveQuadrant,
-// resolveTask, cycleTaskPriority) pick it up.
+// couldn't render the partial. Mirrors _em_task_card.html (minimal layout:
+// checkbox + title + due chip + ⓘ details button).
 function _buildClientTaskCard(t) {
   const esc = (s) => {
     const d = document.createElement("div");
@@ -1933,11 +2178,17 @@ function _buildClientTaskCard(t) {
   const prio = esc(t.priority || "medium");
   const quadrant = esc(t.quadrant || "schedule");
   const title = esc(t.task_text || "");
-  const projectName = t.project_name ? `<span class="em-project-name">${esc(t.project_name)}</span>` : "";
-  const recurPill = t.recurrence
-    ? `<span class="em-recur-pill" title="Repeats ${esc(t.recurrence)}">🔁 ${esc(t.recurrence)}</span>`
-    : "";
+  const taskDate = esc(t.task_date || "");
+  const taskTime = esc(t.task_time || "");
+  const recurrence = esc(t.recurrence || "");
+  const projectName = esc(t.project_name || "");
   const projId = esc(t.project_id || "");
+  const delegatedTo = esc(t.delegated_to || "");
+
+  const dueHtml = (taskDate || taskTime)
+    ? `<div class="em-task-due"><span class="em-due-chip">${taskDate ? "📅 " + taskDate : ""}${taskTime ? " · " + taskTime : ""}</span></div>`
+    : "";
+
   return `
     <div class="em-task prio-${prio}"
          data-id="${id}"
@@ -1945,41 +2196,30 @@ function _buildClientTaskCard(t) {
          data-priority="${prio}"
          data-status="open"
          data-source="matrix"
-         data-project-id="${projId}">
+         data-project-id="${projId}"
+         data-project-name="${projectName}"
+         data-task-text="${title}"
+         data-task-date="${taskDate}"
+         data-task-time="${taskTime}"
+         data-recurrence="${recurrence}"
+         data-delegated-to="${delegatedTo}">
       <span class="em-sel-check" aria-hidden="true"></span>
       <input type="checkbox" onchange="toggleDone('${id}', this.checked)">
       <div class="em-task-body">
-        <div class="em-task-title">
-          ${title}
-          <span class="em-prio-pill ${prio}"
-                title="Click to cycle priority — currently ${prio}"
-                onclick="cycleTaskPriority(event, '${id}')">${prio.toUpperCase()}</span>
-          ${recurPill}
-        </div>
-        <div class="em-task-meta">
-          <span class="em-source-badge em-src-matrix">Task</span>
-          ${projectName}
-        </div>
+        <div class="em-task-title"><span class="em-task-text">${title}</span></div>
+        ${dueHtml}
       </div>
       <div class="em-task-actions">
-        <select class="em-move-select" onchange="moveQuadrant('${id}', this.value)">
-          <option value="do"${quadrant==='do'?' selected':''}>Do</option>
-          <option value="schedule"${quadrant==='schedule'?' selected':''}>Schedule</option>
-          <option value="delegate"${quadrant==='delegate'?' selected':''}>Delegate</option>
-          <option value="eliminate"${quadrant==='eliminate'?' selected':''}>Eliminate</option>
-        </select>
-        <div class="em-more-wrap">
-          <button type="button" class="em-more-btn" title="Set status…"
-                  onclick="toggleResolveMenu(event,'${id}')">⋯</button>
-          <div class="em-more-menu" id="menu-${id}">
-            <button type="button" onclick="resolveTask('${id}','open')">☐ Open</button>
-            <button type="button" onclick="resolveTask('${id}','in_progress')">◐ In Progress</button>
-            <div class="sep"></div>
-            <button type="button" onclick="resolveTask('${id}','done')">✓ Done</button>
-            <button type="button" onclick="resolveTask('${id}','skipped')">⏭ Skipped</button>
-            <button type="button" onclick="resolveTask('${id}','deleted')">🗑 Delete</button>
-          </div>
-        </div>
+        <button type="button" class="em-details-btn" title="Task details"
+                aria-label="Task details"
+                onclick="openTaskDetails('${id}', event)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <line x1="12" y1="11.5" x2="12" y2="16.5"/>
+            <circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
       </div>
     </div>
   `;
