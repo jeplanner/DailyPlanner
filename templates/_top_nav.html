@@ -61,6 +61,117 @@
   color:#2563eb;
 }
 .help-btn svg{width:20px;height:20px;}
+
+/* ── User identity: avatar in top-bar + sidebar header ── */
+.user-menu{position:relative;flex-shrink:0;}
+.user-avatar{
+  width:36px;height:36px;
+  border-radius:50%;
+  border:1px solid #e5e7eb;
+  background:linear-gradient(135deg,#2563eb,#1d4ed8);
+  color:#ffffff;
+  font-weight:700;
+  font-size:13px;
+  letter-spacing:.02em;
+  display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  transition:transform .15s ease,box-shadow .15s ease;
+  user-select:none;
+}
+.user-avatar:hover{transform:scale(1.05);box-shadow:0 0 0 3px rgba(37,99,235,.15);}
+.user-avatar:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.25);}
+html.dark .user-avatar{border-color:#334155;}
+
+.user-popover{
+  position:absolute;top:calc(100% + 8px);right:0;
+  min-width:240px;
+  background:#ffffff;
+  border:1px solid #e5e7eb;
+  border-radius:12px;
+  box-shadow:0 12px 32px rgba(15,23,42,.15),0 4px 8px rgba(15,23,42,.06);
+  padding:6px;
+  opacity:0;pointer-events:none;transform:translateY(-4px);
+  transition:opacity .15s ease,transform .15s ease;
+  z-index:1000;
+}
+.user-popover.open{opacity:1;pointer-events:auto;transform:translateY(0);}
+html.dark .user-popover{background:#1e293b;border-color:#334155;}
+
+.user-popover-header{
+  padding:10px 12px 12px;
+  border-bottom:1px solid #f1f3f5;
+  margin-bottom:4px;
+}
+html.dark .user-popover-header{border-bottom-color:#334155;}
+.user-popover-name{
+  font-weight:600;
+  font-size:14px;
+  color:#111827;
+  line-height:1.35;
+  word-break:break-word;
+}
+.user-popover-email{
+  font-size:12px;
+  color:#6b7280;
+  line-height:1.4;
+  margin-top:2px;
+  word-break:break-all;
+}
+html.dark .user-popover-name{color:#f1f5f9;}
+html.dark .user-popover-email{color:#94a3b8;}
+.user-popover-item{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 12px;
+  border-radius:8px;
+  font-size:14px;
+  font-weight:500;
+  color:#374151;
+  text-decoration:none;
+  cursor:pointer;
+  border:none;background:transparent;width:100%;text-align:left;
+  font-family:inherit;
+  transition:background .12s ease;
+}
+.user-popover-item svg{width:16px;height:16px;stroke:currentColor;flex-shrink:0;}
+.user-popover-item:hover{background:#f3f4f6;color:#111827;}
+.user-popover-item.danger{color:#dc2626;}
+.user-popover-item.danger:hover{background:#fef2f2;color:#b91c1c;}
+html.dark .user-popover-item{color:#cbd5e1;}
+html.dark .user-popover-item:hover{background:#334155;color:#f1f5f9;}
+html.dark .user-popover-item.danger{color:#f87171;}
+html.dark .user-popover-item.danger:hover{background:#450a0a;color:#fca5a5;}
+
+/* ── Sidebar user-identity block (replaces plain "Planner" title) ── */
+.sidebar-identity{
+  display:flex;align-items:center;gap:10px;
+  padding:4px 2px 12px;
+  min-width:0;
+  flex:1;
+}
+.sidebar-identity .user-avatar{width:40px;height:40px;font-size:14px;}
+.sidebar-identity-text{
+  min-width:0;
+  flex:1;
+  line-height:1.3;
+}
+.sidebar-identity-name{
+  font-weight:600;
+  font-size:15px;
+  color:#111827;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sidebar-identity-email{
+  font-size:12px;
+  color:#6b7280;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+html.dark .sidebar-identity-name{color:#f1f5f9;}
+html.dark .sidebar-identity-email{color:#94a3b8;}
+
+/* Hide the top-bar avatar on very narrow screens — the sidebar identity block covers it. */
+@media (max-width:380px){
+  .user-menu{display:none;}
+}
 html.dark .help-btn{color:#94a3b8;}
 html.dark .help-btn:hover{background:#172554;border-color:#1e3a8a;color:#60a5fa;}
 
@@ -503,7 +614,21 @@ html.dark .section-title{color:#f1f5f9;}
 <div id="sidebar" class="sidebar">
 
   <div class="sidebar-header">
-    <div class="sidebar-title">Planner</div>
+    {% if current_user.is_authenticated %}
+      {# Compact identity block: avatar + name + email replace the generic "Planner" title,
+         so the user always knows which account they're in, even on mobile. #}
+      {% set _name = current_user.display_name or current_user.email or 'You' %}
+      {% set _initials = (_name.split()|map('first')|list)[:2]|join|upper if _name else 'U' %}
+      <div class="sidebar-identity">
+        <span class="user-avatar" aria-hidden="true">{{ _initials }}</span>
+        <div class="sidebar-identity-text">
+          <div class="sidebar-identity-name" title="{{ _name }}">{{ _name }}</div>
+          <div class="sidebar-identity-email" title="{{ current_user.email }}">{{ current_user.email }}</div>
+        </div>
+      </div>
+    {% else %}
+      <div class="sidebar-title">Planner</div>
+    {% endif %}
     <button type="button" class="sidebar-close" onclick="closeSidebar()" aria-label="Close menu">
       <i data-feather="x"></i>
     </button>
@@ -658,6 +783,36 @@ html.dark .section-title{color:#f1f5f9;}
     <i data-feather="help-circle"></i>
   </button>
 
+  {% if current_user.is_authenticated %}
+    {# User-identity popover: visible on every screen so the logged-in
+       account is always obvious. Click opens a menu with name, email,
+       and a Sign-out action. #}
+    {% set _name = current_user.display_name or current_user.email or 'You' %}
+    {% set _initials = (_name.split()|map('first')|list)[:2]|join|upper if _name else 'U' %}
+    <div class="user-menu">
+      <button type="button"
+              class="user-avatar"
+              id="user-avatar-btn"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="user-popover"
+              aria-label="Account menu for {{ _name }}"
+              title="Signed in as {{ _name }}">{{ _initials }}</button>
+      <div id="user-popover" class="user-popover" role="menu" aria-labelledby="user-avatar-btn">
+        <div class="user-popover-header">
+          <div class="user-popover-name">{{ _name }}</div>
+          <div class="user-popover-email">{{ current_user.email }}</div>
+        </div>
+        <a href="javascript:void(0)" class="user-popover-item" role="menuitem" onclick="toggleDarkMode();closeUserMenu();">
+          <i data-feather="moon"></i> Toggle dark mode
+        </a>
+        <a href="{{ url_for('auth.logout') }}" class="user-popover-item danger" role="menuitem">
+          <i data-feather="log-out"></i> Sign out
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
 </div>
 
 <!-- ═══════════ HELP MODAL ═══════════ -->
@@ -716,9 +871,40 @@ document.addEventListener("keydown",function(e){
 
   if(e.key === "Escape"){
     closeSidebar()
+    closeUserMenu()
   }
 
 })
+
+/* USER-IDENTITY POPOVER — click avatar to toggle, click outside to close. */
+function toggleUserMenu(){
+  var pop = document.getElementById("user-popover");
+  var btn = document.getElementById("user-avatar-btn");
+  if(!pop || !btn) return;
+  var open = pop.classList.toggle("open");
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  if(open && window.feather) feather.replace();
+}
+function closeUserMenu(){
+  var pop = document.getElementById("user-popover");
+  var btn = document.getElementById("user-avatar-btn");
+  if(pop) pop.classList.remove("open");
+  if(btn) btn.setAttribute("aria-expanded", "false");
+}
+(function(){
+  var btn = document.getElementById("user-avatar-btn");
+  if(!btn) return;
+  btn.addEventListener("click", function(e){
+    e.stopPropagation();
+    toggleUserMenu();
+  });
+  document.addEventListener("click", function(e){
+    var menu = document.getElementById("user-popover");
+    if(menu && menu.classList.contains("open") && !menu.contains(e.target)){
+      closeUserMenu();
+    }
+  });
+})();
 
 /* DATE + TIME — formats in the *user's own* timezone (was hard-coded to IST,
    which silently misled every non-India user). Falls back to IST only if
