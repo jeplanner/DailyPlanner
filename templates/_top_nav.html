@@ -7,6 +7,13 @@
 ====================================================== -->
 
 <meta name="csrf-token" content="{{ csrf_token() }}">
+{# ── Perf: preconnect to CDN hosts we use on every page so DNS+TLS
+     handshake runs in parallel with HTML parsing. Safe, reversible,
+     ~50–200 ms saved on first paint depending on network. ── #}
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="/static/design-system.css">
 <link rel="stylesheet" href="/static/components.css">
 <script src="https://unpkg.com/feather-icons"></script>

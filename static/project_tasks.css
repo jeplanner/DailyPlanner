@@ -2249,17 +2249,13 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
 .task-table.pt-minimal .col-name .task-text {
   flex: 1; min-width: 0;
   font-size: 14px; font-weight: 500; color: var(--pt-text);
-  /* Wrap naturally so the full title is readable. Soft-cap at 2 lines
-     on desktop and 3 on mobile (see @media below) with ellipsis only
-     for unusually long text. Row height grows to fit. */
+  /* Full title always renders. Row height grows to fit. Use the
+     Compact density toggle in the toolbar if you want single-line
+     scanning instead. */
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   cursor: pointer;
 }
 
@@ -2308,7 +2304,6 @@ body.pt-view-compact .task-table.pt-minimal thead.pt-minimal-head { display: non
   .task-table.pt-minimal .row-details-btn { width: 38px; height: 38px; }
   .task-table.pt-minimal .col-name .task-text {
     font-size: 14.5px;
-    -webkit-line-clamp: 3; /* allow up to 3 lines on phones */
   }
   .task-table.pt-minimal .due-chip { font-size: 10.5px; padding: 2px 7px; }
 }
