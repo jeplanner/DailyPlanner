@@ -587,53 +587,23 @@ function quickSetTime(hhmm) {
   autoSaveField("due_time", el.value);
 }
 
-/* Open the native date/time picker for a given input id.
-   Uses HTMLInputElement.showPicker() where available (modern Chrome,
-   Safari, Edge, Firefox 101+), and falls back to focus() + click()
-   for older browsers. Called from the wrapper <div> so the whole pill
-   — icon + field — is tappable.
+/* (Retired) openDatePicker + capture-phase stopPropagation
+   ------------------------------------------------------------------
+   The .panel-date-wrap used to be a <div onclick="openDatePicker()">
+   containing an <input type="date">. That made two independent paths
+   to open the native picker:
+     1. The wrapper onclick calling HTMLInputElement.showPicker()
+     2. The browser's native "click opens picker" on the input itself
+   Any click that hit the input fired both — causing NotAllowedError
+   on some browsers and a stuck-picker loop on Chrome desktop when
+   the ::-webkit-calendar-picker-indicator pseudo-element reported an
+   unexpected event.target.
 
-   IMPORTANT: when the click originated on the <input> itself, the
-   browser is already opening its native picker. Calling showPicker()
-   a second time on top of that throws NotAllowedError on iOS Safari
-   and re-opens the picker on Chrome Android, which creates a "stuck
-   picker" loop as the detail panel animates closed. We check that
-   here AND a capture-phase listener below stops the input's click
-   from ever reaching this wrapper handler (belt + suspenders — some
-   browsers mis-report event.target when the click lands on the
-   ::-webkit-calendar-picker-indicator pseudo-element). */
-function openDatePicker(inputId, ev) {
-  const el = _id(inputId);
-  if (!el) return;
-  const evt = ev || window.event;
-  if (evt && evt.target === el) return; // native picker is already handling it
-  try {
-    if (typeof el.showPicker === "function") {
-      el.showPicker();
-      return;
-    }
-  } catch (err) {
-    // Some browsers throw if called without a user gesture; fall through.
-    console.warn("showPicker failed, falling back:", err);
-  }
-  el.focus();
-  try { el.click(); } catch {}
-}
-
-/* Stop a direct click on a date/time input from bubbling to the
-   .panel-date-wrap onclick. The wrapper's onclick is there to make
-   the pill-shaped padding tappable, but when the user clicks the
-   input itself the browser opens the picker natively — the wrapper
-   adding a second showPicker() call on top is what causes the
-   "stuck picker" loop on desktop and mobile. Capture phase so we
-   beat the bubble-phase onclick attribute. */
-document.addEventListener("click", (e) => {
-  const t = e.target;
-  if (!t || !t.matches) return;
-  if (t.matches('.panel-date-wrap input[type="date"], .panel-date-wrap input[type="time"]')) {
-    e.stopPropagation();
-  }
-}, true);
+   The definitive fix is structural: the wrapper is now a
+   <label for="..."> which forwards clicks to the associated input
+   natively, exactly once, with no JS. So the helpers here are dead
+   code and intentionally removed. Don't reintroduce them — a single
+   code path is the whole point of the fix. */
 
 function closeTaskSheet() {
   const panel = _id("task-panel");

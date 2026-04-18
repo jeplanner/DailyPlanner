@@ -1456,9 +1456,11 @@ details[open] > .section-toggle::after { transform: rotate(-135deg); }
 }
 
 /* ── Date / time picker pill ──
-   Wraps an <input type="date|time"> and a leading calendar / clock icon
-   so the whole thing looks like a tappable pill. Tapping anywhere in the
-   wrapper calls HTMLInputElement.showPicker() via openDatePicker(). */
+   A <label for="input-id"> wraps an <input type="date|time"> and a
+   leading calendar / clock icon so the whole thing looks like a
+   tappable pill. Tapping anywhere on the label forwards the click
+   to the associated input natively (HTML5 label semantics), which
+   opens the native picker — exactly once, no JS involved. */
 .panel-date-wrap {
   flex: 1;
   display: flex;
