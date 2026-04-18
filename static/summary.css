@@ -531,3 +531,171 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   }
   .md-card-head { padding: 10px 12px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MORNING DASHBOARD — dark-mode contrast uplift (2026 fix).
+   In dark mode the default --color-surface (#1e293b) is only a shade
+   off --color-bg (#0f172a), so cards visually melt into the page.
+   Below we:
+     1. Brighten the page bg to a warmer slate so it stops feeling like
+        a void.
+     2. Lift the card surface to clearly distinguish it from the page.
+     3. Boost text + secondary text contrast for readability.
+     4. Give the hero line a visible gradient in dark mode.
+     5. Tighten the mobile card radius + shadow so each item reads as
+        its own object.
+   All scoped under html.dark + applies to the morning-dashboard
+   (summary daily view) surfaces only. Weekly view + other sections
+   aren't touched. Revert by deleting this block if anything breaks.
+   ═══════════════════════════════════════════════════════════════════ */
+html.dark body {
+  background: #0b1220;                              /* deeper, softer page bg */
+  color: #e2e8f0;                                    /* brighter primary text */
+}
+
+html.dark .summary-app {
+  /* nothing — it inherits bg */
+}
+
+/* Cards — elevate with a visibly lighter surface + a soft border that
+   actually reads against the new page bg. */
+html.dark .md-card,
+html.dark .ov-card,
+html.dark .sum-card {
+  background: #172033;
+  border-color: #273449;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.18);
+}
+html.dark .md-card-head {
+  border-bottom-color: #273449;
+}
+
+/* Hero banner — gradient is near-invisible in dark; restore it */
+html.dark .md-hero {
+  background: linear-gradient(180deg, rgba(37,99,235,.18) 0%, transparent 100%);
+  border-color: #273449;
+  color: #cbd5e1;
+}
+html.dark .md-hero b { color: #f8fafc; }
+
+/* Readable text scale */
+html.dark .md-title-row .sum-title,
+html.dark .md-card-title,
+html.dark .md-row-title,
+html.dark .ov-value,
+html.dark .r-kpi-value { color: #f8fafc; }
+
+html.dark .md-band-row td,
+html.dark .ov-label,
+html.dark .md-legend,
+html.dark .md-empty-hint {
+  color: #94a3b8 !important;
+}
+html.dark .md-band-row td {
+  background: #0f1728;
+  border-bottom: 1px solid #273449;
+}
+
+/* Type tag chips — use darker tinted backgrounds so they pop but not shout */
+html.dark .md-tag-meeting { background: #102753; color: #dbeafe; }
+html.dark .md-tag-task    { background: #283245; color: #e2e8f0; }
+html.dark .md-tag-habit   { background: #083325; color: #bbf7d0; }
+
+html.dark .md-context-chip {
+  background: #273449;
+  color: #cbd5e1;
+}
+
+/* Rows — hover color that's actually visible in dark */
+html.dark .md-row:hover {
+  background: #1f2b42 !important;
+}
+
+/* Overdue card — make the card slightly warmer so urgency reads */
+html.dark .md-overdue-card .md-card-head {
+  background: linear-gradient(180deg, rgba(220,38,38,.08), transparent);
+}
+html.dark .md-overdue-chip {
+  background: #3b1111;
+  color: #fca5a5;
+  border: 1px solid #7f1d1d;
+}
+
+/* Band row divider — was barely visible */
+html.dark .md-row-link { color: #94a3b8; }
+html.dark .md-row-link:hover { background: #273449; color: #93c5fd; }
+
+/* Check pills — green-done needs more glow in dark */
+html.dark .md-check-done {
+  background: #083325;
+  color: #6ee7b7;
+}
+html.dark .md-check-open {
+  border-color: #475569;
+}
+
+/* Habit progress bar track */
+html.dark .md-habit-progress {
+  background: #273449;
+}
+
+/* ── Peek sheet (the popup opened on row click) — dark polish ── */
+html.dark .peek-sheet {
+  background: #172033;
+  border-color: #273449;
+  color: #e2e8f0;
+}
+html.dark .peek-head,
+html.dark .peek-foot { border-color: #273449; }
+html.dark .peek-title { color: #f8fafc; }
+html.dark .peek-field { border-bottom-color: #273449; }
+html.dark .peek-field .k { color: #7389a5; }
+html.dark .peek-field .v { color: #e2e8f0; }
+html.dark .peek-meta .chip {
+  background: #273449;
+  color: #cbd5e1;
+}
+html.dark .peek-btn-ghost {
+  background: transparent;
+  color: #cbd5e1;
+  border-color: #334155;
+}
+html.dark .peek-btn-ghost:hover {
+  background: #273449;
+  color: #f8fafc;
+}
+html.dark .peek-close {
+  color: #94a3b8;
+}
+html.dark .peek-close:hover {
+  background: #273449;
+  color: #f8fafc;
+}
+html.dark .peek-habit-bar {
+  background: #273449;
+}
+
+/* ── Mobile-only extra polish: each card gets a little more air and a
+     soft shadow so the list of overdue/agenda/habit items reads as a
+     stack of clear objects instead of one dark slab. ── */
+@media (max-width: 560px) {
+  html.dark .md-row {
+    background: #1a2338;
+    border-color: #2a3653;
+    box-shadow: 0 1px 3px rgba(0,0,0,.35);
+  }
+  html.dark .md-row:hover {
+    background: #23304a !important;
+  }
+  html.dark .md-card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 10px 14px;
+  }
+  html.dark .md-card-head {
+    background: transparent;
+    border-bottom: none;
+    padding: 6px 4px 10px;
+  }
+}
