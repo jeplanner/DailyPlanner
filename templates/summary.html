@@ -94,7 +94,21 @@
         </thead>
         <tbody>
           {% for o in dashboard.overdue %}
-          <tr class="md-row md-overdue-row prio-{{ o.priority or 'medium' }}">
+          <tr class="md-row md-overdue-row prio-{{ o.priority or 'medium' }}"
+              data-id="{{ o.id }}"
+              data-type="task"
+              data-source="{{ o.source or '' }}"
+              data-title="{{ o.title }}"
+              data-context="{{ o.context or '' }}"
+              data-priority="{{ o.priority or '' }}"
+              data-date="{{ o.due_date or '' }}"
+              data-days-overdue="{{ o.days_overdue or 0 }}"
+              data-link="{{ o.link or '' }}"
+              data-done="0"
+              onclick="openItemPeek(this, event)"
+              tabindex="0"
+              role="button"
+              aria-label="Open overdue task: {{ o.title }}">
             <td class="md-c-title">
               <span class="md-row-title">{{ o.title }}</span>
               <span class="md-type-tag md-tag-{{ o.source }}">{{ 'Project' if o.source == 'project' else 'Task' }}</span>
@@ -110,7 +124,7 @@
                 {% else %}{{ o.due_date }}{% endif %}
               </span>
               {% if o.link %}
-                <a class="md-row-link" href="{{ o.link }}" title="Open">
+                <a class="md-row-link" href="{{ o.link }}" title="Open full editor" onclick="event.stopPropagation()">
                   <i data-feather="arrow-up-right"></i>
                 </a>
               {% endif %}
@@ -169,7 +183,24 @@
               <tr class="md-band-row"><td colspan="5">{{ band }}</td></tr>
             {% endif %}
 
-            <tr class="md-row md-agenda-row md-type-{{ it.type }} prio-{{ it.priority or 'medium' }} {{ 'md-done' if it.done }}">
+            <tr class="md-row md-agenda-row md-type-{{ it.type }} prio-{{ it.priority or 'medium' }} {{ 'md-done' if it.done }}"
+                data-id="{{ it.id }}"
+                data-type="{{ it.type }}"
+                data-source="{{ it.source or '' }}"
+                data-title="{{ it.title }}"
+                data-time="{{ it.time or '' }}"
+                data-end-time="{{ it.end_time or '' }}"
+                data-date="{{ it.date or '' }}"
+                data-context="{{ it.context or '' }}"
+                data-priority="{{ it.priority or '' }}"
+                data-status="{{ it.status or '' }}"
+                data-recurrence="{{ it.recurrence or '' }}"
+                data-link="{{ it.link or '' }}"
+                data-done="{{ 1 if it.done else 0 }}"
+                onclick="openItemPeek(this, event)"
+                tabindex="0"
+                role="button"
+                aria-label="Open {{ it.type }}: {{ it.title }}">
               <td class="md-c-time">
                 {% if it.time %}
                   <span class="md-time">{{ it.time }}</span>
@@ -198,7 +229,7 @@
                   <span class="md-check md-check-open" aria-hidden="true"></span>
                 {% endif %}
                 {% if it.link %}
-                  <a class="md-row-link" href="{{ it.link }}" title="Open">
+                  <a class="md-row-link" href="{{ it.link }}" title="Open full editor" onclick="event.stopPropagation()">
                     <i data-feather="arrow-up-right"></i>
                   </a>
                 {% endif %}
@@ -211,7 +242,24 @@
           {% if dashboard.habits %}
             <tr class="md-band-row"><td colspan="5">Habits</td></tr>
             {% for h in dashboard.habits %}
-            <tr class="md-row md-agenda-row md-type-habit {{ 'md-done' if h.done }}">
+            <tr class="md-row md-agenda-row md-type-habit {{ 'md-done' if h.done }}"
+                data-id="{{ h.id }}"
+                data-type="habit"
+                data-source="habit"
+                data-title="{{ h.name }}"
+                data-context="{% if h.habit_type == 'boolean' %}{{ 'Done' if h.done else 'Not yet' }}{% else %}{{ '%g'|format(h.value) }} / {{ '%g'|format(h.goal) }} {{ h.unit }}{% endif %}"
+                data-status="{{ 'done' if h.done else 'open' }}"
+                data-link="/health"
+                data-done="{{ 1 if h.done else 0 }}"
+                data-habit-type="{{ h.habit_type or '' }}"
+                data-habit-value="{{ h.value or 0 }}"
+                data-habit-goal="{{ h.goal or 0 }}"
+                data-habit-unit="{{ h.unit or '' }}"
+                data-habit-progress="{{ h.progress_pct or 0 }}"
+                onclick="openItemPeek(this, event)"
+                tabindex="0"
+                role="button"
+                aria-label="Open habit: {{ h.name }}">
               <td class="md-c-time">
                 <span class="md-time md-time-any">Anytime</span>
               </td>
@@ -241,7 +289,7 @@
                 {% else %}
                   <span class="md-check md-check-open" aria-hidden="true"></span>
                 {% endif %}
-                <a class="md-row-link" href="/health" title="Log habit">
+                <a class="md-row-link" href="/health" title="Log in Health" onclick="event.stopPropagation()">
                   <i data-feather="arrow-up-right"></i>
                 </a>
               </td>
@@ -397,6 +445,367 @@
   {% endif %}
 
 </div>
+
+<!-- ══════════════════ QUICK-PEEK SHEET ══════════════════
+     Opens when a row is clicked on Today's Plan. Shows the item's
+     context without navigation; primary action is type-specific
+     (Mark done for tasks, Open Calendar for meetings, Open Health for
+     habits). "Open full editor →" always links to the native surface. -->
+<div id="peek-overlay" class="peek-overlay hidden" onclick="if(event.target===this)closeItemPeek()"></div>
+<aside id="peek-sheet" class="peek-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="peek-title">
+  <header class="peek-head">
+    <div class="peek-head-row">
+      <span id="peek-type-tag" class="md-type-tag">—</span>
+      <button class="peek-close" onclick="closeItemPeek()" aria-label="Close">×</button>
+    </div>
+    <h3 id="peek-title" class="peek-title">Loading…</h3>
+    <div id="peek-meta" class="peek-meta"></div>
+  </header>
+
+  <div class="peek-body" id="peek-body"></div>
+
+  <footer class="peek-foot">
+    <button id="peek-action" class="peek-btn peek-btn-primary" type="button"
+            onclick="peekPrimaryAction()">Mark done</button>
+    <a id="peek-open" class="peek-btn peek-btn-ghost" href="#" onclick="closeItemPeek()">
+      Open full editor
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+    </a>
+  </footer>
+</aside>
+
+<style>
+/* ══════════════════ QUICK-PEEK STYLES ══════════════════
+   Right-side sheet on desktop, bottom-sheet on mobile. Matches the
+   existing task-detail panel's language so users feel consistency. */
+.peek-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(15, 23, 42, .42); backdrop-filter: blur(2px);
+  opacity: 0; pointer-events: none;
+  transition: opacity .18s ease;
+}
+.peek-overlay:not(.hidden) { opacity: 1; pointer-events: auto; }
+.peek-sheet {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 1200;
+  width: min(440px, 94vw);
+  background: var(--color-surface, #fff); color: var(--color-text, #0f172a);
+  border-left: 1px solid var(--color-border, #e2e8f0);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, .14);
+  display: flex; flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .22s ease;
+}
+.peek-sheet:not(.hidden) { transform: translateX(0); }
+.peek-sheet.hidden { pointer-events: none; }
+html.dark .peek-sheet { background: #1e293b; border-left-color: #334155; color: #f1f5f9; }
+
+.peek-head {
+  padding: 16px 20px 14px; border-bottom: 1px solid var(--color-border, #e2e8f0);
+  display: flex; flex-direction: column; gap: 10px; flex-shrink: 0;
+}
+html.dark .peek-head { border-bottom-color: #334155; }
+.peek-head-row { display: flex; justify-content: space-between; align-items: center; }
+.peek-close {
+  width: 34px; height: 34px; border: none; background: none;
+  border-radius: 8px; cursor: pointer; color: var(--color-text-secondary, #64748b);
+  font-size: 20px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+.peek-close:hover { background: var(--color-border, #e2e8f0); color: var(--color-text, #0f172a); }
+.peek-title {
+  font-size: 18px; font-weight: 700; line-height: 1.3; color: var(--color-text, #0f172a);
+  word-break: break-word;
+}
+.peek-meta {
+  display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--color-text-secondary, #64748b);
+}
+.peek-meta .chip {
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--color-border, #e5e7eb); color: var(--color-text-secondary, #475569);
+  font-weight: 500;
+}
+.peek-meta .chip.overdue { background: color-mix(in srgb, #dc2626 14%, transparent); color: #b91c1c; font-weight: 700; }
+html.dark .peek-meta .chip.overdue { background: #3b1111; color: #fca5a5; }
+
+.peek-body {
+  flex: 1; overflow-y: auto;
+  padding: 16px 20px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.peek-field {
+  display: grid; grid-template-columns: 100px 1fr; gap: 6px 12px;
+  align-items: baseline;
+  padding: 6px 0; border-bottom: 1px dashed var(--color-border, #e5e7eb);
+  font-size: 13.5px;
+}
+.peek-field:last-child { border-bottom: none; }
+.peek-field .k {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .4px;
+  text-transform: uppercase; color: var(--color-text-tertiary, #94a3b8);
+}
+.peek-field .v { color: var(--color-text, #0f172a); word-break: break-word; line-height: 1.5; }
+.peek-empty { color: var(--color-text-tertiary, #94a3b8); font-style: italic; }
+
+.peek-habit-bar {
+  height: 8px; border-radius: 4px; overflow: hidden;
+  background: var(--color-border, #e5e7eb); margin-top: 4px;
+}
+.peek-habit-fill {
+  height: 100%; background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+  border-radius: 4px; transition: width .3s ease;
+}
+
+.peek-foot {
+  padding: 14px 20px; border-top: 1px solid var(--color-border, #e2e8f0);
+  display: flex; gap: 10px; flex-shrink: 0;
+}
+html.dark .peek-foot { border-top-color: #334155; }
+.peek-btn {
+  flex: 1; padding: 10px 14px; border: none; border-radius: 10px;
+  font-size: 13.5px; font-weight: 700; font-family: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: filter .12s, transform .1s;
+  text-decoration: none;
+}
+.peek-btn:hover { filter: brightness(1.06); }
+.peek-btn:active { transform: scale(.98); }
+.peek-btn-primary { background: var(--color-primary, #2563eb); color: #fff; }
+.peek-btn-primary.peek-btn-success { background: #059669; }
+.peek-btn-primary.peek-btn-disabled,
+.peek-btn-primary:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+.peek-btn-ghost {
+  background: transparent; color: var(--color-text-secondary, #475569);
+  border: 1px solid var(--color-border, #e2e8f0);
+}
+.peek-btn-ghost:hover { background: var(--color-border, #e5e7eb); color: var(--color-text, #0f172a); filter: none; }
+
+/* Every row is clickable — cursor + focus ring reinforce that */
+.md-row[role="button"] { cursor: pointer; }
+.md-row[role="button"]:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb); outline-offset: -2px;
+}
+.md-row[role="button"]:hover .md-row-title { color: var(--color-primary, #2563eb); }
+
+/* Mobile: bottom-sheet variant */
+@media (max-width: 560px) {
+  .peek-sheet {
+    top: auto; left: 0; right: 0; bottom: 0;
+    width: 100%;
+    border-left: none; border-top: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 16px 16px 0 0;
+    max-height: 86vh;
+    transform: translateY(100%);
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, .14);
+  }
+  .peek-sheet:not(.hidden) { transform: translateY(0); }
+  .peek-field { grid-template-columns: 90px 1fr; }
+}
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   QUICK-PEEK — read the row's data-* attrs, populate + show the sheet.
+   No fetch: everything the server rendered is already on the row.
+   Mark-done routes to /todo/toggle-done or /projects/tasks/status
+   based on the task's source, with an optimistic UI update.
+   ══════════════════════════════════════════════════════════════════ */
+let _peekItem = null;
+
+function openItemPeek(row, ev) {
+  if (ev) {
+    // Don't hijack clicks on interactive children (the ↗ anchor, etc.)
+    if (ev.target.closest("a, button")) return;
+  }
+  _peekItem = _rowToItem(row);
+  _renderPeek(_peekItem);
+  document.getElementById("peek-overlay").classList.remove("hidden");
+  document.getElementById("peek-sheet").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  // Move focus to close button for keyboard users
+  setTimeout(() => document.querySelector("#peek-sheet .peek-close")?.focus(), 40);
+}
+
+function closeItemPeek() {
+  document.getElementById("peek-overlay").classList.add("hidden");
+  document.getElementById("peek-sheet").classList.add("hidden");
+  document.body.style.overflow = "";
+  _peekItem = null;
+}
+
+function _rowToItem(row) {
+  const d = row.dataset;
+  return {
+    rowEl: row,
+    id: d.id || "",
+    type: d.type || "task",
+    source: d.source || "",
+    title: d.title || "",
+    time: d.time || "",
+    end_time: d.endTime || "",
+    date: d.date || "",
+    context: d.context || "",
+    priority: d.priority || "",
+    status: d.status || "",
+    recurrence: d.recurrence || "",
+    link: d.link || "",
+    done: d.done === "1",
+    daysOverdue: parseInt(d.daysOverdue || "0", 10),
+    habitType: d.habitType || "",
+    habitValue: parseFloat(d.habitValue || "0"),
+    habitGoal: parseFloat(d.habitGoal || "0"),
+    habitUnit: d.habitUnit || "",
+    habitProgress: parseFloat(d.habitProgress || "0"),
+  };
+}
+
+function _esc(s) {
+  const d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML;
+}
+
+function _renderPeek(item) {
+  // Type tag
+  const tag = document.getElementById("peek-type-tag");
+  tag.className = "md-type-tag md-tag-" + item.type;
+  tag.innerHTML = item.type === "meeting"
+    ? `<i data-feather="users"></i> Meeting`
+    : item.type === "habit"
+    ? `<i data-feather="refresh-cw"></i> Habit`
+    : `<i data-feather="check-square"></i> Task`;
+
+  // Title
+  document.getElementById("peek-title").textContent = item.title || "Untitled";
+
+  // Meta chips
+  const meta = [];
+  if (item.time) meta.push(`<span class="chip">${_esc(item.time)}${item.end_time ? "–" + _esc(item.end_time) : ""}</span>`);
+  else if (item.type !== "task" || !item.daysOverdue) meta.push(`<span class="chip">Anytime</span>`);
+  if (item.daysOverdue > 0) meta.push(`<span class="chip overdue">${item.daysOverdue} day${item.daysOverdue === 1 ? "" : "s"} overdue</span>`);
+  if (item.priority) meta.push(`<span class="chip">${_esc(item.priority)} priority</span>`);
+  if (item.done) meta.push(`<span class="chip">✓ Done</span>`);
+  document.getElementById("peek-meta").innerHTML = meta.join("");
+
+  // Body fields
+  const rows = [];
+  if (item.date) rows.push(_field("Date", _esc(item.date)));
+  if (item.context) rows.push(_field(item.source === "project" ? "Project" : "Context", _esc(item.context)));
+  if (item.status && item.status !== "open") rows.push(_field("Status", _esc(item.status).replace(/_/g, " ")));
+  if (item.recurrence) rows.push(_field("Repeats", _esc(item.recurrence)));
+
+  if (item.type === "habit") {
+    const pct = Math.max(0, Math.min(100, item.habitProgress || 0));
+    const label = item.habitType === "boolean"
+      ? (item.done ? "Done ✓" : "Not logged yet")
+      : `${item.habitValue || 0} / ${item.habitGoal || 0}${item.habitUnit ? " " + _esc(item.habitUnit) : ""}`;
+    rows.push(_field("Progress", `
+      ${label}
+      <div class="peek-habit-bar"><div class="peek-habit-fill" style="width:${pct}%"></div></div>
+    `));
+  }
+
+  if (!rows.length) rows.push(_field("Details", `<span class="peek-empty">No additional info.</span>`));
+  document.getElementById("peek-body").innerHTML = rows.join("");
+
+  // Footer actions — primary varies by type
+  const action = document.getElementById("peek-action");
+  const openLink = document.getElementById("peek-open");
+  openLink.href = item.link || "#";
+  openLink.style.display = item.link ? "inline-flex" : "none";
+
+  if (item.type === "task") {
+    const alreadyDone = item.done;
+    action.style.display = "inline-flex";
+    action.textContent = alreadyDone ? "✓ Already done" : "Mark done";
+    action.classList.toggle("peek-btn-success", alreadyDone);
+    action.classList.toggle("peek-btn-disabled", alreadyDone);
+    action.disabled = alreadyDone || !item.id;
+  } else if (item.type === "meeting") {
+    action.style.display = "inline-flex";
+    action.textContent = "Open in Calendar";
+  } else if (item.type === "habit") {
+    action.style.display = "inline-flex";
+    action.textContent = "Log in Health";
+  } else {
+    action.style.display = "none";
+  }
+
+  if (window.feather) feather.replace();
+}
+
+function _field(k, v) {
+  return `<div class="peek-field"><span class="k">${_esc(k)}</span><span class="v">${v}</span></div>`;
+}
+
+function peekPrimaryAction() {
+  if (!_peekItem) return;
+  const it = _peekItem;
+  if (it.type === "task") {
+    _markTaskDone(it);
+  } else {
+    // Meeting / Habit — follow the link
+    if (it.link) window.location.href = it.link;
+    else closeItemPeek();
+  }
+}
+
+async function _markTaskDone(item) {
+  if (!item.id) return;
+  const btn = document.getElementById("peek-action");
+  btn.disabled = true; btn.textContent = "Saving…";
+
+  let url, body;
+  if (item.source === "project") {
+    // Strip the "pt-" prefix — backend expects the raw task_id
+    const rawId = item.id.startsWith("pt-") ? item.id.slice(3) : item.id;
+    url = "/projects/tasks/status";
+    body = { task_id: rawId, status: "done" };
+  } else {
+    // Matrix tasks use the raw uuid id
+    url = "/todo/toggle-done";
+    body = { id: item.id, is_done: true, status: "done" };
+  }
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+
+    // Optimistic UI update: grey out the row + hero count updates on refresh
+    if (item.rowEl) {
+      item.rowEl.classList.add("md-done");
+      item.rowEl.setAttribute("data-done", "1");
+      const statusCell = item.rowEl.querySelector(".md-c-status");
+      if (statusCell) {
+        statusCell.innerHTML = `<span class="md-check md-check-done" title="Done"><i data-feather="check"></i></span>`
+          + (item.link ? ` <a class="md-row-link" href="${item.link}" title="Open full editor" onclick="event.stopPropagation()"><i data-feather="arrow-up-right"></i></a>` : "");
+        if (window.feather) feather.replace();
+      }
+    }
+
+    if (window.showToast) showToast("Marked done", "success", 1800);
+    closeItemPeek();
+  } catch (e) {
+    console.error("_markTaskDone failed:", e);
+    btn.disabled = false;
+    btn.textContent = "Mark done";
+    if (window.showToast) showToast("Couldn't mark done — try the full editor", "error");
+  }
+}
+
+// Escape to close
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const sheet = document.getElementById("peek-sheet");
+    if (sheet && !sheet.classList.contains("hidden")) { closeItemPeek(); }
+  }
+  // Enter/Space on a focused row opens the peek (accessibility)
+  if ((e.key === "Enter" || e.key === " ") && e.target?.classList?.contains("md-row") && e.target.getAttribute("role") === "button") {
+    e.preventDefault();
+    openItemPeek(e.target, e);
+  }
+});
+</script>
 
 <!-- Pass data to JS for charts -->
 <script>
