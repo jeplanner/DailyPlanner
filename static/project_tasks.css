@@ -2100,16 +2100,13 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
     transition: all .15s;
   }
   .task-check:hover { border-color: var(--pt-text2); }
-  .task-row[data-priority="high"]   .task-check { border-color: var(--pt-high); }
-  .task-row[data-priority="medium"] .task-check { border-color: var(--pt-medium); }
-  .task-row[data-priority="low"]    .task-check { border-color: var(--pt-low); }
+  /* Monochrome policy: priority no longer tints the checkbox. Priority
+     is a sort preference, not a per-row action signal — the due chip
+     carries the one urgency color this list is allowed to show. */
   .task-check:checked {
     background: var(--pt-text3);
     border-color: var(--pt-text3);
   }
-  .task-row[data-priority="high"]   .task-check:checked { background: var(--pt-high);   border-color: var(--pt-high); }
-  .task-row[data-priority="medium"] .task-check:checked { background: var(--pt-medium); border-color: var(--pt-medium); }
-  .task-row[data-priority="low"]    .task-check:checked { background: var(--pt-low);    border-color: var(--pt-low); }
   .task-check:checked::after {
     content: '';
     position: absolute;
@@ -2359,23 +2356,33 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
   cursor: default;
 }
 .task-table.pt-minimal .task-row:hover { background: var(--pt-border-light); }
-/* Priority stripe — one calm signal per row. Slightly desaturated
-   relative to a pure Tailwind-600 red so it doesn't compete with the
-   red overdue chip for attention. */
-.task-table.pt-minimal .task-row.prio-high   { border-left-color: #e11d48; }
-.task-table.pt-minimal .task-row.prio-medium { border-left-color: #d97706; }
-.task-table.pt-minimal .task-row.prio-low    { border-left-color: #059669; }
 
-/* Non-open status hints (subtle — richer state lives in the panel) */
-.task-table.pt-minimal .task-row[data-status="in_progress"] .task-text { color: var(--pt-primary); }
-.task-table.pt-minimal .task-row[data-status="skipped"]     { opacity: .6; }
+/* Monochrome rows — by design. Priority is a sort preference, not an
+   action signal, so it does NOT paint the row. Status (open,
+   in_progress) likewise does not tint the title. The only color on
+   this list is the red overdue chip on the due column, which is the
+   one signal that demands action in the morning. Everything else
+   uses opacity / strikethrough / chip shape — state without hue. */
+.task-table.pt-minimal .task-row.prio-high,
+.task-table.pt-minimal .task-row.prio-medium,
+.task-table.pt-minimal .task-row.prio-low {
+  border-left-color: transparent;
+}
+
+/* Closed / inactive statuses — opacity only, no color tint */
+.task-table.pt-minimal .task-row[data-status="skipped"]     { opacity: .55; }
 .task-table.pt-minimal .task-row[data-status="deleted"],
 .task-table.pt-minimal .task-row[data-status="not_required"] {
-  opacity: .5;
+  opacity: .45;
 }
 .task-table.pt-minimal .task-row[data-status="deleted"] .task-text,
 .task-table.pt-minimal .task-row[data-status="not_required"] .task-text {
   text-decoration: line-through;
+}
+
+/* In-progress — neutral italic title, no hue. Signal without color. */
+.task-table.pt-minimal .task-row[data-status="in_progress"] .task-text {
+  font-style: italic;
 }
 
 .task-table.pt-minimal .task-row.done      { opacity: .5; }
