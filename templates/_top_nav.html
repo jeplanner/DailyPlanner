@@ -500,9 +500,39 @@ html.dark .section-title{color:#f1f5f9;}
 
   <nav class="sidebar-nav">
 
-    <!-- ══ WORK ══════════════════════════════════════════ -->
+    <!-- ══ TODAY — the cockpit. Morning lands here. ══════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Today</div>
+
+      <a href="/summary?view=daily" data-match="^/summary.*view=daily" title="Morning dashboard — today's agenda, habits, overdue">
+        <i data-feather="sun"></i>
+        Today's Plan
+      </a>
+
+      <a href="/" data-match="^/$" title="Eisenhower matrix — what to do first">
+        <i data-feather="grid"></i>
+        Priorities
+      </a>
+
+      <a href="/calendar" data-match="^/calendar" title="Calendar — day and week view">
+        <i data-feather="calendar"></i>
+        Calendar
+      </a>
+
+      <a href="/inbox" data-match="^/inbox" title="Inbox — capture first, triage later">
+        <i data-feather="inbox"></i>
+        Inbox
+      </a>
+    </div>
+
+    <!-- ══ WORK — ongoing projects & goals ═══════════════ -->
     <div class="nav-group">
       <div class="nav-group-title">Work</div>
+
+      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects">
+        <i data-feather="briefcase"></i>
+        Projects
+      </a>
 
       <a href="/projects/timeline" data-match="^/projects/timeline" title="Roadmap — projects over time">
         <i data-feather="git-branch"></i>
@@ -512,11 +542,6 @@ html.dark .section-title{color:#f1f5f9;}
       <a href="/goals" data-match="^/goals" title="OKRs — Project → Objective → Key Result → Initiative → Task">
         <i data-feather="target"></i>
         OKRs
-      </a>
-
-      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects">
-        <i data-feather="briefcase"></i>
-        Projects
       </a>
 
       {% if project is defined %}
@@ -531,78 +556,62 @@ html.dark .section-title{color:#f1f5f9;}
       {% endif %}
     </div>
 
-    <!-- ══ DAILY ═════════════════════════════════════════ -->
-    <div class="nav-group">
-      <div class="nav-group-title">Daily</div>
-
-      <a href="/" data-match="^/$" title="Priorities — Eisenhower matrix">
-        <i data-feather="grid"></i>
-        Priorities
-      </a>
-
-      <a href="/calendar" data-match="^/calendar" title="Calendar — day / week view">
-        <i data-feather="calendar"></i>
-        Calendar
-      </a>
-
-      <a href="/inbox" data-match="^/inbox" title="Inbox">
-        <i data-feather="inbox"></i>
-        Inbox
-      </a>
-    </div>
-
-    <!-- ══ REVIEW ════════════════════════════════════════ -->
+    <!-- ══ REVIEW — analytics & reflection ═══════════════ -->
     <div class="nav-group">
       <div class="nav-group-title">Review</div>
 
-      <a href="/summary?view=daily" data-match="^/summary.*view=daily" title="Daily review">
-        <i data-feather="sun"></i>
-        Daily Review
+      <a href="/reports" data-match="^/reports" title="Reports — productivity, habits, financial, overview">
+        <i data-feather="pie-chart"></i>
+        Reports
       </a>
 
-      <a href="/summary?view=weekly" data-match="^/summary.*view=weekly" title="Weekly review">
+      <a href="/summary?view=weekly" data-match="^/summary.*view=weekly" title="Weekly review — aggregate stats, AI narrative">
         <i data-feather="bar-chart-2"></i>
         Weekly Review
       </a>
     </div>
 
-    <!-- ══ KNOWLEDGE ═════════════════════════════════════ -->
+    <!-- ══ LIFE & FINANCE ════════════════════════════════ -->
     <div class="nav-group">
-      <div class="nav-group-title">Knowledge</div>
+      <div class="nav-group-title">Life & Finance</div>
 
-      <a href="/notes/scribble" data-match="^/notes" title="Notes">
-        <i data-feather="edit-3"></i>
-        Notes
-      </a>
-
-      <a href="/references" data-match="^/references" title="Knowledge base — articles, links, AI-answerable content">
-        <i data-feather="book-open"></i>
-        Knowledge Base
-      </a>
-
-      <a href="/refcards" data-match="^/refcards" title="Playbook — SOPs, credentials, checklists, cheat sheets">
-        <i data-feather="clipboard"></i>
-        Playbook
-      </a>
-    </div>
-
-    <!-- ══ LIFE ══════════════════════════════════════════ -->
-    <div class="nav-group">
-      <div class="nav-group-title">Life</div>
-
-      <a href="/health" data-match="^/health" title="Health tracking">
+      <a href="/health" data-match="^/health" title="Habits, sleep, exercise, daily wellness markers">
         <i data-feather="heart"></i>
         Health
       </a>
 
-      <a href="/portfolio" data-match="^/portfolio" title="Investments — stocks, MFs, bonds, gold">
+      <a href="/portfolio" data-match="^/portfolio" title="Portfolio — stocks, mutual funds, bonds, gold">
         <i data-feather="trending-up"></i>
         Investments
+      </a>
+
+      <a href="/refcards" data-match="^/refcards" title="Password-locked vault — bank accounts, cards, documents, ESOPs, credentials">
+        <i data-feather="shield"></i>
+        Vault
+      </a>
+    </div>
+
+    <!-- ══ KNOWLEDGE — second brain ══════════════════════ -->
+    <div class="nav-group">
+      <div class="nav-group-title">Knowledge</div>
+
+      <a href="/references" data-match="^/references" title="Articles, links, and AI-powered search across your saved content">
+        <i data-feather="book-open"></i>
+        Knowledge Base
+      </a>
+
+      <a href="/notes/scribble" data-match="^/notes" title="Freeform notes">
+        <i data-feather="edit-3"></i>
+        Notes
       </a>
     </div>
 
     <!-- ══ FOOTER ════════════════════════════════════════ -->
     <div class="nav-group nav-footer">
+      <a href="javascript:void(0)" onclick="openHelpModal(); closeSidebar();">
+        <i data-feather="help-circle"></i>
+        Help &amp; shortcuts
+      </a>
       <a href="javascript:void(0)" onclick="toggleDarkMode()">
         <i data-feather="moon" id="dark-mode-icon"></i>
         Dark Mode
@@ -629,6 +638,10 @@ html.dark .section-title{color:#f1f5f9;}
     <span id="live-date"></span>
     <span class="time" id="live-time"></span>
   </div>
+
+  <a href="/references" class="help-btn" title="Ask AI / search your knowledge base" aria-label="Ask AI">
+    <i data-feather="search"></i>
+  </a>
 
   <button type="button" class="help-btn" onclick="openHelpModal()" title="Help & tips for this page (press ? anywhere)" aria-label="Help">
     <i data-feather="help-circle"></i>
@@ -908,16 +921,65 @@ const HELP_PAGES = [
     ]
   },
   {
-    match: /^\/summary/,
-    title: "Reviews",
-    lead: "Daily and weekly summaries so you can look back, learn, and plan the next block.",
+    match: /^\/summary.*view=daily/,
+    title: "Today's Plan — morning dashboard",
+    lead: "Your morning cockpit. Chronological agenda for the day, overdue debt to pay off, and habits you're tracking — all scannable in 30 seconds with coffee.",
     sections: [
       {
-        title: "What's in each view",
+        title: "What's on this page",
         items: [
-          "<b>Daily Review</b> — what got done today, what slipped, habits hit, focus time spent.",
-          "<b>Weekly Review</b> — aggregate stats, top projects, KR movement, highlights.",
-          "<b>AI insight</b> — a short narrative summary when a Gemini/Groq key is configured."
+          "<b>Hero line</b> — one sentence summarizing meetings, tasks, habits, overdue.",
+          "<b>Overdue card</b> — appears only if you have overdue items. Project name + relative age. Highest priority signal.",
+          "<b>Today's flow</b> — calendar meetings + scheduled tasks + habits merged into one chronological table. Type badges distinguish Meeting / Task / Habit.",
+          "<b>Reflection + AI recap</b> — bottom-of-page, for when you're closing the day."
+        ]
+      },
+      {
+        title: "How to use it",
+        items: [
+          "Open this first thing in the morning. 30 seconds to read, decide what matters.",
+          "Click any row's ↗ to jump to its editing surface (matrix / calendar / project / vault).",
+          "Overdue items surface work in progress you've been avoiding — triage before adding new work."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/summary/,
+    title: "Weekly Review",
+    lead: "Step back and see the arc. Aggregate stats, AI narrative, day-by-day breakdown.",
+    sections: [
+      {
+        title: "What's in the view",
+        items: [
+          "<b>Focus hours</b>, <b>completion rate</b>, and <b>habit days</b> for the selected week.",
+          "<b>Charts</b> — daily activity bar chart + completion pie.",
+          "<b>Insights</b> — brief narrative bullets from your data (more detailed with an AI key configured).",
+          "<b>Day-by-day</b> accordion at the bottom — tap a day to see its tasks."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/reports/,
+    title: "Reports",
+    lead: "Four lenses on your week, month, quarter, or year. Built to answer 'how am I actually doing?' in under 30 seconds.",
+    sections: [
+      {
+        title: "The four tabs",
+        items: [
+          "<b>Overview</b> — one-line narrative + KPI tiles across all four lenses. Start here.",
+          "<b>Productivity</b> — daily throughput histogram, Eisenhower mix of completed work, project leaderboard, stuck high-priority tasks.",
+          "<b>Habits</b> — adherence %, streaks, 14-day green/gray dot strip per habit.",
+          "<b>Financial</b> — market value, unrealized gain, ESOP vested at FMV, upcoming bills, expiring documents, asset allocation, concentration warnings. Requires the vault to be unlocked."
+        ]
+      },
+      {
+        title: "Tips",
+        items: [
+          "Change the date range with the Week / Month / Quarter / Year buttons in the top-right.",
+          "Financial tab opportunistically loads when the vault is unlocked — the overview tab never forces a vault challenge.",
+          "Stuck high-priority tasks = oldest unfinished items tagged high priority. Pay them down before taking on new work."
         ]
       }
     ]
@@ -939,31 +1001,60 @@ const HELP_PAGES = [
   },
   {
     match: /^\/references/,
-    title: "Knowledge Base",
-    lead: "Articles, links, and AI-answerable content. Your personal second brain.",
+    title: "Knowledge Base — your second brain + AI search",
+    lead: "Save articles, links, and notes from the web. Ask AI (Gemini/Groq) questions against your library, or use the top-bar 🔍 button from anywhere to jump here fast.",
     sections: [
       {
-        title: "What you can do",
+        title: "Capture",
         items: [
-          "Save links from the web (or paste plain text) with title + tags.",
-          "Ask AI questions against your saved references.",
-          "Browse by tag or search full-text."
+          "Paste a URL — metadata (title, description) is fetched automatically.",
+          "Add tags so future-you can find it.",
+          "AI auto-suggests tags and a summary if configured."
+        ]
+      },
+      {
+        title: "Search & ask",
+        items: [
+          "Full-text search across everything you've saved.",
+          "<b>Ask AI</b> — natural-language question against your saved content. Example: <i>what did I bookmark about RSU taxation?</i>",
+          "The 🔍 button in the top bar on every page is a shortcut here — capture first, search anywhere."
         ]
       }
     ]
   },
   {
     match: /^\/refcards/,
-    title: "Playbook",
-    lead: "SOPs, credentials, checklists, cheat sheets — stuff you look up, not stuff you do.",
+    title: "Vault",
+    lead: "Password-locked store for sensitive financial instruments, identity documents, and credentials — designed with a financial-expert lens. Indian and US contexts supported.",
     sections: [
       {
-        title: "What's it for",
+        title: "What goes here",
         items: [
-          "Recurring procedures (e.g. deploy steps, monthly close).",
-          "Sensitive credentials that you want behind a lock.",
-          "Checklists you reuse (travel pack, morning routine).",
-          "Cheat sheets for tools you use occasionally."
+          "<b>Banking</b> — bank accounts with IFSC (IN) / routing (US) / SWIFT / UPI.",
+          "<b>Cards</b> — credit and debit (last 4 + network + expiry + limits). Never store the full card number.",
+          "<b>Documents</b> — passport, PAN, Aadhaar (with VID), SSN, driver's license.",
+          "<b>Investments</b> — mutual funds, Indian & US stocks (with cost basis), ESOP / RSU / options (with vesting progress bar), fixed deposits, retirement (PPF / EPF / NPS / 401k / IRA), insurance policies.",
+          "<b>Bills</b> — recurring utilities, subscriptions, rent — with auto-pay flags and due days.",
+          "<b>Credentials</b> — service logins. For real passwords, use a dedicated password manager — this is a notebook, not a secure enclave."
+        ]
+      },
+      {
+        title: "Security model",
+        items: [
+          "A <b>separate vault password</b> — different from your login — is required to unlock this page.",
+          "Sensitive fields are encrypted at rest (server-side Fernet).",
+          "Auto-lock after configurable inactivity (2–60 min) and when the tab is hidden for >1 min.",
+          "Copy-to-clipboard auto-clears after 30 seconds on secret fields.",
+          "<b>If you forget the vault password</b>, encrypted data can't be recovered. Pick carefully."
+        ]
+      },
+      {
+        title: "Financial-expert features",
+        items: [
+          "<b>Vesting bar</b> on ESOP / RSU cards with next-vest date and vested value at FMV.",
+          "<b>Gain/loss</b> on stock cards (cost basis vs current value, color-coded).",
+          "<b>Portfolio snapshot</b> above the grid: invested, current, unrealized, ESOP vested, allocation by class, concentration warning at 60%+.",
+          "<b>Expiring soon</b> tags on passports, cards, FDs, ESOP lock-ups that expire within 60 days."
         ]
       }
     ]
@@ -1021,19 +1112,39 @@ function _currentHelpEntry(){
     if (e.match.test(path)) return e;
   }
   return {
-    title: "DailyPlanner",
-    lead: "Your personal productivity workspace. Use the menu (top-left) to navigate between Projects, OKRs, Calendar, Reviews, and more.",
-    sections: [{
-      title: "Getting around",
-      items: [
-        "<b>Work</b> — Roadmap, OKRs, Projects.",
-        "<b>Daily</b> — Priorities (Eisenhower), Calendar, Inbox.",
-        "<b>Review</b> — Daily and Weekly Reviews.",
-        "<b>Knowledge</b> — Notes, Knowledge Base, Playbook.",
-        "<b>Life</b> — Health, Investments.",
-        "Press <code>?</code> on any page for help specific to that page."
-      ]
-    }]
+    title: "DailyPlanner — your professional daily & financial planner",
+    lead: "A single workspace for your tasks, habits, health, knowledge, and money. Use the menu (top-left) to navigate. Press <code>?</code> on any page for context-specific help.",
+    sections: [
+      {
+        title: "Navigation — five workflow stages",
+        items: [
+          "<b>Today</b> — Today's Plan (morning dashboard), Priorities (Eisenhower), Calendar, Inbox.",
+          "<b>Work</b> — Projects, Roadmap, OKRs.",
+          "<b>Review</b> — Reports (4 lenses), Weekly Review.",
+          "<b>Life &amp; Finance</b> — Health, Investments, Vault (password-locked — financial instruments + documents).",
+          "<b>Knowledge</b> — Knowledge Base (AI + search), Notes."
+        ]
+      },
+      {
+        title: "Top-bar shortcuts — available on every page",
+        items: [
+          "<code>🔍</code> — jump to the Knowledge Base to search your saved content or ask AI a natural-language question.",
+          "<code>?</code> or <code>Shift + /</code> — open this help panel for the current page.",
+          "<code>n</code> — start a new task (focuses the quick-add on task pages; opens the Eisenhower composer elsewhere).",
+          "<code>/</code> — focus the quick-add / search on task pages.",
+          "<code>Esc</code> — close any open panel or modal."
+        ]
+      },
+      {
+        title: "Features worth knowing about",
+        items: [
+          "<b>Voice dictation</b> with natural-language date parsing (\"tomorrow\", \"next monday\", \"weekly\") on the Eisenhower matrix and project tasks.",
+          "<b>AI answers</b> against your Knowledge Base (needs a Gemini or Groq key in <code>.env</code>).",
+          "<b>Vault</b> protects sensitive data with a separate password and auto-lock. Copy-to-clipboard auto-clears in 30s.",
+          "<b>Reports</b> gives you productivity, habits, and financial dashboards with week / month / quarter / year ranges."
+        ]
+      }
+    ]
   };
 }
 
