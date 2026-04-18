@@ -297,20 +297,20 @@ function setTaskView(view) {
   const boardView = _id("board-view");
   if (!tableView || !boardView) return;
 
-  // "table" and "compact" both use the same DOM — they just toggle
-  // a body-level class that rewrites the row layout in CSS. Only the
-  // board view lives in a separate container.
-  const showTable = (view === "table" || view === "compact");
+  // Legacy "compact" users fall back to the new default minimal list.
+  if (view === "compact") view = "table";
+
+  const showTable = (view === "table");
   tableView.classList.toggle("hidden", !showTable);
   boardView.classList.toggle("hidden", view !== "board");
 
-  document.body.classList.toggle("pt-view-compact", view === "compact");
+  // Ensure the retired compact styles never bleed in.
+  document.body.classList.remove("pt-view-compact");
 
   _qa(".vt-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
 
-  // Persist user's choice so it survives a page refresh
   try { localStorage.setItem("pt_view", view); } catch {}
 
   if (view === "board") populateBoard();

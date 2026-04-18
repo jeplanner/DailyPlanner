@@ -58,11 +58,8 @@
   <div class="proj-toolbar">
     <div class="toolbar-left">
       <div class="view-toggle">
-        <button class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="Full table view">
+        <button class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="List view">
           <i data-feather="list"></i>
-        </button>
-        <button class="vt-btn" data-view="compact" onclick="setTaskView('compact')" title="Compact view — title, due date & status only">
-          <i data-feather="align-justify"></i>
         </button>
         <button class="vt-btn" data-view="board" onclick="setTaskView('board')" title="Board view">
           <i data-feather="columns"></i>
@@ -316,25 +313,20 @@
 
   <!-- ═══════════ TABLE VIEW ═══════════ -->
   <div class="task-table-wrap" id="table-view">
-    <table class="task-table">
-      <thead>
+    <table class="task-table pt-minimal">
+      <thead class="pt-minimal-head">
         <tr>
-          <th class="col-check"></th>
-          <th class="col-prio"></th>
-          <th class="col-name">Task Name</th>
-          <th class="col-status">Status</th>
-          <th class="col-start">Start</th>
-          <th class="col-dur">Duration</th>
+          <th class="col-check" aria-label=""></th>
+          <th class="col-name">Task</th>
           <th class="col-due">Due</th>
-          <th class="col-progress">Progress</th>
-          <th class="col-actions"></th>
+          <th class="col-actions" aria-label=""></th>
         </tr>
       </thead>
       <tbody id="task-tbody">
         {% for group_name, group_tasks in grouped_tasks.items() %}
           {% if group_tasks %}
           <tr class="group-row" data-group="{{ group_name }}">
-            <td colspan="9">
+            <td colspan="4">
               <div class="group-toggle" onclick="toggleGroup(this)">
                 <i data-feather="chevron-down" class="group-chevron"></i>
                 <span class="group-label">{{ group_name }}</span>
@@ -343,7 +335,7 @@
             </td>
           </tr>
           {% for t in group_tasks %}
-          <tr class="task-row {{ 'done' if t.done }} {{ 'overdue' if t.due_label and 'overdue' in t.due_label }}"
+          <tr class="task-row prio-{{ t.priority }} {{ 'done' if t.done }} {{ 'overdue' if t.due_label and 'overdue' in t.due_label }}"
               data-id="{{ t.task_id }}"
               data-status="{{ t.status }}"
               data-priority="{{ t.priority }}"
@@ -353,7 +345,7 @@
               data-kr-id="{{ t.key_result_id or '' }}"
               data-initiative-id="{{ t.initiative_id or '' }}">
 
-            <!-- Checkbox / selection overlay -->
+            <!-- Checkbox -->
             <td class="col-check">
               <span class="pt-sel-check" aria-hidden="true"></span>
               <input type="checkbox" class="task-check"
@@ -361,102 +353,31 @@
                      onchange="toggleTaskDone(this, '{{ t.task_id }}', '{{ t.occurrence_date }}')">
             </td>
 
-            <!-- Priority dot -->
-            <td class="col-prio">
-              <span class="prio-dot prio-{{ t.priority }}"
-                    onclick="cyclePriority('{{ t.task_id }}', this)"
-                    title="{{ t.priority }}"></span>
+            <!-- Title (click = open details) -->
+            <td class="col-name" onclick="openTaskDetail('{{ t.task_id }}')">
+              <div class="task-name-cell">
+                <span class="task-text" title="{{ t.task_text }}">{{ t.task_text }}</span>
+              </div>
             </td>
 
-            <!-- Task name + inline subtasks -->
-            <td class="col-name">
-              <div class="task-name-cell">
-                {% if t.is_pinned %}<i data-feather="bookmark" class="pin-icon"></i>{% endif %}
-                {% if t.subtasks %}
-                  <button class="subtask-expand-btn" onclick="toggleSubtasks(this)" title="Toggle subtasks">
-                    <i data-feather="chevron-right" class="expand-chevron"></i>
-                  </button>
-                {% endif %}
-                <span class="task-text" onclick="openTaskDetail('{{ t.task_id }}')" title="{{ t.task_text }}">{{ t.task_text }}</span>
-                {% if t.subtasks %}
-                  <span class="subtask-badge">{{ t.subtasks|selectattr('is_done')|list|length }}/{{ t.subtasks|length }}</span>
-                {% endif %}
-                {% if t.recurrence_badge %}
-                  <span class="recur-badge">{{ t.recurrence_badge }}</span>
-                {% endif %}
-                {% if t.delegated_to %}
-                  <span class="delegate-badge">→ {{ t.delegated_to }}</span>
-                {% endif %}
-              </div>
-              {% if t.subtasks %}
-              <div class="inline-subtasks collapsed" data-task-id="{{ t.task_id }}">
-                {% for st in t.subtasks %}
-                <label class="inline-subtask {{ 'st-done' if st.is_done }}">
-                  <input type="checkbox" {{ 'checked' if st.is_done }}
-                         onchange="toggleSubtask('{{ st.id }}', this.checked); this.parentElement.classList.toggle('st-done')">
-                  <span>{{ st.title }}</span>
-                </label>
-                {% endfor %}
-                <div class="inline-add-subtask">
-                  <input type="text" placeholder="Add subtask…" class="inline-subtask-input"
-                         data-task-id="{{ t.task_id }}"
-                         onkeydown="if(event.key==='Enter'){addInlineSubtask(this);event.preventDefault();}">
-                </div>
-              </div>
+            <!-- Due chip (relative label served by backend) -->
+            <td class="col-due" onclick="openTaskDetail('{{ t.task_id }}')">
+              {% if t.due_label %}
+                <span class="due-chip {{ 'overdue-label' if 'overdue' in t.due_label }}">{{ t.due_label }}</span>
               {% endif %}
             </td>
 
-            <!-- Status -->
-            <td class="col-status">
-              <select class="status-select status-{{ t.status }}"
-                      onchange="updateStatus('{{ t.task_id }}', this.value, '{{ t.occurrence_date }}')">
-                <option value="open"         {{ 'selected' if t.status=='open' }}>Open</option>
-                <option value="in_progress"  {{ 'selected' if t.status=='in_progress' }}>In Progress</option>
-                <option value="done"         {{ 'selected' if t.status=='done' }}>Done</option>
-                <option value="skipped"      {{ 'selected' if t.status=='skipped' }}>Skipped</option>
-                <option value="deleted"      {{ 'selected' if t.status in ('deleted','not_required') }}>Delete</option>
-              </select>
-            </td>
-
-            <!-- Start -->
-            <td class="col-start">
-              <input type="date" class="cell-date" value="{{ t.start_date or '' }}"
-                     onchange="updateField('{{ t.task_id }}', 'start_date', this.value)">
-            </td>
-
-            <!-- Duration -->
-            <td class="col-dur">
-              <input type="number" class="cell-num" value="{{ t.duration_days }}" min="0"
-                     onchange="updateField('{{ t.task_id }}', 'duration_days', this.value)">
-            </td>
-
-            <!-- Due -->
-            <td class="col-due">
-              <div class="due-cell">
-                <input type="date" class="cell-date" value="{{ t.due_date or '' }}"
-                       onchange="updateField('{{ t.task_id }}', 'due_date', this.value)">
-                {% if t.due_label %}
-                  <span class="due-label {{ 'overdue-label' if 'overdue' in t.due_label }}">{{ t.due_label }}</span>
-                {% endif %}
-              </div>
-            </td>
-
-            <!-- Progress bar -->
-            <td class="col-progress">
-              {% set pct = ((t.actual_hours / t.planned_hours * 100)|round|int) if t.planned_hours > 0 else 0 %}
-              <div class="mini-progress" title="{{ pct }}%">
-                <div class="mini-progress-fill" style="width:{{ [pct, 100]|min }}%"></div>
-              </div>
-              <span class="progress-text">{{ pct }}%</span>
-            </td>
-
-            <!-- Actions -->
+            <!-- Single details affordance -->
             <td class="col-actions">
-              <button class="row-action-btn" onclick="openTaskDetail('{{ t.task_id }}')" title="Details">
-                <i data-feather="more-horizontal"></i>
-              </button>
-              <button class="row-action-btn gcal-btn" onclick="addTaskToGCal('{{ t.task_id }}')" title="Add to Google Calendar">
-                <i data-feather="calendar"></i>
+              <button type="button" class="row-action-btn row-details-btn"
+                      onclick="event.stopPropagation(); openTaskDetail('{{ t.task_id }}')"
+                      title="Task details" aria-label="Task details">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9"/>
+                  <line x1="12" y1="11.5" x2="12" y2="16.5"/>
+                  <circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>
+                </svg>
               </button>
             </td>
           </tr>

@@ -2318,3 +2318,117 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
 @media (max-width: 360px) {
   .proj-header-right .header-action:nth-child(2) { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MINIMAL TASK ROW (progressive disclosure, UX-refactor 2026-04)
+   Task list defaults to: checkbox · title · due chip · ⓘ details.
+   Everything else (status, dates, duration, progress, priority cycle,
+   gcal, recurrence, pin, subtasks) lives in the detail side panel.
+   Priority surfaces as a 4px left-border color stripe — glanceable
+   without taking row space.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.task-table.pt-minimal { table-layout: fixed; }
+.task-table.pt-minimal .col-check    { width: 40px; }
+.task-table.pt-minimal .col-name     { width: auto; }
+.task-table.pt-minimal .col-due      { width: 130px; text-align: right; }
+.task-table.pt-minimal .col-actions  { width: 44px; text-align: right; }
+
+.task-table.pt-minimal thead.pt-minimal-head th {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--pt-text3);
+  padding: 8px 10px; text-align: left;
+  border-bottom: 1px solid var(--pt-border);
+  background: transparent;
+}
+.task-table.pt-minimal thead.pt-minimal-head .col-due     { text-align: right; }
+.task-table.pt-minimal thead.pt-minimal-head .col-check,
+.task-table.pt-minimal thead.pt-minimal-head .col-actions { text-align: center; }
+
+.task-table.pt-minimal td { padding: 10px 10px; vertical-align: middle; }
+
+/* Row base: clean, card-like, with left-border priority accent */
+.task-table.pt-minimal .task-row {
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--pt-border-light);
+  transition: background .12s, box-shadow .12s;
+  cursor: default;
+}
+.task-table.pt-minimal .task-row:hover { background: var(--pt-border-light); }
+.task-table.pt-minimal .task-row.prio-high   { border-left-color: #dc2626; }
+.task-table.pt-minimal .task-row.prio-medium { border-left-color: #f59e0b; }
+.task-table.pt-minimal .task-row.prio-low    { border-left-color: #10b981; }
+
+/* Non-open status hints (subtle — richer state lives in the panel) */
+.task-table.pt-minimal .task-row[data-status="in_progress"] .task-text { color: var(--pt-primary); }
+.task-table.pt-minimal .task-row[data-status="skipped"]     { opacity: .6; }
+.task-table.pt-minimal .task-row[data-status="deleted"],
+.task-table.pt-minimal .task-row[data-status="not_required"] {
+  opacity: .5;
+}
+.task-table.pt-minimal .task-row[data-status="deleted"] .task-text,
+.task-table.pt-minimal .task-row[data-status="not_required"] .task-text {
+  text-decoration: line-through;
+}
+
+.task-table.pt-minimal .task-row.done      { opacity: .5; }
+.task-table.pt-minimal .task-row.done .task-text { text-decoration: line-through; }
+
+/* Make the body of the row (title + due) feel clickable */
+.task-table.pt-minimal .col-name,
+.task-table.pt-minimal .col-due {
+  cursor: pointer;
+}
+.task-table.pt-minimal .col-name .task-name-cell {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.task-table.pt-minimal .col-name .task-text {
+  flex: 1; min-width: 0;
+  font-size: 14px; font-weight: 500; color: var(--pt-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+/* Due chip — relative labels like "⏰ Today", "⚠ 3d overdue", "📅 In 5d" */
+.task-table.pt-minimal .due-chip {
+  display: inline-block;
+  font-size: 11px; font-weight: 600;
+  padding: 3px 8px; border-radius: 10px;
+  background: var(--pt-border-light); color: var(--pt-text2);
+  white-space: nowrap;
+}
+.task-table.pt-minimal .due-chip.overdue-label {
+  background: #fee2e2; color: #b91c1c;
+}
+html.dark .task-table.pt-minimal .due-chip.overdue-label {
+  background: #3b1111; color: #fca5a5;
+}
+
+/* Details button (ⓘ) — the one explicit affordance for full editing */
+.task-table.pt-minimal .row-details-btn {
+  width: 30px; height: 30px; padding: 0;
+  border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--pt-text3);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all .12s;
+}
+.task-table.pt-minimal .row-details-btn:hover {
+  background: var(--pt-border); color: var(--pt-primary);
+  border-color: var(--pt-border);
+}
+.task-table.pt-minimal .row-details-btn:active { transform: scale(.94); }
+
+/* Compact & board view toggles: keep working; our markup is their superset. */
+body.pt-view-compact .task-table.pt-minimal thead.pt-minimal-head { display: none; }
+
+/* Mobile — tighten padding, give the ⓘ a bigger tap target */
+@media (max-width: 560px) {
+  .task-table.pt-minimal thead.pt-minimal-head { display: none; }
+  .task-table.pt-minimal td { padding: 12px 8px; }
+  .task-table.pt-minimal .col-check   { width: 36px; }
+  .task-table.pt-minimal .col-due     { width: auto; max-width: 120px; }
+  .task-table.pt-minimal .col-actions { width: 44px; }
+  .task-table.pt-minimal .row-details-btn { width: 38px; height: 38px; }
+  .task-table.pt-minimal .col-name .task-text { font-size: 14.5px; }
+  .task-table.pt-minimal .due-chip { font-size: 10.5px; padding: 2px 7px; }
+}
