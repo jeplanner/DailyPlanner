@@ -120,6 +120,42 @@ def test_agenda_service_build_dashboard_shape():
     assert set(d["counts"].keys()) >= {"meetings", "tasks", "habits", "habits_done", "overdue"}
 
 
+def test_agenda_habits_template_contract():
+    """Regression: Today's Plan (summary.html) reads `h.name`, `h.value`,
+    `h.goal`, `h.unit`, `h.habit_type`, `h.progress_pct` directly. If the
+    agenda service stops returning any of these keys, the template fails
+    with a Jinja `|format` TypeError at render time (undefined → %g).
+
+    Seen in prod on Render: line 234 of summary.html would crash when a
+    user with habits loaded the morning dashboard."""
+    from datetime import date
+    from unittest.mock import patch
+    import services.agenda_service as a
+
+    def _fake_get(table, **kw):
+        if table == "habit_master":
+            return [{"id": 7, "name": "water", "unit": "L", "goal": 2.0,
+                     "habit_type": "number", "position": 0}]
+        if table == "habit_entries":
+            return [{"habit_id": 7, "value": "1.2"}]
+        return []
+
+    with patch.object(a, "get", side_effect=_fake_get):
+        items = a.fetch_habits("test-user", date(2026, 4, 18))
+
+    assert len(items) == 1
+    h = items[0]
+    # These are the EXACT keys summary.html reads — changing any breaks
+    # the template. If you must rename, update the template too.
+    for required in ("name", "value", "goal", "unit", "habit_type",
+                     "progress_pct", "done"):
+        assert required in h, f"habit item missing '{required}' — summary.html will crash"
+    assert h["name"] == "water"
+    assert h["value"] == 1.2
+    assert h["goal"] == 2.0
+    assert h["unit"] == "L"
+
+
 def test_agenda_sort_timed_then_untimed():
     """Items with a time come first, untimed items last. Crucial for the
     morning dashboard's chronological layout."""

@@ -23,8 +23,11 @@ logger = setup_logger()
 @planner_bp.route("/")
 @login_required
 def planner():
-    # Default landing page = Eisenhower Matrix (priority-focused start)
-    return redirect(url_for("todo.todo"))
+    # Default landing page = Today's Plan (morning dashboard).
+    # This lands users on a daily-review screen that shows today's
+    # agenda + overdue + habits, which is the highest-value "first-thing-
+    # in-the-morning" view. Eisenhower matrix remains at /todo.
+    return redirect(url_for("planner.summary", view="daily"))
 
 
 @planner_bp.route("/calendar")

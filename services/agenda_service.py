@@ -350,11 +350,19 @@ def fetch_habits(user_id: str, plan_date) -> list[dict]:
         done = (value >= 1) if is_boolean else (goal > 0 and value >= goal)
         pct = 100 if done else (int(round(value / goal * 100)) if goal > 0 else 0)
         pct = max(0, min(100, pct))
+        # Habit items carry BOTH the normalized Item-dict keys (title/
+        # habit_value/etc.) AND the short keys (name/value/goal/unit)
+        # that the summary.html template reads directly. Keeping both
+        # avoids touching the template and preserves the legacy contract
+        # from before the agenda-service refactor.
+        name = h.get("name") or ""
+        unit = h.get("unit")
         out.append({
             "id": f"hb-{h['id']}",
             "type": "habit",
             "source": "habit",
-            "title": h.get("name") or "",
+            "title": name,
+            "name": name,          # template expects this
             "time": None,
             "end_time": None,
             "date": date_iso,
@@ -363,11 +371,16 @@ def fetch_habits(user_id: str, plan_date) -> list[dict]:
             "priority": None,
             "context": None,
             "link": "/health",
+            # Normalized (new) field names
             "habit_goal": goal,
             "habit_value": value,
-            "habit_unit": h.get("unit"),
+            "habit_unit": unit,
             "habit_type": h.get("habit_type"),
             "progress_pct": pct,
+            # Template-compatibility short names (pre-agenda-service)
+            "goal": goal,
+            "value": value,
+            "unit": unit,
         })
     return out
 
