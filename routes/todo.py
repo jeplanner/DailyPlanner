@@ -345,6 +345,35 @@ def todo():
     todo = build_eisenhower_view(tasks, plan_date)
     quadrant_counts = compute_quadrant_counts(todo)
 
+    # Travel Mode is "on" for this day when there's at least one
+    # non-deleted row with category=Travel. Used to toggle the header
+    # button between "Travel Mode" (enable) and "Disable Travel Mode".
+    travel_mode_active = any(
+        (r.get("category") or "").lower() == "travel"
+        for r in raw_tasks
+    )
+
+    # When travel mode is OFF but the user had previously disabled it
+    # today (leaving soft-deleted Travel rows behind), surface a restore
+    # prompt. Only run the extra query in that narrow window.
+    travel_mode_restorable_count = 0
+    if not travel_mode_active:
+        try:
+            restorable = get(
+                "todo_matrix",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "plan_date": f"eq.{plan_date.isoformat()}",
+                    "category": "eq.Travel",
+                    "is_deleted": "eq.true",
+                    "status": "eq.deleted",
+                    "select": "id",
+                },
+            ) or []
+            travel_mode_restorable_count = len(restorable)
+        except Exception as e:
+            logger.warning("travel restorable lookup failed: %s", e)
+
     # 5️⃣ Render
     days = calendar.monthrange(year, month)[1]
 
@@ -361,6 +390,8 @@ def todo():
         today=today,
         quadrant_counts=quadrant_counts,
         projects=projects,
+        travel_mode_active=travel_mode_active,
+        travel_mode_restorable_count=travel_mode_restorable_count,
     )
 
 
@@ -579,6 +610,7 @@ def move_eisenhower_task():
 @todo_bp.route("/todo/travel-mode", methods=["POST"])
 @login_required
 def travel_mode():
+    user_id = session["user_id"]
     year = int(request.form["year"])
     month = int(request.form["month"])
     day = int(request.form["day"])
@@ -588,6 +620,25 @@ def travel_mode():
     # When omitted, ALL of the user's travel_tasks are applied.
     category = (request.form.get("category") or "").strip() or None
 
+    # When the user picks "Start fresh" in the restore modal, push any
+    # previously soft-deleted travel rows into a frozen bucket so they
+    # stop showing up as restorable. Soft-delete only — per project
+    # policy, no hard delete.
+    if request.form.get("archive_previous") == "1":
+        try:
+            update(
+                "todo_matrix",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "plan_date": f"eq.{plan_date.isoformat()}",
+                    "category": "eq.Travel",
+                    "is_deleted": "eq.true",
+                },
+                json={"category": "Travel-archived"},
+            )
+        except Exception as e:
+            logger.warning("archive_previous travel rows failed: %s", e)
+
     added = enable_travel_mode(plan_date, category=category)
     logger.info(f"Travel Mode enabled: {added} tasks added (category={category})")
 
@@ -595,6 +646,95 @@ def travel_mode():
         "todo.todo",
         year=plan_date.year, month=plan_date.month, day=plan_date.day,
         travel=1,
+    ))
+
+
+@todo_bp.route("/todo/travel-mode/disable", methods=["POST"])
+@login_required
+def travel_mode_disable():
+    """Soft-delete only the PRISTINE travel-category tasks on this
+    plan_date — rows the user hasn't touched (not completed, not moved
+    through a non-open status). Rows the user edited (checked off,
+    marked in_progress/skipped, etc.) are preserved so the user never
+    loses work.
+
+    Soft-delete only (is_deleted=true + status=deleted) — per project
+    policy we never hard-delete."""
+    user_id = session["user_id"]
+    year = int(request.form["year"])
+    month = int(request.form["month"])
+    day = int(request.form["day"])
+    plan_date = date(year, month, day)
+
+    try:
+        travel_rows = get(
+            "todo_matrix",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date.isoformat()}",
+                "category": "eq.Travel",
+                "is_deleted": "eq.false",
+                "select": "id,is_done,status",
+            },
+        ) or []
+
+        pristine_ids = [
+            r["id"] for r in travel_rows
+            if not r.get("is_done") and (r.get("status") in (None, "", "open"))
+        ]
+        kept = len(travel_rows) - len(pristine_ids)
+
+        if pristine_ids:
+            update(
+                "todo_matrix",
+                params={
+                    "id": f"in.({','.join(str(i) for i in pristine_ids)})",
+                },
+                json={"is_deleted": True, "status": "deleted"},
+            )
+
+        logger.info(
+            "Travel Mode disabled: %d pristine tasks soft-deleted, %d kept (edited/completed)",
+            len(pristine_ids), kept,
+        )
+    except Exception as e:
+        logger.exception("Failed to disable Travel Mode: %s", e)
+
+    return redirect(url_for(
+        "todo.todo",
+        year=plan_date.year, month=plan_date.month, day=plan_date.day,
+    ))
+
+
+@todo_bp.route("/todo/travel-mode/restore", methods=["POST"])
+@login_required
+def travel_mode_restore():
+    """Restore the travel rows that were soft-deleted by the most recent
+    disable. Un-deletes them and resets status to 'open'."""
+    user_id = session["user_id"]
+    year = int(request.form["year"])
+    month = int(request.form["month"])
+    day = int(request.form["day"])
+    plan_date = date(year, month, day)
+
+    try:
+        update(
+            "todo_matrix",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date.isoformat()}",
+                "category": "eq.Travel",
+                "is_deleted": "eq.true",
+                "status": "eq.deleted",
+            },
+            json={"is_deleted": False, "status": "open"},
+        )
+    except Exception as e:
+        logger.exception("Failed to restore Travel Mode: %s", e)
+
+    return redirect(url_for(
+        "todo.todo",
+        year=plan_date.year, month=plan_date.month, day=plan_date.day,
     ))
 
 

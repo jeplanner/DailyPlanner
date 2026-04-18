@@ -1229,6 +1229,32 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       <input type="hidden" name="day" value="{{ plan_date.day }}">
       <button type="submit" class="em-action-btn"><i data-feather="copy" style="width:14px;height:14px"></i> Copy Previous Day</button>
     </form>
+    {% if travel_mode_active %}
+    <form method="post" action="/todo/travel-mode/disable" style="display:inline-flex;gap:4px;align-items:center;"
+          onsubmit="return confirm('Remove the unchanged Travel Mode tasks for this day? Anything you\'ve edited or checked off stays put.');">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <input type="hidden" name="day" value="{{ plan_date.day }}">
+      <button type="submit" class="em-action-btn" style="border-color:#dc2626;color:#dc2626;" title="Remove the unchanged Travel Mode tasks for this day">
+        <i data-feather="navigation-2" style="width:14px;height:14px"></i> Disable Travel Mode
+      </button>
+      <button type="button" class="em-action-btn" onclick="openTravelSettings()" title="Manage travel tasks">
+        <i data-feather="settings" style="width:14px;height:14px"></i>
+      </button>
+    </form>
+    {% elif travel_mode_restorable_count and travel_mode_restorable_count > 0 %}
+    <div style="display:inline-flex;gap:4px;align-items:center;">
+      <button type="button" class="em-action-btn" onclick="openTravelRestoreModal()"
+              title="You turned Travel Mode off earlier — pick up where you left off">
+        <i data-feather="navigation" style="width:14px;height:14px"></i>
+        Travel Mode
+        <span aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 5px;margin-left:6px;border-radius:10px;background:var(--q-schedule);color:#fff;font-size:10px;font-weight:700;">{{ travel_mode_restorable_count }}</span>
+      </button>
+      <button type="button" class="em-action-btn" onclick="openTravelSettings()" title="Manage travel tasks">
+        <i data-feather="settings" style="width:14px;height:14px"></i>
+      </button>
+    </div>
+    {% else %}
     <form method="post" action="/todo/travel-mode" style="display:inline-flex;gap:4px;align-items:center;">
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
@@ -1241,6 +1267,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
         <i data-feather="settings" style="width:14px;height:14px"></i>
       </button>
     </form>
+    {% endif %}
   </div>
 
   <!-- Quick Add Task -->
@@ -1534,6 +1561,136 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     {% endfor %}
   </div>
 </div>
+
+<!-- ══════════ TRAVEL MODE RESTORE MODAL ══════════ -->
+{% if (not travel_mode_active) and travel_mode_restorable_count and travel_mode_restorable_count > 0 %}
+<div id="em-travel-restore-modal" class="em-details-modal hidden" role="dialog" aria-modal="true"
+     aria-labelledby="em-tr-title"
+     onclick="if(event.target===this)closeTravelRestoreModal()">
+  <div class="em-details-sheet" style="max-width:460px;">
+    <div class="em-details-head">
+      <div class="em-details-title" id="em-tr-title" style="display:flex;align-items:center;gap:8px;">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;background:color-mix(in srgb,var(--q-schedule) 16%,transparent);color:var(--q-schedule);flex-shrink:0;">
+          <i data-feather="navigation" style="width:17px;height:17px"></i>
+        </span>
+        <span>Welcome back to Travel Mode</span>
+      </div>
+      <button type="button" class="em-details-close" onclick="closeTravelRestoreModal()" aria-label="Close">×</button>
+    </div>
+    <div class="em-details-body" style="gap:14px;">
+      <p style="font-size:13.5px;line-height:1.55;color:var(--em-text2);margin:0;">
+        You turned Travel Mode off earlier today, which set aside
+        <b style="color:var(--em-text);">{{ travel_mode_restorable_count }}</b>
+        unchanged task{{ '' if travel_mode_restorable_count == 1 else 's' }}.
+        Pick up where you left off, or start over with a fresh template.
+      </p>
+
+      <form method="post" action="/todo/travel-mode/restore" style="margin:0;">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <input type="hidden" name="day" value="{{ plan_date.day }}">
+        <button type="submit" class="em-tr-primary-btn">
+          <i data-feather="rotate-ccw" style="width:15px;height:15px"></i>
+          Restore previous set
+          <span style="font-weight:500;opacity:.85;font-size:12px;">({{ travel_mode_restorable_count }})</span>
+        </button>
+      </form>
+
+      <div style="display:flex;align-items:center;gap:8px;color:var(--em-text3);font-size:11px;text-transform:uppercase;letter-spacing:.5px;">
+        <span style="flex:1;height:1px;background:var(--em-border);"></span>
+        <span>or</span>
+        <span style="flex:1;height:1px;background:var(--em-border);"></span>
+      </div>
+
+      <form method="post" action="/todo/travel-mode" style="margin:0;display:flex;flex-direction:column;gap:8px;">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <input type="hidden" name="day" value="{{ plan_date.day }}">
+        <input type="hidden" name="archive_previous" value="1">
+        <label style="font-size:11px;font-weight:700;color:var(--em-text3);text-transform:uppercase;letter-spacing:.4px;">
+          Start fresh with template
+        </label>
+        <select name="category" id="travel-restore-category-select" class="em-quad-select"
+                style="width:100%;padding:8px 10px;font-size:13px;">
+          <option value="">All templates</option>
+        </select>
+        <button type="submit" class="em-tr-secondary-btn">
+          <i data-feather="plus-circle" style="width:15px;height:15px"></i>
+          Start fresh
+        </button>
+        <p style="font-size:11px;color:var(--em-text3);line-height:1.45;margin:2px 0 0;">
+          The older set will be archived — it won't reappear here next time.
+        </p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+.em-tr-primary-btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+  padding:11px 16px;border:none;border-radius:9px;
+  background:var(--q-schedule);color:#fff;
+  font-size:13.5px;font-weight:600;font-family:inherit;cursor:pointer;
+  transition:filter .12s,transform .1s;
+}
+.em-tr-primary-btn:hover{filter:brightness(1.06);}
+.em-tr-primary-btn:active{transform:scale(.98);}
+
+.em-tr-secondary-btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+  padding:10px 16px;border:1px solid var(--em-border);border-radius:9px;
+  background:var(--em-surface);color:var(--em-text);
+  font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;
+  transition:all .12s;
+}
+.em-tr-secondary-btn:hover{border-color:var(--q-schedule);color:var(--q-schedule);}
+.em-tr-secondary-btn:active{transform:scale(.98);}
+</style>
+
+<script>
+function openTravelRestoreModal() {
+  const m = document.getElementById("em-travel-restore-modal");
+  if (!m) return;
+  m.classList.remove("hidden");
+  if (window.feather) feather.replace();
+
+  // Populate the category dropdown inside the modal from the same
+  // backend endpoint the toolbar uses, so users keep their template
+  // options when starting fresh.
+  const sel = document.getElementById("travel-restore-category-select");
+  if (sel && !sel.dataset.loaded) {
+    sel.dataset.loaded = "1";
+    fetch("/travel/categories")
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const cats = (data && data.categories) || [];
+        for (const c of cats) {
+          const name = (typeof c === "string") ? c : (c && (c.name || c.category));
+          if (!name) continue;
+          const count = (c && c.count != null) ? ` (${c.count})` : "";
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name + count;
+          sel.appendChild(opt);
+        }
+      })
+      .catch(() => {});
+  }
+}
+
+function closeTravelRestoreModal() {
+  document.getElementById("em-travel-restore-modal")?.classList.add("hidden");
+}
+
+// Escape to close
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const m = document.getElementById("em-travel-restore-modal");
+  if (m && !m.classList.contains("hidden")) closeTravelRestoreModal();
+});
+</script>
+{% endif %}
 
 <!-- ══════════ TASK DETAILS MODAL ══════════ -->
 <div id="em-details-modal" class="em-details-modal hidden" role="dialog" aria-modal="true"
