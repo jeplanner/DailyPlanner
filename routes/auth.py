@@ -104,8 +104,34 @@ def register():
     return render_template("register.html")
 
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["GET", "POST"])
 def logout():
+    """Fully sign the user out.
+
+    `logout_user()` alone is not enough: when login is called with
+    `remember=True` (which we do), Flask-Login plants a persistent
+    "remember-me" cookie. After `session.clear()` the next request
+    silently re-authenticates the browser from that cookie, so the
+    user appears never to have logged out.
+
+    The fix is to (1) call logout_user(), (2) clear the server-side
+    session, then (3) explicitly delete *both* the session cookie and
+    the remember cookie on the redirect response.
+    """
+    from flask import current_app, make_response
+
     logout_user()
     session.clear()
-    return redirect(url_for("auth.login"))
+
+    response = make_response(redirect(url_for("auth.login")))
+
+    # Session cookie name — falls back to Flask's default if config is missing.
+    session_cookie = current_app.config.get("SESSION_COOKIE_NAME", "session")
+    response.delete_cookie(session_cookie, path="/")
+
+    # Flask-Login's remember cookie. Default name is "remember_token";
+    # honour an override if the app ever sets one.
+    remember_cookie = current_app.config.get("REMEMBER_COOKIE_NAME", "remember_token")
+    response.delete_cookie(remember_cookie, path="/")
+
+    return response
