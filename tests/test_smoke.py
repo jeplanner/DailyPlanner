@@ -27,15 +27,20 @@ def test_app_factory_runs(app):
 
 
 def test_all_expected_blueprints_present(app):
-    """If someone removes a blueprint by accident, this catches it."""
+    """If someone removes a blueprint by accident, this catches it.
+
+    Blueprint NAMES (what flask stores in app.blueprints.keys()) can
+    differ from the Python variable name — e.g. inbox_bp is named
+    "inbox_bp" via `Blueprint("inbox_bp", __name__)`. We check what
+    Flask actually registers, not the variable name."""
     expected = {
         "auth", "planner", "todo", "projects", "health", "habits",
         "references", "ai", "events", "timeline", "notes", "system",
-        "inbox", "refcards", "portfolio", "goals", "reports",
+        "inbox_bp", "refcards", "portfolio", "goals", "reports",
     }
     registered = set(app.blueprints.keys())
     missing = expected - registered
-    assert not missing, f"blueprints missing: {missing}"
+    assert not missing, f"blueprints missing: {missing} (registered: {sorted(registered)})"
 
 
 # ═══════════════════════════════════════════════════

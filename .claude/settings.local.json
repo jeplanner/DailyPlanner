@@ -11,7 +11,9 @@
       "Bash(node --check /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/voice.js)",
       "Bash(python -c \"from jinja2 import Environment, FileSystemLoader; env = Environment\\(loader=FileSystemLoader\\('templates'\\), autoescape=True\\); env.get_template\\('_em_task_card.html'\\); print\\('partial OK'\\)\")",
       "Bash(node --check /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/project_tasks.js)",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(~/.local/bin/pip --version)",
+      "Bash('~/.local/bin/pip' install *)"
     ]
   }
 }
