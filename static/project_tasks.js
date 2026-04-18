@@ -591,10 +591,19 @@ function quickSetTime(hhmm) {
    Uses HTMLInputElement.showPicker() where available (modern Chrome,
    Safari, Edge, Firefox 101+), and falls back to focus() + click()
    for older browsers. Called from the wrapper <div> so the whole pill
-   — icon + field — is tappable. */
-function openDatePicker(inputId) {
+   — icon + field — is tappable.
+
+   IMPORTANT: when the click originated on the <input> itself, the
+   browser is already opening its native picker. Calling showPicker()
+   a second time on top of that throws NotAllowedError on iOS Safari
+   and re-opens the picker on Chrome Android, which creates a "stuck
+   picker" loop as the detail panel animates closed. So we no-op in
+   that case and let the native handler do its job. */
+function openDatePicker(inputId, ev) {
   const el = _id(inputId);
   if (!el) return;
+  const evt = ev || window.event;
+  if (evt && evt.target === el) return; // native picker is already handling it
   try {
     if (typeof el.showPicker === "function") {
       el.showPicker();
@@ -611,6 +620,16 @@ function openDatePicker(inputId) {
 function closeTaskSheet() {
   const panel = _id("task-panel");
   const overlay = _id("task-panel-overlay");
+
+  // Release focus from whatever's inside the panel before we start the
+  // close animation. Without this, a focused date/time input will keep
+  // the native picker alive across the 250ms fade-out, and the next
+  // tap on the still-present .panel-date-wrap will re-open it — the
+  // "stuck picker" loop users reported.
+  if (panel && document.activeElement && panel.contains(document.activeElement)
+      && typeof document.activeElement.blur === "function") {
+    document.activeElement.blur();
+  }
 
   if (panel) {
     panel.classList.remove("open");
