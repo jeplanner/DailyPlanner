@@ -2032,40 +2032,54 @@ async function bulkAddEisenhower() {
   const text = (document.getElementById("em-bulk-text")?.value || "").trim();
   if (!text) return;
 
-  const quadrant = document.getElementById("quick-quad").value;
+  const defaultQuadrant = document.getElementById("quick-quad").value;
+  const defaultRecurrence = document.getElementById("quick-recurrence")?.value || null;
   const projectId = document.getElementById("quick-project").value || null;
   const priority = document.getElementById("quick-priority")?.value || "medium";
 
-  const lines = text.split("\n")
-    .map(l => l.trim().replace(/^[-•*]\s*/, "").trim())
-    .filter(l => l.length > 0);
+  // Parse each line for quadrant / date / recurrence keywords (e.g. "schedule
+  // call vendor next monday repeat weekly"). The bulk-panel dropdowns act as
+  // defaults when the line doesn't specify a quadrant or recurrence itself.
+  const parsed = text.split("\n")
+    .map(l => (typeof parseTaskLine === "function")
+      ? parseTaskLine(l, PLAN_DATE)
+      : { task_text: l.trim().replace(/^[-•*]\s*/, "").trim(), quadrant: null, due_date: null, recurrence: null })
+    .filter(p => p.task_text && p.task_text.length > 0);
 
-  if (!lines.length) { showToast("No tasks found", "error"); return; }
+  if (!parsed.length) { showToast("No tasks found", "error"); return; }
 
   // Fire all POSTs in parallel, consume the returned HTML fragments, and
   // append them to the right quadrants — no page reload.
   const results = await Promise.all(
-    lines.map(line =>
-      fetch("/todo/autosave", {
+    parsed.map(p => {
+      const q = p.quadrant || defaultQuadrant;
+      const body = {
+        plan_date: PLAN_DATE,
+        task_text: p.task_text,
+        quadrant: q,
+        project_id: projectId,
+        priority: priority,
+        is_done: false,
+      };
+      // Eliminate quadrant carries no due date server-side; skip sending one.
+      if (p.due_date && q !== "eliminate") body.due_date = p.due_date;
+      const recurrence = p.recurrence || defaultRecurrence;
+      if (recurrence) body.recurrence = recurrence;
+      return fetch("/todo/autosave", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          plan_date: PLAN_DATE,
-          task_text: line,
-          quadrant: quadrant,
-          project_id: projectId,
-          priority: priority,
-          is_done: false
-        })
-      }).then(r => r.json()).catch(() => null)
-    )
+        body: JSON.stringify(body),
+      }).then(r => r.json()).catch(() => null);
+    })
   );
 
   let added = 0;
   let fellBackToReload = false;
-  for (const res of results) {
+  for (let i = 0; i < results.length; i++) {
+    const res = results[i];
+    const fallbackQ = parsed[i]?.quadrant || defaultQuadrant;
     if (res && res.html) {
-      _insertTaskCardHtml(res.quadrant || quadrant, res.html);
+      _insertTaskCardHtml(res.quadrant || fallbackQ, res.html);
       added++;
     } else if (res && res.status === "ok") {
       // Succeeded but no HTML returned — at least count it, we'll
