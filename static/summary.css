@@ -186,3 +186,348 @@ html.dark .ai-card { border-color:var(--sm-border); }
   .sum-title { font-size:18px; }
   .view-tabs .vtab { padding:6px 14px; font-size:12px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   MORNING DASHBOARD  (daily review view)
+   One chronological agenda + a focused overdue card at the top.
+   Designed to be scannable in 5 seconds over coffee.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.md-title-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.md-today-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 800; letter-spacing: .6px;
+  text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+}
+.md-hero {
+  margin: 6px 0 20px;
+  font-size: 15px; line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+.md-hero b { color: var(--color-text); font-weight: 700; }
+.md-hero-overdue { color: #b91c1c; font-weight: 700; }
+html.dark .md-hero-overdue { color: #fca5a5; }
+
+/* Card shell — consistent container for overdue + agenda */
+.md-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.04));
+  margin-bottom: 18px;
+  overflow: hidden;
+}
+.md-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+.md-card-title {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0;
+  font-size: 15px; font-weight: 700; color: var(--color-text);
+}
+.md-card-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+}
+.md-card-icon svg { width: 15px; height: 15px; }
+.md-overdue-icon {
+  background: color-mix(in srgb, #dc2626 10%, transparent);
+  color: #dc2626;
+}
+.md-agenda-icon {
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  color: #d97706;
+}
+
+/* Count pills */
+.md-count-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 7px;
+  border-radius: 11px;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 11px; font-weight: 700;
+}
+.md-count-red {
+  background: color-mix(in srgb, #dc2626 18%, transparent);
+  color: #b91c1c;
+}
+html.dark .md-count-red { background: #3b1111; color: #fca5a5; }
+
+/* Legend inline */
+.md-legend {
+  display: flex; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: var(--color-text-secondary);
+}
+.md-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.md-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+}
+.md-dot-meeting { background: #2563eb; }
+.md-dot-task    { background: #6b7280; }
+.md-dot-habit   { background: #059669; }
+
+/* Table */
+.md-table-wrap { overflow-x: auto; }
+.md-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+.md-table thead th {
+  padding: 10px 18px;
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  text-align: left;
+  background: transparent;
+  border-bottom: 1px solid var(--color-border);
+}
+.md-table td {
+  padding: 12px 18px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 14px;
+}
+.md-table tbody tr:last-child td { border-bottom: none; }
+
+/* Column widths */
+.md-table .md-c-time    { width: 110px; }
+.md-table .md-c-type    { width: 120px; }
+.md-table .md-c-title   { width: auto; }
+.md-table .md-c-context { width: 200px; }
+.md-table .md-c-status  { width: 64px; text-align: right; }
+.md-overdue-table .md-c-title   { width: auto; }
+.md-overdue-table .md-c-context { width: 220px; }
+.md-overdue-table .md-c-due     { width: 170px; text-align: right; }
+
+/* Time band divider row */
+.md-band-row td {
+  padding: 6px 18px;
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .6px;
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-border) 40%, transparent);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Agenda row: subtle left accent by type for glance-scanning */
+.md-row { transition: background .12s; }
+.md-row:hover { background: color-mix(in srgb, var(--color-primary) 5%, transparent); }
+.md-row.md-type-meeting { box-shadow: inset 3px 0 0 0 #2563eb; }
+.md-row.md-type-task    { box-shadow: inset 3px 0 0 0 #9ca3af; }
+.md-row.md-type-habit   { box-shadow: inset 3px 0 0 0 #059669; }
+.md-row.md-done {
+  opacity: .55;
+}
+.md-row.md-done .md-row-title { text-decoration: line-through; color: var(--color-text-secondary); }
+
+/* Overdue row — always red accent, regardless of type, to preserve urgency */
+.md-overdue-row { box-shadow: inset 3px 0 0 0 #dc2626; }
+
+/* Time cell */
+.md-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 14px; font-weight: 700; color: var(--color-text);
+}
+.md-time-end {
+  display: inline-block;
+  font-size: 11.5px; color: var(--color-text-secondary);
+  margin-left: 1px;
+}
+.md-time-any {
+  font-weight: 500; color: var(--color-text-tertiary, var(--color-text-secondary));
+  font-size: 12px;
+}
+
+/* Type tag */
+.md-type-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 700;
+  padding: 3px 8px; border-radius: 999px;
+  letter-spacing: .2px;
+  text-transform: none;
+  white-space: nowrap;
+}
+.md-type-tag svg { width: 11px; height: 11px; }
+.md-tag-meeting { background: color-mix(in srgb, #2563eb 12%, transparent); color: #1d4ed8; }
+.md-tag-task    { background: color-mix(in srgb, #6b7280 14%, transparent); color: #374151; }
+.md-tag-habit   { background: color-mix(in srgb, #059669 14%, transparent); color: #047857; }
+.md-tag-project { background: color-mix(in srgb, #7c3aed 12%, transparent); color: #6d28d9; }
+html.dark .md-tag-meeting { background: #1e3a8a; color: #bfdbfe; }
+html.dark .md-tag-task    { background: #374151; color: #d1d5db; }
+html.dark .md-tag-habit   { background: #064e3b; color: #6ee7b7; }
+html.dark .md-tag-project { background: #3b0764; color: #ddd6fe; }
+
+/* Row title */
+.md-row-title {
+  display: inline-block;
+  font-size: 14px; font-weight: 500; color: var(--color-text);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+/* Context chip — project / quadrant label */
+.md-context-chip {
+  display: inline-block;
+  font-size: 11.5px; font-weight: 500;
+  padding: 3px 9px; border-radius: 6px;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+  max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Overdue chip */
+.md-overdue-chip {
+  display: inline-block;
+  font-size: 11.5px; font-weight: 700;
+  padding: 3px 9px; border-radius: 999px;
+  background: color-mix(in srgb, #dc2626 14%, transparent);
+  color: #b91c1c;
+  white-space: nowrap;
+}
+html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
+
+/* Status cell — check mark + open indicator + link arrow */
+.md-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.md-check-done {
+  background: color-mix(in srgb, #059669 20%, transparent);
+  color: #047857;
+}
+.md-check-done svg { width: 13px; height: 13px; }
+.md-check-open {
+  border: 2px solid var(--color-border);
+  background: transparent;
+}
+.md-row-link {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  margin-left: 2px;
+  border-radius: 6px;
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+  opacity: 0; transition: opacity .12s, background .12s, color .12s;
+}
+.md-row-link svg { width: 13px; height: 13px; }
+.md-row:hover .md-row-link,
+.md-overdue-row .md-row-link { opacity: 1; }
+.md-row-link:hover { background: var(--color-border); color: var(--color-primary); }
+
+/* Habit mini progress bar (inside context cell for habit rows) */
+.md-habit-progress {
+  display: block;
+  height: 5px; border-radius: 3px;
+  background: var(--color-border);
+  overflow: hidden;
+  margin-bottom: 4px;
+  max-width: 180px;
+}
+.md-habit-bar {
+  height: 100%;
+  background: #059669;
+  border-radius: 3px;
+  transition: width .3s ease;
+}
+.md-row.md-done .md-habit-bar { background: #6ee7b7; }
+.md-habit-label {
+  font-size: 11.5px; font-weight: 500;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.md-supplement { margin-top: 8px; }
+
+/* ── Priority tint on the title (subtle, only for high) ── */
+.md-row.prio-high .md-row-title::before {
+  content: "";
+  display: inline-block;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: #e11d48;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE — collapse each table row into a stacked card so the
+   agenda stays readable on a phone. The table is still valid
+   HTML for screen readers; we just reflow the cells visually.
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  .md-card-head { padding: 12px 14px; }
+  .md-card-title { font-size: 14px; }
+  .md-legend { order: 3; width: 100%; margin-top: 4px; }
+
+  /* Kill the table grid; each row becomes a flex-wrapped card. */
+  .md-table, .md-table thead, .md-table tbody, .md-table tr, .md-table td, .md-table th {
+    display: block;
+  }
+  .md-table thead { display: none; }
+  .md-table tbody { padding: 4px 10px 12px; }
+
+  .md-band-row { display: block; }
+  .md-band-row td {
+    padding: 14px 6px 6px; font-size: 10px;
+    background: transparent;
+    border-bottom: none;
+    color: var(--color-text-tertiary, var(--color-text-secondary));
+  }
+
+  .md-row {
+    display: grid;
+    grid-template-columns: 64px 1fr auto;
+    grid-template-areas:
+      "time  title   status"
+      "time  ctx     ctx"
+      "type  type    type";
+    gap: 4px 10px;
+    padding: 12px 10px;
+    margin: 6px 0;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+    box-shadow: inset 3px 0 0 0 transparent; /* restored by type rules */
+  }
+  .md-row td { padding: 0; border: none; }
+
+  .md-c-time    { grid-area: time;   }
+  .md-c-title   { grid-area: title;  }
+  .md-c-context, .md-c-due { grid-area: ctx; }
+  .md-c-type    { grid-area: type;   margin-top: 4px; }
+  .md-c-status  { grid-area: status; text-align: right; }
+
+  .md-row .md-time { display: block; font-size: 15px; }
+  .md-row .md-time-end { display: block; font-size: 11px; color: var(--color-text-secondary); }
+  .md-row .md-time-any { font-size: 11.5px; }
+  .md-row .md-row-title { font-size: 14.5px; }
+  .md-row .md-context-chip { font-size: 11px; padding: 2px 7px; }
+  .md-row .md-overdue-chip { font-size: 11px; padding: 2px 8px; }
+  .md-row .md-type-tag { font-size: 10px; padding: 2px 7px; }
+  .md-row .md-row-link { opacity: 1; width: 30px; height: 30px; }
+
+  .md-habit-progress { max-width: 100%; }
+}
+
+/* Very narrow phones (iPhone SE-ish) */
+@media (max-width: 380px) {
+  .md-row {
+    grid-template-columns: 54px 1fr auto;
+    padding: 10px 8px;
+  }
+  .md-card-head { padding: 10px 12px; }
+}

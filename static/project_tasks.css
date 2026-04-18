@@ -1002,8 +1002,10 @@ body.pt-view-compact .group-count {
 .task-row:hover { background: var(--pt-border-light); }
 .task-row.done { opacity: 0.5; }
 .task-row.done .task-text { text-decoration: line-through; }
-.task-row.overdue { background: #fef2f2; }
-html.dark .task-row.overdue { background: #3b1111; }
+/* Overdue no longer paints the whole row — the red due-chip on the
+   right carries the signal on its own. Single-channel, less noise.
+   (Retired 2026-04: the full-row pink/red wash competed with the
+   priority stripe and chip, all yelling the same thing.) */
 .task-row.hidden-group { display: none; }
 
 /* Hide skipped/deleted rows when body.pt-hide-closed is active (client-side filter) */
@@ -2355,9 +2357,12 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
   cursor: default;
 }
 .task-table.pt-minimal .task-row:hover { background: var(--pt-border-light); }
-.task-table.pt-minimal .task-row.prio-high   { border-left-color: #dc2626; }
-.task-table.pt-minimal .task-row.prio-medium { border-left-color: #f59e0b; }
-.task-table.pt-minimal .task-row.prio-low    { border-left-color: #10b981; }
+/* Priority stripe — one calm signal per row. Slightly desaturated
+   relative to a pure Tailwind-600 red so it doesn't compete with the
+   red overdue chip for attention. */
+.task-table.pt-minimal .task-row.prio-high   { border-left-color: #e11d48; }
+.task-table.pt-minimal .task-row.prio-medium { border-left-color: #d97706; }
+.task-table.pt-minimal .task-row.prio-low    { border-left-color: #059669; }
 
 /* Non-open status hints (subtle — richer state lives in the panel) */
 .task-table.pt-minimal .task-row[data-status="in_progress"] .task-text { color: var(--pt-primary); }

@@ -8,7 +8,7 @@ import pytz
 from config import DEFAULT_STATUS, IST,  QUADRANT_MAP, STATUSES, TOTAL_SLOTS
 from logger import setup_logger
 from services.login_service import login_required
-from services.planner_service import  fetch_daily_slots, generate_weekly_insight, get_daily_summary, get_weekly_summary, group_slots_into_blocks, is_health_day, load_day, load_slots_cached, save_day
+from services.planner_service import  fetch_daily_slots, generate_weekly_insight, get_daily_summary, get_morning_dashboard, get_weekly_summary, group_slots_into_blocks, is_health_day, load_day, load_slots_cached, save_day
 from services.recurring_service import materialize_recurring_slots
 from services.untimed_service import remove_untimed_task
 from supabase_client import get, update
@@ -650,9 +650,13 @@ def summary():
         )
 
     # =========================
-    # DAILY VIEW
+    # DAILY VIEW  — morning dashboard
     # =========================
     data = get_daily_summary(plan_date, planner_mode)
+    dashboard = get_morning_dashboard(plan_date, session["user_id"])
+
+    # Today flag (used by template to show a "TODAY" pill)
+    is_today = (plan_date == datetime.now(IST).date())
 
     # Compute prev/next date for navigation
     prev_date = (plan_date - timedelta(days=1)).isoformat()
@@ -662,6 +666,8 @@ def summary():
         "summary.html",
         view="daily",
         data=data,
+        dashboard=dashboard,
+        is_today=is_today,
         date=plan_date,
         prev_date=prev_date,
         next_date=next_date,
