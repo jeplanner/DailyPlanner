@@ -7,7 +7,8 @@
       "Bash(ls Procfile* gunicorn* nginx* render*)",
       "Bash(find . -name \"*.html\" -path \"*/templates/*\" -exec grep -l \"habit\" {} \\\\;)",
       "Bash(find:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(node --check /mnt/c/Users/vengh/OneDrive/Documents/GitHub/DailyPlanner/static/voice.js)"
     ]
   }
 }

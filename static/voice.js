@@ -6,6 +6,16 @@ let recognition;
 let isRecording = false;
 let _voiceBtn = null; // Track which button started recording
 let _voiceSubmitFn = null; // Optional "add tasks" callback per session
+let _voiceSilenceTimer = null; // Auto-stop after prolonged silence
+const VOICE_SILENCE_MS = 15000; // Stop listening after 15s with no speech
+
+function _resetVoiceSilenceTimer() {
+  if (_voiceSilenceTimer) clearTimeout(_voiceSilenceTimer);
+  if (!isRecording) return;
+  _voiceSilenceTimer = setTimeout(() => {
+    if (isRecording) stopVoice();
+  }, VOICE_SILENCE_MS);
+}
 
 function initVoiceDictation(textareaId, statusElId, onSubmit) {
   const textarea = document.getElementById(textareaId);
@@ -25,16 +35,18 @@ function initVoiceDictation(textareaId, statusElId, onSubmit) {
 
   recognition.onstart = () => {
     isRecording = true;
-    if (statusEl) statusEl.innerHTML = '<span style="color:#dc2626;">● REC</span> Listening… tap mic to stop';
+    if (statusEl) statusEl.innerHTML = '<span style="color:#dc2626;">● REC</span> Listening… say "stop" or tap mic';
     // Pulse the button that triggered it
     if (_voiceBtn) {
       _voiceBtn.classList.add("voice-recording");
       _voiceBtn.title = "Stop recording";
     }
+    _resetVoiceSilenceTimer();
   };
 
   recognition.onend = () => {
     isRecording = false;
+    if (_voiceSilenceTimer) { clearTimeout(_voiceSilenceTimer); _voiceSilenceTimer = null; }
     if (statusEl) statusEl.textContent = "Stopped";
     if (_voiceBtn) {
       _voiceBtn.classList.remove("voice-recording");
@@ -47,15 +59,17 @@ function initVoiceDictation(textareaId, statusElId, onSubmit) {
   recognition.onerror = (e) => {
     console.error("Voice error:", e);
     isRecording = false;
+    if (_voiceSilenceTimer) { clearTimeout(_voiceSilenceTimer); _voiceSilenceTimer = null; }
     if (statusEl) statusEl.textContent = "Voice error. Try again.";
     if (_voiceBtn) _voiceBtn.classList.remove("voice-recording");
   };
 
   recognition.onresult = (event) => {
+    _resetVoiceSilenceTimer();
     for (let i = event.resultIndex; i < event.results.length; i++) {
       let text = event.results[i][0].transcript.trim();
 
-      // Intercept meta voice commands (erase/submit) before appending.
+      // Intercept meta voice commands (erase/submit/stop) before appending.
       const cmd = _interpretVoiceCommand(text);
       if (cmd) {
         _executeVoiceCommand(cmd, textarea, statusEl);
@@ -150,6 +164,10 @@ function _interpretVoiceCommand(raw) {
     return { type: "submit" };
   }
 
+  if (/^(?:stop|stop listening|cancel|quit|exit)$/.test(t)) {
+    return { type: "stop" };
+  }
+
   return null;
 }
 
@@ -204,6 +222,12 @@ function _executeVoiceCommand(cmd, textarea, statusEl) {
     // Stop listening so the "add tasks" utterance doesn't race further input.
     stopVoice();
     try { submit(); } catch (e) { console.error("Voice submit failed:", e); }
+    return;
+  }
+
+  if (cmd.type === "stop") {
+    _voiceFlash(statusEl, "Stopped");
+    stopVoice();
     return;
   }
 }
