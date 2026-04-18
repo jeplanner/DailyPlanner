@@ -597,8 +597,11 @@ function quickSetTime(hhmm) {
    browser is already opening its native picker. Calling showPicker()
    a second time on top of that throws NotAllowedError on iOS Safari
    and re-opens the picker on Chrome Android, which creates a "stuck
-   picker" loop as the detail panel animates closed. So we no-op in
-   that case and let the native handler do its job. */
+   picker" loop as the detail panel animates closed. We check that
+   here AND a capture-phase listener below stops the input's click
+   from ever reaching this wrapper handler (belt + suspenders — some
+   browsers mis-report event.target when the click lands on the
+   ::-webkit-calendar-picker-indicator pseudo-element). */
 function openDatePicker(inputId, ev) {
   const el = _id(inputId);
   if (!el) return;
@@ -616,6 +619,21 @@ function openDatePicker(inputId, ev) {
   el.focus();
   try { el.click(); } catch {}
 }
+
+/* Stop a direct click on a date/time input from bubbling to the
+   .panel-date-wrap onclick. The wrapper's onclick is there to make
+   the pill-shaped padding tappable, but when the user clicks the
+   input itself the browser opens the picker natively — the wrapper
+   adding a second showPicker() call on top is what causes the
+   "stuck picker" loop on desktop and mobile. Capture phase so we
+   beat the bubble-phase onclick attribute. */
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (!t || !t.matches) return;
+  if (t.matches('.panel-date-wrap input[type="date"], .panel-date-wrap input[type="time"]')) {
+    e.stopPropagation();
+  }
+}, true);
 
 function closeTaskSheet() {
   const panel = _id("task-panel");

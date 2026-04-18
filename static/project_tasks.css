@@ -2390,7 +2390,17 @@ html.dark .subtask-confirm-text b { color: #fca5a5; }
 .task-table.pt-minimal .col-name .task-text {
   flex: 1; min-width: 0;
   font-size: 14px; font-weight: 500; color: var(--pt-text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* Wrap naturally so the full title is readable. Soft-cap at 2 lines
+     on desktop and 3 on mobile (see @media below) with ellipsis only
+     for unusually long text. Row height grows to fit. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   cursor: pointer;
 }
 
@@ -2426,14 +2436,20 @@ html.dark .task-table.pt-minimal .due-chip.overdue-label {
 /* Compact & board view toggles: keep working; our markup is their superset. */
 body.pt-view-compact .task-table.pt-minimal thead.pt-minimal-head { display: none; }
 
-/* Mobile — tighten padding, give the ⓘ a bigger tap target */
+/* Mobile — tighten padding, give the ⓘ a bigger tap target, allow
+   titles to wrap to 3 lines. Due chip drops to a new line under the
+   title when there's no room, instead of eating title space. */
 @media (max-width: 560px) {
   .task-table.pt-minimal thead.pt-minimal-head { display: none; }
-  .task-table.pt-minimal td { padding: 12px 8px; }
+  .task-table.pt-minimal { table-layout: auto; }
+  .task-table.pt-minimal td { padding: 12px 8px; vertical-align: top; }
   .task-table.pt-minimal .col-check   { width: 36px; }
-  .task-table.pt-minimal .col-due     { width: auto; max-width: 120px; }
+  .task-table.pt-minimal .col-due     { width: auto; max-width: 110px; }
   .task-table.pt-minimal .col-actions { width: 44px; }
   .task-table.pt-minimal .row-details-btn { width: 38px; height: 38px; }
-  .task-table.pt-minimal .col-name .task-text { font-size: 14.5px; }
+  .task-table.pt-minimal .col-name .task-text {
+    font-size: 14.5px;
+    -webkit-line-clamp: 3; /* allow up to 3 lines on phones */
+  }
   .task-table.pt-minimal .due-chip { font-size: 10.5px; padding: 2px 7px; }
 }
