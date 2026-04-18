@@ -51,6 +51,12 @@ def login():
         if user and user.check_password(password):
             login_user(user, remember=True)
             session.permanent = True
+            # Cache the user's preferred timezone in the session so the
+            # rest of the app (utils.user_tz.user_now / user_today) can
+            # serve "today" in the user's wall-clock without a DB hit
+            # on every request.
+            if getattr(user, "timezone", None):
+                session["user_tz"] = user.timezone
             logger.info("User logged in: %s", email)
             next_page = _safe_next_url(request.args.get("next"))
             return redirect(next_page or url_for("planner.planner"))

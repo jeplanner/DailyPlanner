@@ -11,6 +11,10 @@ class User(UserMixin):
         self.password_hash = data.get("password_hash", "")
         self.is_active_flag = data.get("is_active", True)
         self.created_at = data.get("created_at")
+        # IANA timezone (e.g. "America/New_York"). Default keeps existing
+        # IST users unchanged. New columns are tolerated gracefully if the
+        # migration hasn't been applied yet (column simply absent → None).
+        self.timezone = data.get("timezone") or "Asia/Kolkata"
 
     def get_id(self):
         return str(self.id)

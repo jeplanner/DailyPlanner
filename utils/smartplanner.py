@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timedelta, date
 from config import SLOT_MINUTES,WEEKDAYS,IST
+from utils.user_tz import user_now, user_today
 HOUR_RANGE_RE = re.compile(
     r"\b(?P<start>\d{1,2})(?:[:\.](?P<sm>\d{2}))?\s*-\s*(?P<end>\d{1,2})(?:[:\.](?P<em>\d{2}))?\b"
 )

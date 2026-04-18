@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Settings — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='components.css') }}">
+  <style>
+    body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-family);}
+    .settings-shell{max-width:760px;margin:0 auto;padding:var(--space-8) var(--space-5);}
+    .settings-header{margin-bottom:var(--space-6);}
+    .settings-header h1{font-size:var(--font-size-2xl);font-weight:var(--font-weight-bold);letter-spacing:var(--letter-spacing-tight);margin:0 0 6px;}
+    .settings-header p{color:var(--color-text-secondary);font-size:var(--font-size-sm);margin:0;}
+    .settings-card{background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-xl);padding:var(--space-6);box-shadow:var(--shadow-sm);}
+    .settings-section + .settings-section{margin-top:var(--space-8);padding-top:var(--space-6);border-top:1px solid var(--color-border-light);}
+    .settings-section-title{font-size:var(--font-size-lg);font-weight:var(--font-weight-semibold);margin:0 0 6px;color:var(--color-text);}
+    .settings-section-desc{color:var(--color-text-secondary);font-size:var(--font-size-sm);margin:0 0 var(--space-5);line-height:var(--line-height-normal);}
+    .tz-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);}
+    .tz-row .form-select{flex:1;min-width:240px;}
+    .tz-meta{font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-3);display:flex;flex-direction:column;gap:4px;}
+    .tz-meta b{color:var(--color-text-secondary);font-weight:var(--font-weight-semibold);}
+    .save-status{font-size:var(--font-size-xs);color:var(--color-text-muted);}
+    .save-status.ok{color:var(--color-success-strong);}
+    .save-status.err{color:var(--color-danger-strong);}
+    .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--color-text-secondary);text-decoration:none;font-size:var(--font-size-sm);font-weight:var(--font-weight-medium);margin-bottom:var(--space-4);}
+    .back-link:hover{color:var(--color-text);}
+  </style>
+</head>
+<body>
+  {% include "_top_nav.html" %}
+
+  <main id="main" class="settings-shell">
+    <a href="/" class="back-link">← Back</a>
+
+    <header class="settings-header">
+      <h1>Settings</h1>
+      <p>Personal preferences for your account.</p>
+    </header>
+
+    <div class="settings-card">
+      <section class="settings-section">
+        <h2 class="settings-section-title">Timezone</h2>
+        <p class="settings-section-desc">
+          Used everywhere "today" matters — your daily plan, recurring task scheduling,
+          health streaks, portfolio snapshots, the clock in the top bar.
+          Change takes effect on your next page load.
+        </p>
+
+        <div class="tz-row">
+          <select id="tz-select" class="form-select" aria-label="Timezone">
+            <optgroup label="Common">
+              {% for tz in common_timezones %}
+                <option value="{{ tz }}" {% if tz == current_tz %}selected{% endif %}>{{ tz }}</option>
+              {% endfor %}
+            </optgroup>
+            <optgroup label="All timezones">
+              {% for tz in all_timezones %}
+                <option value="{{ tz }}" {% if tz == current_tz %}selected{% endif %}>{{ tz }}</option>
+              {% endfor %}
+            </optgroup>
+          </select>
+          <button type="button" id="tz-detect" class="btn btn-ghost" title="Use the timezone reported by your browser">
+            Use my browser's timezone
+          </button>
+          <button type="button" id="tz-save" class="btn btn-primary">Save</button>
+        </div>
+
+        <div class="tz-meta">
+          <span><b>Current setting:</b> <span id="tz-current">{{ current_tz }}</span></span>
+          <span><b>Browser timezone:</b> <span id="tz-browser">detecting…</span></span>
+          <span><b>Local time now:</b> <span id="tz-local-time">—</span></span>
+        </div>
+
+        <div id="tz-save-status" class="save-status" role="status" aria-live="polite" style="margin-top:var(--space-3)"></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      const select   = document.getElementById("tz-select");
+      const saveBtn  = document.getElementById("tz-save");
+      const detectBtn= document.getElementById("tz-detect");
+      const status   = document.getElementById("tz-save-status");
+      const currentEl= document.getElementById("tz-current");
+      const browserEl= document.getElementById("tz-browser");
+      const timeEl   = document.getElementById("tz-local-time");
+
+      const browserTz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+      browserEl.textContent = browserTz;
+
+      function tickClock() {
+        const tz = select.value || browserTz;
+        try {
+          timeEl.textContent = new Intl.DateTimeFormat(undefined, {
+            timeZone: tz,
+            weekday: "short",
+            year: "numeric", month: "short", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            timeZoneName: "short",
+          }).format(new Date());
+        } catch {
+          timeEl.textContent = "—";
+        }
+      }
+      tickClock();
+      setInterval(tickClock, 1000);
+      select.addEventListener("change", tickClock);
+
+      detectBtn.addEventListener("click", () => {
+        // Pick the matching option if we have it; otherwise the user
+        // can still save (POST validates server-side).
+        const opt = [...select.options].find(o => o.value === browserTz);
+        if (opt) opt.selected = true;
+        else {
+          const o = document.createElement("option");
+          o.value = browserTz; o.textContent = browserTz; o.selected = true;
+          select.appendChild(o);
+        }
+        tickClock();
+        status.className = "save-status";
+        status.textContent = "Selected — click Save to apply.";
+      });
+
+      saveBtn.addEventListener("click", async () => {
+        const tz = select.value;
+        saveBtn.disabled = true;
+        status.className = "save-status";
+        status.textContent = "Saving…";
+        try {
+          const res = await fetch("/api/settings/timezone", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ timezone: tz }),
+          });
+          const data = await res.json();
+          if (res.ok && data.status === "ok") {
+            status.className = "save-status ok";
+            status.textContent = "Saved. New pages will use " + data.timezone + ".";
+            currentEl.textContent = data.timezone;
+            if (window.showToast) showToast("Timezone updated", "success");
+          } else {
+            status.className = "save-status err";
+            status.textContent = data.error || "Save failed.";
+          }
+        } catch {
+          status.className = "save-status err";
+          status.textContent = "Network error.";
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

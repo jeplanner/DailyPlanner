@@ -8,6 +8,7 @@ from flask import Blueprint, request, jsonify, session, render_template
 from supabase_client import get, post, update, delete
 from services.login_service import login_required
 from config import IST
+from utils.user_tz import user_now, user_today
 
 payments_bp = Blueprint("payments", __name__)
 
@@ -208,7 +209,7 @@ def log_payment():
         "id": str(uuid.uuid4()),
         "user_id": session["user_id"],
         "bill_id": bill_id,
-        "paid_date": data.get("paid_date") or datetime.now(IST).date().isoformat(),
+        "paid_date": data.get("paid_date") or user_today().isoformat(),
         "amount": float(data["amount"]) if data.get("amount") else None,
         "method": (data.get("method") or "").strip() or None,
         "reference": (data.get("reference") or "").strip() or None,
@@ -227,7 +228,7 @@ def log_payment():
 @login_required
 def payment_summary():
     user_id = session["user_id"]
-    today = datetime.now(IST).date()
+    today = user_today()
 
     bills = get("ref_cards", params={
         "user_id": f"eq.{user_id}",

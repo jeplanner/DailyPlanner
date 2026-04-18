@@ -26,6 +26,7 @@ from flask import Blueprint, jsonify, redirect, render_template, render_template
 
 from auth import login_required
 from config import IST
+from utils.user_tz import user_now, user_today
 from services.eisenhower_service import (
     autosave_task,
     enable_travel_mode,
@@ -50,9 +51,9 @@ todo_bp = Blueprint("todo", __name__)
 def todo():
     expire_old_eisenhower_tasks(session["user_id"])
 
-    year = int(request.args.get("year", date.today().year))
-    month = int(request.args.get("month", date.today().month))
-    day = int(request.args.get("day", date.today().day))
+    year = int(request.args.get("year", user_today().year))
+    month = int(request.args.get("month", user_today().month))
+    day = int(request.args.get("day", user_today().day))
 
     plan_date = date(year, month, day)
 
@@ -293,7 +294,7 @@ def todo():
             # Non-recurring — show if due on or before selected date
             if not due_date_str:
                 # No due date → show today only
-                if plan_date == date.today():
+                if plan_date == user_today():
                     applies = True
             else:
                 try:
@@ -1492,7 +1493,7 @@ def normalize_task(t, project_name=None):
         "recurrence": t.get("recurrence"),
     }
 def expire_old_eisenhower_tasks(user_id):
-    today = date.today().isoformat()
+    today = user_today().isoformat()
 
     rows = get(
         "todo_matrix",
@@ -1624,7 +1625,7 @@ def delete_recurring():
 
 
 def group_tasks_smart(tasks):
-    today = date.today()
+    today = user_today()
     tomorrow = today + timedelta(days=1)            
 
     # Week ends on Sunday

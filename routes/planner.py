@@ -6,6 +6,7 @@ from supabase_client import post
 import pytz
 
 from config import DEFAULT_STATUS, IST,  QUADRANT_MAP, STATUSES, TOTAL_SLOTS
+from utils.user_tz import user_now, user_today
 from logger import setup_logger
 from services.login_service import login_required
 from services.planner_service import  fetch_daily_slots, generate_weekly_insight, get_daily_summary, get_morning_dashboard, get_weekly_summary, group_slots_into_blocks, is_health_day, load_day, load_slots_cached, save_day
@@ -45,12 +46,12 @@ def planner_legacy():
     daily_slots = []
     if request.method == "HEAD":
         return "", 200
-    today = datetime.now(IST).date()
+    today = user_today()
     # ----------------------------------------------------------
 # Auto-redirect root load to today (only if no date provided)
 # ----------------------------------------------------------
     if request.method == "GET" and not request.args.get("day"):
-        today = datetime.now(IST).date()
+        today = user_today()
         return redirect(
             url_for(
                 "planner.planner",
@@ -114,7 +115,7 @@ def planner_legacy():
 
    # streak_active_today = is_health_day(set(habits))
     selected_date = date(year, month, day)
-    today = date.today()
+    today = user_today()
     #✅ ADD THIS HERE
     timeline_days = [
         selected_date + timedelta(days=i)
@@ -524,7 +525,7 @@ def schedule_untimed():
     plan_date = date.fromisoformat(data["plan_date"])
     plan_date_str = plan_date.isoformat()
 
-    if plan_date < datetime.now(IST).date():
+    if plan_date < user_today():
         return ("Cannot schedule in the past", 400)
 
     task_id = data["id"]
@@ -611,7 +612,7 @@ def summary():
         date_str = date_str.strip()   # ✅ ADD THIS
         plan_date = date.fromisoformat(date_str)
     else:
-        plan_date = datetime.now(IST).date()
+        plan_date = user_today()
 
     # =========================
     # WEEKLY VIEW
@@ -659,7 +660,7 @@ def summary():
     dashboard = get_morning_dashboard(plan_date, session["user_id"])
 
     # Today flag (used by template to show a "TODAY" pill)
-    is_today = (plan_date == datetime.now(IST).date())
+    is_today = (plan_date == user_today())
 
     # Compute prev/next date for navigation
     prev_date = (plan_date - timedelta(days=1)).isoformat()

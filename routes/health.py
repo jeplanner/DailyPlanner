@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 from datetime import date, datetime, timedelta
 from auth import login_required
 from config import IST
+from utils.user_tz import user_now, user_today
 from supabase_client import get, post
 from services.planner_service import compute_health_streak
 
@@ -40,7 +41,7 @@ def get_goals_batch(habit_ids, plan_date):
 def weekly_health():
     user_id = session["user_id"]
 
-    today = datetime.now(IST).date()
+    today = user_today()
     start = today - timedelta(days=6)
 
     # Load last 7 days entries
@@ -354,7 +355,7 @@ def heatmap():
     from flask import request
 
     user_id = session["user_id"]
-    today = datetime.now(IST).date()
+    today = user_today()
 
     # Parse optional range params; clamp and sanity-check.
     raw_end = (request.args.get("end") or "").strip()
@@ -418,7 +419,7 @@ def heatmap():
 @login_required
 def monthly_summary():
     user_id = session["user_id"]
-    today = datetime.now(IST).date()
+    today = user_today()
     start = today.replace(day=1).isoformat()
 
     habits = get("habit_master", params={

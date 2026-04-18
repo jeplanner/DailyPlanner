@@ -6,6 +6,7 @@ import logging
 from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 
 from config import PRIORITY_MAP, SORT_PRESETS
+from utils.user_tz import user_now, user_today
 from routes.todo import group_tasks_smart
 
 # Module-level logger. The project has a `logger.py` module that exports a
@@ -112,7 +113,7 @@ def project_tasks(project_id):
     # ---------------------------------
     # Fetch tasks (with server-side filtering)
     # ---------------------------------
-    today = date.today()
+    today = user_today()
 
     params = {
         "project_id": f"eq.{project_id}",
@@ -234,7 +235,7 @@ def restore_project_task(task_id):
 @login_required
 def add_project_task(project_id):
     text = request.form.get("task_text", "").strip()
-    start_date = request.form.get("start_date") or date.today().isoformat()
+    start_date = request.form.get("start_date") or user_today().isoformat()
 
     if not text:
         return redirect(url_for("projects.project_tasks", project_id=project_id))
@@ -488,7 +489,7 @@ def unsend_task_from_eisenhower():
     if not task_id:
         return jsonify({"error": "Missing task_id"}), 400
 
-    today = date.today().isoformat()
+    today = user_today().isoformat()
 
     # ---------------------------------------------
     # Remove Eisenhower entries linked to this task
@@ -852,7 +853,7 @@ def bulk_add_tasks():
     if not tasks:
         return jsonify({"error": "no tasks provided"}), 400
 
-    today = date.today().isoformat()
+    today = user_today().isoformat()
 
     # Fetch max order_index ONCE (not per task)
     max_order = get_max_order_index(project_id) or 0
@@ -1006,7 +1007,7 @@ def import_csv():
             "task_text": task_text,
             "status": row.get("status", "open"),
             "priority": row.get("priority", "medium"),
-            "start_date": row.get("start_date") or date.today().isoformat(),
+            "start_date": row.get("start_date") or user_today().isoformat(),
             "due_date": row.get("due_date") or None,
             "duration_days": int(row["duration"]) if row.get("duration") else 0,
             "planned_hours": float(row["planned_hours"]) if row.get("planned_hours") else None,
@@ -1473,7 +1474,7 @@ def add_project_task_ajax(project_id):
         return jsonify({"error": "Task text required"}), 400
 
     priority = data.get("priority", "medium")
-    start_date = data.get("start_date") or date.today().isoformat()
+    start_date = data.get("start_date") or user_today().isoformat()
 
     # Normalize the initiative id: empty string / "null" / None → NULL
     raw_init = data.get("initiative_id")
@@ -1499,7 +1500,7 @@ def add_project_task_ajax(project_id):
         return jsonify({"error": "Insert failed"}), 500
 
     raw = result[0]
-    today = date.today()
+    today = user_today()
 
     # Minimal project stub for _build_task_dict
     project_stub = {"name": ""}

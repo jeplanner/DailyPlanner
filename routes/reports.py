@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, jsonify, render_template, request, session
 
 from config import IST
+from utils.user_tz import user_now, user_today
 from services.login_service import login_required
 from services.reports_service import (
     financial_report, habits_report, narrative_insight, productivity_report,
@@ -28,7 +29,7 @@ reports_bp = Blueprint("reports", __name__)
 def _parse_range():
     """Parse ?range=week|month|quarter|year|custom + ?start/?end.
     Defaults to 'week' ending today."""
-    today = datetime.now(IST).date()
+    today = user_today()
     rng = (request.args.get("range") or "week").lower()
     start_arg = request.args.get("start")
     end_arg = request.args.get("end")
@@ -87,7 +88,7 @@ def api_habits():
 @login_required
 @vault_unlocked_required
 def api_financial():
-    today = datetime.now(IST).date()
+    today = user_today()
     return jsonify(financial_report(session["user_id"], today))
 
 
@@ -100,7 +101,7 @@ def api_overview():
     overview still works when the vault has never been set up."""
     start, end, rng = _parse_range()
     user_id = session["user_id"]
-    today = datetime.now(IST).date()
+    today = user_today()
 
     productivity = productivity_report(user_id, start, end)
     habits = habits_report(user_id, start, end)

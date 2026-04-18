@@ -6,6 +6,7 @@ from requests.exceptions import HTTPError
 
 from auth import login_required
 from supabase_client import get, post, update
+from utils.user_tz import user_now, user_today
 
 habits_bp = Blueprint("habits", __name__)
 @habits_bp.route("/api/habits/add", methods=["POST"])
@@ -17,7 +18,7 @@ def add_habit():
     # Trust user-chosen casing; previously force-uppercased ("WALKING" instead of "Walking").
     name = (data.get("name") or "").strip()
     habit_type = data.get("habit_type", "number")
-    start_date = data.get("start_date") or date.today().isoformat()
+    start_date = data.get("start_date") or user_today().isoformat()
 
     # Boolean habits: auto-fill unit and goal
     if habit_type == "boolean":
@@ -105,7 +106,7 @@ def update_habit():
     post("habit_goal_history", {
         "habit_id": data["habit_id"],
         "goal": float(data["goal"]),
-        "effective_from": data.get("effective_from") or date.today().isoformat()
+        "effective_from": data.get("effective_from") or user_today().isoformat()
     })
 
     return jsonify({"success": True})
@@ -127,7 +128,7 @@ def reorder_habit():
 @login_required
 def habit_weekly(habit_id):
     user_id = session["user_id"]
-    today = date.today()
+    today = user_today()
     start = today - timedelta(days=6)
 
     rows = get(
@@ -201,7 +202,7 @@ def habit_detail(habit_id):
             {
                 "habit_id": habit_id,
                 "goal": float(goal),
-                "effective_from": date.today().isoformat()
+                "effective_from": user_today().isoformat()
             }
         )
         return jsonify({"success": True})

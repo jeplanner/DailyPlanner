@@ -62,6 +62,7 @@ def create_app():
     from routes.portfolio import portfolio_bp
     from routes.goals import goals_bp
     from routes.reports import reports_bp
+    from routes.settings import settings_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -80,6 +81,7 @@ def create_app():
     app.register_blueprint(portfolio_bp)
     app.register_blueprint(goals_bp)
     app.register_blueprint(reports_bp)
+    app.register_blueprint(settings_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -98,6 +100,7 @@ def create_app():
     csrf.exempt(references_bp)
     csrf.exempt(goals_bp)
     csrf.exempt(reports_bp)
+    csrf.exempt(settings_bp)
 
     # ── OAuth dev override ──────────────────────────────
     if env == "development":

@@ -5,6 +5,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
 from config import IST
+from utils.user_tz import user_now, user_today
 from routes.planner import build_slot_blocks, load_slot_timeline
 from services.timeline_service import load_timeline_tasks
 from supabase_client import get, update
@@ -107,7 +108,7 @@ def timeline_day():
     if d:
         plan_date = date.fromisoformat(d)
     else:
-        plan_date = datetime.now(IST).date()
+        plan_date = user_today()
 
     rows = load_slot_timeline(plan_date)
     blocks = build_slot_blocks(rows)

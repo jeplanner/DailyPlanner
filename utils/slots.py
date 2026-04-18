@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta,date
 from config import IST
+from utils.user_tz import user_now, user_today
 def slot_label(slot: int) -> str:
     total_minutes = (slot - 1) * 30
     start_h, start_m = divmod(total_minutes, 60)

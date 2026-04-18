@@ -803,6 +803,9 @@ html.dark .section-title{color:#f1f5f9;}
           <div class="user-popover-name">{{ _name }}</div>
           <div class="user-popover-email">{{ current_user.email }}</div>
         </div>
+        <a href="{{ url_for('settings.settings_page') }}" class="user-popover-item" role="menuitem">
+          <i data-feather="settings"></i> Settings
+        </a>
         <a href="javascript:void(0)" class="user-popover-item" role="menuitem" onclick="toggleDarkMode();closeUserMenu();">
           <i data-feather="moon"></i> Toggle dark mode
         </a>
@@ -906,11 +909,17 @@ function closeUserMenu(){
   });
 })();
 
-/* DATE + TIME — formats in the *user's own* timezone (was hard-coded to IST,
-   which silently misled every non-India user). Falls back to IST only if
-   the browser doesn't expose Intl resolvedOptions(). */
+/* DATE + TIME — formats in the user's *saved* timezone (Settings → Timezone),
+   falling back to the browser's detected zone, then to IST. Server-injected
+   USER_TZ wins because the user explicitly chose it; the rest of the app
+   uses the same value via utils/user_tz.py. */
+
+{# Use `attribute` filter with a default so older user objects (or test stubs)
+   that don't carry a `timezone` field don't crash the template. #}
+window.USER_TZ = {{ ((current_user|attr('timezone')) if current_user.is_authenticated else None) | default(none) | tojson }};
 
 function _userTimezone(){
+  if (window.USER_TZ) return window.USER_TZ;
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
   } catch { return "Asia/Kolkata"; }

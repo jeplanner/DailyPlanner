@@ -1,7 +1,12 @@
 from datetime import date
 
+from utils.user_tz import user_today
+
+
 def compute_eisenhower_quadrants(tasks):
-    today = date.today()
+    # Use the user's timezone so "today" matches what they see in the UI,
+    # not the server's local clock.
+    today = user_today()
 
     quadrants = {
         "do_now": [],

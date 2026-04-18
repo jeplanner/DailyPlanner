@@ -9,6 +9,7 @@ from flask import Blueprint, request, jsonify, session, render_template
 from supabase_client import get, post, update, delete
 from services.login_service import login_required
 from config import IST
+from utils.user_tz import user_now, user_today
 from utils.encryption import encrypt_fields, decrypt_fields, decrypt_rows
 
 logger = logging.getLogger("daily_plan")
@@ -127,7 +128,7 @@ def delete_holding(hid):
     update(
         "portfolio_holdings",
         params={"id": f"eq.{hid}", "user_id": f"eq.{session['user_id']}"},
-        json={"is_deleted": True, "deleted_at": datetime.now(IST).isoformat()},
+        json={"is_deleted": True, "deleted_at": user_now().isoformat()},
     )
     return jsonify({"success": True})
 
@@ -472,7 +473,7 @@ def add_transaction():
         "user_id": session["user_id"],
         "holding_id": holding_id,
         "txn_type": data.get("txn_type", "buy"),
-        "txn_date": data.get("txn_date") or datetime.now(IST).date().isoformat(),
+        "txn_date": data.get("txn_date") or user_today().isoformat(),
         "quantity": float(data["quantity"]) if data.get("quantity") else 0,
         "price": float(data["price"]) if data.get("price") else 0,
         "amount": float(data["amount"]) if data.get("amount") else None,
@@ -494,7 +495,7 @@ def delete_transaction(txn_id):
     update(
         "portfolio_transactions",
         params={"id": f"eq.{txn_id}", "user_id": f"eq.{session['user_id']}"},
-        json={"is_deleted": True, "deleted_at": datetime.now(IST).isoformat()},
+        json={"is_deleted": True, "deleted_at": user_now().isoformat()},
     )
     return jsonify({"success": True})
 
@@ -584,12 +585,12 @@ def holding_xirr(holding_id):
         avg = float(h.get("avg_price") or 0)
         if avg and qty:
             bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
-            buy_dt = date.fromisoformat(bd) if bd else datetime.now(IST).date()
+            buy_dt = date.fromisoformat(bd) if bd else user_today()
             cashflows.append((buy_dt, -(qty * avg)))
 
     # Add current value as final "sell"
     if qty > 0 and cmp > 0:
-        cashflows.append((datetime.now(IST).date(), qty * cmp))
+        cashflows.append((user_today(), qty * cmp))
 
     xirr = _xirr(cashflows) if len(cashflows) >= 2 else None
 
@@ -616,7 +617,7 @@ def xirr_breakdown():
     for t in txns:
         txn_by_holding.setdefault(t["holding_id"], []).append(t)
 
-    today = datetime.now(IST).date()
+    today = user_today()
     by_type = {}   # asset_type -> {cashflows}
     by_sector = {} # sector -> {cashflows}
     allocation = {} # asset_type -> current_value
@@ -704,11 +705,11 @@ def portfolio_xirr():
             avg = float(h.get("avg_price") or 0)
             if qty and avg:
                 bd = h.get("buy_date") or (h["created_at"][:10] if h.get("created_at") else None)
-                buy_dt = date.fromisoformat(bd) if bd else datetime.now(IST).date()
+                buy_dt = date.fromisoformat(bd) if bd else user_today()
                 cashflows.append((buy_dt, -(qty * avg)))
 
     # Current portfolio value as final inflow
-    today = datetime.now(IST).date()
+    today = user_today()
     total_current = sum(
         float(h.get("quantity") or 0) * float(h.get("current_price") or h.get("avg_price") or 0)
         for h in holdings
@@ -730,7 +731,7 @@ def portfolio_xirr():
 def take_snapshot():
     """Save today's portfolio values. Called once per day (auto or manual)."""
     user_id = session["user_id"]
-    today = datetime.now(IST).date().isoformat()
+    today = user_today().isoformat()
 
     # Check if snapshot already exists for today
     existing = get("portfolio_snapshots", params={
@@ -758,7 +759,7 @@ def take_snapshot():
     for t in txns:
         txn_by_holding.setdefault(t["holding_id"], []).append(t)
 
-    today_date = datetime.now(IST).date()
+    today_date = user_today()
 
     # Aggregate by type and sector
     by_type = {}   # type -> {invested, current, cashflows}
@@ -864,7 +865,7 @@ def take_snapshot():
 def backfill_snapshots():
     """Fill missing snapshot days by copying the last known snapshot forward."""
     user_id = session["user_id"]
-    today = datetime.now(IST).date()
+    today = user_today()
 
     # Get all existing snapshot dates (overall only, to detect gaps)
     existing = get("portfolio_snapshots", params={
@@ -949,7 +950,7 @@ def cron_snapshot():
     }) or []
 
     user_ids = list(set(h["user_id"] for h in all_holdings))
-    today = datetime.now(IST).date().isoformat()
+    today = user_today().isoformat()
     total = 0
 
     for uid in user_ids:
@@ -973,7 +974,7 @@ def cron_snapshot():
         for t in txns:
             txn_by_holding.setdefault(t["holding_id"], []).append(t)
 
-        today_date = datetime.now(IST).date()
+        today_date = user_today()
         total_invested = 0
         total_current = 0
         by_type = {}
@@ -1053,7 +1054,7 @@ def portfolio_trends():
     group_type = request.args.get("group_type", "overall")
 
     from datetime import timedelta as td
-    from_date = (datetime.now(IST).date() - td(days=days)).isoformat()
+    from_date = (user_today() - td(days=days)).isoformat()
 
     rows = get("portfolio_snapshots", params={
         "user_id": f"eq.{user_id}",

@@ -57,6 +57,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import IST
+from utils.user_tz import user_now, user_today
 from services.login_service import login_required
 from supabase_client import delete, get, post, update
 from utils.encryption import decrypt, decrypt_fields, decrypt_rows, encrypt, encrypt_fields
@@ -540,7 +541,7 @@ def add_log():
         "id": str(uuid.uuid4()),
         "user_id": session["user_id"],
         "bill_id": card_id,
-        "paid_date": data.get("paid_date") or datetime.now(IST).date().isoformat(),
+        "paid_date": data.get("paid_date") or user_today().isoformat(),
         "amount": float(data["amount"]) if data.get("amount") else None,
         "method": (data.get("method") or "").strip() or None,
         "reference": (data.get("reference") or "").strip() or None,
@@ -560,7 +561,7 @@ def add_log():
 @vault_unlocked_required
 def refcards_summary():
     user_id = session["user_id"]
-    today = datetime.now(IST).date()
+    today = user_today()
 
     cards = get("ref_cards", params={
         "user_id": f"eq.{user_id}",

@@ -51,7 +51,13 @@
         });
     });
 
-    /* ── Confirm-password live match check ── */
+    /* ── Confirm-password live match check ──
+       Compares values raw, but strips trailing whitespace on submit
+       because autofill / mobile keyboards routinely append a space the
+       user can't see. We don't trim leading whitespace because some
+       passphrases legitimately start with a space; we don't compare
+       trimmed values during typing because that would let "abc " and
+       "abc" register as a match while typing. */
     document.querySelectorAll("[data-match]").forEach(function (confirmEl) {
         var sourceId = confirmEl.getAttribute("data-match");
         var source = document.getElementById(sourceId);
@@ -66,7 +72,19 @@
             }
             var match = confirmEl.value === source.value;
             confirmEl.setAttribute("aria-invalid", String(!match));
-            if (err) err.hidden = match;
+            if (err) {
+                err.hidden = match;
+                if (!match) {
+                    // Hint at the most common cause: invisible whitespace.
+                    var lenDiff = source.value.length - confirmEl.value.length;
+                    if (Math.abs(lenDiff) === 1
+                        && (source.value.trim() === confirmEl.value.trim())) {
+                        err.textContent = "Passwords differ by a trailing space — check both fields.";
+                    } else {
+                        err.textContent = "Passwords don't match.";
+                    }
+                }
+            }
         }
         confirmEl.addEventListener("input", check);
         source.addEventListener("input", check);
@@ -74,6 +92,14 @@
         var form = confirmEl.closest("form");
         if (form) {
             form.addEventListener("submit", function (e) {
+                // Auto-strip trailing whitespace from BOTH fields right
+                // before submit. Common autofill / mobile-keyboard bug.
+                if (source.value !== source.value.replace(/\s+$/, "")) {
+                    source.value = source.value.replace(/\s+$/, "");
+                }
+                if (confirmEl.value !== confirmEl.value.replace(/\s+$/, "")) {
+                    confirmEl.value = confirmEl.value.replace(/\s+$/, "");
+                }
                 if (confirmEl.value !== source.value) {
                     e.preventDefault();
                     check();
