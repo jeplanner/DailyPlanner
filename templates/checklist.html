@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Checklist — DailyPlanner</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='checklist.css') }}">
+</head>
+<body>
+
+  <div class="nav-icons">
+    {% include "_top_nav.html" %}
+  </div>
+
+  <main id="main" class="cl-container">
+
+    <header class="cl-header">
+      <h1>✓ Daily Checklist</h1>
+      <div class="cl-date">{{ plan_date }}</div>
+    </header>
+
+    <section class="cl-push-status" id="cl-push-status" hidden>
+      <div class="cl-push-text">
+        <strong>Reminders are off on this device.</strong>
+        <span class="cl-push-hint">Enable to get a push when each item is due. On iPhone, add this site to your Home Screen first.</span>
+      </div>
+      <button type="button" class="cl-btn cl-btn-primary" id="cl-push-enable">Enable reminders</button>
+    </section>
+
+    <section class="cl-push-status cl-push-status-ok" id="cl-push-status-ok" hidden>
+      <div class="cl-push-text">
+        <strong>Reminders on.</strong>
+        <span class="cl-push-hint">This browser will ping you at each item's reminder time.</span>
+      </div>
+      <div class="cl-push-actions">
+        <button type="button" class="cl-btn cl-btn-ghost" id="cl-push-test">Send test</button>
+        <button type="button" class="cl-btn cl-btn-ghost" id="cl-push-disable">Disable</button>
+      </div>
+    </section>
+
+    <div id="cl-groups" class="cl-groups"></div>
+
+    <button type="button" class="cl-fab" id="cl-add-btn" aria-label="Add item">+</button>
+  </main>
+
+  <!-- ── Add / Edit modal ─────────────────────────── -->
+  <div class="cl-modal-backdrop" id="cl-modal" hidden>
+    <div class="cl-modal" role="dialog" aria-labelledby="cl-modal-title">
+      <div class="cl-modal-head">
+        <h2 id="cl-modal-title">New checklist item</h2>
+        <button type="button" class="cl-modal-close" id="cl-modal-close" aria-label="Close">×</button>
+      </div>
+
+      <form id="cl-form" class="cl-form">
+        <input type="hidden" id="cl-item-id" value="">
+
+        <label class="cl-field">
+          <span>Name</span>
+          <input type="text" id="cl-name" required maxlength="120" placeholder="e.g. Take meds">
+        </label>
+
+        <label class="cl-field">
+          <span>Notes (optional)</span>
+          <textarea id="cl-notes" rows="2" maxlength="400" placeholder="Extra context"></textarea>
+        </label>
+
+        <label class="cl-field">
+          <span>When</span>
+          <select id="cl-time-of-day">
+            <option value="morning">Morning</option>
+            <option value="afternoon">Afternoon</option>
+            <option value="evening">Evening</option>
+            <option value="anytime" selected>Anytime</option>
+          </select>
+        </label>
+
+        <label class="cl-field">
+          <span>Repeats</span>
+          <select id="cl-schedule">
+            <option value="daily" selected>Every day</option>
+            <option value="weekdays">Weekdays (Mon–Fri)</option>
+            <option value="weekends">Weekends (Sat–Sun)</option>
+            <option value="custom">Custom days…</option>
+          </select>
+        </label>
+
+        <div class="cl-field cl-weekdays" id="cl-weekdays" hidden>
+          <span>Days</span>
+          <div class="cl-day-picker">
+            <label><input type="checkbox" value="0">S</label>
+            <label><input type="checkbox" value="1">M</label>
+            <label><input type="checkbox" value="2">T</label>
+            <label><input type="checkbox" value="3">W</label>
+            <label><input type="checkbox" value="4">T</label>
+            <label><input type="checkbox" value="5">F</label>
+            <label><input type="checkbox" value="6">S</label>
+          </div>
+        </div>
+
+        <label class="cl-field">
+          <span>Reminder time (optional)</span>
+          <input type="time" id="cl-reminder-time">
+          <small class="cl-hint">If set, a push notification fires at this local time.</small>
+        </label>
+
+        <div class="cl-form-actions">
+          <button type="button" class="cl-btn cl-btn-danger" id="cl-delete-btn" hidden>Delete</button>
+          <button type="button" class="cl-btn cl-btn-ghost" id="cl-cancel-btn">Cancel</button>
+          <button type="submit" class="cl-btn cl-btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='checklist.js') }}"></script>
+</body>
+</html>

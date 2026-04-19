@@ -1,5 +1,5 @@
 import os
-from flask import Flask, session, request, jsonify, render_template
+from flask import Flask, session, request, jsonify, render_template, send_from_directory
 from flask_login import current_user
 from werkzeug.middleware.proxy_fix import ProxyFix
 from logger import setup_logger
@@ -63,6 +63,8 @@ def create_app():
     from routes.goals import goals_bp
     from routes.reports import reports_bp
     from routes.settings import settings_bp
+    from routes.checklist import checklist_bp
+    from routes.push import push_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -82,6 +84,8 @@ def create_app():
     app.register_blueprint(goals_bp)
     app.register_blueprint(reports_bp)
     app.register_blueprint(settings_bp)
+    app.register_blueprint(checklist_bp)
+    app.register_blueprint(push_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -101,6 +105,31 @@ def create_app():
     csrf.exempt(goals_bp)
     csrf.exempt(reports_bp)
     csrf.exempt(settings_bp)
+    csrf.exempt(checklist_bp)
+    csrf.exempt(push_bp)
+
+    # ── PWA: serve SW + manifest from the site root so the service
+    # worker's scope is "/" (otherwise it's confined to /static/...).
+    @app.route("/service-worker.js")
+    def _service_worker():
+        return send_from_directory(
+            app.static_folder, "service-worker.js",
+            mimetype="application/javascript",
+        )
+
+    @app.route("/manifest.json")
+    def _manifest():
+        return send_from_directory(
+            app.static_folder, "manifest.json",
+            mimetype="application/manifest+json",
+        )
+
+    # ── Start the push reminder scheduler (idempotent) ──
+    try:
+        from services import push_scheduler
+        push_scheduler.start(app)
+    except Exception:
+        logger.exception("Could not start push scheduler")
 
     # ── OAuth dev override ──────────────────────────────
     if env == "development":

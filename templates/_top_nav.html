@@ -16,9 +16,18 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="/static/design-system.css">
 <link rel="stylesheet" href="/static/components.css">
+{# ── PWA: install + Web Push. On iOS the home-screen install is
+     required before notifications can be granted. ── #}
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#6366f1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Planner">
+<link rel="apple-touch-icon" href="/static/icons/icon.svg">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="/static/js/global.js"></script>
 <script src="/static/js/toast.js"></script>
+<script src="/static/js/push.js"></script>
 
 <style>
 /* ═══════════════════════════════════════════════════════════
@@ -648,6 +657,11 @@ html.dark .section-title{color:#f1f5f9;}
       <a href="/todo" data-match="^/todo" title="Eisenhower matrix — what to do first">
         <i data-feather="grid"></i>
         Priorities
+      </a>
+
+      <a href="/checklist" data-match="^/checklist" title="Daily checklist — recurring items with optional push reminders">
+        <i data-feather="check-square"></i>
+        Checklist
       </a>
 
       <a href="/calendar" data-match="^/calendar" title="Calendar — day and week view">

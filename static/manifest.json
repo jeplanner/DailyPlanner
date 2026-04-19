@@ -1,0 +1,19 @@
+{
+  "name": "DailyPlanner",
+  "short_name": "Planner",
+  "description": "Personal daily planner with checklists, habits, and reminders.",
+  "start_url": "/checklist",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f7f8fa",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/static/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
