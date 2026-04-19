@@ -72,8 +72,13 @@
     .prayer-frame img {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      /* `contain` — no cropping, portraits and landscapes both fully visible.
+         Combined with the gradient on .prayer-frame, the empty area looks
+         intentional rather than awkward. */
+      object-fit: contain;
       display: block;
+      padding: 6px;
+      box-sizing: border-box;
     }
 
     .prayer-name {
