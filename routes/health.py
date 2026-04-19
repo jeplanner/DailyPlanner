@@ -1,3 +1,4 @@
+@ -1,475 +1,489 @@
 from flask import Blueprint, jsonify, render_template, request, session
 from datetime import date, datetime, timedelta
 from auth import login_required
@@ -9,199 +10,36 @@ from services.planner_service import compute_health_streak
 
 
 
-
-@@ -300,176 +300,190 @@
-        "notes": data.get("notes")
-    }
-
-    post("daily_health", payload, prefer="resolution=merge-duplicates")
-    # Upsert: daily_health has UNIQUE (user_id, plan_date). PostgREST's
-    # resolution=merge-duplicates only works when you also pass
-    # on_conflict=<cols>; simpler to check-then-update/insert manually.
-    existing = get(
-        "daily_health",
-        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
-    ) or []
-    if existing:
-        update(
-            "daily_health",
-            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
-            json={k: v for k, v in payload.items() if k not in ("user_id", "plan_date")},
-        )
-    else:
-        post("daily_health", payload, prefer="return=minimal")
-
-    return jsonify({"success": True})
+health_bp = Blueprint("health", __name__)
 
 
-# ==========================================================
-# SAVE HABIT VALUE
-# ==========================================================
-
-@health_bp.route("/api/save-habit-value", methods=["POST"])
-@login_required
-def save_habit_value():
-    user_id = session["user_id"]
-    data = request.json
-
-    habit_id = data.get("habit_id")
-    plan_date = data.get("plan_date")
-    value = clean_number(data.get("value"))
-
-    if not habit_id or not plan_date:
-        return jsonify({"error": "Missing data"}), 400
-
-    post(
-        "habit_entries?on_conflict=user_id,habit_id,plan_date",
+def get_goals_batch(habit_ids, plan_date):
+    """Fetch the effective goal for each habit in one query instead of N queries."""
+    if not habit_ids:
+        return {}
+    ids_str = ",".join(str(h) for h in habit_ids)
+    rows = get(
+        "habit_goal_history",
         {
-            "user_id": user_id,
-            "habit_id": habit_id,
-            "plan_date": plan_date,
-            "value": value
-        },
-        prefer="resolution=merge-duplicates"
-    )
-
-    return jsonify({"success": True})
+            "habit_id": f"in.({ids_str})",
+            "effective_from": f"lte.{plan_date}",
+            "order": "effective_from.desc,created_at.desc",
+        }
+    ) or []
+    goals = {}
+    for row in rows:
+        hid = row["habit_id"]
+        if hid not in goals:  # first row per habit = most recent (desc order)
+            goals[hid] = float(row["goal"])
+    return goals
 
 
 # ==========================================================
-# HEATMAP — 30-day habit completion grid
+# WEEKLY HEALTH
 # ==========================================================
 
-@health_bp.route("/api/v2/heatmap", methods=["GET"])
+@health_bp.route("/api/v2/weekly-health")
 @login_required
-def heatmap():
-    """Habit-completion percentage per day across an arbitrary window.
-
-    Query params (both optional):
-      start=YYYY-MM-DD   Start date (inclusive). Defaults to 29 days ago.
-      end=YYYY-MM-DD     End date (inclusive). Defaults to today.
-
-    Falls back to the legacy "last 30 days" behaviour when neither param
-    is supplied, so older clients keep working.
-    """
-    from flask import request
-
-    user_id = session["user_id"]
-    today = user_today()
-
-    # Parse optional range params; clamp and sanity-check.
-    raw_end = (request.args.get("end") or "").strip()
-    raw_start = (request.args.get("start") or "").strip()
-
-    try:
-        end = datetime.fromisoformat(raw_end).date() if raw_end else today
-    except ValueError:
-        end = today
-    try:
-        start = datetime.fromisoformat(raw_start).date() if raw_start else (end - timedelta(days=29))
-    except ValueError:
-        start = end - timedelta(days=29)
-
-    if start > end:
-        start, end = end, start
-    # Cap at a reasonable one-year window to avoid accidental huge reads.
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
-
-    habits = get("habit_master", params={
-        "user_id": f"eq.{user_id}",
-        "is_deleted": "is.false"
-    })
-    if not habits:
-        return jsonify({})
-
-    total_habits = len(habits)
-
-    # Use PostgREST's combined filter syntax so gte AND lte both apply.
-    # The previous code had two `plan_date` keys in the same dict which
-    # Python silently collapsed to the second one — only the upper bound
-    # actually reached Supabase.
-    entries = get("habit_entries", params={
-        "user_id": f"eq.{user_id}",
-        "plan_date": f"gte.{start.isoformat()}",
-        "and": f"(plan_date.lte.{end.isoformat()})",
-    }) or []
-
-    day_counts = {}
-    for e in entries:
-        d = e["plan_date"]
-        if e.get("value") and float(e["value"]) > 0:
-            day_counts[d] = day_counts.get(d, 0) + 1
-
-    result = {}
-    span = (end - start).days + 1
-    for i in range(span):
-        d = (start + timedelta(days=i)).isoformat()
-        count = day_counts.get(d, 0)
-        result[d] = round((count / total_habits) * 100) if total_habits else 0
-
-    return jsonify(result)
-
-
-# ==========================================================
-# MONTHLY SUMMARY
-# ==========================================================
-
-@health_bp.route("/api/v2/monthly-summary", methods=["GET"])
-@login_required
-def monthly_summary():
-    user_id = session["user_id"]
-    today = user_today()
-    start = today.replace(day=1).isoformat()
-
-    habits = get("habit_master", params={
-        "user_id": f"eq.{user_id}",
-        "is_deleted": "is.false"
-    })
-    total_habits = len(habits) if habits else 1
-
-    # PostgREST `and=()` keeps both range bounds; a duplicated dict key
-    # silently collapses to one filter and read the entire table.
-    entries = get("habit_entries", params={
-        "user_id": f"eq.{user_id}",
-        "and": f"(plan_date.gte.{start},plan_date.lte.{today.isoformat()})",
-    })
-
-    # Days tracked = unique dates with at least 1 entry
-    days_with_entries = set()
-    total_value_entries = 0
-    for e in entries:
-        if e.get("value") and float(e["value"]) > 0:
-            days_with_entries.add(e["plan_date"])
-            total_value_entries += 1
-
-    days_tracked = len(days_with_entries)
-    days_in_month = today.day
-    avg_percent = round((total_value_entries / (days_in_month * total_habits)) * 100) if days_in_month else 0
-
-    # Weight change this month
-    health_rows = get("daily_health", params={
-        "user_id": f"eq.{user_id}",
-        "and": f"(plan_date.gte.{start},plan_date.lte.{today.isoformat()})",
-        "order": "plan_date.asc",
-    })
-    weights = [r["weight"] for r in (health_rows or []) if r.get("weight")]
-    weight_change = round(weights[-1] - weights[0], 1) if len(weights) >= 2 else 0
-
-    energies = [r["energy_level"] for r in (health_rows or []) if r.get("energy_level")]
-    avg_energy = round(sum(energies) / len(energies), 1) if energies else 0
-
-    return jsonify({
-        "days_tracked": days_tracked,
-        "avg_percent": min(avg_percent, 100),
-        "weight_change": weight_change,
-        "avg_energy": avg_energy
-    })
-
-
-# ==========================================================
-# UTIL
-# ==========================================================
-
-def clean_number(val):
-    return float(val) if val not in ("", None) else None@login_required
 def weekly_health():
     user_id = session["user_id"]
 
@@ -465,6 +303,21 @@ def save_daily_health():
     }
 
     post("daily_health", payload, prefer="resolution=merge-duplicates")
+    # Upsert: daily_health has UNIQUE (user_id, plan_date). PostgREST's
+    # resolution=merge-duplicates only works when you also pass
+    # on_conflict=<cols>; simpler to check-then-update/insert manually.
+    existing = get(
+        "daily_health",
+        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+    ) or []
+    if existing:
+        update(
+            "daily_health",
+            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+            json={k: v for k, v in payload.items() if k not in ("user_id", "plan_date")},
+        )
+    else:
+        post("daily_health", payload, prefer="return=minimal")
 
     return jsonify({"success": True})
 
