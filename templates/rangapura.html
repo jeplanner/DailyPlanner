@@ -36,6 +36,25 @@
     }
     html.dark .rp-header .credit { color: #94a3b8; }
 
+    .rp-audio {
+      margin: 8px 0 18px;
+      padding: 12px 14px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    html.dark .rp-audio { background: #1e293b; border-color: #334155; }
+    .rp-audio audio { display: block; }
+    .rp-audio-caption {
+      text-align: right;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #6b7280;
+      font-style: italic;
+    }
+    html.dark .rp-audio-caption { color: #94a3b8; }
+
     .rp-toolbar {
       display: flex; justify-content: center; gap: 8px;
       margin: 14px 0 22px; flex-wrap: wrap;
@@ -109,6 +128,17 @@
       <h1>🎵 Rangapura Vihara</h1>
       <div class="credit">Muthuswami Dikshitar · Raga Brindavana Saranga · as rendered by M. S. Subbulakshmi</div>
     </header>
+
+    <div class="rp-audio">
+      {# preload="none" keeps the 5.8 MB file from downloading on page
+         load. It's only fetched when the user actually hits play. #}
+      <audio controls preload="none" style="width:100%;"
+             src="{{ url_for('static', filename='audio/Rengapuravihara.m4a') }}">
+        Your browser doesn't support audio. Download:
+        <a href="{{ url_for('static', filename='audio/Rengapuravihara.m4a') }}">Rangapura Vihara</a>
+      </audio>
+      <div class="rp-audio-caption">🎧 M. S. Subbulakshmi</div>
+    </div>
 
     <div class="rp-toolbar" role="toolbar" aria-label="Text size">
       <button type="button" onclick="setRpSize('sm')">A−</button>
