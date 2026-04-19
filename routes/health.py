@@ -301,7 +301,7 @@ def save_daily_health():
         "notes": data.get("notes")
     }
 
-    post("daily_health", payload, prefer="resolution=merge-duplicates")
+    
     # Upsert: daily_health has UNIQUE (user_id, plan_date). PostgREST's
     # resolution=merge-duplicates only works when you also pass
     # on_conflict=<cols>; simpler to check-then-update/insert manually.
