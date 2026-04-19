@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Prayer — DailyPlanner</title>
+  <style>
+    body { margin: 0; font-family: 'Inter', system-ui, -apple-system, sans-serif;
+           background: #fffdf7; color: #1a1a2e; -webkit-tap-highlight-color: transparent; }
+    html.dark body { background: #0f172a; color: #f1f5f9; }
+
+    .prayer-container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px 16px 80px;
+    }
+
+    .prayer-header {
+      text-align: center;
+      margin-bottom: 22px;
+    }
+    .prayer-header h1 {
+      font-size: 22px;
+      margin: 0;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .prayer-header p {
+      color: #6b7280;
+      margin: 4px 0 0;
+      font-size: 13.5px;
+    }
+    html.dark .prayer-header p { color: #94a3b8; }
+
+    /* Responsive grid. 2 columns mobile, 3 on tablet, 4 on desktop. */
+    .prayer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 14px;
+    }
+
+    .prayer-card {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      overflow: hidden;
+      text-align: center;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    html.dark .prayer-card { background: #1e293b; border-color: #334155; }
+
+    .prayer-card:hover, .prayer-card:active {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    }
+
+    /* Fixed aspect-ratio frame — prevents Cumulative Layout Shift
+       as images arrive at different times, and keeps the grid tidy. */
+    .prayer-frame {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: linear-gradient(135deg, #fef3c7, #fde68a);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    html.dark .prayer-frame { background: linear-gradient(135deg, #78350f, #92400e); }
+
+    .prayer-frame img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .prayer-name {
+      padding: 10px 8px 12px;
+      font-size: 14px;
+      font-weight: 500;
+      color: inherit;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="nav-icons">
+    {% include "_top_nav.html" %}
+  </div>
+
+  <main id="main" class="prayer-container">
+    <header class="prayer-header">
+      <h1>🕉️ Prayer</h1>
+      <p>A small moment of stillness before you begin.</p>
+    </header>
+
+    <div class="prayer-grid">
+      {% for d in deities %}
+      <div class="prayer-card">
+        <div class="prayer-frame">
+          {# Key perf attributes:
+             - loading="lazy": the browser skips fetching tiles off-screen
+             - decoding="async": decode off the main thread
+             - explicit width/height: no layout shift while decoding
+             - fetchpriority="low": yields to critical resources
+          #}
+          <img
+            src="{{ url_for('static', filename='icons/gods/' ~ d.img) }}"
+            alt="{{ d.name }}"
+            loading="lazy"
+            decoding="async"
+            fetchpriority="low"
+            width="300"
+            height="300">
+        </div>
+        <div class="prayer-name">{{ d.name }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </main>
+
+</body>
+</html>
