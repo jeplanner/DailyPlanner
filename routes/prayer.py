@@ -21,15 +21,24 @@ from services.rangapura_text import get_sections as get_rangapura_sections
 prayer_bp = Blueprint("prayer", __name__)
 
 
-# Order here = display order on the page.
-# Filenames must match exactly what's on disk in static/icons/gods/.
+# Order here = display order on the page. Filenames must match exactly
+# what's on disk in static/icons/gods/. Edit the "name" fields freely —
+# they're the only user-visible text on each tile.
 DEITIES = [
-    {"name": "Lord Ganesha",        "img": "ganesa.webp"},
-    {"name": "Murugan",             "img": "kandhan.webp"},
-    {"name": "Renganathar",         "img": "renganathar.jpg"},
-    {"name": "Meenakshi Amman",     "img": "meenakshi.webp"},
-    {"name": "Venkateswara",        "img": "tirupathi.webp"},
-    {"name": "Oppiliappan",         "img": "upilliappan.jpg"},
+    {"name": "Lord Ganesha",          "img": "ganesa.webp"},
+    {"name": "Murugan",               "img": "kandhan.webp"},
+    {"name": "Murugan II",            "img": "murugan1.webp"},
+    {"name": "Meenakshi Amman",       "img": "meenakshi.webp"},
+    {"name": "Kolavizhi Amman",       "img": "kolavizhiamman.jpg"},
+    {"name": "Kolavizhi Amman II",    "img": "kolavizhiammanji.jpg"},
+    {"name": "Renganathar",           "img": "renganathar.jpg"},
+    {"name": "Renganathar II",        "img": "rengu.jpg"},
+    {"name": "Srirangam Temple",      "img": "renganathaswamy temple-Tiruchy.jpg"},
+    {"name": "Srirangapatnam Temple", "img": "srirangapatinam renga temple.jpg"},
+    {"name": "Parthasarathy",         "img": "parthasarathy.jpg"},
+    {"name": "Parthasarathy II",      "img": "parthasarathy1.jpg"},
+    {"name": "Venkateswara",          "img": "tirupathi.webp"},
+    {"name": "Oppiliappan",           "img": "upilliappan.jpg"},
 ]
 
 
