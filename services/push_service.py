@@ -97,6 +97,7 @@ def send_to_user(user_id, title, body, url="/checklist", tag=None, icon=None):
                 vapid_private_key=private_key,
                 vapid_claims=dict(claims),
                 ttl=3600,
+                headers={"Urgency": "high"},
             )
             sent += 1
         except WebPushException as e:

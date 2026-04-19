@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 from requests.exceptions import HTTPError
 
 from auth import login_required
+from services import checklist_calendar_service as cal_sync
 from supabase_client import delete as sb_delete
 from supabase_client import get, post, update
 from utils.user_tz import user_today
@@ -145,7 +146,22 @@ def create_item():
     except HTTPError as e:
         return jsonify({"error": f"Database error: {e}"}), 500
 
-    return jsonify(_serialize(inserted[0], {}))
+    row = inserted[0]
+
+    # Mirror into Google Calendar if the user has linked their account
+    # and this item carries a reminder time. Calendar's popup reminders
+    # bypass Android OEM heads-up suppression.
+    if reminder_time:
+        google_id = cal_sync.sync_to_calendar(user_id, row)
+        if google_id:
+            update(
+                "checklist_items",
+                params={"id": f"eq.{row['id']}", "user_id": f"eq.{user_id}"},
+                json={"google_event_id": google_id},
+            )
+            row["google_event_id"] = google_id
+
+    return jsonify(_serialize(row, {}))
 
 
 # ─────────────────────────────────────────────
@@ -198,6 +214,33 @@ def update_item(item_id):
         params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
         json=patch,
     )
+
+    # Re-fetch so we hand the calendar helper the fully-merged item.
+    fresh_rows = get(
+        "checklist_items",
+        {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+    ) or []
+    if fresh_rows:
+        fresh = fresh_rows[0]
+        old_event_id = existing[0].get("google_event_id")
+        if fresh.get("reminder_time"):
+            # Create/update the Calendar event.
+            new_event_id = cal_sync.sync_to_calendar(user_id, fresh)
+            if new_event_id and new_event_id != old_event_id:
+                update(
+                    "checklist_items",
+                    params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                    json={"google_event_id": new_event_id},
+                )
+        elif old_event_id:
+            # Reminder cleared — remove the Calendar event and null the link.
+            cal_sync.delete_from_calendar(user_id, old_event_id)
+            update(
+                "checklist_items",
+                params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                json={"google_event_id": None},
+            )
+
     return jsonify({"success": True})
 
 
@@ -208,10 +251,18 @@ def update_item(item_id):
 @login_required
 def delete_item(item_id):
     user_id = session["user_id"]
+
+    existing = get(
+        "checklist_items",
+        {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+    ) or []
+    if existing and existing[0].get("google_event_id"):
+        cal_sync.delete_from_calendar(user_id, existing[0]["google_event_id"])
+
     update(
         "checklist_items",
         params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-        json={"is_deleted": True},
+        json={"is_deleted": True, "google_event_id": None},
     )
     return jsonify({"success": True})
 

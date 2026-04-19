@@ -22,6 +22,14 @@ self.addEventListener("push", (event) => {
     badge: payload.badge || "/static/icons/icon.svg",
     tag: payload.tag || "dailyplanner",
     renotify: true,
+    // Keep on screen until the user taps/dismisses — otherwise Android
+    // auto-hides after a few seconds.
+    requireInteraction: true,
+    // Explicit vibration pattern so phones on the default channel
+    // importance still rumble.
+    vibrate: [200, 100, 200],
+    // Force non-silent so OS playback of the channel's sound triggers.
+    silent: false,
     data: { url: payload.url || "/checklist" },
   };
 

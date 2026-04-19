@@ -600,22 +600,27 @@ create index if not exists portfolio_snap_user_idx on portfolio_snapshots (user_
 -- 13. DAILY CHECKLIST + WEB PUSH
 -- ─────────────────────────────────────────────
 create table if not exists checklist_items (
-  id            uuid primary key default gen_random_uuid(),
-  user_id       text not null,
-  name          text not null,
-  notes         text,
+  id              uuid primary key default gen_random_uuid(),
+  user_id         text not null,
+  name            text not null,
+  notes           text,
   -- 'daily' | 'weekdays' | 'weekends' | 'custom'
-  schedule      text not null default 'daily',
+  schedule        text not null default 'daily',
   -- CSV of weekday numbers (Sun=0 … Sat=6) when schedule='custom'
-  schedule_days text,
+  schedule_days   text,
   -- 'morning' | 'afternoon' | 'evening' | 'anytime'
-  time_of_day   text default 'anytime',
+  time_of_day     text default 'anytime',
   -- Optional local HH:MM:SS reminder time. null = no push.
-  reminder_time time,
-  position      int default 9999,
-  is_deleted    boolean default false,
-  created_at    timestamptz default now()
+  reminder_time   time,
+  -- Google Calendar event ID when reminder is mirrored to the user's
+  -- primary calendar (bypasses Android OEM heads-up suppression).
+  google_event_id text,
+  position        int default 9999,
+  is_deleted      boolean default false,
+  created_at      timestamptz default now()
 );
+alter table checklist_items
+  add column if not exists google_event_id text;
 create index if not exists checklist_items_user_idx on checklist_items (user_id);
 
 
