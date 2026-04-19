@@ -22,13 +22,14 @@ prayer_bp = Blueprint("prayer", __name__)
 
 
 # Order here = display order on the page.
+# Filenames must match exactly what's on disk in static/icons/gods/.
 DEITIES = [
     {"name": "Lord Ganesha",        "img": "ganesa.webp"},
-    {"name": "Murugan",             "img": "murugan.webp"},
+    {"name": "Murugan",             "img": "kandhan.webp"},
     {"name": "Renganathar",         "img": "renganathar.jpg"},
     {"name": "Meenakshi Amman",     "img": "meenakshi.webp"},
     {"name": "Venkateswara",        "img": "tirupathi.webp"},
-    {"name": "Oppiliappan",         "img": "upilliappan.gif"},
+    {"name": "Oppiliappan",         "img": "upilliappan.jpg"},
 ]
 
 
