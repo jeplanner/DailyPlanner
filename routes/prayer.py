@@ -16,6 +16,7 @@ from flask import Blueprint, render_template
 
 from services.kavasam_text import get_verses as get_kavasam_verses
 from services.login_service import login_required
+from services.rangapura_text import get_sections as get_rangapura_sections
 
 prayer_bp = Blueprint("prayer", __name__)
 
@@ -43,3 +44,10 @@ def kavasam_page():
     """Kanda Sashti Kavasam — full Tamil text, mobile-friendly with
     text-size toggle and saved preference."""
     return render_template("kavasam.html", verses=get_kavasam_verses())
+
+
+@prayer_bp.route("/prayer/rangapura")
+@login_required
+def rangapura_page():
+    """Rangapura Vihara (Muthuswami Dikshitar) — as rendered by MSS."""
+    return render_template("rangapura.html", sections=get_rangapura_sections())
