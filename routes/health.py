@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from auth import login_required
 from config import IST
 from utils.user_tz import user_now, user_today
-from supabase_client import get, post
+from supabase_client import get, post, update
 from services.planner_service import compute_health_streak
 
 
@@ -300,7 +300,21 @@ def save_daily_health():
         "notes": data.get("notes")
     }
 
-    post("daily_health", payload, prefer="resolution=merge-duplicates")
+    # Upsert: daily_health has UNIQUE (user_id, plan_date). PostgREST's
+    # resolution=merge-duplicates only works when you also pass
+    # on_conflict=<cols>; simpler to check-then-update/insert manually.
+    existing = get(
+        "daily_health",
+        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+    ) or []
+    if existing:
+        update(
+            "daily_health",
+            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+            json={k: v for k, v in payload.items() if k not in ("user_id", "plan_date")},
+        )
+    else:
+        post("daily_health", payload, prefer="return=minimal")
 
     return jsonify({"success": True})
 
