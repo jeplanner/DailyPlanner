@@ -58,6 +58,7 @@ body {
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
+.cl-push-status[hidden] { display: none; }
 .cl-push-status-ok { border-left-color: var(--cl-success); background: var(--cl-success-light); }
 .cl-push-text { flex: 1 1 220px; font-size: 13.5px; line-height: 1.4; }
 .cl-push-hint { display: block; color: var(--cl-text2); margin-top: 2px; font-size: 12.5px; }
@@ -160,6 +161,10 @@ body {
   z-index: 1000;
   animation: cl-fade-in 0.15s ease-out;
 }
+/* `display:flex` above overrides the `hidden` attribute's default
+   `display:none` (same specificity, later wins). Restore it so
+   `element.hidden = true` actually hides the modal. */
+.cl-modal-backdrop[hidden] { display: none; }
 @keyframes cl-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .cl-modal {
   width: 100%; max-width: 520px;
@@ -186,6 +191,7 @@ body {
 
 .cl-form { display: flex; flex-direction: column; gap: 14px; }
 .cl-field { display: flex; flex-direction: column; gap: 5px; font-size: 13.5px; }
+.cl-field[hidden] { display: none; }
 .cl-field > span { color: var(--cl-text2); font-weight: 500; }
 .cl-field input[type="text"],
 .cl-field input[type="time"],
