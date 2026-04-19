@@ -75,7 +75,13 @@ def _users_with_active_subscriptions():
 
 
 def _user_tz_name(user_id):
-    rows = get("users", {"id": f"eq.{user_id}", "select": "timezone"}) or []
+    # If the `timezone` column isn't present on this Supabase project
+    # yet (e.g. migration not applied), fall back silently instead of
+    # crashing every minute in the scheduler.
+    try:
+        rows = get("users", {"id": f"eq.{user_id}", "select": "timezone"}) or []
+    except Exception:
+        return "Asia/Kolkata"
     if rows:
         return rows[0].get("timezone") or "Asia/Kolkata"
     return "Asia/Kolkata"

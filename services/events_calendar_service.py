@@ -52,7 +52,10 @@ def _credentials(user_id):
 
 
 def _user_tz(user_id):
-    rows = get("users", {"id": f"eq.{user_id}", "select": "timezone"}) or []
+    try:
+        rows = get("users", {"id": f"eq.{user_id}", "select": "timezone"}) or []
+    except Exception:
+        return "Asia/Kolkata"
     if rows and rows[0].get("timezone"):
         return rows[0]["timezone"]
     return "Asia/Kolkata"
