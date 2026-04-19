@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Rangapura Vihara — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;500;600&display=swap">
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Spectral', Georgia, 'Times New Roman', serif;
+      background: #fffdf5;
+      color: #1a1a2e;
+      line-height: 1.85;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html.dark body { background: #0f172a; color: #f1f5f9; }
+
+    .rp-container { max-width: 760px; margin: 0 auto; padding: 20px 18px 120px; }
+
+    .rp-back {
+      margin-bottom: 12px;
+    }
+    .rp-back a {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #6b7280;
+      text-decoration: none;
+      font-size: 13.5px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      transition: background 0.1s;
+    }
+    .rp-back a:hover { background: #f3f4f6; color: #111827; }
+    html.dark .rp-back a { color: #94a3b8; }
+    html.dark .rp-back a:hover { background: #334155; color: #f1f5f9; }
+
+    .rp-header {
+      text-align: center;
+      margin-bottom: 22px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    html.dark .rp-header { border-bottom-color: #334155; }
+    .rp-header h1 {
+      font-size: 26px; font-weight: 600; margin: 0; letter-spacing: 0.01em;
+    }
+    .rp-header .credit {
+      color: #6b7280; margin-top: 6px; font-size: 13.5px;
+    }
+    html.dark .rp-header .credit { color: #94a3b8; }
+
+    .rp-audio {
+      margin: 8px 0 18px;
+      padding: 12px 14px;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    html.dark .rp-audio { background: #1e293b; border-color: #334155; }
+    .rp-audio audio { display: block; }
+    .rp-audio-caption {
+      text-align: right;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #6b7280;
+      font-style: italic;
+    }
+    html.dark .rp-audio-caption { color: #94a3b8; }
+
+    .rp-toolbar {
+      display: flex; justify-content: center; gap: 8px;
+      margin: 14px 0 22px; flex-wrap: wrap;
+    }
+    .rp-toolbar button {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+      padding: 7px 14px; font-size: 13px; cursor: pointer;
+      color: #374151; font-family: inherit;
+    }
+    html.dark .rp-toolbar button {
+      background: #1e293b; border-color: #334155; color: #e2e8f0;
+    }
+    .rp-toolbar button:hover { background: #f3f4f6; }
+    html.dark .rp-toolbar button:hover { background: #334155; }
+
+    .rp-section { margin-bottom: 28px; }
+    .rp-section-label {
+      display: inline-block;
+      background: #1e40af;
+      color: #fff;
+      padding: 4px 14px;
+      border-radius: 16px;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    html.dark .rp-section-label { background: #3b82f6; }
+
+    .rp-verse {
+      padding: 14px 18px;
+      background: #ffffff;
+      border-left: 3px solid #1e40af;
+      border-radius: 6px;
+      font-size: 17px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    html.dark .rp-verse {
+      background: #1e293b;
+      border-left-color: #3b82f6;
+    }
+    .rp-verse .line { display: block; padding: 2px 0; }
+
+    body.rp-size-sm .rp-verse { font-size: 15px;   line-height: 1.8;  }
+    body.rp-size-md .rp-verse { font-size: 17px;   line-height: 1.85; }
+    body.rp-size-lg .rp-verse { font-size: 20px;   line-height: 2.0;  }
+    body.rp-size-xl .rp-verse { font-size: 23.5px; line-height: 2.1;  }
+
+    .rp-footer {
+      text-align: center;
+      margin-top: 34px;
+      padding-top: 18px;
+      border-top: 1px solid #e5e7eb;
+      color: #9ca3af;
+      font-size: 13px;
+      font-style: italic;
+    }
+    html.dark .rp-footer { border-top-color: #334155; }
+  </style>
+</head>
+<body class="rp-size-md">
+
+  <div class="nav-icons">
+    {% include "_top_nav.html" %}
+  </div>
+
+  <main id="main" class="rp-container">
+
+    <div class="rp-back">
+      <a href="/prayer">← Back to Prayer</a>
+    </div>
+
+    <header class="rp-header">
+      <h1>🎵 Rangapura Vihara</h1>
+      <div class="credit">Muthuswami Dikshitar · Raga Brindavana Saranga · as rendered by M. S. Subbulakshmi</div>
+    </header>
+
+    <div class="rp-audio">
+      {# preload="none" keeps the 5.8 MB file from downloading on page
+         load. It's only fetched when the user actually hits play. #}
+      <audio controls preload="none" style="width:100%;"
+             src="{{ url_for('static', filename='audio/Rengapuravihara.m4a') }}">
+        Your browser doesn't support audio. Download:
+        <a href="{{ url_for('static', filename='audio/Rengapuravihara.m4a') }}">Rangapura Vihara</a>
+      </audio>
+      <div class="rp-audio-caption">🎧 M. S. Subbulakshmi</div>
+    </div>
+
+    <div class="rp-toolbar" role="toolbar" aria-label="Text size">
+      <button type="button" onclick="setRpSize('sm')">A−</button>
+      <button type="button" onclick="setRpSize('md')">A</button>
+      <button type="button" onclick="setRpSize('lg')">A+</button>
+      <button type="button" onclick="setRpSize('xl')">A++</button>
+    </div>
+
+    {% for section in sections %}
+    <section class="rp-section">
+      <div class="rp-section-label">{{ section.label }}</div>
+      <div class="rp-verse">
+        {% for line in section.lines %}
+        <span class="line">{{ line }}</span>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+
+    <div class="rp-footer">
+      श्री रङ्गपुर विहारा · Sri Rangapura Vihara 🙏
+    </div>
+  </main>
+
+  <script>
+    function setRpSize(s) {
+      const body = document.body;
+      body.classList.remove("rp-size-sm", "rp-size-md", "rp-size-lg", "rp-size-xl");
+      body.classList.add("rp-size-" + s);
+      try { localStorage.setItem("rp_size", s); } catch (e) {}
+    }
+    try {
+      const saved = localStorage.getItem("rp_size");
+      if (saved) setRpSize(saved);
+    } catch (e) {}
+  </script>
+
+</body>
+</html>
