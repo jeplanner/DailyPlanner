@@ -319,6 +319,52 @@ def untick_item(item_id):
 # ─────────────────────────────────────────────
 #  REORDER
 # ─────────────────────────────────────────────
+@checklist_bp.route("/api/checklist/sync-calendar", methods=["POST"])
+@login_required
+def sync_calendar():
+    """Backfill: create Google Calendar events for every existing
+    checklist item that has a reminder_time but no google_event_id yet.
+    Safe to run multiple times — already-synced items are skipped."""
+    user_id = session["user_id"]
+
+    items = get(
+        "checklist_items",
+        {
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "reminder_time": "not.is.null",
+            "google_event_id": "is.null",
+        },
+    ) or []
+
+    synced = 0
+    skipped = 0
+    failed = 0
+    for it in items:
+        try:
+            new_id = cal_sync.sync_to_calendar(user_id, it)
+        except Exception:
+            failed += 1
+            continue
+        if new_id:
+            update(
+                "checklist_items",
+                params={"id": f"eq.{it['id']}", "user_id": f"eq.{user_id}"},
+                json={"google_event_id": new_id},
+            )
+            synced += 1
+        else:
+            skipped += 1
+
+    return jsonify({
+        "success": True,
+        "synced": synced,
+        "skipped": skipped,
+        "failed": failed,
+        "total_candidates": len(items),
+    })
+
+
 @checklist_bp.route("/api/checklist/reorder", methods=["POST"])
 @login_required
 def reorder_items():

@@ -214,6 +214,26 @@
       if (e.target.id === "cl-modal") closeModal();
     });
 
+    $("#cl-sync-calendar")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Syncing…";
+      try {
+        const r = await api("/api/checklist/sync-calendar", { method: "POST" });
+        const parts = [];
+        if (r.synced)  parts.push(`${r.synced} synced`);
+        if (r.skipped) parts.push(`${r.skipped} skipped (no Google link?)`);
+        if (r.failed)  parts.push(`${r.failed} failed`);
+        alert(parts.length ? parts.join(", ") : "Nothing to sync.");
+      } catch (err) {
+        alert("Sync failed: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    });
+
     // Push UI wiring (push.js is loaded first)
     if (window.ClPush) {
       window.ClPush.init({
