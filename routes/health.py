@@ -3,10 +3,9 @@ from datetime import date, datetime, timedelta
 from auth import login_required
 from config import IST
 from utils.user_tz import user_now, user_today
-<<<<<<< HEAD
-=======
+
 from supabase_client import get, post
->>>>>>> origin/main
+
 from supabase_client import get, post, update
 from services.planner_service import compute_health_streak
 
@@ -304,10 +303,7 @@ def save_daily_health():
         "notes": data.get("notes")
     }
 
-<<<<<<< HEAD
-=======
-    
->>>>>>> origin/main
+
     # Upsert: daily_health has UNIQUE (user_id, plan_date). PostgREST's
     # resolution=merge-duplicates only works when you also pass
     # on_conflict=<cols>; simpler to check-then-update/insert manually.
