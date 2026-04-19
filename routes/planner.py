@@ -770,3 +770,46 @@ def build_google_datetime(plan_date, time_str):
 
     dt = tz.localize(dt)
     return dt.isoformat()
+
+
+# ──────────────────────────────────────────────────────────────
+# DAILY REFLECTION — write to daily_meta.reflection
+# ──────────────────────────────────────────────────────────────
+@planner_bp.route("/api/v2/daily-reflection", methods=["POST"])
+@login_required
+def save_daily_reflection():
+    """Upsert the user's reflection for a given date.
+    daily_meta has UNIQUE (user_id, plan_date); we check-then-update
+    instead of relying on PostgREST's resolution=merge-duplicates
+    (which needs an explicit on_conflict= query arg we don't pass)."""
+    user_id = session["user_id"]
+    data = request.get_json() or {}
+    plan_date = (data.get("plan_date") or "").strip()
+    reflection = data.get("reflection") or ""
+
+    if not plan_date:
+        return jsonify({"error": "plan_date required"}), 400
+    try:
+        date.fromisoformat(plan_date)
+    except ValueError:
+        return jsonify({"error": "Invalid plan_date"}), 400
+
+    existing = get(
+        "daily_meta",
+        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+    ) or []
+
+    if existing:
+        update(
+            "daily_meta",
+            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+            json={"reflection": reflection},
+        )
+    else:
+        post(
+            "daily_meta",
+            {"user_id": user_id, "plan_date": plan_date, "reflection": reflection},
+            prefer="return=minimal",
+        )
+
+    return jsonify({"success": True})

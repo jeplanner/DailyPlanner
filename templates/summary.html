@@ -307,11 +307,26 @@
   <!-- ── Reflection + AI Recap — below the fold, still one tap away ── -->
   <div class="sum-grid md-supplement">
     <div class="sum-card">
-      <h3 class="card-title"><i data-feather="edit-3" class="card-icon"></i> Reflection</h3>
-      {% if data.reflection %}
-      <p class="reflection-text">{{ data.reflection }}</p>
+      <h3 class="card-title">
+        <i data-feather="edit-3" class="card-icon"></i> Reflection
+        <span class="reflection-save-status" id="reflection-status" aria-live="polite"></span>
+      </h3>
+      {% if view == "daily" %}
+      <textarea
+        id="reflection-input"
+        class="reflection-textarea"
+        data-date="{{ date.isoformat() }}"
+        placeholder="How did today go? Wins, blockers, what to change tomorrow…"
+        rows="5"
+        oninput="scheduleReflectionSave()"
+        onblur="saveReflection(true)"
+      >{{ data.reflection or '' }}</textarea>
       {% else %}
-      <div class="empty-msg">No reflection written.</div>
+        {% if data.reflection %}
+        <p class="reflection-text">{{ data.reflection }}</p>
+        {% else %}
+        <div class="empty-msg">No reflection written.</div>
+        {% endif %}
       {% endif %}
     </div>
 
@@ -824,6 +839,95 @@ document.addEventListener("keydown", (e) => {
   {% endif %}
 </script>
 <script src="{{ url_for('static', filename='summary.js') }}"></script>
+
+{% if view == "daily" %}
+<style>
+  .reflection-textarea {
+    width: 100%;
+    min-height: 120px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 14.5px;
+    line-height: 1.55;
+    background: var(--color-bg, #fff);
+    color: var(--color-text, #111827);
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .reflection-textarea:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, .15);
+  }
+  .reflection-save-status {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text-muted, #6b7280);
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .reflection-save-status.is-visible { opacity: 1; }
+  .reflection-save-status.is-saved   { color: #059669; }
+  .reflection-save-status.is-error   { color: #dc2626; }
+  .card-title { display: flex; align-items: center; gap: 8px; }
+</style>
+<script>
+  let _reflectionTimer = null;
+  let _reflectionLastSaved = "";
+
+  function _setReflectionStatus(text, tone) {
+    const el = document.getElementById("reflection-status");
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle("is-visible", !!text);
+    el.classList.toggle("is-saved", tone === "saved");
+    el.classList.toggle("is-error", tone === "error");
+    if (tone === "saved") {
+      setTimeout(() => el.classList.remove("is-visible"), 1800);
+    }
+  }
+
+  function scheduleReflectionSave() {
+    if (_reflectionTimer) clearTimeout(_reflectionTimer);
+    _setReflectionStatus("Editing…", null);
+    _reflectionTimer = setTimeout(() => saveReflection(false), 800);
+  }
+
+  async function saveReflection(onBlur) {
+    const el = document.getElementById("reflection-input");
+    if (!el) return;
+    const txt = el.value;
+    if (txt === _reflectionLastSaved) return;      // nothing changed
+    if (_reflectionTimer) { clearTimeout(_reflectionTimer); _reflectionTimer = null; }
+
+    _setReflectionStatus("Saving…", null);
+    try {
+      const res = await fetch("/api/v2/daily-reflection", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        credentials: "same-origin",
+        body: JSON.stringify({ plan_date: el.dataset.date, reflection: txt }),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      _reflectionLastSaved = txt;
+      _setReflectionStatus("Saved", "saved");
+    } catch (err) {
+      _setReflectionStatus("Save failed — retry on next edit", "error");
+      console.error("Reflection save failed:", err);
+    }
+  }
+
+  // Remember the server-rendered value so we don't spam saves on load.
+  document.addEventListener("DOMContentLoaded", () => {
+    const el = document.getElementById("reflection-input");
+    if (el) _reflectionLastSaved = el.value;
+  });
+</script>
+{% endif %}
+
 <script>if(window.feather)feather.replace();</script>
 </body>
 </html>
