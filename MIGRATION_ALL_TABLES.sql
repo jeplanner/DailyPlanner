@@ -356,6 +356,33 @@ create table if not exists daily_events (
 );
 create index if not exists events_user_date_idx on daily_events (user_id, plan_date);
 
+-- Google Calendar-style recurrence (series + overrides + skipped occurrences).
+alter table daily_events
+  add column if not exists series_id        uuid,
+  add column if not exists recurrence_rule  text,
+  add column if not exists recurrence_days  text,
+  add column if not exists recurrence_end   date,
+  add column if not exists recurrence_count int,
+  add column if not exists is_exception     boolean default false,
+  add column if not exists original_date    date;
+create index if not exists daily_events_series_idx
+  on daily_events (series_id) where is_deleted = false;
+create index if not exists daily_events_series_original_idx
+  on daily_events (series_id, original_date)
+  where is_exception = true and is_deleted = false;
+
+create table if not exists event_exceptions (
+  id             uuid primary key default gen_random_uuid(),
+  series_id      uuid not null,
+  user_id        text not null,
+  exception_date date not null,
+  reason         text default 'deleted',
+  created_at     timestamptz default now(),
+  unique (series_id, exception_date)
+);
+create index if not exists event_exceptions_series_idx on event_exceptions (series_id);
+create index if not exists event_exceptions_user_idx on event_exceptions (user_id, exception_date);
+
 
 -- ─────────────────────────────────────────────
 -- 8. HEALTH + HABITS

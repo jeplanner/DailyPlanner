@@ -1,15 +1,19 @@
 
 import logging
-from datetime import datetime
+import threading
+from datetime import date, datetime, timedelta
 import os
 
 from flask import Blueprint, jsonify, redirect, request, session, url_for
+from supabase_client import delete as sb_delete
 from supabase_client import get, post, update
 
 logger = logging.getLogger("daily_plan")
 
 from routes.planner import build_google_datetime, get_conflicts
 from services.login_service import login_required
+from services import event_recurrence
+from services import events_calendar_service as events_cal
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -21,30 +25,97 @@ events_bp = Blueprint("events", __name__)
 @events_bp.route("/api/v2/events")
 @login_required
 def list_events():
+    """List events for the given date. Expands recurring series:
+    one visible event per occurrence, including per-occurrence
+    overrides (is_exception=true) and skipping dates in
+    event_exceptions."""
     user_id = session["user_id"]
-    plan_date = request.args.get("date")
+    plan_date_str = request.args.get("date")
+    if not plan_date_str:
+        return jsonify([])
 
-    events = get(
+    try:
+        plan_date = date.fromisoformat(plan_date_str)
+    except ValueError:
+        return jsonify({"error": "Invalid date"}), 400
+
+    # 1. Pull everything for this user that could possibly surface on
+    # the target date. That includes:
+    #    - single events where plan_date = target
+    #    - recurring masters whose start <= target and (no end or end >= target)
+    #    - per-occurrence exception rows where original_date = target
+    all_rows = get(
         "daily_events",
         params={
             "user_id": f"eq.{user_id}",
-            "plan_date": f"eq.{plan_date}",
             "is_deleted": "eq.false",
-            "order": "start_time.asc"
-        }
+        },
     ) or []
 
+    singles = [r for r in all_rows
+               if not r.get("recurrence_rule") and not r.get("is_exception")
+               and r.get("plan_date") == plan_date_str]
+
+    masters = [r for r in all_rows if r.get("recurrence_rule")]
+
+    overrides_by_series_date = {
+        (r.get("series_id"), r.get("original_date")): r
+        for r in all_rows if r.get("is_exception")
+    }
+
+    # 2. Skip dates listed in event_exceptions for each series.
+    skipped = get(
+        "event_exceptions",
+        params={"user_id": f"eq.{user_id}", "exception_date": f"eq.{plan_date_str}"},
+    ) or []
+    skipped_series = {row["series_id"] for row in skipped if row.get("reason") == "deleted"}
+
+    # 3. Expand masters.
+    expanded = []
+    for m in masters:
+        # Cheap bound check without importing event_recurrence for the single-date case.
+        occurs = plan_date in event_recurrence.expand_occurrences(m, plan_date, plan_date)
+        if not occurs:
+            continue
+        if m.get("series_id") in skipped_series:
+            continue
+        override = overrides_by_series_date.get((m.get("series_id"), plan_date_str))
+        if override:
+            # The user previously modified this single occurrence — show that.
+            expanded.append({**override, "plan_date": plan_date_str,
+                             "_is_recurring_instance": True,
+                             "_series_id": m.get("series_id"),
+                             "_master_id": m.get("id")})
+        else:
+            # Materialise a virtual instance from the master.
+            expanded.append({
+                **m,
+                "plan_date": plan_date_str,
+                "_is_recurring_instance": True,
+                "_series_id": m.get("series_id"),
+                "_master_id": m.get("id"),
+            })
+
+    # 4. Combine and sort.
+    events = singles + expanded
+    events.sort(key=lambda r: (r.get("start_time") or "00:00"))
     return jsonify(events)
 
 @events_bp.route("/api/v2/events", methods=["POST"])
 @login_required
 def create_event():
     user_id = session["user_id"]
-    data = request.json
+    data = request.json or {}
     force = data.get("force", False)
 
     if data["end_time"] <= data["start_time"]:
         return jsonify({"error": "Invalid time range"}), 400
+
+    # Recurrence fields (optional). parse_recurrence returns {} if rule is missing.
+    try:
+        rec = event_recurrence.parse_recurrence(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     conflicts = get_conflicts(
         user_id,
@@ -59,41 +130,53 @@ def create_event():
             "conflicting_events": conflicts
         }), 409
 
-    response1 = post("daily_events", {
-    "user_id": user_id,
-    "plan_date": data["plan_date"],
-    "start_time": data["start_time"],
-    "end_time": data["end_time"],
-    "title": data["title"],
-    "description": data.get("description", ""),
-    "priority": data.get("priority", "medium"),
-    "quadrant": data.get("quadrant") or None,
-    "reminder_minutes": data.get("reminder_minutes", 10),
-    })
+    payload = {
+        "user_id": user_id,
+        "plan_date": data["plan_date"],
+        "start_time": data["start_time"],
+        "end_time": data["end_time"],
+        "title": data["title"],
+        "description": data.get("description", ""),
+        "priority": data.get("priority", "medium"),
+        "quadrant": data.get("quadrant") or None,
+        "reminder_minutes": data.get("reminder_minutes", 10),
+    }
+    payload.update(rec)
+
+    response1 = post("daily_events", payload, prefer="return=representation")
     created_row = response1[0] if response1 else None
 
-    # Auto-sync to Google Calendar if the user has connected their account.
-    # Always returns — never blocks the local save.
-    gcal_synced = False
-    gcal_error = None
-    if created_row:
-        try:
-            google_id = insert_google_event(created_row)
-            if google_id:
-                update(
-                    "daily_events",
-                    params={"id": f"eq.{created_row['id']}", "user_id": f"eq.{session['user_id']}"},
-                    json={"google_event_id": google_id}
-                )
-                gcal_synced = True
-        except Exception as e:
-            logger.warning("Google sync failed on create: %s", e)
-            gcal_error = str(e)
+    # If recurring, the master's series_id should equal its own id so
+    # the expander can find it and exceptions can reference it.
+    if created_row and created_row.get("recurrence_rule"):
+        update(
+            "daily_events",
+            params={"id": f"eq.{created_row['id']}", "user_id": f"eq.{user_id}"},
+            json={"series_id": created_row["id"]},
+        )
+        created_row["series_id"] = created_row["id"]
+
+    # Google sync in the background so the UI returns fast.
+    gcal_connected = bool(get("user_google_tokens", {"user_id": f"eq.{user_id}"}) or [])
+    if created_row and gcal_connected:
+        def _sync():
+            try:
+                gid = events_cal.sync_create(user_id, created_row)
+                if gid:
+                    update(
+                        "daily_events",
+                        params={"id": f"eq.{created_row['id']}", "user_id": f"eq.{user_id}"},
+                        json={"google_event_id": gid},
+                    )
+            except Exception:
+                logger.exception("Background Google sync failed on create")
+        threading.Thread(target=_sync, daemon=True).start()
 
     return jsonify({
         "success": True,
-        "gcal_synced": gcal_synced,
-        "gcal_error": gcal_error,
+        "id": created_row.get("id") if created_row else None,
+        "gcal_synced": gcal_connected,  # kicked off; actual result async
+        "gcal_error": None,
     })
 
 
@@ -123,168 +206,280 @@ def google_status():
 @events_bp.route("/api/v2/events/<event_id>", methods=["PUT"])
 @login_required
 def update_event(event_id):
+    """Update a calendar event. Supports recurrence edit scopes:
 
+      scope='this'      — only this occurrence (creates an override row)
+      scope='following' — this and all future occurrences (splits series)
+      scope='all'       — every occurrence (updates the master)
+      scope omitted     — legacy single-event update
+    """
     user_id = session["user_id"]
     data = request.json or {}
     force = data.get("force", False)
+    scope = (data.get("scope") or "").strip().lower()
+    occurrence_date = data.get("occurrence_date")  # YYYY-MM-DD the user was looking at
 
-    # Get plan_date from request or fetch from DB
-    plan_date = data.get("plan_date")
-    if not plan_date:
-        existing = get("daily_events", params={"id": f"eq.{event_id}", "select": "plan_date"})
-        plan_date = existing[0]["plan_date"] if existing else None
+    # Load the target row — either the event_id itself, or if the client
+    # passed a master id (from an expanded virtual instance) we still
+    # need to handle it. We branch on what we find.
+    rows = get("daily_events", params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"}) or []
+    if not rows:
+        return jsonify({"error": "Event not found"}), 404
+    row = rows[0]
 
-    if not plan_date or not data.get("start_time") or not data.get("end_time"):
+    # Build the new field values (always validated, even for 'this' scope
+    # since the override row will copy these).
+    if not data.get("start_time") or not data.get("end_time"):
         return jsonify({"error": "start_time and end_time are required"}), 400
+    if data["end_time"] <= data["start_time"]:
+        return jsonify({"error": "Invalid time range"}), 400
 
-    conflicts = get_conflicts(
-        user_id,
-        plan_date,
-        data["start_time"],
-        data["end_time"],
-        exclude_id=event_id
-    )
+    try:
+        rec = event_recurrence.parse_recurrence(data)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
-    if conflicts and not force:
-        return jsonify({
-            "conflict": True,
-            "conflicting_events": conflicts
-        }), 409
-
-    payload = {
+    core_fields = {
         "start_time": data["start_time"],
         "end_time": data["end_time"],
     }
-    if data.get("title"):
-        payload["title"] = data["title"]
+    if data.get("title") is not None:
+        core_fields["title"] = data["title"]
     if "description" in data:
-        payload["description"] = data.get("description", "")
+        core_fields["description"] = data.get("description", "")
     if data.get("priority"):
-        payload["priority"] = data["priority"]
+        core_fields["priority"] = data["priority"]
     if "quadrant" in data:
-        payload["quadrant"] = data.get("quadrant") or None
+        core_fields["quadrant"] = data.get("quadrant") or None
+    if "reminder_minutes" in data:
+        core_fields["reminder_minutes"] = int(data.get("reminder_minutes") or 10)
 
-    update(
-        "daily_events",
-        params={"id": f"eq.{event_id}"},
-        json=payload
-    )
-    # 🔥 SYNC GOOGLE UPDATE
-    row = get(
-        "daily_events",
-        params={"id": f"eq.{event_id}"}
-    )
-
-    if row and row[0].get("google_event_id"):
-        try:
-            google_id = row[0]["google_event_id"]
-
-            # 🔥 Load user Google credentials from DB
-            user_id = session["user_id"]
-
-            rows = get(
-                "user_google_tokens",
-                {"user_id": f"eq.{user_id}"}
+    # ── SCOPE: this occurrence only ─────────────────
+    if scope == "this":
+        if not occurrence_date:
+            return jsonify({"error": "occurrence_date is required for scope='this'"}), 400
+        series_id = row.get("series_id") or row.get("id")
+        # Insert override row (is_exception=true) OR update an existing one.
+        existing_override = get(
+            "daily_events",
+            params={
+                "user_id": f"eq.{user_id}",
+                "series_id": f"eq.{series_id}",
+                "original_date": f"eq.{occurrence_date}",
+                "is_exception": "eq.true",
+            },
+        ) or []
+        if existing_override:
+            override_id = existing_override[0]["id"]
+            update(
+                "daily_events",
+                params={"id": f"eq.{override_id}", "user_id": f"eq.{user_id}"},
+                json={**core_fields, "plan_date": occurrence_date},
             )
+        else:
+            override_body = {
+                "user_id": user_id,
+                "plan_date": occurrence_date,
+                "original_date": occurrence_date,
+                "series_id": series_id,
+                "is_exception": True,
+                "is_deleted": False,
+                **core_fields,
+            }
+            post("daily_events", override_body, prefer="return=minimal")
 
-            if rows:
-                token_row = rows[0]
+        # Google: patch the single instance.
+        master_gid = row.get("google_event_id")
+        if master_gid:
+            _background_gcal(lambda: events_cal.sync_exception_override(
+                user_id, master_gid, occurrence_date, core_fields))
+        return jsonify({"success": True, "scope": "this"})
 
-                credentials = Credentials(
-                    token=token_row["access_token"],
-                    refresh_token=token_row["refresh_token"],
-                    token_uri=token_row["token_uri"],
-                    client_id=token_row["client_id"],
-                    client_secret=token_row["client_secret"],
-                    scopes=token_row["scopes"].split(",")
-                )
+    # ── SCOPE: this and following ───────────────────
+    if scope == "following":
+        if not occurrence_date:
+            return jsonify({"error": "occurrence_date is required for scope='following'"}), 400
+        split_date = date.fromisoformat(occurrence_date)
 
-                if credentials.expired and credentials.refresh_token:
-                    print("Google Credentials Expired")
-                    credentials.refresh(Request())
+        # 1. Cap the original master so it ends the day before the split.
+        series_id = row.get("series_id") or row.get("id")
+        original_master = get("daily_events",
+                              params={"id": f"eq.{series_id}", "user_id": f"eq.{user_id}"}) or []
+        if not original_master:
+            return jsonify({"error": "Series master not found"}), 404
+        original_master = original_master[0]
 
-                    update(
-                        "user_google_tokens",
-                        params={"user_id": f"eq.{user_id}"},
-                        json={"access_token": credentials.token}
-                    )
+        cap = (split_date - timedelta(days=1)).isoformat()
+        # If the cap is before the master's start, delete the whole original series.
+        if cap < original_master["plan_date"]:
+            update("daily_events",
+                   params={"id": f"eq.{series_id}", "user_id": f"eq.{user_id}"},
+                   json={"is_deleted": True})
+            if original_master.get("google_event_id"):
+                _background_gcal(lambda: events_cal.sync_delete(
+                    user_id, original_master["google_event_id"]))
+        else:
+            update("daily_events",
+                   params={"id": f"eq.{series_id}", "user_id": f"eq.{user_id}"},
+                   json={"recurrence_end": cap, "recurrence_count": None})
+            # Update google-side master to respect the new end.
+            refreshed = get("daily_events", params={"id": f"eq.{series_id}"}) or []
+            if refreshed and refreshed[0].get("google_event_id"):
+                _background_gcal(lambda: events_cal.sync_update(user_id, refreshed[0]))
 
-                service = build("calendar", "v3", credentials=credentials)
+        # 2. Create a new master starting from the split date with the new data.
+        #    The new series uses the payload's recurrence_* (or defaults to
+        #    the same rule as the old master).
+        new_rec = rec or {
+            "recurrence_rule": original_master.get("recurrence_rule"),
+            "recurrence_days": original_master.get("recurrence_days"),
+            "recurrence_end": original_master.get("recurrence_end"),
+            "recurrence_count": None,
+        }
+        new_body = {
+            "user_id": user_id,
+            "plan_date": occurrence_date,
+            **core_fields,
+            **new_rec,
+        }
+        new_rows = post("daily_events", new_body, prefer="return=representation")
+        if new_rows:
+            new_id = new_rows[0]["id"]
+            update("daily_events",
+                   params={"id": f"eq.{new_id}", "user_id": f"eq.{user_id}"},
+                   json={"series_id": new_id})
+            _background_gcal(lambda: _create_and_store_gid(user_id, new_id))
 
-                service.events().update(
-                    calendarId="primary",
-                    eventId=google_id,
-                    body={
-                        "summary": data.get("title") or row[0].get("title") or "Untitled",
-                        "description": data.get("description", "") or row[0].get("description", ""),
-                        "start": {
-                            "dateTime": f"{plan_date}T{data['start_time']}:00",
-                            "timeZone": "Asia/Kolkata"
-                        },
-                        "end": {
-                            "dateTime": f"{plan_date}T{data['end_time']}:00",
-                            "timeZone": "Asia/Kolkata"
-                        },
-                        # Keep the 10-min popup reminder attached on edits too
-                        # — otherwise Google strips the override silently on PATCH/PUT.
-                        "reminders": {
-                            "useDefault": False,
-                            "overrides": [
-                                {"method": "popup", "minutes": int(data.get("reminder_minutes") or row[0].get("reminder_minutes") or 10)}
-                            ]
-                        }
-                    }
-                ).execute()
-        except Exception as e:
-            logger.warning("Google update failed: %s", e)
-    return jsonify({"success": True})
+        return jsonify({"success": True, "scope": "following"})
+
+    # ── SCOPE: all / default ────────────────────────
+    # Updates the row itself. If this was a master of a series, it updates
+    # the whole series. If it was a single event, just updates it.
+    patch = {**core_fields}
+    if rec:
+        patch.update(rec)
+
+    update("daily_events",
+           params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"},
+           json=patch)
+
+    refreshed = get("daily_events",
+                    params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"}) or []
+    if refreshed:
+        _background_gcal(lambda: events_cal.sync_update(user_id, refreshed[0]))
+    return jsonify({"success": True, "scope": scope or "single"})
+
+
+def _background_gcal(fn):
+    """Run a Google-sync call in a daemon thread — keeps the request fast."""
+    t = threading.Thread(target=fn, daemon=True)
+    t.start()
+
+
+def _create_and_store_gid(user_id, local_id):
+    """Insert on Google, write back the returned id. Called from threads."""
+    rows = get("daily_events", params={"id": f"eq.{local_id}", "user_id": f"eq.{user_id}"}) or []
+    if not rows:
+        return
+    gid = events_cal.sync_create(user_id, rows[0])
+    if gid:
+        update("daily_events",
+               params={"id": f"eq.{local_id}", "user_id": f"eq.{user_id}"},
+               json={"google_event_id": gid})
 
 @events_bp.route("/api/v2/events/<event_id>", methods=["DELETE"])
 @login_required
 def delete_event(event_id):
-    update(
-        "daily_events",
-        params={"id": f"eq.{event_id}"},
-        json={"is_deleted": True}
-    )
-    row = get(
-    "daily_events",
-    params={"id": f"eq.{event_id}"}
-)
+    """Delete an event. Query params:
 
-    if row and row[0].get("google_event_id"):
+      ?scope=this&occurrence_date=YYYY-MM-DD   — skip this occurrence only
+      ?scope=following&occurrence_date=...     — end series the day before this
+      ?scope=all                                — delete the whole series / single event
+      scope omitted                            — legacy single-event delete
+    """
+    user_id = session["user_id"]
+    scope = (request.args.get("scope") or "").strip().lower()
+    occurrence_date = request.args.get("occurrence_date")
+
+    rows = get("daily_events", params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"}) or []
+    if not rows:
+        return jsonify({"error": "Event not found"}), 404
+    row = rows[0]
+
+    # ── SCOPE: this occurrence only ─────────────────
+    if scope == "this":
+        if not occurrence_date:
+            return jsonify({"error": "occurrence_date required"}), 400
+        series_id = row.get("series_id") or row.get("id")
+        # Insert a skip row (idempotent via UNIQUE constraint).
         try:
-            google_id = row[0]["google_event_id"]
+            post("event_exceptions", {
+                "series_id": series_id,
+                "user_id": user_id,
+                "exception_date": occurrence_date,
+                "reason": "deleted",
+            }, prefer="return=minimal")
+        except Exception:
+            # Already exists — that's fine.
+            pass
 
-            user_id = session["user_id"]
+        # If there's an override row for this date, soft-delete it.
+        overrides = get("daily_events", params={
+            "user_id": f"eq.{user_id}",
+            "series_id": f"eq.{series_id}",
+            "original_date": f"eq.{occurrence_date}",
+            "is_exception": "eq.true",
+        }) or []
+        for o in overrides:
+            update("daily_events",
+                   params={"id": f"eq.{o['id']}", "user_id": f"eq.{user_id}"},
+                   json={"is_deleted": True})
 
-            rows = get(
-                "user_google_tokens",
-                {"user_id": f"eq.{user_id}"}
-            )
+        # Google: cancel the single instance.
+        if row.get("google_event_id"):
+            _background_gcal(lambda: events_cal.sync_exception_cancel(
+                user_id, row["google_event_id"], occurrence_date, row.get("start_time")))
+        return jsonify({"ok": True, "scope": "this"})
 
-            if rows:
-                token_row = rows[0]
+    # ── SCOPE: this and following ───────────────────
+    if scope == "following":
+        if not occurrence_date:
+            return jsonify({"error": "occurrence_date required"}), 400
+        split_date = date.fromisoformat(occurrence_date)
+        series_id = row.get("series_id") or row.get("id")
+        cap = (split_date - timedelta(days=1)).isoformat()
 
-                credentials = Credentials(
-                    token=token_row["access_token"],
-                    refresh_token=token_row["refresh_token"],
-                    token_uri=token_row["token_uri"],
-                    client_id=token_row["client_id"],
-                    client_secret=token_row["client_secret"],
-                    scopes=token_row["scopes"].split(",")
-                )
+        master = get("daily_events",
+                     params={"id": f"eq.{series_id}", "user_id": f"eq.{user_id}"}) or []
+        if not master:
+            return jsonify({"error": "Series master not found"}), 404
+        master = master[0]
 
-                service = build("calendar", "v3", credentials=credentials)
+        if cap < master["plan_date"]:
+            # Deleting everything — soft-delete the master.
+            update("daily_events",
+                   params={"id": f"eq.{series_id}", "user_id": f"eq.{user_id}"},
+                   json={"is_deleted": True})
+            if master.get("google_event_id"):
+                _background_gcal(lambda: events_cal.sync_delete(user_id, master["google_event_id"]))
+        else:
+            update("daily_events",
+                   params={"id": f"eq.{series_id}", "user_id": f"eq.{user_id}"},
+                   json={"recurrence_end": cap, "recurrence_count": None})
+            refreshed = get("daily_events", params={"id": f"eq.{series_id}"}) or []
+            if refreshed and refreshed[0].get("google_event_id"):
+                _background_gcal(lambda: events_cal.sync_update(user_id, refreshed[0]))
+        return jsonify({"ok": True, "scope": "following"})
 
-                service.events().delete(
-                    calendarId="primary",
-                    eventId=google_id
-                ).execute()
+    # ── SCOPE: all (default for recurring masters) ──
+    update("daily_events",
+           params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"},
+           json={"is_deleted": True})
 
-        except Exception as e:
-            logger.warning("Google delete failed: %s", e)
-    return {"ok": True}
+    if row.get("google_event_id"):
+        _background_gcal(lambda: events_cal.sync_delete(user_id, row["google_event_id"]))
+
+    return jsonify({"ok": True, "scope": scope or "single"})
 
 @events_bp.post("/api/v2/smart-create")
 @login_required

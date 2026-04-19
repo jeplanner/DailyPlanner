@@ -259,6 +259,45 @@
       </div>
     </div>
 
+    <div class="form-group">
+      <label>Repeats</label>
+      <select id="recurrence-rule" class="form-input" onchange="onRecurrenceRuleChange()">
+        <option value="">Does not repeat</option>
+        <option value="daily">Daily</option>
+        <option value="weekdays">Every weekday (Mon–Fri)</option>
+        <option value="weekends">Every weekend (Sat–Sun)</option>
+        <option value="weekly">Weekly on the same day</option>
+        <option value="monthly">Monthly on the same date</option>
+        <option value="custom">Custom days…</option>
+      </select>
+    </div>
+
+    <div class="form-group" id="recurrence-days-wrap" style="display:none;">
+      <label>Days</label>
+      <div class="recurrence-day-picker" id="recurrence-days">
+        <label><input type="checkbox" value="0"><span>S</span></label>
+        <label><input type="checkbox" value="1"><span>M</span></label>
+        <label><input type="checkbox" value="2"><span>T</span></label>
+        <label><input type="checkbox" value="3"><span>W</span></label>
+        <label><input type="checkbox" value="4"><span>T</span></label>
+        <label><input type="checkbox" value="5"><span>F</span></label>
+        <label><input type="checkbox" value="6"><span>S</span></label>
+      </div>
+    </div>
+
+    <div class="form-group" id="recurrence-end-wrap" style="display:none;">
+      <label>Ends</label>
+      <div class="recurrence-end-row">
+        <select id="recurrence-end-mode" class="form-input" onchange="onRecurrenceEndModeChange()">
+          <option value="never">Never</option>
+          <option value="on">On date</option>
+          <option value="after">After N occurrences</option>
+        </select>
+        <input type="date"   id="recurrence-end-date"  class="form-input" style="display:none;">
+        <input type="number" id="recurrence-end-count" class="form-input" min="1" placeholder="Count" style="display:none;width:110px;">
+      </div>
+    </div>
+
     <div class="modal-actions">
       <button class="btn btn-primary" onclick="saveEvent()">
         <i data-feather="check" style="width:16px;height:16px"></i> Save

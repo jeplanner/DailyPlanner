@@ -807,6 +807,17 @@ function openCreateModal(prefillDate, prefillStart, prefillEnd) {
   document.querySelectorAll(".quad-btn").forEach(b => b.classList.remove("active"));
   document.querySelector('.quad-btn[data-q=""]')?.classList.add("active");
 
+  // Reset recurrence
+  const ruleSel = document.getElementById("recurrence-rule");
+  if (ruleSel) {
+    ruleSel.value = "";
+    document.querySelectorAll("#recurrence-days input[type=checkbox]").forEach(cb => cb.checked = false);
+    document.getElementById("recurrence-end-mode").value = "never";
+    document.getElementById("recurrence-end-date").value = "";
+    document.getElementById("recurrence-end-count").value = "";
+    onRecurrenceRuleChange();
+  }
+
   // Hide delete button for new events
   const delBtn = document.getElementById("delete-btn");
   if (delBtn) delBtn.style.display = "none";
@@ -831,6 +842,32 @@ function openModal(ev) {
   document.getElementById("event-priority").value = ev.priority || "medium";
   document.getElementById("event-title").value = ev.task_text || ev.title || "";
   document.getElementById("event-desc").value = ev.description || "";
+
+  // Recurrence fields — pre-populate from master (ev carries the master's fields when it's a recurring instance)
+  const ruleSel = document.getElementById("recurrence-rule");
+  if (ruleSel) {
+    ruleSel.value = ev.recurrence_rule || "";
+    onRecurrenceRuleChange();
+
+    // Day picker for custom
+    const daySet = new Set((ev.recurrence_days || "").split(",").filter(Boolean));
+    document.querySelectorAll("#recurrence-days input[type=checkbox]").forEach(cb => {
+      cb.checked = daySet.has(cb.value);
+    });
+
+    // End mode
+    const endMode = document.getElementById("recurrence-end-mode");
+    if (ev.recurrence_end) {
+      endMode.value = "on";
+      document.getElementById("recurrence-end-date").value = ev.recurrence_end;
+    } else if (ev.recurrence_count) {
+      endMode.value = "after";
+      document.getElementById("recurrence-end-count").value = ev.recurrence_count;
+    } else {
+      endMode.value = "never";
+    }
+    onRecurrenceEndModeChange();
+  }
 
   // Reminder
   const select = document.getElementById("reminder-select");
@@ -1340,6 +1377,67 @@ function getReminderMinutes() {
   return parseInt(select.value);
 }
 
+// ── Recurrence UI helpers ─────────────────────────────────────
+function onRecurrenceRuleChange() {
+  const rule = document.getElementById("recurrence-rule").value;
+  document.getElementById("recurrence-days-wrap").style.display =
+    rule === "custom" ? "" : "none";
+  document.getElementById("recurrence-end-wrap").style.display =
+    rule ? "" : "none";
+}
+
+function onRecurrenceEndModeChange() {
+  const mode = document.getElementById("recurrence-end-mode").value;
+  document.getElementById("recurrence-end-date").style.display  = mode === "on"    ? "" : "none";
+  document.getElementById("recurrence-end-count").style.display = mode === "after" ? "" : "none";
+}
+
+function collectRecurrenceFields() {
+  const rule = document.getElementById("recurrence-rule").value || null;
+  if (!rule) return { recurrence_rule: null };
+  const days = Array.from(document.querySelectorAll("#recurrence-days input:checked"))
+                    .map(cb => cb.value).join(",");
+  const mode = document.getElementById("recurrence-end-mode").value;
+  const end = mode === "on"    ? (document.getElementById("recurrence-end-date").value || null)  : null;
+  const cnt = mode === "after" ? (document.getElementById("recurrence-end-count").value || null) : null;
+  return {
+    recurrence_rule: rule,
+    recurrence_days: rule === "custom" ? days : null,
+    recurrence_end: end,
+    recurrence_count: cnt ? parseInt(cnt, 10) : null,
+  };
+}
+
+// Prompt: this / following / all — resolves to 'this'|'following'|'all' or null.
+function promptRecurringScope(verb) {
+  return new Promise(resolve => {
+    const bd = document.createElement("div");
+    bd.className = "cal-recurring-dialog-backdrop";
+    bd.innerHTML = `
+      <div class="cal-recurring-dialog" role="dialog" aria-modal="true">
+        <h3>${verb} recurring event</h3>
+        <label><input type="radio" name="rs" value="this" checked> This event only</label>
+        <label><input type="radio" name="rs" value="following"> This and following events</label>
+        <label><input type="radio" name="rs" value="all"> All events</label>
+        <div class="dialog-actions">
+          <button class="btn btn-ghost" data-act="cancel">Cancel</button>
+          <button class="btn btn-primary" data-act="ok">OK</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bd);
+    bd.addEventListener("click", (e) => {
+      if (e.target === bd || e.target.dataset.act === "cancel") {
+        document.body.removeChild(bd);
+        resolve(null);
+      } else if (e.target.dataset.act === "ok") {
+        const pick = bd.querySelector('input[name="rs"]:checked')?.value || "this";
+        document.body.removeChild(bd);
+        resolve(pick);
+      }
+    });
+  });
+}
+
 async function saveEvent() {
   const start = document.getElementById("start-time").value;
   const end = document.getElementById("end-time").value;
@@ -1361,8 +1459,21 @@ async function saveEvent() {
     description: document.getElementById("event-desc").value,
     priority: document.getElementById("event-priority").value,
     quadrant: getSelectedQuadrant(),
-    reminder_minutes: getReminderMinutes()
+    reminder_minutes: getReminderMinutes(),
+    ...collectRecurrenceFields(),
   };
+
+  // If editing a recurring instance, ask which scope.
+  const isRecurringInstance = selected && (
+    selected._is_recurring_instance ||
+    (selected.recurrence_rule && selected.type !== "project")
+  );
+  if (isRecurringInstance) {
+    const scope = await promptRecurringScope("Edit");
+    if (!scope) return;  // user cancelled
+    payload.scope = scope;
+    payload.occurrence_date = selected.plan_date || currentDate;
+  }
 
   let url, method;
 
@@ -1371,7 +1482,12 @@ async function saveEvent() {
       url = `/api/v2/project-tasks/${selected.task_id}`;
       method = "PUT";
     } else {
-      url = `/api/v2/events/${selected.id}`;
+      // Use the master id (series_id if present) for scope=following/all,
+      // or the exception row for scope=this on an already-modified occurrence.
+      const targetId = payload.scope === "this"
+        ? (selected._master_id || selected.id)
+        : (selected._master_id || selected.id);
+      url = `/api/v2/events/${targetId}`;
       method = "PUT";
     }
   } else {
@@ -1475,6 +1591,29 @@ document.addEventListener("DOMContentLoaded", loadGoogleStatus);
 
 async function deleteEvent() {
   if (!selected || !selected.id) return;
+
+  const isRecurringInstance = selected._is_recurring_instance ||
+    (selected.recurrence_rule && selected.type !== "project");
+
+  if (isRecurringInstance) {
+    const scope = await promptRecurringScope("Delete");
+    if (!scope) return;
+    const targetId = selected._master_id || selected.id;
+    const qs = new URLSearchParams({
+      scope,
+      occurrence_date: selected.plan_date || currentDate,
+    });
+    try {
+      await fetch(`/api/v2/events/${targetId}?${qs}`, { method: "DELETE" });
+      showToast("Deleted", "success");
+      closeModal();
+      loadAllEvents();
+    } catch (err) {
+      showToast("Delete failed", "error");
+    }
+    return;
+  }
+
   await deleteEventById(selected.id);
   closeModal();
 }
