@@ -12,8 +12,33 @@
     { key: "evening",   label: "Evening"   },
     { key: "anytime",   label: "Anytime"   },
   ];
+  const TIME_ORDER = { morning: 0, afternoon: 1, evening: 2, anytime: 3 };
 
   const state = { items: [], knownGroups: [] };
+
+  // ── Sorting ───────────────────────────────────────
+  // Order rule (inside any bucket we render):
+  //   1. time_of_day: morning → afternoon → evening → anytime
+  //   2. reminder_time ascending (items without a time go last)
+  //   3. position (drag-reorder respected)
+  //   4. name (stable tiebreak)
+  function _itemSortKey(it) {
+    const tod = TIME_ORDER[it.time_of_day] ?? 9;
+    const rt = it.reminder_time ? it.reminder_time : "zz:zz"; // pushes blanks to end
+    const pos = it.position ?? 9999;
+    return [tod, rt, pos, (it.name || "").toLowerCase()];
+  }
+  function sortItems(arr) {
+    return [...arr].sort((a, b) => {
+      const ka = _itemSortKey(a);
+      const kb = _itemSortKey(b);
+      for (let i = 0; i < ka.length; i++) {
+        if (ka[i] < kb[i]) return -1;
+        if (ka[i] > kb[i]) return 1;
+      }
+      return 0;
+    });
+  }
 
   // ── API helpers ───────────────────────────────────
   async function api(path, opts = {}) {
@@ -51,13 +76,13 @@
   }
 
   function renderByGroup(container) {
-    const buckets = new Map();  // preserve insertion order
+    const buckets = new Map();
     for (const it of state.items) {
       const key = (it.group_name || "").trim() || "__ungrouped";
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(it);
     }
-    // Sort keys alphabetically, with Ungrouped last.
+    // Sort group names alphabetically, ungrouped last.
     const keys = [...buckets.keys()].sort((a, b) => {
       if (a === "__ungrouped") return 1;
       if (b === "__ungrouped") return -1;
@@ -70,7 +95,7 @@
       section.innerHTML = `<div class="cl-group-title">${label}</div>
                            <div class="cl-list" data-group="${label}"></div>`;
       const list = section.querySelector(".cl-list");
-      for (const it of buckets.get(key)) list.appendChild(itemEl(it));
+      for (const it of sortItems(buckets.get(key))) list.appendChild(itemEl(it));
       container.appendChild(section);
     }
   }
@@ -89,7 +114,7 @@
       section.innerHTML = `<div class="cl-group-title">${b.label}</div>
                            <div class="cl-list" data-group="${b.key}"></div>`;
       const list = section.querySelector(".cl-list");
-      for (const it of items) list.appendChild(itemEl(it));
+      for (const it of sortItems(items)) list.appendChild(itemEl(it));
       container.appendChild(section);
     }
   }
@@ -170,8 +195,14 @@
     $("#cl-schedule").value = item?.schedule || "daily";
     $("#cl-reminder-time").value = item?.reminder_time || "";
     $("#cl-recurrence-end").value = item?.recurrence_end || "";
-    $("#cl-group").value = item?.group_name || "";
-    refreshGroupList();
+    // Refresh the group options (from items loaded so far). If the current
+    // item has a group not yet in the list (rare — races), include it.
+    const currentGroup = item?.group_name || "";
+    if (currentGroup && !state.knownGroups.includes(currentGroup)) {
+      state.knownGroups.push(currentGroup);
+      state.knownGroups.sort();
+    }
+    refreshGroupList(currentGroup);
 
     const customDays = (item?.schedule_days || "").split(",").filter(Boolean);
     $$("#cl-weekdays input[type=checkbox]").forEach((cb) => {
@@ -201,7 +232,10 @@
       schedule: $("#cl-schedule").value,
       reminder_time: $("#cl-reminder-time").value || null,
       recurrence_end: $("#cl-recurrence-end").value || null,
-      group_name: $("#cl-group").value.trim() || null,
+      group_name: (() => {
+        const v = $("#cl-group").value.trim();
+        return (!v || v === "__new__") ? null : v;
+      })(),
       schedule_days: $$("#cl-weekdays input:checked").map((cb) => cb.value).join(","),
     };
     if (!payload.name) return;
@@ -274,13 +308,39 @@
     }
   }
 
-  function refreshGroupList() {
-    const dl = $("#cl-groups-list");
-    if (!dl) return;
-    dl.innerHTML = state.knownGroups
-      .map((g) => `<option value="${g.replace(/"/g, "&quot;")}"></option>`)
-      .join("");
+  function refreshGroupList(preserveSelected) {
+    const sel = $("#cl-group");
+    if (!sel) return;
+    const current = preserveSelected !== undefined ? preserveSelected : sel.value;
+    const options = ['<option value="">(none)</option>'];
+    for (const g of state.knownGroups) {
+      const safe = g.replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      options.push(`<option value="${safe}">${safe}</option>`);
+    }
+    options.push('<option value="__new__">+ New group…</option>');
+    sel.innerHTML = options.join("");
+    // Restore selection if the value still exists; else reset.
+    if (current && (current === "" || state.knownGroups.includes(current))) {
+      sel.value = current;
+    } else {
+      sel.value = "";
+    }
   }
+
+  // Called from the HTML onchange handler.
+  window.onGroupSelectChange = function () {
+    const sel = $("#cl-group");
+    if (sel.value !== "__new__") return;
+    const raw = (prompt("New group name:") || "").trim();
+    if (!raw) { sel.value = ""; return; }
+    // Title Case locally so the dropdown shows the same form that'll be saved.
+    const titled = raw.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    if (!state.knownGroups.includes(titled)) {
+      state.knownGroups.push(titled);
+      state.knownGroups.sort();
+    }
+    refreshGroupList(titled);
+  };
 
   // ── Wire up ───────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {

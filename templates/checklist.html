@@ -67,10 +67,11 @@
 
         <label class="cl-field">
           <span>Group (optional)</span>
-          <input type="text" id="cl-group" list="cl-groups-list" maxlength="60"
-                 placeholder="Pick or type a new group (e.g. Health)">
-          <datalist id="cl-groups-list"></datalist>
-          <small class="cl-hint">Stored in Title Case — "health" and "Health" become one group.</small>
+          <select id="cl-group" onchange="onGroupSelectChange()">
+            <option value="">(none)</option>
+            <option value="__new__">+ New group…</option>
+          </select>
+          <small class="cl-hint">Groups stay in Title Case — "health" and "Health" become one.</small>
         </label>
 
         <label class="cl-field">
