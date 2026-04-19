@@ -59,6 +59,17 @@ def _parse_end_date(value):
     return date.fromisoformat(value).isoformat()
 
 
+def _normalize_group(value):
+    """Normalise a user-typed group name to Title Case so 'health',
+    'Health', 'HEALTH' all collapse to 'Health'. Empty → None."""
+    if not value:
+        return None
+    cleaned = " ".join(str(value).strip().split())  # collapse inner whitespace
+    if not cleaned:
+        return None
+    return cleaned.title()
+
+
 def _serialize(item, tick_map):
     return {
         "id": item["id"],
@@ -69,6 +80,7 @@ def _serialize(item, tick_map):
         "time_of_day": item.get("time_of_day") or "anytime",
         "reminder_time": (item.get("reminder_time") or "")[:5],  # HH:MM
         "recurrence_end": item.get("recurrence_end") or "",
+        "group_name": item.get("group_name") or "",
         "position": item.get("position") or 9999,
         "ticked": tick_map.get(item["id"], False),
     }
@@ -180,6 +192,7 @@ def create_item():
         return jsonify({"error": "Invalid end date"}), 400
 
     schedule_days = (data.get("schedule_days") or "").strip()
+    group_name = _normalize_group(data.get("group_name"))
 
     try:
         inserted = post(
@@ -193,6 +206,7 @@ def create_item():
                 "time_of_day": time_of_day,
                 "reminder_time": reminder_time,
                 "recurrence_end": recurrence_end,
+                "group_name": group_name,
                 "position": int(data.get("position") or 9999),
                 "is_deleted": False,
             },
@@ -256,6 +270,8 @@ def update_item(item_id):
             patch["recurrence_end"] = _parse_end_date(data["recurrence_end"])
         except ValueError:
             return jsonify({"error": "Invalid end date"}), 400
+    if "group_name" in data:
+        patch["group_name"] = _normalize_group(data["group_name"])
     if "position" in data:
         patch["position"] = int(data["position"])
 
@@ -369,6 +385,25 @@ def untick_item(item_id):
 # ─────────────────────────────────────────────
 #  REORDER
 # ─────────────────────────────────────────────
+@checklist_bp.route("/api/checklist/groups", methods=["GET"])
+@login_required
+def list_groups():
+    """Return the distinct group names this user has used, alphabetical.
+    Powers the <datalist> autocomplete in the edit modal."""
+    user_id = session["user_id"]
+    rows = get(
+        "checklist_items",
+        {
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "group_name": "not.is.null",
+            "select": "group_name",
+        },
+    ) or []
+    names = sorted({(r.get("group_name") or "").strip() for r in rows if r.get("group_name")})
+    return jsonify({"groups": [n for n in names if n]})
+
+
 @checklist_bp.route("/api/checklist/sync-calendar", methods=["POST"])
 @login_required
 def sync_calendar():

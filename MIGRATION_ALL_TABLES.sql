@@ -621,8 +621,11 @@ create table if not exists checklist_items (
 );
 alter table checklist_items
   add column if not exists google_event_id text,
-  add column if not exists recurrence_end date;
+  add column if not exists recurrence_end date,
+  add column if not exists group_name text;
 create index if not exists checklist_items_user_idx on checklist_items (user_id);
+create index if not exists checklist_items_group_idx
+  on checklist_items (user_id, group_name) where is_deleted = false;
 
 
 create table if not exists checklist_ticks (

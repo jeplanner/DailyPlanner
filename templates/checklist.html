@@ -66,6 +66,14 @@
         </label>
 
         <label class="cl-field">
+          <span>Group (optional)</span>
+          <input type="text" id="cl-group" list="cl-groups-list" maxlength="60"
+                 placeholder="Pick or type a new group (e.g. Health)">
+          <datalist id="cl-groups-list"></datalist>
+          <small class="cl-hint">Stored in Title Case — "health" and "Health" become one group.</small>
+        </label>
+
+        <label class="cl-field">
           <span>When</span>
           <select id="cl-time-of-day">
             <option value="morning">Morning</option>

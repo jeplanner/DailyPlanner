@@ -6,14 +6,14 @@
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const GROUPS = [
+  const TIME_BUCKETS = [
     { key: "morning",   label: "Morning"   },
     { key: "afternoon", label: "Afternoon" },
     { key: "evening",   label: "Evening"   },
     { key: "anytime",   label: "Anytime"   },
   ];
 
-  const state = { items: [] };
+  const state = { items: [], knownGroups: [] };
 
   // ── API helpers ───────────────────────────────────
   async function api(path, opts = {}) {
@@ -39,22 +39,56 @@
       return;
     }
 
-    const byGroup = {};
-    for (const g of GROUPS) byGroup[g.key] = [];
-    for (const it of state.items) {
-      const k = byGroup[it.time_of_day] ? it.time_of_day : "anytime";
-      byGroup[k].push(it);
+    // If ANY item has a user-defined group, primary-group by that.
+    // Otherwise fall back to time-of-day buckets (the old layout).
+    const anyGroup = state.items.some((it) => (it.group_name || "").trim());
+
+    if (anyGroup) {
+      renderByGroup(container);
+    } else {
+      renderByTimeOfDay(container);
     }
+  }
 
-    for (const g of GROUPS) {
-      const items = byGroup[g.key];
-      if (!items.length) continue;
+  function renderByGroup(container) {
+    const buckets = new Map();  // preserve insertion order
+    for (const it of state.items) {
+      const key = (it.group_name || "").trim() || "__ungrouped";
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(it);
+    }
+    // Sort keys alphabetically, with Ungrouped last.
+    const keys = [...buckets.keys()].sort((a, b) => {
+      if (a === "__ungrouped") return 1;
+      if (b === "__ungrouped") return -1;
+      return a.localeCompare(b);
+    });
 
+    for (const key of keys) {
+      const label = key === "__ungrouped" ? "Ungrouped" : key;
       const section = document.createElement("div");
-      section.innerHTML = `<div class="cl-group-title">${g.label}</div>
-                           <div class="cl-list" data-group="${g.key}"></div>`;
+      section.innerHTML = `<div class="cl-group-title">${label}</div>
+                           <div class="cl-list" data-group="${label}"></div>`;
       const list = section.querySelector(".cl-list");
+      for (const it of buckets.get(key)) list.appendChild(itemEl(it));
+      container.appendChild(section);
+    }
+  }
 
+  function renderByTimeOfDay(container) {
+    const byTime = {};
+    for (const b of TIME_BUCKETS) byTime[b.key] = [];
+    for (const it of state.items) {
+      const k = byTime[it.time_of_day] ? it.time_of_day : "anytime";
+      byTime[k].push(it);
+    }
+    for (const b of TIME_BUCKETS) {
+      const items = byTime[b.key];
+      if (!items.length) continue;
+      const section = document.createElement("div");
+      section.innerHTML = `<div class="cl-group-title">${b.label}</div>
+                           <div class="cl-list" data-group="${b.key}"></div>`;
+      const list = section.querySelector(".cl-list");
       for (const it of items) list.appendChild(itemEl(it));
       container.appendChild(section);
     }
@@ -67,8 +101,15 @@
 
     const meta = [];
     if (it.reminder_time) meta.push(`<span class="cl-meta-badge">⏰ ${it.reminder_time}</span>`);
+    if (it.time_of_day && it.time_of_day !== "anytime") {
+      const tod = it.time_of_day.charAt(0).toUpperCase() + it.time_of_day.slice(1);
+      meta.push(`<span class="cl-meta-badge">${tod}</span>`);
+    }
     if (it.schedule && it.schedule !== "daily") {
       meta.push(`<span class="cl-meta-badge">${scheduleLabel(it)}</span>`);
+    }
+    if (it.recurrence_end) {
+      meta.push(`<span class="cl-meta-badge">until ${it.recurrence_end}</span>`);
     }
 
     row.innerHTML = `
@@ -129,6 +170,8 @@
     $("#cl-schedule").value = item?.schedule || "daily";
     $("#cl-reminder-time").value = item?.reminder_time || "";
     $("#cl-recurrence-end").value = item?.recurrence_end || "";
+    $("#cl-group").value = item?.group_name || "";
+    refreshGroupList();
 
     const customDays = (item?.schedule_days || "").split(",").filter(Boolean);
     $$("#cl-weekdays input[type=checkbox]").forEach((cb) => {
@@ -158,6 +201,7 @@
       schedule: $("#cl-schedule").value,
       reminder_time: $("#cl-reminder-time").value || null,
       recurrence_end: $("#cl-recurrence-end").value || null,
+      group_name: $("#cl-group").value.trim() || null,
       schedule_days: $$("#cl-weekdays input:checked").map((cb) => cb.value).join(","),
     };
     if (!payload.name) return;
@@ -217,11 +261,25 @@
     try {
       const data = await api("/api/checklist/items");
       state.items = data.items || [];
+      // Derive known groups from the loaded items — avoids a second
+      // round-trip to /api/checklist/groups on every page load.
+      state.knownGroups = [
+        ...new Set(state.items.map((it) => (it.group_name || "").trim()).filter(Boolean)),
+      ].sort();
+      refreshGroupList();
       render();
     } catch (err) {
       $("#cl-groups").innerHTML =
         `<div class="cl-empty">Failed to load: ${err.message}</div>`;
     }
+  }
+
+  function refreshGroupList() {
+    const dl = $("#cl-groups-list");
+    if (!dl) return;
+    dl.innerHTML = state.knownGroups
+      .map((g) => `<option value="${g.replace(/"/g, "&quot;")}"></option>`)
+      .join("");
   }
 
   // ── Wire up ───────────────────────────────────────
