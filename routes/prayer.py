@@ -14,6 +14,7 @@ gracefully (the <img> simply won't render).
 """
 from flask import Blueprint, render_template
 
+from services.kavasam_text import get_verses as get_kavasam_verses
 from services.login_service import login_required
 
 prayer_bp = Blueprint("prayer", __name__)
@@ -34,3 +35,11 @@ DEITIES = [
 @login_required
 def prayer_page():
     return render_template("prayer.html", deities=DEITIES)
+
+
+@prayer_bp.route("/prayer/kavasam")
+@login_required
+def kavasam_page():
+    """Kanda Sashti Kavasam — full Tamil text, mobile-friendly with
+    text-size toggle and saved preference."""
+    return render_template("kavasam.html", verses=get_kavasam_verses())

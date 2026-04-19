@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>கந்த சஷ்டி கவசம் — DailyPlanner</title>
+  {# Tamil display font — Noto Sans Tamil has excellent coverage and
+     lightweight weights. Loaded via Google Fonts with display=swap so
+     text is legible immediately even before the font arrives. #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@400;600&display=swap">
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Noto Sans Tamil', 'Latha', system-ui, -apple-system, sans-serif;
+      background: #fffdf5;
+      color: #1a1a2e;
+      line-height: 1.9;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html.dark body { background: #0f172a; color: #f1f5f9; }
+
+    .kav-container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 20px 18px 120px;
+    }
+
+    .kav-header {
+      text-align: center;
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    html.dark .kav-header { border-bottom-color: #334155; }
+    .kav-header h1 {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: 0.01em;
+    }
+    .kav-header .subtitle {
+      color: #6b7280;
+      margin-top: 4px;
+      font-size: 13.5px;
+    }
+    html.dark .kav-header .subtitle { color: #94a3b8; }
+
+    .kav-toolbar {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin: 14px 0 22px;
+      flex-wrap: wrap;
+    }
+    .kav-toolbar button {
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #374151;
+      font-family: inherit;
+    }
+    html.dark .kav-toolbar button {
+      background: #1e293b; border-color: #334155; color: #e2e8f0;
+    }
+    .kav-toolbar button:hover { background: #f3f4f6; }
+    html.dark .kav-toolbar button:hover { background: #334155; }
+
+    .kav-verse {
+      margin-bottom: 22px;
+      padding: 14px 18px;
+      background: #ffffff;
+      border-left: 3px solid #d97706;
+      border-radius: 6px;
+      font-size: 17px;
+      position: relative;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    html.dark .kav-verse {
+      background: #1e293b;
+      border-left-color: #f59e0b;
+    }
+
+    .kav-verse .line {
+      display: block;
+      padding: 1px 0;
+    }
+
+    .kav-verse-num {
+      position: absolute;
+      top: 10px;
+      right: 14px;
+      font-size: 11.5px;
+      color: #9ca3af;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    /* Text-size controls — the body has a size class toggled by JS. */
+    body.kav-size-sm .kav-verse { font-size: 15px;   line-height: 1.85; }
+    body.kav-size-md .kav-verse { font-size: 17px;   line-height: 1.9;  }
+    body.kav-size-lg .kav-verse { font-size: 20px;   line-height: 2.0;  }
+    body.kav-size-xl .kav-verse { font-size: 23.5px; line-height: 2.1;  }
+
+    .kav-footer {
+      text-align: center;
+      margin-top: 34px;
+      padding-top: 18px;
+      border-top: 1px solid #e5e7eb;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+    html.dark .kav-footer { border-top-color: #334155; }
+  </style>
+</head>
+<body class="kav-size-md">
+
+  <div class="nav-icons">
+    {% include "_top_nav.html" %}
+  </div>
+
+  <main id="main" class="kav-container">
+
+    <header class="kav-header">
+      <h1>🕉️ கந்த சஷ்டி கவசம்</h1>
+      <div class="subtitle">தேவராயர் அருளியது</div>
+    </header>
+
+    <div class="kav-toolbar" role="toolbar" aria-label="Text size">
+      <button type="button" onclick="setKavSize('sm')">A−</button>
+      <button type="button" onclick="setKavSize('md')">A</button>
+      <button type="button" onclick="setKavSize('lg')">A+</button>
+      <button type="button" onclick="setKavSize('xl')">A++</button>
+    </div>
+
+    {% for verse in verses %}
+    <section class="kav-verse">
+      <span class="kav-verse-num">— {{ verse.number }}</span>
+      {% for line in verse.lines %}
+      <span class="line">{{ line }}</span>
+      {% endfor %}
+    </section>
+    {% endfor %}
+
+    <div class="kav-footer">
+      சரணம் சரணம் சண்முகா சரணம் 🙏
+    </div>
+  </main>
+
+  <script>
+    function setKavSize(s) {
+      const body = document.body;
+      body.classList.remove("kav-size-sm", "kav-size-md", "kav-size-lg", "kav-size-xl");
+      body.classList.add("kav-size-" + s);
+      try { localStorage.setItem("kav_size", s); } catch (e) {}
+    }
+    // Restore last-used text size.
+    try {
+      const saved = localStorage.getItem("kav_size");
+      if (saved) setKavSize(saved);
+    } catch (e) {}
+  </script>
+
+</body>
+</html>
