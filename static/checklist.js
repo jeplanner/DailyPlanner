@@ -128,6 +128,7 @@
     $("#cl-time-of-day").value = item?.time_of_day || "anytime";
     $("#cl-schedule").value = item?.schedule || "daily";
     $("#cl-reminder-time").value = item?.reminder_time || "";
+    $("#cl-recurrence-end").value = item?.recurrence_end || "";
 
     const customDays = (item?.schedule_days || "").split(",").filter(Boolean);
     $$("#cl-weekdays input[type=checkbox]").forEach((cb) => {
@@ -145,8 +146,10 @@
     $("#cl-weekdays").hidden = $("#cl-schedule").value !== "custom";
   }
 
+  let saving = false;
   async function saveItem(e) {
     e.preventDefault();
+    if (saving) return;               // guard against double-tap
     const id = $("#cl-item-id").value;
     const payload = {
       name: $("#cl-name").value.trim(),
@@ -154,9 +157,18 @@
       time_of_day: $("#cl-time-of-day").value,
       schedule: $("#cl-schedule").value,
       reminder_time: $("#cl-reminder-time").value || null,
+      recurrence_end: $("#cl-recurrence-end").value || null,
       schedule_days: $$("#cl-weekdays input:checked").map((cb) => cb.value).join(","),
     };
     if (!payload.name) return;
+
+    saving = true;
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    const prevLabel = submitBtn?.textContent;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Saving…";
+    }
 
     try {
       if (id) {
@@ -174,19 +186,29 @@
       await load();
     } catch (err) {
       alert("Couldn't save: " + err.message);
+    } finally {
+      saving = false;
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = prevLabel;
+      }
     }
   }
 
-  async function deleteItem() {
+  async function deleteItem(e) {
     const id = $("#cl-item-id").value;
     if (!id) return;
     if (!confirm("Delete this item?")) return;
+    const btn = e?.currentTarget;
+    if (btn) { btn.disabled = true; btn.textContent = "Deleting…"; }
     try {
       await api(`/api/checklist/items/${id}`, { method: "DELETE" });
       closeModal();
       await load();
     } catch (err) {
       alert("Couldn't delete: " + err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Delete"; }
     }
   }
 

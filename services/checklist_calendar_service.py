@@ -68,19 +68,29 @@ def _user_tz(user_id):
     return "Asia/Kolkata"
 
 
-def _rrule(schedule, schedule_days):
+def _rrule(schedule, schedule_days, recurrence_end=None):
     if schedule == "weekdays":
-        return "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
-    if schedule == "weekends":
-        return "RRULE:FREQ=WEEKLY;BYDAY=SA,SU"
-    if schedule == "custom":
+        base = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+    elif schedule == "weekends":
+        base = "FREQ=WEEKLY;BYDAY=SA,SU"
+    elif schedule == "custom":
         day_codes = {"0": "SU", "1": "MO", "2": "TU", "3": "WE",
                      "4": "TH", "5": "FR", "6": "SA"}
         days = [d.strip() for d in (schedule_days or "").split(",") if d.strip() in day_codes]
-        if not days:
-            return "RRULE:FREQ=DAILY"
-        return "RRULE:FREQ=WEEKLY;BYDAY=" + ",".join(day_codes[d] for d in days)
-    return "RRULE:FREQ=DAILY"
+        base = "FREQ=WEEKLY;BYDAY=" + ",".join(day_codes[d] for d in days) if days else "FREQ=DAILY"
+    else:
+        base = "FREQ=DAILY"
+
+    if recurrence_end:
+        try:
+            end = date.fromisoformat(recurrence_end)
+            # UNTIL is inclusive in RFC 5545; use 23:59:59 UTC of the
+            # chosen day so the final occurrence isn't clipped.
+            base += ";UNTIL=" + end.strftime("%Y%m%dT235959Z")
+        except Exception:
+            pass
+
+    return "RRULE:" + base
 
 
 def _event_body(item, tz_name):
@@ -99,7 +109,11 @@ def _event_body(item, tz_name):
             "dateTime": end_dt.strftime("%Y-%m-%dT%H:%M:%S"),
             "timeZone": tz_name,
         },
-        "recurrence": [_rrule(item.get("schedule"), item.get("schedule_days"))],
+        "recurrence": [_rrule(
+            item.get("schedule"),
+            item.get("schedule_days"),
+            item.get("recurrence_end"),
+        )],
         "reminders": {
             "useDefault": False,
             "overrides": [{"method": "popup", "minutes": 0}],

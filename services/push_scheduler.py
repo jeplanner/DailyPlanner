@@ -81,7 +81,7 @@ def _user_tz_name(user_id):
     return "Asia/Kolkata"
 
 
-def _due_items_for_user(user_id, local_hhmm, local_weekday):
+def _due_items_for_user(user_id, local_hhmm, local_weekday, today_iso):
     items = get(
         "checklist_items",
         {
@@ -90,6 +90,8 @@ def _due_items_for_user(user_id, local_hhmm, local_weekday):
             "reminder_time": "not.is.null",
         },
     ) or []
+    from datetime import date as _date
+    today = _date.fromisoformat(today_iso)
     due = []
     for it in items:
         rt = (it.get("reminder_time") or "")[:5]
@@ -97,6 +99,13 @@ def _due_items_for_user(user_id, local_hhmm, local_weekday):
             continue
         if not _schedule_applies_today(it.get("schedule"), it.get("schedule_days"), local_weekday):
             continue
+        end_str = it.get("recurrence_end")
+        if end_str:
+            try:
+                if _date.fromisoformat(end_str) < today:
+                    continue
+            except Exception:
+                pass
         due.append(it)
     return due
 
@@ -139,7 +148,7 @@ def tick():
             weekday = now_local.weekday()  # Mon=0..Sun=6
             today = now_local.date().isoformat()
 
-            items = _due_items_for_user(user_id, hhmm, weekday)
+            items = _due_items_for_user(user_id, hhmm, weekday, today)
             for it in items:
                 if not _claim_send_slot(it["id"], user_id, today):
                     continue

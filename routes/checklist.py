@@ -7,10 +7,15 @@ notification at that local time on the matching schedule.
 Distinct from `habits`: habits track quantity/streak; checklists just
 need to be ticked off for the day.
 """
+import logging
+import threading
+from datetime import date, datetime
 from datetime import time as dtime
 
 from flask import Blueprint, jsonify, render_template, request, session
 from requests.exceptions import HTTPError
+
+logger = logging.getLogger(__name__)
 
 from auth import login_required
 from services import checklist_calendar_service as cal_sync
@@ -43,6 +48,17 @@ def _parse_reminder_time(value):
     return dtime(hh, mm, ss).isoformat()
 
 
+def _parse_end_date(value):
+    """Accept 'YYYY-MM-DD' or empty. Returns ISO string or None."""
+    if not value:
+        return None
+    value = str(value).strip()
+    if not value:
+        return None
+    # Validate by round-tripping through date.fromisoformat.
+    return date.fromisoformat(value).isoformat()
+
+
 def _serialize(item, tick_map):
     return {
         "id": item["id"],
@@ -52,9 +68,43 @@ def _serialize(item, tick_map):
         "schedule_days": item.get("schedule_days") or "",
         "time_of_day": item.get("time_of_day") or "anytime",
         "reminder_time": (item.get("reminder_time") or "")[:5],  # HH:MM
+        "recurrence_end": item.get("recurrence_end") or "",
         "position": item.get("position") or 9999,
         "ticked": tick_map.get(item["id"], False),
     }
+
+
+def _sync_calendar_async(user_id, item_id, item_row, old_event_id=None, force_delete=False):
+    """Run Calendar sync in a background thread so the HTTP request
+    returns immediately. The checklist row is written to Supabase first
+    (source of truth); Calendar is a downstream mirror.
+
+    force_delete=True unconditionally removes old_event_id (used when
+    the reminder is cleared or the item is deleted)."""
+    def _work():
+        try:
+            if force_delete and old_event_id:
+                cal_sync.delete_from_calendar(user_id, old_event_id)
+                update(
+                    "checklist_items",
+                    params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                    json={"google_event_id": None},
+                )
+                return
+            if not item_row.get("reminder_time"):
+                return  # nothing to mirror
+            new_id = cal_sync.sync_to_calendar(user_id, item_row)
+            if new_id and new_id != old_event_id:
+                update(
+                    "checklist_items",
+                    params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                    json={"google_event_id": new_id},
+                )
+        except Exception:
+            logger.exception("Background calendar sync failed for %s", item_id)
+
+    t = threading.Thread(target=_work, name=f"cal-sync-{item_id}", daemon=True)
+    t.start()
 
 
 # ─────────────────────────────────────────────
@@ -124,6 +174,10 @@ def create_item():
         reminder_time = _parse_reminder_time(data.get("reminder_time"))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    try:
+        recurrence_end = _parse_end_date(data.get("recurrence_end"))
+    except ValueError:
+        return jsonify({"error": "Invalid end date"}), 400
 
     schedule_days = (data.get("schedule_days") or "").strip()
 
@@ -138,6 +192,7 @@ def create_item():
                 "schedule_days": schedule_days or None,
                 "time_of_day": time_of_day,
                 "reminder_time": reminder_time,
+                "recurrence_end": recurrence_end,
                 "position": int(data.get("position") or 9999),
                 "is_deleted": False,
             },
@@ -148,18 +203,11 @@ def create_item():
 
     row = inserted[0]
 
-    # Mirror into Google Calendar if the user has linked their account
-    # and this item carries a reminder time. Calendar's popup reminders
-    # bypass Android OEM heads-up suppression.
+    # Kick off calendar mirroring in a background thread so the
+    # browser gets its response in ~100ms instead of ~1s. Supabase is
+    # the source of truth; Calendar is best-effort.
     if reminder_time:
-        google_id = cal_sync.sync_to_calendar(user_id, row)
-        if google_id:
-            update(
-                "checklist_items",
-                params={"id": f"eq.{row['id']}", "user_id": f"eq.{user_id}"},
-                json={"google_event_id": google_id},
-            )
-            row["google_event_id"] = google_id
+        _sync_calendar_async(user_id, row["id"], row)
 
     return jsonify(_serialize(row, {}))
 
@@ -203,6 +251,11 @@ def update_item(item_id):
             patch["reminder_time"] = _parse_reminder_time(data["reminder_time"])
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
+    if "recurrence_end" in data:
+        try:
+            patch["recurrence_end"] = _parse_end_date(data["recurrence_end"])
+        except ValueError:
+            return jsonify({"error": "Invalid end date"}), 400
     if "position" in data:
         patch["position"] = int(data["position"])
 
@@ -224,22 +277,10 @@ def update_item(item_id):
         fresh = fresh_rows[0]
         old_event_id = existing[0].get("google_event_id")
         if fresh.get("reminder_time"):
-            # Create/update the Calendar event.
-            new_event_id = cal_sync.sync_to_calendar(user_id, fresh)
-            if new_event_id and new_event_id != old_event_id:
-                update(
-                    "checklist_items",
-                    params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-                    json={"google_event_id": new_event_id},
-                )
+            _sync_calendar_async(user_id, item_id, fresh, old_event_id=old_event_id)
         elif old_event_id:
-            # Reminder cleared — remove the Calendar event and null the link.
-            cal_sync.delete_from_calendar(user_id, old_event_id)
-            update(
-                "checklist_items",
-                params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-                json={"google_event_id": None},
-            )
+            _sync_calendar_async(user_id, item_id, fresh,
+                                 old_event_id=old_event_id, force_delete=True)
 
     return jsonify({"success": True})
 
@@ -256,14 +297,23 @@ def delete_item(item_id):
         "checklist_items",
         {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
     ) or []
-    if existing and existing[0].get("google_event_id"):
-        cal_sync.delete_from_calendar(user_id, existing[0]["google_event_id"])
+    old_event_id = existing[0].get("google_event_id") if existing else None
 
     update(
         "checklist_items",
         params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
         json={"is_deleted": True, "google_event_id": None},
     )
+
+    if old_event_id:
+        # Fire-and-forget: Calendar cleanup shouldn't block the UI.
+        def _cleanup():
+            try:
+                cal_sync.delete_from_calendar(user_id, old_event_id)
+            except Exception:
+                logger.exception("Background calendar delete failed")
+        threading.Thread(target=_cleanup, daemon=True).start()
+
     return jsonify({"success": True})
 
 

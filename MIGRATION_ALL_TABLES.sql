@@ -620,7 +620,8 @@ create table if not exists checklist_items (
   created_at      timestamptz default now()
 );
 alter table checklist_items
-  add column if not exists google_event_id text;
+  add column if not exists google_event_id text,
+  add column if not exists recurrence_end date;
 create index if not exists checklist_items_user_idx on checklist_items (user_id);
 
 
