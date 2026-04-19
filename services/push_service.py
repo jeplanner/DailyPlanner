@@ -23,7 +23,14 @@ logger = logging.getLogger(__name__)
 
 
 def _vapid_claims():
-    subject = os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")
+    # env var present-but-empty should still fall back, not crash py_vapid
+    # with "Missing 'sub' from claims".
+    subject = (os.environ.get("VAPID_SUBJECT") or "").strip()
+    if not subject:
+        subject = "mailto:admin@example.com"
+    elif not subject.startswith(("mailto:", "http:", "https:")):
+        # Accept a bare email by upgrading it to a mailto: URI.
+        subject = f"mailto:{subject}"
     return {"sub": subject}
 
 
