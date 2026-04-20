@@ -8,6 +8,9 @@
   "orientation": "portrait",
   "background_color": "#f7f8fa",
   "theme_color": "#6366f1",
+  "launch_handler": {
+    "client_mode": ["focus-existing", "auto"]
+  },
   "icons": [
     {
       "src": "/static/icons/icon.svg",

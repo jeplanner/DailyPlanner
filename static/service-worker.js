@@ -42,9 +42,26 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    for (const c of all) {
-      if (c.url.includes(url) && "focus" in c) return c.focus();
+
+    // Prefer an existing window on the same origin. If its URL already
+    // matches the notification target, just focus it; otherwise navigate
+    // it to the target so we don't stack up duplicate tabs.
+    const sameOrigin = all.filter((c) => {
+      try { return new URL(c.url).origin === self.location.origin; }
+      catch (_) { return false; }
+    });
+
+    if (sameOrigin.length) {
+      const exact = sameOrigin.find((c) => c.url.includes(url));
+      const target = exact || sameOrigin[0];
+      if ("focus" in target) {
+        try {
+          if (!exact && "navigate" in target) await target.navigate(url);
+        } catch (_) { /* cross-origin or unsupported — focus anyway */ }
+        return target.focus();
+      }
     }
+
     if (self.clients.openWindow) return self.clients.openWindow(url);
   })());
 });
