@@ -18,6 +18,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from utils.dates import safe_date_from_string
 from utils.planner_parser import parse_planner_input
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
@@ -186,10 +187,12 @@ def create_event():
 @events_bp.route("/api/v2/google-status")
 @login_required
 def google_status():
-    """Tell the client whether the user has connected Google Calendar.
+    """Tell the client whether the user has a usable Google Calendar link.
 
-    Returns {connected: bool, login_url: str}. The client shows a
-    "Connect Google" banner/pill when connected=false.
+    Returns {connected, needs_reauth, login_url}. `connected` is true only
+    when the stored refresh token is still valid; `needs_reauth` flips on
+    when we have a row but refresh fails (revoked / expired), so the UI
+    can distinguish "never linked" from "link is dead, please reconnect".
     """
     user_id = session["user_id"]
     try:
@@ -197,8 +200,31 @@ def google_status():
     except Exception as e:
         logger.warning("google_status lookup failed: %s", e)
         rows = []
+
+    if not rows:
+        return jsonify({
+            "connected": False,
+            "needs_reauth": False,
+            "login_url": url_for("events.google_login"),
+        })
+
+    # Probe the refresh token. _credentials() refreshes when the access
+    # token is expired; a revoked refresh token raises RefreshError.
+    try:
+        creds = events_cal._credentials(user_id)
+        connected = creds is not None
+        needs_reauth = not connected
+    except RefreshError:
+        connected = False
+        needs_reauth = True
+    except Exception as e:
+        logger.warning("google_status token probe failed: %s", e)
+        connected = False
+        needs_reauth = False
+
     return jsonify({
-        "connected": bool(rows),
+        "connected": connected,
+        "needs_reauth": needs_reauth,
         "login_url": url_for("events.google_login"),
     })
 
@@ -480,6 +506,69 @@ def delete_event(event_id):
         _background_gcal(lambda: events_cal.sync_delete(user_id, row["google_event_id"]))
 
     return jsonify({"ok": True, "scope": scope or "single"})
+
+@events_bp.post("/api/v2/events/resync")
+@login_required
+def resync_unsynced_events():
+    """Backfill daily_events rows missing a google_event_id to Google.
+
+    Use case: token was revoked so the background sync silently skipped a
+    batch of newly created events. After reconnecting via /google-login,
+    POST here to push those rows up.
+    """
+    user_id = session["user_id"]
+
+    token_rows = get("user_google_tokens", params={"user_id": f"eq.{user_id}"}) or []
+    if not token_rows:
+        return jsonify({
+            "error": "Not connected to Google Calendar",
+            "login_url": url_for("events.google_login"),
+        }), 400
+
+    try:
+        creds = events_cal._credentials(user_id)
+    except RefreshError:
+        return jsonify({
+            "error": "Google token is revoked or expired — please reconnect",
+            "needs_reauth": True,
+            "login_url": url_for("events.google_login"),
+        }), 400
+    if creds is None:
+        return jsonify({
+            "error": "Could not load Google credentials",
+            "login_url": url_for("events.google_login"),
+        }), 400
+
+    rows = get("daily_events", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
+        "google_event_id": "is.null",
+    }) or []
+
+    # Skip per-occurrence override rows — they patch existing Google
+    # instances via sync_exception_override, not a fresh insert.
+    candidates = [r for r in rows if not r.get("is_exception")]
+
+    synced = 0
+    failed = 0
+    for r in candidates:
+        gid = events_cal.sync_create(user_id, r)
+        if gid:
+            update(
+                "daily_events",
+                params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                json={"google_event_id": gid},
+            )
+            synced += 1
+        else:
+            failed += 1
+
+    return jsonify({
+        "total": len(candidates),
+        "synced": synced,
+        "failed": failed,
+    })
+
 
 @events_bp.post("/api/v2/smart-create")
 @login_required

@@ -1544,6 +1544,7 @@ async function saveEvent() {
 // drives the "Auto-sync" status pill in the modal header.
 // ═══════════════════════════════════════════════════════════
 let _gcalConnected = null;    // null = unknown, true/false once fetched
+let _gcalNeedsReauth = false;
 let _gcalLoginUrl = "/google-login";
 
 async function loadGoogleStatus() {
@@ -1552,6 +1553,7 @@ async function loadGoogleStatus() {
     if (!r.ok) return;
     const data = await r.json();
     _gcalConnected = !!data.connected;
+    _gcalNeedsReauth = !!data.needs_reauth;
     if (data.login_url) _gcalLoginUrl = data.login_url;
     _renderGcalStatusPill();
   } catch (err) {
@@ -1567,6 +1569,11 @@ function _renderGcalStatusPill() {
     pill.classList.remove("disconnected");
     pill.title = "Google Calendar connected — events auto-sync with a 10-minute reminder";
     pill.querySelector(".gcal-status-text").textContent = "Auto-sync on";
+  } else if (_gcalNeedsReauth === true) {
+    pill.classList.add("disconnected");
+    pill.classList.remove("connected");
+    pill.title = "Google token expired or revoked — click to reconnect";
+    pill.querySelector(".gcal-status-text").textContent = "Reconnect Google";
   } else if (_gcalConnected === false) {
     pill.classList.add("disconnected");
     pill.classList.remove("connected");
