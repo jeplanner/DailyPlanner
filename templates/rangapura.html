@@ -142,8 +142,12 @@
 
   <main id="main" class="rp-container">
 
-    <div class="rp-back">
+    <div class="rp-back" style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
       <a href="/prayer">← Back to Prayer</a>
+      <a href="#" id="rp-popout" title="Open this page in a new window so audio keeps playing while you use the main tab"
+         style="color:#6b7280; text-decoration:none; font-size:13px; padding:6px 10px; border-radius:8px;">
+        ↗ Open in new window
+      </a>
     </div>
 
     <header class="rp-header">
@@ -196,6 +200,47 @@
       const saved = localStorage.getItem("rp_size");
       if (saved) setRpSize(saved);
     } catch (e) {}
+
+    // "Open in new window" — pass the current audio position so the new
+    // window can resume where this one left off. MediaSession metadata
+    // lets Android/iOS show lock-screen controls while the tab is
+    // backgrounded, so audio survives screen-off.
+    (function () {
+      const audio = document.querySelector(".rp-audio audio");
+      const btn = document.getElementById("rp-popout");
+      if (btn && audio) {
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          const t = Math.max(0, Math.floor(audio.currentTime || 0));
+          const url = "/prayer/rangapura" + (t ? "?t=" + t : "");
+          // features=noopener ensures the new window can't manipulate this one.
+          window.open(url, "_blank", "noopener");
+        });
+      }
+      // If URL has ?t=, seek to it on load (from a pop-out click).
+      if (audio) {
+        const params = new URLSearchParams(window.location.search);
+        const t = parseInt(params.get("t") || "0", 10);
+        if (t > 0) {
+          audio.addEventListener("loadedmetadata", function () {
+            try { audio.currentTime = t; } catch (e) {}
+          }, { once: true });
+        }
+        // MediaSession API: shows lock-screen / OS-level audio controls
+        // so the user can pause/resume without opening the tab.
+        if ("mediaSession" in navigator) {
+          audio.addEventListener("play", function () {
+            try {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: "Rangapura Vihara",
+                artist: "M. S. Subbulakshmi",
+                album: "Muthuswami Dikshitar · Brindavana Saranga",
+              });
+            } catch (e) {}
+          }, { once: true });
+        }
+      }
+    })();
   </script>
 
 </body>
