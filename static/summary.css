@@ -533,6 +533,48 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   MOBILE — light-mode readability pass.
+   Without this, the white .md-card wraps white .md-row items on a
+   pale-grey page, so everything melts together and chips/band
+   dividers are barely visible. Mirror the dark-mode mobile polish:
+   flatten the card wrapper, elevate each row as a clear object,
+   and bump text + chip contrast. Dark-mode overrides below still win.
+   ═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 560px) {
+  .md-card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 6px 4px;
+    overflow: visible;
+  }
+  .md-card-head {
+    background: transparent;
+    border-bottom: none;
+    padding: 8px 6px 10px;
+  }
+  .md-row {
+    background: #ffffff;
+    border: 1px solid #d9dee7;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 1px 3px rgba(15, 23, 42, .06);
+  }
+  .md-row-title { color: #0f172a; font-weight: 600; }
+  .md-context-chip {
+    background: #eef2f7;
+    color: #334155;
+    font-weight: 600;
+  }
+  .md-band-row td {
+    color: #475569;
+    font-weight: 800;
+    background: transparent;
+  }
+  .md-hero { color: #334155; }
+  .md-hero b { color: #0f172a; }
+  .md-card-title { color: #0f172a; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    MORNING DASHBOARD — dark-mode contrast uplift (2026 fix).
    In dark mode the default --color-surface (#1e293b) is only a shade
    off --color-bg (#0f172a), so cards visually melt into the page.
