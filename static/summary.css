@@ -736,38 +736,127 @@ html.dark .peek-habit-bar {
   background: #273449;
 }
 
-/* ── Mobile-only extra polish: each card gets a little more air and a
-     soft shadow so the list of overdue/agenda/habit items reads as a
-     stack of clear objects instead of one dark slab. ── */
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE DARK — premium neutral charcoal palette (2026).
+   Previous version stacked dark-blue cards on a dark-blue page, which
+   read as cold, corporate, and visually monotonous. Swap to a warm
+   neutral stage (Linear / Arc / Things-3 influence) so colored accents
+   — meeting blue, habit green, overdue red — actually sing against
+   a calm background. Applies only to mobile daily view; desktop and
+   weekly view keep their existing palette.
+   ═══════════════════════════════════════════════════════════════════ */
 @media (max-width: 560px) {
-  html.dark .md-row {
-    background: #1a2338;
-    border-color: #2a3653;
-    box-shadow: 0 1px 3px rgba(0,0,0,.35);
-  }
-  html.dark .md-row:hover {
-    background: #23304a !important;
-  }
+  /* Stage: near-black neutral with a whisper of warmth — no more navy */
+  html.dark body { background: #0a0b0e; }
+
+  /* Card wrapper invisible; each row is the visible "card" */
   html.dark .md-card {
     background: transparent;
     border: none;
     box-shadow: none;
-    padding: 10px 14px;
+    padding: 8px 14px;
   }
   html.dark .md-card-head {
     background: transparent;
     border-bottom: none;
-    padding: 6px 4px 10px;
+    padding: 10px 4px 12px;
   }
-  /* Overdue rows on mobile dark: subtle warm tint + red-tinged border so
-     the whole row flags urgency, not just the tiny red chip. The chip
-     itself is bumped to a saturated red pill above for contrast. */
+
+  /* Row = the object. Neutral charcoal, hairline border, soft depth. */
+  html.dark .md-row {
+    background: #16181c;
+    border: 1px solid #24262c;
+    border-radius: 14px;
+    padding: 14px 14px;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, .32),
+      0 4px 14px rgba(0, 0, 0, .18);
+  }
+  html.dark .md-row:hover {
+    background: #1c1f24 !important;
+    border-color: #2f333b;
+  }
+
+  /* Type accent bars softened to fit the neutral stage */
+  html.dark .md-row.md-type-meeting {
+    box-shadow: inset 3px 0 0 0 #60a5fa, 0 1px 2px rgba(0,0,0,.32), 0 4px 14px rgba(0,0,0,.18);
+  }
+  html.dark .md-row.md-type-task {
+    box-shadow: inset 3px 0 0 0 #71747b, 0 1px 2px rgba(0,0,0,.32), 0 4px 14px rgba(0,0,0,.18);
+  }
+  html.dark .md-row.md-type-habit {
+    box-shadow: inset 3px 0 0 0 #34d399, 0 1px 2px rgba(0,0,0,.32), 0 4px 14px rgba(0,0,0,.18);
+  }
+
+  /* Text hierarchy — softer whites (pure white is harsh on OLED) */
+  html.dark .md-row-title { color: #edeef1; font-weight: 600; }
+  html.dark .md-time { color: #f3f4f6; }
+  html.dark .md-time-end,
+  html.dark .md-time-any { color: #8a8e96; }
+  html.dark .md-hero {
+    background: none;
+    border: none;
+    color: #b4b8c0;
+  }
+  html.dark .md-hero b { color: #f3f4f6; }
+  html.dark .sum-title,
+  html.dark .md-card-title { color: #f3f4f6; }
+
+  /* Band dividers — quiet muted label on transparent */
+  html.dark .md-band-row td {
+    background: transparent !important;
+    border-bottom: none !important;
+    color: #7d818a !important;
+    padding: 18px 6px 6px !important;
+    letter-spacing: .8px;
+  }
+
+  /* Chips & tags — desaturated, readable on charcoal */
+  html.dark .md-context-chip { background: #22242a; color: #c6cad2; }
+  html.dark .md-tag-meeting  { background: #1b2a44; color: #bfdbfe; }
+  html.dark .md-tag-task     { background: #23262c; color: #d1d5db; }
+  html.dark .md-tag-habit    { background: #0f2a22; color: #86efac; }
+  html.dark .md-tag-project  { background: #2a1f45; color: #ddd6fe; }
+
+  /* Status markers */
+  html.dark .md-check-done { background: #0f2a22; color: #6ee7b7; }
+  html.dark .md-check-open { border-color: #3a3e46; }
+  html.dark .md-row-link   { color: #8a8e96; }
+  html.dark .md-row-link:hover { background: #22242a; color: #93c5fd; }
+
+  /* Habit progress bar track */
+  html.dark .md-habit-progress { background: #22242a; }
+
+  /* Count pill (generic, non-red) */
+  html.dark .md-count-pill { background: #22242a; color: #b4b8c0; }
+
+  /* ── Overdue row: warm red wash + bright accent bar so urgency
+       reads at a glance without wrecking the calm palette ── */
   html.dark .md-overdue-row {
-    background: linear-gradient(90deg, rgba(220, 38, 38, .12), rgba(26, 35, 56, 0) 70%), #1a2338;
-    border-color: #7f1d1d;
-    box-shadow: inset 3px 0 0 0 #ef4444, 0 1px 3px rgba(220, 38, 38, .18);
+    background:
+      linear-gradient(90deg, rgba(239, 68, 68, .10), rgba(22, 24, 28, 0) 65%),
+      #17171a;
+    border-color: #3a1f21;
+    box-shadow:
+      inset 3px 0 0 0 #f87171,
+      0 1px 2px rgba(0, 0, 0, .32),
+      0 4px 14px rgba(0, 0, 0, .18);
   }
   html.dark .md-overdue-row:hover {
-    background: linear-gradient(90deg, rgba(220, 38, 38, .18), rgba(35, 48, 74, 0) 70%), #23304a !important;
+    background:
+      linear-gradient(90deg, rgba(239, 68, 68, .16), rgba(28, 31, 36, 0) 65%),
+      #1d1d21 !important;
   }
+  /* Overdue chip: solid, unmissable red pill on the calm stage */
+  html.dark .md-overdue-chip {
+    background: #ef4444;
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+    letter-spacing: .1px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+  }
+  html.dark .md-count-red      { background: #7f1d1d; color: #fecaca; }
+  html.dark .md-overdue-icon   { background: rgba(239, 68, 68, .18); color: #fca5a5; }
+  html.dark .md-hero-overdue   { color: #fca5a5; }
 }
