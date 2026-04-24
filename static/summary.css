@@ -2,6 +2,64 @@
    SUMMARY — SaaS Productivity Dashboard
    ═══════════════════════════════════════════════════ */
 
+/* Earthy palette tokens for the Daily Summary redesign.
+   Used by the mobile daily view; safe to reuse app-wide. */
+:root {
+  --bg-base: #FAF7F2;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F1EBE1;
+  --text-primary: #2B2420;
+  --text-secondary: #6B5D52;
+  --text-muted: #A39689;
+  --accent-primary: #C2591C;
+  --accent-primary-hover: #A84814;
+  --accent-secondary: #7A6A3E;
+  --success: #5B7A3A;
+  --warning: #C68B2E;
+  --danger: #9B3A2F;
+  --border: #E8DFD2;
+  --shadow-card: 0 1px 2px rgba(43, 36, 32, .04), 0 2px 8px rgba(43, 36, 32, .04);
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-pill: 999px;
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --bg-base: #1A1613;
+    --bg-surface: #241E1A;
+    --bg-subtle: #2E2721;
+    --text-primary: #F5EFE6;
+    --text-secondary: #BFB1A2;
+    --text-muted: #847668;
+    --accent-primary: #E07A3C;
+    --accent-primary-hover: #F08E52;
+    --accent-secondary: #B8A56B;
+    --success: #8BAE5F;
+    --warning: #E0A955;
+    --danger: #C85A4A;
+    --border: #3A3128;
+    --shadow-card: none;
+  }
+}
+html.dark, [data-theme="dark"] {
+  --bg-base: #1A1613;
+  --bg-surface: #241E1A;
+  --bg-subtle: #2E2721;
+  --text-primary: #F5EFE6;
+  --text-secondary: #BFB1A2;
+  --text-muted: #847668;
+  --accent-primary: #E07A3C;
+  --accent-primary-hover: #F08E52;
+  --accent-secondary: #B8A56B;
+  --success: #8BAE5F;
+  --warning: #E0A955;
+  --danger: #C85A4A;
+  --border: #3A3128;
+  --shadow-card: none;
+}
+
 :root {
   --sm-bg: #f7f8fa; --sm-surface: #fff; --sm-text: #1a1a2e;
   --sm-text2: #6b7280; --sm-text3: #9ca3af; --sm-border: #e5e7eb;
@@ -464,382 +522,638 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   MOBILE — Todoist-inspired flat list.
-   On a phone the card-grid layout fought the content: heavy boxes,
-   redundant type chips, chunky time blocks. Swap to a clean flat
-   list — typography-led, thin hairline dividers, compact meta line,
-   the colored 2px left-edge encodes item type. Reads like a focused
-   task planner, not a dashboard.
+   MOBILE DAILY SUMMARY — redesign (2026 UX pass)
+
+   Earthy, calm, reading-first. Warm off-white page (light) / warm
+   charcoal (dark). White rounded surface cards with hairline borders.
+   Soft terracotta accent used sparingly. Typography-led hierarchy.
+
+   Typography scale: 28/20/16/14/12 · system font stack · tabular-nums
+   Spacing: 4/8/12/16/20/24/32/48 · 4px base unit
+   Touch targets: ≥44px on interactive elements
    ═══════════════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
-  /* Section header — quiet, inline, no bounding box */
-  .md-card {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    border-radius: 0;
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .summary-app {
+    padding: var(--space-5);
+    max-width: 100%;
+  }
+
+  /* ─── Greeting header ─── */
+  .md-greeting {
     padding: 0;
-    margin: 0 0 6px;
-    overflow: visible;
+    margin: 0 0 var(--space-6);
+  }
+  .md-greet-title {
+    font-size: 28px; line-height: 34px; font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 var(--space-1);
+    letter-spacing: -.3px;
+  }
+  .md-greet-date {
+    font-size: 14px; line-height: 20px; font-weight: 400;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  .md-today-tag {
+    color: var(--accent-primary);
+    font-weight: 600;
+  }
+
+  /* ─── Progress-at-a-glance card ─── */
+  .md-progress-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-4);
+    margin: 0 0 var(--space-6);
+  }
+  .md-progress-track {
+    height: 8px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+    margin-bottom: var(--space-3);
+  }
+  .md-progress-fill {
+    height: 100%;
+    background: var(--success);
+    border-radius: var(--radius-pill);
+    transition: width 150ms ease;
+  }
+  .md-progress-label {
+    font-size: 14px; line-height: 20px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    margin: 0;
+  }
+  .md-progress-label b {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .md-progress-empty {
+    font-size: 14px; line-height: 20px;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  /* Hide the legacy title-row + count summary on mobile; greeting
+     + progress bar cover their purpose with better hierarchy. */
+  .md-title-row,
+  .md-hero { display: none !important; }
+
+  /* ─── Section cards (Overdue, Today's flow) ─── */
+  .md-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 0;
+    margin: 0 0 var(--space-6);
+    overflow: hidden;
   }
   .md-card-head {
+    padding: var(--space-4);
+    border-bottom: 1px solid var(--border);
     background: transparent;
-    border-bottom: none;
-    padding: 18px 4px 6px;
-    gap: 8px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 44px;
   }
   .md-card-title {
-    font-size: 12.5px;
-    font-weight: 700;
-    letter-spacing: .6px;
+    margin: 0;
+    font-size: 12px; line-height: 16px; font-weight: 600;
+    letter-spacing: .04em;
     text-transform: uppercase;
-    color: var(--color-text-secondary);
-    gap: 8px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   .md-card-icon {
-    width: 24px;
-    height: 24px;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--bg-subtle);
+    color: var(--accent-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
-  .md-card-icon svg { width: 13px; height: 13px; }
+  .md-card-icon svg { width: 12px; height: 12px; }
+  .md-overdue-icon { background: var(--bg-subtle); color: var(--warning); }
+  .md-agenda-icon  { background: var(--bg-subtle); color: var(--accent-secondary); }
   .md-count-pill {
-    min-width: 20px;
-    height: 20px;
-    font-size: 11px;
-    background: transparent;
-    color: var(--color-text-secondary);
-    padding: 0 4px;
+    margin-left: auto;
+    padding: 2px 10px;
+    min-width: 24px;
+    min-height: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    border-radius: var(--radius-pill);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
-  .md-legend { display: none; } /* colored left edge carries the type */
+  .md-count-red { background: var(--bg-subtle); color: var(--warning); }
+  .md-legend { display: none; }
 
-  /* Kill the table grid; each row becomes a block-level list item. */
-  .md-table, .md-table thead, .md-table tbody, .md-table tr, .md-table td, .md-table th {
-    display: block;
-  }
+  /* ─── Table → block list ─── */
+  .md-table, .md-table thead, .md-table tbody,
+  .md-table tr, .md-table td, .md-table th { display: block; }
   .md-table thead { display: none; }
   .md-table tbody { padding: 0; }
 
-  /* Time-band label ("Morning" / "Afternoon" / "Habits") — tiny muted tag */
+  /* ─── Time-of-day section header (Morning / Afternoon / Evening / Habits) ─── */
   .md-band-row { display: block; }
   .md-band-row td {
-    padding: 16px 4px 4px;
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: .8px;
+    padding: var(--space-4) var(--space-4) var(--space-2);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: .04em;
     text-transform: uppercase;
+    color: var(--text-muted);
     background: transparent;
     border: none;
-    color: var(--color-text-secondary);
-    opacity: .72;
   }
 
-  /* ── AGENDA ROW ── time | content | status + link ── */
+  /* ─── Row ─── */
   .md-row {
     display: grid;
-    column-gap: 14px;
-    row-gap: 2px;
-    padding: 13px 4px 13px 14px;
-    margin: 0;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    border-bottom: 1px solid var(--color-border-light, var(--color-border));
-    box-shadow: inset 2px 0 0 0 transparent;  /* type accent, filled below */
-    transition: background .12s ease;
-  }
-  .md-row:last-child { border-bottom: none; }
-  .md-row td { padding: 0; border: none; }
-
-  .md-agenda-row {
     grid-template-columns: 52px minmax(0, 1fr) auto;
     grid-template-areas:
       "time  title  status"
       "time  meta   meta";
+    column-gap: var(--space-3);
+    row-gap: 2px;
+    padding: var(--space-3) var(--space-4);
+    min-height: 56px;
+    margin: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    border-bottom: 1px solid var(--border);
+    box-shadow: none;
+    transition: background 150ms ease;
+    cursor: pointer;
   }
-  .md-agenda-row .md-c-time   { grid-area: time; align-self: start; padding-top: 1px; }
-  .md-agenda-row .md-c-title  { grid-area: title; min-width: 0; }
-  .md-agenda-row .md-c-status { grid-area: status; align-self: center; text-align: right; }
-  .md-agenda-row .md-c-type   { display: none; }    /* colored edge encodes type */
-  .md-agenda-row .md-c-context{ grid-area: meta; min-width: 0; }
+  .md-row td { padding: 0; border: none; }
+  .md-row:last-child { border-bottom: none; }
+  .md-row:hover,
+  .md-row:focus-visible { background: var(--bg-base); }
 
-  /* ── OVERDUE ROW ── title | due  /  context on meta line ── */
+  /* Agenda rows */
+  .md-agenda-row .md-c-time   { grid-area: time; align-self: start; padding-top: 2px; }
+  .md-agenda-row .md-c-title  { grid-area: title; min-width: 0; }
+  .md-agenda-row .md-c-status {
+    grid-area: status; align-self: center;
+    text-align: right; min-width: 44px;
+  }
+  .md-agenda-row .md-c-type    { display: none; }
+  .md-agenda-row .md-c-context { grid-area: meta; min-width: 0; }
+
+  /* Overdue rows: no time column */
   .md-overdue-row {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "title  due"
       "meta   meta";
   }
-  .md-overdue-row .md-c-title  { grid-area: title; min-width: 0; }
-  .md-overdue-row .md-c-context{ grid-area: meta; min-width: 0; }
-  .md-overdue-row .md-c-due    { grid-area: due; text-align: right; align-self: center; white-space: nowrap; }
+  .md-overdue-row .md-c-title   { grid-area: title; min-width: 0; }
+  .md-overdue-row .md-c-context { grid-area: meta; min-width: 0; }
+  .md-overdue-row .md-c-due     {
+    grid-area: due; align-self: center;
+    text-align: right; white-space: nowrap;
+    min-width: 44px;
+  }
 
-  /* Time — compact label, not a headline */
+  /* Time cell — tabular, stacked start/end */
   .md-row .md-time {
     display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--color-text);
+    font-size: 14px; line-height: 20px; font-weight: 600;
+    color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
-    line-height: 1.2;
+    letter-spacing: -.1px;
   }
   .md-row .md-time-end {
     display: block;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--color-text-secondary);
-    margin-left: 0;
-    margin-top: 1px;
+    font-size: 12px; line-height: 16px; font-weight: 500;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    margin: 1px 0 0;
   }
   .md-row .md-time-any {
     display: block;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--color-text-secondary);
+    font-size: 12px; line-height: 16px; font-weight: 500;
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: .4px;
+    letter-spacing: .04em;
   }
 
-  /* Title — primary focus, clean typography */
+  /* Title — primary focus */
   .md-row .md-row-title {
     display: block;
-    font-size: 15px;
-    font-weight: 500;
-    line-height: 1.4;
-    color: var(--color-text);
+    font-size: 16px; line-height: 22px; font-weight: 500;
+    color: var(--text-primary);
     letter-spacing: -.1px;
+    word-break: break-word;
   }
   .md-row.md-done .md-row-title {
-    color: var(--color-text-secondary);
     text-decoration: line-through;
+    color: var(--text-muted);
   }
 
-  /* Meta line — plain inline text, not chips */
+  /* Meta line — plain inline text, no chips */
   .md-row .md-context-chip {
+    display: inline;
     background: transparent;
     padding: 0;
-    font-size: 12.5px;
-    font-weight: 400;
-    color: var(--color-text-secondary);
+    font-size: 14px; line-height: 20px; font-weight: 400;
+    color: var(--text-secondary);
     white-space: normal;
     max-width: 100%;
-    display: inline;
   }
   .md-row .md-overdue-chip {
+    display: inline-flex;
+    align-items: center;
     background: transparent;
     padding: 0;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: #dc4c3e;  /* Todoist red */
+    font-size: 14px; line-height: 20px; font-weight: 600;
+    color: var(--warning);
+    border: none !important;
+    box-shadow: none !important;
     letter-spacing: 0;
+  }
+
+  /* Status — checkbox is the only affordance per row */
+  .md-row .md-check {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .md-row .md-check svg { width: 12px; height: 12px; }
+  .md-row .md-check-open {
+    border: 1.5px solid var(--border);
+    background: transparent;
+  }
+  .md-row .md-check-done {
+    background: var(--bg-subtle);
+    color: var(--success);
+  }
+  .md-row .md-row-link {
+    width: 44px; height: 44px;
+    margin-right: -8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-btn);
+    color: var(--text-muted);
+    opacity: 1;
+  }
+  .md-row .md-row-link:hover,
+  .md-row .md-row-link:focus-visible {
+    background: var(--bg-subtle);
+    color: var(--accent-primary);
+  }
+
+  /* Habit progress bar (inside the meta cell on habit rows) */
+  .md-habit-progress {
+    height: 5px;
+    max-width: 100%;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-pill);
+    overflow: hidden;
+    margin: var(--space-1) 0 2px;
+  }
+  .md-habit-bar { background: var(--success); }
+  .md-habit-label {
+    font-size: 13px; line-height: 18px; font-weight: 500;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* High-priority single red dot before the title */
+  .md-row.prio-high .md-row-title::before {
+    content: "";
+    display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--danger);
+    margin-right: var(--space-2);
+    vertical-align: middle;
+    position: relative; top: -1px;
+  }
+
+  /* ─── Reflection (collapsed by default on mobile) ─── */
+  .md-reflection-details {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: 0;
+    margin: 0 0 var(--space-6);
+    overflow: hidden;
+  }
+  .md-reflection-summary {
+    padding: var(--space-4);
+    min-height: 44px;
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 12px; line-height: 16px; font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+  .md-reflection-summary::-webkit-details-marker { display: none; }
+  .md-reflection-summary svg {
+    width: 16px; height: 16px;
+    color: var(--accent-secondary);
+  }
+  .md-reflection-summary::after {
+    content: "›";
+    margin-left: auto;
+    font-size: 20px; line-height: 1;
+    color: var(--text-muted);
+    transition: transform 150ms ease;
+  }
+  .md-reflection-details[open] .md-reflection-summary::after {
+    transform: rotate(90deg);
+  }
+  .md-reflection-preview {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 13px; font-weight: 400;
+    color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+    margin-left: var(--space-2);
+  }
+  .md-reflection-body {
+    padding: 0 var(--space-4) var(--space-4);
+  }
+  .md-reflection-body .reflection-textarea {
+    background: var(--bg-base);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    font-size: 16px;
+    line-height: 24px;
+    border-radius: var(--radius-btn);
+    min-height: 120px;
+  }
+  .md-reflection-body .reflection-textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  }
+  .md-reflection-body .reflection-text {
+    font-size: 16px;
+    line-height: 24px;
+    color: var(--text-secondary);
+  }
+  .md-reflection-body .reflection-save-status {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .md-reflection-body .reflection-save-status.is-saved { color: var(--success); }
+  .md-reflection-body .reflection-save-status.is-error { color: var(--danger); }
+
+  /* AI recap card on mobile — match the surface style */
+  .sum-grid.md-supplement {
+    display: block;
+    margin-top: 0;
+  }
+  .sum-grid.md-supplement .sum-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    padding: var(--space-4);
+    margin: 0 0 var(--space-6);
+  }
+  .sum-grid.md-supplement .sum-card .card-title {
+    font-size: 12px; font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+  }
+  .sum-grid.md-supplement .ai-card {
+    border-style: solid;
+    border-color: var(--border);
+    background: var(--bg-surface);
+  }
+  .sum-grid.md-supplement .ai-btn {
+    background: var(--accent-primary);
+    border-radius: var(--radius-btn);
+    min-height: 44px;
+    padding: var(--space-2) var(--space-4);
+    transition: background 150ms ease;
+  }
+  .sum-grid.md-supplement .ai-btn:hover,
+  .sum-grid.md-supplement .ai-btn:focus-visible {
+    background: var(--accent-primary-hover);
+    opacity: 1;
+  }
+
+  /* ─── Dark-mode specificity overrides ───
+     The existing desktop `html.dark` rules (set outside media queries)
+     use higher specificity than bare selectors inside this block, so
+     we re-bind the same earthy tokens here to win source-order ties. */
+  html.dark body,
+  [data-theme="dark"] body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+  }
+  html.dark .md-card,
+  [data-theme="dark"] .md-card {
+    background: var(--bg-surface);
+    border-color: var(--border);
+    box-shadow: var(--shadow-card);
+  }
+  html.dark .md-card-head,
+  [data-theme="dark"] .md-card-head {
+    border-bottom-color: var(--border);
+    background: transparent;
+  }
+  html.dark .md-card-title,
+  [data-theme="dark"] .md-card-title { color: var(--text-secondary); }
+  html.dark .md-row-title,
+  [data-theme="dark"] .md-row-title { color: var(--text-primary); }
+  html.dark .md-row.md-done .md-row-title,
+  [data-theme="dark"] .md-row.md-done .md-row-title { color: var(--text-muted); }
+  html.dark .md-row:hover,
+  [data-theme="dark"] .md-row:hover { background: var(--bg-base) !important; }
+  html.dark .md-overdue-card .md-card-head,
+  [data-theme="dark"] .md-overdue-card .md-card-head { background: transparent; }
+  html.dark .md-overdue-chip,
+  [data-theme="dark"] .md-overdue-chip {
+    background: transparent;
+    color: var(--warning);
     border: none;
     box-shadow: none;
   }
-
-  /* Row hover — subtle, not "clicked" */
-  .md-row:hover {
-    background: var(--color-border-light, rgba(0, 0, 0, .02));
-  }
-
-  /* Type accent — 2px colored edge, the only "chrome" per row */
-  .md-row.md-type-meeting { box-shadow: inset 2px 0 0 0 #2563eb; }
-  .md-row.md-type-task    { box-shadow: inset 2px 0 0 0 #9ca3af; }
-  .md-row.md-type-habit   { box-shadow: inset 2px 0 0 0 #059669; }
-  .md-overdue-row         { box-shadow: inset 2px 0 0 0 #dc4c3e; }
-
-  /* Status — small, quiet unless completed */
-  .md-row .md-check {
-    width: 20px; height: 20px;
-  }
-  .md-row .md-check svg { width: 11px; height: 11px; }
-  .md-row .md-check-open {
-    border-width: 1.5px;
-    border-color: var(--color-border-strong, var(--color-border));
-  }
-  .md-row .md-row-link {
-    width: 28px; height: 28px;
-    opacity: .6;
-  }
-  .md-row .md-row-link:hover { opacity: 1; }
-
-  /* Habit progress bar — thinner, full-width */
-  .md-habit-progress {
-    height: 4px;
-    max-width: 100%;
-    margin: 4px 0 2px;
-    border-radius: 2px;
-  }
-  .md-habit-label {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--color-text-secondary);
-  }
-
-  /* Hero summary — single clean line, no pill backgrounds */
-  .md-hero {
-    margin: 4px 4px 8px;
-    font-size: 13.5px;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--color-text-secondary);
-  }
-  .md-hero b { color: var(--color-text); font-weight: 600; }
-
-  /* Page title + "Today" pill */
-  .md-title-row { padding: 0 4px; margin-bottom: 4px; }
-  .sum-title { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
-  .md-today-pill {
-    font-size: 10px;
-    padding: 3px 9px;
-    background: color-mix(in srgb, #dc4c3e 12%, transparent);
-    color: #dc4c3e;
-  }
-
-  /* Overdue card: no red-wash count — just the red chip on rows */
-  .md-count-red {
+  html.dark .md-count-red,
+  [data-theme="dark"] .md-count-red { background: var(--bg-subtle); color: var(--warning); }
+  html.dark .md-count-pill,
+  [data-theme="dark"] .md-count-pill { background: var(--bg-subtle); color: var(--text-secondary); }
+  html.dark .md-overdue-icon,
+  [data-theme="dark"] .md-overdue-icon { background: var(--bg-subtle); color: var(--warning); }
+  html.dark .md-agenda-icon,
+  [data-theme="dark"] .md-agenda-icon { background: var(--bg-subtle); color: var(--accent-secondary); }
+  html.dark .md-context-chip,
+  [data-theme="dark"] .md-context-chip {
     background: transparent;
-    color: #dc4c3e;
-    font-weight: 800;
+    color: var(--text-secondary);
   }
-  .md-overdue-icon {
-    background: color-mix(in srgb, #dc4c3e 12%, transparent);
-    color: #dc4c3e;
+  html.dark .md-band-row td,
+  [data-theme="dark"] .md-band-row td {
+    background: transparent !important;
+    color: var(--text-muted) !important;
+    border: none !important;
   }
-
-  /* App container — tighten gutters */
-  .summary-app { padding: 10px 10px 40px; }
+  html.dark .md-row-link,
+  [data-theme="dark"] .md-row-link { color: var(--text-muted); }
+  html.dark .md-row-link:hover,
+  [data-theme="dark"] .md-row-link:hover {
+    background: var(--bg-subtle);
+    color: var(--accent-primary);
+  }
+  html.dark .md-check-done,
+  [data-theme="dark"] .md-check-done { background: var(--bg-subtle); color: var(--success); }
+  html.dark .md-check-open,
+  [data-theme="dark"] .md-check-open { border-color: var(--border); }
+  html.dark .md-habit-progress,
+  [data-theme="dark"] .md-habit-progress { background: var(--bg-subtle); }
+  html.dark .md-time,
+  [data-theme="dark"] .md-time { color: var(--text-secondary); }
+  html.dark .md-time-end,
+  html.dark .md-time-any,
+  [data-theme="dark"] .md-time-end,
+  [data-theme="dark"] .md-time-any { color: var(--text-muted); }
+  html.dark .md-hero,
+  [data-theme="dark"] .md-hero { display: none !important; }
 }
 
-/* Very narrow phones (iPhone SE-ish) */
+/* Very narrow phones (≤ 380px, iPhone SE-ish) */
 @media (max-width: 380px) {
+  .summary-app { padding: var(--space-4); }
   .md-agenda-row { grid-template-columns: 48px minmax(0, 1fr) auto; }
-  .md-row { column-gap: 12px; padding-left: 12px; }
-  .sum-title { font-size: 20px; }
+  .md-row { padding-left: var(--space-3); padding-right: var(--space-3); }
+  .md-greet-title { font-size: 24px; line-height: 30px; }
+}
+
+/* Always hide the native <details> marker triangle on our reflection
+   summary — we draw our own chevron on mobile and no marker on desktop. */
+.md-reflection-summary { list-style: none; }
+.md-reflection-summary::-webkit-details-marker { display: none; }
+.md-reflection-summary::marker { content: ""; }
+
+/* Desktop (> 640px): hide the mobile-first greeting + progress card.
+   The reflection <details> keeps its .sum-card styling (via that class)
+   and the <summary> is restyled to match the old .card-title heading. */
+@media (min-width: 641px) {
+  .md-greeting,
+  .md-progress-card { display: none !important; }
+
+  .md-reflection-summary {
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    margin: 0 0 14px;
+    font-size: 14px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    color: var(--sm-text2);
+  }
+  .md-reflection-summary svg { width: 16px; height: 16px; }
+  .md-reflection-summary::after,
+  .md-reflection-preview { display: none !important; }
+  .md-reflection-body { padding: 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   MORNING DASHBOARD — dark-mode contrast uplift (2026 fix).
-   In dark mode the default --color-surface (#1e293b) is only a shade
-   off --color-bg (#0f172a), so cards visually melt into the page.
-   Below we:
-     1. Brighten the page bg to a warmer slate so it stops feeling like
-        a void.
-     2. Lift the card surface to clearly distinguish it from the page.
-     3. Boost text + secondary text contrast for readability.
-     4. Give the hero line a visible gradient in dark mode.
-     5. Tighten the mobile card radius + shadow so each item reads as
-        its own object.
-   All scoped under html.dark + applies to the morning-dashboard
-   (summary daily view) surfaces only. Weekly view + other sections
-   aren't touched. Revert by deleting this block if anything breaks.
+   MORNING DASHBOARD — dark-mode contrast uplift (DESKTOP only).
+   These rules apply only to desktop; mobile uses the earthy tokens
+   at the top of the file. Without this scoping, these high-specificity
+   `html.dark` rules would override the mobile redesign.
    ═══════════════════════════════════════════════════════════════════ */
-html.dark body {
-  background: #0b1220;                              /* deeper, softer page bg */
-  color: #e2e8f0;                                    /* brighter primary text */
-}
+@media (min-width: 641px) {
+  html.dark body {
+    background: #0b1220;
+    color: #e2e8f0;
+  }
 
-html.dark .summary-app {
-  /* nothing — it inherits bg */
-}
+  html.dark .md-card,
+  html.dark .ov-card,
+  html.dark .sum-card {
+    background: #172033;
+    border-color: #273449;
+    box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.18);
+  }
+  html.dark .md-card-head { border-bottom-color: #273449; }
 
-/* Cards — elevate with a visibly lighter surface + a soft border that
-   actually reads against the new page bg. */
-html.dark .md-card,
-html.dark .ov-card,
-html.dark .sum-card {
-  background: #172033;
-  border-color: #273449;
-  box-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.18);
-}
-html.dark .md-card-head {
-  border-bottom-color: #273449;
-}
+  html.dark .md-hero {
+    background: linear-gradient(180deg, rgba(37,99,235,.18) 0%, transparent 100%);
+    border-color: #273449;
+    color: #cbd5e1;
+  }
+  html.dark .md-hero b { color: #f8fafc; }
 
-/* Hero banner — gradient is near-invisible in dark; restore it */
-html.dark .md-hero {
-  background: linear-gradient(180deg, rgba(37,99,235,.18) 0%, transparent 100%);
-  border-color: #273449;
-  color: #cbd5e1;
-}
-html.dark .md-hero b { color: #f8fafc; }
+  html.dark .md-title-row .sum-title,
+  html.dark .md-card-title,
+  html.dark .md-row-title,
+  html.dark .ov-value,
+  html.dark .r-kpi-value { color: #f8fafc; }
 
-/* Readable text scale */
-html.dark .md-title-row .sum-title,
-html.dark .md-card-title,
-html.dark .md-row-title,
-html.dark .ov-value,
-html.dark .r-kpi-value { color: #f8fafc; }
+  html.dark .md-band-row td,
+  html.dark .ov-label,
+  html.dark .md-legend,
+  html.dark .md-empty-hint { color: #94a3b8 !important; }
+  html.dark .md-band-row td {
+    background: #0f1728;
+    border-bottom: 1px solid #273449;
+  }
 
-html.dark .md-band-row td,
-html.dark .ov-label,
-html.dark .md-legend,
-html.dark .md-empty-hint {
-  color: #94a3b8 !important;
-}
-html.dark .md-band-row td {
-  background: #0f1728;
-  border-bottom: 1px solid #273449;
-}
+  html.dark .md-tag-meeting { background: #102753; color: #dbeafe; }
+  html.dark .md-tag-task    { background: #283245; color: #e2e8f0; }
+  html.dark .md-tag-habit   { background: #083325; color: #bbf7d0; }
 
-/* Type tag chips — use darker tinted backgrounds so they pop but not shout */
-html.dark .md-tag-meeting { background: #102753; color: #dbeafe; }
-html.dark .md-tag-task    { background: #283245; color: #e2e8f0; }
-html.dark .md-tag-habit   { background: #083325; color: #bbf7d0; }
+  html.dark .md-context-chip { background: #273449; color: #cbd5e1; }
+  html.dark .md-row:hover { background: #1f2b42 !important; }
 
-html.dark .md-context-chip {
-  background: #273449;
-  color: #cbd5e1;
-}
+  html.dark .md-overdue-card .md-card-head {
+    background: linear-gradient(180deg, rgba(220,38,38,.08), transparent);
+  }
+  html.dark .md-overdue-chip {
+    background: #dc2626;
+    color: #fff5f5;
+    border: 1px solid #f87171;
+    font-weight: 800;
+    box-shadow: 0 1px 2px rgba(220, 38, 38, .35);
+  }
+  html.dark .md-count-red { background: #b91c1c; color: #fff5f5; }
+  html.dark .md-overdue-icon { background: rgba(239, 68, 68, .22); color: #fca5a5; }
+  html.dark .md-overdue-row { box-shadow: inset 3px 0 0 0 #ef4444; }
+  html.dark .md-hero-overdue { color: #fca5a5; }
 
-/* Rows — hover color that's actually visible in dark */
-html.dark .md-row:hover {
-  background: #1f2b42 !important;
-}
+  html.dark .md-row-link { color: #94a3b8; }
+  html.dark .md-row-link:hover { background: #273449; color: #93c5fd; }
 
-/* Overdue card — make the card slightly warmer so urgency reads */
-html.dark .md-overdue-card .md-card-head {
-  background: linear-gradient(180deg, rgba(220,38,38,.08), transparent);
-}
-/* Overdue chip — saturated red pill with near-white text so it pops
-   against the dark-blue row/card surface. The old maroon+pink combo
-   faded into the card background and was unreadable on mobile. */
-html.dark .md-overdue-chip {
-  background: #dc2626;
-  color: #fff5f5;
-  border: 1px solid #f87171;
-  font-weight: 800;
-  box-shadow: 0 1px 2px rgba(220, 38, 38, .35);
-}
-/* Count pill beside the "Overdue" card title */
-html.dark .md-count-red {
-  background: #b91c1c;
-  color: #fff5f5;
-}
-/* Alert icon badge on the overdue card header */
-html.dark .md-overdue-icon {
-  background: rgba(239, 68, 68, .22);
-  color: #fca5a5;
-}
-/* Brighter left accent on overdue rows so the red edge reads clearly */
-html.dark .md-overdue-row { box-shadow: inset 3px 0 0 0 #ef4444; }
-/* Hero "N overdue" callout — brighter red on dark bg */
-html.dark .md-hero-overdue { color: #fca5a5; }
+  html.dark .md-check-done { background: #083325; color: #6ee7b7; }
+  html.dark .md-check-open { border-color: #475569; }
 
-/* Band row divider — was barely visible */
-html.dark .md-row-link { color: #94a3b8; }
-html.dark .md-row-link:hover { background: #273449; color: #93c5fd; }
-
-/* Check pills — green-done needs more glow in dark */
-html.dark .md-check-done {
-  background: #083325;
-  color: #6ee7b7;
-}
-html.dark .md-check-open {
-  border-color: #475569;
-}
-
-/* Habit progress bar track */
-html.dark .md-habit-progress {
-  background: #273449;
+  html.dark .md-habit-progress { background: #273449; }
 }
 
 /* ── Peek sheet (the popup opened on row click) — dark polish ── */
@@ -878,79 +1192,6 @@ html.dark .peek-habit-bar {
   background: #273449;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   MOBILE DARK — Todoist-inspired flat list, dark palette.
-   Neutral near-black stage, hairline dividers, no card boxes.
-   Colored 2px left edge is the only chrome; typography does the work.
-   ═══════════════════════════════════════════════════════════════════ */
-@media (max-width: 640px) {
-  /* Stage: Todoist-style warm near-black, no navy */
-  html.dark body { background: #1f1f1f; }
-
-  /* Rows — transparent with hairline divider */
-  html.dark .md-row {
-    background: transparent;
-    border-bottom: 1px solid #2a2a2a;
-  }
-  html.dark .md-row:hover { background: #262626; }
-
-  /* Softer left accents on dark */
-  html.dark .md-row.md-type-meeting { box-shadow: inset 2px 0 0 0 #60a5fa; }
-  html.dark .md-row.md-type-task    { box-shadow: inset 2px 0 0 0 #6b7280; }
-  html.dark .md-row.md-type-habit   { box-shadow: inset 2px 0 0 0 #34d399; }
-  html.dark .md-overdue-row         { box-shadow: inset 2px 0 0 0 #ef5a4d; }
-
-  /* Typography — soft whites, muted greys */
-  html.dark .md-row-title { color: #ebebeb; font-weight: 500; }
-  html.dark .md-row.md-done .md-row-title { color: #6b6b6b; }
-  html.dark .md-time { color: #ebebeb; }
-  html.dark .md-time-end,
-  html.dark .md-time-any { color: #8a8a8a; }
-  html.dark .md-row .md-context-chip { color: #8a8a8a; background: transparent; }
-  html.dark .md-row .md-overdue-chip { color: #ef5a4d; background: transparent; }
-  html.dark .sum-title { color: #ebebeb; }
-  html.dark .md-card-title { color: #9a9a9a; }
-  html.dark .md-hero {
-    background: none;
-    border: none;
-    color: #9a9a9a;
-  }
-  html.dark .md-hero b { color: #ebebeb; }
-  html.dark .md-hero-overdue { color: #ef5a4d; }
-
-  /* Band dividers — quiet muted label */
-  html.dark .md-band-row td {
-    background: transparent !important;
-    border-bottom: none !important;
-    color: #7a7a7a !important;
-  }
-
-  /* Status markers */
-  html.dark .md-check-open { border-color: #4a4a4a; }
-  html.dark .md-check-done {
-    background: rgba(74, 222, 128, .15);
-    color: #4ade80;
-  }
-  html.dark .md-row-link { color: #7a7a7a; }
-  html.dark .md-row-link:hover { background: #2e2e2e; color: #ebebeb; }
-
-  /* Habit progress bar */
-  html.dark .md-habit-progress { background: #2e2e2e; }
-  html.dark .md-habit-label { color: #9a9a9a; }
-
-  /* Count pills */
-  html.dark .md-count-pill { background: transparent; color: #8a8a8a; }
-  html.dark .md-count-red  { background: transparent; color: #ef5a4d; }
-
-  /* Overdue icon badge */
-  html.dark .md-overdue-icon {
-    background: rgba(239, 90, 77, .14);
-    color: #ef5a4d;
-  }
-
-  /* Today pill — soft red tint */
-  html.dark .md-today-pill {
-    background: rgba(239, 90, 77, .16);
-    color: #ef5a4d;
-  }
-}
+/* Dark-mode mobile daily view is now entirely driven by the earthy
+   tokens defined at the top of this file (--bg-base, --bg-surface,
+   --text-*, etc.) — no per-selector overrides needed. */

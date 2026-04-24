@@ -52,6 +52,7 @@
   <!-- ═══════════ DAILY VIEW — Morning Dashboard ═══════════ -->
   {% if view == "daily" %}
 
+  <!-- Legacy title row — hidden on mobile, still used on desktop -->
   <div class="md-title-row">
     <h1 class="sum-title">{{ date.strftime("%A, %B %d") }}</h1>
     {% if is_today %}<span class="md-today-pill">Today</span>{% endif %}
@@ -70,6 +71,52 @@
       {% if c.overdue %} · <span class="md-hero-overdue">{{ c.overdue }} overdue</span>{% endif %}
     {% endif %}
   </p>
+
+  <!-- Mobile-first greeting + date. Desktop hides this via CSS-inherited
+       mobile-only styling (the greeting is shown only at ≤ 640px) -->
+  <header class="md-greeting">
+    <h1 class="md-greet-title" id="md-greet-title">Good morning</h1>
+    <p class="md-greet-date">
+      {{ date.strftime("%A, %B %d") }}{% if is_today %} · <span class="md-today-tag">Today</span>{% endif %}
+    </p>
+  </header>
+
+  <!-- Progress at a glance: a single bar driven by today's items only.
+       Habits aren't counted toward task completion since they have their
+       own lifecycle (value vs. goal). -->
+  {% set _today_items = dashboard.today_items %}
+  {% set _total = _today_items|length %}
+  {% set _done = _today_items|selectattr('done')|list|length %}
+  <section class="md-progress-card" aria-label="Today's progress">
+    {% if _total %}
+      <div class="md-progress-track" role="progressbar"
+           aria-valuemin="0" aria-valuemax="{{ _total }}" aria-valuenow="{{ _done }}">
+        <div class="md-progress-fill" style="width: {{ ((_done / _total) * 100)|round(0, 'floor') }}%;"></div>
+      </div>
+      <p class="md-progress-label"><b>{{ _done }}</b> of <b>{{ _total }}</b> done today</p>
+    {% else %}
+      <p class="md-progress-empty">Nothing scheduled yet — a clean slate.</p>
+    {% endif %}
+  </section>
+
+  <script>
+  /* Time-of-day greeting — runs once on paint. */
+  (function () {
+    var h = new Date().getHours();
+    var g = 'Good morning';
+    if (h >= 12 && h < 17) g = 'Good afternoon';
+    else if (h >= 17 || h < 5) g = 'Good evening';
+    var el = document.getElementById('md-greet-title');
+    if (el) el.textContent = g;
+
+    /* On mobile, collapse <details> blocks that were server-rendered
+       with `open` (Reflection). Desktop keeps them expanded. */
+    if (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) {
+      document.querySelectorAll('details.md-reflection-details[open]')
+        .forEach(function (d) { d.removeAttribute('open'); });
+    }
+  })();
+  </script>
 
   <!-- ── OVERDUE ── highest priority signal in a morning review -->
   {% if dashboard.overdue %}
@@ -304,31 +351,45 @@
     {% endif %}
   </section>
 
-  <!-- ── Reflection + AI Recap — below the fold, still one tap away ── -->
+  <!-- ── Reflection + AI Recap — below the fold, still one tap away ──
+       Wrapped in <details> so mobile collapses it by default (expandable
+       on tap). Desktop CSS forces it open and hides the collapse chrome,
+       so desktop users see the unchanged card layout. -->
   <div class="sum-grid md-supplement">
-    <div class="sum-card">
-      <h3 class="card-title">
-        <i data-feather="edit-3" class="card-icon"></i> Reflection
+    <details class="md-reflection-details sum-card" open>
+      <summary class="md-reflection-summary">
+        <i data-feather="edit-3"></i>
+        <span class="md-reflection-label">Reflection</span>
+        <span class="md-reflection-preview">
+          {%- set _ref = data.reflection or '' -%}
+          {%- if _ref -%}
+            {{ _ref[:80] ~ ('…' if _ref|length > 80 else '') }}
+          {%- else -%}
+            Tap to write…
+          {%- endif -%}
+        </span>
         <span class="reflection-save-status" id="reflection-status" aria-live="polite"></span>
-      </h3>
-      {% if view == "daily" %}
-      <textarea
-        id="reflection-input"
-        class="reflection-textarea"
-        data-date="{{ date.isoformat() }}"
-        placeholder="How did today go? Wins, blockers, what to change tomorrow…"
-        rows="5"
-        oninput="scheduleReflectionSave()"
-        onblur="saveReflection(true)"
-      >{{ data.reflection or '' }}</textarea>
-      {% else %}
-        {% if data.reflection %}
-        <p class="reflection-text">{{ data.reflection }}</p>
+      </summary>
+      <div class="md-reflection-body">
+        {% if view == "daily" %}
+        <textarea
+          id="reflection-input"
+          class="reflection-textarea"
+          data-date="{{ date.isoformat() }}"
+          placeholder="How did today go? Wins, blockers, what to change tomorrow…"
+          rows="5"
+          oninput="scheduleReflectionSave()"
+          onblur="saveReflection(true)"
+        >{{ data.reflection or '' }}</textarea>
         {% else %}
-        <div class="empty-msg">No reflection written.</div>
+          {% if data.reflection %}
+          <p class="reflection-text">{{ data.reflection }}</p>
+          {% else %}
+          <div class="empty-msg">No reflection written.</div>
+          {% endif %}
         {% endif %}
-      {% endif %}
-    </div>
+      </div>
+    </details>
 
     <div class="sum-card ai-card">
       <h3 class="card-title"><i data-feather="cpu" class="card-icon"></i> AI Day Recap</h3>
