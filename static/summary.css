@@ -533,6 +533,31 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
    Touch targets: ≥44px on interactive elements
    ═══════════════════════════════════════════════════════════════════ */
 @media (max-width: 640px) {
+  /* FORCE LIGHT PALETTE ON MOBILE.
+     The mobile daily view is a bright, high-contrast reading surface —
+     regardless of OS dark-mode preference or the app's html.dark toggle.
+     These !important tokens override any dark-mode declarations for
+     :root / html.dark / [data-theme=dark]. Desktop dark mode is
+     untouched (the !important only lives inside this media query). */
+  :root,
+  html.dark,
+  [data-theme="dark"] {
+    --bg-base: #FAF7F2 !important;
+    --bg-surface: #FFFFFF !important;
+    --bg-subtle: #F1EBE1 !important;
+    --text-primary: #1A1613 !important;       /* 18.5:1 on white */
+    --text-secondary: #574B42 !important;     /*  9.5:1 on white */
+    --text-muted: #857769 !important;         /*  4.6:1 on white (AA) */
+    --accent-primary: #B84A15 !important;
+    --accent-primary-hover: #9A3D10 !important;
+    --accent-secondary: #6B5D3A !important;
+    --success: #4E6A2B !important;
+    --warning: #A8691A !important;
+    --danger: #8F3528 !important;
+    --border: #E8DFD2 !important;
+    --shadow-card: 0 1px 2px rgba(26,22,19,.05), 0 2px 8px rgba(26,22,19,.04) !important;
+  }
+
   body {
     background: var(--bg-base);
     color: var(--text-primary);
@@ -555,8 +580,8 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     letter-spacing: -.3px;
   }
   .md-greet-date {
-    font-size: 14px; line-height: 20px; font-weight: 400;
-    color: var(--text-muted);
+    font-size: 14px; line-height: 20px; font-weight: 500;
+    color: var(--text-secondary);
     margin: 0;
   }
   .md-today-tag {
@@ -628,10 +653,10 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   }
   .md-card-title {
     margin: 0;
-    font-size: 12px; line-height: 16px; font-weight: 600;
-    letter-spacing: .04em;
+    font-size: 13px; line-height: 18px; font-weight: 700;
+    letter-spacing: .06em;
     text-transform: uppercase;
-    color: var(--text-secondary);
+    color: var(--text-primary);
     display: flex;
     align-items: center;
     gap: var(--space-2);
@@ -676,10 +701,10 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   .md-band-row { display: block; }
   .md-band-row td {
     padding: var(--space-4) var(--space-4) var(--space-2);
-    font-size: 12px; font-weight: 600;
-    letter-spacing: .04em;
+    font-size: 13px; font-weight: 700;
+    letter-spacing: .06em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     background: transparent;
     border: none;
   }
@@ -868,10 +893,10 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    font-size: 12px; line-height: 16px; font-weight: 600;
-    letter-spacing: .04em;
+    font-size: 13px; line-height: 18px; font-weight: 700;
+    letter-spacing: .06em;
     text-transform: uppercase;
-    color: var(--text-secondary);
+    color: var(--text-primary);
   }
   .md-reflection-summary::-webkit-details-marker { display: none; }
   .md-reflection-summary svg {
@@ -940,10 +965,10 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     margin: 0 0 var(--space-6);
   }
   .sum-grid.md-supplement .sum-card .card-title {
-    font-size: 12px; font-weight: 600;
-    letter-spacing: .04em;
+    font-size: 13px; font-weight: 700;
+    letter-spacing: .06em;
     text-transform: uppercase;
-    color: var(--text-secondary);
+    color: var(--text-primary);
   }
   .sum-grid.md-supplement .ai-card {
     border-style: solid;
