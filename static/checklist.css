@@ -129,6 +129,23 @@ body {
 }
 .cl-edit:hover { background: var(--cl-bg); color: var(--cl-text); }
 
+/* Pomodoro start button — ▶ glyph keeps the row compact; expands the
+   global timer widget on click. Hidden when the item is already ticked. */
+.cl-pomo {
+  flex-shrink: 0;
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--cl-border);
+  background: var(--cl-surface);
+  color: #2563eb;
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, transform .08s;
+}
+.cl-pomo:hover { background: #eff6ff; border-color: #bfdbfe; }
+.cl-pomo:active { transform: scale(.94); }
+.cl-item.is-ticked .cl-pomo { display: none; }
+
 .cl-empty {
   padding: 28px 16px; text-align: center; color: var(--cl-text2);
   background: var(--cl-surface);

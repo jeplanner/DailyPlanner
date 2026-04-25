@@ -1095,6 +1095,363 @@ document.addEventListener("keydown", (e) => {
 </aside>
 
 
+<!-- ═══════════ GLOBAL POMODORO WIDGET ═══════════
+     Lives on every page (this nav is _included_ everywhere). Hidden
+     until /api/v2/timer/active returns a running session, at which
+     point it shows the task title, mode, countdown, and Pause/Stop
+     controls. State is server-side, so the widget hydrates the same
+     across page navigations. -->
+<div id="gpomo" class="gpomo gpomo-hidden" role="region" aria-label="Active timer">
+  <div class="gpomo-icon" aria-hidden="true">
+    <i data-feather="clock"></i>
+  </div>
+  <div class="gpomo-body">
+    <div class="gpomo-line1">
+      <span class="gpomo-mode" id="gpomo-mode">Pomodoro</span>
+      <span class="gpomo-sep">·</span>
+      <span class="gpomo-title" id="gpomo-title">—</span>
+    </div>
+    <div class="gpomo-time" id="gpomo-time">25:00</div>
+    <div class="gpomo-bar"><div class="gpomo-bar-fill" id="gpomo-bar-fill"></div></div>
+  </div>
+  <div class="gpomo-controls">
+    <button type="button" class="gpomo-btn" id="gpomo-pause-btn"
+            onclick="gpomoTogglePause()" title="Pause / Resume" aria-label="Pause or resume">
+      <i data-feather="pause" id="gpomo-pause-icon"></i>
+    </button>
+    <button type="button" class="gpomo-btn gpomo-btn-stop"
+            onclick="gpomoStop()" title="Stop and log time" aria-label="Stop">
+      <i data-feather="square"></i>
+    </button>
+  </div>
+</div>
+<style>
+  .gpomo {
+    position: fixed; right: 16px; bottom: 16px; z-index: 9985;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px 10px 14px;
+    min-width: 280px; max-width: 360px;
+    background: #ffffff; color: #0f172a;
+    border: 1px solid #e2e8f0; border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(15,23,42,0.18), 0 2px 6px rgba(15,23,42,.06);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    transition: transform .2s ease, opacity .2s ease;
+  }
+  .gpomo-hidden { transform: translateY(20px); opacity: 0; pointer-events: none; }
+  html.dark .gpomo { background: #1e293b; color: #f1f5f9; border-color: #334155; }
+  .gpomo-icon {
+    width: 36px; height: 36px; flex: 0 0 auto;
+    border-radius: 50%;
+    background: color-mix(in srgb, #2563eb 14%, transparent);
+    color: #2563eb;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .gpomo.is-paused .gpomo-icon {
+    background: color-mix(in srgb, #f59e0b 18%, transparent);
+    color: #b45309;
+  }
+  .gpomo.is-overtime .gpomo-icon {
+    background: color-mix(in srgb, #16a34a 16%, transparent);
+    color: #15803d;
+  }
+  html.dark .gpomo-icon { background: rgba(37,99,235,.22); color: #93c5fd; }
+  html.dark .gpomo.is-paused .gpomo-icon { background: rgba(245,158,11,.22); color: #fcd34d; }
+  html.dark .gpomo.is-overtime .gpomo-icon { background: rgba(22,163,74,.22); color: #86efac; }
+  .gpomo-icon svg { width: 18px; height: 18px; }
+  .gpomo-body { flex: 1; min-width: 0; }
+  .gpomo-line1 {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600;
+    color: #64748b; text-transform: uppercase; letter-spacing: .04em;
+  }
+  html.dark .gpomo-line1 { color: #94a3b8; }
+  .gpomo-mode { color: #2563eb; }
+  html.dark .gpomo-mode { color: #93c5fd; }
+  .gpomo.is-paused .gpomo-mode { color: #b45309; }
+  html.dark .gpomo.is-paused .gpomo-mode { color: #fcd34d; }
+  .gpomo-sep { color: #cbd5e1; }
+  .gpomo-title {
+    color: #0f172a; font-weight: 600; text-transform: none; letter-spacing: 0;
+    font-size: 12px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+  }
+  html.dark .gpomo-title { color: #f1f5f9; }
+  .gpomo-time {
+    margin-top: 2px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 22px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #0f172a;
+    line-height: 1.1;
+  }
+  html.dark .gpomo-time { color: #f1f5f9; }
+  .gpomo.is-overtime .gpomo-time { color: #15803d; }
+  html.dark .gpomo.is-overtime .gpomo-time { color: #86efac; }
+  .gpomo-bar {
+    margin-top: 6px; height: 3px; border-radius: 2px;
+    background: rgba(15,23,42,0.08); overflow: hidden;
+  }
+  html.dark .gpomo-bar { background: rgba(255,255,255,.10); }
+  .gpomo-bar-fill {
+    height: 100%; width: 0%;
+    background: #2563eb;
+    transition: width .4s ease;
+  }
+  .gpomo.is-paused .gpomo-bar-fill { background: #f59e0b; }
+  .gpomo.is-overtime .gpomo-bar-fill { background: #16a34a; }
+  .gpomo-controls { display: flex; gap: 6px; flex: 0 0 auto; }
+  .gpomo-btn {
+    appearance: none; padding: 0; cursor: pointer;
+    width: 36px; height: 36px; border-radius: 10px;
+    border: 1px solid #e2e8f0; background: #f8fafc; color: #0f172a;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .gpomo-btn svg { width: 16px; height: 16px; }
+  .gpomo-btn:hover { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+  .gpomo-btn-stop:hover { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+  html.dark .gpomo-btn { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+  html.dark .gpomo-btn:hover { background: #1e3a8a; color: #bfdbfe; border-color: #1d4ed8; }
+  html.dark .gpomo-btn-stop:hover { background: #3b1111; color: #fca5a5; border-color: #b91c1c; }
+
+  @media (max-width: 480px) {
+    .gpomo { left: 12px; right: 12px; bottom: 12px; min-width: 0; max-width: none; }
+  }
+
+  /* Pomodoro completion pulse */
+  @keyframes gpomoPulse {
+    0%, 100% { box-shadow: 0 12px 32px rgba(15,23,42,0.18), 0 0 0 0 rgba(22,163,74,.45); }
+    50%      { box-shadow: 0 12px 32px rgba(15,23,42,0.18), 0 0 0 12px rgba(22,163,74,0); }
+  }
+  .gpomo.is-overtime { animation: gpomoPulse 2s ease-in-out 2; }
+</style>
+<script>
+/* ═══════════ GLOBAL POMODORO STATE & API ═══════════ */
+(function(){
+  const state = {
+    id: null, mode: "stopwatch", title: "",
+    startedAt: 0,            // ms epoch
+    targetSeconds: null,     // null for stopwatch
+    pausedSeconds: 0,        // accumulated paused seconds
+    pausedAt: null,          // ms epoch when paused, or null
+    overtimeChimedFor: null, // log id we've already chimed for
+  };
+  let tickHandle = null;
+
+  function _$(id) { return document.getElementById(id); }
+  function _fmt(seconds) {
+    const sgn = seconds < 0 ? "-" : "";
+    const s = Math.floor(Math.abs(seconds));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${sgn}${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+    return `${sgn}${m}:${String(sec).padStart(2,"0")}`;
+  }
+  function _modeLabel() {
+    if (state.mode === "pomodoro") {
+      const mins = Math.round((state.targetSeconds || 0) / 60);
+      return `Pomodoro ${mins}`;
+    }
+    return "Stopwatch";
+  }
+
+  function _elapsedSeconds() {
+    let elapsed = (Date.now() - state.startedAt) / 1000;
+    elapsed -= state.pausedSeconds;
+    if (state.pausedAt) elapsed -= (Date.now() - state.pausedAt) / 1000;
+    return Math.max(0, elapsed);
+  }
+
+  function _render() {
+    const el = _$("gpomo");
+    if (!el) return;
+    if (!state.id) { el.classList.add("gpomo-hidden"); return; }
+    el.classList.remove("gpomo-hidden");
+
+    _$("gpomo-mode").textContent  = _modeLabel();
+    _$("gpomo-title").textContent = state.title || "Untitled";
+
+    const elapsed = _elapsedSeconds();
+    const display = (state.mode === "pomodoro" && state.targetSeconds)
+      ? state.targetSeconds - elapsed
+      : elapsed;
+    _$("gpomo-time").textContent = _fmt(display);
+
+    const fill = _$("gpomo-bar-fill");
+    if (state.mode === "pomodoro" && state.targetSeconds) {
+      const pct = Math.min(100, Math.max(0, (elapsed / state.targetSeconds) * 100));
+      fill.style.width = pct + "%";
+    } else {
+      // For stopwatch, animate a "breathing" bar to show liveness.
+      const cycle = (elapsed % 60) / 60 * 100;
+      fill.style.width = cycle + "%";
+    }
+
+    el.classList.toggle("is-paused", !!state.pausedAt);
+    const overtime = state.mode === "pomodoro" && state.targetSeconds
+                     && elapsed >= state.targetSeconds;
+    el.classList.toggle("is-overtime", !!overtime);
+
+    // Update pause/resume icon
+    const ic = _$("gpomo-pause-icon");
+    if (ic) {
+      ic.setAttribute("data-feather", state.pausedAt ? "play" : "pause");
+      if (window.feather) {
+        // Replace just this icon; feather.replace() rebuilds all svgs.
+        const parent = ic.parentElement;
+        ic.outerHTML = `<i data-feather="${state.pausedAt ? "play" : "pause"}" id="gpomo-pause-icon"></i>`;
+        if (window.feather) window.feather.replace();
+      }
+    }
+
+    // Chime once when a Pomodoro target is hit
+    if (overtime && state.overtimeChimedFor !== state.id) {
+      state.overtimeChimedFor = state.id;
+      _chime();
+      if (window.showToast) window.showToast("Pomodoro complete — take a break", "success", 4000);
+    }
+  }
+
+  function _startTicking() {
+    if (tickHandle) return;
+    tickHandle = setInterval(_render, 1000);
+  }
+  function _stopTicking() {
+    if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
+  }
+
+  function _chime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sine"; o.frequency.value = 880;
+      g.gain.value = 0.001;
+      o.connect(g); g.connect(ctx.destination);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9);
+      o.stop(ctx.currentTime + 0.95);
+    } catch (e) { /* audio is best-effort */ }
+  }
+
+  /* ── Public API (window-scoped, called by other pages) ── */
+
+  // Hydrate from /active on page load
+  async function gpomoHydrate() {
+    try {
+      const r = await fetch("/api/v2/timer/active");
+      if (!r.ok) return;
+      const data = await r.json();
+      const t = (data.active || [])[0];
+      if (!t) { state.id = null; _render(); _stopTicking(); return; }
+      _adoptFromServer(t);
+      _render();
+      _startTicking();
+    } catch (e) { /* non-fatal */ }
+  }
+
+  function _adoptFromServer(t) {
+    state.id = t.id;
+    state.mode = t.mode || "stopwatch";
+    state.title = t.title || t.label || "Untitled task";
+    state.startedAt = new Date(t.started_at).getTime();
+    state.targetSeconds = t.target_seconds || null;
+    state.pausedSeconds = parseInt(t.paused_seconds || 0, 10) || 0;
+    state.pausedAt = t.paused_at ? new Date(t.paused_at).getTime() : null;
+  }
+
+  // Start a new timer (single-active enforced server-side)
+  // payload shape mirrors /api/v2/timer/start body
+  window.gpomoStart = async function(payload) {
+    try {
+      const r = await fetch("/api/v2/timer/start", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload || {}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      // Synthesise a "title" so we don't have to refetch /active.
+      state.id = data.id;
+      state.mode = data.mode || payload.mode || "stopwatch";
+      state.title = payload._title || payload.label || "Active task";
+      state.startedAt = new Date(data.started_at).getTime();
+      state.targetSeconds = data.target_seconds || payload.target_seconds || null;
+      state.pausedSeconds = 0;
+      state.pausedAt = null;
+      state.overtimeChimedFor = null;
+      _render();
+      _startTicking();
+      if (window.showToast) window.showToast("Timer started", "success", 1500);
+      // Re-fetch to get authoritative title / fields
+      gpomoHydrate();
+      return data;
+    } catch (e) {
+      console.error("gpomoStart failed", e);
+      if (window.showToast) window.showToast("Couldn't start timer", "error");
+    }
+  };
+
+  window.gpomoTogglePause = async function() {
+    if (!state.id) return;
+    const endpoint = state.pausedAt ? "resume" : "pause";
+    try {
+      const r = await fetch(`/api/v2/timer/${endpoint}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({id: state.id}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (state.pausedAt) {
+        // Resuming: fold the paused interval into pausedSeconds.
+        state.pausedSeconds += Math.round((Date.now() - state.pausedAt) / 1000);
+        state.pausedAt = null;
+      } else {
+        state.pausedAt = Date.now();
+      }
+      _render();
+    } catch (e) {
+      if (window.showToast) window.showToast("Couldn't update timer", "error");
+    }
+  };
+
+  window.gpomoStop = async function() {
+    if (!state.id) return;
+    const id = state.id;
+    try {
+      const r = await fetch("/api/v2/timer/stop", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({id}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const mins = Math.round((data.duration_seconds || 0) / 60);
+      state.id = null; state.pausedAt = null;
+      _render();
+      _stopTicking();
+      if (window.showToast) window.showToast(`Logged ${mins} min`, "success", 2200);
+    } catch (e) {
+      if (window.showToast) window.showToast("Couldn't stop timer", "error");
+    }
+  };
+
+  // Returns whether a timer is running (for callers that want to confirm
+  // before starting another one).
+  window.gpomoIsRunning = function() { return !!state.id; };
+  window.gpomoCurrentId = function() { return state.id; };
+  window.gpomoHydrate = gpomoHydrate;
+
+  document.addEventListener("DOMContentLoaded", () => {
+    gpomoHydrate();
+    if (window.feather) window.feather.replace();
+  });
+})();
+</script>
+
+
 <div class="section-title">
   {{ section_title }}
 </div>

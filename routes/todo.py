@@ -581,13 +581,22 @@ def _create_next_recurring_instance(user_id, recurring_id, current_plan_date,
 # bugs (NameError + missing user_id scope). The Morning Dashboard
 # (/summary?view=daily) now surfaces overdue items as a read-through
 # view — no duplication required.
+def _parse_iso_z(s):
+    from datetime import datetime as _dt
+    if not s:
+        return None
+    return _dt.fromisoformat(s.rstrip("Z"))
+
+
 @todo_bp.route("/api/v2/timer/start", methods=["POST"])
 @login_required
 def timer_start():
     """Start a time-tracking session on a task.
     Body: { "source": "matrix"|"project"|"event"|"adhoc",
             "matrix_task_id"?: uuid, "project_task_id"?: uuid,
-            "event_id"?: uuid, "label"?: "..." }
+            "event_id"?: uuid, "label"?: "...",
+            "mode"?: "stopwatch"|"pomodoro",
+            "target_seconds"?: int }
     If a session for the same task is already running, returns it instead of
     starting a duplicate (idempotent so refreshing doesn't double-count).
     """
@@ -598,21 +607,38 @@ def timer_start():
     if source not in ("matrix", "project", "event", "adhoc"):
         return jsonify({"error": "invalid source"}), 400
 
-    # Look for an already-running timer on this task
-    filter_key = {"matrix": "matrix_task_id", "project": "project_task_id", "event": "event_id"}.get(source)
-    if filter_key and data.get(filter_key):
-        existing = get(
-            "task_time_logs",
-            params={
-                "user_id": f"eq.{user_id}",
-                filter_key: f"eq.{data[filter_key]}",
-                "ended_at": "is.null",
-                "select": "id,started_at",
-                "limit": 1,
-            },
-        ) or []
-        if existing:
-            return jsonify({"id": existing[0]["id"], "started_at": existing[0]["started_at"], "resumed": True})
+    mode = (data.get("mode") or "stopwatch").strip()
+    if mode not in ("stopwatch", "pomodoro"):
+        mode = "stopwatch"
+    target_seconds = data.get("target_seconds")
+    try:
+        target_seconds = int(target_seconds) if target_seconds is not None else None
+    except (TypeError, ValueError):
+        target_seconds = None
+    if mode == "pomodoro" and (not target_seconds or target_seconds <= 0):
+        target_seconds = 25 * 60  # sensible default
+
+    # Single active timer policy: stop any other running timer first so the
+    # global widget always reflects exactly one in-flight session.
+    others = get(
+        "task_time_logs",
+        params={
+            "user_id": f"eq.{user_id}",
+            "ended_at": "is.null",
+            "select": "id,started_at,paused_at,paused_seconds",
+            "order": "started_at.desc",
+        },
+    ) or []
+    for o in others:
+        # If it's the same task we're starting, prefer to resume rather than stop.
+        same = False
+        for k in ("matrix_task_id", "project_task_id", "event_id"):
+            if data.get(k) and o.get(k) == data.get(k):
+                same = True
+                break
+        if same:
+            return jsonify({"id": o["id"], "started_at": o["started_at"], "resumed": True})
+        _stop_log(user_id, o)
 
     payload = {
         "user_id": user_id,
@@ -622,16 +648,76 @@ def timer_start():
         "event_id":        data.get("event_id"),
         "label":           (data.get("label") or "").strip() or None,
         "started_at":      _dt.utcnow().isoformat() + "Z",
+        "mode":            mode,
+        "target_seconds":  target_seconds,
+        "paused_seconds":  0,
     }
     rows = post("task_time_logs", payload)
-    return jsonify({"id": rows[0]["id"] if rows else None, "started_at": payload["started_at"]})
+    return jsonify({
+        "id": rows[0]["id"] if rows else None,
+        "started_at": payload["started_at"],
+        "mode": mode,
+        "target_seconds": target_seconds,
+    })
+
+
+def _stop_log(user_id, row):
+    """Compute duration honouring pauses and stamp ended_at on the row.
+    Used both by /timer/stop and the auto-stop in /timer/start."""
+    from datetime import datetime as _dt
+    ended = _dt.utcnow()
+    started = _parse_iso_z(row["started_at"])
+    paused_seconds = int(row.get("paused_seconds") or 0)
+    if row.get("paused_at"):
+        # Currently paused — count the still-paused interval as paused too.
+        paused_at = _parse_iso_z(row["paused_at"])
+        paused_seconds += int((ended - paused_at).total_seconds())
+    duration = max(0, int((ended - started).total_seconds()) - paused_seconds)
+    update(
+        "task_time_logs",
+        params={"id": f"eq.{row['id']}", "user_id": f"eq.{user_id}"},
+        json={
+            "ended_at": ended.isoformat() + "Z",
+            "duration_seconds": duration,
+            "paused_seconds": paused_seconds,
+            "paused_at": None,
+        },
+    )
+    return duration
 
 
 @todo_bp.route("/api/v2/timer/stop", methods=["POST"])
 @login_required
 def timer_stop():
     """Stop a running timer. Body: { "id": uuid }
-    Computes duration_seconds and stamps ended_at."""
+    Subtracts paused time so duration reflects actual focus."""
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    log_id = data.get("id")
+    if not log_id:
+        return jsonify({"error": "id required"}), 400
+
+    rows = get(
+        "task_time_logs",
+        params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
+                "select": "id,started_at,ended_at,paused_at,paused_seconds"},
+    ) or []
+    if not rows:
+        return jsonify({"error": "log not found"}), 404
+    row = rows[0]
+    if row.get("ended_at"):
+        return jsonify({"ok": True, "already_stopped": True})
+
+    duration = _stop_log(user_id, row)
+    return jsonify({"ok": True, "duration_seconds": duration})
+
+
+@todo_bp.route("/api/v2/timer/pause", methods=["POST"])
+@login_required
+def timer_pause():
+    """Pause a running timer. Body: { "id": uuid }
+    Stamps paused_at; the elapsed-since-pause interval is added to
+    paused_seconds on resume (or stop)."""
     from datetime import datetime as _dt
     user_id = session["user_id"]
     data = request.get_json(force=True) or {}
@@ -642,41 +728,121 @@ def timer_stop():
     rows = get(
         "task_time_logs",
         params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
-                "select": "started_at,ended_at"},
+                "select": "id,ended_at,paused_at"},
     ) or []
     if not rows:
         return jsonify({"error": "log not found"}), 404
     row = rows[0]
     if row.get("ended_at"):
-        return jsonify({"ok": True, "already_stopped": True})
+        return jsonify({"error": "already stopped"}), 400
+    if row.get("paused_at"):
+        return jsonify({"ok": True, "already_paused": True, "paused_at": row["paused_at"]})
 
-    ended = _dt.utcnow()
-    started = _dt.fromisoformat(row["started_at"].rstrip("Z"))
-    duration = max(0, int((ended - started).total_seconds()))
-
+    now_iso = _dt.utcnow().isoformat() + "Z"
     update(
         "task_time_logs",
         params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}"},
-        json={"ended_at": ended.isoformat() + "Z", "duration_seconds": duration},
+        json={"paused_at": now_iso},
     )
-    return jsonify({"ok": True, "duration_seconds": duration})
+    return jsonify({"ok": True, "paused_at": now_iso})
+
+
+@todo_bp.route("/api/v2/timer/resume", methods=["POST"])
+@login_required
+def timer_resume():
+    """Resume a paused timer. Body: { "id": uuid }
+    Folds (now - paused_at) into paused_seconds and clears paused_at."""
+    from datetime import datetime as _dt
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    log_id = data.get("id")
+    if not log_id:
+        return jsonify({"error": "id required"}), 400
+
+    rows = get(
+        "task_time_logs",
+        params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
+                "select": "id,ended_at,paused_at,paused_seconds"},
+    ) or []
+    if not rows:
+        return jsonify({"error": "log not found"}), 404
+    row = rows[0]
+    if row.get("ended_at"):
+        return jsonify({"error": "already stopped"}), 400
+    if not row.get("paused_at"):
+        return jsonify({"ok": True, "not_paused": True})
+
+    now = _dt.utcnow()
+    paused_at = _parse_iso_z(row["paused_at"])
+    delta = max(0, int((now - paused_at).total_seconds()))
+    new_paused = int(row.get("paused_seconds") or 0) + delta
+    update(
+        "task_time_logs",
+        params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}"},
+        json={"paused_at": None, "paused_seconds": new_paused},
+    )
+    return jsonify({"ok": True, "paused_seconds": new_paused})
 
 
 @todo_bp.route("/api/v2/timer/active", methods=["GET"])
 @login_required
 def timer_active():
     """Return all currently-running timers for the user (usually 0 or 1).
-    Used on page load to restore the timer UI when the user returns."""
+    Used on page load to restore the timer UI when the user returns.
+    For each row also resolves the task title so the global widget can
+    display "Pomodoro · <task name>" without a second round-trip."""
     user_id = session["user_id"]
     rows = get(
         "task_time_logs",
         params={
             "user_id": f"eq.{user_id}",
             "ended_at": "is.null",
-            "select": "id,source,matrix_task_id,project_task_id,event_id,label,started_at",
+            "select": ("id,source,matrix_task_id,project_task_id,event_id,"
+                       "label,started_at,mode,target_seconds,"
+                       "paused_at,paused_seconds"),
             "order": "started_at.desc",
         },
     ) or []
+
+    # Resolve titles in bulk so the global widget can show "Pomodoro · <task>"
+    # without a second round-trip. Column names follow the existing schema:
+    # todo_matrix.task_text, project_tasks.task_text, daily_events.title.
+    matrix_ids  = [r["matrix_task_id"]  for r in rows if r.get("matrix_task_id")]
+    project_ids = [r["project_task_id"] for r in rows if r.get("project_task_id")]
+    event_ids   = [r["event_id"]        for r in rows if r.get("event_id")]
+    title_map = {}
+    if matrix_ids:
+        mrows = get("todo_matrix",
+                    params={"id": f"in.({','.join(matrix_ids)})",
+                            "user_id": f"eq.{user_id}",
+                            "select": "id,task_text"}) or []
+        for m in mrows:
+            title_map[("matrix", m["id"])] = m.get("task_text")
+    if project_ids:
+        prows = get("project_tasks",
+                    params={"task_id": f"in.({','.join(project_ids)})",
+                            "user_id": f"eq.{user_id}",
+                            "select": "task_id,task_text"}) or []
+        for p in prows:
+            title_map[("project", p["task_id"])] = p.get("task_text")
+    if event_ids:
+        erows = get("daily_events",
+                    params={"id": f"in.({','.join(event_ids)})",
+                            "user_id": f"eq.{user_id}",
+                            "select": "id,title"}) or []
+        for e in erows:
+            title_map[("event", e["id"])] = e.get("title")
+
+    for r in rows:
+        if r.get("matrix_task_id"):
+            r["title"] = title_map.get(("matrix", r["matrix_task_id"]))
+        elif r.get("project_task_id"):
+            r["title"] = title_map.get(("project", r["project_task_id"]))
+        elif r.get("event_id"):
+            r["title"] = title_map.get(("event", r["event_id"]))
+        else:
+            r["title"] = r.get("label")
+
     return jsonify({"active": rows})
 
 

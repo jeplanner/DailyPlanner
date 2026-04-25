@@ -143,6 +143,7 @@
         <div class="cl-name"></div>
         ${meta.length ? `<div class="cl-meta">${meta.join("")}</div>` : ""}
       </div>
+      <button type="button" class="cl-pomo" title="Start Pomodoro 25 min" aria-label="Start Pomodoro">▶</button>
       <button type="button" class="cl-edit" aria-label="Edit">✎</button>
     `;
     row.querySelector(".cl-name").textContent = it.name;
@@ -154,8 +155,26 @@
       e.stopPropagation();
       openModal(it);
     });
+    row.querySelector(".cl-pomo").addEventListener("click", (e) => {
+      e.stopPropagation();
+      startChecklistPomo(it);
+    });
     row.addEventListener("click", () => toggleTick(it));
     return row;
+  }
+
+  // Start a 25-min Pomodoro on a checklist item. Routes through the
+  // global timer widget (defined in _top_nav.html) so pause/stop live
+  // in one place across pages.
+  async function startChecklistPomo(it) {
+    if (!window.gpomoStart) return;
+    await window.gpomoStart({
+      source: "adhoc",
+      label: it.name,
+      mode: "pomodoro",
+      target_seconds: 25 * 60,
+      _title: it.name,
+    });
   }
 
   function scheduleLabel(it) {
