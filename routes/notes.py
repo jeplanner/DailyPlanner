@@ -92,15 +92,33 @@ def scribble_list():
     )
 
 
+def _peers_in_folder(user_id, folder):
+    """Return every note in `folder`, ordered the same way the list page
+    orders them (pinned first, most-recent next). Used to power the
+    editor's "notes in this folder" rail and the prev/next nav."""
+    params = {
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
+        "select": "id,title,is_pinned,updated_at,notebook",
+        "order": "is_pinned.desc,updated_at.desc",
+        "limit": "200",
+    }
+    if folder and folder.lower() not in ("all", "all notes"):
+        params["notebook"] = f"eq.{folder}"
+    return get("scribble_notes", params=params) or []
+
+
 @notes_bp.route("/notes/scribble/new")
 @login_required
 def scribble_new():
     user_id = session["user_id"]
+    folder = request.args.get("folder", "")
     return render_template(
         "scribble_edit.html",
         note=None,
         sidebar=_list_folders(user_id),
-        prefill_folder=request.args.get("folder", ""),
+        prefill_folder=folder,
+        peers=_peers_in_folder(user_id, folder),
     )
 
 
@@ -119,6 +137,7 @@ def scribble_edit(note_id):
         note=note,
         sidebar=_list_folders(user_id),
         prefill_folder="",
+        peers=_peers_in_folder(user_id, note.get("notebook") or ""),
     )
 
 
@@ -214,3 +233,47 @@ def move_scribble(note_id):
 def api_folders():
     """Sidebar refresh hook — returns the current folder list with counts."""
     return jsonify(_list_folders(session["user_id"]))
+
+
+@notes_bp.route("/notes/scribble/folder/rename", methods=["POST"])
+@login_required
+def rename_folder():
+    """Bulk-rename a folder: every note where notebook=<from> gets
+    notebook=<to>. Body: { "from": "Work", "to": "Work + Side projects" }
+    Empty/missing fields are no-ops; renaming to "All Notes" is allowed
+    (same as moving the contents to the default bucket)."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    src = (data.get("from") or "").strip()
+    dst = (data.get("to") or "").strip()
+    if not src or not dst:
+        return jsonify({"error": "from and to required"}), 400
+    if src == dst:
+        return jsonify({"ok": True, "noop": True})
+    update(
+        "scribble_notes",
+        params={"user_id": f"eq.{user_id}", "notebook": f"eq.{src}"},
+        json={"notebook": dst},
+    )
+    return jsonify({"ok": True, "from": src, "to": dst})
+
+
+@notes_bp.route("/notes/scribble/folder/delete", methods=["POST"])
+@login_required
+def delete_folder():
+    """Soft-delete every note in a folder. Body: { "name": "Old folder" }
+    Notes are flagged is_deleted=true (per the project's no-hard-delete
+    rule) so they remain recoverable from the database if needed."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    if name.lower() == "all notes":
+        return jsonify({"error": "default folder can't be deleted"}), 400
+    update(
+        "scribble_notes",
+        params={"user_id": f"eq.{user_id}", "notebook": f"eq.{name}"},
+        json={"is_deleted": True},
+    )
+    return jsonify({"ok": True, "name": name})

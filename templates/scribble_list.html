@@ -93,6 +93,52 @@
     }
     .nl-new-folder svg { width: 13px; height: 13px; }
 
+    /* Folder row: link + hover-revealed actions menu */
+    .nl-folder-row {
+      position: relative;
+      display: flex; align-items: center;
+    }
+    .nl-folder-row .nl-folder { flex: 1; padding-right: 32px; }
+    .nl-folder-menu-btn {
+      position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+      width: 26px; height: 26px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: none; border-radius: 6px;
+      background: transparent;
+      color: var(--color-text-muted);
+      cursor: pointer; opacity: 0;
+      transition: opacity .12s, background .12s, color .12s;
+    }
+    .nl-folder-row:hover .nl-folder-menu-btn,
+    .nl-folder-menu-btn:focus-visible { opacity: 1; }
+    .nl-folder-menu-btn:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+    .nl-folder-menu-btn svg { width: 14px; height: 14px; }
+
+    .nl-folder-menu {
+      position: absolute; z-index: 100;
+      min-width: 170px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      box-shadow: 0 12px 28px rgba(15,23,42,.16);
+      padding: 5px;
+      display: none;
+    }
+    .nl-folder-menu.open { display: block; }
+    .nl-folder-menu button {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      padding: 8px 10px;
+      border: none; background: transparent;
+      color: var(--color-text); text-align: left;
+      font: inherit; font-size: 13px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .nl-folder-menu button:hover { background: var(--color-surface-secondary); }
+    .nl-folder-menu button.danger { color: var(--color-danger); }
+    .nl-folder-menu button.danger:hover { background: var(--color-danger-light); }
+    .nl-folder-menu svg { width: 14px; height: 14px; }
+
     /* ── Main pane ─────────────────────────────────── */
     .nl-main { padding: 22px 28px 32px; min-width: 0; }
     .nl-main-head {
@@ -306,12 +352,20 @@
       <div class="nl-side-section-label">Folders</div>
       {% for f in sidebar.folders %}
         {% if f.name and f.name|lower != 'all notes' %}
-        <a href="/notes/scribble?folder={{ f.name|urlencode }}"
-           class="nl-folder {% if folder == f.name %}is-active{% endif %}">
-          <i data-feather="folder"></i>
-          <span class="nl-folder-name">{{ f.name }}</span>
-          <span class="nl-folder-count">{{ f.count }}</span>
-        </a>
+        <div class="nl-folder-row">
+          <a href="/notes/scribble?folder={{ f.name|urlencode }}"
+             class="nl-folder {% if folder == f.name %}is-active{% endif %}">
+            <i data-feather="folder"></i>
+            <span class="nl-folder-name">{{ f.name }}</span>
+            <span class="nl-folder-count">{{ f.count }}</span>
+          </a>
+          <button type="button" class="nl-folder-menu-btn"
+                  data-folder="{{ f.name }}"
+                  onclick="openFolderMenu(event, '{{ f.name|replace("'", "\\'") }}')"
+                  aria-label="Folder actions" title="Rename or delete folder">
+            <i data-feather="more-horizontal"></i>
+          </button>
+        </div>
         {% endif %}
       {% endfor %}
     {% endif %}
@@ -499,6 +553,85 @@
     // Folders only exist when a note is in them, so route the user
     // straight to a new note pre-filled with that folder.
     window.location.href = "/notes/scribble/new?folder=" + encodeURIComponent(trimmed);
+  }
+
+  // ── Folder ⋯ menu (rename / delete) ─────────────────────────
+  let _folderMenu = null;
+  function _closeFolderMenu() {
+    if (_folderMenu) { _folderMenu.remove(); _folderMenu = null; }
+    document.removeEventListener("click", _docClickClose);
+  }
+  function _docClickClose(e) {
+    if (_folderMenu && !_folderMenu.contains(e.target)) _closeFolderMenu();
+  }
+
+  function openFolderMenu(ev, folderName) {
+    ev.preventDefault(); ev.stopPropagation();
+    _closeFolderMenu();
+    const btn = ev.currentTarget;
+    const menu = document.createElement("div");
+    menu.className = "nl-folder-menu open";
+    menu.innerHTML = `
+      <button type="button" onclick="renameFolder('${folderName.replace(/'/g, "\\'")}')">
+        <i data-feather="edit-2"></i> Rename folder
+      </button>
+      <button type="button" class="danger" onclick="deleteFolder('${folderName.replace(/'/g, "\\'")}')">
+        <i data-feather="trash-2"></i> Delete folder
+      </button>
+    `;
+    document.body.appendChild(menu);
+    const rect = btn.getBoundingClientRect();
+    menu.style.left = Math.min(window.innerWidth - 180, rect.left) + "px";
+    menu.style.top = (rect.bottom + 4) + "px";
+    if (window.feather) feather.replace();
+    _folderMenu = menu;
+    setTimeout(() => document.addEventListener("click", _docClickClose), 0);
+  }
+
+  async function renameFolder(folderName) {
+    _closeFolderMenu();
+    const next = prompt(`Rename folder "${folderName}" to:`, folderName);
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === folderName) return;
+    if (trimmed.toLowerCase() === "all notes") {
+      alert(`"All Notes" is reserved — pick another name.`);
+      return;
+    }
+    try {
+      const r = await fetch("/notes/scribble/folder/rename", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({from: folderName, to: trimmed}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (window.showToast) showToast(`Folder renamed`, "success", 1400);
+      // Reload to refresh sidebar counts and active state.
+      location.href = "/notes/scribble?folder=" + encodeURIComponent(trimmed);
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't rename folder", "error");
+    }
+  }
+
+  async function deleteFolder(folderName) {
+    _closeFolderMenu();
+    if (!confirm(
+      `Delete folder "${folderName}"?\n\n` +
+      `Every note in it will be moved to Trash (soft-deleted). ` +
+      `You can restore them from Supabase if needed; nothing is hard-deleted.`
+    )) return;
+    try {
+      const r = await fetch("/notes/scribble/folder/delete", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: folderName}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (window.showToast) showToast(`Folder deleted`, "success", 1600);
+      location.href = "/notes/scribble";
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't delete folder", "error");
+    }
   }
 </script>
 

@@ -22,14 +22,73 @@
 
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
+{# Peers rail — desktop-only side panel showing every note in the
+   current note's folder. Click any item to switch instantly. Mobile
+   keeps the back-then-tap flow plus the prev/next arrows on the topbar. #}
+{% if peers and peers|length > 1 %}
+<aside class="peers-rail" aria-label="Notes in this folder">
+  <div class="peers-rail-head">
+    <span class="peers-rail-label">
+      <i data-feather="folder" style="width:13px;height:13px"></i>
+      {% if note and note.notebook and note.notebook|lower != 'all notes' %}{{ note.notebook }}{% else %}All Notes{% endif %}
+    </span>
+    <span class="peers-rail-count">{{ peers|length }}</span>
+  </div>
+  <div class="peers-rail-list">
+    {% for p in peers %}
+      {% set p_title = (p.title or 'Untitled') %}
+      <a href="/notes/scribble/{{ p.id }}"
+         class="peer-item {% if note and note.id == p.id %}is-active{% endif %} {% if p.is_pinned %}is-pinned{% endif %}"
+         title="{{ p_title }}">
+        <span class="peer-item-icon">
+          {% if p.is_pinned %}<i data-feather="star" style="width:11px;height:11px"></i>
+          {% else %}<i data-feather="file" style="width:11px;height:11px"></i>{% endif %}
+        </span>
+        <span class="peer-item-title">{{ p_title }}</span>
+      </a>
+    {% endfor %}
+  </div>
+  <a href="/notes/scribble/new{% if note and note.notebook %}?folder={{ note.notebook|urlencode }}{% endif %}"
+     class="peers-rail-new" title="New note in this folder">
+    <i data-feather="plus" style="width:13px;height:13px"></i> New
+  </a>
+</aside>
+{% endif %}
+
 <div class="scribble-editor-shell">
 
   <!-- ═══════════ EDITOR TOP BAR ═══════════ -->
   <div class="editor-topbar">
-    <a href="{{ url_for('notes.scribble_list') }}" class="editor-back" title="Back to notes">
+    <a href="{{ url_for('notes.scribble_list') }}{% if note and note.notebook and note.notebook|lower != 'all notes' %}?folder={{ note.notebook|urlencode }}{% endif %}"
+       class="editor-back" title="Back to notes">
       <i data-feather="arrow-left"></i>
-      <span>Notes</span>
+      <span>{% if note and note.notebook and note.notebook|lower != 'all notes' %}{{ note.notebook }}{% else %}Notes{% endif %}</span>
     </a>
+
+    {# Prev / Next navigation within the current folder. Computed
+       server-side from the peers list so the buttons disable cleanly
+       at the edges. Hidden on a brand-new note (nothing to compare). #}
+    {% if note and note.id and peers and peers|length > 1 %}
+      {% set _ids = peers|map(attribute='id')|list %}
+      {% set _idx = _ids.index(note.id) if note.id in _ids else -1 %}
+      {% set _prev = peers[_idx - 1] if _idx > 0 else none %}
+      {% set _next = peers[_idx + 1] if _idx >= 0 and _idx < (peers|length - 1) else none %}
+      <div class="editor-nav">
+        <a href="{% if _prev %}/notes/scribble/{{ _prev.id }}{% else %}#{% endif %}"
+           class="editor-nav-btn {% if not _prev %}is-disabled{% endif %}"
+           title="Previous note in this folder ({{ _idx }} of {{ peers|length }})"
+           aria-label="Previous">
+          <i data-feather="chevron-left"></i>
+        </a>
+        <span class="editor-nav-pos">{{ _idx + 1 }}/{{ peers|length }}</span>
+        <a href="{% if _next %}/notes/scribble/{{ _next.id }}{% else %}#{% endif %}"
+           class="editor-nav-btn {% if not _next %}is-disabled{% endif %}"
+           title="Next note in this folder ({{ _idx + 2 }} of {{ peers|length }})"
+           aria-label="Next">
+          <i data-feather="chevron-right"></i>
+        </a>
+      </div>
+    {% endif %}
 
     <div class="editor-status">
       <span class="save-indicator" id="save-indicator" aria-live="polite">
@@ -250,6 +309,144 @@
       padding: 32px 0; text-align: center;
       color: var(--color-text-muted, #94a3b8);
       font-style: italic;
+    }
+
+    /* ── Prev / Next within the current folder ──────────────── */
+    .editor-nav {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-left: 4px;
+    }
+    .editor-nav-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px;
+      border: 1px solid var(--color-border, #e5e7eb);
+      border-radius: 8px;
+      background: var(--color-surface, #fff);
+      color: var(--color-text-secondary, #64748b);
+      text-decoration: none;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .editor-nav-btn:hover {
+      background: var(--color-surface-secondary, #f9fafb);
+      color: var(--color-text);
+      border-color: var(--color-border-strong, #cbd5e1);
+    }
+    .editor-nav-btn.is-disabled {
+      opacity: .35; pointer-events: none;
+    }
+    .editor-nav-btn svg { width: 15px; height: 15px; }
+    .editor-nav-pos {
+      font-size: 11px; font-weight: 700;
+      color: var(--color-text-muted, #94a3b8);
+      font-variant-numeric: tabular-nums;
+      padding: 0 4px;
+      letter-spacing: .02em;
+    }
+    html.dark .editor-nav-btn { background: #0f172a; border-color: #334155; color: #94a3b8; }
+    html.dark .editor-nav-btn:hover { background: #273449; color: #f1f5f9; border-color: #475569; }
+
+    /* ── Peers rail (notes-in-folder, desktop only) ─────────── */
+    .peers-rail {
+      position: fixed;
+      left: 0; top: 60px; bottom: 0;
+      width: 240px;
+      background: var(--color-surface, #fff);
+      border-right: 1px solid var(--color-border, #e5e7eb);
+      padding: 14px 8px 14px;
+      display: flex; flex-direction: column;
+      z-index: 50;
+      overflow: hidden;
+    }
+    html.dark .peers-rail { background: #1e293b; border-right-color: #334155; }
+    .peers-rail-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px 10px;
+      border-bottom: 1px solid var(--color-border-light, #f1f3f5);
+      margin-bottom: 6px;
+    }
+    html.dark .peers-rail-head { border-bottom-color: #273449; }
+    .peers-rail-label {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11.5px; font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary, #64748b);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      flex: 1; min-width: 0;
+    }
+    .peers-rail-label svg { color: var(--color-text-muted, #94a3b8); flex: 0 0 auto; }
+    .peers-rail-count {
+      font-size: 10.5px; font-weight: 700;
+      color: var(--color-text-muted, #94a3b8);
+      background: var(--color-surface-sunken, #eef0f3);
+      padding: 1px 7px; border-radius: 999px;
+      font-variant-numeric: tabular-nums;
+    }
+    html.dark .peers-rail-count { background: #0f172a; }
+
+    .peers-rail-list {
+      flex: 1; overflow-y: auto; padding: 0 2px;
+    }
+    .peer-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; margin: 1px 0;
+      border-radius: 7px;
+      color: var(--color-text-secondary, #475569);
+      text-decoration: none;
+      font-size: 13px; font-weight: 500;
+      line-height: 1.35;
+      transition: background .12s, color .12s;
+    }
+    .peer-item:hover { background: var(--color-surface-secondary, #f9fafb); color: var(--color-text); }
+    .peer-item.is-active {
+      background: var(--color-primary-light, #eff6ff);
+      color: var(--color-primary, #2563eb);
+      font-weight: 600;
+    }
+    html.dark .peer-item.is-active {
+      background: rgba(37,99,235,.22); color: #93c5fd;
+    }
+    .peer-item-icon {
+      width: 14px; flex: 0 0 auto;
+      color: var(--color-text-muted, #94a3b8);
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .peer-item.is-pinned .peer-item-icon { color: #B45309; }
+    .peer-item.is-pinned .peer-item-icon svg { fill: currentColor; }
+    .peer-item.is-active .peer-item-icon { color: inherit; }
+    .peer-item-title {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      flex: 1; min-width: 0;
+    }
+    .peers-rail-new {
+      margin-top: 6px;
+      display: inline-flex; align-items: center; gap: 6px;
+      justify-content: center;
+      padding: 8px 10px;
+      background: transparent;
+      color: var(--color-text-muted);
+      border: 1px dashed var(--color-border);
+      border-radius: 7px;
+      font-size: 12.5px; font-weight: 600;
+      text-decoration: none;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .peers-rail-new:hover {
+      background: var(--color-surface-secondary);
+      color: var(--color-primary);
+      border-color: var(--color-primary);
+    }
+
+    /* Make room for the rail on desktop. The shell already has its own
+       max-width auto-margin so we use padding-left on body to push the
+       whole layout right. */
+    @media (min-width: 980px) {
+      body:has(.peers-rail) .scribble-editor-shell { margin-left: 240px; }
+    }
+    /* Hide the rail entirely below 980px — prev/next arrows on the
+       topbar already cover navigation on tablets and phones. */
+    @media (max-width: 979px) {
+      .peers-rail { display: none; }
     }
   </style>
 
