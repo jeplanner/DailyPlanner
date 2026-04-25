@@ -1,140 +1,483 @@
-{% extends "base.html" %}
-
-{% block title %}Relationships{% endblock %}
-
-{% block content %}
-<div class="rel-page">
-  <header class="rel-header">
-    <h1>Relationships</h1>
-    <p class="rel-sub">When did you last reach out to the people who matter? Set a cadence; the page nudges you when you're overdue.</p>
-  </header>
-
-  <form class="rel-add" onsubmit="addRelationship(event)">
-    <input type="text" id="rel-name" placeholder="Name (e.g. Mom)" required maxlength="80">
-    <input type="text" id="rel-relation" placeholder="Relation (family, friend, mentor…)" maxlength="40">
-    <input type="number" id="rel-cadence" placeholder="Every (days)" value="14" min="1" max="365">
-    <input type="date" id="rel-last">
-    <button type="submit" class="rel-btn rel-btn-primary">Add</button>
-  </form>
-
-  <div id="rel-list" class="rel-list">
-    <div class="rel-loading">Loading…</div>
-  </div>
-</div>
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Relationships — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <style>
-  .rel-page { max-width: 880px; margin: 24px auto; padding: 0 18px; }
-  .rel-header h1 { font-size: 26px; font-weight: 800; margin-bottom: 4px; }
-  .rel-sub { color: var(--color-text-secondary, #64748b); font-size: 14px; margin-bottom: 24px; }
-  .rel-add {
-    display: grid;
-    grid-template-columns: 1fr 1fr 120px 160px auto;
-    gap: 8px;
-    margin-bottom: 24px;
-    padding: 14px;
-    background: var(--color-bg-subtle, #f8fafc);
-    border-radius: 12px;
-    border: 1px solid var(--color-border, #e2e8f0);
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .rel-app { max-width: 920px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  /* Hero */
+  .rel-hero {
+    display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+    margin-bottom: 18px;
   }
-  @media (max-width: 720px) { .rel-add { grid-template-columns: 1fr 1fr; } }
-  .rel-add input {
-    padding: 8px 12px; font: inherit; font-size: 14px;
-    border: 1px solid var(--color-border, #e2e8f0);
-    border-radius: 8px;
-    background: var(--color-bg, #fff);
-    color: var(--color-text, #0f172a);
+  .rel-hero h1 { font-size: 28px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .rel-sub { color: var(--color-text-secondary); font-size: 14px; max-width: 56ch; margin: 0; line-height: 1.5; }
+  .rel-hero .btn-primary {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 10px;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: none; cursor: pointer; font-weight: 600; font-size: 14px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.06);
+    transition: background .12s, transform .08s;
   }
-  .rel-btn {
-    padding: 8px 16px; font: inherit; font-size: 14px; font-weight: 600;
-    border: none; border-radius: 8px; cursor: pointer;
+  .rel-hero .btn-primary:hover { background: var(--color-primary-hover); }
+  .rel-hero .btn-primary:active { transform: translateY(1px); }
+  .rel-hero .btn-primary svg { width: 16px; height: 16px; }
+
+  /* Stat strip */
+  .rel-stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+  .rel-stat {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    font-size: 13px; color: var(--color-text-secondary);
   }
-  .rel-btn-primary { background: var(--color-primary, #2563eb); color: #fff; }
+  .rel-stat strong { font-size: 15px; font-weight: 800; color: var(--color-text); font-variant-numeric: tabular-nums; }
+  .rel-stat.is-late strong { color: #b91c1c; }
+  .rel-stat.is-due  strong { color: #b45309; }
+  .rel-stat.is-ok   strong { color: #15803d; }
+
+  /* Add form */
+  .rel-form {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 18px 20px; margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+  }
+  .rel-form.hidden { display: none; }
+  .rel-form-grid {
+    display: grid; gap: 14px 16px;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (max-width: 600px) { .rel-form-grid { grid-template-columns: 1fr; } }
+  .rel-form label { display: flex; flex-direction: column; gap: 6px; }
+  .rel-label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); letter-spacing: .02em; }
+  .rel-form input[type="text"],
+  .rel-form input[type="number"],
+  .rel-form input[type="date"] {
+    padding: 9px 12px; font: inherit; font-size: 14px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .rel-form input:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring); }
+  .rel-cadence-input { display: flex; align-items: center; gap: 8px; }
+  .rel-cadence-input input { flex: 1; }
+  .rel-cadence-input span { color: var(--color-text-secondary); font-size: 13px; }
+  .rel-form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+  .btn-ghost {
+    padding: 9px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    background: transparent; color: var(--color-text-secondary);
+    border: 1px solid var(--color-border); border-radius: 10px; cursor: pointer;
+  }
+  .btn-ghost:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+  .btn-primary {
+    padding: 9px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: none; border-radius: 10px; cursor: pointer;
+  }
+  .btn-primary:hover { background: var(--color-primary-hover); }
+
+  /* Sections */
+  .rel-section { margin-bottom: 28px; }
+  .rel-section.hidden { display: none; }
+  .rel-section-title {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--color-text-secondary); margin: 0 0 10px; padding: 0 4px;
+  }
+  .rel-section-count {
+    margin-left: auto; font-weight: 600; font-size: 12px;
+    color: var(--color-text-muted); letter-spacing: 0; text-transform: none;
+  }
+  .rel-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .rel-dot-late { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.14); }
+  .rel-dot-due  { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,.16); }
+  .rel-dot-ok   { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.14); }
+
+  /* List */
   .rel-list { display: flex; flex-direction: column; gap: 8px; }
   .rel-row {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto;
-    gap: 12px; align-items: center;
-    padding: 14px 16px;
-    background: var(--color-bg, #fff);
-    border: 1px solid var(--color-border, #e2e8f0);
-    border-radius: 10px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 12px; transition: border-color .12s, box-shadow .12s;
   }
-  .rel-row.is-overdue { border-left: 4px solid #dc2626; }
-  .rel-name { font-weight: 600; font-size: 15px; }
-  .rel-relation {
-    font-size: 12px; color: var(--color-text-secondary, #64748b);
-    margin-left: 8px; font-weight: 500;
+  .rel-row:hover { border-color: var(--color-border-strong); }
+  .rel-row.is-expanded { box-shadow: 0 4px 12px rgba(15,23,42,.06); }
+  .rel-row-head {
+    display: grid;
+    grid-template-columns: 40px 1fr auto auto auto;
+    gap: 14px; align-items: center;
+    padding: 12px 16px; cursor: pointer;
+  }
+  @media (max-width: 600px) {
+    .rel-row-head { grid-template-columns: 36px 1fr auto; padding: 12px; gap: 10px; }
+    .rel-row-head .rel-touch-btn,
+    .rel-row-head .rel-more-btn { grid-row: 2; }
+    .rel-row-head .rel-status { grid-column: 2 / -1; }
+  }
+  .rel-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: linear-gradient(135deg, #dbeafe, #c7d2fe);
+    color: #1e40af; font-weight: 700; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    flex: 0 0 auto;
+  }
+  .rel-row.is-late .rel-avatar { background: linear-gradient(135deg, #fee2e2, #fecaca); color: #991b1b; }
+  .rel-row.is-due  .rel-avatar { background: linear-gradient(135deg, #fef3c7, #fde68a); color: #92400e; }
+  .rel-name-block { min-width: 0; }
+  .rel-name { font-weight: 600; font-size: 15px; color: var(--color-text); }
+  .rel-meta {
+    margin-top: 2px; font-size: 12.5px; color: var(--color-text-muted);
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  }
+  .rel-relation-chip {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--color-surface-sunken); color: var(--color-text-secondary);
+    font-size: 11px; font-weight: 600;
   }
   .rel-status {
     font-size: 12px; font-weight: 700;
     padding: 4px 10px; border-radius: 999px;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
-  .rel-status.is-ok    { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
-  .rel-status.is-due   { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #b45309; }
-  .rel-status.is-late  { background: color-mix(in srgb, #dc2626 14%, transparent); color: #b91c1c; }
-  html.dark .rel-status.is-ok    { background: #052e16; color: #86efac; }
-  html.dark .rel-status.is-due   { background: #451a03; color: #fcd34d; }
-  html.dark .rel-status.is-late  { background: #3b1111; color: #fca5a5; }
-  .rel-touch {
-    appearance: none; padding: 6px 12px;
-    font: inherit; font-size: 12px; font-weight: 600;
-    background: var(--color-primary, #2563eb); color: #fff;
-    border: none; border-radius: 6px; cursor: pointer;
+  .rel-status.is-ok   { background: rgba(22,163,74,.12); color: #15803d; }
+  .rel-status.is-due  { background: rgba(245,158,11,.16); color: #b45309; }
+  .rel-status.is-late { background: rgba(220,38,38,.12); color: #b91c1c; }
+  .rel-touch-btn {
+    appearance: none; padding: 7px 12px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    background: var(--color-surface); color: var(--color-text-secondary);
+    border: 1px solid var(--color-border); border-radius: 8px;
+    cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .12s, color .12s, border-color .12s;
   }
-  .rel-archive {
+  .rel-touch-btn:hover {
+    background: rgba(22,163,74,.08); color: #15803d; border-color: #16a34a;
+  }
+  .rel-touch-btn svg { width: 13px; height: 13px; }
+  .rel-more-btn {
     appearance: none; padding: 6px 8px;
-    background: transparent; border: none; cursor: pointer;
-    color: var(--color-text-tertiary, #94a3b8);
+    background: transparent; border: none; border-radius: 8px;
+    color: var(--color-text-muted); cursor: pointer;
   }
-  .rel-archive:hover { color: #dc2626; }
-  .rel-loading, .rel-empty {
-    padding: 24px; text-align: center;
-    color: var(--color-text-secondary, #64748b);
+  .rel-more-btn:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+
+  /* Expanded edit panel */
+  .rel-edit {
+    border-top: 1px solid var(--color-border);
+    padding: 16px 18px;
+    display: grid; gap: 12px 16px;
+    grid-template-columns: repeat(3, 1fr);
   }
+  @media (max-width: 600px) { .rel-edit { grid-template-columns: 1fr; } }
+  .rel-edit.hidden { display: none; }
+  .rel-edit label { display: flex; flex-direction: column; gap: 6px; }
+  .rel-edit input,
+  .rel-edit textarea {
+    padding: 8px 10px; font: inherit; font-size: 13.5px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .rel-edit textarea { resize: vertical; min-height: 60px; }
+  .rel-edit-notes { grid-column: 1 / -1; }
+  .rel-edit-actions {
+    grid-column: 1 / -1;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 4px;
+  }
+  .rel-archive-btn {
+    appearance: none; padding: 7px 12px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    color: #b91c1c; background: transparent;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .rel-archive-btn:hover { background: rgba(220,38,38,.08); border-color: #fca5a5; }
+  .rel-archive-btn svg { width: 13px; height: 13px; }
+
+  /* Empty state */
+  .rel-empty {
+    background: var(--color-surface); border: 1px dashed var(--color-border);
+    border-radius: 16px; padding: 48px 24px; text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .rel-empty.hidden { display: none; }
+  .rel-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+  .rel-empty h2 { font-size: 18px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+  .rel-empty p { max-width: 44ch; margin: 0 auto 18px; font-size: 14px; line-height: 1.55; }
+
+  .rel-loading {
+    padding: 40px; text-align: center;
+    color: var(--color-text-muted); font-size: 13px;
+  }
+  .rel-loading.hidden { display: none; }
+
+  /* Dark mode tweaks (uses design-system tokens; light-mode constants get nudged) */
+  html.dark .rel-avatar { background: linear-gradient(135deg, #1e3a8a, #3730a3); color: #bfdbfe; }
+  html.dark .rel-row.is-late .rel-avatar { background: linear-gradient(135deg, #3b1111, #4c1d1d); color: #fca5a5; }
+  html.dark .rel-row.is-due  .rel-avatar { background: linear-gradient(135deg, #451a03, #4d2c0a); color: #fcd34d; }
+  html.dark .rel-status.is-ok   { background: rgba(22,163,74,.18); color: #86efac; }
+  html.dark .rel-status.is-due  { background: rgba(245,158,11,.22); color: #fcd34d; }
+  html.dark .rel-status.is-late { background: rgba(220,38,38,.22); color: #fca5a5; }
+  html.dark .rel-touch-btn:hover { background: rgba(22,163,74,.15); color: #86efac; border-color: #16a34a; }
 </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="rel-app">
+
+  <header class="rel-hero">
+    <div>
+      <h1>Relationships</h1>
+      <p class="rel-sub">When did you last reach out to the people who matter? Set a cadence per person — the page nudges you when you're overdue.</p>
+    </div>
+    <button class="btn-primary" onclick="toggleRelForm(true)" id="rel-add-btn">
+      <i data-feather="plus"></i> Add person
+    </button>
+  </header>
+
+  <div class="rel-stats" id="rel-stats" hidden>
+    <div class="rel-stat is-late"><strong id="rel-stat-late">0</strong> overdue</div>
+    <div class="rel-stat is-due"><strong id="rel-stat-due">0</strong> due soon</div>
+    <div class="rel-stat is-ok"><strong id="rel-stat-ok">0</strong> on track</div>
+  </div>
+
+  <form id="rel-form" class="rel-form hidden" onsubmit="addRelationship(event)">
+    <div class="rel-form-grid">
+      <label>
+        <span class="rel-label">Name</span>
+        <input type="text" id="rel-name" required maxlength="80" placeholder="Mom" autocomplete="off">
+      </label>
+      <label>
+        <span class="rel-label">Relation</span>
+        <input type="text" id="rel-relation" maxlength="40" placeholder="Family · Mentor · Friend" autocomplete="off">
+      </label>
+      <label>
+        <span class="rel-label">Cadence</span>
+        <div class="rel-cadence-input">
+          <input type="number" id="rel-cadence" value="14" min="1" max="365">
+          <span>days</span>
+        </div>
+      </label>
+      <label>
+        <span class="rel-label">Last contacted (optional)</span>
+        <input type="date" id="rel-last">
+      </label>
+    </div>
+    <div class="rel-form-actions">
+      <button type="button" class="btn-ghost" onclick="toggleRelForm(false)">Cancel</button>
+      <button type="submit" class="btn-primary">Save person</button>
+    </div>
+  </form>
+
+  <div id="rel-loading" class="rel-loading">Loading…</div>
+
+  <section class="rel-section hidden" id="rel-section-late">
+    <h2 class="rel-section-title">
+      <span class="rel-dot rel-dot-late"></span>
+      Overdue
+      <span class="rel-section-count" id="rel-count-late"></span>
+    </h2>
+    <div class="rel-list" id="rel-list-late"></div>
+  </section>
+
+  <section class="rel-section hidden" id="rel-section-due">
+    <h2 class="rel-section-title">
+      <span class="rel-dot rel-dot-due"></span>
+      Due soon
+      <span class="rel-section-count" id="rel-count-due"></span>
+    </h2>
+    <div class="rel-list" id="rel-list-due"></div>
+  </section>
+
+  <section class="rel-section hidden" id="rel-section-ok">
+    <h2 class="rel-section-title">
+      <span class="rel-dot rel-dot-ok"></span>
+      On track
+      <span class="rel-section-count" id="rel-count-ok"></span>
+    </h2>
+    <div class="rel-list" id="rel-list-ok"></div>
+  </section>
+
+  <div id="rel-empty" class="rel-empty hidden">
+    <i data-feather="users"></i>
+    <h2>Nobody on the list yet</h2>
+    <p>Add the people you want to stay close with — partner, parents, mentors, old friends. Set a cadence per person and you'll get a nudge when it's time to reach out.</p>
+    <button class="btn-primary" onclick="toggleRelForm(true)">Add the first person</button>
+  </div>
+
+</div>
 
 <script>
-  async function loadRelationships() {
-    const r = await fetch("/api/relationships");
-    const data = await r.json();
-    _renderRelList(data.relationships || []);
+  // ── State ────────────────────────────────────────────────
+  let _rels = [];
+
+  // ── Form toggle ──────────────────────────────────────────
+  function toggleRelForm(show) {
+    const f = document.getElementById("rel-form");
+    const willShow = (typeof show === "boolean") ? show : f.classList.contains("hidden");
+    f.classList.toggle("hidden", !willShow);
+    if (willShow) setTimeout(() => document.getElementById("rel-name").focus(), 30);
   }
 
-  function _renderRelList(items) {
-    const root = document.getElementById("rel-list");
-    if (!items.length) {
-      root.innerHTML = '<div class="rel-empty">No relationships yet. Add the first person above.</div>';
-      return;
+  // ── Load + render ────────────────────────────────────────
+  async function loadRelationships() {
+    const loading = document.getElementById("rel-loading");
+    loading.classList.remove("hidden");
+    try {
+      const r = await fetch("/api/relationships");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      _rels = data.relationships || [];
+      _render();
+    } catch (e) {
+      console.error("Failed to load relationships:", e);
+      if (window.showToast) showToast("Couldn't load relationships", "error");
+    } finally {
+      loading.classList.add("hidden");
     }
-    root.innerHTML = items.map(it => {
-      const overdue = it.overdue_by || 0;
-      const days_since = it.days_since;
-      let statusClass = "is-ok", statusText = "On track";
-      if (days_since == null) {
-        statusClass = "is-due"; statusText = "Never contacted";
-      } else if (overdue > 7) {
-        statusClass = "is-late"; statusText = `${overdue}d overdue`;
-      } else if (overdue > 0) {
-        statusClass = "is-due"; statusText = `${overdue}d overdue`;
-      } else {
-        statusText = `${days_since}d ago · ${it.cadence_days}d cadence`;
-      }
-      return `
-        <div class="rel-row ${overdue > 0 ? 'is-overdue' : ''}">
-          <div>
-            <span class="rel-name">${_escRel(it.name)}</span>
-            ${it.relation ? `<span class="rel-relation">${_escRel(it.relation)}</span>` : ''}
-          </div>
-          <span class="rel-status ${statusClass}">${statusText}</span>
-          <button class="rel-touch" onclick="touchRelationship('${it.id}')">Just reached out</button>
-          <button class="rel-archive" title="Archive" onclick="archiveRelationship('${it.id}')">×</button>
-        </div>`;
-    }).join("");
   }
-  function _escRel(s) {
-    if (!s) return "";
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  function _bucket(rel) {
+    const cadence = rel.cadence_days || 14;
+    if (rel.overdue_by > 0) return "late";
+    // "due soon" = within 3 days of cadence (or never contacted with cadence <= 7)
+    if (rel.days_since == null) return "late";  // never contacted = treat as overdue
+    if (rel.days_since >= cadence - 3) return "due";
+    return "ok";
+  }
+
+  function _statusFor(rel) {
+    const cadence = rel.cadence_days || 14;
+    if (rel.days_since == null) {
+      return { cls: "is-late", text: "Never contacted" };
+    }
+    if (rel.overdue_by > 0) {
+      return { cls: "is-late", text: `${rel.overdue_by}d overdue` };
+    }
+    if (rel.days_since >= cadence - 3) {
+      const left = cadence - rel.days_since;
+      return { cls: "is-due", text: left <= 0 ? "Due today" : `Due in ${left}d` };
+    }
+    return { cls: "is-ok", text: `${rel.days_since}d ago` };
+  }
+
+  function _initial(name) {
+    if (!name) return "?";
+    const s = name.trim();
+    if (!s) return "?";
+    return s[0].toUpperCase();
+  }
+
+  function _esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function _render() {
+    const buckets = { late: [], due: [], ok: [] };
+    for (const r of _rels) buckets[_bucket(r)].push(r);
+
+    // Update stats
+    document.getElementById("rel-stat-late").textContent = buckets.late.length;
+    document.getElementById("rel-stat-due").textContent  = buckets.due.length;
+    document.getElementById("rel-stat-ok").textContent   = buckets.ok.length;
+    document.getElementById("rel-stats").hidden = (_rels.length === 0);
+
+    // Empty state
+    document.getElementById("rel-empty").classList.toggle("hidden", _rels.length > 0);
+
+    // Each section
+    for (const key of ["late", "due", "ok"]) {
+      const items = buckets[key];
+      const sec = document.getElementById(`rel-section-${key}`);
+      const list = document.getElementById(`rel-list-${key}`);
+      const count = document.getElementById(`rel-count-${key}`);
+      sec.classList.toggle("hidden", items.length === 0);
+      count.textContent = items.length ? `${items.length}` : "";
+      list.innerHTML = items.map(it => _rowHtml(it, key)).join("");
+    }
+
+    if (window.feather) feather.replace();
+  }
+
+  function _rowHtml(rel, bucketKey) {
+    const status = _statusFor(rel);
+    const bucketCls = bucketKey === "late" ? "is-late" : bucketKey === "due" ? "is-due" : "is-ok";
+    return `
+      <div class="rel-row ${bucketCls}" data-id="${rel.id}">
+        <div class="rel-row-head" onclick="toggleEdit('${rel.id}', event)">
+          <div class="rel-avatar">${_esc(_initial(rel.name))}</div>
+          <div class="rel-name-block">
+            <div class="rel-name">${_esc(rel.name)}</div>
+            <div class="rel-meta">
+              ${rel.relation ? `<span class="rel-relation-chip">${_esc(rel.relation)}</span>` : ''}
+              <span>every ${rel.cadence_days || 14}d</span>
+            </div>
+          </div>
+          <span class="rel-status ${status.cls}">${status.text}</span>
+          <button type="button" class="rel-touch-btn"
+                  onclick="event.stopPropagation(); touchRelationship('${rel.id}')"
+                  title="Mark that you reached out today">
+            <i data-feather="check"></i> Reached out
+          </button>
+          <button type="button" class="rel-more-btn"
+                  onclick="event.stopPropagation(); toggleEdit('${rel.id}')"
+                  aria-label="Edit">
+            <i data-feather="more-horizontal"></i>
+          </button>
+        </div>
+        <div class="rel-edit hidden" id="rel-edit-${rel.id}">
+          <label>
+            <span class="rel-label">Cadence (days)</span>
+            <input type="number" id="re-cadence-${rel.id}" min="1" max="365" value="${rel.cadence_days || 14}">
+          </label>
+          <label>
+            <span class="rel-label">Last contacted</span>
+            <input type="date" id="re-last-${rel.id}" value="${rel.last_contact_date || ''}">
+          </label>
+          <label>
+            <span class="rel-label">Relation</span>
+            <input type="text" id="re-relation-${rel.id}" maxlength="40" value="${_esc(rel.relation || '')}">
+          </label>
+          <label class="rel-edit-notes">
+            <span class="rel-label">Notes</span>
+            <textarea id="re-notes-${rel.id}" placeholder="Birthday, kids' names, last topic discussed…">${_esc(rel.notes || '')}</textarea>
+          </label>
+          <div class="rel-edit-actions">
+            <button type="button" class="rel-archive-btn" onclick="archiveRelationship('${rel.id}', '${_esc(rel.name).replace(/'/g, "\\'")}')">
+              <i data-feather="archive"></i> Archive
+            </button>
+            <div style="display:flex; gap:10px;">
+              <button type="button" class="btn-ghost" onclick="toggleEdit('${rel.id}', null, false)">Cancel</button>
+              <button type="button" class="btn-primary" onclick="saveEdit('${rel.id}')">Save changes</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Row interactions ─────────────────────────────────────
+  function toggleEdit(id, ev, force) {
+    const row = document.querySelector(`.rel-row[data-id="${id}"]`);
+    const edit = document.getElementById(`rel-edit-${id}`);
+    if (!row || !edit) return;
+    const willOpen = (typeof force === "boolean") ? force : edit.classList.contains("hidden");
+    edit.classList.toggle("hidden", !willOpen);
+    row.classList.toggle("is-expanded", willOpen);
   }
 
   async function addRelationship(ev) {
@@ -153,24 +496,58 @@
     if (r.ok) {
       ev.target.reset();
       document.getElementById("rel-cadence").value = 14;
+      toggleRelForm(false);
+      if (window.showToast) showToast(`Added ${payload.name}`, "success", 1800);
       loadRelationships();
     } else {
       if (window.showToast) showToast("Couldn't save", "error");
     }
   }
+
   async function touchRelationship(id) {
-    await fetch(`/api/relationships/${id}/touch`, { method: "POST" });
-    loadRelationships();
-    if (window.showToast) showToast("Logged contact", "success", 1500);
+    const r = await fetch(`/api/relationships/${id}/touch`, { method: "POST" });
+    if (r.ok) {
+      if (window.showToast) showToast("Logged contact for today", "success", 1500);
+      loadRelationships();
+    } else if (window.showToast) showToast("Couldn't log contact", "error");
   }
-  async function archiveRelationship(id) {
-    await fetch(`/api/relationships/${id}`, {
+
+  async function saveEdit(id) {
+    const payload = {
+      cadence_days: parseInt(document.getElementById(`re-cadence-${id}`).value, 10) || 14,
+      last_contact_date: document.getElementById(`re-last-${id}`).value || null,
+      relation: document.getElementById(`re-relation-${id}`).value.trim() || null,
+      notes: document.getElementById(`re-notes-${id}`).value.trim() || null,
+    };
+    const r = await fetch(`/api/relationships/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (r.ok) {
+      if (window.showToast) showToast("Saved", "success", 1200);
+      loadRelationships();
+    } else if (window.showToast) showToast("Couldn't save", "error");
+  }
+
+  async function archiveRelationship(id, name) {
+    if (!confirm(`Archive ${name || "this person"}?\n\nThey'll be hidden from this list. Reach out to support to restore.`)) return;
+    const r = await fetch(`/api/relationships/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_archived: true }),
     });
-    loadRelationships();
+    if (r.ok) {
+      if (window.showToast) showToast("Archived", "success", 1500);
+      loadRelationships();
+    } else if (window.showToast) showToast("Couldn't archive", "error");
   }
-  document.addEventListener("DOMContentLoaded", loadRelationships);
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+    loadRelationships();
+  });
 </script>
-{% endblock %}
+
+</body>
+</html>
