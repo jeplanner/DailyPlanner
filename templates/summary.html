@@ -488,6 +488,49 @@
   </section>
   {% endif %}
 
+  {# ── PARKED TASKS ── 3+ days overdue. Same parking concept as the
+     Eisenhower matrix — keeps the Overdue card focused on items still
+     in the user's reasonable triage window (1-2 days) so they're not
+     drowning in stale work. One-tap revise pulls a parked task back. #}
+  {% if dashboard.parked %}
+  <section class="md-card md-parked-card" aria-labelledby="md-parked-title">
+    <header class="md-card-head">
+      <h2 class="md-card-title" id="md-parked-title">
+        <span class="md-card-icon md-parked-icon"><i data-feather="archive"></i></span>
+        Parked
+        <span class="md-count-pill md-count-warn">{{ c.parked }}</span>
+      </h2>
+      <span class="md-parked-hint">Due dates elapsed by 3+ days. Not blocking the matrix.</span>
+    </header>
+    <div class="md-parked-body">
+      {% for p in dashboard.parked %}
+      <div class="md-parked-row" data-task-id="{{ p.id|replace('pt-', '') if p.source == 'project' else p.id }}"
+           data-source="{{ p.source }}">
+        <div class="md-parked-info">
+          <div class="md-parked-title-text">{{ p.title }}</div>
+          <div class="md-parked-meta">
+            {% if p.context %}<span class="md-parked-chip">{{ p.context }}</span>{% endif %}
+            <span class="md-parked-overdue">{{ p.days_overdue }}d overdue</span>
+            <span class="md-parked-orig">orig: {{ p.due_date or '—' }}</span>
+          </div>
+        </div>
+        <div class="md-parked-actions">
+          <button type="button" class="md-parked-btn md-parked-primary"
+                  onclick="reviseParkedFromSummary(this, 0)" title="Move to today">↩ Today</button>
+          <button type="button" class="md-parked-btn"
+                  onclick="reviseParkedFromSummary(this, 1)" title="+1 day">+1d</button>
+          <button type="button" class="md-parked-btn"
+                  onclick="reviseParkedFromSummary(this, 7)" title="+1 week">+1w</button>
+          <input type="date" class="md-parked-date"
+                 onchange="reviseParkedFromSummaryTo(this.closest('.md-parked-row'), this.value)"
+                 aria-label="Pick a revised date">
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <!-- ── TODAY'S RECAP ── tasks completed today; uncheck-able if marked by mistake -->
   {% if dashboard.done_today %}
   <section class="md-card md-recap-card" aria-labelledby="md-recap-title" id="md-recap-card">
@@ -1336,7 +1379,151 @@ html.dark .qc-btn-ghost:hover { background: #273449; }
   .peek-sheet:not(.hidden) { transform: translateY(0); }
   .peek-field { grid-template-columns: 90px 1fr; }
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   PARKED (3+ days overdue) — same model as the /todo Parked section.
+   Quieter palette than Overdue (amber, not red) — these are explicitly
+   off the day's plate. Single-tap "Today" pulls one back into the matrix.
+   ════════════════════════════════════════════════════════════════ */
+.md-parked-card { /* inherits .md-card */ }
+.md-parked-icon { background: var(--tint-warning-bg, color-mix(in srgb, #f59e0b 16%, transparent)); color: var(--color-warning, #b45309); }
+.md-count-warn  { background: var(--tint-warning-bg, color-mix(in srgb, #f59e0b 16%, transparent)); color: var(--color-warning-on-tint, #92400e); }
+html.dark .md-count-warn { background: rgba(245,158,11,.22); color: #fcd34d; }
+.md-parked-hint {
+  font-size: 12.5px; color: var(--color-text-secondary, #64748b);
+  margin-left: auto; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-parked-body {
+  display: flex; flex-direction: column;
+  max-height: 60vh; overflow-y: auto;
+}
+.md-parked-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--color-border-light, #f1f3f5);
+}
+.md-parked-row:last-child { border-bottom: none; }
+.md-parked-info { flex: 1; min-width: 0; }
+.md-parked-title-text {
+  font-size: 14px; font-weight: 600;
+  color: var(--color-text, #0f172a);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.md-parked-meta {
+  margin-top: 3px;
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  font-size: 12px; color: var(--color-text-secondary, #64748b);
+}
+.md-parked-chip {
+  padding: 1px 8px; border-radius: 999px;
+  background: var(--color-surface-sunken, #eef0f3);
+  color: var(--color-text-secondary, #475569);
+  font-weight: 600;
+}
+.md-parked-overdue {
+  color: var(--color-warning-on-tint, #92400e);
+  font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.md-parked-orig { color: var(--color-text-muted, #94a3b8); }
+
+.md-parked-actions {
+  display: inline-flex; gap: 5px; flex: 0 0 auto; align-items: center;
+}
+.md-parked-btn {
+  padding: 6px 11px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #0f172a);
+  border-radius: 8px;
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.md-parked-btn:hover {
+  background: var(--color-primary-light, #eff6ff);
+  color: var(--color-primary, #2563eb);
+  border-color: var(--color-primary, #2563eb);
+}
+.md-parked-primary {
+  background: var(--color-primary, #2563eb); color: var(--color-on-primary, #fff);
+  border-color: var(--color-primary, #2563eb);
+}
+.md-parked-primary:hover { filter: brightness(1.08); background: var(--color-primary, #2563eb); color: var(--color-on-primary, #fff); }
+.md-parked-date {
+  padding: 5px 8px; font: inherit; font-size: 12.5px;
+  border: 1px solid var(--color-border, #e5e7eb); border-radius: 8px;
+  background: var(--color-surface, #fff); color: var(--color-text, #0f172a);
+  width: 132px;
+}
+
+@media (max-width: 640px) {
+  .md-parked-hint { display: none; }
+  .md-parked-row {
+    flex-direction: column; align-items: stretch; gap: 8px;
+    padding: 12px 14px;
+  }
+  .md-parked-title-text { white-space: normal; }
+  .md-parked-actions { flex-wrap: wrap; }
+  .md-parked-date { flex: 1; width: auto; min-width: 130px; }
+}
 </style>
+
+<script>
+// Revise a parked task from the daily-summary parked section. Source
+// drives the endpoint: project tasks go through /projects/tasks/update-date
+// (writes revised_due_date), matrix tasks through /todo/reschedule
+// (which updates task_date + plan_date so the row actually moves into
+// the new day's matrix).
+async function reviseParkedFromSummary(btn, shiftDays) {
+  const row = btn.closest(".md-parked-row");
+  if (!row) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  today.setDate(today.getDate() + (parseInt(shiftDays, 10) || 0));
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, "0");
+  const dd = String(today.getDate()).padStart(2, "0");
+  return reviseParkedFromSummaryTo(row, `${yyyy}-${mm}-${dd}`);
+}
+
+async function reviseParkedFromSummaryTo(row, newDate) {
+  if (!row || !newDate) return;
+  const taskId = row.dataset.taskId;
+  const source = row.dataset.source;
+  let url, body;
+  if (source === "matrix") {
+    url = "/todo/reschedule";
+    body = { id: taskId, due_date: newDate };
+  } else {
+    url = "/projects/tasks/update-date";
+    body = { task_id: taskId, due_date: newDate };
+  }
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    row.style.transition = "opacity .25s ease, transform .25s ease, max-height .3s ease";
+    row.style.opacity = "0";
+    row.style.transform = "translateX(8px)";
+    row.style.maxHeight = "0";
+    row.style.overflow = "hidden";
+    setTimeout(() => row.remove(), 320);
+    const card = document.querySelector(".md-parked-card");
+    if (card) {
+      const remaining = card.querySelectorAll(".md-parked-row").length - 1;
+      const pill = card.querySelector(".md-count-warn");
+      if (pill) pill.textContent = Math.max(0, remaining);
+      if (remaining <= 0) setTimeout(() => card.remove(), 340);
+    }
+    if (window.showToast) showToast("Revised to " + newDate, "success", 1800);
+  } catch (e) {
+    if (window.showToast) showToast("Couldn't revise date", "error");
+  }
+}
+</script>
 
 <script>
 /* ══════════════════════════════════════════════════════════════════

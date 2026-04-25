@@ -326,18 +326,38 @@ def fetch_project_items(
     params = {
         "user_id": f"eq.{user_id}",
         "is_eliminated": "eq.false",
+        # Pull revised_due_date too so callers can fall back to it when
+        # the parking migration hasn't been applied (column absent →
+        # PostgREST silently omits the field, callers see None).
         "select": "task_id,task_text,status,priority,due_time,due_date,"
+                  "revised_due_date,"
                   "project_id,initiative_id,key_result_id,delegated_to,is_recurring,"
                   "recurrence_type",
-        "order": "due_date.asc",
+        # Order by revised first so the most-current intent leads.
+        "order": "revised_due_date.asc",
         "limit": 400,
     }
     if project_id:
         params["project_id"] = f"eq.{project_id}"
+    # Date filters now drive off revised_due_date so a user-pushed task
+    # appears in "today" / "overdue" based on their current intent, not
+    # the immutable original deadline. Pre-migration the column doesn't
+    # exist, so supabase_client.get returns 400; we guard against that
+    # by widening to the union of revised_due_date and due_date via a
+    # PostgREST `or` clause when both possibilities are in play.
     if due_on:
-        params["due_date"] = f"eq.{due_on}"
+        # Effective date == due_on. Match either revised (if set) or
+        # due_date when revised is null.
+        params["or"] = (
+            f"(revised_due_date.eq.{due_on},"
+            f"and(revised_due_date.is.null,due_date.eq.{due_on}))"
+        )
     if overdue_before:
-        params["due_date"] = f"lt.{overdue_before}"
+        # Effective date < overdue_before. Same union shape.
+        params["or"] = (
+            f"(revised_due_date.lt.{overdue_before},"
+            f"and(revised_due_date.is.null,due_date.lt.{overdue_before}))"
+        )
         params["status"] = "neq.done"
     if not include_done:
         params["status"] = "neq.done"
@@ -370,7 +390,11 @@ def fetch_project_items(
                         or kr_label_map.get(r.get("initiative_id")),
             "time": (r.get("due_time") or "")[:5] or None,
             "end_time": None,
-            "date": r.get("due_date"),
+            # Show the effective date — what the user actually intends —
+            # not the immutable original deadline. _days_overdue and the
+            # parked-vs-overdue split downstream use this same field.
+            "date": r.get("revised_due_date") or r.get("due_date"),
+            "due_date": r.get("due_date"),  # original kept around for context
             "done": r.get("status") == "done",
             "status": r.get("status") or "open",
             "priority": r.get("priority"),
@@ -575,18 +599,22 @@ def fetch_overdue(user_id: str, plan_date) -> list[dict]:
     # Project tasks with due_date in the past and still not done
     project_items = fetch_project_items(user_id, overdue_before=iso)
 
-    # Matrix tasks with task_date < today and still not done.
-    # fetch_matrix_items doesn't support `task_date<` filter directly, so we
-    # hand-craft the query.
+    # Matrix tasks whose effective date elapsed and still not done.
+    # Match the project_tasks pattern: prefer revised_due_date, fall
+    # back to task_date if no revision yet (or pre-migration rows).
     matrix_rows = _safe_get(
         "todo_matrix",
         params={
             "user_id": f"eq.{user_id}",
             "is_deleted": "eq.false",
             "is_done": "eq.false",
-            "task_date": f"lt.{iso}",
-            "select": "id,task_text,priority,task_date,quadrant,category,project_id",
-            "order": "task_date.asc",
+            "or": (
+                f"(revised_due_date.lt.{iso},"
+                f"and(revised_due_date.is.null,task_date.lt.{iso}))"
+            ),
+            "select": "id,task_text,priority,task_date,revised_due_date,"
+                      "quadrant,category,project_id",
+            "order": "revised_due_date.asc",
             "limit": 200,
         },
         action="overdue matrix fetch",
@@ -609,7 +637,11 @@ def fetch_overdue(user_id: str, plan_date) -> list[dict]:
             "title": title,
             "time": None,
             "end_time": None,
-            "date": r.get("task_date"),
+            # Effective date drives the days-overdue computation. Falls
+            # back to task_date when revised_due_date hasn't been set
+            # (legacy rows or pre-migration).
+            "date": r.get("revised_due_date") or r.get("task_date"),
+            "due_date": r.get("task_date"),
             "done": False,
             "status": "open",
             "priority": r.get("priority"),
@@ -656,7 +688,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     matrix_items = fetch_matrix_items(user_id, plan_date)
     project_due_today = fetch_project_items(user_id, due_on=_to_iso(plan_date))
     habits = fetch_habits(user_id, plan_date)
-    overdue = fetch_overdue(user_id, plan_date)
+    overdue_all = fetch_overdue(user_id, plan_date)
     done_today = fetch_done_today(user_id, plan_date)
     intent = _fetch_daily_intent(user_id, plan_date)
 
@@ -664,6 +696,16 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     # chronological list. Habits render in their own band (no time).
     today_items = events + matrix_items + project_due_today
     _sort_timed_then_untimed(today_items)
+
+    # Split overdue into "active overdue" (1-2 days old) and "parked"
+    # (3+ days old). Anything older than the user's reasonable triage
+    # window goes into a separate list so the morning view stays
+    # focused. The parked section gets a one-tap revise control.
+    OVERDUE_WINDOW_DAYS = 2
+    overdue = [it for it in overdue_all
+               if (it.get("days_overdue") or 0) <= OVERDUE_WINDOW_DAYS]
+    parked  = [it for it in overdue_all
+               if (it.get("days_overdue") or 0) >  OVERDUE_WINDOW_DAYS]
 
     # Counts for the hero line
     meeting_count = sum(1 for it in today_items if it["type"] == "meeting")
@@ -673,6 +715,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     return {
         "today_items": today_items,
         "overdue": overdue,
+        "parked":  parked,
         "done_today": done_today,
         "habits": habits,
         "intent": intent,
@@ -682,6 +725,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
             "habits": len(habits),
             "habits_done": habits_done,
             "overdue": len(overdue),
+            "parked":  len(parked),
             "done_today": len(done_today),
         },
     }

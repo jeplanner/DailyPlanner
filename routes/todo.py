@@ -1543,6 +1543,9 @@ def todo_autosave():
                     "priority_rank": _PRIO_RANK.get(priority, 2),
                     "start_date": data["plan_date"],
                     "due_date": due_date,
+                    # Mirror to revised_due_date so the task is visible
+                    # in the matrix immediately under the parking filter.
+                    "revised_due_date": due_date,
                     "due_time": task_time,
                     "delegated_to": delegated_to,
                     "quadrant": quadrant,
