@@ -21,10 +21,11 @@ import logging
 from collections import Counter
 from datetime import date
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
-from supabase_client import get
+from supabase_client import get, post
+from supabase_client import delete as sb_delete
 
 logger = logging.getLogger("daily_plan")
 quotes_bp = Blueprint("quotes", __name__)
@@ -102,3 +103,93 @@ def quote_categories():
         if name
     ]
     return jsonify({"categories": out, "total": len(rows)})
+
+
+# ─────────── Browse + favorites ───────────────────────────────────
+
+def _user_favorite_ids(user_id):
+    """Set of quote_ids the user has starred. Best-effort — if the
+    favorites migration hasn't been applied yet, returns empty."""
+    try:
+        rows = get(
+            "quote_favorites",
+            params={"user_id": f"eq.{user_id}", "select": "quote_id", "limit": "1000"},
+        ) or []
+    except Exception as e:
+        logger.warning("quote_favorites fetch failed (migration missing?): %s", e)
+        return set()
+    return {r["quote_id"] for r in rows}
+
+
+@quotes_bp.route("/quotes", methods=["GET"])
+@login_required
+def quotes_browse_page():
+    """Browse Quotes page — server-renders the initial list to avoid a
+    flash-of-empty-grid on first load. Filtering happens client-side
+    over the rendered set; no need to paginate at this corpus size."""
+    user_id = session["user_id"]
+    rows = _fetch_active(limit=1000)
+    favorites = _user_favorite_ids(user_id)
+
+    counts = Counter((r.get("category") or "").strip() for r in rows)
+    categories = [{"name": n, "count": c}
+                  for n, c in counts.most_common() if n]
+
+    enriched = []
+    for r in rows:
+        enriched.append({
+            "id":       r.get("id"),
+            "text":     r.get("text"),
+            "author":   r.get("author"),
+            "category": r.get("category"),
+            "tags":     r.get("tags") or [],
+            "era":      r.get("era"),
+            "is_favorite": r.get("id") in favorites,
+        })
+
+    # Favorites first when any are starred — gives the page a bias
+    # toward what the user already cares about.
+    enriched.sort(key=lambda q: (not q["is_favorite"], (q.get("category") or ""), (q.get("author") or "")))
+
+    return render_template(
+        "quotes_browse.html",
+        quotes=enriched,
+        categories=categories,
+        favorites_count=len(favorites),
+    )
+
+
+@quotes_bp.route("/api/quotes/favorite/<quote_id>", methods=["POST"])
+@login_required
+def toggle_favorite(quote_id):
+    """Toggle favorite. Body: { favorite: true|false }, omitted = flip."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    # Resolve current state if caller didn't pre-decide.
+    if "favorite" in data:
+        want = bool(data["favorite"])
+    else:
+        existing = get(
+            "quote_favorites",
+            params={
+                "user_id": f"eq.{user_id}",
+                "quote_id": f"eq.{quote_id}",
+                "select": "quote_id", "limit": "1",
+            },
+        ) or []
+        want = not bool(existing)
+
+    if want:
+        # Idempotent insert — primary key on (user_id, quote_id) makes
+        # this safe; PostgREST raises 409 on duplicate, which we swallow.
+        try:
+            post("quote_favorites", {"user_id": user_id, "quote_id": quote_id})
+        except Exception as e:
+            logger.info("favorite insert (likely duplicate, ok): %s", e)
+    else:
+        sb_delete(
+            "quote_favorites",
+            params={"user_id": f"eq.{user_id}", "quote_id": f"eq.{quote_id}"},
+        )
+    return jsonify({"ok": True, "is_favorite": want})

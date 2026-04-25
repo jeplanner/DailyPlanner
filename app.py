@@ -127,6 +127,7 @@ def create_app():
     csrf.exempt(focus_log_bp)
     csrf.exempt(prayer_bp)
     csrf.exempt(photos_bp)
+    csrf.exempt(quotes_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).

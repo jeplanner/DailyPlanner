@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Quotes — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Crimson+Pro:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .qb-app { max-width: 920px; margin: 0 auto; padding: 26px 20px 80px; }
+
+  /* Hero */
+  .qb-hero { margin-bottom: 18px; }
+  .qb-hero h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 6px; }
+  .qb-sub {
+    color: var(--color-text-secondary); font-size: 14px;
+    max-width: 60ch; margin: 0; line-height: 1.5;
+  }
+
+  /* Filter bar */
+  .qb-filters {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center;
+    margin: 18px 0 14px;
+  }
+  .qb-search {
+    flex: 1 1 240px; min-width: 0;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 14px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-surface);
+  }
+  .qb-search:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring); }
+  .qb-search svg { width: 16px; height: 16px; color: var(--color-text-muted); flex: 0 0 auto; }
+  .qb-search input {
+    flex: 1; min-width: 0;
+    border: none; outline: none; background: transparent;
+    font: inherit; font-size: 14px; color: var(--color-text);
+  }
+  .qb-fav-toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: 10px;
+    font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    user-select: none;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .qb-fav-toggle:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+  .qb-fav-toggle.is-on {
+    background: color-mix(in srgb, #f59e0b 14%, transparent);
+    color: #92400e;
+    border-color: #fcd34d;
+  }
+  html.dark .qb-fav-toggle.is-on { background: rgba(245,158,11,.22); color: #fcd34d; border-color: #b45309; }
+  .qb-fav-toggle svg { width: 14px; height: 14px; }
+
+  /* Category chip rail */
+  .qb-cats {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  .qb-chip {
+    appearance: none;
+    padding: 6px 12px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: 999px;
+    color: var(--color-text-secondary);
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s, transform .08s;
+  }
+  .qb-chip:hover { background: var(--color-primary-light); color: var(--color-primary); border-color: var(--color-primary); }
+  .qb-chip.is-active {
+    background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
+  }
+  .qb-chip:active { transform: scale(.96); }
+  .qb-chip-count {
+    margin-left: 6px;
+    font-size: 11px;
+    opacity: .7;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Quote list */
+  .qb-list {
+    display: flex; flex-direction: column;
+    gap: 12px;
+  }
+  .qb-card {
+    position: relative;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    padding: 18px 20px 16px 22px;
+    transition: border-color .12s, box-shadow .14s;
+  }
+  .qb-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+  .qb-card.is-favorite {
+    border-color: #FCD34D;
+    background: linear-gradient(0deg, var(--color-surface), var(--color-surface)),
+                linear-gradient(135deg, rgba(245,158,11,.10), transparent);
+    box-shadow: 0 1px 0 rgba(245,158,11,.18);
+  }
+  html.dark .qb-card.is-favorite {
+    background: var(--color-surface);
+    border-color: #B45309;
+    box-shadow: 0 1px 0 rgba(180,83,9,.4);
+  }
+  .qb-quote-mark {
+    position: absolute; left: 8px; top: 4px;
+    font-family: 'Crimson Pro', serif;
+    font-size: 56px; line-height: 1;
+    color: var(--color-text-muted);
+    opacity: .25;
+    pointer-events: none;
+    user-select: none;
+  }
+  .qb-quote-text {
+    font-family: 'Crimson Pro', serif;
+    font-size: 18px; line-height: 1.5;
+    color: var(--color-text);
+    margin: 0 36px 10px 0;
+    font-weight: 500;
+  }
+  .qb-quote-foot {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-size: 12.5px;
+  }
+  .qb-author {
+    font-weight: 700; color: var(--color-text);
+  }
+  .qb-author::before { content: "— "; color: var(--color-text-muted); margin-right: 2px; }
+  .qb-cat-pill {
+    padding: 1px 9px; border-radius: 999px;
+    background: var(--color-surface-sunken);
+    color: var(--color-text-secondary);
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .qb-era {
+    color: var(--color-text-muted);
+    font-size: 11px; font-weight: 500;
+  }
+  .qb-fav-btn {
+    position: absolute; top: 12px; right: 12px;
+    width: 36px; height: 36px;
+    border: none; background: transparent;
+    border-radius: 50%;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s, transform .08s;
+  }
+  .qb-fav-btn:hover { background: var(--color-surface-sunken); color: #b45309; }
+  .qb-fav-btn:active { transform: scale(.92); }
+  .qb-fav-btn svg { width: 18px; height: 18px; }
+  .qb-card.is-favorite .qb-fav-btn { color: #b45309; }
+  .qb-card.is-favorite .qb-fav-btn svg { fill: currentColor; }
+
+  /* Empty state */
+  .qb-empty {
+    background: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: 14px;
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .qb-empty svg { width: 36px; height: 36px; color: var(--color-text-muted); margin-bottom: 10px; }
+  .qb-empty h2 { font-size: 16px; font-weight: 700; color: var(--color-text); margin: 0 0 6px; }
+  .qb-empty p { font-size: 13.5px; margin: 0; max-width: 44ch; margin-left: auto; margin-right: auto; }
+  .qb-empty.hidden { display: none; }
+
+  /* Toast */
+  .qb-toast {
+    position: fixed; left: 50%; bottom: 24px;
+    transform: translateX(-50%);
+    padding: 9px 16px; border-radius: 999px;
+    background: #0f172a; color: #fff;
+    font-size: 13.5px; font-weight: 600;
+    box-shadow: 0 12px 28px rgba(15,23,42,.32);
+    z-index: 9999;
+  }
+  .qb-toast.is-error { background: #b91c1c; }
+
+  @media (max-width: 640px) {
+    .qb-hero h1 { font-size: 24px; }
+    .qb-card { padding: 16px 16px 14px 18px; }
+    .qb-quote-text { font-size: 17px; margin-right: 30px; }
+    .qb-quote-mark { font-size: 44px; }
+    .qb-fav-btn { width: 32px; height: 32px; top: 8px; right: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="qb-app">
+
+  <header class="qb-hero">
+    <h1>📖 Quotes</h1>
+    <p class="qb-sub">{{ quotes|length }} quotes across {{ categories|length }} categories. Star the ones that resonate — favorites surface on top.</p>
+  </header>
+
+  <div class="qb-filters">
+    <label class="qb-search">
+      <i data-feather="search"></i>
+      <input type="text" id="qb-search" placeholder="Search text or author…" oninput="qbApplyFilters()">
+    </label>
+    <button type="button" class="qb-fav-toggle {% if favorites_count %}is-on{% endif %}"
+            id="qb-fav-toggle" onclick="qbToggleFavOnly()" aria-pressed="false">
+      <i data-feather="star" id="qb-fav-toggle-icon"></i>
+      <span id="qb-fav-toggle-label">Favorites only</span>
+      <span class="qb-chip-count" id="qb-fav-count">{{ favorites_count }}</span>
+    </button>
+  </div>
+
+  <div class="qb-cats" role="tablist" aria-label="Filter by category">
+    <button type="button" class="qb-chip is-active" data-cat="all" onclick="qbPickCat(this)">
+      All <span class="qb-chip-count">{{ quotes|length }}</span>
+    </button>
+    {% for c in categories %}
+      <button type="button" class="qb-chip" data-cat="{{ c.name }}" onclick="qbPickCat(this)">
+        {{ c.name|capitalize }} <span class="qb-chip-count">{{ c.count }}</span>
+      </button>
+    {% endfor %}
+  </div>
+
+  <div class="qb-list" id="qb-list">
+    {% for q in quotes %}
+    <article class="qb-card {% if q.is_favorite %}is-favorite{% endif %}"
+             data-id="{{ q.id }}"
+             data-cat="{{ q.category }}"
+             data-fav="{{ '1' if q.is_favorite else '0' }}"
+             data-search="{{ (q.text ~ ' ' ~ (q.author or ''))|lower|e }}">
+      <span class="qb-quote-mark" aria-hidden="true">“</span>
+      <button type="button" class="qb-fav-btn"
+              onclick="qbToggleFavorite('{{ q.id }}', this)"
+              title="{{ 'Unstar' if q.is_favorite else 'Star this quote' }}"
+              aria-label="Toggle favorite">
+        <i data-feather="star"></i>
+      </button>
+      <p class="qb-quote-text">{{ q.text }}</p>
+      <div class="qb-quote-foot">
+        {% if q.author %}<span class="qb-author">{{ q.author }}</span>{% endif %}
+        <span class="qb-cat-pill">{{ q.category }}</span>
+        {% if q.era %}<span class="qb-era">· {{ q.era }}</span>{% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+
+  <div class="qb-empty hidden" id="qb-empty">
+    <i data-feather="search"></i>
+    <h2>No quotes match</h2>
+    <p>Try a different category, clear the search, or turn off "Favorites only".</p>
+  </div>
+
+</div>
+
+<div class="qb-toast" id="qb-toast" hidden></div>
+
+<script>
+  let _qbActiveCat = "all";
+  let _qbFavOnly  = false;
+
+  function _toast(msg, kind, ms) {
+    const t = document.getElementById("qb-toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.className = "qb-toast" + (kind ? " is-" + kind : "");
+    t.hidden = false;
+    clearTimeout(t._dismissTimer);
+    if (ms) t._dismissTimer = setTimeout(() => t.hidden = true, ms);
+  }
+
+  function qbPickCat(btn) {
+    _qbActiveCat = btn.dataset.cat;
+    document.querySelectorAll(".qb-chip").forEach(c => {
+      c.classList.toggle("is-active", c === btn);
+    });
+    qbApplyFilters();
+  }
+
+  function qbToggleFavOnly() {
+    _qbFavOnly = !_qbFavOnly;
+    const btn = document.getElementById("qb-fav-toggle");
+    btn.classList.toggle("is-on", _qbFavOnly);
+    btn.setAttribute("aria-pressed", _qbFavOnly ? "true" : "false");
+    qbApplyFilters();
+  }
+
+  function qbApplyFilters() {
+    const q = (document.getElementById("qb-search")?.value || "").trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll(".qb-card").forEach(card => {
+      const matchCat = _qbActiveCat === "all" || card.dataset.cat === _qbActiveCat;
+      const matchFav = !_qbFavOnly || card.dataset.fav === "1";
+      const matchQ   = !q || (card.dataset.search || "").includes(q);
+      const show = matchCat && matchFav && matchQ;
+      card.style.display = show ? "" : "none";
+      if (show) visible++;
+    });
+    document.getElementById("qb-empty").classList.toggle("hidden", visible > 0);
+  }
+
+  async function qbToggleFavorite(id, btn) {
+    const card = btn.closest(".qb-card");
+    if (!card) return;
+    const willFav = card.dataset.fav !== "1";
+    // Optimistic
+    card.dataset.fav = willFav ? "1" : "0";
+    card.classList.toggle("is-favorite", willFav);
+    btn.title = willFav ? "Unstar" : "Star this quote";
+    _bumpFavoritesCount(willFav ? +1 : -1);
+    if (window.feather) feather.replace();
+    try {
+      const r = await fetch(`/api/quotes/favorite/${id}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({favorite: willFav}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+    } catch (e) {
+      // Revert on failure
+      card.dataset.fav = willFav ? "0" : "1";
+      card.classList.toggle("is-favorite", !willFav);
+      _bumpFavoritesCount(willFav ? -1 : +1);
+      if (window.feather) feather.replace();
+      _toast("Couldn't update favorite", "error", 3000);
+    }
+    if (_qbFavOnly && !willFav) qbApplyFilters();
+  }
+
+  function _bumpFavoritesCount(delta) {
+    const el = document.getElementById("qb-fav-count");
+    if (!el) return;
+    const next = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
+    el.textContent = next;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+</script>
+
+</body>
+</html>
