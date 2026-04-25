@@ -715,6 +715,11 @@ html.dark .section-title{color:#f1f5f9;}
         Reports
       </a>
 
+      <a href="/focus-log" data-match="^/focus-log" title="Focus Log — where your Quick Pomodoro time has gone, by activity">
+        <i data-feather="clock"></i>
+        Focus Log
+      </a>
+
       <a href="/summary?view=daily#reflection" title="End-of-day reflection — gratitude, what to change tomorrow">
         <i data-feather="edit-3"></i>
         Daily Review
@@ -1131,7 +1136,9 @@ document.addEventListener("keydown", (e) => {
     <label class="qpomo-field">
       <span>What are you focusing on?</span>
       <input type="text" id="qpomo-label" placeholder="e.g. Read chapter 4 of Atomic Habits"
-             maxlength="120" autocomplete="off">
+             maxlength="120" autocomplete="off" list="qpomo-label-options">
+      <datalist id="qpomo-label-options"></datalist>
+      <span class="qpomo-hint" style="margin-top:4px;">Reusing a label keeps time tracked under the same activity in the Focus Log.</span>
     </label>
     <div class="qpomo-field">
       <span>Duration</span>
@@ -1297,6 +1304,21 @@ document.addEventListener("keydown", (e) => {
     overlay.classList.remove("hidden");
     setTimeout(() => document.getElementById("qpomo-label")?.focus(), 50);
     if (window.feather) window.feather.replace();
+    // Populate the autocomplete datalist with existing activity labels so
+    // re-using a label is a one-tap action. Best-effort — silently fall
+    // back to a free-text input if the API isn't available yet.
+    fetch("/api/focus-log/tasks")
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        const dl = document.getElementById("qpomo-label-options");
+        if (!dl) return;
+        const tasks = (data.tasks || []).filter(t => !t.is_archived);
+        dl.innerHTML = tasks.map(t => `<option value="${
+          String(t.label).replace(/"/g, "&quot;")
+        }">`).join("");
+      })
+      .catch(() => {});
   }
   function closeQuickPomo() {
     document.getElementById("qpomo-modal")?.classList.add("hidden");

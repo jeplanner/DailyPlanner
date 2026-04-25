@@ -67,6 +67,7 @@ def create_app():
     from routes.push import push_bp
     from routes.prayer import prayer_bp
     from routes.relationships import relationships_bp
+    from routes.focus_log import focus_log_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -90,6 +91,7 @@ def create_app():
     app.register_blueprint(push_bp)
     app.register_blueprint(prayer_bp)
     app.register_blueprint(relationships_bp)
+    app.register_blueprint(focus_log_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -111,6 +113,7 @@ def create_app():
     csrf.exempt(settings_bp)
     csrf.exempt(checklist_bp)
     csrf.exempt(push_bp)
+    csrf.exempt(focus_log_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).

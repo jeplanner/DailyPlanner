@@ -654,13 +654,14 @@ def timer_start():
             return jsonify({"id": o["id"], "started_at": o["started_at"], "resumed": True})
         _stop_log(user_id, o)
 
+    label = (data.get("label") or "").strip() or None
     payload = {
         "user_id": user_id,
         "source": source,
         "matrix_task_id":  data.get("matrix_task_id"),
         "project_task_id": data.get("project_task_id"),
         "event_id":        data.get("event_id"),
-        "label":           (data.get("label") or "").strip() or None,
+        "label":           label,
         "started_at":      _dt.utcnow().isoformat() + "Z",
     }
     # Only include pomodoro-specific fields when relevant. The columns have
@@ -670,6 +671,19 @@ def timer_start():
         payload["mode"] = "pomodoro"
         if target_seconds:
             payload["target_seconds"] = target_seconds
+    # Adhoc sessions get an adhoc_task_id so the Focus Log can aggregate
+    # totals per label. Best-effort — if the adhoc_tasks migration hasn't
+    # run yet, just skip and the row inserts without the back-pointer.
+    if source == "adhoc" and label:
+        try:
+            from routes.focus_log import find_or_create_adhoc_task
+            tid = find_or_create_adhoc_task(user_id, label)
+            if tid:
+                payload["adhoc_task_id"] = tid
+        except Exception as _e:
+            logging.getLogger("daily_plan").warning(
+                "find_or_create_adhoc_task failed: %s", _e
+            )
     rows = post("task_time_logs", payload)
     return jsonify({
         "id": rows[0]["id"] if rows else None,

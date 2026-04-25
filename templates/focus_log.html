@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Focus Log — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .fl-app { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  .fl-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .fl-hero h1 { font-size: 28px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .fl-sub { color: var(--color-text-secondary); font-size: 14px; max-width: 60ch; margin: 0; line-height: 1.5; }
+  .fl-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 10px;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: none; cursor: pointer; font-weight: 600; font-size: 14px;
+  }
+  .fl-cta:hover { background: var(--color-primary-hover); }
+  .fl-cta svg { width: 16px; height: 16px; }
+
+  /* Top stat strip */
+  .fl-stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+  .fl-stat {
+    flex: 1 1 180px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 14px 18px;
+  }
+  .fl-stat-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--color-text-secondary);
+  }
+  .fl-stat-value {
+    margin-top: 4px;
+    font-size: 24px; font-weight: 800; color: var(--color-text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Toolbar */
+  .fl-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .fl-search {
+    flex: 1 1 240px; min-width: 0;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 14px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-surface);
+  }
+  .fl-search svg { width: 16px; height: 16px; color: var(--color-text-muted); flex: 0 0 auto; }
+  .fl-search input {
+    flex: 1; padding: 0; appearance: none; background: transparent;
+    border: none; outline: none;
+    font: inherit; font-size: 14px; color: var(--color-text); min-width: 0;
+  }
+  .fl-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border-radius: 999px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    font-size: 13px; color: var(--color-text-secondary); cursor: pointer;
+    user-select: none;
+  }
+  .fl-toggle input { accent-color: var(--color-primary); }
+
+  /* Table */
+  .fl-table {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; overflow: hidden;
+  }
+  .fl-row {
+    display: grid; align-items: center;
+    grid-template-columns: 1fr 110px 90px 130px 80px;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: background .12s;
+  }
+  .fl-row:last-child { border-bottom: none; }
+  .fl-row:hover { background: var(--color-surface-secondary); }
+  .fl-row.is-archived { opacity: .55; }
+  .fl-head {
+    background: var(--color-surface-sunken);
+    cursor: default;
+    font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--color-text-secondary);
+  }
+  .fl-head:hover { background: var(--color-surface-sunken); }
+
+  .fl-label { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .fl-icon {
+    width: 32px; height: 32px; flex: 0 0 auto;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #dbeafe, #c7d2fe);
+    color: #1e40af;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+  }
+  .fl-name {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 14.5px; font-weight: 600;
+  }
+  .fl-cat-chip {
+    margin-left: 8px;
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--color-surface-sunken); color: var(--color-text-secondary);
+    font-size: 11px; font-weight: 600;
+  }
+  .fl-running-pill {
+    margin-left: 8px;
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: rgba(22,163,74,.16); color: #15803d;
+    font-size: 11px; font-weight: 700;
+    animation: flPulse 2s ease-in-out infinite;
+  }
+  @keyframes flPulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+
+  .fl-num {
+    font-variant-numeric: tabular-nums;
+    font-size: 13.5px; color: var(--color-text); text-align: right;
+  }
+  .fl-time { font-weight: 700; font-size: 14px; }
+  .fl-muted { color: var(--color-text-muted); font-size: 12.5px; }
+  .fl-actions {
+    display: flex; gap: 4px; justify-content: flex-end; flex: 0 0 auto;
+  }
+  .fl-act-btn {
+    appearance: none; padding: 6px 8px;
+    background: transparent; border: none; border-radius: 6px;
+    color: var(--color-text-muted); cursor: pointer;
+  }
+  .fl-act-btn:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+  .fl-act-btn svg { width: 14px; height: 14px; }
+
+  /* Expanded sessions */
+  .fl-detail {
+    padding: 12px 18px 16px 60px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-secondary);
+  }
+  .fl-detail-title { font-size: 12px; font-weight: 700; color: var(--color-text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .04em; }
+  .fl-session {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 0;
+    font-size: 13px; color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  .fl-session-date { color: var(--color-text); }
+  .fl-session-dur { font-weight: 700; }
+
+  .fl-empty {
+    background: var(--color-surface); border: 1px dashed var(--color-border);
+    border-radius: 16px; padding: 48px 24px; text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .fl-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+  .fl-empty h2 { font-size: 18px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+  .fl-empty p { max-width: 50ch; margin: 0 auto 14px; line-height: 1.55; font-size: 14px; }
+
+  .fl-loading { padding: 36px; text-align: center; color: var(--color-text-muted); font-size: 13px; }
+
+  @media (max-width: 720px) {
+    .fl-row { grid-template-columns: 1fr 90px 70px; gap: 10px; padding: 12px 14px; }
+    .fl-row .fl-col-last, .fl-row .fl-col-actions { display: none; }
+    .fl-head .fl-col-last, .fl-head .fl-col-actions { display: none; }
+    .fl-detail { padding-left: 14px; }
+  }
+  html.dark .fl-icon { background: linear-gradient(135deg, #1e3a8a, #3730a3); color: #bfdbfe; }
+  html.dark .fl-running-pill { background: rgba(22,163,74,.22); color: #86efac; }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="fl-app">
+
+  <header class="fl-hero">
+    <div>
+      <h1>Focus Log</h1>
+      <p class="fl-sub">Every Quick Pomodoro you start gets logged here. Aggregated by label so you can see, at a glance, where your focused time is actually going.</p>
+    </div>
+    <button class="fl-cta" onclick="window.openQuickPomo && window.openQuickPomo()" title="Quick Pomodoro">
+      <i data-feather="play"></i> Start a Pomodoro
+    </button>
+  </header>
+
+  <div class="fl-stats" id="fl-stats" hidden>
+    <div class="fl-stat">
+      <div class="fl-stat-label">Total focused</div>
+      <div class="fl-stat-value" id="fl-tot-time">0h</div>
+    </div>
+    <div class="fl-stat">
+      <div class="fl-stat-label">Sessions</div>
+      <div class="fl-stat-value" id="fl-tot-sessions">0</div>
+    </div>
+    <div class="fl-stat">
+      <div class="fl-stat-label">Activities</div>
+      <div class="fl-stat-value" id="fl-tot-labels">0</div>
+    </div>
+  </div>
+
+  <div class="fl-toolbar">
+    <label class="fl-search">
+      <i data-feather="search"></i>
+      <input type="text" id="fl-search" placeholder="Filter activities…" oninput="filterFL()">
+    </label>
+    <label class="fl-toggle">
+      <input type="checkbox" id="fl-show-archived" onchange="loadFL()">
+      <span>Show archived</span>
+    </label>
+  </div>
+
+  <div id="fl-loading" class="fl-loading">Loading…</div>
+
+  <div id="fl-empty" class="fl-empty" hidden>
+    <i data-feather="clock"></i>
+    <h2>Nothing tracked yet</h2>
+    <p>Start a Quick Pomodoro from the clock icon at the top of any page (or the button above), give it a label, and the time you spend will start showing up here.</p>
+    <button class="fl-cta" onclick="window.openQuickPomo && window.openQuickPomo()">Start a Pomodoro</button>
+  </div>
+
+  <div id="fl-table" class="fl-table" hidden>
+    <div class="fl-row fl-head">
+      <div>Activity</div>
+      <div class="fl-num">Total</div>
+      <div class="fl-num">Sessions</div>
+      <div class="fl-num fl-col-last">Last</div>
+      <div class="fl-col-actions"></div>
+    </div>
+    <div id="fl-rows"></div>
+  </div>
+
+</div>
+
+<script>
+  let _flTasks = [];
+
+  function _fmtSec(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) return `${sec}s`;
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (h === 0) return `${m}m`;
+    return `${h}h ${String(m).padStart(2,"0")}m`;
+  }
+  function _fmtDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (isNaN(d)) return "—";
+    const now = new Date();
+    const ms = now - d;
+    const days = Math.floor(ms / 86400000);
+    if (days === 0) return "Today, " + d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    if (days === 1) return "Yesterday";
+    if (days < 7)  return `${days}d ago`;
+    return d.toLocaleDateString([], {month:"short", day:"numeric"});
+  }
+  function _esc(s) {
+    if (s == null) return "";
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+  function _initial(s) {
+    if (!s) return "?";
+    const t = s.trim();
+    return t ? t[0].toUpperCase() : "?";
+  }
+
+  async function loadFL() {
+    const showArchived = document.getElementById("fl-show-archived").checked;
+    const loading = document.getElementById("fl-loading");
+    loading.removeAttribute("hidden");
+    try {
+      const r = await fetch("/api/focus-log/tasks" + (showArchived ? "?include_archived=1" : ""));
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      _flTasks = data.tasks || [];
+      _renderStats(data.totals || {});
+      _renderRows();
+    } catch (e) {
+      console.error("focus log load failed", e);
+      if (window.showToast) showToast("Couldn't load focus log", "error");
+    } finally {
+      loading.setAttribute("hidden", "");
+    }
+  }
+
+  function _renderStats(totals) {
+    const stats = document.getElementById("fl-stats");
+    if (!_flTasks.length) { stats.setAttribute("hidden", ""); return; }
+    stats.removeAttribute("hidden");
+    document.getElementById("fl-tot-time").textContent = _fmtSec(totals.total_seconds || 0);
+    document.getElementById("fl-tot-sessions").textContent = totals.session_count || 0;
+    document.getElementById("fl-tot-labels").textContent = totals.label_count || 0;
+  }
+
+  function _renderRows() {
+    const empty = document.getElementById("fl-empty");
+    const table = document.getElementById("fl-table");
+    if (!_flTasks.length) {
+      empty.removeAttribute("hidden");
+      table.setAttribute("hidden", "");
+      return;
+    }
+    empty.setAttribute("hidden", "");
+    table.removeAttribute("hidden");
+    document.getElementById("fl-rows").innerHTML = _flTasks.map(_rowHtml).join("");
+    if (window.feather) feather.replace();
+    filterFL();
+  }
+
+  function _rowHtml(t) {
+    return `
+      <div class="fl-row ${t.is_archived ? 'is-archived' : ''}"
+           data-id="${t.id}" data-label="${_esc((t.label || '').toLowerCase())}"
+           onclick="toggleFLDetail('${t.id}')">
+        <div class="fl-label">
+          <div class="fl-icon">${_esc(_initial(t.label))}</div>
+          <div style="min-width:0;">
+            <div class="fl-name">${_esc(t.label || '(unnamed)')}
+              ${t.category ? `<span class="fl-cat-chip">${_esc(t.category)}</span>` : ''}
+              ${t.is_running ? `<span class="fl-running-pill">running</span>` : ''}
+            </div>
+            <div class="fl-muted">${t.is_archived ? 'Archived · ' : ''}First seen ${_fmtDate(t.created_at)}</div>
+          </div>
+        </div>
+        <div class="fl-num fl-time">${_fmtSec(t.total_seconds)}</div>
+        <div class="fl-num">${t.session_count}</div>
+        <div class="fl-num fl-col-last">${_fmtDate(t.last_session_at)}</div>
+        <div class="fl-actions fl-col-actions" onclick="event.stopPropagation()">
+          <button type="button" class="fl-act-btn" onclick="renameFL('${t.id}', this)" title="Rename">
+            <i data-feather="edit-2"></i>
+          </button>
+          <button type="button" class="fl-act-btn" onclick="archiveFL('${t.id}', '${_esc(t.label).replace(/'/g, "\\'")}', ${!t.is_archived})"
+                  title="${t.is_archived ? 'Unarchive' : 'Archive'}">
+            <i data-feather="${t.is_archived ? 'rotate-ccw' : 'archive'}"></i>
+          </button>
+        </div>
+      </div>
+      <div class="fl-detail" id="fl-detail-${t.id}" hidden></div>
+    `;
+  }
+
+  async function toggleFLDetail(id) {
+    const el = document.getElementById(`fl-detail-${id}`);
+    if (!el) return;
+    if (!el.hasAttribute("hidden")) { el.setAttribute("hidden", ""); return; }
+    el.removeAttribute("hidden");
+    el.innerHTML = '<div class="fl-muted">Loading sessions…</div>';
+    try {
+      const r = await fetch(`/api/focus-log/tasks/${id}/sessions?limit=20`);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const sessions = data.sessions || [];
+      if (!sessions.length) {
+        el.innerHTML = '<div class="fl-muted">No sessions logged yet.</div>';
+        return;
+      }
+      el.innerHTML = `
+        <div class="fl-detail-title">Recent sessions (${sessions.length})</div>
+        ${sessions.map(s => {
+          const dur = s.duration_seconds != null
+            ? _fmtSec(s.duration_seconds)
+            : (s.ended_at ? '—' : '<span style="color:#15803d">running</span>');
+          return `<div class="fl-session">
+                    <span class="fl-session-date">${_fmtDate(s.started_at)}</span>
+                    <span class="fl-session-dur">${dur}</span>
+                  </div>`;
+        }).join("")}
+      `;
+    } catch (e) {
+      el.innerHTML = '<div class="fl-muted">Couldn\'t load sessions.</div>';
+    }
+  }
+
+  async function renameFL(id, btn) {
+    const t = _flTasks.find(x => x.id === id);
+    const next = prompt("Rename activity:", t?.label || "");
+    if (next == null || !next.trim()) return;
+    const r = await fetch(`/api/focus-log/tasks/${id}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({label: next.trim()}),
+    });
+    if (r.ok) { if (window.showToast) showToast("Renamed", "success", 1200); loadFL(); }
+    else if (window.showToast) showToast("Couldn't rename", "error");
+  }
+
+  async function archiveFL(id, label, archive) {
+    const verb = archive ? "Archive" : "Unarchive";
+    if (archive && !confirm(`${verb} "${label || 'this activity'}"?\n\nIts time history is kept; it just won't show in the active list.`)) return;
+    const r = await fetch(`/api/focus-log/tasks/${id}`, {
+      method: "PATCH",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({is_archived: archive}),
+    });
+    if (r.ok) { if (window.showToast) showToast(verb + "d", "success", 1200); loadFL(); }
+    else if (window.showToast) showToast(`Couldn't ${verb.toLowerCase()}`, "error");
+  }
+
+  function filterFL() {
+    const q = (document.getElementById("fl-search")?.value || "").trim().toLowerCase();
+    document.querySelectorAll(".fl-row[data-label]").forEach(row => {
+      const detail = document.getElementById("fl-detail-" + row.dataset.id);
+      const match = !q || row.dataset.label.includes(q);
+      row.style.display = match ? "" : "none";
+      if (detail && !match) detail.setAttribute("hidden", "");
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+    loadFL();
+  });
+</script>
+
+</body>
+</html>
