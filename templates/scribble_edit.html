@@ -36,6 +36,34 @@
     </div>
 
     <div class="editor-actions">
+      <div class="folder-picker-wrap">
+        <i data-feather="folder" class="folder-picker-icon" aria-hidden="true"></i>
+        <select id="folder-select" class="folder-select"
+                title="Move to folder"
+                onchange="handleFolderChange(this)">
+          {% set current_folder = (note.notebook if note else '') or prefill_folder or 'All Notes' %}
+          {% set known = [] %}
+          {% for f in sidebar.folders %}{% if known.append(f.name) %}{% endif %}{% endfor %}
+          <option value="All Notes" {% if current_folder == 'All Notes' %}selected{% endif %}>All Notes</option>
+          {% for f in sidebar.folders %}
+            {% if f.name and f.name|lower != 'all notes' %}
+            <option value="{{ f.name }}" {% if current_folder == f.name %}selected{% endif %}>{{ f.name }}</option>
+            {% endif %}
+          {% endfor %}
+          {% if current_folder and current_folder != 'All Notes' and current_folder not in known %}
+            <option value="{{ current_folder }}" selected>{{ current_folder }}</option>
+          {% endif %}
+          <option value="__new__">+ New folder…</option>
+        </select>
+      </div>
+
+      <button type="button" class="icon-btn pin-btn" id="pin-btn"
+              onclick="togglePinEditor()"
+              title="Pin to top"
+              data-pinned="{{ '1' if (note and note.is_pinned) else '0' }}">
+        <i data-feather="star"></i>
+      </button>
+
       {% if note and note.id %}
       <button type="button" class="icon-btn danger" onclick="showDeleteConfirm()" title="Delete note">
         <i data-feather="trash-2"></i>
@@ -43,6 +71,46 @@
       {% endif %}
     </div>
   </div>
+
+  <style>
+    .folder-picker-wrap {
+      position: relative;
+      display: inline-flex; align-items: center;
+    }
+    .folder-picker-icon {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      width: 14px; height: 14px;
+      color: var(--color-text-muted, #94a3b8);
+      pointer-events: none;
+    }
+    .folder-select {
+      appearance: none;
+      padding: 7px 28px 7px 32px;
+      border: 1px solid var(--color-border, #e2e8f0);
+      border-radius: 8px;
+      background: var(--color-surface, #fff);
+      color: var(--color-text, #0f172a);
+      font: inherit; font-size: 13px; font-weight: 500;
+      cursor: pointer;
+      max-width: 160px;
+      text-overflow: ellipsis;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+    }
+    .folder-select:hover { border-color: var(--color-border-strong, #cbd5e1); }
+    .folder-select:focus { outline: none; border-color: var(--color-primary, #2563eb); box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.18)); }
+    html.dark .folder-select { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+    html.dark .folder-picker-icon { color: #94a3b8; }
+
+    .pin-btn { color: var(--color-text-muted); }
+    .pin-btn:hover { color: var(--color-warning, #f59e0b); }
+    .pin-btn[data-pinned="1"] { color: var(--color-warning, #f59e0b); }
+    .pin-btn[data-pinned="1"] svg { fill: currentColor; }
+    @media (max-width: 560px) {
+      .folder-select { max-width: 110px; font-size: 12.5px; }
+    }
+  </style>
 
   <!-- ═══════════ INLINE DELETE CONFIRM ═══════════ -->
   <div id="delete-confirm" class="delete-confirm hidden">
@@ -194,11 +262,19 @@ async function saveNote(options = {}) {
 
   setSaveState("saving", "Saving…");
 
+  // Folder + pin state ride along on every save so we never have a
+  // half-saved note (e.g. content updated but folder change lost).
+  const folderEl = document.getElementById("folder-select");
+  const pinEl    = document.getElementById("pin-btn");
+  const notebook = (folderEl && folderEl.value && folderEl.value !== "__new__")
+                    ? folderEl.value : "All Notes";
+  const is_pinned = pinEl ? pinEl.dataset.pinned === "1" : false;
+
   try {
     const res = await fetch("/notes/scribble/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: noteId, title, content }),
+      body: JSON.stringify({ id: noteId, title, content, notebook, is_pinned }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -215,6 +291,38 @@ async function saveNote(options = {}) {
     setSaveState("error", "Save failed");
     if (window.showToast) showToast("Failed to save note", "error");
   }
+}
+
+// ─── Folder + pin handlers ───────────────────────────────────
+function handleFolderChange(sel) {
+  if (sel.value === "__new__") {
+    const name = prompt("Folder name:");
+    if (!name || !name.trim() || name.trim().toLowerCase() === "all notes") {
+      sel.value = sel.dataset.previous || "All Notes";
+      return;
+    }
+    const trimmed = name.trim();
+    // Insert the new option just before the "+ New folder…" entry
+    const opt = document.createElement("option");
+    opt.value = trimmed; opt.textContent = trimmed;
+    const newFolderOpt = sel.querySelector('option[value="__new__"]');
+    sel.insertBefore(opt, newFolderOpt);
+    sel.value = trimmed;
+  }
+  sel.dataset.previous = sel.value;
+  markDirty();
+  saveNote();
+}
+
+function togglePinEditor() {
+  const btn = document.getElementById("pin-btn");
+  if (!btn) return;
+  const next = btn.dataset.pinned === "1" ? "0" : "1";
+  btn.dataset.pinned = next;
+  btn.title = next === "1" ? "Unpin" : "Pin to top";
+  if (window.showToast) showToast(next === "1" ? "Pinned" : "Unpinned", "success", 1100);
+  markDirty();
+  saveNote();
 }
 
 // ─── Delete (inline confirm, no native confirm()) ─────────────

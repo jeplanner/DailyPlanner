@@ -4,104 +4,408 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
-  <title>Notes – Scribble</title>
+  <title>Notes — DailyPlanner</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='scribble.css') }}">
   <script src="https://unpkg.com/feather-icons"></script>
   <script src="{{ url_for('static', filename='js/global.js') }}"></script>
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
-</head>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    .nl-app {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 0;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0;
+      min-height: calc(100vh - 60px);
+    }
 
+    /* ── Sidebar (folders) ──────────────────────────── */
+    .nl-sidebar {
+      border-right: 1px solid var(--color-border);
+      background: var(--color-surface);
+      padding: 22px 14px 32px;
+      overflow-y: auto;
+    }
+    .nl-side-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px; padding: 0 6px;
+    }
+    .nl-side-head h2 {
+      margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -.01em;
+    }
+    .nl-new-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; padding: 0;
+      border: none; border-radius: 9px;
+      background: var(--color-primary); color: var(--color-on-primary);
+      cursor: pointer;
+      transition: background .12s, transform .08s;
+    }
+    .nl-new-btn:hover { background: var(--color-primary-hover); }
+    .nl-new-btn:active { transform: scale(.95); }
+    .nl-new-btn svg { width: 16px; height: 16px; }
+
+    .nl-folder {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; margin: 2px 0;
+      border-radius: 8px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      font-size: 14px; font-weight: 500;
+      transition: background .12s, color .12s;
+    }
+    .nl-folder:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .nl-folder.is-active { background: var(--color-primary-light); color: var(--color-primary); font-weight: 600; }
+    html.dark .nl-folder.is-active { background: rgba(37,99,235,.22); color: #93c5fd; }
+    .nl-folder svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .85; }
+    .nl-folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nl-folder-count {
+      font-size: 11.5px; color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .nl-folder.is-active .nl-folder-count { color: var(--color-primary); }
+    .nl-side-section-label {
+      font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: var(--color-text-muted);
+      padding: 12px 10px 4px;
+    }
+    .nl-new-folder {
+      margin-top: 6px;
+      width: 100%;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 7px 10px;
+      background: transparent;
+      border: 1px dashed var(--color-border);
+      border-radius: 8px;
+      color: var(--color-text-muted);
+      font: inherit; font-size: 12.5px; font-weight: 600;
+      cursor: pointer;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .nl-new-folder:hover {
+      background: var(--color-surface-secondary);
+      color: var(--color-text);
+      border-color: var(--color-border-strong);
+    }
+    .nl-new-folder svg { width: 13px; height: 13px; }
+
+    /* ── Main pane ─────────────────────────────────── */
+    .nl-main { padding: 22px 28px 32px; min-width: 0; }
+    .nl-main-head {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      margin-bottom: 14px; gap: 16px; flex-wrap: wrap;
+    }
+    .nl-title-block h1 {
+      font-size: 26px; font-weight: 800; margin: 0 0 4px; letter-spacing: -.02em;
+    }
+    .nl-title-block p {
+      margin: 0; font-size: 13.5px; color: var(--color-text-muted);
+    }
+
+    .nl-toolbar {
+      display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;
+      align-items: center;
+    }
+    .nl-search {
+      flex: 1 1 280px; min-width: 0;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 14px;
+      border: 1px solid var(--color-border); border-radius: 10px;
+      background: var(--color-surface);
+      transition: border-color .12s, box-shadow .12s;
+    }
+    .nl-search:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring); }
+    .nl-search svg { width: 16px; height: 16px; color: var(--color-text-muted); flex: 0 0 auto; }
+    .nl-search input {
+      flex: 1; min-width: 0;
+      padding: 0; border: none; outline: none;
+      background: transparent;
+      font: inherit; font-size: 14px; color: var(--color-text);
+    }
+    .nl-search-clear {
+      width: 22px; height: 22px; border-radius: 50%;
+      border: none; background: var(--color-surface-sunken);
+      color: var(--color-text-muted); cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .nl-search-clear:hover { color: var(--color-text); }
+    .nl-search-clear svg { width: 12px; height: 12px; }
+
+    /* Notes grid */
+    .nl-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 14px;
+    }
+    .nl-card {
+      position: relative;
+      display: block;
+      padding: 16px 16px 14px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      color: var(--color-text);
+      text-decoration: none;
+      transition: border-color .12s, box-shadow .14s, transform .08s;
+      min-height: 140px;
+      overflow: hidden;
+    }
+    .nl-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    .nl-card.is-pinned {
+      border-color: var(--color-warning-border);
+      background: linear-gradient(0deg, var(--color-surface), var(--color-surface)),
+                  linear-gradient(135deg, rgba(245,158,11,.08), transparent);
+    }
+    html.dark .nl-card.is-pinned { background: linear-gradient(0deg, var(--color-surface), var(--color-surface)),
+                                    linear-gradient(135deg, rgba(245,158,11,.14), transparent); }
+
+    .nl-card-pin {
+      position: absolute; top: 10px; right: 10px;
+      width: 28px; height: 28px; border-radius: 8px;
+      border: none; background: transparent;
+      color: var(--color-text-muted);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; opacity: 0;
+      transition: opacity .12s, color .12s, background .12s;
+    }
+    .nl-card:hover .nl-card-pin,
+    .nl-card.is-pinned .nl-card-pin { opacity: 1; }
+    .nl-card-pin:hover { background: var(--color-surface-sunken); color: var(--color-warning); }
+    .nl-card.is-pinned .nl-card-pin { color: var(--color-warning); }
+    .nl-card-pin svg { width: 14px; height: 14px; }
+
+    .nl-card-title {
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 6px;
+      line-height: 1.3;
+      overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      padding-right: 32px; /* room for the pin button */
+    }
+    .nl-card-preview {
+      font-size: 13px; color: var(--color-text-secondary);
+      line-height: 1.5;
+      overflow: hidden;
+      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+      white-space: pre-wrap;
+    }
+    .nl-card-preview.empty { color: var(--color-text-muted); font-style: italic; }
+    .nl-card-foot {
+      margin-top: 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      font-size: 11.5px; color: var(--color-text-muted);
+      padding-top: 10px;
+      border-top: 1px solid var(--color-border-light);
+    }
+    .nl-folder-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px;
+      background: var(--color-surface-sunken);
+      color: var(--color-text-secondary);
+      font-size: 11px; font-weight: 600;
+    }
+    .nl-folder-chip svg { width: 11px; height: 11px; }
+    .nl-card-date { font-variant-numeric: tabular-nums; }
+
+    /* Empty state */
+    .nl-empty {
+      grid-column: 1 / -1;
+      padding: 56px 24px;
+      text-align: center;
+      color: var(--color-text-secondary);
+      background: var(--color-surface);
+      border: 1px dashed var(--color-border);
+      border-radius: 16px;
+    }
+    .nl-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+    .nl-empty h2 { font-size: 20px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+    .nl-empty p { max-width: 50ch; margin: 0 auto 18px; line-height: 1.55; font-size: 14px; }
+    .nl-empty .nl-empty-cta {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 16px;
+      background: var(--color-primary); color: var(--color-on-primary);
+      border: none; border-radius: 10px;
+      font-weight: 600; font-size: 14px; text-decoration: none;
+    }
+    .nl-empty .nl-empty-cta:hover { background: var(--color-primary-hover); }
+
+    /* Mobile: collapse sidebar into a top dropdown */
+    .nl-folder-mobile-wrap { display: none; }
+    @media (max-width: 800px) {
+      .nl-app { grid-template-columns: 1fr; }
+      .nl-sidebar { display: none; }
+      .nl-main { padding: 16px 14px 32px; }
+      .nl-folder-mobile-wrap { display: block; margin-bottom: 14px; }
+      .nl-folder-mobile {
+        width: 100%;
+        padding: 10px 14px;
+        background: var(--color-surface);
+        border: 1px solid var(--color-border); border-radius: 10px;
+        font: inherit; font-size: 14px; color: var(--color-text);
+        appearance: none;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        padding-right: 36px;
+      }
+    }
+  </style>
+</head>
 <body>
 
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
-<div class="scribble-app">
+<div class="nl-app">
 
-  <header class="scribble-header">
-    <div>
-      <h1>📝 Notes</h1>
-      <p class="scribble-sub">
-        {% if notes %}
-          {{ notes|length }} note{{ 's' if notes|length != 1 }}
-        {% else %}
-          Your scribble workspace
-        {% endif %}
-      </p>
-    </div>
-    <a href="/notes/scribble/new" class="btn-new" title="Create a new note (N)">
-      <i data-feather="plus"></i>
-      <span>New note</span>
-    </a>
-  </header>
-
-  <form method="get" class="scribble-search" role="search" autocomplete="off">
-    <i data-feather="search" class="scribble-search-icon" aria-hidden="true"></i>
-    <input
-      type="text"
-      name="q"
-      id="scribble-search-input"
-      placeholder="Search by title or content…"
-      value="{{ q or '' }}"
-      autofocus
-    >
-    {% if q %}
-      <a href="/notes/scribble" class="scribble-search-clear" title="Clear search">
-        <i data-feather="x"></i>
-      </a>
-    {% endif %}
-  </form>
-
-  {% if notes %}
-    <div class="note-grid">
-      {% for note in notes %}
-        {% set title = note.title or "Untitled note" %}
-        {% set preview = (note.content or '')|trim %}
-        <a class="note-card" href="/notes/scribble/{{ note.id }}">
-          <div class="note-card-title">{{ title }}</div>
-          {% if preview %}
-            <div class="note-card-preview">{{ preview[:240] }}{% if preview|length > 240 %}…{% endif %}</div>
-          {% else %}
-            <div class="note-card-preview empty">Empty note — tap to start writing</div>
-          {% endif %}
-          <div class="note-card-footer">
-            <span class="note-card-meta">
-              <i data-feather="clock" style="width:11px;height:11px"></i>
-              {% if note.updated_at %}{{ note.updated_at[:10] }}{% else %}—{% endif %}
-            </span>
-            {% if preview %}
-              <span class="note-card-meta">
-                <i data-feather="type" style="width:11px;height:11px"></i>
-                {{ preview.split()|length }} word{{ 's' if preview.split()|length != 1 }}
-              </span>
-            {% endif %}
-          </div>
-        </a>
-      {% endfor %}
-    </div>
-  {% else %}
-    <div class="scribble-empty">
-      <div class="scribble-empty-icon">
-        <i data-feather="book-open"></i>
-      </div>
-      <h2>{% if q %}No matches{% else %}No notes yet{% endif %}</h2>
-      <p>
-        {% if q %}
-          Nothing matched "<strong>{{ q }}</strong>". Try a different search term, or
-          <a href="/notes/scribble">clear the search</a>.
-        {% else %}
-          Create your first scribble note to capture thoughts, meeting notes, ideas,
-          and quick tasks. Everything saves automatically.
-        {% endif %}
-      </p>
-      <a href="/notes/scribble/new" class="btn-new">
+  <!-- ── Sidebar (desktop) ────────────────────────────── -->
+  <aside class="nl-sidebar" aria-label="Folders">
+    <div class="nl-side-head">
+      <h2>Notes</h2>
+      <a href="/notes/scribble/new{% if folder %}?folder={{ folder|urlencode }}{% endif %}" class="nl-new-btn" title="New note (N)" aria-label="New note">
         <i data-feather="plus"></i>
-        <span>Create your first note</span>
       </a>
     </div>
-  {% endif %}
+
+    <a href="/notes/scribble" class="nl-folder {% if not folder and not pinned_only %}is-active{% endif %}">
+      <i data-feather="book-open"></i>
+      <span class="nl-folder-name">All Notes</span>
+      <span class="nl-folder-count">{{ sidebar.total }}</span>
+    </a>
+
+    <a href="/notes/scribble?pinned=1" class="nl-folder {% if pinned_only %}is-active{% endif %}">
+      <i data-feather="star"></i>
+      <span class="nl-folder-name">Pinned</span>
+      <span class="nl-folder-count">{{ sidebar.pinned }}</span>
+    </a>
+
+    {% if sidebar.folders %}
+      <div class="nl-side-section-label">Folders</div>
+      {% for f in sidebar.folders %}
+        {% if f.name and f.name|lower != 'all notes' %}
+        <a href="/notes/scribble?folder={{ f.name|urlencode }}"
+           class="nl-folder {% if folder == f.name %}is-active{% endif %}">
+          <i data-feather="folder"></i>
+          <span class="nl-folder-name">{{ f.name }}</span>
+          <span class="nl-folder-count">{{ f.count }}</span>
+        </a>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    <button type="button" class="nl-new-folder" onclick="createFolder()" title="Create a new folder">
+      <i data-feather="folder-plus"></i> New folder
+    </button>
+  </aside>
+
+  <!-- ── Main pane ─────────────────────────────────────── -->
+  <main class="nl-main">
+
+    <header class="nl-main-head">
+      <div class="nl-title-block">
+        <h1>
+          {% if pinned_only %}Pinned
+          {% elif folder %}{{ folder }}
+          {% else %}All Notes
+          {% endif %}
+        </h1>
+        <p>
+          {{ notes|length }} note{{ 's' if notes|length != 1 }}
+          {% if q %} matching "<strong>{{ q }}</strong>"{% endif %}
+        </p>
+      </div>
+    </header>
+
+    <!-- Mobile folder dropdown -->
+    <div class="nl-folder-mobile-wrap">
+      <select class="nl-folder-mobile" onchange="if(this.value)location.href=this.value;" aria-label="Folder">
+        <option value="/notes/scribble" {% if not folder and not pinned_only %}selected{% endif %}>📓 All Notes ({{ sidebar.total }})</option>
+        <option value="/notes/scribble?pinned=1" {% if pinned_only %}selected{% endif %}>⭐ Pinned ({{ sidebar.pinned }})</option>
+        {% for f in sidebar.folders %}
+          {% if f.name and f.name|lower != 'all notes' %}
+          <option value="/notes/scribble?folder={{ f.name|urlencode }}" {% if folder == f.name %}selected{% endif %}>📁 {{ f.name }} ({{ f.count }})</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="nl-toolbar">
+      <form method="get" class="nl-search" role="search" autocomplete="off">
+        <i data-feather="search"></i>
+        <input type="text" name="q" id="nl-search-input"
+               placeholder="Search by title or content…"
+               value="{{ q or '' }}">
+        {% if folder %}<input type="hidden" name="folder" value="{{ folder }}">{% endif %}
+        {% if pinned_only %}<input type="hidden" name="pinned" value="1">{% endif %}
+        {% if q %}
+          <a href="/notes/scribble{% if folder %}?folder={{ folder|urlencode }}{% endif %}{% if pinned_only %}{% if folder %}&{% else %}?{% endif %}pinned=1{% endif %}"
+             class="nl-search-clear" title="Clear search" aria-label="Clear">
+            <i data-feather="x"></i>
+          </a>
+        {% endif %}
+      </form>
+    </div>
+
+    {% if notes %}
+      <div class="nl-grid">
+        {% for note in notes %}
+          {% set title = note.title or "Untitled note" %}
+          {% set preview = (note.content or '')|trim %}
+          <a class="nl-card {% if note.is_pinned %}is-pinned{% endif %}"
+             href="/notes/scribble/{{ note.id }}"
+             data-id="{{ note.id }}">
+            <button type="button" class="nl-card-pin"
+                    onclick="event.preventDefault();event.stopPropagation();togglePin('{{ note.id }}', this)"
+                    title="{{ 'Unpin' if note.is_pinned else 'Pin to top' }}"
+                    aria-label="Toggle pin">
+              <i data-feather="{{ 'star' if note.is_pinned else 'star' }}"
+                 {% if note.is_pinned %}fill="currentColor"{% endif %}></i>
+            </button>
+            <div class="nl-card-title">{{ title }}</div>
+            {% if preview %}
+              <div class="nl-card-preview">{{ preview[:280] }}{% if preview|length > 280 %}…{% endif %}</div>
+            {% else %}
+              <div class="nl-card-preview empty">Empty note — tap to start writing</div>
+            {% endif %}
+            <div class="nl-card-foot">
+              <span class="nl-folder-chip">
+                <i data-feather="folder"></i>
+                {{ note.notebook or 'All Notes' }}
+              </span>
+              <span class="nl-card-date">
+                {% if note.updated_at %}{{ note.updated_at[:10] }}{% else %}—{% endif %}
+              </span>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="nl-empty">
+        <i data-feather="book-open"></i>
+        <h2>{% if q %}No matches{% elif pinned_only %}Nothing pinned yet{% elif folder %}This folder is empty{% else %}No notes yet{% endif %}</h2>
+        <p>
+          {% if q %}
+            Nothing matched "<strong>{{ q }}</strong>". Try a different search term, or
+            <a href="/notes/scribble">clear the search</a>.
+          {% elif pinned_only %}
+            Pin notes from the list (the ⭐ button on each card) to keep them at the top.
+          {% elif folder %}
+            Move notes into this folder from the editor's folder picker, or create a new note here.
+          {% else %}
+            Create your first note to capture thoughts, meeting notes, or ideas. Everything saves automatically as you type.
+          {% endif %}
+        </p>
+        <a href="/notes/scribble/new{% if folder %}?folder={{ folder|urlencode }}{% endif %}" class="nl-empty-cta">
+          <i data-feather="plus"></i>
+          New note
+        </a>
+      </div>
+    {% endif %}
+  </main>
+
 </div>
 
 <script>
@@ -109,7 +413,6 @@
     if (window.feather) feather.replace();
   });
 
-  // Keyboard shortcut: press "N" (not in input) to create a new note
   document.addEventListener("keydown", (e) => {
     const tag = (e.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -117,12 +420,43 @@
       e.preventDefault();
       window.location.href = "/notes/scribble/new";
     }
-    // "/" focuses the search
     if (e.key === "/") {
       e.preventDefault();
-      document.getElementById("scribble-search-input")?.focus();
+      document.getElementById("nl-search-input")?.focus();
     }
   });
+
+  async function togglePin(id, btn) {
+    try {
+      const r = await fetch(`/notes/scribble/${id}/pin`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const card = btn.closest(".nl-card");
+      if (data.is_pinned) {
+        card.classList.add("is-pinned");
+        btn.title = "Unpin";
+        btn.querySelector("svg")?.setAttribute("fill", "currentColor");
+      } else {
+        card.classList.remove("is-pinned");
+        btn.title = "Pin to top";
+        btn.querySelector("svg")?.removeAttribute("fill");
+      }
+      if (window.showToast) showToast(data.is_pinned ? "Pinned" : "Unpinned", "success", 1200);
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't update pin", "error");
+    }
+  }
+
+  function createFolder() {
+    const name = prompt("Folder name:");
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.toLowerCase() === "all notes") return;
+    // Folders only exist when a note is in them, so route the user
+    // straight to a new note pre-filled with that folder.
+    window.location.href = "/notes/scribble/new?folder=" + encodeURIComponent(trimmed);
+  }
 </script>
+
 </body>
 </html>
