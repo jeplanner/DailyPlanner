@@ -34,22 +34,46 @@
     };
 
     // ── Dark Mode ─────────────────────────────────
+    // Tri-state: "dark" forces html.dark, "light" forces html.light, no
+    // value lets the OS prefers-color-scheme @media query decide.
+    // The .light class is essential — design-system.css scopes its dark
+    // @media block to :root:not(.light) so a user who explicitly picks
+    // light on a system-dark phone actually gets light tokens. Without
+    // .light, html.dark would be cleared but the OS-pref dark block
+    // would still inject dark tokens, producing white text on a white
+    // surface.
     function applyTheme() {
+        const root = document.documentElement;
         const stored = localStorage.getItem("dp-theme");
         if (stored === "dark") {
-            document.documentElement.classList.add("dark");
+            root.classList.add("dark");
+            root.classList.remove("light");
         } else if (stored === "light") {
-            document.documentElement.classList.remove("dark");
+            root.classList.add("light");
+            root.classList.remove("dark");
+        } else {
+            root.classList.remove("dark");
+            root.classList.remove("light");
         }
-        // If no preference stored, let CSS @media handle it
     }
 
     window.toggleDarkMode = function () {
-        const isDark = document.documentElement.classList.toggle("dark");
-        localStorage.setItem("dp-theme", isDark ? "dark" : "light");
-        // Update toggle icon if exists
+        const root = document.documentElement;
+        // Resolve current effective theme — class beats stored, stored
+        // beats OS preference. We need this so the toggle flips between
+        // explicit dark and explicit light, not "explicit dark → no
+        // pref" which would re-engage the OS preference.
+        const stored = localStorage.getItem("dp-theme");
+        let effectiveDark;
+        if (stored === "dark") effectiveDark = true;
+        else if (stored === "light") effectiveDark = false;
+        else effectiveDark = window.matchMedia &&
+                              window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const next = effectiveDark ? "light" : "dark";
+        localStorage.setItem("dp-theme", next);
+        applyTheme();
         const icon = document.getElementById("dark-mode-icon");
-        if (icon) icon.textContent = isDark ? "sun" : "moon";
+        if (icon) icon.textContent = next === "dark" ? "sun" : "moon";
         if (window.feather) feather.replace();
     };
 
