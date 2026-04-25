@@ -1319,7 +1319,14 @@ document.addEventListener("keydown", (e) => {
     } catch {}
     modal.classList.remove("hidden");
     overlay.classList.remove("hidden");
-    setTimeout(() => document.getElementById("qpomo-label")?.focus(), 50);
+    // Auto-focus on desktop only. On touch devices the keyboard pops
+    // up the moment focus lands, which is annoying when the user is
+    // about to tap a preset chip or the Start button. Pointer:fine
+    // tracks input type, not viewport — keeps a docked iPad usable.
+    const _isDesktop = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
+    if (_isDesktop) {
+      setTimeout(() => document.getElementById("qpomo-label")?.focus(), 50);
+    }
     if (window.feather) window.feather.replace();
     // Populate the autocomplete datalist with existing activity labels so
     // re-using a label is a one-tap action. Best-effort — silently fall
