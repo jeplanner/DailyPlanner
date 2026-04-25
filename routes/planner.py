@@ -593,6 +593,42 @@ def schedule_untimed():
 
     return ("", 204)
 
+def _compute_trend_deltas(data: dict, prev_data: dict) -> dict:
+    """Compute week-over-week deltas for the weekly KPI row.
+
+    Returns a dict shape the template can splat into stat-cards:
+      { focused_hours: {"diff": +3.0, "dir": "up"},
+        completion_rate: {"diff": -8, "dir": "down"},
+        habit_days: {"diff": 1, "dir": "up"},
+        active_days: {"diff": 0, "dir": "flat"} }
+    Each `diff` is rounded sensibly per metric.
+    """
+    def _delta(cur, prev):
+        try:
+            d = (cur or 0) - (prev or 0)
+        except TypeError:
+            return None
+        direction = "up" if d > 0 else ("down" if d < 0 else "flat")
+        return {"diff": d, "dir": direction}
+
+    cur_active = len(data.get("days") or {})
+    prev_active = len(prev_data.get("days") or {})
+
+    out = {
+        "focused_hours":   _delta(round(data.get("focused_hours", 0), 1),
+                                   round(prev_data.get("focused_hours", 0), 1)),
+        "completion_rate": _delta(round(data.get("completion_rate", 0)),
+                                   round(prev_data.get("completion_rate", 0))),
+        "habit_days":      _delta(data.get("habit_days", 0),
+                                   prev_data.get("habit_days", 0)),
+        "active_days":     _delta(cur_active, prev_active),
+    }
+    # Round the focused-hours diff to 1 decimal for clean display.
+    if out["focused_hours"]:
+        out["focused_hours"]["diff"] = round(out["focused_hours"]["diff"], 1)
+    return out
+
+
 @planner_bp.route("/summary")
 @login_required
 def summary():
@@ -637,6 +673,38 @@ def summary():
         data = get_weekly_summary(start, end, planner_mode)
         insights = generate_weekly_insight(data)
 
+        # Trend deltas — fetch the previous 7-day window so the template
+        # can show "+3h vs last week" beside each KPI. Failure to load
+        # last week is non-fatal: the template just won't render deltas.
+        prev_start = start - timedelta(days=7)
+        prev_end = end - timedelta(days=7)
+        try:
+            prev_data = get_weekly_summary(prev_start, prev_end, planner_mode)
+        except Exception:
+            prev_data = None
+        deltas = _compute_trend_deltas(data, prev_data) if prev_data else {}
+
+        # Weekly structured review — degrade to empty if the migration
+        # hasn't run yet (table missing).
+        review = {"went_well": "", "didnt_go": "", "one_change": ""}
+        try:
+            rev_rows = get(
+                "weekly_reviews",
+                params={
+                    "user_id": f"eq.{session['user_id']}",
+                    "week_start": f"eq.{start.isoformat()}",
+                    "select": "went_well,didnt_go,one_change",
+                },
+            ) or []
+            if rev_rows:
+                review = {
+                    "went_well":  rev_rows[0].get("went_well")  or "",
+                    "didnt_go":   rev_rows[0].get("didnt_go")   or "",
+                    "one_change": rev_rows[0].get("one_change") or "",
+                }
+        except Exception:
+            pass
+
         # Compute prev/next week for navigation
         prev_week = (start - timedelta(days=7)).strftime("%G-W%V")
         next_week = (start + timedelta(days=7)).strftime("%G-W%V")
@@ -648,6 +716,8 @@ def summary():
             start=start,
             end=end,
             insights=insights,
+            deltas=deltas,
+            review=review,
             selected_week=start.strftime("%G-W%V"),
             prev_week=prev_week,
             next_week=next_week,
@@ -776,6 +846,60 @@ def build_google_datetime(plan_date, time_str):
 # ──────────────────────────────────────────────────────────────
 # DAILY REFLECTION — write to daily_meta.reflection
 # ──────────────────────────────────────────────────────────────
+@planner_bp.route("/api/v2/weekly-review", methods=["POST"])
+@login_required
+def save_weekly_review():
+    """Upsert a weekly review row.
+
+    Body: { "week_start": "YYYY-MM-DD",
+            "went_well": "...", "didnt_go": "...", "one_change": "..." }
+
+    Any field omitted is preserved (partial save). Empty strings are
+    stored as NULL so analytics distinguishes "skipped" from "answered".
+    """
+    user_id = session["user_id"]
+    data = request.get_json() or {}
+    week_start = (data.get("week_start") or "").strip()
+    if not week_start:
+        return jsonify({"error": "week_start required"}), 400
+    try:
+        date.fromisoformat(week_start)
+    except ValueError:
+        return jsonify({"error": "Invalid week_start"}), 400
+
+    payload: dict = {}
+    for k in ("went_well", "didnt_go", "one_change"):
+        if k in data:
+            v = (data.get(k) or "").strip()
+            payload[k] = v if v else None
+
+    if not payload:
+        return jsonify({"success": True, "noop": True})
+
+    # supabase_client.update sends raw JSON, so postgres functions like
+    # NOW() can't be passed as strings — generate the timestamp here.
+    payload["updated_at"] = datetime.utcnow().isoformat() + "Z"
+
+    existing = get(
+        "weekly_reviews",
+        {"user_id": f"eq.{user_id}", "week_start": f"eq.{week_start}", "select": "user_id"},
+    ) or []
+
+    if existing:
+        update(
+            "weekly_reviews",
+            params={"user_id": f"eq.{user_id}", "week_start": f"eq.{week_start}"},
+            json=payload,
+        )
+    else:
+        post(
+            "weekly_reviews",
+            {"user_id": user_id, "week_start": week_start, **payload},
+            prefer="return=minimal",
+        )
+    return jsonify({"success": True})
+
+
 @planner_bp.route("/api/v2/daily-intent", methods=["POST"])
 @login_required
 def save_daily_intent():

@@ -110,6 +110,69 @@ def _project_name_map(user_id: str, project_ids: Iterable) -> dict:
     return {r["project_id"]: r.get("name") for r in rows}
 
 
+def _kr_label_map(kr_ids: Iterable, initiative_ids: Iterable) -> dict:
+    """Maps each id (key_result_id OR initiative_id) → a short label
+    suitable for a chip on a task row. Initiatives are resolved to
+    their parent KR title (one step up the OKR ladder), so a task
+    linked to an initiative still surfaces the higher-level outcome.
+
+    Returns: { id: "KR title", ... }  — same dict for both id types
+    so the caller can do a single .get(...) without branching.
+    """
+    kr_ids_set = {x for x in kr_ids if x}
+    init_ids_set = {x for x in initiative_ids if x}
+
+    out: dict = {}
+
+    if kr_ids_set:
+        rows = _safe_get(
+            "key_results",
+            params={
+                "id": f"in.({','.join(str(i) for i in kr_ids_set)})",
+                "is_deleted": "eq.false",
+                "select": "id,title",
+            },
+            action="key_result label lookup",
+        )
+        for r in rows:
+            out[r["id"]] = (r.get("title") or "").strip() or None
+
+    if init_ids_set:
+        # Initiatives → fetch their key_result_id, then look up the KR title.
+        init_rows = _safe_get(
+            "initiatives",
+            params={
+                "id": f"in.({','.join(str(i) for i in init_ids_set)})",
+                "select": "id,key_result_id",
+            },
+            action="initiative→KR lookup",
+        )
+        kr_ids_via_init = {r.get("key_result_id") for r in init_rows if r.get("key_result_id")}
+        # Avoid refetching KRs we already have
+        kr_ids_via_init -= set(out.keys())
+        kr_titles: dict = {}
+        if kr_ids_via_init:
+            kr_rows = _safe_get(
+                "key_results",
+                params={
+                    "id": f"in.({','.join(str(i) for i in kr_ids_via_init)})",
+                    "is_deleted": "eq.false",
+                    "select": "id,title",
+                },
+                action="initiative→KR title lookup",
+            )
+            kr_titles = {r["id"]: (r.get("title") or "").strip() or None for r in kr_rows}
+            out.update(kr_titles)
+
+        # Map initiative_id → KR title for direct lookup by initiative_id too
+        for r in init_rows:
+            kr_id = r.get("key_result_id")
+            if kr_id:
+                out[r["id"]] = kr_titles.get(kr_id) or out.get(kr_id)
+
+    return out
+
+
 def _recurrence_map(recurring_ids: Iterable) -> dict:
     """Map recurring_id → recurrence type. Used by matrix tasks where the
     rule is stored separately in recurring_tasks."""
@@ -286,6 +349,12 @@ def fetch_project_items(
             user_id,
             (r.get("project_id") for r in rows),
         )
+    # OKR chip labels: resolve KR titles for tasks linked to a key_result
+    # or (one ladder rung lower) an initiative.
+    kr_label_map = _kr_label_map(
+        (r.get("key_result_id") for r in rows),
+        (r.get("initiative_id") for r in rows),
+    )
 
     out = []
     for r in rows:
@@ -297,6 +366,8 @@ def fetch_project_items(
             "type": "task",
             "source": "project",
             "title": title,
+            "kr_label": kr_label_map.get(r.get("key_result_id"))
+                        or kr_label_map.get(r.get("initiative_id")),
             "time": (r.get("due_time") or "")[:5] or None,
             "end_time": None,
             "date": r.get("due_date"),
@@ -443,6 +514,10 @@ def fetch_done_today(user_id: str, plan_date) -> list[dict]:
         [r.get("project_id") for r in matrix_rows]
         + [r.get("project_id") for r in project_rows],
     )
+    kr_label_map = _kr_label_map(
+        (r.get("key_result_id") for r in project_rows),
+        (r.get("initiative_id") for r in project_rows),
+    )
 
     items = []
     for r in matrix_rows:
@@ -479,6 +554,8 @@ def fetch_done_today(user_id: str, plan_date) -> list[dict]:
             "priority": r.get("priority"),
             "date": r.get("due_date"),
             "context": project_name_map.get(r.get("project_id")),
+            "kr_label": kr_label_map.get(r.get("key_result_id"))
+                        or kr_label_map.get(r.get("initiative_id")),
             "link": "/projects",
             "project_id": r.get("project_id"),
             "category": None,

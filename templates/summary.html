@@ -213,6 +213,9 @@
                       onclick="markTaskDoneInRow(this, event)"></button>
               <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(o.category, '📁') }}</span>
               <span class="md-row-title">{{ o.title }}</span>
+              {% if o.kr_label %}
+              <span class="md-kr-chip" title="Key Result: {{ o.kr_label }}">↑ {{ o.kr_label }}</span>
+              {% endif %}
               <button type="button" class="md-reschedule-btn" aria-label="Reschedule"
                       onclick="openRescheduleMenu(this, event)" title="Push to a later date">
                 <i data-feather="clock"></i>
@@ -319,6 +322,9 @@
               </td>
               <td class="md-c-title">
                 <span class="md-row-title">{{ it.title }}</span>
+                {% if it.kr_label %}
+                <span class="md-kr-chip" title="Key Result: {{ it.kr_label }}">↑ {{ it.kr_label }}</span>
+                {% endif %}
               </td>
               <td class="md-c-context">
                 {% if it.context %}<span class="md-context-chip">{{ it.context }}</span>{% endif %}
@@ -408,6 +414,65 @@
     {% endif %}
   </section>
 
+  <!-- ── PLAN TOMORROW ── end-of-day card; surfaces today's unfinished
+       tasks so the user can decide: mark done, push to tomorrow, or push
+       to next week. "Move all to tomorrow" handles the bulk case in one tap.
+       Only renders when today is the current date AND there are open
+       items — past/future days don't need a "plan tomorrow" prompt. -->
+  {% set _open_today = dashboard.today_items|rejectattr('done')|selectattr('type','equalto','task')|list %}
+  {% if is_today and _open_today %}
+  <section class="md-card md-plan-card" aria-labelledby="md-plan-title" id="md-plan-card">
+    <header class="md-card-head">
+      <h2 class="md-card-title" id="md-plan-title">
+        <span class="md-card-icon md-plan-icon"><i data-feather="sunrise"></i></span>
+        Plan Tomorrow
+        <span class="md-count-pill md-count-blue">{{ _open_today|length }}</span>
+      </h2>
+      <button type="button" class="md-plan-bulk" onclick="planMoveAllToTomorrow()">
+        Move all to tomorrow →
+      </button>
+    </header>
+    <div class="md-table-wrap" role="region" aria-label="Today's unfinished tasks">
+      <table class="md-table md-overdue-table md-plan-table">
+        <thead>
+          <tr><th class="md-c-title">Open task</th></tr>
+        </thead>
+        <tbody>
+          {% for it in _open_today %}
+          <tr class="md-row md-overdue-row md-plan-row prio-{{ it.priority or 'medium' }}"
+              data-id="{{ it.id }}"
+              data-type="task"
+              data-source="{{ it.source or '' }}"
+              data-title="{{ it.title }}"
+              data-context="{{ it.context or '' }}"
+              data-priority="{{ it.priority or '' }}"
+              data-date="{{ it.date or '' }}"
+              data-link="{{ it.link or '' }}"
+              data-done="0"
+              onclick="openItemPeek(this, event)"
+              tabindex="0"
+              role="button"
+              aria-label="Open task: {{ it.title }}">
+            <td class="md-c-title">
+              <button type="button" class="md-task-toggle" aria-label="Mark done"
+                      onclick="markTaskDoneInRow(this, event)"></button>
+              <span class="md-row-title">{{ it.title }}</span>
+              {% if it.kr_label %}
+              <span class="md-kr-chip" title="Key Result: {{ it.kr_label }}">↑ {{ it.kr_label }}</span>
+              {% endif %}
+              <button type="button" class="md-plan-tomorrow-btn" aria-label="Move to tomorrow"
+                      onclick="planMoveOneToTomorrow(this, event)" title="Push to tomorrow">
+                Tomorrow →
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   <!-- ── TODAY'S RECAP ── tasks completed today; uncheck-able if marked by mistake -->
   {% if dashboard.done_today %}
   <section class="md-card md-recap-card" aria-labelledby="md-recap-title" id="md-recap-card">
@@ -446,6 +511,9 @@
                       onclick="markTaskDoneInRow(this, event)"></button>
               <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(d.category, '📁') }}</span>
               <span class="md-row-title">{{ d.title }}</span>
+              {% if d.kr_label %}
+              <span class="md-kr-chip" title="Key Result: {{ d.kr_label }}">↑ {{ d.kr_label }}</span>
+              {% endif %}
             </td>
           </tr>
           {% endfor %}
@@ -510,27 +578,45 @@
 
   <h1 class="sum-title">Week of {{ start.strftime("%b %d") }} – {{ end.strftime("%b %d, %Y") }}</h1>
 
+  {# Helper for rendering a delta chip: green for "up" direction.
+     Habit-days, focus-hours, completion-rate "up" = good. #}
+  {% macro delta_chip(d, suffix='', good_dir='up') %}
+    {% if d %}
+      {% set is_good = (d.dir == good_dir) %}
+      {% set is_neutral = (d.dir == 'flat') %}
+      <span class="stat-delta stat-delta-{{ 'good' if is_good else ('flat' if is_neutral else 'bad') }}">
+        {%- if d.diff > 0 -%}+{% endif -%}
+        {{ d.diff }}{{ suffix }}
+        <span class="stat-delta-vs">vs last wk</span>
+      </span>
+    {% endif %}
+  {% endmacro %}
+
   <!-- KPI Row -->
   <div class="stats-row">
     <div class="stat-card">
       <div class="stat-icon-wrap blue"><i data-feather="clock"></i></div>
       <div class="stat-num">{{ data.focused_hours }}h</div>
       <div class="stat-label">Focus Hours</div>
+      {{ delta_chip(deltas.focused_hours, suffix='h') }}
     </div>
     <div class="stat-card">
       <div class="stat-icon-wrap green"><i data-feather="trending-up"></i></div>
       <div class="stat-num">{{ data.completion_rate }}%</div>
       <div class="stat-label">Completion</div>
+      {{ delta_chip(deltas.completion_rate, suffix='%') }}
     </div>
     <div class="stat-card">
       <div class="stat-icon-wrap purple"><i data-feather="heart"></i></div>
       <div class="stat-num">{{ data.habit_days }}/7</div>
       <div class="stat-label">Habit Days</div>
+      {{ delta_chip(deltas.habit_days, suffix=' days') }}
     </div>
     <div class="stat-card">
       <div class="stat-icon-wrap amber"><i data-feather="calendar"></i></div>
       <div class="stat-num">{{ data.days|length }}</div>
       <div class="stat-label">Active Days</div>
+      {{ delta_chip(deltas.active_days, suffix=' days') }}
     </div>
   </div>
 
@@ -572,17 +658,41 @@
     </div>
 
     <div class="sum-right">
-      <!-- Reflections -->
-      <div class="sum-card">
-        <h3 class="card-title"><i data-feather="edit-3" class="card-icon"></i> Reflections</h3>
+      <!-- Weekly Review (3 structured prompts) — beats one blank box for
+           getting people to actually reflect. Saves on blur (autosave). -->
+      <div class="sum-card weekly-review-card" data-week-start="{{ start.isoformat() }}">
+        <h3 class="card-title"><i data-feather="edit-3" class="card-icon"></i> Weekly Review</h3>
+        <div class="wr-prompts">
+          <label class="wr-prompt">
+            <span class="wr-label">What went well?</span>
+            <textarea class="wr-input" data-field="went_well" rows="3"
+                      placeholder="Wins, breakthroughs, things to repeat…"
+                      onblur="saveWeeklyReview()">{{ review.went_well }}</textarea>
+          </label>
+          <label class="wr-prompt">
+            <span class="wr-label">What didn't?</span>
+            <textarea class="wr-input" data-field="didnt_go" rows="3"
+                      placeholder="What got dropped, what felt off…"
+                      onblur="saveWeeklyReview()">{{ review.didnt_go }}</textarea>
+          </label>
+          <label class="wr-prompt">
+            <span class="wr-label">One change for next week?</span>
+            <textarea class="wr-input" data-field="one_change" rows="2"
+                      placeholder="One small shift you'll commit to…"
+                      onblur="saveWeeklyReview()">{{ review.one_change }}</textarea>
+          </label>
+          <span class="wr-status" id="wr-status" aria-live="polite"></span>
+        </div>
+
         {% if data.reflections %}
-        <ul class="reflection-list">
-          {% for r in data.reflections %}
-          <li>{{ r }}</li>
-          {% endfor %}
-        </ul>
-        {% else %}
-        <div class="empty-msg">No reflections this week.</div>
+        <details class="wr-daily-archive">
+          <summary>Daily reflections from this week ({{ data.reflections|length }})</summary>
+          <ul class="reflection-list">
+            {% for r in data.reflections %}
+            <li>{{ r }}</li>
+            {% endfor %}
+          </ul>
+        </details>
         {% endif %}
       </div>
 
@@ -1655,6 +1765,47 @@ function _renderDailyIntent(body) {
   if (window.feather) feather.replace();
 }
 
+/* ── Plan Tomorrow ──────────────────────────────────────────────
+ * Per-row "Tomorrow →" button on Plan Tomorrow card calls into
+ * _doReschedule (Phase 1) with shift_days=1. Bulk action loops over
+ * every visible row and reschedules them all sequentially. */
+async function planMoveOneToTomorrow(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const row = btn.closest(".md-plan-row");
+  if (!row) return;
+  _reschedRow = row;
+  await _doReschedule({ shift_days: 1 });
+  _maybeFadePlanCard();
+}
+
+async function planMoveAllToTomorrow() {
+  const rows = Array.from(document.querySelectorAll("#md-plan-card .md-plan-row"));
+  if (!rows.length) return;
+  if (!confirm(`Move all ${rows.length} unfinished task(s) to tomorrow?`)) return;
+
+  for (const row of rows) {
+    _reschedRow = row;
+    await _doReschedule({ shift_days: 1 });
+  }
+  _maybeFadePlanCard();
+}
+
+/* If the Plan Tomorrow card has no rows left, fade it away. */
+function _maybeFadePlanCard() {
+  const card = document.getElementById("md-plan-card");
+  if (!card) return;
+  const remaining = card.querySelectorAll(".md-plan-row").length;
+  if (remaining > 0) {
+    // Update the count pill if any rows remain.
+    const pill = card.querySelector(".md-count-pill");
+    if (pill) pill.textContent = String(remaining);
+    return;
+  }
+  card.style.transition = "opacity .25s ease";
+  card.style.opacity = "0";
+  setTimeout(() => card.remove(), 260);
+}
+
 /* ── Quick capture ──────────────────────────────────────────────
  * Floating + button → minimal sheet → POST /todo/autosave with the
  * smallest payload that creates a usable matrix task. Keeps capture
@@ -2067,6 +2218,39 @@ document.addEventListener("keydown", (e) => {
     const el = document.getElementById("reflection-input");
     if (el) _reflectionLastSaved = el.value;
   });
+
+  /* ── Weekly Review autosave ──────────────────────────────────────
+   * Three textareas (went_well / didnt_go / one_change). Saves on
+   * blur for each field individually. Status pill flashes "Saved". */
+  let _wrSaveTimer = null;
+  async function saveWeeklyReview() {
+    const card = document.querySelector(".weekly-review-card");
+    if (!card) return;
+    const weekStart = card.dataset.weekStart;
+    const inputs = card.querySelectorAll(".wr-input");
+    const payload = { week_start: weekStart };
+    inputs.forEach(el => { payload[el.dataset.field] = el.value; });
+
+    const status = document.getElementById("wr-status");
+    if (status) { status.textContent = "Saving…"; status.className = "wr-status saving"; }
+
+    try {
+      const r = await fetch("/api/v2/weekly-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (status) { status.textContent = "Saved"; status.className = "wr-status saved"; }
+      clearTimeout(_wrSaveTimer);
+      _wrSaveTimer = setTimeout(() => {
+        if (status) { status.textContent = ""; status.className = "wr-status"; }
+      }, 1500);
+    } catch (e) {
+      if (status) { status.textContent = "Save failed"; status.className = "wr-status error"; }
+      console.error("weekly review save failed:", e);
+    }
+  }
 </script>
 {% endif %}
 

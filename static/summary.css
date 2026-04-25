@@ -126,6 +126,25 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
 .stat-num { font-size:24px; font-weight:800; }
 .stat-label { font-size:11px; font-weight:500; color:var(--sm-text3); text-transform:uppercase; letter-spacing:0.3px; }
 
+/* Trend delta — small chip below the stat label, week-over-week. */
+.stat-delta {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  margin-top: 6px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stat-delta-vs {
+  font-size: 9.5px; font-weight: 500; opacity: .75;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.stat-delta-good { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
+.stat-delta-bad  { background: color-mix(in srgb, #dc2626 14%, transparent); color: #b91c1c; }
+.stat-delta-flat { background: var(--sm-bg2, #f1f5f9); color: var(--sm-text3, #64748b); }
+html.dark .stat-delta-good { background: #052e16; color: #86efac; }
+html.dark .stat-delta-bad  { background: #3b1111; color: #fca5a5; }
+html.dark .stat-delta-flat { background: #273449; color: #cbd5e1; }
+
 /* ═══════════ CARDS ═══════════ */
 .sum-card {
   background:var(--sm-surface); border-radius:14px; padding:20px;
@@ -168,6 +187,60 @@ body { font-family:'Inter',system-ui,sans-serif; background:var(--sm-bg); color:
 .reflection-text { font-size:14px; line-height:1.6; color:var(--sm-text); white-space:pre-wrap; }
 .reflection-list { padding-left:18px; font-size:14px; line-height:1.7; color:var(--sm-text); }
 .reflection-list li { margin-bottom:8px; }
+
+/* Weekly Review (3 structured prompts) — replaces the free-form
+   reflection field on the weekly view. Each prompt is a small card. */
+.weekly-review-card { padding-bottom: 12px; }
+.wr-prompts { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.wr-prompt { display: flex; flex-direction: column; gap: 6px; }
+.wr-label {
+  font-size: 12px; font-weight: 700;
+  color: var(--sm-text);
+  letter-spacing: .02em;
+}
+.wr-input {
+  font: inherit; font-size: 13.5px; line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--sm-border, #e2e8f0);
+  border-radius: 8px;
+  background: var(--sm-bg, #fff);
+  color: var(--sm-text, #0f172a);
+  resize: vertical;
+  min-height: 56px;
+  transition: border-color .12s, box-shadow .12s;
+}
+.wr-input:focus {
+  outline: none;
+  border-color: var(--sm-primary, #2563eb);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sm-primary, #2563eb) 14%, transparent);
+}
+html.dark .wr-input { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+.wr-status {
+  display: inline-block;
+  font-size: 11px; font-weight: 600;
+  height: 16px;
+  align-self: flex-end;
+  color: transparent;
+  transition: color .15s;
+}
+.wr-status.saving { color: var(--sm-text3, #94a3b8); }
+.wr-status.saved  { color: #16a34a; }
+.wr-status.error  { color: #dc2626; }
+.wr-daily-archive {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--sm-border, #e2e8f0);
+}
+.wr-daily-archive summary {
+  cursor: pointer;
+  font-size: 12px; font-weight: 600;
+  color: var(--sm-text3, #64748b);
+  list-style: none;
+}
+.wr-daily-archive summary::-webkit-details-marker { display: none; }
+.wr-daily-archive summary::before { content: "▸ "; }
+.wr-daily-archive[open] summary::before { content: "▾ "; }
+.wr-daily-archive .reflection-list { margin-top: 8px; }
 
 /* ═══════════ AI CARD ═══════════ */
 .ai-card { border:1px dashed var(--sm-primary); background:var(--sm-primary-light); }
@@ -333,6 +406,81 @@ html.dark .md-count-green { background: #052e16; color: #86efac; }
 .md-recap-icon { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
 html.dark .md-recap-icon { background: #052e16; color: #4ade80; }
 .md-recap-row { /* visually identical to a struck-through overdue row */ }
+
+/* OKR chip — surfaces the key result a task ladders up to. Quiet
+   purple so it doesn't compete with priority/category cues. */
+.md-kr-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 10.5px; font-weight: 600;
+  letter-spacing: .02em;
+  border-radius: 999px;
+  background: color-mix(in srgb, #7c3aed 10%, transparent);
+  color: #6d28d9;
+  max-width: 220px;
+  vertical-align: middle;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html.dark .md-kr-chip { background: #3b0764; color: #ddd6fe; }
+@media (max-width: 640px) {
+  /* On mobile we hid most extras for a clean title-only row; KR chip
+     stays as a compact suffix (it's high-signal per inch). */
+  .md-kr-chip { font-size: 10px; max-width: 140px; padding: 1px 7px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PLAN TOMORROW CARD
+   End-of-day card with today's open tasks. Per-row "Tomorrow →" button
+   plus a bulk action in the header. Visual language matches Overdue
+   (same row style) but the icon + count are blue (planning, not alarm).
+   ═══════════════════════════════════════════════════════════════════ */
+.md-plan-icon  { background: color-mix(in srgb, #2563eb 12%, transparent); color: #2563eb; }
+html.dark .md-plan-icon { background: #1e3a8a; color: #93c5fd; }
+.md-count-blue { background: color-mix(in srgb, #2563eb 16%, transparent); color: #1d4ed8; }
+html.dark .md-count-blue { background: #1e3a8a; color: #93c5fd; }
+
+.md-plan-bulk {
+  appearance: none;
+  margin-left: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-primary, #2563eb);
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.md-plan-bulk:hover {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
+  border-color: var(--color-primary, #2563eb);
+}
+html.dark .md-plan-bulk { color: #93c5fd; border-color: #334155; }
+html.dark .md-plan-bulk:hover { background: #273449; }
+
+.md-plan-tomorrow-btn {
+  appearance: none;
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary, #94a3b8);
+  font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+  white-space: nowrap;
+}
+.md-plan-tomorrow-btn:hover {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
+  color: var(--color-primary, #2563eb);
+  border-color: color-mix(in srgb, var(--color-primary, #2563eb) 30%, transparent);
+}
+@media (max-width: 640px) {
+  .md-plan-tomorrow-btn { display: none; }  /* mobile: use peek sheet's reschedule strip */
+  .md-plan-bulk { font-size: 11.5px; padding: 5px 10px; }
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    TODAY'S FOCUS CARD (One Big Thing)
