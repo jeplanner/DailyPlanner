@@ -5,7 +5,7 @@ from flask import Blueprint, jsonify, redirect, render_template, render_template
 from supabase_client import post
 import pytz
 
-from config import DEFAULT_STATUS, IST,  QUADRANT_MAP, STATUSES, TOTAL_SLOTS
+from config import DEFAULT_STATUS, IST,  QUADRANT_MAP, STATUSES, TASK_CATEGORIES, TOTAL_SLOTS
 from utils.user_tz import user_now, user_today
 from logger import setup_logger
 from services.login_service import login_required
@@ -675,6 +675,7 @@ def summary():
         date=plan_date,
         prev_date=prev_date,
         next_date=next_date,
+        task_categories=TASK_CATEGORIES,
     )
 def get_plans_for_date(plan_date):
     return [

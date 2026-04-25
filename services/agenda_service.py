@@ -439,6 +439,7 @@ def fetch_overdue(user_id: str, plan_date) -> list[dict]:
             "context": project_name_map.get(r.get("project_id")) or QUADRANT_LABELS.get(r.get("quadrant")),
             "link": "/todo",
             "project_id": r.get("project_id"),
+            "category": r.get("category"),
         })
 
     # Fill in project context names we already fetched.

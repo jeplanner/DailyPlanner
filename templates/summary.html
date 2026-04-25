@@ -179,15 +179,14 @@
               role="button"
               aria-label="Open overdue task: {{ o.title }}">
             <td class="md-c-title">
+              <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(o.category, '📁') }}</span>
               <span class="md-row-title">{{ o.title }}</span>
               <span class="md-type-tag md-tag-{{ o.source }}">{{ 'Project' if o.source == 'project' else 'Task' }}</span>
             </td>
             <td class="md-c-due">
               <span class="md-overdue-chip"
-                    title="Due {{ o.due_date }}">
-                {% if o.days_overdue == 1 %}1 day ago
-                {% elif o.days_overdue > 1 %}{{ o.days_overdue }} days ago
-                {% else %}{{ o.due_date }}{% endif %}
+                    title="{% if o.days_overdue and o.days_overdue > 0 %}{{ o.days_overdue }} day{{ 's' if o.days_overdue > 1 else '' }} overdue · {% endif %}Due {{ o.due_date }}">
+                {% if o.days_overdue and o.days_overdue > 0 %}{{ o.days_overdue }}d{% else %}today{% endif %}
               </span>
               {% if o.link %}
                 <a class="md-row-link" href="{{ o.link }}" title="Open full editor" onclick="event.stopPropagation()">

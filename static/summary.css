@@ -448,6 +448,15 @@ html.dark .md-tag-project { background: #3b0764; color: #ddd6fe; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* Category icon shown at the start of each row's title (Overdue + agenda).
+   Sized to sit cleanly next to the title text without throwing the baseline. */
+.md-cat-icon {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 14px; line-height: 1;
+  vertical-align: -1px;
+}
+
 /* Overdue chip */
 .md-overdue-chip {
   display: inline-block;
