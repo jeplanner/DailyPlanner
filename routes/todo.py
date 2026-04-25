@@ -620,12 +620,13 @@ def timer_start():
 
     # Single active timer policy: stop any other running timer first so the
     # global widget always reflects exactly one in-flight session.
+    # select=* keeps us robust to whether the pomodoro migration has run.
     others = get(
         "task_time_logs",
         params={
             "user_id": f"eq.{user_id}",
             "ended_at": "is.null",
-            "select": "id,started_at,paused_at,paused_seconds",
+            "select": "*",
             "order": "started_at.desc",
         },
     ) or []
@@ -648,10 +649,14 @@ def timer_start():
         "event_id":        data.get("event_id"),
         "label":           (data.get("label") or "").strip() or None,
         "started_at":      _dt.utcnow().isoformat() + "Z",
-        "mode":            mode,
-        "target_seconds":  target_seconds,
-        "paused_seconds":  0,
     }
+    # Only include pomodoro-specific fields when relevant. The columns have
+    # sensible defaults (mode='stopwatch', paused_seconds=0) so omitting
+    # them keeps inserts working even if the migration hasn't been applied.
+    if mode == "pomodoro":
+        payload["mode"] = "pomodoro"
+        if target_seconds:
+            payload["target_seconds"] = target_seconds
     rows = post("task_time_logs", payload)
     return jsonify({
         "id": rows[0]["id"] if rows else None,
@@ -700,7 +705,7 @@ def timer_stop():
     rows = get(
         "task_time_logs",
         params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
-                "select": "id,started_at,ended_at,paused_at,paused_seconds"},
+                "select": "*"},
     ) or []
     if not rows:
         return jsonify({"error": "log not found"}), 404
@@ -728,7 +733,7 @@ def timer_pause():
     rows = get(
         "task_time_logs",
         params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
-                "select": "id,ended_at,paused_at"},
+                "select": "*"},
     ) or []
     if not rows:
         return jsonify({"error": "log not found"}), 404
@@ -762,7 +767,7 @@ def timer_resume():
     rows = get(
         "task_time_logs",
         params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
-                "select": "id,ended_at,paused_at,paused_seconds"},
+                "select": "*"},
     ) or []
     if not rows:
         return jsonify({"error": "log not found"}), 404
@@ -797,9 +802,7 @@ def timer_active():
         params={
             "user_id": f"eq.{user_id}",
             "ended_at": "is.null",
-            "select": ("id,source,matrix_task_id,project_task_id,event_id,"
-                       "label,started_at,mode,target_seconds,"
-                       "paused_at,paused_seconds"),
+            "select": "*",
             "order": "started_at.desc",
         },
     ) or []

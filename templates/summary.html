@@ -857,24 +857,32 @@
 
   <div class="peek-body" id="peek-body"></div>
 
-  <!-- Timer strip — start a Pomodoro or stopwatch on the open task.
-       Once running, the global floating widget owns pause / stop /
-       countdown so we don't duplicate state. Strip auto-hides when
-       the active timer is for this task (avoids two "running" UIs). -->
+  <!-- Timer strip — start a Pomodoro (configurable duration) or a free
+       stopwatch on the open task. Once running, the global floating
+       widget owns pause / stop / countdown so we don't duplicate state. -->
   <div id="peek-timer" class="peek-timer hidden">
-    <span class="peek-timer-label-text">Start timer</span>
-    <button type="button" class="peek-timer-opt" data-mode="pomodoro" data-target="1500"
-            onclick="peekStartTimer('pomodoro', 1500)">
-      <i data-feather="clock"></i> Pomodoro 25
-    </button>
-    <button type="button" class="peek-timer-opt" data-mode="pomodoro" data-target="3000"
-            onclick="peekStartTimer('pomodoro', 3000)">
-      <i data-feather="clock"></i> Pomodoro 50
+    <span class="peek-timer-label-text">Pomodoro</span>
+    <div class="peek-timer-input">
+      <button type="button" class="peek-timer-step" onclick="peekTimerStep(-5)" aria-label="Decrease">−</button>
+      <input type="number" id="peek-timer-mins" min="1" max="180" step="1" value="25"
+             onchange="peekTimerSaveDefault()">
+      <button type="button" class="peek-timer-step" onclick="peekTimerStep(5)" aria-label="Increase">+</button>
+      <span class="peek-timer-unit">min</span>
+    </div>
+    <button type="button" class="peek-timer-opt" onclick="peekStartTimerCustom()">
+      <i data-feather="play"></i> Start
     </button>
     <button type="button" class="peek-timer-opt peek-timer-opt-ghost"
             onclick="peekStartTimer('stopwatch', null)">
       Stopwatch
     </button>
+    <div class="peek-timer-presets">
+      <button type="button" class="peek-timer-chip" onclick="peekTimerSet(15)">15</button>
+      <button type="button" class="peek-timer-chip" onclick="peekTimerSet(25)">25</button>
+      <button type="button" class="peek-timer-chip" onclick="peekTimerSet(45)">45</button>
+      <button type="button" class="peek-timer-chip" onclick="peekTimerSet(50)">50</button>
+      <button type="button" class="peek-timer-chip" onclick="peekTimerSet(90)">90</button>
+    </div>
     <div class="peek-timer-running" id="peek-timer-running" hidden>
       <i data-feather="check-circle"></i>
       <span>Timer running — controls are in the widget at the bottom-right.</span>
@@ -1039,8 +1047,9 @@ html.dark .peek-reschedule { border-top-color: #334155; }
 html.dark .peek-reschedule-btn { border-color: #334155; color: #f1f5f9; }
 html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; border-color: #475569; }
 
-/* Timer strip in the peek sheet — three start options + a "running"
-   confirmation row. Pause/stop live in the global widget. */
+/* Timer strip in the peek sheet — configurable Pomodoro duration
+   plus quick presets and a Stopwatch fallback. Pause/stop live in the
+   global widget so we never render two "running" UIs. */
 .peek-timer {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 12px 20px;
@@ -1048,37 +1057,96 @@ html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; bord
 }
 .peek-timer.hidden { display: none; }
 .peek-timer-label-text {
-  font-size: 12px; font-weight: 600;
+  font-size: 12px; font-weight: 700;
   color: var(--color-text-secondary, #64748b);
+  text-transform: uppercase; letter-spacing: .04em;
   margin-right: 4px;
+}
+.peek-timer-input {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 4px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 999px;
+  background: var(--color-surface, #fff);
+}
+.peek-timer-input input {
+  width: 44px; padding: 5px 4px; text-align: center;
+  border: none; outline: none; background: transparent;
+  font: inherit; font-size: 13px; font-weight: 700;
+  color: var(--color-text, #0f172a);
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.peek-timer-input input::-webkit-outer-spin-button,
+.peek-timer-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.peek-timer-step {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: none; background: var(--color-surface-secondary, #f9fafb);
+  color: var(--color-text-secondary, #64748b);
+  font: inherit; font-size: 14px; font-weight: 700;
+  cursor: pointer; line-height: 1;
+}
+.peek-timer-step:hover { background: var(--color-border-light, #f1f3f5); color: var(--color-text); }
+.peek-timer-unit {
+  font-size: 11px; font-weight: 600;
+  color: var(--color-text-muted, #94a3b8);
+  padding: 0 6px 0 2px;
 }
 .peek-timer-opt {
   appearance: none;
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 12px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  padding: 7px 14px;
+  border: 1px solid var(--color-primary, #2563eb);
   border-radius: 999px;
-  background: var(--color-surface, #fff);
-  color: var(--color-text, #0f172a);
+  background: var(--color-primary, #2563eb);
+  color: #fff;
   font: inherit; font-size: 12.5px; font-weight: 600;
   cursor: pointer;
   transition: background .12s, border-color .12s, color .12s, transform .08s;
 }
 .peek-timer-opt svg { width: 13px; height: 13px; }
-.peek-timer-opt:hover {
-  background: color-mix(in srgb, #2563eb 10%, transparent);
-  border-color: #2563eb;
-  color: #1d4ed8;
-}
+.peek-timer-opt:hover { background: var(--color-primary-hover, #1d4ed8); border-color: var(--color-primary-hover, #1d4ed8); }
 .peek-timer-opt:active { transform: scale(.97); }
 .peek-timer-opt-ghost {
   background: transparent;
+  border-color: var(--color-border, #e2e8f0);
   color: var(--color-text-secondary, #64748b);
 }
+.peek-timer-opt-ghost:hover {
+  background: var(--color-surface-secondary, #f9fafb);
+  color: var(--color-text);
+  border-color: var(--color-border-strong, #d1d5db);
+}
+.peek-timer-presets {
+  display: inline-flex; gap: 4px; flex-wrap: wrap;
+  margin-left: auto;
+}
+.peek-timer-chip {
+  appearance: none;
+  padding: 3px 9px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-muted, #94a3b8);
+  font: inherit; font-size: 11.5px; font-weight: 700;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.peek-timer-chip:hover {
+  background: color-mix(in srgb, #2563eb 10%, transparent);
+  color: #1d4ed8; border-color: #bfdbfe;
+}
 html.dark .peek-timer { border-top-color: #334155; }
-html.dark .peek-timer-opt { background: #0f172a; border-color: #334155; color: #f1f5f9; }
-html.dark .peek-timer-opt:hover { background: #1e3a8a; color: #bfdbfe; border-color: #1d4ed8; }
-html.dark .peek-timer-opt-ghost { background: transparent; color: #94a3b8; }
+html.dark .peek-timer-input { background: #0f172a; border-color: #334155; }
+html.dark .peek-timer-input input { color: #f1f5f9; }
+html.dark .peek-timer-step { background: #1e293b; color: #94a3b8; }
+html.dark .peek-timer-step:hover { background: #273449; color: #f1f5f9; }
+html.dark .peek-timer-opt-ghost { background: transparent; border-color: #334155; color: #94a3b8; }
+html.dark .peek-timer-opt-ghost:hover { background: #273449; color: #f1f5f9; }
+html.dark .peek-timer-chip { border-color: #334155; color: #94a3b8; }
+html.dark .peek-timer-chip:hover { background: rgba(37,99,235,.22); color: #93c5fd; border-color: #1d4ed8; }
+
 .peek-timer-running {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 12px; border-radius: 10px;
@@ -1472,6 +1540,48 @@ async function peekStartTimer(mode, targetSeconds) {
   if (window.gpomoStart) await window.gpomoStart(payload);
   _renderPeekTimerState(item);
 }
+
+// Custom-duration starter — reads the minutes input. Persists the chosen
+// duration to localStorage so it sticks across page loads + applies as
+// the default for the checklist's quick-start button.
+function peekStartTimerCustom() {
+  const input = document.getElementById("peek-timer-mins");
+  const mins = Math.max(1, Math.min(180, parseInt(input.value, 10) || 25));
+  input.value = mins;
+  try { localStorage.setItem("pomo_default_minutes", String(mins)); } catch {}
+  peekStartTimer("pomodoro", mins * 60);
+}
+
+function peekTimerSet(mins) {
+  const input = document.getElementById("peek-timer-mins");
+  if (input) input.value = mins;
+  peekTimerSaveDefault();
+}
+
+function peekTimerStep(delta) {
+  const input = document.getElementById("peek-timer-mins");
+  if (!input) return;
+  const next = Math.max(1, Math.min(180, (parseInt(input.value, 10) || 25) + delta));
+  input.value = next;
+  peekTimerSaveDefault();
+}
+
+function peekTimerSaveDefault() {
+  const input = document.getElementById("peek-timer-mins");
+  if (!input) return;
+  const mins = Math.max(1, Math.min(180, parseInt(input.value, 10) || 25));
+  input.value = mins;
+  try { localStorage.setItem("pomo_default_minutes", String(mins)); } catch {}
+}
+
+// Restore last-used duration when the page mounts.
+document.addEventListener("DOMContentLoaded", () => {
+  try {
+    const saved = parseInt(localStorage.getItem("pomo_default_minutes") || "25", 10);
+    const input = document.getElementById("peek-timer-mins");
+    if (input && saved >= 1 && saved <= 180) input.value = saved;
+  } catch {}
+});
 
 // On page load the global widget rehydrates itself; nothing to do here.
 

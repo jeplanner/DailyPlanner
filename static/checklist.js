@@ -163,16 +163,21 @@
     return row;
   }
 
-  // Start a 25-min Pomodoro on a checklist item. Routes through the
-  // global timer widget (defined in _top_nav.html) so pause/stop live
-  // in one place across pages.
+  // Start a Pomodoro on a checklist item. Duration falls back to the
+  // user's last-saved default (set via the peek-sheet input) — keeps
+  // both surfaces in sync without a separate setting.
   async function startChecklistPomo(it) {
     if (!window.gpomoStart) return;
+    let mins = 25;
+    try {
+      const saved = parseInt(localStorage.getItem("pomo_default_minutes") || "25", 10);
+      if (saved >= 1 && saved <= 180) mins = saved;
+    } catch {}
     await window.gpomoStart({
       source: "adhoc",
       label: it.name,
       mode: "pomodoro",
-      target_seconds: 25 * 60,
+      target_seconds: mins * 60,
       _title: it.name,
     });
   }
