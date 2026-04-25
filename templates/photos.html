@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Photos — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .ph-app { max-width: 1100px; margin: 0 auto; padding: 28px 20px 96px; }
+
+  .ph-hero {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
+  }
+  .ph-hero h1 { font-size: 28px; font-weight: 800; margin: 0 0 6px; letter-spacing: -.02em; }
+  .ph-sub { color: var(--color-text-secondary); font-size: 14px; max-width: 60ch; margin: 0; line-height: 1.5; }
+  .ph-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 10px;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: none; cursor: pointer; font-weight: 600; font-size: 14px;
+  }
+  .ph-cta:hover { background: var(--color-primary-hover); }
+  .ph-cta svg { width: 16px; height: 16px; }
+
+  .ph-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .ph-card {
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    transition: border-color .12s, box-shadow .14s, transform .08s;
+  }
+  .ph-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+  .ph-frame {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background: var(--color-surface-sunken);
+    overflow: hidden;
+  }
+  .ph-frame img {
+    width: 100%; height: 100%; object-fit: cover;
+    display: block;
+    transition: transform .25s ease;
+  }
+  .ph-card:hover .ph-frame img { transform: scale(1.03); }
+
+  .ph-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: flex-start; justify-content: flex-end;
+    padding: 8px;
+    pointer-events: none;
+  }
+  .ph-overlay-actions {
+    display: flex; gap: 6px;
+    pointer-events: auto;
+  }
+  .ph-action {
+    width: 30px; height: 30px;
+    border: none; border-radius: 50%;
+    background: rgba(15,23,42,.55); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; opacity: 0;
+    transition: opacity .12s, background .12s, transform .08s;
+    backdrop-filter: blur(2px);
+  }
+  .ph-action svg { width: 14px; height: 14px; }
+  .ph-card:hover .ph-action,
+  .ph-action:focus-visible { opacity: 1; }
+  .ph-action.danger:hover { background: #b91c1c; }
+  .ph-action:not(.danger):hover { background: #1d4ed8; }
+  .ph-action:active { transform: scale(.92); }
+  @media (hover: none) { .ph-action { opacity: 1; } }
+
+  .ph-name {
+    padding: 9px 12px;
+    font-size: 13px; color: var(--color-text);
+    border-top: 1px solid var(--color-border);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ph-name-empty { color: var(--color-text-muted); font-style: italic; }
+
+  .ph-empty {
+    padding: 56px 24px; text-align: center;
+    background: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: 16px;
+    color: var(--color-text-secondary);
+  }
+  .ph-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+  .ph-empty h2 { font-size: 18px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+  .ph-empty p { max-width: 50ch; margin: 0 auto 18px; font-size: 14px; line-height: 1.55; }
+
+  /* Mobile-only floating action button */
+  .ph-fab { display: none; }
+  @media (max-width: 640px) {
+    .ph-app { padding: 18px 14px 96px; }
+    .ph-hero h1 { font-size: 24px; }
+    .ph-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .ph-fab {
+      display: inline-flex; align-items: center; justify-content: center;
+      position: fixed;
+      right: 16px; bottom: 16px;
+      bottom: calc(16px + env(safe-area-inset-bottom, 0));
+      z-index: 200;
+      width: 56px; height: 56px;
+      border: none; border-radius: 50%;
+      background: var(--color-primary); color: var(--color-on-primary);
+      box-shadow: 0 12px 28px rgba(37,99,235,.35);
+      font-size: 26px; line-height: 1;
+      cursor: pointer;
+    }
+    .ph-fab:active { transform: scale(.94); }
+  }
+
+  .ph-toast {
+    position: fixed; left: 50%; bottom: 24px;
+    transform: translateX(-50%);
+    padding: 10px 18px; border-radius: 999px;
+    background: #0f172a; color: #fff;
+    font-size: 13.5px; font-weight: 600;
+    box-shadow: 0 12px 28px rgba(15,23,42,.32);
+    z-index: 9999;
+  }
+  .ph-toast.is-error { background: #b91c1c; }
+  .ph-toast.is-saving { background: #1d4ed8; }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="ph-app">
+
+  <header class="ph-hero">
+    <div>
+      <h1>📸 Photos</h1>
+      <p class="ph-sub">A general album. Upload images here that aren't tied to a specific page. Stored on Supabase Storage with year-long browser cache so repeat visits don't re-download.</p>
+    </div>
+    <button type="button" class="ph-cta" onclick="document.getElementById('ph-file-input').click()">
+      <i data-feather="upload"></i> Upload photo
+    </button>
+    <input type="file" id="ph-file-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden onchange="handlePhotoUpload(this)">
+  </header>
+
+  {% if photos %}
+    <div class="ph-grid" id="ph-grid">
+      {% for p in photos %}
+      <div class="ph-card" data-photo-id="{{ p.id }}">
+        <div class="ph-frame">
+          <img src="{{ p.img }}" alt="{{ p.name }}"
+               loading="lazy" decoding="async" fetchpriority="low">
+          <div class="ph-overlay">
+            <div class="ph-overlay-actions">
+              <button type="button" class="ph-action" title="Rename"
+                      onclick="renamePhoto('{{ p.id }}', this)">
+                <i data-feather="edit-2"></i>
+              </button>
+              <button type="button" class="ph-action danger" title="Delete"
+                      onclick="deletePhoto('{{ p.id }}', this)">
+                <i data-feather="trash-2"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="ph-name {% if not p.name or p.name == 'Photo' %}ph-name-empty{% endif %}">
+          {{ p.name or 'Untitled' }}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="ph-empty">
+      <i data-feather="image"></i>
+      <h2>No photos yet</h2>
+      <p>Upload an image (JPG, PNG, WebP, GIF — up to 5 MB) and it'll appear here. Files stay in Supabase Storage so they survive deploys.</p>
+      <button type="button" class="ph-cta" onclick="document.getElementById('ph-file-input').click()">
+        <i data-feather="upload"></i> Upload your first photo
+      </button>
+    </div>
+  {% endif %}
+
+  <button type="button" class="ph-fab" aria-label="Upload photo"
+          onclick="document.getElementById('ph-file-input').click()">+</button>
+
+</div>
+
+<div id="ph-toast" class="ph-toast" hidden></div>
+
+<script>
+  function _toast(msg, kind, ms) {
+    const t = document.getElementById("ph-toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.className = "ph-toast" + (kind ? " is-" + kind : "");
+    t.hidden = false;
+    clearTimeout(t._dismissTimer);
+    if (ms) t._dismissTimer = setTimeout(() => t.hidden = true, ms);
+  }
+
+  async function handlePhotoUpload(input) {
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      _toast("File too large (max 5 MB)", "error", 3500);
+      return;
+    }
+    let displayName = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 80);
+    const named = prompt("Caption for this photo?", displayName);
+    if (named === null) return;
+    displayName = named.trim().slice(0, 80) || displayName;
+
+    _toast("Uploading…", "saving");
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("display_name", displayName);
+    try {
+      const r = await fetch("/photos/upload", { method: "POST", body: fd });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        _toast(data.error || ("Upload failed (" + r.status + ")"), "error", 4500);
+        return;
+      }
+      _toast("Photo added", null, 2000);
+      _addTile(data.id, data.url, data.display_name);
+    } catch (e) {
+      console.error(e);
+      _toast("Upload failed — please try again.", "error", 4500);
+    }
+  }
+
+  function _addTile(id, url, name) {
+    const safeName = (name || 'Untitled').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    let grid = document.getElementById("ph-grid");
+    if (!grid) {
+      // Empty state visible — easiest is a full reload to land in the
+      // grid layout; the page is small.
+      location.reload();
+      return;
+    }
+    const card = document.createElement("div");
+    card.className = "ph-card";
+    card.setAttribute("data-photo-id", id);
+    card.innerHTML = `
+      <div class="ph-frame">
+        <img src="${url}" alt="${safeName}" loading="lazy" decoding="async">
+        <div class="ph-overlay">
+          <div class="ph-overlay-actions">
+            <button type="button" class="ph-action" title="Rename"
+                    onclick="renamePhoto('${id}', this)">
+              <i data-feather="edit-2"></i>
+            </button>
+            <button type="button" class="ph-action danger" title="Delete"
+                    onclick="deletePhoto('${id}', this)">
+              <i data-feather="trash-2"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="ph-name">${safeName}</div>`;
+    grid.insertBefore(card, grid.firstChild);
+    if (window.feather) feather.replace();
+  }
+
+  async function deletePhoto(id, btn) {
+    if (!confirm("Delete this photo?")) return;
+    try {
+      const r = await fetch(`/photos/${id}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const card = btn.closest(".ph-card");
+      if (card) {
+        card.style.transition = "opacity .25s, transform .25s";
+        card.style.opacity = "0";
+        card.style.transform = "scale(.92)";
+        setTimeout(() => card.remove(), 280);
+      }
+      _toast("Deleted", null, 1500);
+    } catch (e) {
+      _toast("Couldn't delete photo", "error", 3500);
+    }
+  }
+
+  async function renamePhoto(id, btn) {
+    const card = btn.closest(".ph-card");
+    const nameEl = card?.querySelector(".ph-name");
+    const current = nameEl ? nameEl.textContent.trim() : "";
+    const next = prompt("Rename photo:", current === "Untitled" ? "" : current);
+    if (next === null) return;
+    const trimmed = next.trim();
+    try {
+      const r = await fetch(`/photos/${id}/rename`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({display_name: trimmed}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (nameEl) {
+        nameEl.textContent = trimmed || "Untitled";
+        nameEl.classList.toggle("ph-name-empty", !trimmed);
+      }
+      _toast("Renamed", null, 1200);
+    } catch (e) {
+      _toast("Couldn't rename", "error", 3500);
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+</script>
+
+</body>
+</html>

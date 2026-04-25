@@ -16,6 +16,13 @@ def create_app():
     env = os.environ.get("FLASK_ENV", "production")
     app.config.from_object(config_map.get(env, config_map["production"]))
 
+    # Static files (CSS, JS, deity portraits, icons) get a 30-day
+    # browser-cache so phones don't re-download them on every visit.
+    # We cache-bust by adding ?v=<deploy id> to URLs that change; static
+    # assets here are content-stable so a long max-age is safe and
+    # dramatically reduces /prayer's bandwidth bill on repeat visits.
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30  # 30 days
+
     app.wsgi_app = ProxyFix(
         app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1
     )
@@ -68,6 +75,7 @@ def create_app():
     from routes.prayer import prayer_bp
     from routes.relationships import relationships_bp
     from routes.focus_log import focus_log_bp
+    from routes.photos import photos_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -92,6 +100,7 @@ def create_app():
     app.register_blueprint(prayer_bp)
     app.register_blueprint(relationships_bp)
     app.register_blueprint(focus_log_bp)
+    app.register_blueprint(photos_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -115,6 +124,7 @@ def create_app():
     csrf.exempt(push_bp)
     csrf.exempt(focus_log_bp)
     csrf.exempt(prayer_bp)
+    csrf.exempt(photos_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).

@@ -200,6 +200,11 @@ def upload_prayer_photo():
                 "Authorization": f"Bearer {SUPABASE_KEY}",
                 "Content-Type": mime,
                 "x-upsert": "false",
+                # Long-immutable cache. The object key includes a UUID
+                # so the URL never changes once uploaded — safe to mark
+                # immutable so browsers skip the conditional GET on
+                # repeat visits.
+                "Cache-Control": "public, max-age=31536000, immutable",
             },
             data=f.stream.read(),
             timeout=30,
