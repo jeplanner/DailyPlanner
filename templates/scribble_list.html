@@ -155,17 +155,34 @@
       overflow: hidden;
     }
     .nl-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    /* Pinned cards: a confident cream paper feel rather than a faint
+       yellow wash. Border tightens to a warm gold and the inside picks
+       up a real cream background. Reads as "this is special" without
+       shouting. */
     .nl-card.is-pinned {
-      border-color: var(--color-warning-border);
-      background: linear-gradient(0deg, var(--color-surface), var(--color-surface)),
-                  linear-gradient(135deg, rgba(245,158,11,.08), transparent);
+      background: #FFF8E1;          /* warm cream, AAA contrast for body text */
+      border-color: #F2C94C;
+      box-shadow: 0 1px 0 rgba(242,201,76,.4);
     }
-    html.dark .nl-card.is-pinned { background: linear-gradient(0deg, var(--color-surface), var(--color-surface)),
-                                    linear-gradient(135deg, rgba(245,158,11,.14), transparent); }
+    .nl-card.is-pinned:hover {
+      border-color: #E0AC1F;
+      box-shadow: 0 6px 18px rgba(217,119,6,.18);
+    }
+    .nl-card.is-pinned .nl-card-foot { border-top-color: rgba(217,119,6,.20); }
+    html.dark .nl-card.is-pinned {
+      background: #2E2410;          /* deep amber-brown */
+      border-color: #B45309;
+      box-shadow: 0 1px 0 rgba(180,83,9,.45);
+    }
+    html.dark .nl-card.is-pinned:hover {
+      border-color: #F59E0B;
+      box-shadow: 0 6px 18px rgba(0,0,0,.45);
+    }
+    html.dark .nl-card.is-pinned .nl-card-foot { border-top-color: rgba(245,158,11,.25); }
 
     .nl-card-pin {
       position: absolute; top: 10px; right: 10px;
-      width: 28px; height: 28px; border-radius: 8px;
+      width: 30px; height: 30px; border-radius: 8px;
       border: none; background: transparent;
       color: var(--color-text-muted);
       display: flex; align-items: center; justify-content: center;
@@ -174,9 +191,12 @@
     }
     .nl-card:hover .nl-card-pin,
     .nl-card.is-pinned .nl-card-pin { opacity: 1; }
-    .nl-card-pin:hover { background: var(--color-surface-sunken); color: var(--color-warning); }
-    .nl-card.is-pinned .nl-card-pin { color: var(--color-warning); }
-    .nl-card-pin svg { width: 14px; height: 14px; }
+    .nl-card-pin:hover { background: rgba(217,119,6,.12); color: #B45309; }
+    .nl-card.is-pinned .nl-card-pin { color: #B45309; }
+    .nl-card.is-pinned .nl-card-pin svg { fill: currentColor; }
+    .nl-card-pin svg { width: 15px; height: 15px; }
+    html.dark .nl-card.is-pinned .nl-card-pin,
+    html.dark .nl-card-pin:hover { color: #FBBF24; background: rgba(245,158,11,.18); }
 
     .nl-card-title {
       font-size: 15px; font-weight: 700;
@@ -409,8 +429,32 @@
 </div>
 
 <script>
+  // Strip the most common markdown syntax from card previews so they
+  // read like a snippet of the note rather than its raw source.
+  // Done client-side after render so the server can keep storing the
+  // canonical markdown without dual-encoding.
+  function _cleanPreview(s) {
+    if (!s) return "";
+    return s
+      .replace(/^#{1,6}\s+/gm, "")        // # headings → just the text
+      .replace(/\*\*(.+?)\*\*/g, "$1")    // **bold** → bold
+      .replace(/\*(.+?)\*/g, "$1")        // *italic*
+      .replace(/_(.+?)_/g, "$1")          // _italic_
+      .replace(/`(.+?)`/g, "$1")          // `code`
+      .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "☐ ")  // - [ ] / - [x]
+      .replace(/^\s*[-*+]\s+/gm, "• ")    // bullets
+      .replace(/^\s*>\s+/gm, "")          // blockquote
+      .replace(/!\[.*?\]\(.*?\)/g, "")    // image embeds
+      .replace(/\[(.+?)\]\((.*?)\)/g, "$1") // [text](url) → text
+      .replace(/\n{3,}/g, "\n\n");        // collapse big gaps
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     if (window.feather) feather.replace();
+    document.querySelectorAll(".nl-card-preview").forEach(el => {
+      if (el.classList.contains("empty")) return;
+      el.textContent = _cleanPreview(el.textContent || "");
+    });
   });
 
   document.addEventListener("keydown", (e) => {
