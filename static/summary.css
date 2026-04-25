@@ -764,52 +764,29 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
       "meta   meta";
     align-items: baseline;
   }
-  /* Compact overdue row: title + Xd on a single line, no arrow icon
-     (the whole row is already tappable). Tighter padding so more
-     overdue tasks fit on a phone screen. */
+  /* Mobile overdue row: title only. Category icon, date chip, and
+     arrow link are all hidden — tap the row to open the peek sheet
+     which shows project, days-overdue, priority, status, etc. The
+     band header (project · count) above each group still provides
+     grouping context while scrolling. */
   .md-overdue-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "title";
     min-height: 0;
-    padding: 8px var(--space-4);
+    padding: 6px var(--space-4);
     row-gap: 0;
   }
-  .md-overdue-row .md-c-title   {
+  .md-overdue-row .md-c-title {
     grid-area: title; min-width: 0;
-    align-self: baseline;
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    flex-wrap: wrap;
   }
-  .md-overdue-row .md-c-title .md-cat-icon { flex: 0 0 auto; }
   .md-overdue-row .md-c-title .md-row-title {
-    flex: 1 1 auto; min-width: 0;
-    font-size: 15px; line-height: 20px;
-    display: inline; /* override the block override that came from .md-row */
+    font-size: 15px; line-height: 22px;
+    display: inline;
   }
-  .md-overdue-row .md-c-context {
-    grid-area: meta; min-width: 0;
-    align-self: baseline;
-  }
-  .md-overdue-row .md-c-due     {
-    grid-area: due;
-    align-self: baseline;
-    text-align: right;
-    white-space: nowrap;
-    min-width: 28px;
-  }
-  /* Hide the per-row arrow link on mobile — the row's onclick handler
-     opens the same peek view, so the arrow only adds visual weight. */
+  .md-overdue-row .md-cat-icon,
+  .md-overdue-row .md-c-due,
+  .md-overdue-row .md-c-context,
   .md-overdue-row .md-row-link { display: none; }
-
-  /* Mobile due chip: red (matches desktop) so overdue reads as urgent
-     at a glance, instead of the amber --warning that mobile inherited. */
-  .md-overdue-row .md-overdue-chip {
-    color: #dc2626;
-    font-weight: 700;
-    font-size: 13px;
-  }
-  html.dark .md-overdue-row .md-overdue-chip,
-  [data-theme="dark"] .md-overdue-row .md-overdue-chip { color: #fca5a5; }
 
   /* Time cell — tabular, stacked start/end */
   .md-row .md-time {
