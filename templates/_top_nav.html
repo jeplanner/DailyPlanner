@@ -1596,15 +1596,15 @@ document.addEventListener("keydown", (e) => {
     if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
   }
 
-  // Alarm = three beeps spaced ~0.8s apart, plus device vibration, plus a
-  // browser Notification if the tab is backgrounded so the user hears it
-  // even with the page hidden. Audio context is best-effort; some
-  // browsers block until a user gesture has occurred — usually starting
-  // the timer counts as that gesture.
+  // Alarm = five beeps over ~6s ending on a sustained tone, plus device
+  // vibration, plus a browser Notification if the tab is backgrounded so
+  // the user hears it even with the page hidden. Audio context is
+  // best-effort; some browsers block it until a user gesture has
+  // occurred — starting the timer counts as that gesture.
   function _chime() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const beep = (when, freq=880, dur=0.65) => {
+      const beep = (when, freq=880, dur=0.7) => {
         const o = ctx.createOscillator(), g = ctx.createGain();
         o.type = "sine"; o.frequency.value = freq;
         g.gain.value = 0.0001;
@@ -1615,11 +1615,20 @@ document.addEventListener("keydown", (e) => {
         o.stop(when + dur + 0.05);
       };
       const t0 = ctx.currentTime + 0.02;
-      beep(t0,        880, 0.65);
-      beep(t0 + 0.85, 988, 0.65);
-      beep(t0 + 1.70, 880, 1.10);
+      const seq = [
+        [880, 0.70, 0.00],
+        [988, 0.70, 1.00],
+        [880, 0.70, 2.00],
+        [988, 0.70, 3.00],
+        [880, 1.60, 4.00],   // sustained finale
+      ];
+      seq.forEach(([f, d, t]) => beep(t0 + t, f, d));
     } catch (e) { /* audio is best-effort */ }
-    try { if (navigator.vibrate) navigator.vibrate([400, 180, 400, 180, 600]); } catch {}
+    try {
+      if (navigator.vibrate) {
+        navigator.vibrate([400, 180, 400, 180, 400, 180, 400, 180, 800]);
+      }
+    } catch {}
     try {
       if ("Notification" in window && Notification.permission === "granted") {
         const n = new Notification("Pomodoro complete", {
