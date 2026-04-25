@@ -715,6 +715,11 @@ html.dark .section-title{color:#f1f5f9;}
         Reports
       </a>
 
+      <a href="/summary?view=daily#reflection" title="End-of-day reflection — gratitude, what to change tomorrow">
+        <i data-feather="edit-3"></i>
+        Daily Review
+      </a>
+
       <a href="/summary?view=weekly" data-match="^/summary.*view=weekly" title="Weekly review — aggregate stats, AI narrative">
         <i data-feather="bar-chart-2"></i>
         Weekly Review
@@ -808,6 +813,12 @@ html.dark .section-title{color:#f1f5f9;}
     <span id="live-date"></span>
     <span class="time" id="live-time"></span>
   </div>
+
+  <button type="button" class="help-btn" onclick="openQuickPomo()"
+          title="Quick Pomodoro — start a focus timer (no task linkage)"
+          aria-label="Quick Pomodoro">
+    <i data-feather="clock"></i>
+  </button>
 
   <button type="button" class="help-btn" onclick="openSearchPalette()"
           title="Search everything (Cmd/Ctrl+K)" aria-label="Search">
@@ -1105,6 +1116,230 @@ document.addEventListener("keydown", (e) => {
 </aside>
 
 
+<!-- ═══════════ QUICK POMODORO MODAL ═══════════
+     Triggered by the clock icon in the top header. Starts a Pomodoro
+     not linked to any task — useful for "I want to focus for 25 min on
+     reading" without polluting the task list. The label is the only
+     identifier; it shows in the global widget. -->
+<div id="qpomo-overlay" class="qpomo-overlay hidden" onclick="if(event.target===this)closeQuickPomo()"></div>
+<div id="qpomo-modal" class="qpomo-modal hidden" role="dialog" aria-modal="true" aria-labelledby="qpomo-title">
+  <header class="qpomo-head">
+    <h3 id="qpomo-title">Quick Pomodoro</h3>
+    <button type="button" class="qpomo-close" onclick="closeQuickPomo()" aria-label="Close">×</button>
+  </header>
+  <div class="qpomo-body">
+    <label class="qpomo-field">
+      <span>What are you focusing on?</span>
+      <input type="text" id="qpomo-label" placeholder="e.g. Read chapter 4 of Atomic Habits"
+             maxlength="120" autocomplete="off">
+    </label>
+    <div class="qpomo-field">
+      <span>Duration</span>
+      <div class="qpomo-input">
+        <button type="button" class="qpomo-step" onclick="qpomoStep(-5)">−</button>
+        <input type="number" id="qpomo-mins" min="1" max="180" step="1" value="25" inputmode="numeric">
+        <button type="button" class="qpomo-step" onclick="qpomoStep(5)">+</button>
+        <span class="qpomo-unit">min</span>
+      </div>
+      <div class="qpomo-presets">
+        <button type="button" class="qpomo-chip" onclick="qpomoSet(15)">15</button>
+        <button type="button" class="qpomo-chip" onclick="qpomoSet(25)">25</button>
+        <button type="button" class="qpomo-chip" onclick="qpomoSet(45)">45</button>
+        <button type="button" class="qpomo-chip" onclick="qpomoSet(50)">50</button>
+        <button type="button" class="qpomo-chip" onclick="qpomoSet(90)">90</button>
+      </div>
+    </div>
+    <div class="qpomo-hint">An alarm will sound when the timer finishes.</div>
+  </div>
+  <footer class="qpomo-foot">
+    <button type="button" class="btn-ghost" onclick="closeQuickPomo()">Cancel</button>
+    <button type="button" class="btn-primary" onclick="startQuickPomo()">
+      <i data-feather="play"></i> Start
+    </button>
+  </footer>
+</div>
+<style>
+  .qpomo-overlay {
+    position: fixed; inset: 0; z-index: 9988;
+    background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
+    transition: opacity .14s ease;
+  }
+  .qpomo-overlay.hidden { opacity: 0; pointer-events: none; }
+  .qpomo-modal {
+    position: fixed; left: 50%; top: 14vh;
+    transform: translateX(-50%);
+    width: min(440px, 92vw); z-index: 9989;
+    background: #fff; color: #0f172a;
+    border: 1px solid #e2e8f0; border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(15,23,42,.28);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    transition: opacity .14s ease, transform .18s ease;
+  }
+  .qpomo-modal.hidden {
+    opacity: 0; pointer-events: none;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  html.dark .qpomo-modal { background: #1e293b; color: #f1f5f9; border-color: #334155; }
+  .qpomo-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; border-bottom: 1px solid #e2e8f0;
+  }
+  html.dark .qpomo-head { border-bottom-color: #334155; }
+  .qpomo-head h3 { margin: 0; font-size: 16px; font-weight: 700; }
+  .qpomo-close {
+    appearance: none; padding: 0; width: 32px; height: 32px;
+    border: none; background: transparent; color: #64748b;
+    font-size: 22px; line-height: 1; cursor: pointer; border-radius: 8px;
+  }
+  .qpomo-close:hover { background: #f1f5f9; color: #0f172a; }
+  html.dark .qpomo-close:hover { background: #273449; color: #f1f5f9; }
+
+  .qpomo-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+  .qpomo-field { display: flex; flex-direction: column; gap: 6px; }
+  .qpomo-field > span {
+    font-size: 12px; font-weight: 600; color: #64748b;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  html.dark .qpomo-field > span { color: #94a3b8; }
+  .qpomo-field input[type="text"] {
+    padding: 9px 12px; font: inherit; font-size: 14px;
+    border: 1px solid #e2e8f0; border-radius: 8px;
+    background: #fff; color: #0f172a;
+  }
+  html.dark .qpomo-field input[type="text"] { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+  .qpomo-field input[type="text"]:focus {
+    outline: none; border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37,99,235,.18);
+  }
+
+  .qpomo-input {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 6px; width: max-content;
+    border: 1px solid #e2e8f0; border-radius: 999px;
+    background: #f8fafc;
+  }
+  html.dark .qpomo-input { background: #0f172a; border-color: #334155; }
+  .qpomo-input input {
+    width: 56px; padding: 6px 4px; text-align: center;
+    border: none; outline: none; background: transparent;
+    font: inherit; font-size: 15px; font-weight: 700;
+    color: inherit; font-variant-numeric: tabular-nums;
+    -moz-appearance: textfield;
+  }
+  .qpomo-input input::-webkit-outer-spin-button,
+  .qpomo-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .qpomo-step {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: none; background: #fff; color: #64748b;
+    font: inherit; font-size: 16px; font-weight: 700;
+    cursor: pointer; line-height: 1;
+  }
+  .qpomo-step:hover { background: #e0e7ff; color: #1d4ed8; }
+  html.dark .qpomo-step { background: #1e293b; color: #94a3b8; }
+  html.dark .qpomo-step:hover { background: #1e3a8a; color: #bfdbfe; }
+  .qpomo-unit { font-size: 11px; font-weight: 600; color: #94a3b8; padding: 0 8px 0 2px; }
+  .qpomo-presets { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+  .qpomo-chip {
+    appearance: none;
+    padding: 4px 10px;
+    border: 1px solid #e2e8f0; border-radius: 999px;
+    background: transparent; color: #64748b;
+    font: inherit; font-size: 12px; font-weight: 700;
+    cursor: pointer; font-variant-numeric: tabular-nums;
+  }
+  .qpomo-chip:hover { background: rgba(37,99,235,.1); color: #1d4ed8; border-color: #bfdbfe; }
+  html.dark .qpomo-chip { border-color: #334155; color: #94a3b8; }
+  html.dark .qpomo-chip:hover { background: rgba(37,99,235,.22); color: #93c5fd; border-color: #1d4ed8; }
+
+  .qpomo-hint { font-size: 12px; color: #64748b; }
+  html.dark .qpomo-hint { color: #94a3b8; }
+
+  .qpomo-foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 18px; border-top: 1px solid #e2e8f0;
+  }
+  html.dark .qpomo-foot { border-top-color: #334155; }
+  .qpomo-foot .btn-primary {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    border: none; border-radius: 10px; cursor: pointer;
+    background: #2563eb; color: #fff;
+  }
+  .qpomo-foot .btn-primary:hover { background: #1d4ed8; }
+  .qpomo-foot .btn-primary svg { width: 14px; height: 14px; }
+  .qpomo-foot .btn-ghost {
+    padding: 9px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    background: transparent; color: #64748b;
+    border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer;
+  }
+  .qpomo-foot .btn-ghost:hover { background: #f8fafc; color: #0f172a; }
+  html.dark .qpomo-foot .btn-ghost { border-color: #334155; color: #94a3b8; }
+  html.dark .qpomo-foot .btn-ghost:hover { background: #273449; color: #f1f5f9; }
+
+  @media (max-width: 480px) {
+    .qpomo-modal { left: 10px; right: 10px; top: 8vh; width: auto; transform: none; }
+    .qpomo-modal.hidden { transform: translateY(-8px); }
+  }
+</style>
+<script>
+  function openQuickPomo() {
+    const modal = document.getElementById("qpomo-modal");
+    const overlay = document.getElementById("qpomo-overlay");
+    if (!modal || !overlay) return;
+    // Pre-fill with the saved default duration
+    try {
+      const saved = parseInt(localStorage.getItem("pomo_default_minutes") || "25", 10);
+      const input = document.getElementById("qpomo-mins");
+      if (input && saved >= 1 && saved <= 180) input.value = saved;
+    } catch {}
+    modal.classList.remove("hidden");
+    overlay.classList.remove("hidden");
+    setTimeout(() => document.getElementById("qpomo-label")?.focus(), 50);
+    if (window.feather) window.feather.replace();
+  }
+  function closeQuickPomo() {
+    document.getElementById("qpomo-modal")?.classList.add("hidden");
+    document.getElementById("qpomo-overlay")?.classList.add("hidden");
+  }
+  function qpomoStep(d) {
+    const i = document.getElementById("qpomo-mins");
+    if (!i) return;
+    const next = Math.max(1, Math.min(180, (parseInt(i.value, 10) || 25) + d));
+    i.value = next;
+  }
+  function qpomoSet(m) {
+    const i = document.getElementById("qpomo-mins");
+    if (i) i.value = m;
+  }
+  async function startQuickPomo() {
+    const labelEl = document.getElementById("qpomo-label");
+    const minsEl = document.getElementById("qpomo-mins");
+    const label = (labelEl?.value || "").trim() || "Focus session";
+    const mins = Math.max(1, Math.min(180, parseInt(minsEl?.value || "25", 10) || 25));
+    try { localStorage.setItem("pomo_default_minutes", String(mins)); } catch {}
+    if (!window.gpomoStart) { closeQuickPomo(); return; }
+    // Ask for Notification permission ahead of time so the alarm lands
+    // even if the tab is backgrounded when the timer ends.
+    if ("Notification" in window && Notification.permission === "default") {
+      try { await Notification.requestPermission(); } catch {}
+    }
+    closeQuickPomo();
+    await window.gpomoStart({
+      source: "adhoc",
+      label,
+      mode: "pomodoro",
+      target_seconds: mins * 60,
+      _title: label,
+    });
+  }
+  // Esc closes
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeQuickPomo();
+  });
+</script>
+
+
 <!-- ═══════════ GLOBAL POMODORO WIDGET ═══════════
      Lives on every page (this nav is _included_ everywhere). Hidden
      until /api/v2/timer/active returns a running session, at which
@@ -1332,18 +1567,41 @@ document.addEventListener("keydown", (e) => {
     if (tickHandle) { clearInterval(tickHandle); tickHandle = null; }
   }
 
+  // Alarm = three beeps spaced ~0.8s apart, plus device vibration, plus a
+  // browser Notification if the tab is backgrounded so the user hears it
+  // even with the page hidden. Audio context is best-effort; some
+  // browsers block until a user gesture has occurred — usually starting
+  // the timer counts as that gesture.
   function _chime() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "sine"; o.frequency.value = 880;
-      g.gain.value = 0.001;
-      o.connect(g); g.connect(ctx.destination);
-      o.start();
-      g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.9);
-      o.stop(ctx.currentTime + 0.95);
+      const beep = (when, freq=880, dur=0.65) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = freq;
+        g.gain.value = 0.0001;
+        o.connect(g); g.connect(ctx.destination);
+        o.start(when);
+        g.gain.exponentialRampToValueAtTime(0.30, when + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+        o.stop(when + dur + 0.05);
+      };
+      const t0 = ctx.currentTime + 0.02;
+      beep(t0,        880, 0.65);
+      beep(t0 + 0.85, 988, 0.65);
+      beep(t0 + 1.70, 880, 1.10);
     } catch (e) { /* audio is best-effort */ }
+    try { if (navigator.vibrate) navigator.vibrate([400, 180, 400, 180, 600]); } catch {}
+    try {
+      if ("Notification" in window && Notification.permission === "granted") {
+        const n = new Notification("Pomodoro complete", {
+          body: state.title ? `Focus on "${state.title}" finished.` : "Time's up — take a break.",
+          icon: "/static/icons/icon.svg",
+          tag: "gpomo-done",
+          requireInteraction: false,
+        });
+        setTimeout(() => { try { n.close(); } catch {} }, 8000);
+      }
+    } catch {}
   }
 
   /* ── Public API (window-scoped, called by other pages) ── */

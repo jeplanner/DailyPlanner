@@ -541,8 +541,10 @@
   <!-- ── Reflection + AI Recap — below the fold, still one tap away ──
        Wrapped in <details> so mobile collapses it by default (expandable
        on tap). Desktop CSS forces it open and hides the collapse chrome,
-       so desktop users see the unchanged card layout. -->
-  <div class="sum-grid md-supplement">
+       so desktop users see the unchanged card layout.
+       The id="reflection" anchor lets nav links jump straight here
+       (e.g. /summary?view=daily#reflection from "Daily Review"). -->
+  <div class="sum-grid md-supplement" id="reflection">
     <details class="md-reflection-details sum-card" open>
       <summary class="md-reflection-summary">
         <i data-feather="edit-3"></i>
