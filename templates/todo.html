@@ -1717,6 +1717,225 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   </div>
 </div>
 
+{# ══════════ PARKED TASKS — overdue items pulled out of the quadrants ══════════
+   These are project tasks whose effective date (revised_due_date or due_date)
+   has already elapsed but the task is still open. We keep them visible here so
+   users can triage in one place: "Revise to today" pulls back into the matrix,
+   the +N button skips them forward by N days, and the date input does an
+   explicit pick. The original due_date is preserved as audit history. #}
+{% if parked_tasks %}
+<div class="em-parked-section" id="em-parked-section" data-collapsed="1">
+  <button type="button" class="em-parked-toggle"
+          onclick="this.closest('.em-parked-section').toggleAttribute('data-collapsed')"
+          aria-expanded="false">
+    <span class="em-parked-icon">⏸</span>
+    <span class="em-parked-title">Parked tasks</span>
+    <span class="em-parked-count">{{ parked_tasks|length }}</span>
+    <span class="em-parked-hint">— due dates elapsed; not blocking the matrix.</span>
+    <i data-feather="chevron-down" class="em-parked-chevron"></i>
+  </button>
+  <div class="em-parked-body">
+    {% for p in parked_tasks %}
+    <div class="em-parked-row" data-task-id="{{ p.task_id }}">
+      <div class="em-parked-info">
+        <div class="em-parked-task">{{ p.task_text }}</div>
+        <div class="em-parked-meta">
+          {% if p.project_name %}
+            <span class="em-parked-chip">{{ p.project_name }}</span>
+          {% endif %}
+          <span class="em-parked-overdue">{{ p.days_overdue }}d overdue</span>
+          <span class="em-parked-orig">orig: {{ p.due_date or '—' }}</span>
+        </div>
+      </div>
+      <div class="em-parked-actions">
+        <button type="button" class="em-parked-btn em-parked-primary"
+                onclick="reviseParkedTask('{{ p.task_id }}', 0)"
+                title="Move to today's matrix">
+          ↩ Today
+        </button>
+        <button type="button" class="em-parked-btn"
+                onclick="reviseParkedTask('{{ p.task_id }}', 1)"
+                title="Revise to tomorrow">+1d</button>
+        <button type="button" class="em-parked-btn"
+                onclick="reviseParkedTask('{{ p.task_id }}', 7)"
+                title="Revise to next week">+1w</button>
+        <input type="date" class="em-parked-date"
+               aria-label="Pick a revised date"
+               onchange="reviseParkedTaskTo('{{ p.task_id }}', this.value)">
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+<style>
+  .em-parked-section {
+    margin: 22px auto 18px;
+    max-width: 1200px;
+    background: var(--em-surface);
+    border: 1px solid var(--em-border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .em-parked-toggle {
+    width: 100%; padding: 14px 18px;
+    display: flex; align-items: center; gap: 10px;
+    border: none; background: transparent;
+    color: var(--em-text);
+    cursor: pointer; font: inherit; text-align: left;
+    border-bottom: 1px solid var(--em-border);
+  }
+  .em-parked-icon { font-size: 18px; flex: 0 0 auto; }
+  .em-parked-title { font-size: 15px; font-weight: 700; flex: 0 0 auto; }
+  .em-parked-count {
+    flex: 0 0 auto;
+    padding: 2px 9px; border-radius: 999px;
+    background: rgba(245,158,11,.18);
+    color: #92400e;
+    font-size: 12px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  html.dark .em-parked-count { background: rgba(245,158,11,.25); color: #fcd34d; }
+  .em-parked-hint {
+    font-size: 12.5px; color: var(--em-text2);
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .em-parked-chevron {
+    width: 18px; height: 18px; flex: 0 0 auto;
+    color: var(--em-text2);
+    transition: transform .15s;
+  }
+  .em-parked-section[data-collapsed] .em-parked-chevron { transform: rotate(0deg); }
+  .em-parked-section:not([data-collapsed]) .em-parked-chevron { transform: rotate(180deg); }
+  .em-parked-section[data-collapsed] .em-parked-toggle { border-bottom: none; }
+  .em-parked-section[data-collapsed] .em-parked-body { display: none; }
+  .em-parked-body {
+    display: flex; flex-direction: column;
+    max-height: 60vh; overflow-y: auto;
+  }
+  .em-parked-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--em-border-light, #f1f3f5);
+  }
+  html.dark .em-parked-row { border-bottom-color: #1d2740; }
+  .em-parked-row:last-child { border-bottom: none; }
+  .em-parked-info { flex: 1; min-width: 0; }
+  .em-parked-task {
+    font-size: 14px; font-weight: 600;
+    color: var(--em-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .em-parked-meta {
+    margin-top: 3px;
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    font-size: 12px; color: var(--em-text2);
+  }
+  .em-parked-chip {
+    padding: 1px 8px; border-radius: 999px;
+    background: var(--em-border-light, #f1f3f5); color: var(--em-text2);
+    font-weight: 600;
+  }
+  html.dark .em-parked-chip { background: #1d2740; color: #cbd5e1; }
+  .em-parked-overdue {
+    color: #b45309; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  html.dark .em-parked-overdue { color: #fcd34d; }
+  .em-parked-orig { color: var(--em-text3, #94a3b8); }
+
+  .em-parked-actions {
+    display: inline-flex; gap: 5px; flex: 0 0 auto; align-items: center;
+  }
+  .em-parked-btn {
+    padding: 6px 11px;
+    border: 1px solid var(--em-border);
+    background: var(--em-surface);
+    color: var(--em-text);
+    border-radius: 8px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .em-parked-btn:hover {
+    background: rgba(37,99,235,.1); color: #1d4ed8; border-color: #2563eb;
+  }
+  html.dark .em-parked-btn:hover { background: rgba(37,99,235,.22); color: #93c5fd; border-color: #1d4ed8; }
+  .em-parked-primary {
+    background: var(--q-schedule); color: #fff; border-color: var(--q-schedule);
+  }
+  .em-parked-primary:hover { filter: brightness(1.08); }
+  .em-parked-date {
+    padding: 5px 8px; font: inherit; font-size: 12.5px;
+    border: 1px solid var(--em-border); border-radius: 8px;
+    background: var(--em-surface); color: var(--em-text);
+    width: 132px;
+  }
+
+  @media (max-width: 640px) {
+    .em-parked-toggle { padding: 12px 14px; }
+    .em-parked-hint { display: none; }
+    .em-parked-row {
+      flex-direction: column; align-items: stretch; gap: 8px;
+      padding: 12px 14px;
+    }
+    .em-parked-task { white-space: normal; }
+    .em-parked-actions { flex-wrap: wrap; }
+    .em-parked-date { flex: 1; width: auto; min-width: 130px; }
+  }
+</style>
+<script>
+  // Revise a parked task forward by N days from today (0 = today).
+  async function reviseParkedTask(taskId, shiftDays) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    today.setDate(today.getDate() + (parseInt(shiftDays, 10) || 0));
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    return reviseParkedTaskTo(taskId, `${yyyy}-${mm}-${dd}`);
+  }
+
+  async function reviseParkedTaskTo(taskId, newDate) {
+    if (!taskId || !newDate) return;
+    try {
+      const r = await fetch("/projects/tasks/update-date", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({task_id: taskId, due_date: newDate}),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      // Animate the row out, then drop it. A full reload would jolt the
+      // user out of context — the task still shows in the appropriate
+      // quadrant on next reload anyway.
+      const row = document.querySelector(`.em-parked-row[data-task-id="${taskId}"]`);
+      if (row) {
+        row.style.transition = "opacity .25s ease, transform .25s ease, max-height .3s ease";
+        row.style.opacity = "0";
+        row.style.transform = "translateX(8px)";
+        row.style.maxHeight = "0";
+        row.style.overflow = "hidden";
+        setTimeout(() => row.remove(), 320);
+      }
+      // Update the badge count
+      const countEl = document.querySelector(".em-parked-count");
+      if (countEl) {
+        const next = Math.max(0, parseInt(countEl.textContent, 10) - 1);
+        countEl.textContent = next;
+        if (next === 0) {
+          document.getElementById("em-parked-section")?.remove();
+        }
+      }
+      if (window.showToast) showToast("Revised to " + newDate, "success", 1800);
+    } catch (e) {
+      console.error("revise failed", e);
+      if (window.showToast) showToast("Couldn't revise date", "error");
+    }
+  }
+</script>
+{% endif %}
+
 <!-- ══════════ TRAVEL MODE RESTORE MODAL ══════════ -->
 {% if (not travel_mode_active) and travel_mode_restorable_count and travel_mode_restorable_count > 0 %}
 <div id="em-travel-restore-modal" class="em-details-modal hidden" role="dialog" aria-modal="true"

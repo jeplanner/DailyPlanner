@@ -525,36 +525,41 @@ def unsend_task_from_eisenhower():
 @projects_bp.route("/projects/tasks/update-date", methods=["POST"])
 @login_required
 def update_project_task_date():
-    """Update a project task's due_date.
+    """Reschedule a project task to a new effective date.
 
-    Body accepts either an explicit `due_date` (legacy callers) or a
-    relative `shift_days` shortcut that the daily-summary "Push to
-    tomorrow / +3d / next week" buttons use.
+    Writes to `revised_due_date` so the original `due_date` stays as
+    an audit trail of the deadline that was first set. The Eisenhower
+    matrix and project listings page are now driven by revised_due_date
+    (or due_date if no revision yet).
+
+    Body accepts either an explicit `due_date` (legacy callers) — which
+    despite the field name now sets revised_due_date — or a relative
+    `shift_days` shortcut from the "+1d / +3d / next week" buttons.
     """
     from datetime import date as _date, timedelta as _td
 
     data = request.get_json() or {}
     task_id = data.get("task_id")
-    due_date = data.get("due_date")
+    new_date = data.get("due_date")
 
     if not task_id:
         return jsonify({"error": "Missing task id"}), 400
 
-    if not due_date:
+    if not new_date:
         try:
             shift = int(data.get("shift_days") or 0)
         except (TypeError, ValueError):
             return jsonify({"error": "Invalid shift_days"}), 400
         if shift > 0:
-            due_date = (_date.today() + _td(days=shift)).isoformat()
+            new_date = (_date.today() + _td(days=shift)).isoformat()
 
     update(
         "project_tasks",
         params={"task_id": f"eq.{task_id}"},
-        json={"due_date": due_date},
+        json={"revised_due_date": new_date},
     )
-    logger.info(f"👉 task_id={task_id}, new_date={due_date}")
-    return jsonify({"status": "ok", "due_date": due_date})
+    logger.info(f"👉 task_id={task_id}, revised_due_date={new_date}")
+    return jsonify({"status": "ok", "revised_due_date": new_date, "due_date": new_date})
 @projects_bp.route("/projects/tasks/<task_id>/update", methods=["POST"])
 @login_required
 def update_task(task_id):
@@ -567,6 +572,7 @@ def update_task(task_id):
         "task_text",
         "start_date",
         "due_date",
+        "revised_due_date",
         "due_time",
         "notes",
         "status",
@@ -1034,6 +1040,11 @@ def import_csv():
             "priority": row.get("priority", "medium"),
             "start_date": row.get("start_date") or user_today().isoformat(),
             "due_date": row.get("due_date") or None,
+            # Mirror due_date → revised_due_date on insert so the parking
+            # filter (revised_due_date < today) sees the original
+            # deadline immediately. Pre-migration this column won't
+            # exist and supabase_client.post strips it on PGRST204.
+            "revised_due_date": row.get("due_date") or None,
             "duration_days": int(row["duration"]) if row.get("duration") else 0,
             "planned_hours": float(row["planned_hours"]) if row.get("planned_hours") else None,
             "notes": row.get("notes") or None,

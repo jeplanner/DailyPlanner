@@ -255,6 +255,8 @@ def todo():
         logger.warning("OKR display lookup failed: %s", e)
 
     target_weekday = plan_date.weekday()
+    today_iso = user_today().isoformat()
+    parked_tasks = []
 
     for t in proj_tasks_q:
         if not t.get("quadrant"):
@@ -266,6 +268,11 @@ def todo():
 
         is_recurring = t.get("is_recurring")
         due_date_str = t.get("due_date")
+        # Effective date for scheduling = the user's latest revision if
+        # they've reset it, else fall back to the original due_date so
+        # untouched tasks behave exactly as before. Recurring tasks
+        # ignore this and use the recurrence rule.
+        effective_date_str = t.get("revised_due_date") or due_date_str
 
         # Determine if this task applies to the selected date
         applies = False
@@ -280,10 +287,11 @@ def todo():
                 if target_weekday in days:
                     applies = True
             elif rec_type == "monthly":
-                # Show on same day of month as due_date if set, else every day
-                if due_date_str:
+                # Show on same day of month as effective date if set,
+                # else every day.
+                if effective_date_str:
                     try:
-                        dd = date.fromisoformat(due_date_str)
+                        dd = date.fromisoformat(effective_date_str)
                         if plan_date.day == dd.day:
                             applies = True
                     except (ValueError, TypeError):
@@ -291,14 +299,33 @@ def todo():
             else:
                 applies = True  # Unknown recurrence — show it
         else:
-            # Non-recurring — show if due on or before selected date
-            if not due_date_str:
-                # No due date → show today only
+            # Non-recurring — drive scheduling off the effective date.
+            if not effective_date_str:
+                # No date at all → show today only.
                 if plan_date == user_today():
                     applies = True
             else:
                 try:
-                    dd = date.fromisoformat(due_date_str)
+                    dd = date.fromisoformat(effective_date_str)
+                    if dd < user_today() and plan_date == user_today():
+                        # Effective date elapsed and we're rendering
+                        # today's matrix — this task is "Parked". Stash
+                        # it so the page can surface it in the Parked
+                        # section instead of cluttering the quadrants.
+                        parked_tasks.append({
+                            "id": f"pt-{t['task_id']}",
+                            "task_id": t["task_id"],
+                            "task_text": t.get("task_text") or "",
+                            "project_id": t.get("project_id"),
+                            "project_name": project_map.get(t.get("project_id")),
+                            "due_date": due_date_str,
+                            "revised_due_date": t.get("revised_due_date"),
+                            "effective_date": effective_date_str,
+                            "days_overdue": (user_today() - dd).days,
+                            "priority": t.get("priority") or "medium",
+                            "quadrant": t.get("quadrant"),
+                        })
+                        continue
                     if dd <= plan_date:
                         applies = True
                 except (ValueError, TypeError):
@@ -381,6 +408,11 @@ def todo():
     from config import IST
     today = dt.now(IST).date().isoformat()
 
+    # Sort parked tasks by most-overdue first so the user sees the
+    # longest-stale items at the top — they're the highest-signal
+    # candidates for either "do today" or "explicitly defer" decisions.
+    parked_tasks.sort(key=lambda p: -(p.get("days_overdue") or 0))
+
     return render_template(
         "todo.html",
         todo=todo,
@@ -392,6 +424,7 @@ def todo():
         projects=projects,
         travel_mode_active=travel_mode_active,
         travel_mode_restorable_count=travel_mode_restorable_count,
+        parked_tasks=parked_tasks,
     )
 
 
