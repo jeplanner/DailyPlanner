@@ -717,20 +717,65 @@ html.dark .dc-icon { color: #fca5a5; }
   .note-card-title { font-size: 15px; }
   .note-card-preview { font-size: 13px; -webkit-line-clamp: 4; }
 
-  .scribble-editor-shell { padding: 10px 14px 100px; }
-  .editor-paper { padding: 20px 18px; border-radius: 14px; }
+  .scribble-editor-shell { padding: 10px 12px 100px; }
+  .editor-paper { padding: 22px 18px; border-radius: 14px; }
   .editor-title { font-size: 24px; }
   .editor-content { font-size: 16px; }  /* 16px prevents iOS zoom */
   .editor-footer { font-size: 10px; gap: 10px; }
   .editor-hint { display: none; }
-  .editor-back span { display: none; }
 
   .delete-confirm { flex-wrap: wrap; }
   .dc-text { flex: 1 1 100%; }
   .dc-actions { margin-left: auto; }
+
+  /* ─── Mobile editor topbar — explicit two-row grid ─────────
+     Row 1: ← Back (truncates) ............... Folder · Pin · Del
+     Row 2: Save · Edit/Read .................... Prev · Pos · Next
+     Each child is explicitly placed so nothing competes for space. */
+  .editor-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "back  actions"
+      "status nav";
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 6px;
+    padding: 8px 0;
+  }
+  .editor-back   { grid-area: back; min-width: 0; padding: 8px 10px; }
+  .editor-actions { grid-area: actions; gap: 4px; }
+  .editor-status { grid-area: status; flex: initial; justify-content: flex-start; gap: 8px; }
+  .editor-nav    { grid-area: nav; }
+
+  .editor-back span {
+    display: inline-block;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%;
+  }
+  .save-indicator { padding: 5px 9px; font-size: 11px; }
+  .save-indicator .si-text { font-size: 11px; }
 }
 
 @media (max-width: 480px) {
-  .editor-topbar { gap: 8px; }
   .editor-title { font-size: 22px; }
+  .editor-paper { padding: 18px 14px; }
+  .editor-back { padding: 7px 8px; }
+  .editor-back svg { width: 18px; height: 18px; }
+  .editor-back span { font-size: 13px; font-weight: 700; }
+  /* On the very narrow screens, hide the mode-toggle text — icons only */
+  .mode-btn span { display: none; }
+  .mode-btn { padding: 6px 9px; }
+  .save-indicator { padding: 4px 8px; }
+  .save-indicator .si-text { display: none; }
+  /* Tighten icon buttons */
+  .icon-btn { width: 34px; height: 34px; }
+  /* Prev/next compact */
+  .editor-nav-btn { width: 32px; height: 32px; }
+}
+
+@media (max-width: 360px) {
+  /* Below 360px (older Androids) drop the position counter to keep
+     just the arrows visible. Folder picker stays — name truncates. */
+  .editor-nav-pos { display: none; }
 }
