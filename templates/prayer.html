@@ -109,9 +109,38 @@
            title="Opens in a new tab so audio keeps playing while you navigate">
           🎵 Rangapura Vihara ↗
         </a>
+        <button type="button" id="prayer-add-photo"
+                onclick="document.getElementById('prayer-file-input').click()"
+                style="display:inline-flex; align-items:center; gap:6px; padding:8px 16px; background:#15803d; color:#fff; border:none; border-radius:20px; cursor:pointer; font-size:13.5px; font-weight:500;"
+                title="Upload your own photo to this page">
+          ＋ Add photo
+        </button>
+        <input type="file" id="prayer-file-input" accept="image/jpeg,image/png,image/webp,image/gif" hidden onchange="handlePrayerUpload(this)">
       </div>
     </header>
 
+    {% if user_photos %}
+    <div class="prayer-section-label">Your photos</div>
+    <div class="prayer-grid" id="prayer-user-grid">
+      {% for p in user_photos %}
+      <div class="prayer-card prayer-user-card" data-photo-id="{{ p.id }}">
+        <div class="prayer-frame">
+          <img src="{{ p.img }}" alt="{{ p.name }}"
+               loading="lazy" decoding="async" fetchpriority="low"
+               width="300" height="300">
+          <button type="button" class="prayer-delete-btn"
+                  onclick="deletePrayerPhoto('{{ p.id }}', this)"
+                  title="Remove this photo" aria-label="Remove">×</button>
+        </div>
+        <div class="prayer-name">{{ p.name }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if deities %}
+    <div class="prayer-section-label">Devotional images</div>
+    {% endif %}
     <div class="prayer-grid">
       {% for d in deities %}
       <div class="prayer-card">
@@ -136,6 +165,154 @@
       {% endfor %}
     </div>
   </main>
+
+  <!-- Upload progress toast (replaces the global toast which may not be loaded) -->
+  <div id="prayer-toast" class="prayer-toast" hidden></div>
+
+  <style>
+    .prayer-section-label {
+      font-size: 12px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase; color: #6b5d52;
+      margin: 18px 4px 10px;
+    }
+    html.dark .prayer-section-label { color: #94a3b8; }
+    .prayer-user-card { position: relative; }
+    .prayer-delete-btn {
+      position: absolute; top: 6px; right: 6px;
+      width: 26px; height: 26px;
+      border: none; border-radius: 50%;
+      background: rgba(15, 23, 42, .55); color: #fff;
+      font-size: 18px; line-height: 1; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity .12s, background .12s, transform .08s;
+      backdrop-filter: blur(2px);
+    }
+    .prayer-user-card:hover .prayer-delete-btn,
+    .prayer-delete-btn:focus-visible { opacity: 1; }
+    .prayer-delete-btn:hover { background: #b91c1c; }
+    .prayer-delete-btn:active { transform: scale(.92); }
+
+    .prayer-toast {
+      position: fixed; left: 50%; bottom: 24px;
+      transform: translateX(-50%);
+      padding: 10px 18px; border-radius: 999px;
+      background: #0f172a; color: #fff;
+      font-size: 13.5px; font-weight: 600;
+      box-shadow: 0 12px 28px rgba(15,23,42,.32);
+      z-index: 9999;
+    }
+    .prayer-toast.is-error { background: #b91c1c; }
+    .prayer-toast.is-saving { background: #1d4ed8; }
+
+    /* Always make the delete button visible on touch devices since
+       there's no hover state. */
+    @media (hover: none) {
+      .prayer-delete-btn { opacity: 1; }
+    }
+  </style>
+
+  <script>
+    function _showPrayerToast(msg, kind, ms) {
+      const t = document.getElementById("prayer-toast");
+      if (!t) return;
+      t.textContent = msg;
+      t.className = "prayer-toast" + (kind ? " is-" + kind : "");
+      t.hidden = false;
+      clearTimeout(t._dismissTimer);
+      if (ms) t._dismissTimer = setTimeout(() => t.hidden = true, ms);
+    }
+
+    async function handlePrayerUpload(input) {
+      const file = input.files && input.files[0];
+      input.value = "";    // reset so picking the same file twice still fires
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        _showPrayerToast("File too large (max 5 MB)", "error", 3500);
+        return;
+      }
+      let displayName = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 80);
+      // Optional rename prompt — keep simple, skip if user cancels.
+      const named = prompt("Caption for this photo?", displayName);
+      if (named === null) return;     // cancelled
+      displayName = named.trim().slice(0, 80) || displayName;
+
+      _showPrayerToast("Uploading…", "saving");
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("display_name", displayName);
+      try {
+        const r = await fetch("/prayer/upload", { method: "POST", body: fd });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          _showPrayerToast(data.error || ("Upload failed (" + r.status + ")"), "error", 4500);
+          return;
+        }
+        _showPrayerToast("Photo added", null, 2200);
+        // Render the new tile in-place rather than a full reload.
+        _addUserTile(data.id, data.url, data.display_name);
+      } catch (e) {
+        console.error("upload failed:", e);
+        _showPrayerToast("Upload failed — please try again.", "error", 4500);
+      }
+    }
+
+    function _addUserTile(id, url, name) {
+      let grid = document.getElementById("prayer-user-grid");
+      if (!grid) {
+        // No "Your photos" section yet — create the label + grid.
+        const main = document.querySelector(".prayer-container");
+        if (!main) { location.reload(); return; }
+        const label = document.createElement("div");
+        label.className = "prayer-section-label";
+        label.textContent = "Your photos";
+        grid = document.createElement("div");
+        grid.id = "prayer-user-grid";
+        grid.className = "prayer-grid";
+        // Insert after the header
+        const header = main.querySelector(".prayer-header");
+        header.parentNode.insertBefore(label, header.nextSibling);
+        label.parentNode.insertBefore(grid, label.nextSibling);
+      }
+      const card = document.createElement("div");
+      card.className = "prayer-card prayer-user-card";
+      card.setAttribute("data-photo-id", id);
+      card.innerHTML = `
+        <div class="prayer-frame">
+          <img src="${url}" alt="${name || 'Photo'}" loading="lazy" decoding="async">
+          <button type="button" class="prayer-delete-btn"
+                  onclick="deletePrayerPhoto('${id}', this)" title="Remove this photo" aria-label="Remove">×</button>
+        </div>
+        <div class="prayer-name">${(name || 'Photo').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`;
+      grid.insertBefore(card, grid.firstChild);
+    }
+
+    async function deletePrayerPhoto(id, btn) {
+      if (!confirm("Remove this photo from your prayer page?")) return;
+      try {
+        const r = await fetch(`/prayer/photos/${id}/delete`, { method: "POST" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const card = btn.closest(".prayer-user-card");
+        if (card) {
+          card.style.transition = "opacity .25s, transform .25s";
+          card.style.opacity = "0";
+          card.style.transform = "scale(.92)";
+          setTimeout(() => {
+            card.remove();
+            // If that was the last user photo, drop the section label too.
+            const grid = document.getElementById("prayer-user-grid");
+            if (grid && grid.children.length === 0) {
+              const label = grid.previousElementSibling;
+              if (label && label.classList.contains("prayer-section-label")) label.remove();
+              grid.remove();
+            }
+          }, 280);
+        }
+        _showPrayerToast("Removed", null, 1500);
+      } catch (e) {
+        _showPrayerToast("Couldn't remove photo", "error", 3500);
+      }
+    }
+  </script>
 
 </body>
 </html>
