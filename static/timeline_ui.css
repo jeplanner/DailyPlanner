@@ -1,167 +1,237 @@
+/* ═══════════════════════════════════════════════════════════
+   ROADMAP / TIMELINE — responsive + dark-mode
+   Reuses design-system tokens so it stays in sync with the rest
+   of the app. The previous version had a fixed 120px left rail
+   margin and absolute-positioned date labels which broke below
+   ~720px viewport (date labels clipped, cards squashed).
+   ═══════════════════════════════════════════════════════════ */
+
 body {
-  font-family: system-ui, sans-serif;
-  background: #f6f7f9;
+  font-family: var(--font-family, 'Inter', system-ui, sans-serif);
+  background: var(--color-bg, #f5f6f8);
+  color: var(--color-text, #0f172a);
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ICON NAV — THIS IS THE IMPORTANT PART */
-.nav-icons {
-  display: flex;
-  justify-content: center;   /* ⬅️ centers icons */
-  align-items: center;
-  gap: 14px;
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 18px 20px 80px;
 }
 
-/* Icon styling */
-.nav-icons a,
-.nav-icons button {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  padding: 6px;
-  border-radius: 10px;
-  line-height: 1;
-}
-
-/* Hover feedback */
-.nav-icons a:hover,
-.nav-icons button:hover {
-  background: #f3f4f6;
-}
-
-/* ======================
-   HEADER
-====================== */
-
+/* ───────────── HEADER ───────────── */
 .timeline-header {
-  display:flex;
-  justify-content: space-between;
-  align-items:center;
-  margin: 12px 0 18px;
+  display: flex; flex-wrap: wrap; gap: 12px;
+  justify-content: space-between; align-items: center;
+  margin: 6px 0 22px;
 }
-
+.timeline-header .left h2 {
+  font-size: 22px; font-weight: 800; margin: 0;
+  letter-spacing: -.01em;
+  color: var(--color-text, #0f172a);
+}
 .controls {
-  display:flex;
-  gap:12px;
-  align-items:center;
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
 }
 
+/* Zoom toggle — segmented control matching the design-system pattern */
+.zoom-toggle {
+  display: inline-flex; gap: 0;
+  background: var(--color-surface-sunken, #eef0f3);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 9px;
+  padding: 2px;
+}
 .zoom-toggle button {
-  padding:6px 10px;
-  border-radius:8px;
-  border:1px solid #e5e7eb;
-  background:white;
-  cursor:pointer;
+  padding: 6px 14px;
+  border: none; background: transparent;
+  border-radius: 7px;
+  font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--color-text-secondary, #64748b);
+  cursor: pointer;
+  transition: background .12s, color .12s, box-shadow .12s;
 }
-
 .zoom-toggle button.active {
-  background:#2563eb;
-  color:white;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #0f172a);
+  box-shadow: 0 1px 2px rgba(15,23,42,.08);
 }
+html.dark .zoom-toggle { background: #0f172a; border-color: #334155; }
+html.dark .zoom-toggle button { color: #94a3b8; }
+html.dark .zoom-toggle button.active { background: #1e293b; color: #f1f5f9; }
 
-/* ======================
-   TIMELINE RAIL
-====================== */
+/* Project filter dropdown */
+.controls select {
+  appearance: none;
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 9px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #0f172a);
+  font: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  max-width: 220px;
+}
+.controls select:focus {
+  outline: none;
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.18));
+}
+html.dark .controls select { background-color: #0f172a; border-color: #334155; color: #f1f5f9; }
 
+/* ───────────── TIMELINE RAIL ─────────────
+   Single vertical line on the left, dots mark each block.
+   No fixed left margin — uses padding-left on each block so the
+   card area always sizes to the viewport. */
 .timeline {
   position: relative;
-  margin-left: 120px;
+  padding-left: 0;
 }
-
 .timeline::before {
-  content:"";
-  position:absolute;
-  left:-40px;
-  top:0;
-  bottom:0;
-  width:3px;
-  background:#e5e7eb;
+  content: "";
+  position: absolute;
+  left: 11px; top: 4px; bottom: 4px;
+  width: 2px;
+  background: var(--color-border, #e5e7eb);
+  border-radius: 1px;
 }
-
-/* ======================
-   BLOCKS
-====================== */
+html.dark .timeline::before { background: #28344a; }
 
 .time-block {
-  position:relative;
-  margin-bottom:22px;
+  position: relative;
+  padding-left: 36px;
+  margin-bottom: 22px;
 }
 
+/* Date label + dot share a row at the top of the block.
+   Dot sits on the rail; label is to its right. */
 .time-node {
-  position:absolute;
-  left:-120px;
-  width:100px;
-  text-align:right;
+  position: relative;
+  margin-left: -36px;
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 14px;
+  min-height: 24px;
 }
-
 .time-node .dot {
-  position:absolute;
-  right:-46px;
-  top:6px;
-  width:12px;
-  height:12px;
-  background:#2563eb;
-  border-radius:50%;
+  position: relative;
+  width: 14px; height: 14px;
+  margin-left: 5px;          /* aligns with rail at left:11px (centre 12, dot half 7 → 5) */
+  background: var(--color-primary, #2563eb);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px var(--color-bg, #f5f6f8);
+  flex: 0 0 auto;
 }
+html.dark .time-node .dot { box-shadow: 0 0 0 4px #0b1220; }
 
 .time-label {
-  font-size:13px;
-  font-weight:600;
-  color:#374151;
+  font-size: 13px; font-weight: 700;
+  color: var(--color-text, #0f172a);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
 }
 
-/* ======================
-   CARDS
-====================== */
-
+/* ───────────── CARDS ───────────── */
 .time-content {
-  display:flex;
-  flex-direction:column;
-  gap:10px;
+  display: flex; flex-direction: column; gap: 8px;
 }
 
 .timeline-card {
-  background:white;
-  border-radius:12px;
-  padding:12px;
-  box-shadow:0 6px 18px rgba(0,0,0,0.06);
-  cursor:grab;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  will-change: transform;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: grab;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04);
+  transition: transform .14s ease, box-shadow .14s ease, border-color .14s;
+  word-break: break-word;
 }
-
 .timeline-card:hover {
-   transform: translateY(-2px);
+  transform: translateY(-1px);
+  border-color: var(--color-border-strong, #d1d5db);
+  box-shadow: 0 6px 16px rgba(15,23,42,.08);
 }
+.timeline-card:active { cursor: grabbing; }
+html.dark .timeline-card { background: #111a2c; border-color: #28344a; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+html.dark .timeline-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
 
 .card-title {
-  font-weight:600;
-  margin-bottom:4px;
+  font-weight: 600; font-size: 14px; line-height: 1.4;
+  margin-bottom: 4px;
+  color: var(--color-text, #0f172a);
 }
-
 .card-meta {
-  font-size:12px;
-  color:#6b7280;
+  font-size: 12px;
+  color: var(--color-text-muted, #6b7280);
 }
 
-/* drag highlight */
-
-.timeline-card.drag-over {
-  outline: 2px dashed #2563eb;
-}
+/* Drag highlights */
+.timeline-card.drag-over { outline: 2px dashed var(--color-primary, #2563eb); }
 .time-block.drag-over {
-  background: #eef4ff;
+  background: var(--color-primary-light, #eff6ff);
   border-radius: 12px;
 }
+html.dark .time-block.drag-over { background: rgba(37,99,235,.18); }
 
+/* ───────────── EMPTY STATES ───────────── */
 .empty-slot {
-  font-size: 12px;
-  color: #9ca3af;
-  padding: 6px 0;
+  font-size: 12px; padding: 6px 0;
+  color: var(--color-text-muted, #94a3b8);
+  font-style: italic;
 }
-
 .empty-timeline {
-  text-align: center;
-  color: #6b7280;
-  padding: 40px 0;
+  text-align: center; padding: 56px 20px;
+  background: var(--color-surface, #fff);
+  border: 1px dashed var(--color-border, #e5e7eb);
+  border-radius: 14px;
+  color: var(--color-text-muted, #6b7280);
+  font-size: 14px;
+}
+html.dark .empty-timeline { background: #111a2c; border-color: #28344a; color: #94a3b8; }
+
+/* Footer back link */
+body > .container > a[href="/"] {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 24px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 9px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-secondary, #64748b);
+  text-decoration: none;
+  font-size: 13px; font-weight: 600;
+  transition: background .12s, color .12s, border-color .12s;
+}
+body > .container > a[href="/"]:hover {
+  background: var(--color-surface-secondary, #f9fafb);
+  color: var(--color-text, #0f172a);
+  border-color: var(--color-border-strong, #d1d5db);
+}
+html.dark body > .container > a[href="/"] { background: #111a2c; border-color: #28344a; color: #cbd5e1; }
+html.dark body > .container > a[href="/"]:hover { background: #15203a; color: #f1f5f9; }
+
+/* ───────────── MOBILE ───────────── */
+@media (max-width: 640px) {
+  .container { padding: 14px 14px 80px; }
+  .timeline-header { gap: 10px; margin-bottom: 16px; }
+  .timeline-header .left h2 { font-size: 18px; }
+  .controls { width: 100%; justify-content: stretch; gap: 8px; }
+  .controls select { flex: 1 1 auto; max-width: none; min-width: 0; font-size: 14px; }
+  .zoom-toggle { flex: 0 0 auto; }
+  .zoom-toggle button { padding: 7px 12px; font-size: 13px; }
+
+  .time-block { padding-left: 28px; margin-bottom: 18px; }
+  .timeline::before { left: 8px; }
+  .time-node { margin-left: -28px; gap: 10px; }
+  .time-node .dot { margin-left: 2px; width: 12px; height: 12px; }
+  .time-label { font-size: 12.5px; }
+
+  .timeline-card { padding: 11px 13px; border-radius: 9px; }
+  .card-title { font-size: 14px; }
+  .card-meta  { font-size: 11.5px; }
+
+  .empty-timeline { padding: 40px 16px; font-size: 13.5px; }
 }

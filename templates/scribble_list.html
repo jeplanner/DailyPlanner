@@ -13,6 +13,20 @@
   <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
   <style>
     body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    /* Explicit dark-mode tweaks so the page reads as actually dark on
+       phones, not "off-white". The design-system base flips already,
+       but a couple of inline rules used hardcoded light surfaces. */
+    html.dark body { background: #0b1220; }
+    html.dark .nl-sidebar { background: #111a2c; border-right-color: #28344a; }
+    html.dark .nl-card    { background: #111a2c; border-color: #28344a; }
+    html.dark .nl-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+    html.dark .nl-folder:hover { background: #15203a; color: #f1f5f9; }
+    html.dark .nl-folder-row .nl-folder-menu-btn:hover { background: #15203a; color: #f1f5f9; }
+    html.dark .nl-search { background: #111a2c; border-color: #28344a; }
+    html.dark .nl-search-clear { background: #15203a; }
+    html.dark .nl-folder-chip { background: #15203a; color: #cbd5e1; }
+    html.dark .nl-empty { background: #111a2c; border-color: #28344a; }
+    html.dark .nl-folder-mobile { background: #111a2c; border-color: #28344a; color: #f1f5f9; }
     .nl-app {
       display: grid;
       grid-template-columns: 260px 1fr;
@@ -299,15 +313,17 @@
     }
     .nl-empty .nl-empty-cta:hover { background: var(--color-primary-hover); }
 
-    /* Mobile: collapse sidebar into a top dropdown */
+    /* Mobile: collapse sidebar into a top dropdown + FAB */
     .nl-folder-mobile-wrap { display: none; }
+    .nl-fab { display: none; }   /* desktop hides the floating add button */
+
     @media (max-width: 800px) {
       .nl-app { grid-template-columns: 1fr; }
       .nl-sidebar { display: none; }
-      .nl-main { padding: 16px 14px 32px; }
-      .nl-folder-mobile-wrap { display: block; margin-bottom: 14px; }
+      .nl-main { padding: 16px 14px 96px; }   /* extra bottom padding so FAB doesn't overlap last card */
+      .nl-folder-mobile-wrap { display: flex; gap: 10px; align-items: stretch; margin-bottom: 14px; }
       .nl-folder-mobile {
-        width: 100%;
+        flex: 1; min-width: 0;
         padding: 10px 14px;
         background: var(--color-surface);
         border: 1px solid var(--color-border); border-radius: 10px;
@@ -318,6 +334,41 @@
         background-position: right 12px center;
         padding-right: 36px;
       }
+      /* Inline "+ New" button next to the folder dropdown so a fresh
+         user always sees how to create a note (the desktop sidebar's
+         + button is hidden in this viewport). */
+      .nl-mobile-new {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 0 14px;
+        background: var(--color-primary); color: var(--color-on-primary);
+        border: none; border-radius: 10px;
+        font: inherit; font-size: 14px; font-weight: 600;
+        text-decoration: none;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      .nl-mobile-new:hover { background: var(--color-primary-hover); }
+      .nl-mobile-new svg { width: 16px; height: 16px; }
+      @media (max-width: 380px) { .nl-mobile-new span { display: none; } }
+
+      /* Floating "new note" FAB — second affordance, always reachable
+         with the right thumb. Mirrors /checklist's .cl-fab pattern. */
+      .nl-fab {
+        position: fixed;
+        right: 16px; bottom: 16px;
+        bottom: calc(16px + env(safe-area-inset-bottom, 0));
+        z-index: 200;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 56px; height: 56px;
+        border: none; border-radius: 50%;
+        background: var(--color-primary); color: var(--color-on-primary);
+        box-shadow: 0 12px 28px rgba(37,99,235,.35);
+        text-decoration: none;
+        font-size: 26px; line-height: 1; font-weight: 400;
+        transition: transform .12s, background .12s;
+      }
+      .nl-fab:hover { background: var(--color-primary-hover); }
+      .nl-fab:active { transform: scale(.94); }
     }
   </style>
 </head>
@@ -393,7 +444,7 @@
       </div>
     </header>
 
-    <!-- Mobile folder dropdown -->
+    <!-- Mobile folder dropdown + add button -->
     <div class="nl-folder-mobile-wrap">
       <select class="nl-folder-mobile" onchange="if(this.value)location.href=this.value;" aria-label="Folder">
         <option value="/notes/scribble" {% if not folder and not pinned_only %}selected{% endif %}>📓 All Notes ({{ sidebar.total }})</option>
@@ -404,6 +455,11 @@
           {% endif %}
         {% endfor %}
       </select>
+      <a href="/notes/scribble/new{% if folder %}?folder={{ folder|urlencode }}{% endif %}"
+         class="nl-mobile-new" aria-label="New note">
+        <i data-feather="plus"></i>
+        <span>New note</span>
+      </a>
     </div>
 
     <div class="nl-toolbar">
@@ -479,6 +535,12 @@
       </div>
     {% endif %}
   </main>
+
+  <!-- Mobile-only floating action button — always visible thumb-zone CTA -->
+  <a class="nl-fab"
+     href="/notes/scribble/new{% if folder %}?folder={{ folder|urlencode }}{% endif %}"
+     aria-label="Create new note"
+     title="New note">+</a>
 
 </div>
 

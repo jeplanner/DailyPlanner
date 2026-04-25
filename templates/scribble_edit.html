@@ -144,6 +144,12 @@
         <i data-feather="star"></i>
       </button>
 
+      <a class="icon-btn"
+         href="/notes/scribble/new{% if note and note.notebook %}?folder={{ note.notebook|urlencode }}{% endif %}"
+         title="New note in this folder" aria-label="New note">
+        <i data-feather="plus"></i>
+      </a>
+
       {% if note and note.id %}
       <button type="button" class="icon-btn danger" onclick="showDeleteConfirm()" title="Delete note">
         <i data-feather="trash-2"></i>
