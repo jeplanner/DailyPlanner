@@ -1781,13 +1781,20 @@ async function planMoveOneToTomorrow(btn, ev) {
 async function planMoveAllToTomorrow() {
   const rows = Array.from(document.querySelectorAll("#md-plan-card .md-plan-row"));
   if (!rows.length) return;
-  if (!confirm(`Move all ${rows.length} unfinished task(s) to tomorrow?`)) return;
+  const n = rows.length;
 
+  // No browser confirm — feels intrusive in a fluid planning flow.
+  // Per-task animation + a single summary toast give enough feedback,
+  // and individual rows can be re-rescheduled if needed. We pass
+  // silent=true to suppress the per-row toast (would be N toasts).
   for (const row of rows) {
     _reschedRow = row;
-    await _doReschedule({ shift_days: 1 });
+    await _doReschedule({ shift_days: 1 }, { silent: true });
   }
   _maybeFadePlanCard();
+  if (window.showToast) {
+    showToast(`Moved ${n} task${n === 1 ? '' : 's'} to tomorrow`, "success", 2200);
+  }
 }
 
 /* If the Plan Tomorrow card has no rows left, fade it away. */
@@ -1966,10 +1973,11 @@ async function applyReschedulePick(input) {
   input.value = "";
 }
 
-async function _doReschedule(payload) {
+async function _doReschedule(payload, opts) {
   const row = _reschedRow;
   closeRescheduleMenu();
   if (!row) return;
+  const silent = opts && opts.silent;
 
   const id = row.dataset.id;
   const source = row.dataset.source || "";
@@ -2000,13 +2008,13 @@ async function _doReschedule(payload) {
     row.style.transform = "translateX(8px)";
     setTimeout(() => row.remove(), 260);
 
-    if (window.showToast) {
+    if (!silent && window.showToast) {
       const label = newDate ? `Moved to ${newDate}` : "Rescheduled";
       showToast(label, "success", 2200);
     }
   } catch (e) {
     console.error("reschedule failed:", e);
-    if (window.showToast) showToast("Couldn't reschedule", "error");
+    if (!silent && window.showToast) showToast("Couldn't reschedule", "error");
   }
 }
 
