@@ -719,6 +719,16 @@ html.dark .section-title{color:#f1f5f9;}
         <i data-feather="bar-chart-2"></i>
         Weekly Review
       </a>
+
+      <a href="/summary?view=monthly" data-match="^/summary.*view=monthly" title="Monthly review — month-over-month trends, structured prompts">
+        <i data-feather="calendar"></i>
+        Monthly Review
+      </a>
+
+      <a href="/summary?view=annual" data-match="^/summary.*view=annual" title="Year in review — annual stats, themes, what next">
+        <i data-feather="award"></i>
+        Annual Review
+      </a>
     </div>
 
     <!-- ══ LIFE & FINANCE ════════════════════════════════ -->
@@ -1814,6 +1824,37 @@ const HELP_PAGES = [
     ]
   },
   {
+    match: /^\/summary.*view=monthly/,
+    title: "Monthly Review",
+    lead: "Step back to the month view. Month-over-month deltas, structured prompts, what to repeat or change.",
+    sections: [
+      {
+        title: "What's in the view",
+        items: [
+          "<b>Focus hours</b>, <b>completion rate</b>, and <b>habit days</b> for the selected month with vs-last-month deltas.",
+          "<b>Charts</b> — weekly activity bars + completion pie for the month.",
+          "<b>Monthly Review</b> prompts — what went well, what to change, what to keep doing. Saves on blur.",
+          "<b>Day-by-day</b> accordion — tap any day to see its tasks."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/summary.*view=annual/,
+    title: "Annual Review",
+    lead: "Year in review — themes, milestones, year-over-year trends, what next.",
+    sections: [
+      {
+        title: "What's in the view",
+        items: [
+          "<b>Focus hours</b>, <b>completion rate</b>, and <b>habit days</b> for the selected year with vs-last-year deltas.",
+          "<b>Annual Review</b> prompts — wins, lessons, themes for next year.",
+          "Use this once a year (December / January) to set the tone for what comes next."
+        ]
+      }
+    ]
+  },
+  {
     match: /^\/summary/,
     title: "Weekly Review",
     lead: "Step back and see the arc. Aggregate stats, AI narrative, day-by-day breakdown.",
@@ -1824,7 +1865,8 @@ const HELP_PAGES = [
           "<b>Focus hours</b>, <b>completion rate</b>, and <b>habit days</b> for the selected week.",
           "<b>Charts</b> — daily activity bar chart + completion pie.",
           "<b>Insights</b> — brief narrative bullets from your data (more detailed with an AI key configured).",
-          "<b>Day-by-day</b> accordion at the bottom — tap a day to see its tasks."
+          "<b>Day-by-day</b> accordion at the bottom — tap a day to see its tasks.",
+          "Switch to <b>Monthly</b> or <b>Yearly</b> with the tabs above for longer-horizon reviews."
         ]
       }
     ]

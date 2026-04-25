@@ -163,22 +163,65 @@
     return row;
   }
 
-  // Start a Pomodoro on a checklist item. Duration falls back to the
-  // user's last-saved default (set via the peek-sheet input) — keeps
-  // both surfaces in sync without a separate setting.
+  // Start a Pomodoro on a checklist item. Duration is read from the
+  // top-of-page Pomodoro bar (which mirrors localStorage so the peek
+  // sheet on /summary stays in sync).
   async function startChecklistPomo(it) {
     if (!window.gpomoStart) return;
-    let mins = 25;
-    try {
-      const saved = parseInt(localStorage.getItem("pomo_default_minutes") || "25", 10);
-      if (saved >= 1 && saved <= 180) mins = saved;
-    } catch {}
+    const mins = readPomoMinutes();
     await window.gpomoStart({
       source: "adhoc",
       label: it.name,
       mode: "pomodoro",
       target_seconds: mins * 60,
       _title: it.name,
+    });
+  }
+
+  // ── Pomodoro duration bar ────────────────────────
+  function readPomoMinutes() {
+    const input = document.getElementById("cl-pomo-mins");
+    let mins = 25;
+    if (input) {
+      mins = Math.max(1, Math.min(180, parseInt(input.value, 10) || 25));
+    } else {
+      try {
+        const saved = parseInt(localStorage.getItem("pomo_default_minutes") || "25", 10);
+        if (saved >= 1 && saved <= 180) mins = saved;
+      } catch {}
+    }
+    return mins;
+  }
+  function setPomoMinutes(mins) {
+    const safe = Math.max(1, Math.min(180, parseInt(mins, 10) || 25));
+    const input = document.getElementById("cl-pomo-mins");
+    if (input) input.value = safe;
+    try { localStorage.setItem("pomo_default_minutes", String(safe)); } catch {}
+    // Highlight the matching preset chip if any.
+    document.querySelectorAll(".cl-pomo-chip").forEach(c => {
+      c.classList.toggle("is-active", parseInt(c.dataset.mins, 10) === safe);
+    });
+  }
+  function initPomoBar() {
+    const input = document.getElementById("cl-pomo-mins");
+    if (!input) return;
+    let saved = 25;
+    try {
+      const v = parseInt(localStorage.getItem("pomo_default_minutes") || "25", 10);
+      if (v >= 1 && v <= 180) saved = v;
+    } catch {}
+    setPomoMinutes(saved);
+
+    input.addEventListener("change", () => setPomoMinutes(input.value));
+    input.addEventListener("input", () => setPomoMinutes(input.value));
+    document.getElementById("cl-pomo-minus")?.addEventListener("click", () => {
+      setPomoMinutes(readPomoMinutes() - 5);
+    });
+    document.getElementById("cl-pomo-plus")?.addEventListener("click", () => {
+      setPomoMinutes(readPomoMinutes() + 5);
+    });
+    document.querySelectorAll(".cl-pomo-chip").forEach(chip => {
+      chip.addEventListener("click", () => setPomoMinutes(chip.dataset.mins));
     });
   }
 
@@ -397,6 +440,8 @@
         btn.textContent = label;
       }
     });
+
+    initPomoBar();
 
     // Push UI wiring (push.js is loaded first)
     if (window.ClPush) {

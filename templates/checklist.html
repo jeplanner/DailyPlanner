@@ -19,6 +19,28 @@
       <div class="cl-date">{{ plan_date }}</div>
     </header>
 
+    <!-- Pomodoro duration — controls the ▶ button on every item.
+         Persisted to localStorage as pomo_default_minutes; the peek
+         sheet on /summary reads the same key, so changing it here
+         changes it everywhere. -->
+    <section class="cl-pomo-bar" id="cl-pomo-bar">
+      <span class="cl-pomo-label">Pomodoro</span>
+      <div class="cl-pomo-input">
+        <button type="button" class="cl-pomo-step" id="cl-pomo-minus" aria-label="Decrease 5 min">−</button>
+        <input type="number" id="cl-pomo-mins" min="1" max="180" step="1" value="25" inputmode="numeric">
+        <button type="button" class="cl-pomo-step" id="cl-pomo-plus" aria-label="Increase 5 min">+</button>
+        <span class="cl-pomo-unit">min</span>
+      </div>
+      <div class="cl-pomo-presets">
+        <button type="button" class="cl-pomo-chip" data-mins="15">15</button>
+        <button type="button" class="cl-pomo-chip" data-mins="25">25</button>
+        <button type="button" class="cl-pomo-chip" data-mins="45">45</button>
+        <button type="button" class="cl-pomo-chip" data-mins="50">50</button>
+        <button type="button" class="cl-pomo-chip" data-mins="90">90</button>
+      </div>
+      <span class="cl-pomo-hint">▶ on each item starts a Pomodoro of this length.</span>
+    </section>
+
     <section class="cl-push-status" id="cl-push-status" hidden>
       <div class="cl-push-text">
         <strong>Reminders are off on this device.</strong>
