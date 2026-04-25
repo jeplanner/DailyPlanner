@@ -16,7 +16,11 @@
       "Bash('~/.local/bin/pip' install *)",
       "Bash(.venv/bin/python /tmp/get-pip.py)",
       "Bash(.venv/bin/python -m pip --version)",
-      "Bash(.venv/bin/python --version)"
+      "Bash(.venv/bin/python --version)",
+      "Bash(gh auth *)",
+      "Read(//home/venghatesh/**)",
+      "Bash(git fetch *)",
+      "Bash(git push *)"
     ]
   }
 }
