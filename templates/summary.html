@@ -1000,12 +1000,26 @@ function _applyDoneState(row, btn, isDone) {
  * Today's Recap tbody. Used after the undo window closes. The recap
  * card is created on the fly if the page didn't render one (i.e. this
  * is the first task being completed today). */
+/* Maps a row to its pre-recap location { parent, nextSibling } so that
+ * an uncheck or undo can put the row back where it belongs without a
+ * full page refresh. Server-rendered recap rows don't have an entry
+ * here — they're handled by _restoreFromRecap's fallback branch. */
+const _recapOrigin = new WeakMap();
+
 function _moveRowToRecap(row) {
   if (!row.isConnected) return;
   if (row.closest("#md-recap-card")) return;  // already there
 
   const recapTbody = _ensureRecapCard();
   if (!recapTbody) return;
+
+  // Remember original location so an uncheck/undo can restore it.
+  if (!_recapOrigin.has(row)) {
+    _recapOrigin.set(row, {
+      parent: row.parentNode,
+      nextSibling: row.nextSibling,
+    });
+  }
 
   // Slide-out animation from current position
   row.style.transition = "opacity .25s ease, transform .25s ease";
@@ -1061,6 +1075,70 @@ function _ensureRecapCard() {
   reflection.parentNode.insertBefore(card, reflection);
   if (window.feather) feather.replace();
   return document.getElementById("md-recap-tbody");
+}
+
+/* Pull a row out of the Today's Recap card and either:
+ *   (A) put it back in its original section if we tracked the origin
+ *       (i.e. the row was moved here during *this* page session), OR
+ *   (B) fade it out and tell the user to refresh — for server-rendered
+ *       recap rows, we don't know which section / project group / time
+ *       band to drop it into, and re-rendering that DOM is fragile.
+ * Either way the strike-through and "is-done" classes are stripped so
+ * the restored row reads as active again. */
+function _restoreFromRecap(row) {
+  const origin = _recapOrigin.get(row);
+  const hasLiveOrigin = origin && origin.parent && origin.parent.isConnected;
+
+  _bumpRecapCount(-1);
+
+  if (!hasLiveOrigin) {
+    // Case B: server-rendered recap row, or original section was removed.
+    // Be honest about what's happening so the row doesn't seem to vanish.
+    row.style.transition = "opacity .25s ease";
+    row.style.opacity = "0";
+    setTimeout(() => row.remove(), 260);
+    if (window.showToast) {
+      showToast("Marked open · refresh to see it in its section", "info", 3500);
+    }
+    return;
+  }
+
+  // Case A: animate out of the recap then reinsert at the original spot.
+  row.style.transition = "opacity .2s ease, transform .2s ease";
+  row.style.opacity = "0";
+  row.style.transform = "translateX(-8px)";
+  setTimeout(() => {
+    // Strip done state — the row is becoming active again.
+    row.classList.remove("md-done", "md-recap-row");
+    row.dataset.done = "0";
+    const btn = row.querySelector(".md-task-toggle");
+    if (btn) {
+      btn.classList.remove("is-done", "is-saving");
+      btn.setAttribute("aria-label", "Mark done");
+    }
+
+    // Reinsert at original location. If the original next-sibling was
+    // removed in the meantime, fall back to appending to the parent.
+    if (origin.nextSibling && origin.nextSibling.parentNode === origin.parent) {
+      origin.parent.insertBefore(row, origin.nextSibling);
+    } else {
+      origin.parent.appendChild(row);
+    }
+    _recapOrigin.delete(row);
+
+    // Tiny in-animation so the user's eye catches the new home.
+    row.style.transition = "";
+    row.style.opacity = "0";
+    row.style.transform = "translateY(-4px)";
+    requestAnimationFrame(() => {
+      row.style.transition = "opacity .25s ease, transform .25s ease";
+      row.style.opacity = "1";
+      row.style.transform = "translateY(0)";
+      setTimeout(() => { row.style.transition = ""; }, 260);
+    });
+
+    if (window.showToast) showToast("Restored", "info", 1500);
+  }, 220);
 }
 
 function _bumpRecapCount(delta) {
@@ -1124,11 +1202,13 @@ async function markTaskDoneInRow(btn, ev) {
           btn.classList.add("is-saving");
           try {
             await _postToggle(source, id, false);
-            _applyDoneState(row, btn, false);
-            // If we'd already moved this row to the recap, pull it back.
+            // If the row already moved to recap, _restoreFromRecap puts
+            // it back in its origin and shows its own "Restored" toast.
+            // Otherwise just unstrike in place.
             if (row.closest("#md-recap-card")) {
-              _bumpRecapCount(-1);
-              row.remove();
+              _restoreFromRecap(row);
+            } else {
+              _applyDoneState(row, btn, false);
               if (window.showToast) showToast("Restored", "info", 1500);
             }
           } catch (err) {
@@ -1140,14 +1220,18 @@ async function markTaskDoneInRow(btn, ev) {
       });
     }
   } else {
-    // Uncheck path: row was in recap; pull it out (count auto-fades card).
+    // Uncheck path. Two cases:
+    //   - Row is in recap → _restoreFromRecap moves it back to its
+    //     original section (or fades + toasts a refresh hint for
+    //     server-rendered recap rows).
+    //   - Row is still in its native section (struck-through but the
+    //     5s move-to-recap timer hadn't fired yet) → just unstrike in
+    //     place; nothing to move.
     if (row.closest("#md-recap-card")) {
-      _bumpRecapCount(-1);
-      row.style.transition = "opacity .2s ease";
-      row.style.opacity = "0";
-      setTimeout(() => row.remove(), 220);
+      _restoreFromRecap(row);
+    } else if (window.showToast) {
+      showToast("Marked open", "info", 1800);
     }
-    if (window.showToast) showToast("Marked open", "info", 1800);
   }
 }
 
