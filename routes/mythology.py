@@ -81,10 +81,11 @@ def _pick_daily(rows, count=5, ref_date=None):
 @mythology_bp.route("/mythology", methods=["GET"])
 @login_required
 def mythology_page():
-    """Daily 5 stories. Optional query params:
-       ?epic=ramayana | ?epic=mahabharata  → scope to one epic
-       ?count=N                            → override picker count (1..20)
-    """
+    """Daily 5 stories. The page renders all three filter views
+    (Both / Ramayana / Mahabharata) server-side and JS toggles which
+    one is visible — that way switching tabs feels instant and never
+    flashes white during navigation. Initial visible view is driven
+    by ?epic=<name>; missing or unknown values fall back to "both"."""
     epic = (request.args.get("epic") or "").strip().lower() or None
     if epic and epic not in ("ramayana", "mahabharata"):
         epic = None
@@ -93,22 +94,33 @@ def mythology_page():
     except (TypeError, ValueError):
         count = 5
 
-    rows = _fetch_all(epic=epic)
-    stories = _pick_daily(rows, count=count) if not epic else (rows[:count] if rows else [])
+    # Fetch the full corpus once — it's small enough to slice in
+    # Python without three separate DB hits.
+    all_rows = _fetch_all()
+    rama_rows = [r for r in all_rows if (r.get("epic") or "").lower() == "ramayana"]
+    maha_rows = [r for r in all_rows if (r.get("epic") or "").lower() == "mahabharata"]
 
-    # When epic is set, just shuffle deterministically and slice — no
-    # need for the alternating-epics interleave.
-    if epic and rows:
-        rng = random.Random(_date_seed())
-        pool = list(rows)
-        rng.shuffle(pool)
-        stories = pool[:count]
+    rng_seed = _date_seed()
+
+    def _shuffled(pool):
+        rng = random.Random(rng_seed)
+        out = list(pool)
+        rng.shuffle(out)
+        return out
+
+    stories_both = _pick_daily(all_rows, count=count)
+    stories_rama = _shuffled(rama_rows)[:count]
+    stories_maha = _shuffled(maha_rows)[:count]
 
     return render_template(
         "mythology.html",
-        stories=stories,
-        epic=epic,
-        total=len(rows),
+        stories_both=stories_both,
+        stories_rama=stories_rama,
+        stories_maha=stories_maha,
+        active_epic=epic or "both",
+        total=len(all_rows),
+        ramayana_total=len(rama_rows),
+        mahabharata_total=len(maha_rows),
         today=date.today().strftime("%A, %B %-d"),
     )
 

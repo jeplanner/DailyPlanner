@@ -187,41 +187,58 @@
   </header>
 
   <div class="myth-filters" role="tablist" aria-label="Filter by epic">
-    <a href="/mythology"
-       class="myth-chip {% if not epic %}is-active{% endif %}">
-      Both ({{ total if not epic else 'all' }})
-    </a>
-    <a href="/mythology?epic=ramayana"
-       class="myth-chip {% if epic == 'ramayana' %}is-active{% endif %}">
-      Ramayana
-    </a>
-    <a href="/mythology?epic=mahabharata"
-       class="myth-chip {% if epic == 'mahabharata' %}is-active{% endif %}">
-      Mahabharata
-    </a>
+    <button type="button" class="myth-chip" data-view="both"
+            onclick="mythPickView('both')" role="tab">
+      Both ({{ total }})
+    </button>
+    <button type="button" class="myth-chip" data-view="ramayana"
+            onclick="mythPickView('ramayana')" role="tab">
+      Ramayana ({{ ramayana_total }})
+    </button>
+    <button type="button" class="myth-chip" data-view="mahabharata"
+            onclick="mythPickView('mahabharata')" role="tab">
+      Mahabharata ({{ mahabharata_total }})
+    </button>
   </div>
 
-  {% if stories %}
-    <div class="myth-list">
-      {% for s in stories %}
-      <article class="myth-card">
-        <div class="myth-card-head">
-          <span class="myth-num">{{ loop.index }}</span>
-          <span class="myth-epic is-{{ s.epic|lower }}">{{ s.epic|capitalize }}</span>
-          <h2 class="myth-title">{{ s.title }}</h2>
-        </div>
-        {% if s.characters %}
-          <div class="myth-meta"><span class="myth-characters">{{ s.characters }}</span></div>
-        {% endif %}
-        <p class="myth-summary">{{ s.summary }}</p>
-        {% if s.moral %}
-          <p class="myth-moral"><b>Reflection</b> · {{ s.moral }}</p>
-        {% endif %}
-        {% if s.source_ref %}
-          <div class="myth-source">— {{ s.source_ref }}</div>
-        {% endif %}
-      </article>
-      {% endfor %}
+  {# Three pre-rendered lists. JS toggles which one is visible — no
+     navigation, no flash. URL is updated via pushState so the active
+     view is bookmarkable / shareable. #}
+  {% macro story_card(s, idx) %}
+    <article class="myth-card">
+      <div class="myth-card-head">
+        <span class="myth-num">{{ idx }}</span>
+        <span class="myth-epic is-{{ s.epic|lower }}">{{ s.epic|capitalize }}</span>
+        <h2 class="myth-title">{{ s.title }}</h2>
+      </div>
+      {% if s.characters %}
+        <div class="myth-meta"><span class="myth-characters">{{ s.characters }}</span></div>
+      {% endif %}
+      <p class="myth-summary">{{ s.summary }}</p>
+      {% if s.moral %}
+        <p class="myth-moral"><b>Reflection</b> · {{ s.moral }}</p>
+      {% endif %}
+      {% if s.source_ref %}
+        <div class="myth-source">— {{ s.source_ref }}</div>
+      {% endif %}
+    </article>
+  {% endmacro %}
+
+  {% if stories_both or stories_rama or stories_maha %}
+    <div class="myth-list" data-view="both">
+      {% for s in stories_both %}{{ story_card(s, loop.index) }}{% endfor %}
+    </div>
+    <div class="myth-list" data-view="ramayana" hidden>
+      {% for s in stories_rama %}{{ story_card(s, loop.index) }}{% endfor %}
+      {% if not stories_rama %}
+        <div class="myth-empty"><h2>No Ramayana stories</h2><p>The corpus may need more entries.</p></div>
+      {% endif %}
+    </div>
+    <div class="myth-list" data-view="mahabharata" hidden>
+      {% for s in stories_maha %}{{ story_card(s, loop.index) }}{% endfor %}
+      {% if not stories_maha %}
+        <div class="myth-empty"><h2>No Mahabharata stories</h2><p>The corpus may need more entries.</p></div>
+      {% endif %}
     </div>
   {% else %}
     <div class="myth-empty">
@@ -234,8 +251,37 @@
 </div>
 
 <script>
+  // Initial view from server-rendered active_epic, falling back to "both".
+  const _MYTH_INITIAL = {{ active_epic|tojson }};
+
+  function mythPickView(view) {
+    if (!["both", "ramayana", "mahabharata"].includes(view)) view = "both";
+    document.querySelectorAll(".myth-chip").forEach(c => {
+      c.classList.toggle("is-active", c.dataset.view === view);
+      c.setAttribute("aria-selected", c.dataset.view === view ? "true" : "false");
+    });
+    document.querySelectorAll(".myth-list[data-view]").forEach(list => {
+      list.hidden = list.dataset.view !== view;
+    });
+    // Update URL without a navigation — bookmarkable + back-button works.
+    const url = view === "both" ? "/mythology" : ("/mythology?epic=" + view);
+    if (window.history && window.history.pushState) {
+      try { window.history.pushState({view}, "", url); } catch {}
+    }
+    // Light scroll-to-top so the user lands at story #1 of the new view.
+    window.scrollTo({top: 0, behavior: "smooth"});
+  }
+
+  // Restore view on browser back/forward.
+  window.addEventListener("popstate", (e) => {
+    const params = new URLSearchParams(window.location.search);
+    const v = (params.get("epic") || "both").toLowerCase();
+    mythPickView(["ramayana", "mahabharata"].includes(v) ? v : "both");
+  });
+
   document.addEventListener("DOMContentLoaded", () => {
     if (window.feather) feather.replace();
+    mythPickView(_MYTH_INITIAL || "both");
   });
 </script>
 
