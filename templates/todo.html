@@ -204,7 +204,22 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 
 @media (max-width: 560px){
   .em-details-modal{align-items:flex-end;padding:0;}
-  .em-details-sheet{max-width:none;border-radius:16px 16px 0 0;max-height:82vh;}
+  .em-details-sheet{
+    max-width:none;border-radius:18px 18px 0 0;max-height:86vh;
+    /* Visual cue that this sheet can be dragged / dismissed by swiping
+       down. The handle is a pure pseudo-element; the actual swipe
+       gesture is handled in JS where present (otherwise users tap the
+       backdrop / close button). */
+    padding-top:12px;
+    background:var(--em-surface);
+  }
+  .em-details-sheet::before{
+    content:"";display:block;
+    width:36px;height:4px;border-radius:999px;
+    background:var(--em-border);
+    margin:0 auto 8px;
+  }
+  .em-details-head{padding-top:6px;}
 }
 
 .em-empty{text-align:center;padding:20px 8px;color:var(--em-text3);font-size:13px;}
@@ -237,7 +252,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--em-bg);color:var(
 .em-extra-input[type="text"]{max-width:160px;}
 
 /* Status badge + resolution menu */
-.em-status-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
+.em-status-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:0.3px;margin-left:4px;}
 .em-status-badge.done{background:#d1fae5;color:#166534;}
 .em-status-badge.in_progress{background:#dbeafe;color:#2563eb;}
 .em-status-badge.deleted{background:#fee2e2;color:#b91c1c;}
@@ -394,7 +409,7 @@ html.dark .em-select-mode .em-task.em-selected{background:#172554;}
 .em-task.prio-medium,
 .em-task.prio-low { border-left: 3px solid transparent; }
 
-.em-prio-pill{display:inline-flex;align-items:center;gap:3px;font-size:9px;font-weight:800;padding:2px 7px;border-radius:10px;margin-left:6px;text-transform:uppercase;letter-spacing:.4px;cursor:pointer;user-select:none;transition:transform .1s,filter .1s;}
+.em-prio-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;margin-left:6px;text-transform:uppercase;letter-spacing:.3px;cursor:pointer;user-select:none;transition:transform .1s,filter .1s;}
 .em-prio-pill:hover{filter:brightness(1.05) saturate(1.1);transform:scale(1.06);}
 .em-prio-pill:active{transform:scale(.94);}
 .em-prio-pill::after{content:"⇅";font-size:8px;opacity:.5;margin-left:2px;font-weight:700;}

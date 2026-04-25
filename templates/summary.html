@@ -993,8 +993,17 @@ html.dark .peek-meta .chip.overdue { background: #3b1111; color: #fca5a5; }
 }
 
 .peek-foot {
-  padding: 14px 20px; border-top: 1px solid var(--color-border, #e2e8f0);
+  padding: 14px 20px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0));
+  border-top: 1px solid var(--color-border, #e2e8f0);
   display: flex; gap: 10px; flex-shrink: 0;
+}
+@media (max-width: 420px) {
+  /* Below 420px the side-by-side buttons clip "Open in editor" by 1-2
+     characters. Stack vertically and put the primary action on top so
+     the most important affordance is closest to the thumb. */
+  .peek-foot { flex-direction: column-reverse; gap: 8px; padding: 12px 16px; }
+  .peek-foot .peek-btn { width: 100%; }
 }
 html.dark .peek-foot { border-top-color: #334155; }
 .peek-btn {

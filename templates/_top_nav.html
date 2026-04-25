@@ -1492,6 +1492,18 @@ document.addEventListener("keydown", (e) => {
   @media (max-width: 480px) {
     .gpomo { left: 12px; right: 12px; bottom: 12px; min-width: 0; max-width: none; }
   }
+  /* Below 380px (iPhone SE landscape, narrow Androids) the time digits +
+     two control buttons + task title compete for space and overlap. Tighten
+     paddings, shrink the controls, and let the title truncate so the time
+     digits are always fully visible. */
+  @media (max-width: 380px) {
+    .gpomo { padding: 8px 10px; gap: 8px; bottom: 10px; left: 8px; right: 8px; }
+    .gpomo-icon { display: none; }
+    .gpomo-time { font-size: 18px; }
+    .gpomo-bar { display: none; }
+    .gpomo-btn { width: 32px; height: 32px; border-radius: 8px; }
+    .gpomo-btn svg { width: 14px; height: 14px; }
+  }
 
   /* Pomodoro completion pulse */
   @keyframes gpomoPulse {

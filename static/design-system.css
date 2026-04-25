@@ -50,7 +50,29 @@
     --color-on-warning: #ffffff;
 
     --color-info: #2563eb;
+    --color-info-strong: #1e40af;
     --color-info-light: #eff6ff;
+    --color-info-border: #bfdbfe;
+
+    /* ── "On-tint" text colors ──────────────────────────────
+       Use these for text that sits on a *-light tinted surface
+       (e.g. text on --color-success-light). They pin the contrast
+       at >=5:1 in both themes so we never ship an illegible pill
+       again. Distinct from --color-{x} (the saturated brand hue,
+       used for icons / borders / solid buttons) and --color-{x}-strong
+       (kept for headings). */
+    --color-success-on-tint: #166534;
+    --color-warning-on-tint: #92400e;
+    --color-danger-on-tint:  #991b1b;
+    --color-info-on-tint:    #1e40af;
+
+    /* Standard pill / button tint pairs — these are the canonical
+       fills for soft-coloured chips. Pages should reach for these
+       instead of inventing color-mix() expressions. */
+    --tint-success-bg: color-mix(in srgb, var(--color-success) 14%, transparent);
+    --tint-warning-bg: color-mix(in srgb, var(--color-warning) 16%, transparent);
+    --tint-danger-bg:  color-mix(in srgb, var(--color-danger)  14%, transparent);
+    --tint-info-bg:    color-mix(in srgb, var(--color-info)    12%, transparent);
 
     /* ── Surface / text ────────────────────────────── */
     --color-bg: #f5f6f8;
@@ -227,6 +249,18 @@ html.dark {
     --color-success-border: #14532d;
     --color-warning-light: #451a03;
     --color-warning-border: #78350f;
+    --color-info-light: #102753;
+    --color-info-border: #1d4ed8;
+    /* On-tint text colors — flipped for dark surfaces so contrast
+       stays >=5:1 against the dark *-light fills above. */
+    --color-success-on-tint: #86efac;
+    --color-warning-on-tint: #fcd34d;
+    --color-danger-on-tint:  #fca5a5;
+    --color-info-on-tint:    #93c5fd;
+    --tint-success-bg: rgba(22, 163, 74, 0.20);
+    --tint-warning-bg: rgba(245, 158, 11, 0.22);
+    --tint-danger-bg:  rgba(220, 38, 38, 0.22);
+    --tint-info-bg:    rgba(37, 99, 235, 0.24);
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
