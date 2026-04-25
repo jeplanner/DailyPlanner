@@ -129,18 +129,40 @@
       </h2>
     </header>
 
+    {# Group overdue items by project (context). Preserves input order
+       so the project containing the most-overdue task appears first,
+       and within each group the most-overdue task is on top.
+       NOTE: keys are 'name' / 'tasks' (not 'items') because Jinja
+       resolves `dict.items` to the bound method, not the key. #}
+    {% set _overdue_groups = [] %}
+    {% set _overdue_seen = {} %}
+    {% for o in dashboard.overdue %}
+      {% set _key = o.context or '— No project —' %}
+      {% if _key not in _overdue_seen %}
+        {% set _ = _overdue_seen.update({_key: _overdue_groups|length}) %}
+        {% set _ = _overdue_groups.append({'name': _key, 'tasks': []}) %}
+      {% endif %}
+      {% set _ = _overdue_groups[_overdue_seen[_key]]['tasks'].append(o) %}
+    {% endfor %}
+
     <!-- Desktop / tablet: real table with columns. Mobile CSS collapses each row into a card. -->
     <div class="md-table-wrap" role="region" aria-label="Overdue tasks">
       <table class="md-table md-overdue-table">
         <thead>
           <tr>
             <th class="md-c-title">Task</th>
-            <th class="md-c-context">Project</th>
             <th class="md-c-due">Due</th>
           </tr>
         </thead>
         <tbody>
-          {% for o in dashboard.overdue %}
+          {% for group in _overdue_groups %}
+          <tr class="md-band-row md-overdue-group-row">
+            <td colspan="2">
+              {{ group.name }}
+              <span class="md-count-pill md-count-red">{{ group.tasks|length }}</span>
+            </td>
+          </tr>
+          {% for o in group.tasks %}
           <tr class="md-row md-overdue-row prio-{{ o.priority or 'medium' }}"
               data-id="{{ o.id }}"
               data-type="task"
@@ -160,9 +182,6 @@
               <span class="md-row-title">{{ o.title }}</span>
               <span class="md-type-tag md-tag-{{ o.source }}">{{ 'Project' if o.source == 'project' else 'Task' }}</span>
             </td>
-            <td class="md-c-context">
-              {% if o.context %}<span class="md-context-chip">{{ o.context }}</span>{% endif %}
-            </td>
             <td class="md-c-due">
               <span class="md-overdue-chip"
                     title="Due {{ o.due_date }}">
@@ -177,6 +196,7 @@
               {% endif %}
             </td>
           </tr>
+          {% endfor %}
           {% endfor %}
         </tbody>
       </table>
