@@ -44,6 +44,7 @@ create index if not exists todo_matrix_revised_idx
   on todo_matrix (user_id, revised_due_date)
   where is_deleted = false;
 
+-- project_tasks uses `is_eliminated` for soft-delete (not is_deleted).
 create index if not exists project_tasks_revised_idx
   on project_tasks (user_id, revised_due_date)
-  where is_deleted = false and is_eliminated = false;
+  where is_eliminated = false;
