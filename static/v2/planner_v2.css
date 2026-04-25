@@ -805,7 +805,7 @@ body {
 .gcal-status-pill.connected {
   border-color: #a7f3d0;
   background: #ecfdf5;
-  color: #047857;
+  color: #166534;
 }
 .gcal-status-pill.connected .gcal-status-dot {
   background: #10b981;

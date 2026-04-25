@@ -2399,7 +2399,7 @@ body.pt-density-compact .task-table.pt-minimal .row-details-btn { width: 26px; h
   font-size: 11.5px; font-weight: 600;
   border-radius: 999px;
   background: color-mix(in srgb, #10b981 14%, var(--pt-surface));
-  color: #047857;
+  color: #166534;
   border: 1px solid color-mix(in srgb, #10b981 28%, transparent);
   box-shadow: 0 4px 14px rgba(0,0,0,.08);
   transition: opacity .2s, transform .2s;
