@@ -1068,22 +1068,22 @@ html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; bord
 }
 .peek-timer.hidden { display: none; }
 .peek-timer-label-text {
-  font-size: 12px; font-weight: 700;
-  color: var(--color-text-secondary, #64748b);
-  text-transform: uppercase; letter-spacing: .04em;
+  font-size: 12.5px; font-weight: 800;
+  color: var(--color-text, #0f172a);
+  text-transform: uppercase; letter-spacing: .05em;
   margin-right: 4px;
 }
 .peek-timer-input {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 4px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1.5px solid var(--color-border-strong, #cbd5e1);
   border-radius: 999px;
   background: var(--color-surface, #fff);
 }
 .peek-timer-input input {
-  width: 44px; padding: 5px 4px; text-align: center;
+  width: 48px; padding: 6px 4px; text-align: center;
   border: none; outline: none; background: transparent;
-  font: inherit; font-size: 13px; font-weight: 700;
+  font: inherit; font-size: 15px; font-weight: 800;
   color: var(--color-text, #0f172a);
   font-variant-numeric: tabular-nums;
   -moz-appearance: textfield;
@@ -1091,16 +1091,17 @@ html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; bord
 .peek-timer-input input::-webkit-outer-spin-button,
 .peek-timer-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .peek-timer-step {
-  width: 24px; height: 24px; border-radius: 50%;
-  border: none; background: var(--color-surface-secondary, #f9fafb);
-  color: var(--color-text-secondary, #64748b);
-  font: inherit; font-size: 14px; font-weight: 700;
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-surface-secondary, #f9fafb);
+  color: var(--color-text, #0f172a);
+  font: inherit; font-size: 16px; font-weight: 800;
   cursor: pointer; line-height: 1;
 }
-.peek-timer-step:hover { background: var(--color-border-light, #f1f3f5); color: var(--color-text); }
+.peek-timer-step:hover { background: var(--color-primary-light, #eff6ff); color: var(--color-primary, #2563eb); border-color: var(--color-primary, #2563eb); }
 .peek-timer-unit {
-  font-size: 11px; font-weight: 600;
-  color: var(--color-text-muted, #94a3b8);
+  font-size: 12px; font-weight: 700;
+  color: var(--color-text-secondary, #475569);
   padding: 0 6px 0 2px;
 }
 .peek-timer-opt {
@@ -1119,34 +1120,35 @@ html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; bord
 .peek-timer-opt:hover { background: var(--color-primary-hover, #1d4ed8); border-color: var(--color-primary-hover, #1d4ed8); }
 .peek-timer-opt:active { transform: scale(.97); }
 .peek-timer-opt-ghost {
-  background: transparent;
-  border-color: var(--color-border, #e2e8f0);
-  color: var(--color-text-secondary, #64748b);
+  background: var(--color-surface, #fff);
+  border-color: var(--color-border-strong, #cbd5e1);
+  color: var(--color-text, #0f172a);
 }
 .peek-timer-opt-ghost:hover {
-  background: var(--color-surface-secondary, #f9fafb);
-  color: var(--color-text);
-  border-color: var(--color-border-strong, #d1d5db);
+  background: var(--color-primary-light, #eff6ff);
+  color: var(--color-primary, #2563eb);
+  border-color: var(--color-primary, #2563eb);
 }
 .peek-timer-presets {
-  display: inline-flex; gap: 4px; flex-wrap: wrap;
+  display: inline-flex; gap: 5px; flex-wrap: wrap;
   margin-left: auto;
 }
 .peek-timer-chip {
   appearance: none;
-  padding: 3px 9px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  padding: 5px 11px;
+  border: 1px solid var(--color-border-strong, #cbd5e1);
   border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-muted, #94a3b8);
-  font: inherit; font-size: 11.5px; font-weight: 700;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #0f172a);
+  font: inherit; font-size: 13px; font-weight: 700;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
   transition: background .12s, color .12s, border-color .12s;
 }
 .peek-timer-chip:hover {
-  background: color-mix(in srgb, #2563eb 10%, transparent);
-  color: #1d4ed8; border-color: #bfdbfe;
+  background: var(--color-primary-light, #eff6ff);
+  color: var(--color-primary, #2563eb);
+  border-color: var(--color-primary, #2563eb);
 }
 html.dark .peek-timer { border-top-color: #334155; }
 html.dark .peek-timer-input { background: #0f172a; border-color: #334155; }

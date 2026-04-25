@@ -156,21 +156,22 @@ body {
   margin-bottom: 14px;
 }
 .cl-pomo-label {
-  font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .06em;
-  color: var(--cl-text2);
+  font-size: 12.5px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--cl-text);
 }
 .cl-pomo-input {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 2px 4px;
-  border: 1px solid var(--cl-border);
+  border: 1.5px solid #cbd5e1;
   border-radius: 999px;
   background: var(--cl-bg);
 }
+html.dark .cl-pomo-input { border-color: #475569; }
 .cl-pomo-input input {
-  width: 44px; padding: 5px 4px; text-align: center;
+  width: 48px; padding: 6px 4px; text-align: center;
   border: none; outline: none; background: transparent;
-  font: inherit; font-size: 13px; font-weight: 700;
+  font: inherit; font-size: 15px; font-weight: 800;
   color: var(--cl-text);
   font-variant-numeric: tabular-nums;
   -moz-appearance: textfield;
@@ -178,33 +179,38 @@ body {
 .cl-pomo-input input::-webkit-outer-spin-button,
 .cl-pomo-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .cl-pomo-step {
-  width: 26px; height: 26px; border-radius: 50%;
-  border: none; background: var(--cl-surface); color: var(--cl-text2);
-  font: inherit; font-size: 14px; font-weight: 700;
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 1px solid var(--cl-border);
+  background: var(--cl-surface);
+  color: var(--cl-text);
+  font: inherit; font-size: 16px; font-weight: 800;
   cursor: pointer; line-height: 1;
 }
-.cl-pomo-step:hover { background: var(--cl-border); color: var(--cl-text); }
+.cl-pomo-step:hover { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+html.dark .cl-pomo-step:hover { background: #1e3a8a; color: #bfdbfe; border-color: #1d4ed8; }
 .cl-pomo-unit {
-  font-size: 11px; font-weight: 600;
-  color: var(--cl-text2);
+  font-size: 12px; font-weight: 700;
+  color: var(--cl-text);
   padding: 0 6px 0 2px;
 }
 .cl-pomo-presets {
-  display: inline-flex; gap: 4px; flex-wrap: wrap;
+  display: inline-flex; gap: 5px; flex-wrap: wrap;
 }
 .cl-pomo-chip {
   appearance: none;
-  padding: 3px 9px;
-  border: 1px solid var(--cl-border);
+  padding: 5px 11px;
+  border: 1px solid #cbd5e1;
   border-radius: 999px;
-  background: transparent;
-  color: var(--cl-text2);
-  font: inherit; font-size: 11.5px; font-weight: 700;
+  background: var(--cl-surface);
+  color: var(--cl-text);
+  font: inherit; font-size: 13px; font-weight: 700;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
   transition: background .12s, color .12s, border-color .12s;
 }
-.cl-pomo-chip:hover { background: rgba(37,99,235,.12); color: #1d4ed8; border-color: #bfdbfe; }
+html.dark .cl-pomo-chip { border-color: #475569; }
+.cl-pomo-chip:hover { background: #eff6ff; color: #1d4ed8; border-color: #2563eb; }
+html.dark .cl-pomo-chip:hover { background: #1e3a8a; color: #bfdbfe; border-color: #1d4ed8; }
 .cl-pomo-chip.is-active { background: #2563eb; color: #fff; border-color: #2563eb; }
 .cl-pomo-hint {
   flex: 1 1 100%;
