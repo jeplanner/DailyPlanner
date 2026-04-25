@@ -582,10 +582,23 @@ def _create_next_recurring_instance(user_id, recurring_id, current_plan_date,
 # (/summary?view=daily) now surfaces overdue items as a read-through
 # view — no duplication required.
 def _parse_iso_z(s):
-    from datetime import datetime as _dt
+    """Parse an ISO-8601 timestamp from Supabase into a tz-naive UTC datetime.
+    Supabase emits offsets like '+00:00', so we normalise to UTC and drop tz
+    info — this lets us subtract against datetime.utcnow() (also tz-naive)
+    without raising "can't subtract offset-naive and offset-aware"."""
+    from datetime import datetime as _dt, timezone as _tz
     if not s:
         return None
-    return _dt.fromisoformat(s.rstrip("Z"))
+    # Normalise both 'Z' and '+00:00' suffixes to a Python-parseable form.
+    raw = s.replace("Z", "+00:00") if s.endswith("Z") else s
+    try:
+        dt = _dt.fromisoformat(raw)
+    except ValueError:
+        # Fall back to naive parse for any oddly formatted legacy rows.
+        return _dt.fromisoformat(s.rstrip("Z"))
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
 
 
 @todo_bp.route("/api/v2/timer/start", methods=["POST"])
