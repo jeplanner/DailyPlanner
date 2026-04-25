@@ -735,6 +735,11 @@ html.dark .section-title{color:#f1f5f9;}
         Prayer
       </a>
 
+      <a href="/relationships" data-match="^/relationships" title="Stay in touch with the people who matter">
+        <i data-feather="users"></i>
+        Relationships
+      </a>
+
       <a href="/portfolio" data-match="^/portfolio" title="Portfolio — stocks, mutual funds, bonds, gold">
         <i data-feather="trending-up"></i>
         Investments
@@ -794,9 +799,10 @@ html.dark .section-title{color:#f1f5f9;}
     <span class="time" id="live-time"></span>
   </div>
 
-  <a href="/references" class="help-btn" title="Ask AI / search your knowledge base" aria-label="Ask AI">
+  <button type="button" class="help-btn" onclick="openSearchPalette()"
+          title="Search everything (Cmd/Ctrl+K)" aria-label="Search">
     <i data-feather="search"></i>
-  </a>
+  </button>
 
   <button type="button" class="help-btn" onclick="openHelpModal()" title="Help & tips for this page (press ? anywhere)" aria-label="Help">
     <i data-feather="help-circle"></i>
@@ -836,6 +842,236 @@ html.dark .section-title{color:#f1f5f9;}
   {% endif %}
 
 </div>
+
+<!-- ═══════════ GLOBAL SEARCH PALETTE (Cmd/Ctrl+K) ═══════════ -->
+<div id="search-overlay" class="search-overlay hidden" onclick="if(event.target===this)closeSearchPalette()"></div>
+<div id="search-palette" class="search-palette hidden" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="search-input-row">
+    <i data-feather="search"></i>
+    <input type="text" id="search-palette-input" placeholder="Search tasks, notes, references, projects…"
+           autocomplete="off" oninput="onSearchPaletteInput(this.value)" onkeydown="onSearchPaletteKey(event)">
+    <kbd class="search-esc">Esc</kbd>
+  </div>
+  <div class="search-results" id="search-results">
+    <div class="search-empty">Type at least 2 characters to search</div>
+  </div>
+  <div class="search-footer">
+    <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+    <span><kbd>↵</kbd> open</span>
+    <span><kbd>Esc</kbd> close</span>
+  </div>
+</div>
+<style>
+.search-overlay {
+  position: fixed; inset: 0; z-index: 9990;
+  background: rgba(15,23,42,0.5); backdrop-filter: blur(4px);
+  transition: opacity .15s ease;
+}
+.search-overlay.hidden { opacity: 0; pointer-events: none; }
+.search-palette {
+  position: fixed; left: 50%; top: 12vh;
+  transform: translateX(-50%);
+  width: min(640px, 92vw);
+  background: #fff; color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0,0,0,.25);
+  z-index: 9991;
+  display: flex; flex-direction: column;
+  max-height: 70vh;
+  overflow: hidden;
+  transition: opacity .15s ease, transform .18s ease;
+}
+.search-palette.hidden {
+  opacity: 0; pointer-events: none;
+  transform: translateX(-50%) translateY(-8px);
+}
+html.dark .search-palette { background: #1e293b; color: #f1f5f9; border-color: #334155; }
+.search-input-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+html.dark .search-input-row { border-bottom-color: #334155; }
+.search-input-row svg { width: 18px; height: 18px; color: #94a3b8; flex: 0 0 auto; }
+#search-palette-input {
+  flex: 1; appearance: none; background: transparent;
+  border: none; outline: none;
+  font: inherit; font-size: 16px; color: inherit;
+}
+.search-esc {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px; padding: 2px 6px;
+  border: 1px solid #cbd5e1; border-radius: 4px;
+  color: #64748b; background: #f8fafc;
+}
+html.dark .search-esc { background: #0f172a; color: #94a3b8; border-color: #334155; }
+.search-results { flex: 1; overflow-y: auto; padding: 6px; }
+.search-empty, .search-loading {
+  padding: 24px; text-align: center; color: #64748b; font-size: 13px;
+}
+.search-result {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: none; color: inherit;
+}
+.search-result:hover, .search-result.is-selected {
+  background: #eff6ff;
+}
+html.dark .search-result:hover, html.dark .search-result.is-selected {
+  background: #172554;
+}
+.search-result-main {
+  flex: 1; min-width: 0;
+}
+.search-result-title {
+  font-weight: 600; font-size: 14px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.search-result-snippet {
+  font-size: 12px; color: #64748b;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html.dark .search-result-snippet { color: #94a3b8; }
+.search-result-badge {
+  font-size: 10.5px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px;
+  background: #f1f5f9; color: #475569;
+  text-transform: uppercase; letter-spacing: .04em;
+  white-space: nowrap;
+}
+html.dark .search-result-badge { background: #334155; color: #cbd5e1; }
+.search-footer {
+  display: flex; gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid #e2e8f0;
+  font-size: 11px; color: #64748b;
+}
+.search-footer kbd {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  background: #f8fafc;
+  margin-right: 4px;
+}
+html.dark .search-footer { border-top-color: #334155; color: #94a3b8; }
+html.dark .search-footer kbd { background: #0f172a; border-color: #334155; }
+</style>
+<script>
+let _searchDebounceTimer = null;
+let _searchSelectedIndex = 0;
+let _searchResults = [];
+
+function openSearchPalette() {
+  const overlay = document.getElementById("search-overlay");
+  const palette = document.getElementById("search-palette");
+  if (!overlay || !palette) return;
+  overlay.classList.remove("hidden");
+  palette.classList.remove("hidden");
+  const input = document.getElementById("search-palette-input");
+  if (input) {
+    input.value = "";
+    setTimeout(() => input.focus(), 50);
+  }
+  document.getElementById("search-results").innerHTML =
+    '<div class="search-empty">Type at least 2 characters to search</div>';
+  _searchSelectedIndex = 0;
+  _searchResults = [];
+  if (window.feather) feather.replace();
+}
+function closeSearchPalette() {
+  document.getElementById("search-overlay")?.classList.add("hidden");
+  document.getElementById("search-palette")?.classList.add("hidden");
+}
+
+function onSearchPaletteInput(q) {
+  clearTimeout(_searchDebounceTimer);
+  if (q.trim().length < 2) {
+    document.getElementById("search-results").innerHTML =
+      '<div class="search-empty">Type at least 2 characters to search</div>';
+    return;
+  }
+  _searchDebounceTimer = setTimeout(async () => {
+    document.getElementById("search-results").innerHTML =
+      '<div class="search-loading">Searching…</div>';
+    try {
+      const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const data = await r.json();
+      _renderSearchResults(data.results || []);
+    } catch (e) {
+      document.getElementById("search-results").innerHTML =
+        '<div class="search-empty">Search failed — try again</div>';
+    }
+  }, 180);
+}
+
+function _renderSearchResults(results) {
+  _searchResults = results;
+  _searchSelectedIndex = 0;
+  const container = document.getElementById("search-results");
+  if (!container) return;
+  if (!results.length) {
+    container.innerHTML = '<div class="search-empty">No matches</div>';
+    return;
+  }
+  container.innerHTML = results.map((r, i) => `
+    <a class="search-result ${i === 0 ? 'is-selected' : ''}"
+       data-idx="${i}"
+       href="${r.url || '#'}"
+       onmouseenter="_searchSelectIdx(${i})">
+      <div class="search-result-main">
+        <div class="search-result-title">${_escSearchHtml(r.title)}</div>
+        ${r.snippet ? `<div class="search-result-snippet">${_escSearchHtml(r.snippet)}</div>` : ''}
+      </div>
+      <span class="search-result-badge">${_escSearchHtml(r.badge || '')}</span>
+    </a>`).join("");
+}
+function _escSearchHtml(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function _searchSelectIdx(i) {
+  _searchSelectedIndex = i;
+  document.querySelectorAll(".search-result").forEach((el, idx) => {
+    el.classList.toggle("is-selected", idx === i);
+  });
+}
+
+function onSearchPaletteKey(ev) {
+  if (ev.key === "ArrowDown") {
+    ev.preventDefault();
+    if (_searchResults.length) {
+      _searchSelectIdx((_searchSelectedIndex + 1) % _searchResults.length);
+    }
+  } else if (ev.key === "ArrowUp") {
+    ev.preventDefault();
+    if (_searchResults.length) {
+      _searchSelectIdx((_searchSelectedIndex - 1 + _searchResults.length) % _searchResults.length);
+    }
+  } else if (ev.key === "Enter") {
+    ev.preventDefault();
+    if (_searchResults.length) {
+      const r = _searchResults[_searchSelectedIndex];
+      if (r && r.url) window.location.href = r.url;
+    }
+  } else if (ev.key === "Escape") {
+    ev.preventDefault();
+    closeSearchPalette();
+  }
+}
+
+// Cmd+K / Ctrl+K opens the palette anywhere
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openSearchPalette();
+  }
+});
+</script>
 
 <!-- ═══════════ HELP MODAL ═══════════ -->
 <div id="help-overlay" class="help-overlay" onclick="if(event.target===this)closeHelpModal()"></div>

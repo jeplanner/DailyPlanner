@@ -413,6 +413,124 @@ def _create_and_store_gid(user_id, local_id):
                params={"id": f"eq.{local_id}", "user_id": f"eq.{user_id}"},
                json={"google_event_id": gid})
 
+@events_bp.route("/api/calendar.ics")
+def ical_feed():
+    """RFC 5545 ICS feed of the user's daily_events. Read-only.
+
+    Security: doesn't require an active session — it's intended to be
+    subscribed to by external calendars (Apple Cal, Outlook, Notion Cal)
+    that can't carry session cookies. Auth is via a query-token argument
+    derived from the user's id + a server-side secret. Without a valid
+    token, returns 401.
+
+    URL shape:
+      /api/calendar.ics?u=<user_id>&t=<token>
+
+    Date window: rolling -30d to +180d to keep the file small.
+    """
+    import hmac
+    import hashlib
+    import os as _os
+    from datetime import date as _date, timedelta as _td, datetime as _dt
+    from flask import Response
+
+    user_id = (request.args.get("u") or "").strip()
+    token = (request.args.get("t") or "").strip()
+    if not user_id or not token:
+        return ("Missing u or t", 401)
+
+    secret = (_os.environ.get("ICAL_FEED_SECRET")
+              or _os.environ.get("FLASK_SECRET_KEY") or "")
+    expected = hmac.new(secret.encode(), user_id.encode(), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(token, expected):
+        return ("Invalid token", 401)
+
+    today = _date.today()
+    start = today - _td(days=30)
+    end = today + _td(days=180)
+
+    rows = get(
+        "daily_events",
+        params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "and": f"(plan_date.gte.{start.isoformat()},plan_date.lte.{end.isoformat()})",
+            "select": "id,plan_date,start_time,end_time,title,description,status",
+            "order": "plan_date.asc",
+            "limit": 1000,
+        },
+    ) or []
+
+    def _esc_ics(s):
+        if s is None: return ""
+        return (str(s).replace("\\", "\\\\")
+                       .replace(",", "\\,")
+                       .replace(";", "\\;")
+                       .replace("\n", "\\n"))
+
+    def _to_dt_utc(date_iso, time_hhmm):
+        if not time_hhmm:
+            return None
+        try:
+            return _dt.fromisoformat(f"{date_iso}T{time_hhmm}:00").strftime("%Y%m%dT%H%M%S")
+        except Exception:
+            return None
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//DailyPlanner//Personal//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:DailyPlanner",
+        "X-WR-TIMEZONE:UTC",
+    ]
+    now_stamp = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    for r in rows:
+        plan_date = r.get("plan_date")
+        title = (r.get("title") or "").strip() or "(untitled)"
+        desc = r.get("description") or ""
+        start_dt = _to_dt_utc(plan_date, r.get("start_time"))
+        end_dt = _to_dt_utc(plan_date, r.get("end_time"))
+        lines.append("BEGIN:VEVENT")
+        lines.append(f"UID:{r.get('id')}@dailyplanner")
+        lines.append(f"DTSTAMP:{now_stamp}")
+        if start_dt and end_dt:
+            lines.append(f"DTSTART:{start_dt}")
+            lines.append(f"DTEND:{end_dt}")
+        else:
+            # All-day event
+            ymd = (plan_date or "").replace("-", "")
+            if ymd:
+                lines.append(f"DTSTART;VALUE=DATE:{ymd}")
+                lines.append(f"DTEND;VALUE=DATE:{ymd}")
+        lines.append(f"SUMMARY:{_esc_ics(title)}")
+        if desc:
+            lines.append(f"DESCRIPTION:{_esc_ics(desc)}")
+        if r.get("status") == "done":
+            lines.append("STATUS:CONFIRMED")
+        lines.append("END:VEVENT")
+    lines.append("END:VCALENDAR")
+
+    body = "\r\n".join(lines) + "\r\n"
+    return Response(body, mimetype="text/calendar; charset=utf-8")
+
+
+@events_bp.route("/api/calendar/feed-url")
+@login_required
+def ical_feed_url():
+    """Returns the user's personal feed URL with HMAC token.
+    Settings page can show this so the user knows what to subscribe."""
+    import hmac
+    import hashlib
+    import os as _os
+    user_id = session["user_id"]
+    secret = (_os.environ.get("ICAL_FEED_SECRET")
+              or _os.environ.get("FLASK_SECRET_KEY") or "")
+    token = hmac.new(secret.encode(), user_id.encode(), hashlib.sha256).hexdigest()[:32]
+    return jsonify({"url": f"/api/calendar.ics?u={user_id}&t={token}"})
+
+
 @events_bp.route("/api/v2/events/<event_id>/toggle-status", methods=["POST"])
 @login_required
 def toggle_event_status(event_id):

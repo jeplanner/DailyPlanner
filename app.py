@@ -66,6 +66,7 @@ def create_app():
     from routes.checklist import checklist_bp
     from routes.push import push_bp
     from routes.prayer import prayer_bp
+    from routes.relationships import relationships_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -88,6 +89,7 @@ def create_app():
     app.register_blueprint(checklist_bp)
     app.register_blueprint(push_bp)
     app.register_blueprint(prayer_bp)
+    app.register_blueprint(relationships_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens

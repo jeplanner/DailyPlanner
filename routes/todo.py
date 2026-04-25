@@ -581,6 +581,105 @@ def _create_next_recurring_instance(user_id, recurring_id, current_plan_date,
 # bugs (NameError + missing user_id scope). The Morning Dashboard
 # (/summary?view=daily) now surfaces overdue items as a read-through
 # view — no duplication required.
+@todo_bp.route("/api/v2/timer/start", methods=["POST"])
+@login_required
+def timer_start():
+    """Start a time-tracking session on a task.
+    Body: { "source": "matrix"|"project"|"event"|"adhoc",
+            "matrix_task_id"?: uuid, "project_task_id"?: uuid,
+            "event_id"?: uuid, "label"?: "..." }
+    If a session for the same task is already running, returns it instead of
+    starting a duplicate (idempotent so refreshing doesn't double-count).
+    """
+    from datetime import datetime as _dt
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    source = (data.get("source") or "adhoc").strip()
+    if source not in ("matrix", "project", "event", "adhoc"):
+        return jsonify({"error": "invalid source"}), 400
+
+    # Look for an already-running timer on this task
+    filter_key = {"matrix": "matrix_task_id", "project": "project_task_id", "event": "event_id"}.get(source)
+    if filter_key and data.get(filter_key):
+        existing = get(
+            "task_time_logs",
+            params={
+                "user_id": f"eq.{user_id}",
+                filter_key: f"eq.{data[filter_key]}",
+                "ended_at": "is.null",
+                "select": "id,started_at",
+                "limit": 1,
+            },
+        ) or []
+        if existing:
+            return jsonify({"id": existing[0]["id"], "started_at": existing[0]["started_at"], "resumed": True})
+
+    payload = {
+        "user_id": user_id,
+        "source": source,
+        "matrix_task_id":  data.get("matrix_task_id"),
+        "project_task_id": data.get("project_task_id"),
+        "event_id":        data.get("event_id"),
+        "label":           (data.get("label") or "").strip() or None,
+        "started_at":      _dt.utcnow().isoformat() + "Z",
+    }
+    rows = post("task_time_logs", payload)
+    return jsonify({"id": rows[0]["id"] if rows else None, "started_at": payload["started_at"]})
+
+
+@todo_bp.route("/api/v2/timer/stop", methods=["POST"])
+@login_required
+def timer_stop():
+    """Stop a running timer. Body: { "id": uuid }
+    Computes duration_seconds and stamps ended_at."""
+    from datetime import datetime as _dt
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    log_id = data.get("id")
+    if not log_id:
+        return jsonify({"error": "id required"}), 400
+
+    rows = get(
+        "task_time_logs",
+        params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}",
+                "select": "started_at,ended_at"},
+    ) or []
+    if not rows:
+        return jsonify({"error": "log not found"}), 404
+    row = rows[0]
+    if row.get("ended_at"):
+        return jsonify({"ok": True, "already_stopped": True})
+
+    ended = _dt.utcnow()
+    started = _dt.fromisoformat(row["started_at"].rstrip("Z"))
+    duration = max(0, int((ended - started).total_seconds()))
+
+    update(
+        "task_time_logs",
+        params={"id": f"eq.{log_id}", "user_id": f"eq.{user_id}"},
+        json={"ended_at": ended.isoformat() + "Z", "duration_seconds": duration},
+    )
+    return jsonify({"ok": True, "duration_seconds": duration})
+
+
+@todo_bp.route("/api/v2/timer/active", methods=["GET"])
+@login_required
+def timer_active():
+    """Return all currently-running timers for the user (usually 0 or 1).
+    Used on page load to restore the timer UI when the user returns."""
+    user_id = session["user_id"]
+    rows = get(
+        "task_time_logs",
+        params={
+            "user_id": f"eq.{user_id}",
+            "ended_at": "is.null",
+            "select": "id,source,matrix_task_id,project_task_id,event_id,label,started_at",
+            "order": "started_at.desc",
+        },
+    ) or []
+    return jsonify({"active": rows})
+
+
 @todo_bp.route("/todo/reschedule", methods=["POST"])
 @login_required
 def reschedule_eisenhower_task():

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>{{ "Weekly Review" if view == "weekly" else "Daily Summary" }}</title>
+<title>{% if view == "weekly" %}Weekly Review{% elif view == "monthly" %}Monthly Review{% elif view == "annual" %}{{ selected_year }} in Review{% else %}Daily Summary{% endif %}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
@@ -25,8 +25,10 @@
   <header class="sum-header">
     <div class="sum-header-left">
       <div class="view-tabs">
-        <a href="/summary?view=daily" class="vtab {{ 'active' if view == 'daily' }}">Daily</a>
-        <a href="/summary?view=weekly" class="vtab {{ 'active' if view == 'weekly' }}">Weekly</a>
+        <a href="/summary?view=daily"   class="vtab {{ 'active' if view == 'daily' }}">Daily</a>
+        <a href="/summary?view=weekly"  class="vtab {{ 'active' if view == 'weekly' }}">Weekly</a>
+        <a href="/summary?view=monthly" class="vtab {{ 'active' if view == 'monthly' }}">Monthly</a>
+        <a href="/summary?view=annual"  class="vtab {{ 'active' if view == 'annual' }}">Yearly</a>
       </div>
     </div>
 
@@ -37,6 +39,19 @@
           <input type="date" class="date-pick" value="{{ date.isoformat() }}"
                  onchange="location.href='/summary?view=daily&date='+this.value">
           <a href="/summary?view=daily&date={{ next_date }}" class="nav-arrow"><i data-feather="chevron-right"></i></a>
+        </div>
+      {% elif view == "monthly" %}
+        <div class="date-nav">
+          <a href="/summary?view=monthly&month={{ prev_month }}" class="nav-arrow"><i data-feather="chevron-left"></i></a>
+          <input type="month" class="date-pick" value="{{ selected_month }}"
+                 onchange="location.href='/summary?view=monthly&month='+this.value">
+          <a href="/summary?view=monthly&month={{ next_month }}" class="nav-arrow"><i data-feather="chevron-right"></i></a>
+        </div>
+      {% elif view == "annual" %}
+        <div class="date-nav">
+          <a href="/summary?view=annual&year={{ prev_year }}" class="nav-arrow"><i data-feather="chevron-left"></i></a>
+          <span class="date-pick" style="padding:6px 14px; min-width:88px; text-align:center;">{{ selected_year }}</span>
+          <a href="/summary?view=annual&year={{ next_year }}" class="nav-arrow"><i data-feather="chevron-right"></i></a>
         </div>
       {% else %}
         <div class="date-nav">
@@ -544,15 +559,28 @@
       </summary>
       <div class="md-reflection-body">
         {% if view == "daily" %}
+        <label class="ref-prompt-label">How did today go?</label>
         <textarea
           id="reflection-input"
           class="reflection-textarea"
           data-date="{{ date.isoformat() }}"
-          placeholder="How did today go? Wins, blockers, what to change tomorrow…"
-          rows="5"
+          placeholder="Wins, blockers, what to change tomorrow…"
+          rows="4"
           oninput="scheduleReflectionSave()"
           onblur="saveReflection(true)"
         >{{ data.reflection or '' }}</textarea>
+
+        {# Gratitude: separate from reflection so the appreciative
+           prompt isn't diluted by the analytical one. #}
+        <label class="ref-prompt-label" style="margin-top:14px;">What are you grateful for today? <span class="hint">🙏</span></label>
+        <textarea
+          id="gratitude-input"
+          class="reflection-textarea gratitude-textarea"
+          data-date="{{ date.isoformat() }}"
+          placeholder="Three small things, or one big one…"
+          rows="3"
+          onblur="saveGratitude()"
+        >{{ data.gratitude or '' }}</textarea>
         {% else %}
           {% if data.reflection %}
           <p class="reflection-text">{{ data.reflection }}</p>
@@ -576,10 +604,16 @@
   <!-- ═══════════ WEEKLY VIEW ═══════════ -->
   {% else %}
 
-  <h1 class="sum-title">Week of {{ start.strftime("%b %d") }} – {{ end.strftime("%b %d, %Y") }}</h1>
+  <h1 class="sum-title">
+    {%- if view == "monthly" -%}{{ start.strftime("%B %Y") }}
+    {%- elif view == "annual" -%}{{ selected_year }} in Review
+    {%- else -%}Week of {{ start.strftime("%b %d") }} – {{ end.strftime("%b %d, %Y") }}
+    {%- endif -%}
+  </h1>
 
   {# Helper for rendering a delta chip: green for "up" direction.
-     Habit-days, focus-hours, completion-rate "up" = good. #}
+     Suffix label adapts per view (week/month/year). #}
+  {% set _vs_label = 'vs last yr' if view == 'annual' else ('vs last mo' if view == 'monthly' else 'vs last wk') %}
   {% macro delta_chip(d, suffix='', good_dir='up') %}
     {% if d %}
       {% set is_good = (d.dir == good_dir) %}
@@ -587,7 +621,7 @@
       <span class="stat-delta stat-delta-{{ 'good' if is_good else ('flat' if is_neutral else 'bad') }}">
         {%- if d.diff > 0 -%}+{% endif -%}
         {{ d.diff }}{{ suffix }}
-        <span class="stat-delta-vs">vs last wk</span>
+        <span class="stat-delta-vs">{{ _vs_label }}</span>
       </span>
     {% endif %}
   {% endmacro %}
@@ -661,7 +695,13 @@
       <!-- Weekly Review (3 structured prompts) — beats one blank box for
            getting people to actually reflect. Saves on blur (autosave). -->
       <div class="sum-card weekly-review-card" data-week-start="{{ start.isoformat() }}">
-        <h3 class="card-title"><i data-feather="edit-3" class="card-icon"></i> Weekly Review</h3>
+        <h3 class="card-title">
+          <i data-feather="edit-3" class="card-icon"></i>
+          {%- if view == "monthly" %} Monthly Review
+          {%- elif view == "annual" %} Annual Review
+          {%- else %} Weekly Review
+          {%- endif %}
+        </h3>
         <div class="wr-prompts">
           <label class="wr-prompt">
             <span class="wr-label">What went well?</span>
@@ -816,6 +856,17 @@
   </header>
 
   <div class="peek-body" id="peek-body"></div>
+
+  <!-- Timer strip — start/stop a time tracking session for the open task.
+       Shown only for active (not-done) tasks. Hidden via JS in _renderPeek. -->
+  <div id="peek-timer" class="peek-timer hidden">
+    <button type="button" id="peek-timer-btn" class="peek-timer-btn"
+            onclick="peekToggleTimer()">
+      <span class="peek-timer-icon">⏱</span>
+      <span id="peek-timer-label">Start timer</span>
+    </button>
+    <span id="peek-timer-elapsed" class="peek-timer-elapsed"></span>
+  </div>
 
   <!-- Reschedule shortcuts — visible only when the item is a task. The
        three buttons cover the most common pushes; full date picker is
@@ -974,6 +1025,62 @@ html.dark .peek-foot { border-top-color: #334155; }
 html.dark .peek-reschedule { border-top-color: #334155; }
 html.dark .peek-reschedule-btn { border-color: #334155; color: #f1f5f9; }
 html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; border-color: #475569; }
+
+/* Timer strip in the peek sheet */
+.peek-timer {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--color-border, #e2e8f0);
+}
+.peek-timer.hidden { display: none; }
+.peek-timer-btn {
+  appearance: none;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text, #0f172a);
+  font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.peek-timer-btn:hover {
+  background: color-mix(in srgb, #16a34a 10%, transparent);
+  border-color: #16a34a;
+  color: #15803d;
+}
+.peek-timer-btn.is-running {
+  background: #dc2626; color: #fff; border-color: #dc2626;
+}
+.peek-timer-btn.is-running:hover { background: #b91c1c; border-color: #b91c1c; }
+.peek-timer-icon { font-size: 14px; }
+.peek-timer-elapsed {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 14px; font-weight: 700;
+  color: var(--color-text, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+html.dark .peek-timer { border-top-color: #334155; }
+html.dark .peek-timer-btn { border-color: #334155; color: #f1f5f9; }
+html.dark .peek-timer-btn:hover { background: #052e16; color: #86efac; border-color: #16a34a; }
+
+/* Per-row "timer running" badge */
+.md-row-timer-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px; font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  background: #dc2626; color: #fff;
+  border-radius: 999px;
+  animation: timerPulse 2s ease-in-out infinite;
+}
+@keyframes timerPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
 
 /* ══════════════════ QUICK CAPTURE FAB + SHEET ══════════════════ */
 .quick-capture-fab {
@@ -1242,6 +1349,15 @@ function _renderPeek(item) {
     reschedStrip.classList.toggle("hidden", !isActiveTask);
   }
 
+  // Timer strip — same gate (active tasks only). Reflects whether we
+  // already have a running timer on this task.
+  const timerStrip = document.getElementById("peek-timer");
+  if (timerStrip) {
+    const isActiveTask = item.type === "task" && !item.done && !!item.id;
+    timerStrip.classList.toggle("hidden", !isActiveTask);
+    if (isActiveTask) _renderPeekTimerState(item);
+  }
+
   if (item.type === "task") {
     const alreadyDone = item.done;
     action.style.display = "inline-flex";
@@ -1261,6 +1377,181 @@ function _renderPeek(item) {
 
   if (window.feather) feather.replace();
 }
+
+/* ── Timer (peek-side) ──────────────────────────────────────────
+ * Per-task time tracking. Backed by /api/v2/timer/start, /stop, /active.
+ * State lives on the open peek item and a 1Hz tick updates the elapsed
+ * label while running. Active timers survive page reloads — _restoreTimer
+ * runs on DOMContentLoaded and tags any task already being tracked. */
+let _activeTimer = null;          // { id, source, taskId, startedAt }
+let _timerTickInterval = null;
+
+function _activeTimerMatchesItem(item) {
+  if (!_activeTimer || !item) return false;
+  if (item.source !== _activeTimer.source) return false;
+  if (_activeTimer.source === "project") {
+    const rawId = item.id.startsWith("pt-") ? item.id.slice(3) : item.id;
+    return rawId === _activeTimer.taskId;
+  }
+  return item.id === _activeTimer.taskId;
+}
+
+function _renderPeekTimerState(item) {
+  const btn = document.getElementById("peek-timer-btn");
+  const label = document.getElementById("peek-timer-label");
+  const elapsed = document.getElementById("peek-timer-elapsed");
+  if (!btn || !label) return;
+
+  if (_activeTimerMatchesItem(item)) {
+    btn.classList.add("is-running");
+    label.textContent = "Stop timer";
+    _startTickRender();
+  } else {
+    btn.classList.remove("is-running");
+    label.textContent = "Start timer";
+    if (elapsed) elapsed.textContent = "";
+  }
+}
+
+function _formatHMS(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  return `${m}:${String(sec).padStart(2,"0")}`;
+}
+
+function _startTickRender() {
+  if (_timerTickInterval) return;
+  _timerTickInterval = setInterval(() => {
+    if (!_activeTimer) {
+      clearInterval(_timerTickInterval);
+      _timerTickInterval = null;
+      return;
+    }
+    const elapsed = (Date.now() - _activeTimer.startedAt) / 1000;
+    // Update peek elapsed label if visible
+    const el = document.getElementById("peek-timer-elapsed");
+    if (el) el.textContent = _formatHMS(elapsed);
+    // Update any row-level badges showing the running timer
+    document.querySelectorAll(".md-row-timer-badge.is-running").forEach(b => {
+      b.textContent = "⏱ " + _formatHMS(elapsed);
+    });
+  }, 1000);
+}
+
+async function peekToggleTimer() {
+  if (!_peekItem) return;
+  const item = _peekItem;
+
+  if (_activeTimerMatchesItem(item)) {
+    // Stop
+    try {
+      const r = await fetch("/api/v2/timer/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: _activeTimer.id }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      const mins = Math.round((data.duration_seconds || 0) / 60);
+      _activeTimer = null;
+      _renderPeekTimerState(item);
+      _clearAllRowTimerBadges();
+      if (window.showToast) showToast(`Logged ${mins} min`, "success", 2200);
+    } catch (e) {
+      console.error("timer stop failed:", e);
+      if (window.showToast) showToast("Couldn't stop timer", "error");
+    }
+  } else {
+    // If another timer is running, stop it first (single-timer policy)
+    if (_activeTimer) {
+      try {
+        await fetch("/api/v2/timer/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: _activeTimer.id }),
+        });
+      } catch {}
+      _activeTimer = null;
+      _clearAllRowTimerBadges();
+    }
+    // Start new
+    let payload = { source: item.source };
+    if (item.source === "project") {
+      const rawId = item.id.startsWith("pt-") ? item.id.slice(3) : item.id;
+      payload.project_task_id = rawId;
+    } else if (item.source === "matrix") {
+      payload.matrix_task_id = item.id;
+    } else if (item.source === "event") {
+      payload.event_id = item.id;
+    } else {
+      payload.label = item.title;
+    }
+    try {
+      const r = await fetch("/api/v2/timer/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      _activeTimer = {
+        id: data.id,
+        source: item.source,
+        taskId: payload.project_task_id || payload.matrix_task_id || payload.event_id,
+        startedAt: new Date(data.started_at).getTime(),
+      };
+      _renderPeekTimerState(item);
+      _markRowAsTimerActive(item);
+      if (window.showToast) showToast("Timer started", "success", 1500);
+    } catch (e) {
+      console.error("timer start failed:", e);
+      if (window.showToast) showToast("Couldn't start timer", "error");
+    }
+  }
+}
+
+function _markRowAsTimerActive(item) {
+  if (!item.rowEl) return;
+  let badge = item.rowEl.querySelector(".md-row-timer-badge");
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "md-row-timer-badge is-running";
+    const titleCell = item.rowEl.querySelector(".md-c-title");
+    if (titleCell) titleCell.appendChild(badge);
+  }
+  badge.classList.add("is-running");
+  badge.textContent = "⏱ 0:00";
+}
+function _clearAllRowTimerBadges() {
+  document.querySelectorAll(".md-row-timer-badge").forEach(b => b.remove());
+}
+
+async function _restoreTimerOnLoad() {
+  try {
+    const r = await fetch("/api/v2/timer/active");
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.active || !data.active.length) return;
+    const t = data.active[0];
+    _activeTimer = {
+      id: t.id,
+      source: t.source,
+      taskId: t.matrix_task_id || t.project_task_id || t.event_id,
+      startedAt: new Date(t.started_at).getTime(),
+    };
+    // Tag the matching row if it's on the page
+    const selector = _activeTimer.source === "project"
+      ? `.md-row[data-source="project"][data-id="pt-${_activeTimer.taskId}"]`
+      : `.md-row[data-id="${_activeTimer.taskId}"]`;
+    const row = document.querySelector(selector);
+    if (row) _markRowAsTimerActive({ rowEl: row });
+    _startTickRender();
+  } catch (e) { /* non-fatal */ }
+}
+document.addEventListener("DOMContentLoaded", _restoreTimerOnLoad);
 
 /* Reschedule the currently-open peek item. Mirrors _doReschedule but
  * sourced from _peekItem instead of a row's dataset, since the peek may
@@ -2126,7 +2417,7 @@ document.addEventListener("keydown", (e) => {
 <!-- Pass data to JS for charts -->
 <script>
   const VIEW = "{{ view }}";
-  {% if view == "weekly" %}
+  {% if view in ("weekly", "monthly", "annual") %}
   const WEEKLY_DATA = {
     days: {{ data.days | tojson }},
     focused_hours: {{ data.focused_hours }},
@@ -2141,7 +2432,9 @@ document.addEventListener("keydown", (e) => {
 </script>
 <script src="{{ url_for('static', filename='summary.js') }}"></script>
 
-{% if view == "daily" %}
+{# This style+script block is needed by both daily (reflection autosave)
+   and weekly/monthly/annual (weekly-review autosave). All references are
+   null-guarded so loading on a view without those elements is harmless. #}
 <style>
   .reflection-textarea {
     width: 100%;
@@ -2227,6 +2520,30 @@ document.addEventListener("keydown", (e) => {
     if (el) _reflectionLastSaved = el.value;
   });
 
+  /* ── Gratitude autosave ──────────────────────────────────────── */
+  let _gratitudeLastSaved = "";
+  async function saveGratitude() {
+    const el = document.getElementById("gratitude-input");
+    if (!el) return;
+    const txt = el.value.trim();
+    if (txt === _gratitudeLastSaved) return;
+    try {
+      const r = await fetch("/api/v2/daily-gratitude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_date: el.dataset.date, gratitude: txt }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      _gratitudeLastSaved = txt;
+    } catch (e) {
+      console.error("gratitude save failed:", e);
+    }
+  }
+  document.addEventListener("DOMContentLoaded", () => {
+    const el = document.getElementById("gratitude-input");
+    if (el) _gratitudeLastSaved = el.value;
+  });
+
   /* ── Weekly Review autosave ──────────────────────────────────────
    * Three textareas (went_well / didnt_go / one_change). Saves on
    * blur for each field individually. Status pill flashes "Saved". */
@@ -2260,7 +2577,6 @@ document.addEventListener("keydown", (e) => {
     }
   }
 </script>
-{% endif %}
 
 <script>if(window.feather)feather.replace();</script>
 </body>

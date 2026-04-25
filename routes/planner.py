@@ -593,6 +593,33 @@ def schedule_untimed():
 
     return ("", 204)
 
+def _load_period_review(user_id: str, period_start) -> dict:
+    """Load the structured review row for a given period start (week/month/year).
+    The same `weekly_reviews` table backs all three — different date conventions
+    (Monday for weekly, 1st of month for monthly, Jan 1 for annual) keep rows
+    unique per period.
+    """
+    blank = {"went_well": "", "didnt_go": "", "one_change": ""}
+    try:
+        rows = get(
+            "weekly_reviews",
+            params={
+                "user_id": f"eq.{user_id}",
+                "week_start": f"eq.{period_start.isoformat()}",
+                "select": "went_well,didnt_go,one_change",
+            },
+        ) or []
+        if not rows:
+            return blank
+        return {
+            "went_well":  rows[0].get("went_well")  or "",
+            "didnt_go":   rows[0].get("didnt_go")   or "",
+            "one_change": rows[0].get("one_change") or "",
+        }
+    except Exception:
+        return blank
+
+
 def _compute_trend_deltas(data: dict, prev_data: dict) -> dict:
     """Compute week-over-week deltas for the weekly KPI row.
 
@@ -649,6 +676,103 @@ def summary():
         plan_date = date.fromisoformat(date_str)
     else:
         plan_date = user_today()
+
+    # =========================
+    # MONTHLY VIEW
+    # =========================
+    if view == "monthly":
+        month_str = request.args.get("month")  # YYYY-MM
+        if month_str:
+            try:
+                yr, mo = month_str.split("-")
+                start = date(int(yr), int(mo), 1)
+            except (ValueError, TypeError):
+                start = plan_date.replace(day=1)
+        else:
+            start = plan_date.replace(day=1)
+        # Last day of month: bump to next month, subtract 1 day
+        if start.month == 12:
+            end = date(start.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end = date(start.year, start.month + 1, 1) - timedelta(days=1)
+
+        data = get_weekly_summary(start, end, planner_mode)
+        insights = generate_weekly_insight(data)
+
+        # Prev month for delta
+        prev_start = (start - timedelta(days=1)).replace(day=1)
+        if prev_start.month == 12:
+            prev_end = date(prev_start.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            prev_end = date(prev_start.year, prev_start.month + 1, 1) - timedelta(days=1)
+        try:
+            prev_data = get_weekly_summary(prev_start, prev_end, planner_mode)
+        except Exception:
+            prev_data = None
+        deltas = _compute_trend_deltas(data, prev_data) if prev_data else {}
+
+        # Nav helpers
+        prev_month = prev_start.strftime("%Y-%m")
+        if start.month == 12:
+            next_month = f"{start.year + 1}-01"
+        else:
+            next_month = f"{start.year}-{start.month + 1:02d}"
+
+        review = _load_period_review(session["user_id"], start)
+
+        return render_template(
+            "summary.html",
+            view="monthly",
+            data=data,
+            start=start,
+            end=end,
+            insights=insights,
+            deltas=deltas,
+            review=review,
+            selected_month=start.strftime("%Y-%m"),
+            prev_month=prev_month,
+            next_month=next_month,
+        )
+
+    # =========================
+    # ANNUAL / YEAR-IN-REVIEW
+    # =========================
+    if view == "annual":
+        year_str = request.args.get("year")
+        try:
+            year = int(year_str) if year_str else plan_date.year
+        except (ValueError, TypeError):
+            year = plan_date.year
+        start = date(year, 1, 1)
+        end = date(year, 12, 31)
+
+        data = get_weekly_summary(start, end, planner_mode)
+        insights = generate_weekly_insight(data)
+
+        # Year-over-year delta
+        prev_start = date(year - 1, 1, 1)
+        prev_end = date(year - 1, 12, 31)
+        try:
+            prev_data = get_weekly_summary(prev_start, prev_end, planner_mode)
+        except Exception:
+            prev_data = None
+        deltas = _compute_trend_deltas(data, prev_data) if prev_data else {}
+
+        review = _load_period_review(session["user_id"], start)
+
+        return render_template(
+            "summary.html",
+            view="annual",
+            data=data,
+            start=start,
+            end=end,
+            insights=insights,
+            deltas=deltas,
+            review=review,
+            selected_year=year,
+            prev_year=year - 1,
+            next_year=year + 1,
+        )
 
     # =========================
     # WEEKLY VIEW
@@ -895,6 +1019,42 @@ def save_weekly_review():
         post(
             "weekly_reviews",
             {"user_id": user_id, "week_start": week_start, **payload},
+            prefer="return=minimal",
+        )
+    return jsonify({"success": True})
+
+
+@planner_bp.route("/api/v2/daily-gratitude", methods=["POST"])
+@login_required
+def save_daily_gratitude():
+    """Upsert today's gratitude entry (separate from reflection).
+    Body: { "plan_date": "YYYY-MM-DD", "gratitude": "..." }
+    Empty string clears it."""
+    user_id = session["user_id"]
+    data = request.get_json() or {}
+    plan_date = (data.get("plan_date") or "").strip()
+    gratitude = (data.get("gratitude") or "").strip() or None
+    if not plan_date:
+        return jsonify({"error": "plan_date required"}), 400
+    try:
+        date.fromisoformat(plan_date)
+    except ValueError:
+        return jsonify({"error": "Invalid plan_date"}), 400
+
+    existing = get(
+        "daily_meta",
+        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+    ) or []
+    if existing:
+        update(
+            "daily_meta",
+            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+            json={"gratitude": gratitude},
+        )
+    else:
+        post(
+            "daily_meta",
+            {"user_id": user_id, "plan_date": plan_date, "gratitude": gratitude},
             prefer="return=minimal",
         )
     return jsonify({"success": True})

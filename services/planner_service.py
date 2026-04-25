@@ -659,21 +659,36 @@ def load_tasks_from_events(user_id, plan_date):
 def get_daily_summary(plan_date, planner_mode="slots"):
     user_id = session["user_id"]
 
-    meta_rows = get(
-        "daily_meta",
-        params={
-            "user_id": f"eq.{user_id}",  # ✅ FIX
-            "plan_date": f"eq.{plan_date}",
-            "select": "habits,reflection",
-        },
-    ) or []
+    # Try the new schema (with gratitude). If the column hasn't been
+    # migrated yet, fall back to the legacy select so the page still
+    # renders — the gratitude textarea just shows empty.
+    try:
+        meta_rows = get(
+            "daily_meta",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date}",
+                "select": "habits,reflection,gratitude",
+            },
+        ) or []
+    except Exception:
+        meta_rows = get(
+            "daily_meta",
+            params={
+                "user_id": f"eq.{user_id}",
+                "plan_date": f"eq.{plan_date}",
+                "select": "habits,reflection",
+            },
+        ) or []
 
     habits = []
     reflection = ""
+    gratitude = ""
 
     if meta_rows:
         habits = meta_rows[0].get("habits") or []
         reflection = meta_rows[0].get("reflection") or ""
+        gratitude = meta_rows[0].get("gratitude") or ""
 
     # 🔁 SWITCH
     if planner_mode == "v2":
@@ -689,6 +704,7 @@ def get_daily_summary(plan_date, planner_mode="slots"):
         "tasks": tasks,
         "habits": habits,
         "reflection": reflection,
+        "gratitude": gratitude,
     }
 
 

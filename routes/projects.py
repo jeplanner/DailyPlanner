@@ -397,6 +397,15 @@ def update_project_task_status():
         json=patch,
     )
 
+    # Auto-progress: if this task ladders up to an auto-tracked KR, refresh
+    # the KR's current_value. Lazy-imported to avoid a circular ref since
+    # routes/goals.py imports from routes/todo (which projects.py uses).
+    try:
+        from routes.goals import recompute_kr_auto_progress_for_task
+        recompute_kr_auto_progress_for_task(user_id, task_id)
+    except Exception:
+        pass
+
     return jsonify({"status": "ok"})
 
 

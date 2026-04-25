@@ -205,6 +205,136 @@ def _kr_progress(kr):
     return max(0.0, min(1.0, pct)) * 100.0
 
 
+def recompute_kr_auto_progress(user_id, kr_id):
+    """When a KR has auto_progress=true, derive current_value from the
+    share of completed project_tasks that ladder up to it.
+
+      current_value = start + (target - start) * (done / total)
+
+    Tasks linked to one of the KR's initiatives count. Tasks linked
+    directly via key_result_id (legacy) also count.
+
+    Silently no-ops if auto_progress is false or the column doesn't
+    exist (pre-migration). Logs failures but never raises — task
+    toggles must not be blocked by KR roll-up issues.
+    """
+    try:
+        kr_rows = get(
+            "key_results",
+            params={
+                "id": f"eq.{kr_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "id,start_value,target_value,auto_progress",
+            },
+        ) or []
+        if not kr_rows:
+            return
+        kr = kr_rows[0]
+        if not kr.get("auto_progress"):
+            return
+
+        # Collect all initiative ids under this KR
+        init_rows = get(
+            "initiatives",
+            params={
+                "key_result_id": f"eq.{kr_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "id",
+            },
+        ) or []
+        init_ids = [r["id"] for r in init_rows]
+
+        # Count tasks linked via initiative OR (legacy) directly via KR.
+        # Two queries summed for clarity — both small (per-user scope).
+        total_done = 0
+        total_all = 0
+
+        if init_ids:
+            ids_csv = ",".join(str(i) for i in init_ids)
+            t_rows = get(
+                "project_tasks",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "is_deleted": "eq.false",
+                    "is_eliminated": "eq.false",
+                    "initiative_id": f"in.({ids_csv})",
+                    "select": "task_id,status",
+                },
+            ) or []
+            total_all += len(t_rows)
+            total_done += sum(1 for r in t_rows if r.get("status") == "done")
+
+        # Legacy: tasks linked directly via key_result_id (no initiative)
+        legacy_rows = get(
+            "project_tasks",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "is_eliminated": "eq.false",
+                "key_result_id": f"eq.{kr_id}",
+                "initiative_id": "is.null",
+                "select": "task_id,status",
+            },
+        ) or []
+        total_all += len(legacy_rows)
+        total_done += sum(1 for r in legacy_rows if r.get("status") == "done")
+
+        if total_all == 0:
+            new_current = float(kr.get("start_value") or 0)
+        else:
+            start = float(kr.get("start_value") or 0)
+            target = float(kr.get("target_value") or 0)
+            ratio = total_done / total_all
+            new_current = start + (target - start) * ratio
+
+        update(
+            "key_results",
+            params={"id": f"eq.{kr_id}", "user_id": f"eq.{user_id}"},
+            json={"current_value": round(new_current, 2)},
+        )
+    except Exception as e:
+        # Don't let KR roll-up break a task toggle. Log + move on.
+        import logging
+        logging.getLogger(__name__).warning(
+            "recompute_kr_auto_progress(%s) failed: %s", kr_id, e
+        )
+
+
+def recompute_kr_auto_progress_for_task(user_id, project_task_id):
+    """Resolve the KR(s) a project task ladders up to and recompute.
+
+    A task may link via initiative_id (preferred) or legacy key_result_id.
+    Either path triggers a recompute of the parent KR.
+    """
+    try:
+        rows = get(
+            "project_tasks",
+            params={
+                "task_id": f"eq.{project_task_id}",
+                "user_id": f"eq.{user_id}",
+                "select": "initiative_id,key_result_id",
+            },
+        ) or []
+        if not rows:
+            return
+        r = rows[0]
+        kr_id = r.get("key_result_id")
+        if not kr_id and r.get("initiative_id"):
+            init_rows = get(
+                "initiatives",
+                params={"id": f"eq.{r['initiative_id']}", "select": "key_result_id"},
+            ) or []
+            if init_rows:
+                kr_id = init_rows[0].get("key_result_id")
+        if kr_id:
+            recompute_kr_auto_progress(user_id, kr_id)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "recompute_kr_auto_progress_for_task(%s) failed: %s", project_task_id, e
+        )
+
+
 def _project_map(user_id):
     rows = get(
         "projects",
@@ -572,6 +702,7 @@ def update_key_result(kr_id):
         "start_value", "current_value", "target_value",
         "direction", "order_index",
         "is_deleted",
+        "auto_progress",  # opt-in to KR roll-up from completed tasks
     }
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
@@ -595,6 +726,10 @@ def update_key_result(kr_id):
         params={"id": f"eq.{kr_id}", "user_id": f"eq.{session['user_id']}"},
         json=patch,
     )
+    # If we just turned auto_progress on, recompute immediately so the
+    # KR's current_value reflects today's task completions.
+    if patch.get("auto_progress") is True:
+        recompute_kr_auto_progress(session["user_id"], kr_id)
     return jsonify({"status": "ok"})
 
 

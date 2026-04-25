@@ -242,6 +242,17 @@ html.dark .wr-input { background: #0f172a; border-color: #334155; color: #f1f5f9
 .wr-daily-archive[open] summary::before { content: "▾ "; }
 .wr-daily-archive .reflection-list { margin-top: 8px; }
 
+/* Reflection / Gratitude prompt labels (daily view) */
+.ref-prompt-label {
+  display: block;
+  font-size: 12px; font-weight: 700;
+  color: var(--sm-text, #0f172a);
+  letter-spacing: .02em;
+  margin-bottom: 6px;
+}
+.ref-prompt-label .hint { color: var(--sm-text3, #94a3b8); font-weight: 500; }
+.gratitude-textarea { background-image: linear-gradient(180deg, transparent, color-mix(in srgb, #16a34a 4%, transparent)); }
+
 /* ═══════════ AI CARD ═══════════ */
 .ai-card { border:1px dashed var(--sm-primary); background:var(--sm-primary-light); }
 html.dark .ai-card { border-color:var(--sm-border); }

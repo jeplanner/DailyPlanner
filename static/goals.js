@@ -360,6 +360,8 @@ function openNewKrModal(objectiveId) {
   $("km-target").value = "";
   $("km-unit").value = "";
   $("km-direction").value = "up";
+  const auto = $("km-auto-progress");
+  if (auto) auto.checked = false;
   $("kr-modal").classList.remove("hidden");
   setTimeout(() => $("km-title").focus(), 50);
 }
@@ -380,6 +382,8 @@ function openEditKrModal(krId) {
   $("km-target").value = kr.target_value ?? "";
   $("km-unit").value = kr.unit || "";
   $("km-direction").value = kr.direction || "up";
+  const auto = $("km-auto-progress");
+  if (auto) auto.checked = !!kr.auto_progress;
   $("kr-modal").classList.remove("hidden");
 }
 
@@ -400,6 +404,7 @@ async function saveKrModal() {
     target_value: target,
     unit: $("km-unit").value.trim() || null,
     direction: $("km-direction").value,
+    auto_progress: !!($("km-auto-progress") && $("km-auto-progress").checked),
   };
   if (!payload.title) { showToast("Title is required", "error"); return; }
 
