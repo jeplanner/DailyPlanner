@@ -581,6 +581,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     habits = fetch_habits(user_id, plan_date)
     overdue = fetch_overdue(user_id, plan_date)
     done_today = fetch_done_today(user_id, plan_date)
+    intent = _fetch_daily_intent(user_id, plan_date)
 
     # The morning-agenda table merges meetings + today's tasks into one
     # chronological list. Habits render in their own band (no time).
@@ -597,6 +598,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
         "overdue": overdue,
         "done_today": done_today,
         "habits": habits,
+        "intent": intent,
         "counts": {
             "meetings": meeting_count,
             "tasks": task_count,
@@ -605,4 +607,28 @@ def build_dashboard(user_id: str, plan_date) -> dict:
             "overdue": len(overdue),
             "done_today": len(done_today),
         },
+    }
+
+
+def _fetch_daily_intent(user_id: str, plan_date) -> dict:
+    """Returns {"text": str | None, "done": bool} for the day's intent.
+    Degrades to {"text": None, "done": False} if the daily_intent
+    columns haven't been migrated yet (column-not-in-schema-cache),
+    so the UI just doesn't render the focus card on un-migrated DBs."""
+    iso = _to_iso(plan_date)
+    rows = _safe_get(
+        "daily_meta",
+        params={
+            "user_id": f"eq.{user_id}",
+            "plan_date": f"eq.{iso}",
+            "select": "daily_intent,daily_intent_done",
+        },
+        action="daily intent fetch",
+    )
+    if not rows:
+        return {"text": None, "done": False}
+    r = rows[0]
+    return {
+        "text": (r.get("daily_intent") or "").strip() or None,
+        "done": bool(r.get("daily_intent_done")),
     }

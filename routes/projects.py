@@ -516,6 +516,14 @@ def unsend_task_from_eisenhower():
 @projects_bp.route("/projects/tasks/update-date", methods=["POST"])
 @login_required
 def update_project_task_date():
+    """Update a project task's due_date.
+
+    Body accepts either an explicit `due_date` (legacy callers) or a
+    relative `shift_days` shortcut that the daily-summary "Push to
+    tomorrow / +3d / next week" buttons use.
+    """
+    from datetime import date as _date, timedelta as _td
+
     data = request.get_json() or {}
     task_id = data.get("task_id")
     due_date = data.get("due_date")
@@ -523,13 +531,21 @@ def update_project_task_date():
     if not task_id:
         return jsonify({"error": "Missing task id"}), 400
 
+    if not due_date:
+        try:
+            shift = int(data.get("shift_days") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid shift_days"}), 400
+        if shift > 0:
+            due_date = (_date.today() + _td(days=shift)).isoformat()
+
     update(
         "project_tasks",
         params={"task_id": f"eq.{task_id}"},
         json={"due_date": due_date},
     )
     logger.info(f"👉 task_id={task_id}, new_date={due_date}")
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "due_date": due_date})
 @projects_bp.route("/projects/tasks/<task_id>/update", methods=["POST"])
 @login_required
 def update_task(task_id):

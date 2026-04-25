@@ -581,6 +581,45 @@ def _create_next_recurring_instance(user_id, recurring_id, current_plan_date,
 # bugs (NameError + missing user_id scope). The Morning Dashboard
 # (/summary?view=daily) now surfaces overdue items as a read-through
 # view — no duplication required.
+@todo_bp.route("/todo/reschedule", methods=["POST"])
+@login_required
+def reschedule_eisenhower_task():
+    """Push a matrix task's task_date forward (or to a specific date).
+
+    Body shapes accepted:
+      { "id": "<uuid>", "due_date": "YYYY-MM-DD" }     # explicit date
+      { "id": "<uuid>", "shift_days": 1 }              # +1 day from today
+      { "id": "<uuid>", "shift_days": 7 }              # next week, etc.
+
+    Returns the new due_date so the client can confirm and update its
+    own DOM without a full refresh.
+    """
+    from datetime import date as _date, timedelta as _td
+
+    data = request.get_json(force=True) or {}
+    task_id = data.get("id")
+    if not task_id:
+        return jsonify({"error": "Missing task id"}), 400
+
+    new_date = data.get("due_date")
+    if not new_date:
+        try:
+            shift = int(data.get("shift_days") or 0)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid shift_days"}), 400
+        if shift <= 0:
+            return jsonify({"error": "shift_days must be positive"}), 400
+        new_date = (_date.today() + _td(days=shift)).isoformat()
+
+    user_id = session["user_id"]
+    update(
+        "todo_matrix",
+        params={"id": f"eq.{task_id}", "user_id": f"eq.{user_id}"},
+        json={"task_date": new_date, "plan_date": new_date},
+    )
+    return jsonify({"status": "ok", "due_date": new_date})
+
+
 @todo_bp.route("/todo/move", methods=["POST"])
 @login_required
 def move_eisenhower_task():

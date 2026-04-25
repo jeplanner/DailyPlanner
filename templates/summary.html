@@ -118,6 +118,36 @@
   })();
   </script>
 
+  <!-- ── TODAY'S FOCUS (One Big Thing) ── single most important thing today.
+       Empty state prompts user to commit; filled state shows with toggle. -->
+  <section class="md-card md-focus-card" aria-labelledby="md-focus-title">
+    <header class="md-card-head">
+      <h2 class="md-card-title" id="md-focus-title">
+        <span class="md-card-icon md-focus-icon"><i data-feather="target"></i></span>
+        Today's Focus
+      </h2>
+    </header>
+    <div class="md-focus-body" id="md-focus-body"
+         data-date="{{ date.isoformat() }}"
+         data-intent="{{ dashboard.intent.text or '' }}"
+         data-done="{{ 1 if dashboard.intent.done else 0 }}">
+      {% if dashboard.intent.text %}
+        <button type="button" class="md-task-toggle md-focus-toggle {{ 'is-done' if dashboard.intent.done }}"
+                aria-label="{{ 'Mark not done' if dashboard.intent.done else 'Mark done' }}"
+                onclick="toggleDailyIntent(this, event)"></button>
+        <span class="md-focus-text {{ 'md-focus-done' if dashboard.intent.done }}"
+              onclick="editDailyIntent()">{{ dashboard.intent.text }}</span>
+        <button type="button" class="md-focus-edit" aria-label="Edit focus" onclick="editDailyIntent()">
+          <i data-feather="edit-2"></i>
+        </button>
+      {% else %}
+        <button type="button" class="md-focus-empty" onclick="editDailyIntent()">
+          What's the one thing you want to accomplish today?
+        </button>
+      {% endif %}
+    </div>
+  </section>
+
   <!-- ── OVERDUE ── highest priority signal in a morning review -->
   {% if dashboard.overdue %}
   <section class="md-card md-overdue-card" aria-labelledby="md-overdue-title">
@@ -183,6 +213,10 @@
                       onclick="markTaskDoneInRow(this, event)"></button>
               <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(o.category, '📁') }}</span>
               <span class="md-row-title">{{ o.title }}</span>
+              <button type="button" class="md-reschedule-btn" aria-label="Reschedule"
+                      onclick="openRescheduleMenu(this, event)" title="Push to a later date">
+                <i data-feather="clock"></i>
+              </button>
             </td>
             <td class="md-c-due">
               <span class="md-overdue-chip"
@@ -605,6 +639,56 @@
 
 </div>
 
+<!-- ══════════════════ QUICK CAPTURE FAB ══════════════════
+     Floating "+" on the summary page. Tap to add a task without
+     navigating away — intentionally minimal: title + date. Project
+     and category default to General/Personal so capture stays under
+     two seconds, the actual planner page is where users refine. -->
+<button type="button" id="quick-capture-fab" class="quick-capture-fab"
+        aria-label="Add a task" onclick="openQuickCapture()">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+  </svg>
+</button>
+
+<div id="quick-capture-overlay" class="quick-capture-overlay hidden"
+     onclick="if(event.target===this)closeQuickCapture()"></div>
+<aside id="quick-capture-sheet" class="quick-capture-sheet hidden" role="dialog" aria-modal="true"
+       aria-labelledby="qc-title">
+  <header class="qc-head">
+    <h3 id="qc-title">Add a task</h3>
+    <button type="button" class="qc-close" onclick="closeQuickCapture()" aria-label="Close">×</button>
+  </header>
+  <form class="qc-form" onsubmit="submitQuickCapture(event)">
+    <input type="text" id="qc-text" class="qc-text" placeholder="What needs doing?"
+           autocomplete="off" required maxlength="240">
+    <div class="qc-when">
+      <button type="button" class="qc-chip qc-chip-active" data-when="today" onclick="setQcWhen(this)">Today</button>
+      <button type="button" class="qc-chip" data-when="tomorrow" onclick="setQcWhen(this)">Tomorrow</button>
+      <button type="button" class="qc-chip" data-when="week" onclick="setQcWhen(this)">Next week</button>
+      <input type="date" id="qc-date" class="qc-date" onchange="setQcDateInput()">
+    </div>
+    <div class="qc-foot">
+      <button type="button" class="qc-btn qc-btn-ghost" onclick="closeQuickCapture()">Cancel</button>
+      <button type="submit" class="qc-btn qc-btn-primary">Add task</button>
+    </div>
+  </form>
+</aside>
+
+<!-- ══════════════════ RESCHEDULE MENU ══════════════════
+     Tiny popover anchored to the row's reschedule button. Built once,
+     reused for every row. Position is computed in JS. -->
+<div id="reschedule-menu" class="reschedule-menu hidden" role="menu" aria-label="Reschedule task">
+  <button type="button" role="menuitem" data-shift="1"  onclick="applyReschedule(this)">Tomorrow</button>
+  <button type="button" role="menuitem" data-shift="3"  onclick="applyReschedule(this)">In 3 days</button>
+  <button type="button" role="menuitem" data-shift="7"  onclick="applyReschedule(this)">Next week</button>
+  <label class="reschedule-pick" role="menuitem">
+    Pick date
+    <input type="date" id="reschedule-pick-input" onchange="applyReschedulePick(this)">
+  </label>
+</div>
+
 <!-- ══════════════════ QUICK-PEEK SHEET ══════════════════
      Opens when a row is clicked on Today's Plan. Shows the item's
      context without navigation; primary action is type-specific
@@ -622,6 +706,17 @@
   </header>
 
   <div class="peek-body" id="peek-body"></div>
+
+  <!-- Reschedule shortcuts — visible only when the item is a task. The
+       three buttons cover the most common pushes; full date picker is
+       in the existing editor for anything finer. Hidden on non-task
+       items via JS in _renderPeek. -->
+  <div id="peek-reschedule" class="peek-reschedule hidden">
+    <span class="peek-reschedule-label">Push to</span>
+    <button type="button" class="peek-reschedule-btn" data-shift="1" onclick="peekReschedule(1)">Tomorrow</button>
+    <button type="button" class="peek-reschedule-btn" data-shift="3" onclick="peekReschedule(3)">+3 days</button>
+    <button type="button" class="peek-reschedule-btn" data-shift="7" onclick="peekReschedule(7)">Next week</button>
+  </div>
 
   <footer class="peek-foot">
     <button id="peek-action" class="peek-btn peek-btn-primary" type="button"
@@ -736,6 +831,167 @@ html.dark .peek-foot { border-top-color: #334155; }
   border: 1px solid var(--color-border, #e2e8f0);
 }
 .peek-btn-ghost:hover { background: var(--color-border, #e5e7eb); color: var(--color-text, #0f172a); filter: none; }
+
+/* Reschedule strip inside the peek sheet — sits above the footer.
+   Compact pill row for the most common pushes (Tomorrow / +3d / Next week). */
+.peek-reschedule {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 10px 20px;
+  border-top: 1px solid var(--color-border, #e2e8f0);
+}
+.peek-reschedule.hidden { display: none; }
+.peek-reschedule-label {
+  font-size: 12px; font-weight: 600;
+  color: var(--color-text-secondary, #64748b);
+  margin-right: 4px;
+}
+.peek-reschedule-btn {
+  appearance: none;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text, #0f172a);
+  font: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.peek-reschedule-btn:hover {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
+  border-color: var(--color-primary, #2563eb);
+  color: var(--color-primary, #2563eb);
+}
+html.dark .peek-reschedule { border-top-color: #334155; }
+html.dark .peek-reschedule-btn { border-color: #334155; color: #f1f5f9; }
+html.dark .peek-reschedule-btn:hover { background: #273449; color: #93c5fd; border-color: #475569; }
+
+/* ══════════════════ QUICK CAPTURE FAB + SHEET ══════════════════ */
+.quick-capture-fab {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right, 20px));
+  bottom: max(24px, env(safe-area-inset-bottom, 24px));
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-primary, #2563eb);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  z-index: 1050;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.quick-capture-fab:hover {
+  transform: scale(1.05);
+  box-shadow: 0 12px 28px rgba(37, 99, 235, 0.45);
+}
+.quick-capture-fab:active { transform: scale(.96); }
+.quick-capture-fab:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-primary, #2563eb) 50%, transparent);
+  outline-offset: 2px;
+}
+
+.quick-capture-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(15, 23, 42, .42); backdrop-filter: blur(2px);
+  opacity: 1; transition: opacity .2s ease;
+}
+.quick-capture-overlay.hidden { opacity: 0; pointer-events: none; }
+
+.quick-capture-sheet {
+  position: fixed; z-index: 1101;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #0f172a);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+  padding: 18px;
+  width: min(440px, calc(100vw - 24px));
+  /* Desktop: centered; mobile: bottom-sheet */
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  transition: transform .22s ease, opacity .22s ease;
+  opacity: 1;
+}
+.quick-capture-sheet.hidden {
+  opacity: 0; pointer-events: none;
+  transform: translate(-50%, -45%);
+}
+html.dark .quick-capture-sheet { background: #1e293b; color: #f1f5f9; }
+@media (max-width: 640px) {
+  .quick-capture-sheet {
+    top: auto; bottom: 0; left: 0; right: 0;
+    width: 100%;
+    transform: translateY(0);
+    border-radius: 14px 14px 0 0;
+    padding: 18px 18px max(20px, env(safe-area-inset-bottom, 18px));
+  }
+  .quick-capture-sheet.hidden { transform: translateY(20px); }
+}
+.qc-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.qc-head h3 { font-size: 16px; font-weight: 700; margin: 0; }
+.qc-close {
+  appearance: none; background: transparent; border: none;
+  font-size: 22px; line-height: 1; cursor: pointer;
+  color: var(--color-text-tertiary, #94a3b8);
+  padding: 0 6px;
+}
+.qc-close:hover { color: var(--color-text, #0f172a); }
+.qc-form { display: flex; flex-direction: column; gap: 12px; }
+.qc-text {
+  font: inherit; font-size: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #0f172a);
+  width: 100%;
+}
+.qc-text:focus {
+  outline: none;
+  border-color: var(--color-primary, #2563eb);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2563eb) 15%, transparent);
+}
+html.dark .qc-text { background: #0f172a; border-color: #334155; color: #f1f5f9; }
+.qc-when { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.qc-chip {
+  appearance: none;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary, #475569);
+  font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.qc-chip:hover { border-color: var(--color-primary, #2563eb); color: var(--color-primary, #2563eb); }
+.qc-chip-active {
+  background: var(--color-primary, #2563eb);
+  color: #fff; border-color: var(--color-primary, #2563eb);
+}
+.qc-chip-active:hover { color: #fff; }
+.qc-date {
+  margin-left: auto;
+  font: inherit; font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text, #0f172a);
+}
+html.dark .qc-chip { color: #cbd5e1; border-color: #334155; }
+html.dark .qc-chip:hover { color: #93c5fd; border-color: #475569; }
+html.dark .qc-date { border-color: #334155; color: #f1f5f9; }
+.qc-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.qc-btn {
+  padding: 9px 16px; border-radius: 10px; font: inherit; font-size: 13.5px; font-weight: 700;
+  border: none; cursor: pointer;
+}
+.qc-btn-primary { background: var(--color-primary, #2563eb); color: #fff; }
+.qc-btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.qc-btn-ghost { background: transparent; color: var(--color-text-secondary, #475569); border: 1px solid var(--color-border, #e2e8f0); }
+.qc-btn-ghost:hover { background: var(--color-border, #e5e7eb); }
+html.dark .qc-btn-ghost { color: #cbd5e1; border-color: #334155; }
+html.dark .qc-btn-ghost:hover { background: #273449; }
 
 /* Every row is clickable — cursor + focus ring reinforce that */
 .md-row[role="button"] { cursor: pointer; }
@@ -869,6 +1125,13 @@ function _renderPeek(item) {
   openLink.href = item.link || "#";
   openLink.style.display = item.link ? "inline-flex" : "none";
 
+  // Reschedule strip — only relevant for active (not-done) tasks.
+  const reschedStrip = document.getElementById("peek-reschedule");
+  if (reschedStrip) {
+    const isActiveTask = item.type === "task" && !item.done && !!item.id;
+    reschedStrip.classList.toggle("hidden", !isActiveTask);
+  }
+
   if (item.type === "task") {
     const alreadyDone = item.done;
     action.style.display = "inline-flex";
@@ -887,6 +1150,53 @@ function _renderPeek(item) {
   }
 
   if (window.feather) feather.replace();
+}
+
+/* Reschedule the currently-open peek item. Mirrors _doReschedule but
+ * sourced from _peekItem instead of a row's dataset, since the peek may
+ * have been opened from a row that's already in DOM but we want to
+ * update the row that lives behind the sheet. */
+async function peekReschedule(shiftDays) {
+  if (!_peekItem) return;
+  const item = _peekItem;
+  if (!item.id) return;
+
+  let url, body;
+  if (item.source === "project") {
+    const rawId = item.id.startsWith("pt-") ? item.id.slice(3) : item.id;
+    url = "/projects/tasks/update-date";
+    body = { task_id: rawId, shift_days: shiftDays };
+  } else {
+    url = "/todo/reschedule";
+    body = { id: item.id, shift_days: shiftDays };
+  }
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json().catch(() => ({}));
+
+    // Animate the source row out, mirroring the inline reschedule path.
+    if (item.rowEl) {
+      item.rowEl.style.transition = "opacity .25s ease, transform .25s ease";
+      item.rowEl.style.opacity = "0";
+      item.rowEl.style.transform = "translateX(8px)";
+      setTimeout(() => item.rowEl.remove(), 260);
+    }
+
+    closeItemPeek();
+    if (window.showToast) {
+      const newDate = data.due_date || "";
+      showToast(newDate ? `Moved to ${newDate}` : "Rescheduled", "success", 2200);
+    }
+  } catch (e) {
+    console.error("peekReschedule failed:", e);
+    if (window.showToast) showToast("Couldn't reschedule", "error");
+  }
 }
 
 function _field(k, v) {
@@ -1232,6 +1542,320 @@ async function markTaskDoneInRow(btn, ev) {
     } else if (window.showToast) {
       showToast("Marked open", "info", 1800);
     }
+  }
+}
+
+/* ── Daily Intent ("Today's Focus") ─────────────────────────────
+ * In-place edit: clicking the empty prompt OR the existing text
+ * swaps the body for an inline input. Enter or blur saves; Escape
+ * cancels. Toggling the circle flips the done state. */
+function editDailyIntent() {
+  const body = document.getElementById("md-focus-body");
+  if (!body || body.dataset.editing === "1") return;
+  const planDate = body.dataset.date;
+  const cur = body.dataset.intent || "";
+
+  body.dataset.editing = "1";
+  body.innerHTML = `
+    <input type="text" class="md-focus-input" id="md-focus-input"
+           maxlength="160" placeholder="One sentence — what does today look like won?"
+           value="${cur.replace(/"/g, "&quot;")}">
+    <button type="button" class="md-focus-save" onclick="saveDailyIntent()">Save</button>
+    <button type="button" class="md-focus-cancel" onclick="cancelEditDailyIntent()">×</button>
+  `;
+  const input = document.getElementById("md-focus-input");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); saveDailyIntent(); }
+      if (e.key === "Escape") { e.preventDefault(); cancelEditDailyIntent(); }
+    });
+  }
+}
+function cancelEditDailyIntent() {
+  const body = document.getElementById("md-focus-body");
+  if (!body) return;
+  body.dataset.editing = "";
+  _renderDailyIntent(body);
+}
+async function saveDailyIntent() {
+  const body = document.getElementById("md-focus-body");
+  if (!body) return;
+  const input = document.getElementById("md-focus-input");
+  const text = (input?.value || "").trim();
+  const planDate = body.dataset.date;
+
+  try {
+    const r = await fetch("/api/v2/daily-intent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_date: planDate, intent: text }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    body.dataset.intent = text;
+    if (!text) body.dataset.done = "0";
+    body.dataset.editing = "";
+    _renderDailyIntent(body);
+    if (window.showToast) showToast(text ? "Focus saved" : "Focus cleared", "success", 1500);
+  } catch (e) {
+    console.error("saveDailyIntent failed:", e);
+    if (window.showToast) showToast("Couldn't save", "error");
+  }
+}
+async function toggleDailyIntent(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const body = document.getElementById("md-focus-body");
+  if (!body) return;
+  const planDate = body.dataset.date;
+
+  btn.classList.add("is-saving");
+  try {
+    const r = await fetch("/api/v2/daily-intent/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_date: planDate }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    body.dataset.done = data.done ? "1" : "0";
+    _renderDailyIntent(body);
+    if (window.showToast) {
+      showToast(data.done ? "Focus achieved 🎯" : "Focus reopened", "success", 1800);
+    }
+  } catch (e) {
+    console.error("toggleDailyIntent failed:", e);
+    btn.classList.remove("is-saving");
+    if (window.showToast) showToast("Couldn't update", "error");
+  }
+}
+function _renderDailyIntent(body) {
+  const text = body.dataset.intent || "";
+  const done = body.dataset.done === "1";
+  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  if (text) {
+    body.innerHTML = `
+      <button type="button" class="md-task-toggle md-focus-toggle ${done ? 'is-done' : ''}"
+              aria-label="${done ? 'Mark not done' : 'Mark done'}"
+              onclick="toggleDailyIntent(this, event)"></button>
+      <span class="md-focus-text ${done ? 'md-focus-done' : ''}"
+            onclick="editDailyIntent()">${escaped}</span>
+      <button type="button" class="md-focus-edit" aria-label="Edit focus" onclick="editDailyIntent()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+        </svg>
+      </button>`;
+  } else {
+    body.innerHTML = `
+      <button type="button" class="md-focus-empty" onclick="editDailyIntent()">
+        What's the one thing you want to accomplish today?
+      </button>`;
+  }
+  if (window.feather) feather.replace();
+}
+
+/* ── Quick capture ──────────────────────────────────────────────
+ * Floating + button → minimal sheet → POST /todo/autosave with the
+ * smallest payload that creates a usable matrix task. Keeps capture
+ * under two seconds by defaulting category/quadrant. The point isn't
+ * to replace the planner page — it's to never lose a thought.
+ */
+function openQuickCapture() {
+  const sheet = document.getElementById("quick-capture-sheet");
+  const overlay = document.getElementById("quick-capture-overlay");
+  if (!sheet || !overlay) return;
+  overlay.classList.remove("hidden");
+  sheet.classList.remove("hidden");
+  // Reset chip selection to Today, clear text + date
+  document.querySelectorAll(".qc-chip").forEach(c =>
+    c.classList.toggle("qc-chip-active", c.dataset.when === "today"));
+  const dateInput = document.getElementById("qc-date");
+  if (dateInput) dateInput.value = "";
+  const txt = document.getElementById("qc-text");
+  if (txt) { txt.value = ""; setTimeout(() => txt.focus(), 50); }
+}
+function closeQuickCapture() {
+  document.getElementById("quick-capture-sheet")?.classList.add("hidden");
+  document.getElementById("quick-capture-overlay")?.classList.add("hidden");
+}
+function setQcWhen(btn) {
+  document.querySelectorAll(".qc-chip").forEach(c => c.classList.remove("qc-chip-active"));
+  btn.classList.add("qc-chip-active");
+  const dateInput = document.getElementById("qc-date");
+  if (dateInput) dateInput.value = "";  // chip choice clears the explicit date
+}
+function setQcDateInput() {
+  // Picking a date deselects the chips so the picker's value wins
+  document.querySelectorAll(".qc-chip").forEach(c => c.classList.remove("qc-chip-active"));
+}
+function _qcResolveDate() {
+  const dateInput = document.getElementById("qc-date");
+  if (dateInput && dateInput.value) return dateInput.value;
+  const active = document.querySelector(".qc-chip.qc-chip-active");
+  const when = active ? active.dataset.when : "today";
+  const d = new Date();
+  if (when === "tomorrow") d.setDate(d.getDate() + 1);
+  else if (when === "week") d.setDate(d.getDate() + 7);
+  // else: today
+  // Local-tz YYYY-MM-DD
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+async function submitQuickCapture(ev) {
+  ev.preventDefault();
+  const text = (document.getElementById("qc-text")?.value || "").trim();
+  if (!text) return;
+  const planDate = _qcResolveDate();
+
+  const submitBtn = ev.target.querySelector(".qc-btn-primary");
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving…"; }
+
+  try {
+    // /todo/autosave creates a new matrix task when no `id` is given.
+    // category/subcategory are NOT-NULL in the schema — autosave defaults
+    // them to "General" when omitted, so we don't send them here.
+    const r = await fetch("/todo/autosave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_date: planDate,
+        task_date: planDate,
+        quadrant: "do",      // default to Important+Urgent for quick captures
+        task_text: text,
+        priority: "medium",
+      }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    closeQuickCapture();
+    if (window.showToast) showToast(`Added "${text.slice(0, 40)}${text.length > 40 ? '…' : ''}"`, "success", 2200);
+  } catch (e) {
+    console.error("quick capture failed:", e);
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Add task"; }
+    if (window.showToast) showToast("Couldn't save — try again", "error");
+  }
+}
+
+// Keyboard: Escape closes the quick-capture sheet too
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const sheet = document.getElementById("quick-capture-sheet");
+    if (sheet && !sheet.classList.contains("hidden")) closeQuickCapture();
+  }
+});
+
+/* ── Reschedule (push to tomorrow / +3d / next week / pick) ──────
+ * Anchored popover. The "anchor row" is remembered between
+ * openRescheduleMenu() and applyReschedule(), so click handlers can
+ * grab the source row's id/source without prop drilling. */
+let _reschedRow = null;
+
+function openRescheduleMenu(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const row = btn.closest(".md-row");
+  if (!row) return;
+  _reschedRow = row;
+
+  const menu = document.getElementById("reschedule-menu");
+  if (!menu) return;
+
+  // Position below the button (or above if it would clip the viewport).
+  const r = btn.getBoundingClientRect();
+  menu.classList.remove("hidden");
+  // Render once to measure
+  const mh = menu.offsetHeight;
+  const mw = menu.offsetWidth;
+  let top = r.bottom + window.scrollY + 6;
+  let left = r.right + window.scrollX - mw;
+  if (left < 8) left = 8;
+  if (top + mh > window.scrollY + window.innerHeight - 8) {
+    top = r.top + window.scrollY - mh - 6;  // flip above
+  }
+  menu.style.top = top + "px";
+  menu.style.left = left + "px";
+
+  // Close on outside click / Escape
+  setTimeout(() => {
+    document.addEventListener("click", _closeRescheduleOnOutside, { once: true });
+    document.addEventListener("keydown", _closeRescheduleOnEsc, { once: true });
+  }, 0);
+}
+
+function _closeRescheduleOnOutside(ev) {
+  const menu = document.getElementById("reschedule-menu");
+  if (!menu) return;
+  if (menu.contains(ev.target)) {
+    // Re-arm so the next outside click closes it.
+    document.addEventListener("click", _closeRescheduleOnOutside, { once: true });
+    return;
+  }
+  closeRescheduleMenu();
+}
+function _closeRescheduleOnEsc(ev) {
+  if (ev.key === "Escape") closeRescheduleMenu();
+}
+function closeRescheduleMenu() {
+  const menu = document.getElementById("reschedule-menu");
+  if (menu) menu.classList.add("hidden");
+  _reschedRow = null;
+  document.removeEventListener("click", _closeRescheduleOnOutside);
+  document.removeEventListener("keydown", _closeRescheduleOnEsc);
+}
+
+async function applyReschedule(btn) {
+  const shift = parseInt(btn.dataset.shift || "0", 10);
+  if (!shift) return;
+  await _doReschedule({ shift_days: shift });
+}
+async function applyReschedulePick(input) {
+  if (!input.value) return;
+  await _doReschedule({ due_date: input.value });
+  input.value = "";
+}
+
+async function _doReschedule(payload) {
+  const row = _reschedRow;
+  closeRescheduleMenu();
+  if (!row) return;
+
+  const id = row.dataset.id;
+  const source = row.dataset.source || "";
+  let url, body;
+  if (source === "project") {
+    const rawId = id && id.startsWith("pt-") ? id.slice(3) : id;
+    url = "/projects/tasks/update-date";
+    body = { task_id: rawId, ...payload };
+  } else {
+    url = "/todo/reschedule";
+    body = { id: id, ...payload };
+  }
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json().catch(() => ({}));
+    const newDate = data.due_date || (payload.due_date || "");
+
+    // Animate row out — it's no longer overdue (unless they picked a
+    // past date, but we don't second-guess that here).
+    row.style.transition = "opacity .25s ease, transform .25s ease";
+    row.style.opacity = "0";
+    row.style.transform = "translateX(8px)";
+    setTimeout(() => row.remove(), 260);
+
+    if (window.showToast) {
+      const label = newDate ? `Moved to ${newDate}` : "Rescheduled";
+      showToast(label, "success", 2200);
+    }
+  } catch (e) {
+    console.error("reschedule failed:", e);
+    if (window.showToast) showToast("Couldn't reschedule", "error");
   }
 }
 

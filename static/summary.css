@@ -334,6 +334,179 @@ html.dark .md-count-green { background: #052e16; color: #86efac; }
 html.dark .md-recap-icon { background: #052e16; color: #4ade80; }
 .md-recap-row { /* visually identical to a struck-through overdue row */ }
 
+/* ═══════════════════════════════════════════════════════════════════
+   TODAY'S FOCUS CARD (One Big Thing)
+   Sits at the very top of the daily summary. Calm but assertive
+   typography — this is the "north star" of the day.
+   ═══════════════════════════════════════════════════════════════════ */
+.md-focus-icon {
+  background: color-mix(in srgb, #2563eb 12%, transparent);
+  color: #2563eb;
+}
+html.dark .md-focus-icon { background: #1e3a8a; color: #93c5fd; }
+
+.md-focus-body {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px 18px;
+  min-height: 48px;
+}
+.md-focus-toggle { width: 24px; height: 24px; margin-right: 0; }
+.md-focus-text {
+  flex: 1 1 auto;
+  font-size: 17px; line-height: 1.4; font-weight: 600;
+  color: var(--color-text, #0f172a);
+  cursor: pointer;
+  word-break: break-word;
+}
+.md-focus-text:hover { color: var(--color-primary, #2563eb); }
+.md-focus-done {
+  text-decoration: line-through;
+  color: var(--color-text-secondary, #94a3b8);
+}
+.md-focus-empty {
+  flex: 1; text-align: left;
+  background: transparent; border: 1px dashed var(--color-border, #e2e8f0);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font: inherit; font-size: 14px; font-weight: 500;
+  color: var(--color-text-secondary, #64748b);
+  cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.md-focus-empty:hover {
+  border-color: var(--color-primary, #2563eb);
+  color: var(--color-primary, #2563eb);
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 5%, transparent);
+}
+.md-focus-edit {
+  appearance: none;
+  width: 28px; height: 28px;
+  padding: 0; border: none; border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary, #94a3b8);
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.md-focus-edit:hover {
+  background: var(--color-bg-subtle, #f1f5f9);
+  color: var(--color-primary, #2563eb);
+}
+html.dark .md-focus-edit:hover { background: #273449; color: #93c5fd; }
+.md-focus-input {
+  flex: 1;
+  font: inherit; font-size: 16px; font-weight: 500;
+  padding: 10px 12px;
+  border: 1px solid var(--color-primary, #2563eb);
+  border-radius: 8px;
+  background: var(--color-bg, #fff);
+  color: var(--color-text, #0f172a);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2563eb) 15%, transparent);
+}
+.md-focus-input:focus { outline: none; }
+html.dark .md-focus-input { background: #0f172a; color: #f1f5f9; }
+.md-focus-save, .md-focus-cancel {
+  appearance: none;
+  padding: 8px 14px;
+  border-radius: 8px; font: inherit; font-size: 13px; font-weight: 700;
+  border: none; cursor: pointer;
+}
+.md-focus-save { background: var(--color-primary, #2563eb); color: #fff; }
+.md-focus-cancel {
+  background: transparent;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 22px; padding: 4px 10px;
+}
+.md-focus-cancel:hover { color: var(--color-text, #0f172a); }
+@media (max-width: 640px) {
+  .md-focus-text { font-size: 16px; }
+  .md-focus-body { gap: 10px; padding: 12px 14px 16px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RESCHEDULE BUTTON + POPOVER
+   The clock icon sits on the right edge of each Overdue row's title
+   cell. Tap to open a small floating menu anchored to the button.
+   ═══════════════════════════════════════════════════════════════════ */
+.md-reschedule-btn {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 28px; height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary, #9ca3af);
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s;
+}
+.md-reschedule-btn svg { width: 14px; height: 14px; }
+.md-reschedule-btn:hover {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 10%, transparent);
+  color: var(--color-primary, #2563eb);
+}
+.md-reschedule-btn:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: 2px;
+}
+/* Hide on mobile — gets its own bottom-sheet style spot via the title-cell
+   layout which is title-only on mobile per earlier UX pass. We surface the
+   reschedule action via the peek sheet instead on small screens. */
+@media (max-width: 640px) {
+  .md-reschedule-btn { display: none; }
+}
+
+.reschedule-menu {
+  position: absolute;
+  z-index: 9000;
+  min-width: 168px;
+  background: var(--color-bg, #fff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 13px;
+}
+.reschedule-menu.hidden { display: none; }
+.reschedule-menu button,
+.reschedule-menu .reschedule-pick {
+  appearance: none;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font: inherit;
+  color: var(--color-text, #111827);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.reschedule-menu button:hover,
+.reschedule-menu .reschedule-pick:hover {
+  background: var(--color-bg-subtle, #f3f4f6);
+}
+.reschedule-menu .reschedule-pick { padding: 6px 10px; gap: 8px; }
+.reschedule-menu .reschedule-pick input[type="date"] {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+}
+html.dark .reschedule-menu {
+  background: #1e293b;
+  border-color: #334155;
+  color: #f1f5f9;
+}
+html.dark .reschedule-menu button:hover,
+html.dark .reschedule-menu .reschedule-pick:hover { background: #273449; }
+html.dark .reschedule-menu .reschedule-pick input[type="date"] {
+  border-color: #334155; color: #f1f5f9;
+}
+
 /* Legend inline */
 .md-legend {
   display: flex; gap: 12px; flex-wrap: wrap;

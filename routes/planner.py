@@ -776,6 +776,91 @@ def build_google_datetime(plan_date, time_str):
 # ──────────────────────────────────────────────────────────────
 # DAILY REFLECTION — write to daily_meta.reflection
 # ──────────────────────────────────────────────────────────────
+@planner_bp.route("/api/v2/daily-intent", methods=["POST"])
+@login_required
+def save_daily_intent():
+    """Set or clear the user's "One Big Thing" for a date.
+
+    Body: { "plan_date": "YYYY-MM-DD", "intent": "...", "done": false? }
+
+    `intent` may be empty string to clear. `done` is optional — when
+    omitted, existing done state is preserved (so a text edit doesn't
+    accidentally re-open a completed intent).
+    """
+    user_id = session["user_id"]
+    data = request.get_json() or {}
+    plan_date = (data.get("plan_date") or "").strip()
+    intent = (data.get("intent") or "").strip() or None
+
+    if not plan_date:
+        return jsonify({"error": "plan_date required"}), 400
+    try:
+        date.fromisoformat(plan_date)
+    except ValueError:
+        return jsonify({"error": "Invalid plan_date"}), 400
+
+    payload = {"daily_intent": intent}
+    if "done" in data:
+        payload["daily_intent_done"] = bool(data.get("done"))
+    elif intent is None:
+        # Clearing the intent → reset done state too
+        payload["daily_intent_done"] = False
+
+    existing = get(
+        "daily_meta",
+        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+    ) or []
+
+    if existing:
+        update(
+            "daily_meta",
+            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+            json=payload,
+        )
+    else:
+        post(
+            "daily_meta",
+            {"user_id": user_id, "plan_date": plan_date, **payload},
+            prefer="return=minimal",
+        )
+
+    return jsonify({"success": True})
+
+
+@planner_bp.route("/api/v2/daily-intent/toggle", methods=["POST"])
+@login_required
+def toggle_daily_intent_done():
+    """Flip the daily_intent_done flag for a date."""
+    user_id = session["user_id"]
+    data = request.get_json() or {}
+    plan_date = (data.get("plan_date") or "").strip()
+    if not plan_date:
+        return jsonify({"error": "plan_date required"}), 400
+
+    rows = get(
+        "daily_meta",
+        {"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}",
+         "select": "daily_intent_done"},
+    ) or []
+    cur = bool(rows[0].get("daily_intent_done")) if rows else False
+    new_val = not cur
+
+    if rows:
+        update(
+            "daily_meta",
+            params={"user_id": f"eq.{user_id}", "plan_date": f"eq.{plan_date}"},
+            json={"daily_intent_done": new_val},
+        )
+    else:
+        post(
+            "daily_meta",
+            {"user_id": user_id, "plan_date": plan_date, "daily_intent_done": new_val},
+            prefer="return=minimal",
+        )
+
+    return jsonify({"success": True, "done": new_val})
+
+
 @planner_bp.route("/api/v2/daily-reflection", methods=["POST"])
 @login_required
 def save_daily_reflection():
