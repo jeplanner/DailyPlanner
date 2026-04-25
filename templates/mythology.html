@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Mythology — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Crimson+Pro:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .myth-app { max-width: 880px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  .myth-hero {
+    margin-bottom: 22px;
+  }
+  .myth-hero h1 {
+    font-size: 28px; font-weight: 800; letter-spacing: -.02em;
+    margin: 0 0 6px;
+  }
+  .myth-sub {
+    color: var(--color-text-secondary); font-size: 14px; line-height: 1.5;
+    max-width: 60ch; margin: 0;
+  }
+  .myth-date-line {
+    margin-top: 8px;
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--color-surface-sunken);
+    color: var(--color-text-secondary);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: .02em;
+  }
+
+  /* Filter rail */
+  .myth-filters {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  .myth-chip {
+    appearance: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 13px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; text-decoration: none;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .myth-chip:hover { background: var(--color-primary-light); color: var(--color-primary); border-color: var(--color-primary); }
+  .myth-chip.is-active {
+    background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
+  }
+
+  /* Story cards */
+  .myth-list {
+    display: flex; flex-direction: column;
+    gap: 16px;
+  }
+  .myth-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    padding: 22px 24px 20px;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04);
+    transition: border-color .14s, box-shadow .14s;
+  }
+  .myth-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.07); }
+
+  .myth-card-head {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px; flex-wrap: wrap;
+  }
+  .myth-num {
+    flex: 0 0 auto;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--color-surface-sunken);
+    color: var(--color-text-secondary);
+    font-size: 12px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .myth-epic {
+    flex: 0 0 auto;
+    padding: 2px 10px; border-radius: 999px;
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .myth-epic.is-ramayana {
+    background: rgba(217,119,6,.14); color: #92400e;
+  }
+  html.dark .myth-epic.is-ramayana { background: rgba(245,158,11,.22); color: #fcd34d; }
+  .myth-epic.is-mahabharata {
+    background: rgba(37,99,235,.14); color: #1e40af;
+  }
+  html.dark .myth-epic.is-mahabharata { background: rgba(37,99,235,.22); color: #93c5fd; }
+
+  .myth-title {
+    font-size: 20px; font-weight: 700; line-height: 1.3;
+    margin: 0;
+    flex: 1; min-width: 200px;
+    color: var(--color-text);
+    letter-spacing: -.005em;
+  }
+
+  .myth-meta {
+    margin: 4px 0 14px;
+    font-size: 12.5px; color: var(--color-text-muted);
+  }
+  .myth-characters { font-style: italic; }
+
+  .myth-summary {
+    font-family: 'Crimson Pro', serif;
+    font-size: 17px; line-height: 1.7;
+    color: var(--color-text);
+    margin: 0 0 14px;
+    font-weight: 400;
+  }
+
+  .myth-moral {
+    border-left: 3px solid #fcd34d;
+    padding: 6px 14px;
+    background: rgba(245,158,11,.07);
+    border-radius: 0 8px 8px 0;
+    font-size: 13.5px; line-height: 1.55;
+    color: var(--color-text);
+    margin: 0;
+  }
+  html.dark .myth-moral {
+    background: rgba(245,158,11,.14);
+    border-left-color: #b45309;
+  }
+  .myth-moral b {
+    font-weight: 700;
+    color: #92400e;
+    letter-spacing: .02em;
+  }
+  html.dark .myth-moral b { color: #fcd34d; }
+
+  .myth-source {
+    margin-top: 8px;
+    font-size: 11.5px; color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Empty state */
+  .myth-empty {
+    background: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: 16px;
+    padding: 56px 24px;
+    text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .myth-empty svg { width: 36px; height: 36px; color: var(--color-text-muted); margin-bottom: 10px; }
+  .myth-empty h2 { font-size: 16px; font-weight: 700; color: var(--color-text); margin: 0 0 6px; }
+  .myth-empty p { font-size: 13.5px; margin: 0; max-width: 44ch; margin-left: auto; margin-right: auto; line-height: 1.55; }
+
+  @media (max-width: 640px) {
+    .myth-app { padding: 20px 14px 80px; }
+    .myth-hero h1 { font-size: 24px; }
+    .myth-card { padding: 18px 18px 16px; border-radius: 14px; }
+    .myth-title { font-size: 18px; min-width: 0; }
+    .myth-summary { font-size: 16px; line-height: 1.65; }
+    .myth-moral { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="myth-app">
+
+  <header class="myth-hero">
+    <h1>📖 Daily Mythology</h1>
+    <p class="myth-sub">Five stories a day from the Ramayana and Mahabharata. The selection is stable per day — same five appear on every refresh until midnight, then a new set rolls in.</p>
+    <div class="myth-date-line">{{ today }}</div>
+  </header>
+
+  <div class="myth-filters" role="tablist" aria-label="Filter by epic">
+    <a href="/mythology"
+       class="myth-chip {% if not epic %}is-active{% endif %}">
+      Both ({{ total if not epic else 'all' }})
+    </a>
+    <a href="/mythology?epic=ramayana"
+       class="myth-chip {% if epic == 'ramayana' %}is-active{% endif %}">
+      Ramayana
+    </a>
+    <a href="/mythology?epic=mahabharata"
+       class="myth-chip {% if epic == 'mahabharata' %}is-active{% endif %}">
+      Mahabharata
+    </a>
+  </div>
+
+  {% if stories %}
+    <div class="myth-list">
+      {% for s in stories %}
+      <article class="myth-card">
+        <div class="myth-card-head">
+          <span class="myth-num">{{ loop.index }}</span>
+          <span class="myth-epic is-{{ s.epic|lower }}">{{ s.epic|capitalize }}</span>
+          <h2 class="myth-title">{{ s.title }}</h2>
+        </div>
+        {% if s.characters %}
+          <div class="myth-meta"><span class="myth-characters">{{ s.characters }}</span></div>
+        {% endif %}
+        <p class="myth-summary">{{ s.summary }}</p>
+        {% if s.moral %}
+          <p class="myth-moral"><b>Reflection</b> · {{ s.moral }}</p>
+        {% endif %}
+        {% if s.source_ref %}
+          <div class="myth-source">— {{ s.source_ref }}</div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="myth-empty">
+      <i data-feather="book-open"></i>
+      <h2>No stories yet</h2>
+      <p>Run <code>MIGRATION_MYTHOLOGY_STORIES.sql</code> in the Supabase SQL editor to seed the corpus, then refresh this page.</p>
+    </div>
+  {% endif %}
+
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+</script>
+
+</body>
+</html>
