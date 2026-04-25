@@ -76,6 +76,7 @@ def create_app():
     from routes.relationships import relationships_bp
     from routes.focus_log import focus_log_bp
     from routes.photos import photos_bp
+    from routes.quotes import quotes_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -101,6 +102,7 @@ def create_app():
     app.register_blueprint(relationships_bp)
     app.register_blueprint(focus_log_bp)
     app.register_blueprint(photos_bp)
+    app.register_blueprint(quotes_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
