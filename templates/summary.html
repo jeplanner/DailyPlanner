@@ -179,6 +179,8 @@
               role="button"
               aria-label="Open overdue task: {{ o.title }}">
             <td class="md-c-title">
+              <button type="button" class="md-task-toggle" aria-label="Mark done"
+                      onclick="markTaskDoneInRow(this, event)"></button>
               <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(o.category, '📁') }}</span>
               <span class="md-row-title">{{ o.title }}</span>
             </td>
@@ -288,7 +290,10 @@
                 {% if it.context %}<span class="md-context-chip">{{ it.context }}</span>{% endif %}
               </td>
               <td class="md-c-status">
-                {% if it.done %}
+                {% if it.type == 'task' and not it.done %}
+                  <button type="button" class="md-task-toggle md-task-toggle-status" aria-label="Mark done"
+                          onclick="markTaskDoneInRow(this, event)"></button>
+                {% elif it.done %}
                   <span class="md-check md-check-done" title="Done"><i data-feather="check"></i></span>
                 {% else %}
                   <span class="md-check md-check-open" aria-hidden="true"></span>
@@ -524,10 +529,17 @@
         </summary>
         <div class="day-tasks">
           {% for t in tasks %}
-          <div class="day-task {{ 'task-done' if t.done }}">
+          <div class="day-task {{ 'task-done' if t.done }}"
+               {% if t.slot %}data-slot="{{ t.slot }}" data-date="{{ day_date }}"{% endif %}
+               data-done="{{ 1 if t.done else 0 }}">
+            {% if t.slot and not t.done %}
+              <button type="button" class="md-task-toggle md-task-toggle-week" aria-label="Mark done"
+                      onclick="markSlotDoneInRow(this, event)"></button>
+            {% elif t.done %}
+              <span class="md-check md-check-done dt-check-done" title="Done"><i data-feather="check"></i></span>
+            {% endif %}
             <span class="dt-time">{{ t.label }}</span>
             <span class="dt-text">{{ t.text }}</span>
-            {% if t.done %}<i data-feather="check" class="dt-check"></i>{% endif %}
           </div>
           {% endfor %}
         </div>
@@ -884,6 +896,100 @@ async function _markTaskDone(item) {
     btn.disabled = false;
     btn.textContent = "Mark done";
     if (window.showToast) showToast("Couldn't mark done — try the full editor", "error");
+  }
+}
+
+/* ── In-row strike-off (no peek required) ────────────────────────
+ * Tap the small circle on a task row → mark done in place. The whole
+ * row's onclick still opens the peek for full details; we stop bubbling
+ * here so the two interactions don't collide.
+ *
+ * Reuses the same /todo/toggle-done and /projects/tasks/status routes
+ * that the peek sheet uses, so a row marked done here will show as done
+ * on the next refresh too.
+ */
+async function markTaskDoneInRow(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const row = btn.closest(".md-row");
+  if (!row) return;
+  if (row.dataset.done === "1" || btn.classList.contains("is-saving")) return;
+
+  btn.classList.add("is-saving");
+
+  const id = row.dataset.id;
+  const source = row.dataset.source || "";
+  const link = row.dataset.link || "";
+
+  let url, body;
+  if (source === "project") {
+    const rawId = id && id.startsWith("pt-") ? id.slice(3) : id;
+    url = "/projects/tasks/status";
+    body = { task_id: rawId, status: "done" };
+  } else {
+    url = "/todo/toggle-done";
+    body = { id: id, is_done: true, status: "done" };
+  }
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+
+    // Optimistic in-place update — keep the row visible so the user sees
+    // what they did, but visually de-emphasise it via .md-done.
+    row.classList.add("md-done");
+    row.dataset.done = "1";
+    btn.classList.remove("is-saving");
+    btn.classList.add("is-done");
+    btn.setAttribute("aria-label", "Done");
+
+    if (window.showToast) showToast("Marked done", "success", 1500);
+  } catch (e) {
+    console.error("markTaskDoneInRow failed:", e);
+    btn.classList.remove("is-saving");
+    if (window.showToast) showToast("Couldn't mark done", "error");
+  }
+}
+
+/* ── Weekly slot strike-off ───────────────────────────────────────
+ * Weekly view is slot-based (V1 planner). Each task div has data-slot +
+ * data-date; we POST to the existing /slot/toggle-status endpoint.
+ * V2 (event-based) weekly tasks don't expose an ID yet — for those the
+ * toggle button is omitted in the template, so this never runs.
+ */
+async function markSlotDoneInRow(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const row = btn.closest(".day-task");
+  if (!row) return;
+  if (row.dataset.done === "1" || btn.classList.contains("is-saving")) return;
+
+  const slot = row.dataset.slot;
+  const planDate = row.dataset.date;
+  if (!slot || !planDate) return;
+
+  btn.classList.add("is-saving");
+  try {
+    const r = await fetch("/slot/toggle-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_date: planDate, slot: parseInt(slot, 10), status: "done" }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+
+    row.classList.add("task-done");
+    row.dataset.done = "1";
+    btn.classList.remove("is-saving");
+    btn.classList.add("is-done");
+    btn.setAttribute("aria-label", "Done");
+
+    if (window.showToast) showToast("Marked done", "success", 1500);
+  } catch (e) {
+    console.error("markSlotDoneInRow failed:", e);
+    btn.classList.remove("is-saving");
+    if (window.showToast) showToast("Couldn't mark done", "error");
   }
 }
 
