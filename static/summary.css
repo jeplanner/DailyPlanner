@@ -764,18 +764,28 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
       "meta   meta";
     align-items: baseline;
   }
+  /* Compact overdue row: title + Xd on a single line, no arrow icon
+     (the whole row is already tappable). Tighter padding so more
+     overdue tasks fit on a phone screen. */
+  .md-overdue-row {
+    min-height: 0;
+    padding: 8px var(--space-4);
+    row-gap: 0;
+  }
   .md-overdue-row .md-c-title   {
     grid-area: title; min-width: 0;
     align-self: baseline;
-    /* Keep cat-icon + title text on the same line, wrapping the title
-       (not the icon) when long. */
     display: flex;
     align-items: baseline;
     gap: 6px;
     flex-wrap: wrap;
   }
   .md-overdue-row .md-c-title .md-cat-icon { flex: 0 0 auto; }
-  .md-overdue-row .md-c-title .md-row-title { flex: 1 1 auto; min-width: 0; }
+  .md-overdue-row .md-c-title .md-row-title {
+    flex: 1 1 auto; min-width: 0;
+    font-size: 15px; line-height: 20px;
+    display: inline; /* override the block override that came from .md-row */
+  }
   .md-overdue-row .md-c-context {
     grid-area: meta; min-width: 0;
     align-self: baseline;
@@ -785,13 +795,18 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     align-self: baseline;
     text-align: right;
     white-space: nowrap;
-    min-width: 32px;
+    min-width: 28px;
   }
-  /* Mobile due chip: stronger red than the amber --warning so overdue
-     reads as urgent at a glance, matching the desktop chip palette. */
+  /* Hide the per-row arrow link on mobile — the row's onclick handler
+     opens the same peek view, so the arrow only adds visual weight. */
+  .md-overdue-row .md-row-link { display: none; }
+
+  /* Mobile due chip: red (matches desktop) so overdue reads as urgent
+     at a glance, instead of the amber --warning that mobile inherited. */
   .md-overdue-row .md-overdue-chip {
     color: #dc2626;
     font-weight: 700;
+    font-size: 13px;
   }
   html.dark .md-overdue-row .md-overdue-chip,
   [data-theme="dark"] .md-overdue-row .md-overdue-chip { color: #fca5a5; }
