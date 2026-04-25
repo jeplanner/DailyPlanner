@@ -150,9 +150,12 @@
     color: var(--color-text-muted);
     font-size: 11px; font-weight: 500;
   }
-  .qb-fav-btn {
+  .qb-card-actions {
     position: absolute; top: 12px; right: 12px;
-    width: 36px; height: 36px;
+    display: flex; gap: 4px;
+  }
+  .qb-card-action {
+    width: 34px; height: 34px;
     border: none; background: transparent;
     border-radius: 50%;
     color: var(--color-text-muted);
@@ -160,11 +163,121 @@
     display: flex; align-items: center; justify-content: center;
     transition: background .12s, color .12s, transform .08s;
   }
+  .qb-card-action:active { transform: scale(.92); }
+  .qb-card-action svg { width: 16px; height: 16px; }
   .qb-fav-btn:hover { background: var(--color-surface-sunken); color: #b45309; }
-  .qb-fav-btn:active { transform: scale(.92); }
-  .qb-fav-btn svg { width: 18px; height: 18px; }
   .qb-card.is-favorite .qb-fav-btn { color: #b45309; }
   .qb-card.is-favorite .qb-fav-btn svg { fill: currentColor; }
+  .qb-delete-btn:hover { background: rgba(220,38,38,.12); color: #b91c1c; }
+  .qb-mine-pill {
+    padding: 1px 8px; border-radius: 999px;
+    background: rgba(37,99,235,.10); color: var(--color-info-on-tint, #1e40af);
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  html.dark .qb-mine-pill { background: rgba(37,99,235,.22); color: #93c5fd; }
+
+  /* Hero row + Add CTA */
+  .qb-hero-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 16px; flex-wrap: wrap;
+  }
+  .qb-add-cta {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 9px 16px;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: none; border-radius: 10px;
+    font: inherit; font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    transition: background .12s, transform .08s;
+    flex: 0 0 auto;
+  }
+  .qb-add-cta:hover { background: var(--color-primary-hover); }
+  .qb-add-cta:active { transform: scale(.97); }
+  .qb-add-cta svg { width: 14px; height: 14px; }
+
+  /* Add-quote modal */
+  .qb-overlay {
+    position: fixed; inset: 0; z-index: 9988;
+    background: rgba(15,23,42,.55); backdrop-filter: blur(3px);
+    transition: opacity .14s ease;
+  }
+  .qb-overlay.hidden { opacity: 0; pointer-events: none; }
+  .qb-modal {
+    position: fixed; left: 50%; top: 8vh; z-index: 9989;
+    transform: translateX(-50%);
+    width: min(560px, 94vw); max-height: 86vh; overflow-y: auto;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(15,23,42,.28);
+    display: flex; flex-direction: column;
+    transition: opacity .14s ease, transform .18s ease;
+  }
+  .qb-modal.hidden {
+    opacity: 0; pointer-events: none;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  .qb-modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .qb-modal-head h3 { margin: 0; font-size: 16px; font-weight: 700; }
+  .qb-modal-close {
+    appearance: none; padding: 0; width: 32px; height: 32px;
+    border: none; background: transparent; color: var(--color-text-muted);
+    font-size: 22px; line-height: 1; cursor: pointer; border-radius: 8px;
+  }
+  .qb-modal-close:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+  .qb-modal-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+  .qb-field { display: flex; flex-direction: column; gap: 6px; }
+  .qb-field label {
+    font-size: 12px; font-weight: 700; color: var(--color-text-secondary);
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .qb-field input, .qb-field textarea, .qb-field select {
+    padding: 9px 12px; font: inherit; font-size: 14px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    width: 100%;
+  }
+  .qb-field textarea { resize: vertical; min-height: 80px; line-height: 1.55; }
+  .qb-field input:focus, .qb-field textarea:focus, .qb-field select:focus {
+    outline: none; border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring);
+  }
+  .qb-field-row {
+    display: grid; gap: 12px;
+    grid-template-columns: 1fr 1fr;
+  }
+  @media (max-width: 480px) {
+    .qb-field-row { grid-template-columns: 1fr; }
+  }
+  .qb-counter {
+    font-size: 11px; color: var(--color-text-muted);
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .qb-counter.is-over { color: #b91c1c; }
+  .qb-modal-foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--color-border);
+  }
+  .qb-btn-ghost {
+    padding: 9px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: transparent; color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .qb-btn-ghost:hover { background: var(--color-surface-sunken); color: var(--color-text); }
+  .qb-btn-primary {
+    padding: 9px 18px; font: inherit; font-size: 14px; font-weight: 600;
+    border: none; border-radius: 10px;
+    background: var(--color-primary); color: var(--color-on-primary);
+    cursor: pointer;
+  }
+  .qb-btn-primary:hover { background: var(--color-primary-hover); }
+  .qb-btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 
   /* Empty state */
   .qb-empty {
@@ -208,8 +321,15 @@
 <div class="qb-app">
 
   <header class="qb-hero">
-    <h1>📖 Quotes</h1>
-    <p class="qb-sub">{{ quotes|length }} quotes across {{ categories|length }} categories. Star the ones that resonate — favorites surface on top.</p>
+    <div class="qb-hero-row">
+      <div>
+        <h1>📖 Quotes</h1>
+        <p class="qb-sub">{{ quotes|length }} quotes across {{ categories|length }} categories. Star the ones that resonate — favorites surface on top.</p>
+      </div>
+      <button type="button" class="qb-add-cta" onclick="qbOpenAdd()">
+        <i data-feather="plus"></i> Add quote
+      </button>
+    </div>
   </header>
 
   <div class="qb-filters">
@@ -238,23 +358,34 @@
 
   <div class="qb-list" id="qb-list">
     {% for q in quotes %}
-    <article class="qb-card {% if q.is_favorite %}is-favorite{% endif %}"
+    <article class="qb-card {% if q.is_favorite %}is-favorite{% endif %} {% if q.is_mine %}is-mine{% endif %}"
              data-id="{{ q.id }}"
              data-cat="{{ q.category }}"
              data-fav="{{ '1' if q.is_favorite else '0' }}"
+             data-mine="{{ '1' if q.is_mine else '0' }}"
              data-search="{{ (q.text ~ ' ' ~ (q.author or ''))|lower|e }}">
       <span class="qb-quote-mark" aria-hidden="true">“</span>
-      <button type="button" class="qb-fav-btn"
-              onclick="qbToggleFavorite('{{ q.id }}', this)"
-              title="{{ 'Unstar' if q.is_favorite else 'Star this quote' }}"
-              aria-label="Toggle favorite">
-        <i data-feather="star"></i>
-      </button>
+      <div class="qb-card-actions">
+        {% if q.is_mine %}
+        <button type="button" class="qb-card-action qb-delete-btn"
+                onclick="qbDeleteQuote('{{ q.id }}', this)"
+                title="Delete (this is your quote)" aria-label="Delete">
+          <i data-feather="trash-2"></i>
+        </button>
+        {% endif %}
+        <button type="button" class="qb-card-action qb-fav-btn"
+                onclick="qbToggleFavorite('{{ q.id }}', this)"
+                title="{{ 'Unstar' if q.is_favorite else 'Star this quote' }}"
+                aria-label="Toggle favorite">
+          <i data-feather="star"></i>
+        </button>
+      </div>
       <p class="qb-quote-text">{{ q.text }}</p>
       <div class="qb-quote-foot">
         {% if q.author %}<span class="qb-author">{{ q.author }}</span>{% endif %}
         <span class="qb-cat-pill">{{ q.category }}</span>
         {% if q.era %}<span class="qb-era">· {{ q.era }}</span>{% endif %}
+        {% if q.is_mine %}<span class="qb-mine-pill">added by you</span>{% endif %}
       </div>
     </article>
     {% endfor %}
@@ -266,6 +397,58 @@
     <p>Try a different category, clear the search, or turn off "Favorites only".</p>
   </div>
 
+</div>
+
+<!-- Add-quote modal -->
+<div id="qb-overlay" class="qb-overlay hidden" onclick="if(event.target===this)qbCloseAdd()"></div>
+<div id="qb-modal" class="qb-modal hidden" role="dialog" aria-modal="true" aria-labelledby="qb-modal-title">
+  <header class="qb-modal-head">
+    <h3 id="qb-modal-title">Add a quote</h3>
+    <button type="button" class="qb-modal-close" onclick="qbCloseAdd()" aria-label="Close">×</button>
+  </header>
+  <div class="qb-modal-body">
+    <div class="qb-field">
+      <label for="qb-input-text">Quote</label>
+      <textarea id="qb-input-text" maxlength="600"
+                placeholder="The secret of getting ahead is getting started."
+                oninput="qbUpdateCounter()"></textarea>
+      <div class="qb-counter"><span id="qb-counter-now">0</span> / 600</div>
+    </div>
+    <div class="qb-field-row">
+      <div class="qb-field">
+        <label for="qb-input-author">Author <span style="font-weight:500;text-transform:none;color:var(--color-text-muted)">(optional)</span></label>
+        <input type="text" id="qb-input-author" maxlength="120" placeholder="e.g. Mark Twain">
+      </div>
+      <div class="qb-field">
+        <label for="qb-input-category">Category</label>
+        <select id="qb-input-category">
+          {% for c in categories %}
+          <option value="{{ c.name }}">{{ c.name|capitalize }}</option>
+          {% endfor %}
+          <option value="__new__">+ New category…</option>
+        </select>
+      </div>
+    </div>
+    <div class="qb-field-row">
+      <div class="qb-field">
+        <label for="qb-input-era">Era <span style="font-weight:500;text-transform:none;color:var(--color-text-muted)">(optional)</span></label>
+        <select id="qb-input-era">
+          <option value="">—</option>
+          <option value="ancient">Ancient</option>
+          <option value="classical">Classical</option>
+          <option value="modern">Modern</option>
+        </select>
+      </div>
+      <div class="qb-field">
+        <label for="qb-input-tags">Tags <span style="font-weight:500;text-transform:none;color:var(--color-text-muted)">(comma-separated)</span></label>
+        <input type="text" id="qb-input-tags" placeholder="start, persistence">
+      </div>
+    </div>
+  </div>
+  <footer class="qb-modal-foot">
+    <button type="button" class="qb-btn-ghost" onclick="qbCloseAdd()">Cancel</button>
+    <button type="button" class="qb-btn-primary" id="qb-save-btn" onclick="qbSaveQuote()">Add quote</button>
+  </footer>
 </div>
 
 <div class="qb-toast" id="qb-toast" hidden></div>
@@ -348,6 +531,147 @@
     const next = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
     el.textContent = next;
   }
+
+  // ── Add-quote modal ──────────────────────────────────────
+  function qbOpenAdd() {
+    document.getElementById("qb-modal").classList.remove("hidden");
+    document.getElementById("qb-overlay").classList.remove("hidden");
+    qbUpdateCounter();
+    // Auto-focus on desktop only — touch devices will pop the keyboard
+    // mid-decision otherwise.
+    const isDesktop = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
+    if (isDesktop) setTimeout(() => document.getElementById("qb-input-text")?.focus(), 50);
+  }
+  function qbCloseAdd() {
+    document.getElementById("qb-modal").classList.add("hidden");
+    document.getElementById("qb-overlay").classList.add("hidden");
+  }
+  function qbUpdateCounter() {
+    const el = document.getElementById("qb-input-text");
+    const c  = document.getElementById("qb-counter-now");
+    const w  = document.querySelector(".qb-counter");
+    if (!el || !c) return;
+    const n = (el.value || "").length;
+    c.textContent = n;
+    w?.classList.toggle("is-over", n > 600);
+  }
+
+  async function qbSaveQuote() {
+    const textEl   = document.getElementById("qb-input-text");
+    const authorEl = document.getElementById("qb-input-author");
+    const catEl    = document.getElementById("qb-input-category");
+    const eraEl    = document.getElementById("qb-input-era");
+    const tagsEl   = document.getElementById("qb-input-tags");
+    const saveBtn  = document.getElementById("qb-save-btn");
+
+    const text = (textEl?.value || "").trim();
+    if (!text) { _toast("Quote text is required", "error", 3000); textEl?.focus(); return; }
+    if (text.length > 600) { _toast("Quote too long (max 600)", "error", 3000); return; }
+
+    let category = catEl?.value || "wisdom";
+    if (category === "__new__") {
+      const name = prompt("New category name (one word, lowercase, e.g. 'mindfulness'):");
+      if (!name || !name.trim()) { catEl.value = "wisdom"; return; }
+      category = name.trim().toLowerCase();
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Adding…";
+    try {
+      const r = await fetch("/api/quotes", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          text,
+          author: (authorEl?.value || "").trim(),
+          category,
+          era: (eraEl?.value || "").trim() || null,
+          tags: (tagsEl?.value || "").split(",").map(s => s.trim()).filter(Boolean),
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        _toast(data.error || ("Couldn't save (" + r.status + ")"), "error", 4000);
+        return;
+      }
+      _toast("Quote added", null, 1800);
+      qbCloseAdd();
+      _qbAddCardToTop(data.quote);
+      // Clear inputs for next time
+      textEl.value = ""; authorEl.value = ""; tagsEl.value = "";
+      qbUpdateCounter();
+    } catch (e) {
+      console.error(e);
+      _toast("Couldn't save — please try again.", "error", 4000);
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Add quote";
+    }
+  }
+
+  function _qbAddCardToTop(q) {
+    if (!q) { return; }
+    const list = document.getElementById("qb-list");
+    if (!list) return;
+    const card = document.createElement("article");
+    card.className = "qb-card is-mine";
+    card.dataset.id = q.id;
+    card.dataset.cat = q.category || "";
+    card.dataset.fav = "0";
+    card.dataset.mine = "1";
+    const safeText = (q.text || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const safeAuthor = (q.author || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    card.dataset.search = (q.text + " " + (q.author || "")).toLowerCase();
+    card.innerHTML = `
+      <span class="qb-quote-mark" aria-hidden="true">“</span>
+      <div class="qb-card-actions">
+        <button type="button" class="qb-card-action qb-delete-btn"
+                onclick="qbDeleteQuote('${q.id}', this)" title="Delete (this is your quote)" aria-label="Delete">
+          <i data-feather="trash-2"></i>
+        </button>
+        <button type="button" class="qb-card-action qb-fav-btn"
+                onclick="qbToggleFavorite('${q.id}', this)" title="Star this quote" aria-label="Toggle favorite">
+          <i data-feather="star"></i>
+        </button>
+      </div>
+      <p class="qb-quote-text">${safeText}</p>
+      <div class="qb-quote-foot">
+        ${safeAuthor ? `<span class="qb-author">${safeAuthor}</span>` : ''}
+        <span class="qb-cat-pill">${q.category || ''}</span>
+        ${q.era ? `<span class="qb-era">· ${q.era}</span>` : ''}
+        <span class="qb-mine-pill">added by you</span>
+      </div>`;
+    list.insertBefore(card, list.firstChild);
+    if (window.feather) feather.replace();
+  }
+
+  async function qbDeleteQuote(id, btn) {
+    if (!confirm("Delete this quote? This only removes ones you've added.")) return;
+    const card = btn.closest(".qb-card");
+    try {
+      const r = await fetch(`/api/quotes/${id}/delete`, { method: "POST" });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || ("HTTP " + r.status));
+      }
+      if (card) {
+        card.style.transition = "opacity .2s, transform .2s, max-height .25s";
+        card.style.opacity = "0";
+        card.style.transform = "scale(.94)";
+        card.style.maxHeight = "0";
+        card.style.overflow = "hidden";
+        setTimeout(() => card.remove(), 240);
+      }
+      _toast("Deleted", null, 1500);
+    } catch (e) {
+      _toast("Couldn't delete: " + e.message, "error", 3500);
+    }
+  }
+
+  // Esc closes the modal; convenient on desktop where Esc is reflex.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") qbCloseAdd();
+  });
 
   document.addEventListener("DOMContentLoaded", () => {
     if (window.feather) feather.replace();

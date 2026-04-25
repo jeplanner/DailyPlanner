@@ -24,7 +24,7 @@ from datetime import date
 from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
-from supabase_client import get, post
+from supabase_client import get, post, update
 from supabase_client import delete as sb_delete
 
 logger = logging.getLogger("daily_plan")
@@ -34,7 +34,13 @@ quotes_bp = Blueprint("quotes", __name__)
 def _fetch_active(category=None, limit=500):
     params = {
         "is_active": "eq.true",
-        "select": "id,text,author,category,tags,source,era",
+        # added_by surfaces so the page can show "delete" on rows the
+        # current user contributed. Falls back gracefully if the
+        # quotes_user_added migration hasn't run — supabase_client.get
+        # returns the rows minus the unknown column when * is used,
+        # but we ask explicitly here so a missing column 400s and we
+        # log it. Drop added_by from the select if you hit that.
+        "select": "id,text,author,category,tags,source,era,added_by",
         "limit": str(limit),
     }
     if category:
@@ -43,7 +49,13 @@ def _fetch_active(category=None, limit=500):
         return get("quotes", params=params) or []
     except Exception as e:
         logger.warning("quotes fetch failed (migration missing?): %s", e)
-        return []
+        # Retry without the new column so the page still loads even
+        # if MIGRATION_QUOTES_USER_ADDED hasn't been applied yet.
+        try:
+            params["select"] = "id,text,author,category,tags,source,era"
+            return get("quotes", params=params) or []
+        except Exception:
+            return []
 
 
 def _date_index(rows, ref_date=None):
@@ -145,6 +157,9 @@ def quotes_browse_page():
             "tags":     r.get("tags") or [],
             "era":      r.get("era"),
             "is_favorite": r.get("id") in favorites,
+            # is_mine controls whether the delete button shows on the
+            # card — only for quotes the logged-in user contributed.
+            "is_mine":  r.get("added_by") == user_id and r.get("added_by") is not None,
         })
 
     # Favorites first when any are starred — gives the page a bias
@@ -157,6 +172,96 @@ def quotes_browse_page():
         categories=categories,
         favorites_count=len(favorites),
     )
+
+
+# ─────────── Create / delete (user-added) ─────────────────────────
+
+_VALID_ERAS = {"ancient", "classical", "modern"}
+_MAX_TEXT_LEN = 600
+
+
+@quotes_bp.route("/api/quotes", methods=["POST"])
+@login_required
+def create_quote():
+    """Add a new quote to the corpus, attributed to the logged-in user.
+    Body: { text, author?, category?, tags? (string[] | comma string),
+            era? }"""
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Quote text is required"}), 400
+    if len(text) > _MAX_TEXT_LEN:
+        return jsonify({"error": f"Quote too long (max {_MAX_TEXT_LEN} characters)"}), 400
+
+    author = (data.get("author") or "").strip()[:120] or None
+
+    category = (data.get("category") or "").strip().lower()
+    if not category:
+        category = "wisdom"
+    elif len(category) > 40:
+        category = category[:40]
+    # Restrict to a-z + dashes for stability of filter chips. Anything
+    # weirder gets normalised. Empty after normalisation → fallback.
+    import re
+    category = re.sub(r"[^a-z\-]+", "-", category).strip("-") or "wisdom"
+
+    raw_tags = data.get("tags") or []
+    if isinstance(raw_tags, str):
+        raw_tags = [t for t in (s.strip() for s in raw_tags.split(",")) if t]
+    raw_tags = [str(t)[:40] for t in raw_tags if t][:10]
+
+    era = (data.get("era") or "").strip().lower() or None
+    if era and era not in _VALID_ERAS:
+        era = None
+
+    payload = {
+        "text": text,
+        "author": author,
+        "category": category,
+        "tags": raw_tags,
+        "era": era,
+        "is_active": True,
+        "added_by": user_id,
+    }
+    try:
+        rows = post("quotes", payload)
+    except Exception as e:
+        logger.error("quote insert failed: %s", e)
+        return jsonify({"error": "Couldn't save quote — please try again."}), 502
+
+    new_row = rows[0] if rows else None
+    return jsonify({
+        "ok": True,
+        "id": new_row["id"] if new_row else None,
+        "quote": new_row,
+    })
+
+
+@quotes_bp.route("/api/quotes/<quote_id>/delete", methods=["POST"])
+@login_required
+def delete_quote(quote_id):
+    """Soft-delete a user-added quote. Seed rows (added_by IS NULL)
+    are protected — only the original author can delete their own."""
+    user_id = session["user_id"]
+    rows = get(
+        "quotes",
+        params={
+            "id": f"eq.{quote_id}",
+            "added_by": f"eq.{user_id}",
+            "select": "id",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        return jsonify({"error": "Not found, or this isn't yours to delete."}), 403
+    update(
+        "quotes",
+        params={"id": f"eq.{quote_id}", "added_by": f"eq.{user_id}"},
+        json={"is_active": False},
+    )
+    return jsonify({"ok": True})
 
 
 @quotes_bp.route("/api/quotes/favorite/<quote_id>", methods=["POST"])
