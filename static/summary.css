@@ -767,7 +767,15 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   .md-overdue-row .md-c-title   {
     grid-area: title; min-width: 0;
     align-self: baseline;
+    /* Keep cat-icon + title text on the same line, wrapping the title
+       (not the icon) when long. */
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
   }
+  .md-overdue-row .md-c-title .md-cat-icon { flex: 0 0 auto; }
+  .md-overdue-row .md-c-title .md-row-title { flex: 1 1 auto; min-width: 0; }
   .md-overdue-row .md-c-context {
     grid-area: meta; min-width: 0;
     align-self: baseline;
@@ -777,8 +785,16 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     align-self: baseline;
     text-align: right;
     white-space: nowrap;
-    min-width: 44px;
+    min-width: 32px;
   }
+  /* Mobile due chip: stronger red than the amber --warning so overdue
+     reads as urgent at a glance, matching the desktop chip palette. */
+  .md-overdue-row .md-overdue-chip {
+    color: #dc2626;
+    font-weight: 700;
+  }
+  html.dark .md-overdue-row .md-overdue-chip,
+  [data-theme="dark"] .md-overdue-row .md-overdue-chip { color: #fca5a5; }
 
   /* Time cell — tabular, stacked start/end */
   .md-row .md-time {
