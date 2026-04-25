@@ -322,6 +322,17 @@ html.dark .md-hero-overdue { color: #fca5a5; }
   color: #b91c1c;
 }
 html.dark .md-count-red { background: #3b1111; color: #fca5a5; }
+.md-count-green {
+  background: color-mix(in srgb, #16a34a 18%, transparent);
+  color: #15803d;
+}
+html.dark .md-count-green { background: #052e16; color: #86efac; }
+
+/* Today's Recap card — quiet, celebratory tone for completed work. */
+.md-recap-card { /* no extra layout — inherits from .md-card */ }
+.md-recap-icon { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
+html.dark .md-recap-icon { background: #052e16; color: #4ade80; }
+.md-recap-row { /* visually identical to a struck-through overdue row */ }
 
 /* Legend inline */
 .md-legend {

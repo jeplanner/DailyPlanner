@@ -44,7 +44,13 @@
         info:    { bg: "rgba(37, 99, 235, 0.92)", icon: "info" },
     };
 
-    window.showToast = function (message, type, duration) {
+    /* showToast(message, type, duration, action?)
+     *   action = { label: "Undo", onClick: () => { ... } }
+     * When `action` is provided, the toast renders an inline button.
+     * Clicking the button runs the callback and dismisses the toast
+     * immediately. Returns a `dismiss()` function the caller can use
+     * to close the toast early (e.g. on navigation). */
+    window.showToast = function (message, type, duration, action) {
         type = type || "info";
         duration = duration || 3000;
         const cfg = COLORS[type] || COLORS.info;
@@ -71,9 +77,35 @@
             maxWidth: "90vw",
         });
 
-        toast.innerHTML =
-            '<i data-feather="' + cfg.icon + '" style="width:16px;height:16px;flex-shrink:0"></i>' +
-            '<span>' + message + '</span>';
+        const iconHtml = '<i data-feather="' + cfg.icon + '" style="width:16px;height:16px;flex-shrink:0"></i>';
+        const msgHtml = '<span>' + message + '</span>';
+        toast.innerHTML = iconHtml + msgHtml;
+
+        // Optional action button (e.g. Undo)
+        if (action && action.label && typeof action.onClick === "function") {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.textContent = action.label;
+            Object.assign(btn.style, {
+                background: "rgba(255,255,255,0.18)",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.35)",
+                borderRadius: "8px",
+                padding: "4px 12px",
+                fontSize: "13px",
+                fontWeight: "600",
+                marginLeft: "8px",
+                cursor: "pointer",
+                fontFamily: "inherit",
+            });
+            btn.addEventListener("mouseenter", function () { btn.style.background = "rgba(255,255,255,0.28)"; });
+            btn.addEventListener("mouseleave", function () { btn.style.background = "rgba(255,255,255,0.18)"; });
+            btn.addEventListener("click", function (ev) {
+                ev.stopPropagation();
+                try { action.onClick(); } finally { dismiss(); }
+            });
+            toast.appendChild(btn);
+        }
 
         wrap.appendChild(toast);
 
@@ -86,11 +118,19 @@
             toast.style.transform = "translateY(0)";
         });
 
-        // Animate out + remove
-        setTimeout(function () {
+        let dismissed = false;
+        function dismiss() {
+            if (dismissed) return;
+            dismissed = true;
             toast.style.opacity = "0";
             toast.style.transform = "translateY(12px)";
             setTimeout(function () { toast.remove(); }, 300);
-        }, duration);
+        }
+
+        // Auto-dismiss
+        const timer = setTimeout(dismiss, duration);
+
+        // Caller can dismiss early
+        return function () { clearTimeout(timer); dismiss(); };
     };
 })();

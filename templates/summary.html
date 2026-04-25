@@ -374,6 +374,53 @@
     {% endif %}
   </section>
 
+  <!-- ── TODAY'S RECAP ── tasks completed today; uncheck-able if marked by mistake -->
+  {% if dashboard.done_today %}
+  <section class="md-card md-recap-card" aria-labelledby="md-recap-title" id="md-recap-card">
+    <header class="md-card-head">
+      <h2 class="md-card-title" id="md-recap-title">
+        <span class="md-card-icon md-recap-icon"><i data-feather="check-circle"></i></span>
+        Today's Recap
+        <span class="md-count-pill md-count-green">{{ dashboard.done_today|length }}</span>
+      </h2>
+    </header>
+    <div class="md-table-wrap" role="region" aria-label="Tasks completed today">
+      <table class="md-table md-recap-table">
+        <thead>
+          <tr>
+            <th class="md-c-title">Task</th>
+          </tr>
+        </thead>
+        <tbody id="md-recap-tbody">
+          {% for d in dashboard.done_today %}
+          <tr class="md-row md-overdue-row md-recap-row md-done"
+              data-id="{{ d.id }}"
+              data-type="task"
+              data-source="{{ d.source or '' }}"
+              data-title="{{ d.title }}"
+              data-context="{{ d.context or '' }}"
+              data-priority="{{ d.priority or '' }}"
+              data-date="{{ d.date or '' }}"
+              data-link="{{ d.link or '' }}"
+              data-done="1"
+              onclick="openItemPeek(this, event)"
+              tabindex="0"
+              role="button"
+              aria-label="Completed task: {{ d.title }} (tap to undo)">
+            <td class="md-c-title">
+              <button type="button" class="md-task-toggle is-done" aria-label="Mark not done"
+                      onclick="markTaskDoneInRow(this, event)"></button>
+              <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(d.category, '📁') }}</span>
+              <span class="md-row-title">{{ d.title }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   <!-- ── Reflection + AI Recap — below the fold, still one tap away ──
        Wrapped in <details> so mobile collapses it by default (expandable
        on tap). Desktop CSS forces it open and hides the collapse chrome,
@@ -531,10 +578,16 @@
           {% for t in tasks %}
           <div class="day-task {{ 'task-done' if t.done }}"
                {% if t.slot %}data-slot="{{ t.slot }}" data-date="{{ day_date }}"{% endif %}
+               {% if t.id %}data-event-id="{{ t.id }}"{% endif %}
                data-done="{{ 1 if t.done else 0 }}">
-            {% if t.slot and not t.done %}
-              <button type="button" class="md-task-toggle md-task-toggle-week" aria-label="Mark done"
+            {% if t.slot %}
+              <button type="button" class="md-task-toggle md-task-toggle-week {{ 'is-done' if t.done }}"
+                      aria-label="{{ 'Mark not done' if t.done else 'Mark done' }}"
                       onclick="markSlotDoneInRow(this, event)"></button>
+            {% elif t.id %}
+              <button type="button" class="md-task-toggle md-task-toggle-week {{ 'is-done' if t.done }}"
+                      aria-label="{{ 'Mark not done' if t.done else 'Mark done' }}"
+                      onclick="markEventDoneInRow(this, event)"></button>
             {% elif t.done %}
               <span class="md-check md-check-done dt-check-done" title="Done"><i data-feather="check"></i></span>
             {% endif %}
@@ -899,97 +952,293 @@ async function _markTaskDone(item) {
   }
 }
 
-/* ── In-row strike-off (no peek required) ────────────────────────
- * Tap the small circle on a task row → mark done in place. The whole
- * row's onclick still opens the peek for full details; we stop bubbling
- * here so the two interactions don't collide.
+/* ── In-row strike-off ────────────────────────────────────────────
+ * One circle per task. Tap once → marks done; tap a green circle →
+ * unchecks. The whole row's onclick still opens the peek; we stop
+ * bubbling so the two never collide.
  *
- * Reuses the same /todo/toggle-done and /projects/tasks/status routes
- * that the peek sheet uses, so a row marked done here will show as done
- * on the next refresh too.
+ * After marking done, a 5-second "Undo" toast lets the user reverse.
+ * If the toast expires without an undo and the row is in a non-recap
+ * section (Overdue, Today's flow), the row animates out and is appended
+ * to the Today's Recap card — so completed work has a celebratory home
+ * without polluting the active list.
  */
-async function markTaskDoneInRow(btn, ev) {
-  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
-  const row = btn.closest(".md-row");
-  if (!row) return;
-  if (row.dataset.done === "1" || btn.classList.contains("is-saving")) return;
+const RECAP_MOVE_DELAY_MS = 5200;  // Slightly longer than the toast so the
+                                   // user has time to see the undo button.
+const _recapMoveTimers = new WeakMap();
 
-  btn.classList.add("is-saving");
-
-  const id = row.dataset.id;
-  const source = row.dataset.source || "";
-  const link = row.dataset.link || "";
-
+function _postToggle(source, id, makeDone) {
+  // Returns a promise that resolves on HTTP 2xx, rejects otherwise.
   let url, body;
   if (source === "project") {
     const rawId = id && id.startsWith("pt-") ? id.slice(3) : id;
     url = "/projects/tasks/status";
-    body = { task_id: rawId, status: "done" };
+    body = { task_id: rawId, status: makeDone ? "done" : "open" };
   } else {
+    // matrix tasks (Eisenhower)
     url = "/todo/toggle-done";
-    body = { id: id, is_done: true, status: "done" };
+    body = { id: id, is_done: makeDone, status: makeDone ? "done" : "open" };
   }
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); });
+}
 
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+function _applyDoneState(row, btn, isDone) {
+  row.classList.toggle("md-done", isDone);
+  row.dataset.done = isDone ? "1" : "0";
+  btn.classList.toggle("is-done", isDone);
+  btn.classList.remove("is-saving");
+  btn.setAttribute("aria-label", isDone ? "Mark not done" : "Mark done");
+  row.setAttribute("aria-label",
+    (isDone ? "Completed task: " : "Open task: ") + (row.dataset.title || ""));
+}
+
+/* Animate the row out of its current section and append to the
+ * Today's Recap tbody. Used after the undo window closes. The recap
+ * card is created on the fly if the page didn't render one (i.e. this
+ * is the first task being completed today). */
+function _moveRowToRecap(row) {
+  if (!row.isConnected) return;
+  if (row.closest("#md-recap-card")) return;  // already there
+
+  const recapTbody = _ensureRecapCard();
+  if (!recapTbody) return;
+
+  // Slide-out animation from current position
+  row.style.transition = "opacity .25s ease, transform .25s ease";
+  row.style.opacity = "0";
+  row.style.transform = "translateX(8px)";
+  setTimeout(() => {
+    // Reset inline animation styles before re-inserting so the recap
+    // copy renders normally (and animates back in).
+    row.style.transition = "";
+    row.style.opacity = "";
+    row.style.transform = "";
+    row.classList.add("md-recap-row");
+    recapTbody.prepend(row);
+    // Tiny in-animation in the new home
+    row.style.opacity = "0";
+    row.style.transform = "translateY(-4px)";
+    requestAnimationFrame(() => {
+      row.style.transition = "opacity .25s ease, transform .25s ease";
+      row.style.opacity = "1";
+      row.style.transform = "translateY(0)";
+      setTimeout(() => { row.style.transition = ""; }, 280);
     });
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    _bumpRecapCount(+1);
+  }, 260);
+}
 
-    // Optimistic in-place update — keep the row visible so the user sees
-    // what they did, but visually de-emphasise it via .md-done.
-    row.classList.add("md-done");
-    row.dataset.done = "1";
-    btn.classList.remove("is-saving");
-    btn.classList.add("is-done");
-    btn.setAttribute("aria-label", "Done");
+function _ensureRecapCard() {
+  let tbody = document.getElementById("md-recap-tbody");
+  if (tbody) return tbody;
 
-    if (window.showToast) showToast("Marked done", "success", 1500);
-  } catch (e) {
-    console.error("markTaskDoneInRow failed:", e);
-    btn.classList.remove("is-saving");
-    if (window.showToast) showToast("Couldn't mark done", "error");
+  // Build the card the same shape the template renders. The reflection
+  // card is the natural insertion point — recap should sit just above it.
+  const reflection = document.querySelector(".md-supplement");
+  if (!reflection || !reflection.parentNode) return null;
+
+  const card = document.createElement("section");
+  card.className = "md-card md-recap-card";
+  card.id = "md-recap-card";
+  card.setAttribute("aria-labelledby", "md-recap-title");
+  card.innerHTML = `
+    <header class="md-card-head">
+      <h2 class="md-card-title" id="md-recap-title">
+        <span class="md-card-icon md-recap-icon"><i data-feather="check-circle"></i></span>
+        Today's Recap
+        <span class="md-count-pill md-count-green" id="md-recap-count">0</span>
+      </h2>
+    </header>
+    <div class="md-table-wrap" role="region" aria-label="Tasks completed today">
+      <table class="md-table md-recap-table">
+        <tbody id="md-recap-tbody"></tbody>
+      </table>
+    </div>`;
+  reflection.parentNode.insertBefore(card, reflection);
+  if (window.feather) feather.replace();
+  return document.getElementById("md-recap-tbody");
+}
+
+function _bumpRecapCount(delta) {
+  const pill = document.querySelector("#md-recap-card .md-count-pill");
+  if (!pill) return;
+  const cur = parseInt(pill.textContent, 10) || 0;
+  const next = Math.max(0, cur + delta);
+  pill.textContent = String(next);
+  if (next === 0) {
+    // Recap is empty — fade the card away rather than leaving an empty box.
+    const card = document.getElementById("md-recap-card");
+    if (card) {
+      card.style.transition = "opacity .25s ease";
+      card.style.opacity = "0";
+      setTimeout(() => card.remove(), 260);
+    }
   }
 }
 
-/* ── Weekly slot strike-off ───────────────────────────────────────
- * Weekly view is slot-based (V1 planner). Each task div has data-slot +
- * data-date; we POST to the existing /slot/toggle-status endpoint.
- * V2 (event-based) weekly tasks don't expose an ID yet — for those the
- * toggle button is omitted in the template, so this never runs.
- */
+async function markTaskDoneInRow(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const row = btn.closest(".md-row");
+  if (!row || btn.classList.contains("is-saving")) return;
+
+  // Cancel any pending move-to-recap so an immediate undo lands cleanly.
+  const pending = _recapMoveTimers.get(row);
+  if (pending) { clearTimeout(pending); _recapMoveTimers.delete(row); }
+
+  const wasDone = row.dataset.done === "1";
+  const makeDone = !wasDone;
+  const id = row.dataset.id;
+  const source = row.dataset.source || "";
+
+  btn.classList.add("is-saving");
+
+  try {
+    await _postToggle(source, id, makeDone);
+  } catch (e) {
+    console.error("markTaskDoneInRow failed:", e);
+    btn.classList.remove("is-saving");
+    if (window.showToast) showToast("Couldn't update — try again", "error");
+    return;
+  }
+
+  _applyDoneState(row, btn, makeDone);
+
+  if (makeDone) {
+    // Schedule the move-to-recap; cancel on undo.
+    const moveTimer = setTimeout(() => {
+      _recapMoveTimers.delete(row);
+      _moveRowToRecap(row);
+    }, RECAP_MOVE_DELAY_MS);
+    _recapMoveTimers.set(row, moveTimer);
+
+    if (window.showToast) {
+      showToast("Marked done", "success", 5000, {
+        label: "Undo",
+        onClick: async () => {
+          const t = _recapMoveTimers.get(row);
+          if (t) { clearTimeout(t); _recapMoveTimers.delete(row); }
+          btn.classList.add("is-saving");
+          try {
+            await _postToggle(source, id, false);
+            _applyDoneState(row, btn, false);
+            // If we'd already moved this row to the recap, pull it back.
+            if (row.closest("#md-recap-card")) {
+              _bumpRecapCount(-1);
+              row.remove();
+              if (window.showToast) showToast("Restored", "info", 1500);
+            }
+          } catch (err) {
+            console.error("undo failed:", err);
+            btn.classList.remove("is-saving");
+            if (window.showToast) showToast("Couldn't undo", "error");
+          }
+        },
+      });
+    }
+  } else {
+    // Uncheck path: row was in recap; pull it out (count auto-fades card).
+    if (row.closest("#md-recap-card")) {
+      _bumpRecapCount(-1);
+      row.style.transition = "opacity .2s ease";
+      row.style.opacity = "0";
+      setTimeout(() => row.remove(), 220);
+    }
+    if (window.showToast) showToast("Marked open", "info", 1800);
+  }
+}
+
+/* ── Weekly slot toggle (V1 slot mode) ──────────────────────────── */
 async function markSlotDoneInRow(btn, ev) {
   if (ev) { ev.stopPropagation(); ev.preventDefault(); }
   const row = btn.closest(".day-task");
-  if (!row) return;
-  if (row.dataset.done === "1" || btn.classList.contains("is-saving")) return;
+  if (!row || btn.classList.contains("is-saving")) return;
 
   const slot = row.dataset.slot;
   const planDate = row.dataset.date;
   if (!slot || !planDate) return;
+
+  const wasDone = row.dataset.done === "1";
+  const makeDone = !wasDone;
 
   btn.classList.add("is-saving");
   try {
     const r = await fetch("/slot/toggle-status", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan_date: planDate, slot: parseInt(slot, 10), status: "done" }),
+      body: JSON.stringify({
+        plan_date: planDate,
+        slot: parseInt(slot, 10),
+        status: makeDone ? "done" : "Yet to Start",
+      }),
     });
     if (!r.ok) throw new Error("HTTP " + r.status);
-
-    row.classList.add("task-done");
-    row.dataset.done = "1";
+    row.classList.toggle("task-done", makeDone);
+    row.dataset.done = makeDone ? "1" : "0";
+    btn.classList.toggle("is-done", makeDone);
     btn.classList.remove("is-saving");
-    btn.classList.add("is-done");
-    btn.setAttribute("aria-label", "Done");
+    btn.setAttribute("aria-label", makeDone ? "Mark not done" : "Mark done");
 
-    if (window.showToast) showToast("Marked done", "success", 1500);
+    if (window.showToast) {
+      if (makeDone) {
+        showToast("Marked done", "success", 5000, {
+          label: "Undo",
+          onClick: () => markSlotDoneInRow(btn, null),
+        });
+      } else {
+        showToast("Marked open", "info", 1800);
+      }
+    }
   } catch (e) {
     console.error("markSlotDoneInRow failed:", e);
     btn.classList.remove("is-saving");
-    if (window.showToast) showToast("Couldn't mark done", "error");
+    if (window.showToast) showToast("Couldn't update", "error");
+  }
+}
+
+/* ── Weekly event toggle (V2 event mode) ────────────────────────── */
+async function markEventDoneInRow(btn, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const row = btn.closest(".day-task");
+  if (!row || btn.classList.contains("is-saving")) return;
+
+  const eventId = row.dataset.eventId;
+  if (!eventId) return;
+
+  const wasDone = row.dataset.done === "1";
+  const makeDone = !wasDone;
+
+  btn.classList.add("is-saving");
+  try {
+    const r = await fetch(`/api/v2/events/${encodeURIComponent(eventId)}/toggle-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: makeDone ? "done" : "open" }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    row.classList.toggle("task-done", makeDone);
+    row.dataset.done = makeDone ? "1" : "0";
+    btn.classList.toggle("is-done", makeDone);
+    btn.classList.remove("is-saving");
+    btn.setAttribute("aria-label", makeDone ? "Mark not done" : "Mark done");
+
+    if (window.showToast) {
+      if (makeDone) {
+        showToast("Marked done", "success", 5000, {
+          label: "Undo",
+          onClick: () => markEventDoneInRow(btn, null),
+        });
+      } else {
+        showToast("Marked open", "info", 1800);
+      }
+    }
+  } catch (e) {
+    console.error("markEventDoneInRow failed:", e);
+    btn.classList.remove("is-saving");
+    if (window.showToast) showToast("Couldn't update", "error");
   }
 }
 

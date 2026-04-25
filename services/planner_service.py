@@ -716,7 +716,7 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false",
                 "and": f"(plan_date.gte.{start_date},plan_date.lte.{end_date})",
-                "select": "plan_date,start_time,end_time,title,status",
+                "select": "id,plan_date,start_time,end_time,title,status",
                 "order": "plan_date.asc,start_time.asc",
             },
         ) or []
@@ -780,6 +780,7 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
                 duration = 0
 
             days.setdefault(date, []).append({
+                "id": r.get("id"),
                 "label": label,
                 "text": text,
                 "done": r.get("status") == "done",

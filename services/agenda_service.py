@@ -389,6 +389,106 @@ def fetch_habits(user_id: str, plan_date) -> list[dict]:
 # Composite views
 # ═══════════════════════════════════════════════════════════
 
+def fetch_done_today(user_id: str, plan_date) -> list[dict]:
+    """All tasks the user marked done today — across both matrix and
+    project sources. Used by the "Today's Recap" section at the bottom
+    of the daily summary so completed work has a celebratory home and
+    can still be unchecked if the user marked something done by mistake.
+
+    "Today" is bounded by the plan_date the dashboard is being rendered
+    for, not necessarily wall-clock today, so navigating to a past day's
+    recap shows what was completed on that date.
+    """
+    iso = _to_iso(plan_date)
+    day_start = f"{iso}T00:00:00"
+    day_end = f"{iso}T23:59:59.999"
+
+    # Matrix tasks: is_done=true, updated within the day
+    matrix_rows = _safe_get(
+        "todo_matrix",
+        params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "is_done": "eq.true",
+            "updated_at": f"gte.{day_start}",
+            "and": f"(updated_at.lte.{day_end})",
+            "select": "id,task_text,priority,task_date,plan_date,quadrant,"
+                      "category,project_id,updated_at",
+            "order": "updated_at.desc",
+            "limit": 200,
+        },
+        action="done-today matrix fetch",
+    )
+
+    # Project tasks: status='done', updated within the day
+    project_rows = _safe_get(
+        "project_tasks",
+        params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "is_eliminated": "eq.false",
+            "status": "eq.done",
+            "updated_at": f"gte.{day_start}",
+            "and": f"(updated_at.lte.{day_end})",
+            "select": "task_id,task_text,priority,due_date,project_id,"
+                      "initiative_id,key_result_id,delegated_to,updated_at",
+            "order": "updated_at.desc",
+            "limit": 200,
+        },
+        action="done-today project fetch",
+    )
+
+    project_name_map = _project_name_map(
+        user_id,
+        [r.get("project_id") for r in matrix_rows]
+        + [r.get("project_id") for r in project_rows],
+    )
+
+    items = []
+    for r in matrix_rows:
+        title = (r.get("task_text") or "").strip()
+        if not title:
+            continue
+        items.append({
+            "id": r.get("id"),
+            "type": "task",
+            "source": "matrix",
+            "title": title,
+            "done": True,
+            "status": "done",
+            "priority": r.get("priority"),
+            "date": r.get("task_date") or r.get("plan_date"),
+            "context": project_name_map.get(r.get("project_id"))
+                       or QUADRANT_LABELS.get(r.get("quadrant")),
+            "link": "/todo",
+            "project_id": r.get("project_id"),
+            "category": r.get("category"),
+            "completed_at": r.get("updated_at"),
+        })
+    for r in project_rows:
+        title = (r.get("task_text") or "").strip()
+        if not title:
+            continue
+        items.append({
+            "id": f"pt-{r.get('task_id')}",
+            "type": "task",
+            "source": "project",
+            "title": title,
+            "done": True,
+            "status": "done",
+            "priority": r.get("priority"),
+            "date": r.get("due_date"),
+            "context": project_name_map.get(r.get("project_id")),
+            "link": "/projects",
+            "project_id": r.get("project_id"),
+            "category": None,
+            "completed_at": r.get("updated_at"),
+        })
+
+    items.sort(key=lambda x: x.get("completed_at") or "", reverse=True)
+    return items
+
+
 def fetch_overdue(user_id: str, plan_date) -> list[dict]:
     """All overdue items (both matrix + project) sorted most-overdue first.
     Stamps `days_overdue` onto each."""
@@ -480,6 +580,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     project_due_today = fetch_project_items(user_id, due_on=_to_iso(plan_date))
     habits = fetch_habits(user_id, plan_date)
     overdue = fetch_overdue(user_id, plan_date)
+    done_today = fetch_done_today(user_id, plan_date)
 
     # The morning-agenda table merges meetings + today's tasks into one
     # chronological list. Habits render in their own band (no time).
@@ -494,6 +595,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     return {
         "today_items": today_items,
         "overdue": overdue,
+        "done_today": done_today,
         "habits": habits,
         "counts": {
             "meetings": meeting_count,
@@ -501,5 +603,6 @@ def build_dashboard(user_id: str, plan_date) -> dict:
             "habits": len(habits),
             "habits_done": habits_done,
             "overdue": len(overdue),
+            "done_today": len(done_today),
         },
     }

@@ -413,6 +413,38 @@ def _create_and_store_gid(user_id, local_id):
                params={"id": f"eq.{local_id}", "user_id": f"eq.{user_id}"},
                json={"google_event_id": gid})
 
+@events_bp.route("/api/v2/events/<event_id>/toggle-status", methods=["POST"])
+@login_required
+def toggle_event_status(event_id):
+    """Lightweight status toggle for a daily_events row.
+
+    Body: { "status": "done" | "open" | "in_progress" }
+
+    Used by the weekly summary's in-row strike-off button. The full PUT
+    endpoint requires start_time/end_time/recurrence parsing — overkill
+    for a single status flip.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    status = (data.get("status") or "").strip()
+    if status not in ("done", "open", "in_progress", "skipped"):
+        return jsonify({"error": "invalid status"}), 400
+
+    rows = get(
+        "daily_events",
+        params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}", "select": "id"},
+    ) or []
+    if not rows:
+        return jsonify({"error": "Event not found"}), 404
+
+    update(
+        "daily_events",
+        params={"id": f"eq.{event_id}", "user_id": f"eq.{user_id}"},
+        json={"status": status},
+    )
+    return ("", 204)
+
+
 @events_bp.route("/api/v2/events/<event_id>", methods=["DELETE"])
 @login_required
 def delete_event(event_id):
