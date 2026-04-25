@@ -1161,13 +1161,12 @@ html.dark .peek-timer-chip:hover { background: rgba(37,99,235,.22); color: #93c5
 .peek-timer-running {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 12px; border-radius: 10px;
-  background: color-mix(in srgb, #16a34a 14%, transparent);
-  color: #166534;
+  background: var(--tint-success-bg, color-mix(in srgb, #16a34a 14%, transparent));
+  color: var(--color-success-on-tint, #166534);
   font-size: 12.5px; font-weight: 600;
   flex: 1 1 100%;
 }
 .peek-timer-running svg { width: 14px; height: 14px; flex: 0 0 auto; }
-html.dark .peek-timer-running { background: rgba(22,163,74,.18); color: #86efac; }
 
 /* Per-row "timer running" badge */
 .md-row-timer-badge {

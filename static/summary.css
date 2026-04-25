@@ -903,6 +903,31 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     --danger: #8F3528 !important;
     --border: #E8DFD2 !important;
     --shadow-card: 0 1px 2px rgba(26,22,19,.05), 0 2px 8px rgba(26,22,19,.04) !important;
+
+    /* Re-bind the design-system token set too. Without this, components
+       that read --color-text / --color-surface (cards, peek sheet,
+       Today's Focus, timer-running pill, etc.) keep their dark-mode
+       values — which on a forced-white surface means light text on
+       white = invisible. Mapping them onto the earthy palette above
+       keeps the entire daily view legible regardless of OS dark-mode. */
+    --color-bg: #FAF7F2 !important;
+    --color-surface: #FFFFFF !important;
+    --color-surface-secondary: #FAF7F2 !important;
+    --color-surface-elevated: #FFFFFF !important;
+    --color-surface-sunken: #F1EBE1 !important;
+    --color-text: #1A1613 !important;
+    --color-text-secondary: #574B42 !important;
+    --color-text-muted: #857769 !important;
+    --color-text-tertiary: #857769 !important;
+    --color-border: #E8DFD2 !important;
+    --color-border-strong: #C9BBA8 !important;
+    --color-border-light: #F1EBE1 !important;
+    /* Status text-on-tint colors used by chips, pills, peek-timer-
+       running etc. Pinned at the WCAG-AA pairings we standardised on. */
+    --color-success-on-tint: #166534 !important;
+    --color-warning-on-tint: #92400e !important;
+    --color-danger-on-tint:  #991b1b !important;
+    --color-info-on-tint:    #1e40af !important;
   }
 
   body {
