@@ -147,6 +147,18 @@
   .tr-card.is-done { opacity: .6; }
   .tr-card.is-done .tr-title { text-decoration: line-through; color: var(--color-text-muted); }
 
+  /* Inline YouTube player — appears as a 4th row spanning the full card */
+  .tr-player {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--color-border);
+    background: #000;
+    aspect-ratio: 16 / 9;
+    display: none;
+  }
+  .tr-card.is-playing .tr-player { display: block; }
+  .tr-player iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .tr-icon-btn.is-active { color: var(--color-primary); border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
+
   /* Empty */
   .tr-empty {
     text-align: center;
@@ -295,6 +307,7 @@ function trRender() {
 function _card(it) {
   const isDone = it.status === 'done';
   const isProg = it.status === 'in_progress';
+  const ytId = _youtubeId(it.url);
   const thumb = it.thumbnail_url
     ? `<div class="tr-thumb" style="background-image:url('${escapeAttr(it.thumbnail_url)}')"></div>`
     : `<div class="tr-thumb tr-thumb-fallback"><i data-feather="${KIND_ICON[it.kind] || 'link'}"></i></div>`;
@@ -318,6 +331,12 @@ function _card(it) {
       ? `<button type="button" class="tr-icon-btn success" title="Mark done" onclick="trStatus('${it.id}','done')"><i data-feather="check"></i></button>`
       : `<button type="button" class="tr-icon-btn" title="Start" onclick="trStatus('${it.id}','in_progress')"><i data-feather="play"></i></button>`;
 
+  const watchBtn = ytId
+    ? `<button type="button" class="tr-icon-btn" title="Watch inline" onclick="trToggleWatch('${it.id}', this)"><i data-feather="tv"></i></button>`
+    : '';
+
+  const playerSlot = ytId ? `<div class="tr-player" data-yt="${escapeAttr(ytId)}"></div>` : '';
+
   return `
     <div class="tr-card ${isDone ? 'is-done' : ''}" data-id="${it.id}">
       ${thumb}
@@ -330,10 +349,12 @@ function _card(it) {
       </div>
       <div class="tr-actions">
         <a class="tr-icon-btn" href="${escapeAttr(it.url)}" target="_blank" rel="noopener" title="Open"><i data-feather="external-link"></i></a>
+        ${watchBtn}
         ${statusBtn}
         <button type="button" class="tr-icon-btn" title="${transcribeLabel}" ${transcribeAction}><i data-feather="${transcribeIcon}"></i></button>
         <button type="button" class="tr-icon-btn danger" title="Remove" onclick="trArchive('${it.id}')"><i data-feather="x"></i></button>
       </div>
+      ${playerSlot}
     </div>`;
 }
 
@@ -450,7 +471,37 @@ async function trTranscribe(id, btn) {
   }
 }
 
+function trToggleWatch(id, btn) {
+  const card = document.querySelector(`.tr-card[data-id="${id}"]`);
+  if (!card) return;
+  const slot = card.querySelector('.tr-player');
+  if (!slot) return;
+  const isOpen = card.classList.toggle('is-playing');
+  if (btn) btn.classList.toggle('is-active', isOpen);
+  if (isOpen) {
+    const ytId = slot.dataset.yt;
+    if (!ytId) { card.classList.remove('is-playing'); return; }
+    const iframe = document.createElement('iframe');
+    iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(ytId)}?autoplay=1&rel=0`;
+    iframe.title = 'YouTube video';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+    iframe.allowFullscreen = true;
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    slot.innerHTML = '';
+    slot.appendChild(iframe);
+  } else {
+    slot.innerHTML = '';   // unload iframe to stop audio/video
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────
+const _YT_ID_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{6,})/;
+function _youtubeId(url) {
+  if (!url) return null;
+  const m = String(url).match(_YT_ID_RE);
+  return m ? m[1] : null;
+}
+
 function escapeHtml(s) {
   if (s == null) return '';
   return String(s)
