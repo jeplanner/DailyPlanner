@@ -342,11 +342,21 @@ let _items = [];
 
 async function grLoad() {
   try {
-    const r = await fetch('/api/grocery', { credentials: 'same-origin' });
-    const j = await r.json();
-    _items = j.items || [];
+    const [listRes, knownRes] = await Promise.all([
+      fetch('/api/grocery', { credentials: 'same-origin' }),
+      fetch('/api/grocery/known-items', { credentials: 'same-origin' }),
+    ]);
+    const listJ = await listRes.json();
+    const knownJ = knownRes.ok ? await knownRes.json() : { items: [] };
+    _items = listJ.items || [];
+    _userDict = {};
+    (knownJ.items || []).forEach(it => {
+      const key = (it.name || '').trim().toLowerCase();
+      if (key) _userDict[key] = { name: it.name, category: it.category || 'other' };
+    });
   } catch (e) {
     _items = [];
+    _userDict = {};
   }
   grRender();
 }
@@ -498,6 +508,10 @@ async function grAdd(ev) {
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error(j.error || 'Failed');
     if (j.item) _items.push(j.item);
+    // Remember this item in the user's personal dictionary so future
+    // typing of the same name autocompletes — even before page reload.
+    const key = item.trim().toLowerCase();
+    if (key) _userDict[key] = { name: item, category };
     document.getElementById('gr-input-item').value = '';
     document.getElementById('gr-input-qty').value = '';
     document.getElementById('gr-input-category').value = 'other';
@@ -515,11 +529,20 @@ async function grAdd(ev) {
 let _acIndex = -1;
 let _acMatches = [];
 let _catManuallySet = false;
+// Per-user dictionary built from "known-items" endpoint — every item
+// the user has ever added (including archived rows). Populated on
+// load and updated live after each successful add, so anything you
+// type once is suggested next time.
+let _userDict = {};
 
 function _lookupCategory(name) {
   if (!name) return null;
+  const key = name.trim().toLowerCase();
+  // Personal dict wins over the static one — user has already
+  // categorised this item their way and we should respect that.
+  if (_userDict[key]) return _userDict[key].category;
   const dict = window.GROCERY_DICT || {};
-  return dict[name.trim().toLowerCase()] || null;
+  return dict[key] || null;
 }
 
 function _capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
@@ -537,33 +560,36 @@ function _highlightMatch(name, q) {
 function _buildSuggestions(query) {
   const q = (query || '').trim().toLowerCase();
   if (q.length < 1) return [];
-  const dict = window.GROCERY_DICT || {};
   const seen = new Set();
   const out = [];
 
-  // 1. Items the user has bought before — most relevant.
-  for (const it of _items) {
-    const name = (it.item || '').toLowerCase();
-    if (!name || seen.has(name)) continue;
-    if (name.includes(q)) {
-      seen.add(name);
-      out.push({ name: it.item, category: it.category || _lookupCategory(it.item) || 'other', isHistory: true });
-    }
-    if (out.length >= 3) break;   // cap history rows so the dictionary still shows
+  // 1. User's personal dictionary — anything they've added before.
+  // Prefix matches first, then contains. Capped so the static dict
+  // still gets a chance to show through for unknown queries.
+  const userPrefix = [], userContains = [];
+  for (const [key, val] of Object.entries(_userDict)) {
+    if (seen.has(key)) continue;
+    if (key.startsWith(q))      userPrefix.push({ key, val });
+    else if (key.includes(q))   userContains.push({ key, val });
+  }
+  for (const m of [...userPrefix, ...userContains]) {
+    out.push({ name: m.val.name, category: m.val.category, isHistory: true });
+    seen.add(m.key);
+    if (out.length >= 5) break;
   }
 
-  // 2. Dictionary — prefix matches first, then contains.
-  const prefix = [];
-  const contains = [];
+  // 2. Static dictionary (Indian-vegetarian staples).
+  const dict = window.GROCERY_DICT || {};
+  const dictPrefix = [], dictContains = [];
   for (const [name, cat] of Object.entries(dict)) {
     if (seen.has(name)) continue;
-    if (name.startsWith(q)) prefix.push({ name, category: cat });
-    else if (name.includes(q)) contains.push({ name, category: cat });
+    if (name.startsWith(q))   dictPrefix.push({ name, category: cat });
+    else if (name.includes(q)) dictContains.push({ name, category: cat });
   }
-  for (const m of [...prefix, ...contains]) {
-    out.push(m);
+  for (const m of [...dictPrefix, ...dictContains]) {
+    out.push({ name: m.name, category: m.category, isHistory: false });
     seen.add(m.name);
-    if (out.length >= 10) break;
+    if (out.length >= 12) break;
   }
   return out;
 }

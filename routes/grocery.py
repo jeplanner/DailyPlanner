@@ -80,6 +80,50 @@ def grocery_page():
     )
 
 
+# ─────────── API: known items (autocomplete dictionary) ─────────
+
+
+@grocery_bp.route("/api/grocery/known-items", methods=["GET"])
+@login_required
+def list_known_items():
+    """Return distinct items this user has ever added to their grocery
+    list (including archived and purchased rows), each paired with the
+    category they most recently used.
+
+    Drives the autocomplete's "remember everything I've typed" behaviour
+    so user-specific staples — brand names, regional items, anything
+    that isn't in the static dictionary — start auto-completing on the
+    second use.
+    """
+    user_id = session["user_id"]
+    try:
+        rows = get(
+            "groceries",
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "item,category,created_at",
+                "order": "created_at.desc",
+                "limit": "1000",
+            },
+        ) or []
+    except Exception as e:
+        logger.warning("known-items fetch failed: %s", e)
+        return jsonify({"items": []})
+
+    # Rows are ordered desc, so the first time we see a name we have
+    # the freshest category. Dedupe case-insensitively.
+    seen = {}
+    for r in rows:
+        key = (r.get("item") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen[key] = {
+            "name": r.get("item"),
+            "category": r.get("category") or "other",
+        }
+    return jsonify({"items": list(seen.values())})
+
+
 # ─────────── API: list ───────────────────────────────────────────
 
 
