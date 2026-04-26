@@ -329,16 +329,41 @@ html.dark .ai-card { border-color:var(--sm-border); }
   .view-tabs .vtab { padding:6px 14px; font-size:12px; }
 }
 
-/* Compact header on mobile (≤640) — keeps tabs + date-nav on one row
-   on most phones (375+). The first fold is precious; every pixel here
-   buys a row of real content below. */
+/* Compact header on mobile (≤640) — tabs + date-nav stay on one row.
+   Two-letter tab labels swap in at this breakpoint so even iPhone SE
+   (375px) fits the row without overflow. */
+.vtab-short { display: none; }
 @media (max-width: 640px) {
-  .sum-header { gap: 8px; margin-bottom: 10px; }
-  .view-tabs { border-radius: 7px; }
-  .view-tabs .vtab { padding: 6px 11px; font-size: 11.5px; }
-  .nav-arrow { width: 28px; height: 28px; }
-  .nav-arrow svg { width: 16px; height: 16px; }
-  .date-pick { padding: 4px 6px; font-size: 12px; }
+  .sum-header {
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    align-items: center;
+  }
+  .sum-header-left,
+  .sum-header-right {
+    flex: 0 1 auto;
+    min-width: 0;       /* allow shrink past intrinsic content size */
+  }
+  .view-tabs { border-radius: 7px; flex: 0 0 auto; }
+  .view-tabs .vtab {
+    padding: 6px 9px;
+    font-size: 11.5px;
+    line-height: 1.1;
+  }
+  .vtab-full  { display: none; }
+  .vtab-short { display: inline; }
+  .nav-arrow { width: 26px; height: 26px; }
+  .nav-arrow svg { width: 14px; height: 14px; }
+  .date-nav { gap: 2px; flex: 0 1 auto; min-width: 0; }
+  .date-pick {
+    padding: 4px 4px;
+    font-size: 11.5px;
+    min-width: 0;
+    /* Cap so a long locale-formatted date can't push the row to wrap.
+       Native input still shows the full value via its internal scroll. */
+    max-width: 110px;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
