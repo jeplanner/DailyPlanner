@@ -3,12 +3,23 @@ from flask_login import login_user, logout_user, current_user
 from extensions import limiter
 from models.user import User
 from urllib.parse import urlparse
+import os
 import re
 import logging
 
 logger = logging.getLogger("daily_plan")
 
 auth_bp = Blueprint("auth", __name__)
+
+
+def _registration_allowlist():
+    """Emails permitted to register, from REGISTRATION_ALLOWLIST env var.
+
+    Comma-separated, case-insensitive. Empty/unset → registration is
+    closed (fail-closed). Existing users can still log in.
+    """
+    raw = os.environ.get("REGISTRATION_ALLOWLIST", "")
+    return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 
 def _safe_next_url(target):
@@ -88,6 +99,18 @@ def register():
             errors.append("Password must be at least 8 characters")
         if password != confirm:
             errors.append("Passwords do not match")
+
+        # Allowlist gate — only emails in REGISTRATION_ALLOWLIST may
+        # create new accounts. Existing users are unaffected (they log
+        # in via /login). Empty allowlist closes registration entirely.
+        if not errors:
+            allowed = _registration_allowlist()
+            if email not in allowed:
+                logger.info("Registration blocked (not allowlisted): %s", email)
+                errors.append(
+                    "Registration is by invitation only. "
+                    "Contact the administrator if you believe you should have access."
+                )
 
         if not errors:
             existing = User.get_by_email(email)
