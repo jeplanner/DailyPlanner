@@ -196,21 +196,13 @@
     font-size: 22px; line-height: 1; cursor: pointer;
   }
   .tr-modal-close:hover { background: var(--color-surface-secondary); color: var(--color-text); }
-  .tr-modal-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--color-border); margin-bottom: 14px; }
-  .tr-tab {
-    appearance: none; padding: 8px 14px; font: inherit; font-size: 13px; font-weight: 600;
-    border: 0; background: transparent; color: var(--color-text-secondary);
-    border-bottom: 2px solid transparent; cursor: pointer;
-  }
-  .tr-tab.is-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
-  .tr-tab-pane[hidden] { display: none; }
-  .tr-tab-pane p { font-size: 13.5px; color: var(--color-text-secondary); margin: 0 0 12px; line-height: 1.5; }
-  .tr-tab-pane textarea {
+  .tr-modal-card p:not(.tr-modal-sub) { font-size: 13.5px; color: var(--color-text-secondary); margin: 0 0 12px; line-height: 1.5; }
+  .tr-modal-card textarea {
     width: 100%; min-height: 180px; padding: 10px 12px; font: inherit; font-size: 13px;
     border: 1px solid var(--color-border); border-radius: 8px; resize: vertical;
     background: var(--color-bg-subtle, #f8fafc); color: var(--color-text);
   }
-  .tr-tab-pane textarea:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15)); }
+  .tr-modal-card textarea:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15)); }
   .tr-bookmarklet {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
@@ -290,51 +282,32 @@
   </div>
 </div>
 
-<!-- ─── Transcribe modal ───────────────────────────────── -->
+<!-- ─── Transcribe modal (paste-only — auto path disabled while
+       YouTube is blocking yt-dlp from cloud IPs) ─────────────── -->
 <div id="tr-modal" class="tr-modal" hidden>
   <div class="tr-modal-backdrop" onclick="trCloseModal()"></div>
   <div class="tr-modal-card" role="dialog" aria-modal="true" aria-labelledby="tr-modal-title">
     <button class="tr-modal-close" type="button" onclick="trCloseModal()" aria-label="Close">×</button>
-    <h3 id="tr-modal-title">Get transcript</h3>
+    <h3 id="tr-modal-title">Paste transcript</h3>
     <p class="tr-modal-sub" id="tr-modal-sub"></p>
 
-    <div class="tr-modal-tabs">
-      <button type="button" class="tr-tab is-active" data-tab="auto" onclick="trSwitchTab('auto')">Auto (Whisper)</button>
-      <button type="button" class="tr-tab" data-tab="paste" onclick="trSwitchTab('paste')">Paste / Bookmarklet</button>
+    <p>
+      Capture the transcript on your own machine and paste it here.
+      <b>Drag the bookmarklet</b> below to your bookmarks bar — clicking it while on a YouTube video copies that video's transcript to your clipboard.
+    </p>
+    <p>
+      <a class="tr-bookmarklet" id="tr-bookmarklet" draggable="true">📋 TravelReads → grab transcript</a>
+    </p>
+    <p style="margin-top:14px">
+      Or open YouTube's own <b>Show transcript</b> menu (⋯ button under the video), copy, and paste below.
+    </p>
+    <textarea id="tr-paste-text" placeholder="Paste transcript text here…"></textarea>
+    <div class="tr-modal-actions">
+      <button type="button" class="btn btn-primary" onclick="trRunPaste()">
+        <i data-feather="save"></i> Save transcript
+      </button>
     </div>
-
-    <div class="tr-tab-pane" data-pane="auto">
-      <p>
-        Server downloads the audio with <code>yt-dlp</code> and transcribes it through Groq Whisper Large v3 Turbo.
-        <span class="tr-cost">free tier</span>
-        Works for YouTube and many podcast/audio URLs. Long files are auto-chunked.
-      </p>
-      <div class="tr-modal-actions">
-        <button type="button" class="btn btn-primary" id="tr-auto-btn" onclick="trRunAuto()">
-          <i data-feather="zap"></i> Transcribe with Whisper
-        </button>
-      </div>
-      <div class="tr-status" id="tr-auto-status"></div>
-    </div>
-
-    <div class="tr-tab-pane" data-pane="paste" hidden>
-      <p>
-        Get the transcript on your own machine — bypasses cloud-IP blocks. <b>Drag the bookmarklet</b> below to your bookmarks bar; click it while on a YouTube video to copy that video's transcript to your clipboard, then paste here.
-      </p>
-      <p>
-        <a class="tr-bookmarklet" id="tr-bookmarklet" draggable="true">📋 TravelReads → grab transcript</a>
-      </p>
-      <p style="margin-top:14px">
-        Or open YouTube's own <b>Show transcript</b> menu (⋯ button under the video), copy, and paste below.
-      </p>
-      <textarea id="tr-paste-text" placeholder="Paste transcript text here…"></textarea>
-      <div class="tr-modal-actions">
-        <button type="button" class="btn btn-primary" onclick="trRunPaste()">
-          <i data-feather="save"></i> Save transcript
-        </button>
-      </div>
-      <div class="tr-status" id="tr-paste-status"></div>
-    </div>
+    <div class="tr-status" id="tr-paste-status"></div>
   </div>
 </div>
 
@@ -550,8 +523,8 @@ function trOpenTranscribeModal(id) {
   _modalReadId = id;
   const it = _items.find(x => x.id === id);
   document.getElementById('tr-modal-sub').textContent = (it && (it.title || it.url)) || '';
-  trSwitchTab('auto');
-  _resetModalStatus();
+  const status = document.getElementById('tr-paste-status');
+  if (status) { status.textContent = ''; status.classList.remove('is-error'); }
   document.getElementById('tr-paste-text').value = '';
   document.getElementById('tr-modal').hidden = false;
   if (window.feather) feather.replace();
@@ -560,19 +533,6 @@ function trOpenTranscribeModal(id) {
 function trCloseModal() {
   document.getElementById('tr-modal').hidden = true;
   _modalReadId = null;
-}
-
-function trSwitchTab(name) {
-  document.querySelectorAll('#tr-modal .tr-tab').forEach(b => b.classList.toggle('is-active', b.dataset.tab === name));
-  document.querySelectorAll('#tr-modal .tr-tab-pane').forEach(p => p.hidden = (p.dataset.pane !== name));
-  _resetModalStatus();
-}
-
-function _resetModalStatus() {
-  ['tr-auto-status', 'tr-paste-status'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) { el.textContent = ''; el.classList.remove('is-error'); }
-  });
 }
 
 function _modalError(elId, msg) {
@@ -592,29 +552,6 @@ function _afterTranscriptSaved(j, id) {
       'success', 4000,
       { label: 'Open note', onClick: () => window.open(j.note_url || `/notes/scribble/${j.note_id}`, '_blank') }
     );
-  }
-}
-
-async function trRunAuto() {
-  const id = _modalReadId; if (!id) return;
-  const btn = document.getElementById('tr-auto-btn');
-  const status = document.getElementById('tr-auto-status');
-  btn.disabled = true;
-  status.classList.remove('is-error');
-  status.textContent = 'Transcribing… this can take 30 s – 3 min depending on length. Don’t close the page.';
-  try {
-    const r = await fetch(`/api/travel-reads/${id}/transcribe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      credentials: 'same-origin',
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error || 'Transcription failed');
-    if (j.note_id) _afterTranscriptSaved(j, id);
-  } catch (e) {
-    _modalError('tr-auto-status', e.message || 'Transcription failed.');
-  } finally {
-    btn.disabled = false;
   }
 }
 

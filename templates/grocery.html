@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/grocery_dict.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .gr-app { max-width: 880px; margin: 0 auto; padding: 24px 20px 80px; }
@@ -210,6 +211,39 @@
   }
   .gr-edit-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
+  /* ── Autocomplete dropdown ─── */
+  .gr-ac-wrap { position: relative; }
+  .gr-ac {
+    position: absolute; left: 0; right: 0; top: 100%;
+    z-index: 50; margin-top: 4px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 8px 22px rgba(15,23,42,.08);
+    max-height: 260px; overflow-y: auto;
+  }
+  .gr-ac[hidden] { display: none; }
+  .gr-ac-item {
+    padding: 8px 12px; cursor: pointer; font-size: 14px;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--color-border-light, var(--color-border));
+  }
+  .gr-ac-item:last-child { border-bottom: 0; }
+  .gr-ac-item:hover,
+  .gr-ac-item.is-active {
+    background: color-mix(in srgb, var(--color-primary, #2563eb) 8%, transparent);
+  }
+  .gr-ac-name { color: var(--color-text); font-weight: 500; }
+  .gr-ac-name strong { color: var(--color-primary, #2563eb); font-weight: 700; }
+  .gr-ac-cat {
+    font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--color-text-muted, var(--color-text-secondary));
+    flex-shrink: 0;
+  }
+  .gr-ac-item.is-history .gr-ac-cat::before {
+    content: "↺ "; color: var(--color-text-secondary);
+  }
+
   /* ── Mobile tweaks ─── */
   @media (max-width: 640px) {
     .gr-app { padding: 16px 14px 80px; }
@@ -252,8 +286,12 @@
     <div class="gr-add-grid">
       <label>
         <span class="gr-add-label">Item</span>
-        <input type="text" name="item" id="gr-input-item"
-               placeholder="e.g. Milk" autocomplete="off" required>
+        <div class="gr-ac-wrap">
+          <input type="text" name="item" id="gr-input-item"
+                 placeholder="e.g. Tomato, Paneer, Toor dal…"
+                 autocomplete="off" autocorrect="off" spellcheck="false" required>
+          <div class="gr-ac" id="gr-autocomplete" hidden role="listbox"></div>
+        </div>
       </label>
       <label>
         <span class="gr-add-label">Qty</span>
@@ -436,10 +474,18 @@ async function grAdd(ev) {
   ev.preventDefault();
   const item = document.getElementById('gr-input-item').value.trim();
   if (!item) return;
+  // If the user typed a known item but never touched the category dropdown,
+  // map the category from the dictionary so the row lands in the right group.
+  let category = document.getElementById('gr-input-category').value;
+  const dictCat = _lookupCategory(item);
+  if (dictCat && !_catManuallySet) {
+    category = dictCat;
+    document.getElementById('gr-input-category').value = category;
+  }
   const payload = {
     item,
     quantity: document.getElementById('gr-input-qty').value.trim(),
-    category: document.getElementById('gr-input-category').value,
+    category,
     priority: document.getElementById('gr-input-priority').value,
   };
   try {
@@ -454,11 +500,147 @@ async function grAdd(ev) {
     if (j.item) _items.push(j.item);
     document.getElementById('gr-input-item').value = '';
     document.getElementById('gr-input-qty').value = '';
+    document.getElementById('gr-input-category').value = 'other';
+    _catManuallySet = false;
+    _hideAutocomplete();
     grRender();
     document.getElementById('gr-input-item').focus();
     if (window.showToast) showToast('Added', 'success', 1400);
   } catch (e) {
     if (window.showToast) showToast(e.message || 'Could not add', 'error');
+  }
+}
+
+// ─── Autocomplete ─────────────────────────────────────
+let _acIndex = -1;
+let _acMatches = [];
+let _catManuallySet = false;
+
+function _lookupCategory(name) {
+  if (!name) return null;
+  const dict = window.GROCERY_DICT || {};
+  return dict[name.trim().toLowerCase()] || null;
+}
+
+function _capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+
+function _highlightMatch(name, q) {
+  const lo = name.toLowerCase();
+  const idx = lo.indexOf(q);
+  if (idx < 0) return _escapeHtml(_capitalize(name));
+  const before = name.slice(0, idx);
+  const match  = name.slice(idx, idx + q.length);
+  const after  = name.slice(idx + q.length);
+  return `${_escapeHtml(_capitalize(before))}<strong>${_escapeHtml(match)}</strong>${_escapeHtml(after)}`;
+}
+
+function _buildSuggestions(query) {
+  const q = (query || '').trim().toLowerCase();
+  if (q.length < 1) return [];
+  const dict = window.GROCERY_DICT || {};
+  const seen = new Set();
+  const out = [];
+
+  // 1. Items the user has bought before — most relevant.
+  for (const it of _items) {
+    const name = (it.item || '').toLowerCase();
+    if (!name || seen.has(name)) continue;
+    if (name.includes(q)) {
+      seen.add(name);
+      out.push({ name: it.item, category: it.category || _lookupCategory(it.item) || 'other', isHistory: true });
+    }
+    if (out.length >= 3) break;   // cap history rows so the dictionary still shows
+  }
+
+  // 2. Dictionary — prefix matches first, then contains.
+  const prefix = [];
+  const contains = [];
+  for (const [name, cat] of Object.entries(dict)) {
+    if (seen.has(name)) continue;
+    if (name.startsWith(q)) prefix.push({ name, category: cat });
+    else if (name.includes(q)) contains.push({ name, category: cat });
+  }
+  for (const m of [...prefix, ...contains]) {
+    out.push(m);
+    seen.add(m.name);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+function _renderAutocomplete(matches, query) {
+  const ac = document.getElementById('gr-autocomplete');
+  if (!matches.length) { ac.hidden = true; ac.innerHTML = ''; return; }
+  const q = (query || '').toLowerCase();
+  ac.innerHTML = matches.map((m, i) => `
+    <div class="gr-ac-item ${m.isHistory ? 'is-history' : ''} ${i === _acIndex ? 'is-active' : ''}"
+         data-index="${i}" role="option" aria-selected="${i === _acIndex}"
+         onmousedown="event.preventDefault();" onclick="_acPick(${i})">
+      <span class="gr-ac-name">${_highlightMatch(m.name, q)}</span>
+      <span class="gr-ac-cat">${_escapeHtml(_categoryLabel(m.category || 'other'))}</span>
+    </div>
+  `).join('');
+  ac.hidden = false;
+  _acMatches = matches;
+}
+
+function _acPick(i) {
+  const m = _acMatches[i];
+  if (!m) return;
+  document.getElementById('gr-input-item').value = _capitalize(m.name);
+  if (m.category) {
+    const sel = document.getElementById('gr-input-category');
+    if (sel && Array.from(sel.options).some(o => o.value === m.category)) {
+      sel.value = m.category;
+      // The category came from the dictionary, not the user — treat as auto.
+      _catManuallySet = false;
+    }
+  }
+  _hideAutocomplete();
+  document.getElementById('gr-input-qty').focus();
+}
+
+function _hideAutocomplete() {
+  const ac = document.getElementById('gr-autocomplete');
+  if (ac) { ac.hidden = true; ac.innerHTML = ''; }
+  _acIndex = -1; _acMatches = [];
+}
+
+function _onItemInput(ev) {
+  const q = ev.target.value;
+  const matches = _buildSuggestions(q);
+  _acIndex = matches.length ? 0 : -1;
+  _renderAutocomplete(matches, q);
+
+  // Light auto-fill: if the typed string is a known item exactly, set the
+  // category (unless the user has manually overridden it).
+  if (!_catManuallySet) {
+    const cat = _lookupCategory(q);
+    if (cat) {
+      const sel = document.getElementById('gr-input-category');
+      if (sel && Array.from(sel.options).some(o => o.value === cat)) sel.value = cat;
+    }
+  }
+}
+
+function _onItemKey(ev) {
+  if (!_acMatches.length && ev.key !== 'Escape') return;
+  if (ev.key === 'ArrowDown') {
+    _acIndex = (_acIndex + 1) % _acMatches.length;
+    _renderAutocomplete(_acMatches, document.getElementById('gr-input-item').value);
+    ev.preventDefault();
+  } else if (ev.key === 'ArrowUp') {
+    _acIndex = (_acIndex - 1 + _acMatches.length) % _acMatches.length;
+    _renderAutocomplete(_acMatches, document.getElementById('gr-input-item').value);
+    ev.preventDefault();
+  } else if (ev.key === 'Enter' || ev.key === 'Tab') {
+    if (_acIndex >= 0 && _acMatches[_acIndex]) {
+      _acPick(_acIndex);
+      if (ev.key === 'Enter') ev.preventDefault();
+    }
+  } else if (ev.key === 'Escape') {
+    _hideAutocomplete();
+    ev.preventDefault();
   }
 }
 
@@ -581,6 +763,18 @@ function _escapeAttr(s) { return _escapeHtml(s); }
 document.addEventListener('DOMContentLoaded', () => {
   if (window.feather) feather.replace();
   grLoad();
+
+  const itemInput = document.getElementById('gr-input-item');
+  itemInput.addEventListener('input', _onItemInput);
+  itemInput.addEventListener('keydown', _onItemKey);
+  itemInput.addEventListener('blur', () => setTimeout(_hideAutocomplete, 150));
+  itemInput.addEventListener('focus', _onItemInput);
+
+  // Track manual category override so dictionary auto-fill doesn't overwrite
+  // a deliberate user choice.
+  document.getElementById('gr-input-category').addEventListener('change', () => {
+    _catManuallySet = true;
+  });
 });
 </script>
 </body>
