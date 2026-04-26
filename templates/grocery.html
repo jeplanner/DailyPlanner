@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Grocery — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .gr-app { max-width: 880px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  /* ── Hero ─── */
+  .gr-hero {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+    margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .gr-hero h1 { font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+  .gr-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; }
+  .gr-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 10px;
+    font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: background .12s, border-color .12s, color .12s;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .btn svg { width: 14px; height: 14px; }
+  .btn-primary {
+    background: var(--color-primary); color: var(--color-on-primary);
+    border-color: var(--color-primary);
+  }
+  .btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+  .btn-ghost:hover { background: var(--color-surface-secondary); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ── Stats strip ─── */
+  .gr-stats { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
+  .gr-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    font-size: 12.5px; color: var(--color-text-secondary);
+  }
+  .gr-chip strong { font-weight: 800; color: var(--color-text); font-variant-numeric: tabular-nums; }
+
+  /* ── Quick add ─── */
+  .gr-add {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 16px; margin-bottom: 22px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+  }
+  .gr-add-grid {
+    display: grid; gap: 10px 12px;
+    grid-template-columns: 2fr 1fr 1.2fr 1fr;
+  }
+  @media (max-width: 720px) { .gr-add-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 480px) { .gr-add-grid { grid-template-columns: 1fr; } }
+  .gr-add label { display: flex; flex-direction: column; gap: 5px; }
+  .gr-add-label { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-tertiary, var(--color-text-secondary)); }
+  .gr-add input[type="text"],
+  .gr-add select {
+    padding: 9px 12px; font: inherit; font-size: 14px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .gr-add input:focus,
+  .gr-add select:focus {
+    outline: none; border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .gr-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+  /* ── Group + list ─── */
+  .gr-group { margin-bottom: 22px; }
+  .gr-group-head {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 0 8px; padding: 0 4px;
+    font-size: 11.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
+  .gr-group-count {
+    margin-left: auto; font-weight: 600; font-size: 11.5px;
+    color: var(--color-text-muted, var(--color-text-secondary));
+    letter-spacing: 0; text-transform: none;
+  }
+
+  .gr-list {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+  }
+  .gr-row {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border-light, var(--color-border));
+    transition: background .12s;
+  }
+  .gr-row:last-child { border-bottom: none; }
+  .gr-row:hover { background: var(--color-surface-secondary, color-mix(in srgb, var(--color-primary) 4%, transparent)); }
+  .gr-row.is-purchased .gr-row-name { text-decoration: line-through; color: var(--color-text-muted); }
+  .gr-row.is-purchased .gr-row-meta { opacity: .7; }
+
+  .gr-check {
+    appearance: none;
+    width: 22px; height: 22px;
+    border: 1.5px solid var(--color-text-tertiary, #9ca3af);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    transition: border-color .15s, background .15s;
+    flex-shrink: 0;
+  }
+  .gr-check:hover { border-color: var(--color-primary, #16a34a); }
+  .gr-check.is-on {
+    background: #16a34a; border-color: #16a34a;
+  }
+  .gr-check.is-on::after {
+    content: ""; position: absolute;
+    left: 6px; top: 2px;
+    width: 6px; height: 11px;
+    border: solid #fff; border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  .gr-row-main { min-width: 0; }
+  .gr-row-name {
+    font-size: 15px; font-weight: 600; color: var(--color-text);
+    line-height: 1.3; word-break: break-word;
+  }
+  .gr-row-meta {
+    margin-top: 2px;
+    font-size: 12.5px; color: var(--color-text-secondary);
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .gr-row-qty { font-variant-numeric: tabular-nums; }
+  .gr-row-notes {
+    font-size: 12px; color: var(--color-text-muted);
+    margin-top: 3px; line-height: 1.4;
+  }
+
+  .gr-prio {
+    display: inline-flex; align-items: center;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .02em;
+    text-transform: uppercase;
+  }
+  .gr-prio-high   { background: color-mix(in srgb, #dc2626 14%, transparent); color: #b91c1c; }
+  .gr-prio-medium { display: none; }   /* default — hide chip to reduce noise */
+  .gr-prio-low    { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
+
+  .gr-row-actions { display: inline-flex; gap: 4px; align-items: center; }
+  .gr-icon-btn {
+    appearance: none;
+    width: 30px; height: 30px;
+    padding: 0; border: 1px solid transparent; background: transparent;
+    border-radius: 8px; cursor: pointer;
+    color: var(--color-text-tertiary, var(--color-text-secondary));
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .gr-icon-btn svg { width: 15px; height: 15px; }
+  .gr-icon-btn:hover {
+    background: var(--color-surface-secondary, var(--color-bg));
+    color: var(--color-primary, #2563eb);
+    border-color: var(--color-border);
+  }
+  .gr-icon-btn.danger:hover { color: #b91c1c; }
+
+  /* ── Empty / loading ─── */
+  .gr-empty {
+    text-align: center;
+    background: var(--color-surface); border: 1px dashed var(--color-border);
+    border-radius: 14px; padding: 36px 20px;
+    color: var(--color-text-secondary);
+    font-size: 14px;
+  }
+  .gr-empty strong { display: block; font-size: 16px; color: var(--color-text); font-weight: 700; margin-bottom: 4px; }
+
+  /* ── Inline edit panel ─── */
+  .gr-edit { display: none; padding: 12px 14px 14px; background: var(--color-surface-sunken, var(--color-bg)); border-top: 1px solid var(--color-border-light, var(--color-border)); }
+  .gr-row.is-editing + .gr-edit { display: block; }
+  .gr-edit-grid {
+    display: grid; gap: 10px 12px;
+    grid-template-columns: 2fr 1fr 1.2fr 1fr;
+  }
+  @media (max-width: 720px) { .gr-edit-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 480px) { .gr-edit-grid { grid-template-columns: 1fr; } }
+  .gr-edit input,
+  .gr-edit select {
+    padding: 8px 10px; font: inherit; font-size: 13px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .gr-edit input:focus,
+  .gr-edit select:focus {
+    outline: none; border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .gr-edit-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* ── Mobile tweaks ─── */
+  @media (max-width: 640px) {
+    .gr-app { padding: 16px 14px 80px; }
+    .gr-hero h1 { font-size: 22px; }
+    .gr-row { padding: 10px 12px; gap: 10px; grid-template-columns: 24px minmax(0, 1fr) auto; }
+    /* Stack the action group below the title on phones — saves a column */
+    .gr-row-actions { grid-column: 1 / -1; justify-content: flex-end; gap: 0; }
+    .gr-row .gr-prio { /* visible on the meta line on mobile */ }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="gr-app">
+
+  <!-- Hero -->
+  <header class="gr-hero">
+    <div>
+      <h1>Grocery list</h1>
+      <p class="gr-sub">Add items to buy. Tap the box when something lands in the cart.</p>
+    </div>
+    <div class="gr-actions">
+      <button type="button" class="btn btn-ghost" id="gr-clear-btn" onclick="grClearPurchased()" disabled>
+        <i data-feather="trash-2"></i> Clear purchased
+      </button>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div class="gr-stats" id="gr-stats">
+    <span class="gr-chip"><strong id="gr-stat-open">0</strong> to buy</span>
+    <span class="gr-chip"><strong id="gr-stat-done">0</strong> in cart</span>
+    <span class="gr-chip"><strong id="gr-stat-total">0</strong> total</span>
+  </div>
+
+  <!-- Quick add -->
+  <form class="gr-add" id="gr-add-form" onsubmit="grAdd(event)">
+    <div class="gr-add-grid">
+      <label>
+        <span class="gr-add-label">Item</span>
+        <input type="text" name="item" id="gr-input-item"
+               placeholder="e.g. Milk" autocomplete="off" required>
+      </label>
+      <label>
+        <span class="gr-add-label">Qty</span>
+        <input type="text" name="quantity" id="gr-input-qty"
+               placeholder="e.g. 2 L" autocomplete="off">
+      </label>
+      <label>
+        <span class="gr-add-label">Category</span>
+        <select name="category" id="gr-input-category">
+          {% for c in suggested_categories %}
+            <option value="{{ c }}" {% if c == 'other' %}selected{% endif %}>{{ c|capitalize }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span class="gr-add-label">Priority</span>
+        <select name="priority" id="gr-input-priority">
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </label>
+    </div>
+    <div class="gr-add-actions">
+      <button type="submit" class="btn btn-primary">
+        <i data-feather="plus"></i> Add item
+      </button>
+    </div>
+  </form>
+
+  <!-- List (rendered client-side) -->
+  <div id="gr-list-root">
+    <div class="gr-empty" id="gr-loading">Loading…</div>
+  </div>
+
+</div>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+const CATEGORY_LABELS = {
+  produce: 'Produce', dairy: 'Dairy', staples: 'Staples',
+  snacks: 'Snacks', household: 'Household', spices: 'Spices',
+  frozen: 'Frozen', beverages: 'Beverages', meat: 'Meat',
+  bakery: 'Bakery', other: 'Other',
+};
+const SUGGESTED = {{ suggested_categories|tojson }};
+let _items = [];
+
+async function grLoad() {
+  try {
+    const r = await fetch('/api/grocery', { credentials: 'same-origin' });
+    const j = await r.json();
+    _items = j.items || [];
+  } catch (e) {
+    _items = [];
+  }
+  grRender();
+}
+
+function _cmpItems(a, b) {
+  const ap = a.is_purchased ? 1 : 0;
+  const bp = b.is_purchased ? 1 : 0;
+  if (ap !== bp) return ap - bp;
+  const pri = { high: 0, medium: 1, low: 2 };
+  const apr = pri[a.priority || 'medium'] ?? 1;
+  const bpr = pri[b.priority || 'medium'] ?? 1;
+  if (apr !== bpr) return apr - bpr;
+  return (a.item || '').localeCompare(b.item || '');
+}
+
+function _categoryLabel(c) {
+  if (!c) return 'Other';
+  return CATEGORY_LABELS[c] || (c[0].toUpperCase() + c.slice(1));
+}
+
+function grRender() {
+  const root = document.getElementById('gr-list-root');
+  if (!_items.length) {
+    root.innerHTML = `
+      <div class="gr-empty">
+        <strong>Nothing on the list yet.</strong>
+        Add an item above to get started.
+      </div>`;
+    _updateStats();
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  _items.forEach(it => {
+    const c = it.category || 'other';
+    if (!groups[c]) groups[c] = [];
+    groups[c].push(it);
+  });
+  Object.values(groups).forEach(arr => arr.sort(_cmpItems));
+
+  // Order the categories: suggested order first, then anything else alpha
+  const ordered = [];
+  SUGGESTED.forEach(c => { if (groups[c]) ordered.push(c); });
+  Object.keys(groups).sort().forEach(c => {
+    if (!ordered.includes(c)) ordered.push(c);
+  });
+
+  let html = '';
+  ordered.forEach(cat => {
+    const arr = groups[cat];
+    const open = arr.filter(it => !it.is_purchased).length;
+    html += `
+      <section class="gr-group">
+        <h2 class="gr-group-head">
+          ${_escapeHtml(_categoryLabel(cat))}
+          <span class="gr-group-count">${open} of ${arr.length}</span>
+        </h2>
+        <div class="gr-list">
+          ${arr.map(_renderRow).join('')}
+        </div>
+      </section>`;
+  });
+  root.innerHTML = html;
+  if (window.feather) feather.replace();
+  _updateStats();
+}
+
+function _renderRow(it) {
+  const purchased = !!it.is_purchased;
+  const pri = it.priority || 'medium';
+  const meta = [];
+  if (it.quantity) meta.push(`<span class="gr-row-qty">${_escapeHtml(it.quantity)}</span>`);
+  if (pri !== 'medium') meta.push(`<span class="gr-prio gr-prio-${pri}">${pri}</span>`);
+  return `
+    <div class="gr-row ${purchased ? 'is-purchased' : ''}" data-id="${it.id}">
+      <button type="button" class="gr-check ${purchased ? 'is-on' : ''}"
+              aria-label="${purchased ? 'Mark not bought' : 'Mark bought'}"
+              onclick="grToggle('${it.id}', this)"></button>
+      <div class="gr-row-main">
+        <div class="gr-row-name">${_escapeHtml(it.item)}</div>
+        ${meta.length ? `<div class="gr-row-meta">${meta.join('')}</div>` : ''}
+        ${it.notes ? `<div class="gr-row-notes">${_escapeHtml(it.notes)}</div>` : ''}
+      </div>
+      <div class="gr-row-actions">
+        <button type="button" class="gr-icon-btn" onclick="grEdit('${it.id}')" title="Edit">
+          <i data-feather="edit-2"></i>
+        </button>
+        <button type="button" class="gr-icon-btn danger" onclick="grArchive('${it.id}')" title="Remove">
+          <i data-feather="x"></i>
+        </button>
+      </div>
+    </div>
+    <div class="gr-edit" id="gr-edit-${it.id}">
+      <div class="gr-edit-grid">
+        <input type="text" id="gr-edit-item-${it.id}" value="${_escapeAttr(it.item)}" placeholder="Item">
+        <input type="text" id="gr-edit-qty-${it.id}" value="${_escapeAttr(it.quantity || '')}" placeholder="Qty">
+        <select id="gr-edit-cat-${it.id}">
+          ${SUGGESTED.map(c => `<option value="${c}" ${c === (it.category || 'other') ? 'selected' : ''}>${_categoryLabel(c)}</option>`).join('')}
+        </select>
+        <select id="gr-edit-pri-${it.id}">
+          <option value="high"   ${pri === 'high'   ? 'selected' : ''}>High</option>
+          <option value="medium" ${pri === 'medium' ? 'selected' : ''}>Medium</option>
+          <option value="low"    ${pri === 'low'    ? 'selected' : ''}>Low</option>
+        </select>
+      </div>
+      <input type="text" id="gr-edit-notes-${it.id}" value="${_escapeAttr(it.notes || '')}" placeholder="Notes (optional)" style="margin-top:10px; width:100%;">
+      <div class="gr-edit-actions">
+        <button type="button" class="btn btn-ghost" onclick="grEditCancel('${it.id}')">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="grEditSave('${it.id}')">Save</button>
+      </div>
+    </div>`;
+}
+
+function _updateStats() {
+  const open = _items.filter(it => !it.is_purchased).length;
+  const done = _items.filter(it => it.is_purchased).length;
+  document.getElementById('gr-stat-open').textContent = open;
+  document.getElementById('gr-stat-done').textContent = done;
+  document.getElementById('gr-stat-total').textContent = _items.length;
+  document.getElementById('gr-clear-btn').disabled = done === 0;
+}
+
+async function grAdd(ev) {
+  ev.preventDefault();
+  const item = document.getElementById('gr-input-item').value.trim();
+  if (!item) return;
+  const payload = {
+    item,
+    quantity: document.getElementById('gr-input-qty').value.trim(),
+    category: document.getElementById('gr-input-category').value,
+    priority: document.getElementById('gr-input-priority').value,
+  };
+  try {
+    const r = await fetch('/api/grocery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Failed');
+    if (j.item) _items.push(j.item);
+    document.getElementById('gr-input-item').value = '';
+    document.getElementById('gr-input-qty').value = '';
+    grRender();
+    document.getElementById('gr-input-item').focus();
+    if (window.showToast) showToast('Added', 'success', 1400);
+  } catch (e) {
+    if (window.showToast) showToast(e.message || 'Could not add', 'error');
+  }
+}
+
+async function grToggle(id, btn) {
+  const it = _items.find(x => x.id === id);
+  if (!it) return;
+  const want = !it.is_purchased;
+  // Optimistic
+  it.is_purchased = want;
+  btn.classList.toggle('is-on', want);
+  btn.closest('.gr-row').classList.toggle('is-purchased', want);
+  _updateStats();
+  try {
+    await fetch(`/api/grocery/${id}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify({ purchased: want }),
+    });
+  } catch (e) {
+    // Roll back on error
+    it.is_purchased = !want;
+    btn.classList.toggle('is-on', !want);
+    btn.closest('.gr-row').classList.toggle('is-purchased', !want);
+    _updateStats();
+    if (window.showToast) showToast('Could not save', 'error');
+  }
+}
+
+function grEdit(id) {
+  const row = document.querySelector(`.gr-row[data-id="${id}"]`);
+  if (!row) return;
+  // Close any other open edit
+  document.querySelectorAll('.gr-row.is-editing').forEach(r => {
+    if (r !== row) r.classList.remove('is-editing');
+  });
+  row.classList.toggle('is-editing');
+}
+
+function grEditCancel(id) {
+  const row = document.querySelector(`.gr-row[data-id="${id}"]`);
+  if (row) row.classList.remove('is-editing');
+}
+
+async function grEditSave(id) {
+  const it = _items.find(x => x.id === id);
+  if (!it) return;
+  const payload = {
+    item:     document.getElementById(`gr-edit-item-${id}`).value.trim(),
+    quantity: document.getElementById(`gr-edit-qty-${id}`).value.trim(),
+    category: document.getElementById(`gr-edit-cat-${id}`).value,
+    priority: document.getElementById(`gr-edit-pri-${id}`).value,
+    notes:    document.getElementById(`gr-edit-notes-${id}`).value.trim(),
+  };
+  if (!payload.item) {
+    if (window.showToast) showToast('Item name required', 'error');
+    return;
+  }
+  try {
+    const r = await fetch(`/api/grocery/${id}/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Failed');
+    Object.assign(it, payload);
+    grRender();
+    if (window.showToast) showToast('Saved', 'success', 1200);
+  } catch (e) {
+    if (window.showToast) showToast(e.message || 'Could not save', 'error');
+  }
+}
+
+async function grArchive(id) {
+  if (!confirm('Remove this item from the list?')) return;
+  try {
+    await fetch(`/api/grocery/${id}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+    });
+    _items = _items.filter(x => x.id !== id);
+    grRender();
+    if (window.showToast) showToast('Removed', 'success', 1200);
+  } catch (e) {
+    if (window.showToast) showToast('Could not remove', 'error');
+  }
+}
+
+async function grClearPurchased() {
+  const done = _items.filter(it => it.is_purchased).length;
+  if (!done) return;
+  if (!confirm(`Clear ${done} purchased item${done === 1 ? '' : 's'} from the list?`)) return;
+  try {
+    await fetch('/api/grocery/clear-purchased', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+    });
+    _items = _items.filter(it => !it.is_purchased);
+    grRender();
+    if (window.showToast) showToast('Cleared', 'success', 1200);
+  } catch (e) {
+    if (window.showToast) showToast('Could not clear', 'error');
+  }
+}
+
+// ─── Helpers ─────────────────────────────────────────
+function _escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+function _escapeAttr(s) { return _escapeHtml(s); }
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+  if (window.feather) feather.replace();
+  grLoad();
+});
+</script>
+</body>
+</html>
