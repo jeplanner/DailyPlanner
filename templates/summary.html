@@ -36,8 +36,16 @@
       {% if view == "daily" %}
         <div class="date-nav">
           <a href="/summary?view=daily&date={{ prev_date }}" class="nav-arrow"><i data-feather="chevron-left"></i></a>
-          <input type="date" class="date-pick" value="{{ date.isoformat() }}"
-                 onchange="location.href='/summary?view=daily&date='+this.value">
+          {# Wrapping label lets us show a custom-formatted "26-Apr-2026"
+             label while still firing the native date picker on tap. The
+             input is positioned over the label at opacity 0 so clicks
+             anywhere in the wrapper open the OS date UI. #}
+          <label class="date-pick date-pick-formatted">
+            <span class="date-pick-display">{{ date.strftime('%d-%b-%Y') }}</span>
+            <input type="date" value="{{ date.isoformat() }}"
+                   onchange="location.href='/summary?view=daily&date='+this.value"
+                   aria-label="Pick date">
+          </label>
           <a href="/summary?view=daily&date={{ next_date }}" class="nav-arrow"><i data-feather="chevron-right"></i></a>
         </div>
       {% elif view == "monthly" %}
@@ -88,11 +96,12 @@
   </p>
 
   <!-- Mobile-first greeting + date. Desktop hides this via CSS-inherited
-       mobile-only styling (the greeting is shown only at ≤ 640px) -->
+       mobile-only styling (the greeting is shown only at ≤ 640px).
+       Title and date sit on one row to keep the chrome tight. -->
   <header class="md-greeting">
     <h1 class="md-greet-title" id="md-greet-title">Good morning</h1>
     <p class="md-greet-date">
-      {{ date.strftime("%A, %B %d") }}{% if is_today %} · <span class="md-today-tag">Today</span>{% endif %}
+      {{ date.strftime("%a, %b %d") }}{% if is_today %} · <span class="md-today-tag">Today</span>{% endif %}
     </p>
   </header>
 
