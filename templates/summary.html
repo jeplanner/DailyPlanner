@@ -268,11 +268,10 @@
       <div class="md-legend" aria-hidden="true">
         <span class="md-legend-item"><span class="md-dot md-dot-meeting"></span>Meeting</span>
         <span class="md-legend-item"><span class="md-dot md-dot-task"></span>Task</span>
-        <span class="md-legend-item"><span class="md-dot md-dot-habit"></span>Habit</span>
       </div>
     </header>
 
-    {% if dashboard.today_items or dashboard.habits %}
+    {% if dashboard.today_items %}
     <div class="md-table-wrap">
       <table class="md-table md-agenda-table">
         <thead>
@@ -361,66 +360,6 @@
               </td>
             </tr>
           {% endfor %}
-
-          {# Habits — appended as their own band so the chronological table still makes sense
-             even when habits are untimed. Each habit becomes one row. #}
-          {% if dashboard.habits %}
-            <tr class="md-band-row"><td colspan="5">Habits</td></tr>
-            {% for h in dashboard.habits %}
-            <tr class="md-row md-agenda-row md-type-habit {{ 'md-done' if h.done }}"
-                data-id="{{ h.id }}"
-                data-type="habit"
-                data-source="habit"
-                data-title="{{ h.name }}"
-                data-context="{% if h.habit_type == 'boolean' %}{{ 'Done' if h.done else 'Not yet' }}{% else %}{{ '%g'|format(h.value) }} / {{ '%g'|format(h.goal) }} {{ h.unit }}{% endif %}"
-                data-status="{{ 'done' if h.done else 'open' }}"
-                data-link="/health"
-                data-done="{{ 1 if h.done else 0 }}"
-                data-habit-type="{{ h.habit_type or '' }}"
-                data-habit-value="{{ h.value or 0 }}"
-                data-habit-goal="{{ h.goal or 0 }}"
-                data-habit-unit="{{ h.unit or '' }}"
-                data-habit-progress="{{ h.progress_pct or 0 }}"
-                onclick="openItemPeek(this, event)"
-                tabindex="0"
-                role="button"
-                aria-label="Open habit: {{ h.name }}">
-              <td class="md-c-time">
-                <span class="md-time md-time-any">Anytime</span>
-              </td>
-              <td class="md-c-type">
-                <span class="md-type-tag md-tag-habit">
-                  <i data-feather="refresh-cw"></i> Habit
-                </span>
-              </td>
-              <td class="md-c-title">
-                <span class="md-row-title">{{ h.name }}</span>
-              </td>
-              <td class="md-c-context">
-                <div class="md-habit-progress">
-                  <div class="md-habit-bar" style="width:{{ h.progress_pct }}%"></div>
-                </div>
-                <span class="md-habit-label">
-                  {% if h.habit_type == 'boolean' %}
-                    {{ 'Done' if h.done else 'Not yet' }}
-                  {% else %}
-                    {{ '%g'|format(h.value) }} / {{ '%g'|format(h.goal) }} {{ h.unit }}
-                  {% endif %}
-                </span>
-              </td>
-              <td class="md-c-status">
-                {% if h.done %}
-                  <span class="md-check md-check-done" title="Done"><i data-feather="check"></i></span>
-                {% else %}
-                  <span class="md-check md-check-open" aria-hidden="true"></span>
-                {% endif %}
-                <a class="md-row-link" href="/health" title="Log in Health" onclick="event.stopPropagation()">
-                  <i data-feather="arrow-up-right"></i>
-                </a>
-              </td>
-            </tr>
-            {% endfor %}
-          {% endif %}
         </tbody>
       </table>
     </div>
@@ -428,6 +367,79 @@
       <div class="empty-msg">Nothing on the board yet — add a task or schedule a meeting to get started.</div>
     {% endif %}
   </section>
+
+  <!-- ── HABITS ── separate card so it gets its own bounded scroll
+       (Parked-style) and doesn't push Today's flow off the screen. -->
+  {% if dashboard.habits %}
+  <section class="md-card md-habits-card" aria-labelledby="md-habits-title">
+    <header class="md-card-head">
+      <h2 class="md-card-title" id="md-habits-title">
+        <span class="md-card-icon md-habits-icon"><i data-feather="refresh-cw"></i></span>
+        Habits
+        <span class="md-count-pill md-count-green">{{ c.habits_done }}/{{ c.habits }}</span>
+      </h2>
+    </header>
+    <div class="md-table-wrap" role="region" aria-label="Habits">
+      <table class="md-table md-habits-table">
+        <thead>
+          <tr>
+            <th class="md-c-title">Habit</th>
+            <th class="md-c-context">Progress</th>
+            <th class="md-c-status" aria-label="Status"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in dashboard.habits %}
+          <tr class="md-row md-agenda-row md-habit-row md-type-habit {{ 'md-done' if h.done }}"
+              data-id="{{ h.id }}"
+              data-type="habit"
+              data-source="habit"
+              data-title="{{ h.name }}"
+              data-context="{% if h.habit_type == 'boolean' %}{{ 'Done' if h.done else 'Not yet' }}{% else %}{{ '%g'|format(h.value) }} / {{ '%g'|format(h.goal) }} {{ h.unit }}{% endif %}"
+              data-status="{{ 'done' if h.done else 'open' }}"
+              data-link="/health"
+              data-done="{{ 1 if h.done else 0 }}"
+              data-habit-type="{{ h.habit_type or '' }}"
+              data-habit-value="{{ h.value or 0 }}"
+              data-habit-goal="{{ h.goal or 0 }}"
+              data-habit-unit="{{ h.unit or '' }}"
+              data-habit-progress="{{ h.progress_pct or 0 }}"
+              onclick="openItemPeek(this, event)"
+              tabindex="0"
+              role="button"
+              aria-label="Open habit: {{ h.name }}">
+            <td class="md-c-title">
+              <span class="md-row-title">{{ h.name }}</span>
+            </td>
+            <td class="md-c-context">
+              <div class="md-habit-progress">
+                <div class="md-habit-bar" style="width:{{ h.progress_pct }}%"></div>
+              </div>
+              <span class="md-habit-label">
+                {% if h.habit_type == 'boolean' %}
+                  {{ 'Done' if h.done else 'Not yet' }}
+                {% else %}
+                  {{ '%g'|format(h.value) }} / {{ '%g'|format(h.goal) }} {{ h.unit }}
+                {% endif %}
+              </span>
+            </td>
+            <td class="md-c-status">
+              {% if h.done %}
+                <span class="md-check md-check-done" title="Done"><i data-feather="check"></i></span>
+              {% else %}
+                <span class="md-check md-check-open" aria-hidden="true"></span>
+              {% endif %}
+              <a class="md-row-link" href="/health" title="Log in Health" onclick="event.stopPropagation()">
+                <i data-feather="arrow-up-right"></i>
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
 
   <!-- ── PLAN TOMORROW ── end-of-day card; surfaces today's unfinished
        tasks so the user can decide: mark done, push to tomorrow, or push

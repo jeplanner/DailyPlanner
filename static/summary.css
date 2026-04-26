@@ -399,6 +399,11 @@ html.dark .md-hero-overdue { color: #fca5a5; }
   background: color-mix(in srgb, #dc2626 10%, transparent);
   color: #dc2626;
 }
+.md-habits-icon {
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+  color: #166534;
+}
+html.dark .md-habits-icon { background: #052e16; color: #4ade80; }
 .md-agenda-icon {
   background: color-mix(in srgb, #f59e0b 12%, transparent);
   color: #d97706;
@@ -693,6 +698,53 @@ html.dark .reschedule-menu .reschedule-pick input[type="date"] {
 
 /* Table */
 .md-table-wrap { overflow-x: auto; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   BOUNDED SCROLL — Parked-style ───────────────────────────────────
+   Today's flow, Overdue, and Habits each cap their body height so a
+   long list doesn't push every later card off the screen. Each card
+   becomes a self-contained scroll surface; the header stays visible
+   at the top of the card while the rows scroll within.
+   ═══════════════════════════════════════════════════════════════════ */
+.md-overdue-card .md-table-wrap,
+.md-agenda-card  .md-table-wrap,
+.md-habits-card  .md-table-wrap {
+  max-height: 60vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;       /* iOS scroll bounce stays inside */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;              /* Firefox */
+  scrollbar-color: var(--color-border-strong, #cbd5e1) transparent;
+}
+.md-overdue-card .md-table-wrap::-webkit-scrollbar,
+.md-agenda-card  .md-table-wrap::-webkit-scrollbar,
+.md-habits-card  .md-table-wrap::-webkit-scrollbar { width: 6px; }
+.md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
+.md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
+.md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong, #cbd5e1);
+  border-radius: 3px;
+}
+.md-overdue-card .md-table-wrap::-webkit-scrollbar-track,
+.md-agenda-card  .md-table-wrap::-webkit-scrollbar-track,
+.md-habits-card  .md-table-wrap::-webkit-scrollbar-track { background: transparent; }
+html.dark .md-overdue-card .md-table-wrap,
+html.dark .md-agenda-card  .md-table-wrap,
+html.dark .md-habits-card  .md-table-wrap {
+  scrollbar-color: #475569 transparent;
+}
+html.dark .md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
+html.dark .md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
+html.dark .md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb { background: #475569; }
+@media (max-width: 640px) {
+  /* Mobile viewports are short — cap a little tighter so the next
+     section is still hinted at the bottom edge of the screen. */
+  .md-overdue-card .md-table-wrap,
+  .md-agenda-card  .md-table-wrap,
+  .md-habits-card  .md-table-wrap {
+    max-height: 56vh;
+  }
+}
 .md-table {
   width: 100%;
   border-collapse: separate;
@@ -823,10 +875,12 @@ html.dark .md-tag-project { background: #3b0764; color: #ddd6fe; }
 }
 html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
 
-/* Status cell — check mark + open indicator + link arrow */
+/* Status cell — check mark + open indicator + link arrow.
+   Square (checkbox) instead of circle (radio) — these are completion
+   indicators ("did this happen"), not single-choice picks. */
 .md-check {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 50%;
+  width: 22px; height: 22px; border-radius: 4px;
   flex-shrink: 0;
 }
 .md-check-done {
@@ -1071,6 +1125,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   .md-card-icon svg { width: 12px; height: 12px; }
   .md-overdue-icon { background: var(--bg-subtle); color: var(--warning); }
   .md-agenda-icon  { background: var(--bg-subtle); color: var(--accent-secondary); }
+  .md-habits-icon  { background: var(--bg-subtle); color: var(--success); }
   .md-count-pill {
     margin-left: auto;
     padding: 2px 10px;
@@ -1149,6 +1204,15 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   }
   .md-agenda-row .md-c-type    { display: none; }
   .md-agenda-row .md-c-context { grid-area: meta; min-width: 0; align-self: baseline; }
+
+  /* Habit rows live in their own card now and have no time column —
+     drop the 48px "time" track so the title sits flush left. */
+  .md-habit-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title  status"
+      "meta   meta";
+  }
 
   /* Status indicators in the agenda's right-hand cell are pinned to a
      uniform 22×22 box so the right edge never drifts between rows.
@@ -1268,7 +1332,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   /* Status — checkbox is the only affordance per row */
   .md-row .md-check {
     width: 22px; height: 22px;
-    border-radius: 50%;
+    border-radius: 4px;
     flex-shrink: 0;
   }
   .md-row .md-check svg { width: 12px; height: 12px; }
@@ -1475,6 +1539,8 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   [data-theme="dark"] .md-overdue-icon { background: var(--bg-subtle); color: var(--warning); }
   html.dark .md-agenda-icon,
   [data-theme="dark"] .md-agenda-icon { background: var(--bg-subtle); color: var(--accent-secondary); }
+  html.dark .md-habits-icon,
+  [data-theme="dark"] .md-habits-icon { background: var(--bg-subtle); color: var(--success); }
   html.dark .md-context-chip,
   [data-theme="dark"] .md-context-chip {
     background: transparent;
@@ -1737,7 +1803,7 @@ html.dark .peek-habit-bar {
   margin-right: 10px;
   padding: 0;
   border: 1.5px solid var(--color-text-tertiary, #9ca3af);
-  border-radius: 50%;
+  border-radius: 4px;
   background: transparent;
   cursor: pointer;
   vertical-align: middle;
@@ -1781,20 +1847,10 @@ html.dark .peek-habit-bar {
    the toggle sits in the right-hand status column instead of the left). */
 .md-task-toggle-status { margin-right: 0; }
 
-/* Overdue + Plan Tomorrow: render the toggle as a checkbox (square),
-   not a radio (circle). Overdue items are decisions ("did I do this?"),
-   not single-choice picks — a checkbox reads correctly and aligns with
-   how the rest of the planner marks tasks done. */
-.md-overdue-row .md-task-toggle,
-.md-recap-row .md-task-toggle,
-.md-plan-row .md-task-toggle {
-  border-radius: 4px;
-}
-.md-overdue-row .md-task-toggle.is-done,
-.md-recap-row .md-task-toggle.is-done,
-.md-plan-row .md-task-toggle.is-done {
-  border-radius: 4px;
-}
+/* All mark-done indicators are now square (4px) at the base level —
+   .md-task-toggle and .md-check both use checkbox semantics, applied
+   consistently across Overdue, Today's flow, Habits, Plan Tomorrow,
+   and Recap. */
 
 /* Mobile: bigger tap target (Apple HIG / Material guideline = 44px), but
    the visual circle stays the same so the row doesn't feel chunky. */
