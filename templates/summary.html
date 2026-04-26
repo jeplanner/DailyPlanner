@@ -131,6 +131,26 @@
         .forEach(function (d) { d.removeAttribute('open'); });
     }
   })();
+
+  /* Collapsible card persistence ───────────────────────────────
+     Cards default to collapsed. The first time a user opens one,
+     the choice is remembered so returning visits don't force a
+     re-tap on every section. Storage is keyed per card-id, with
+     a date suffix-free key so the preference applies across days. */
+  (function () {
+    var cards = document.querySelectorAll('details.md-collapsible[data-card-id]');
+    cards.forEach(function (d) {
+      var key = 'mdCard:' + d.dataset.cardId;
+      var saved = null;
+      try { saved = localStorage.getItem(key); } catch (e) { /* private mode */ }
+      if (saved === '1') d.setAttribute('open', '');
+      else if (saved === '0') d.removeAttribute('open');
+      // No saved value → leave server-rendered default (all closed).
+      d.addEventListener('toggle', function () {
+        try { localStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {}
+      });
+    });
+  })();
   </script>
 
   <!-- ── TODAY'S FOCUS (One Big Thing) ── single most important thing today.
@@ -163,16 +183,21 @@
     </div>
   </section>
 
-  <!-- ── OVERDUE ── highest priority signal in a morning review -->
+  <!-- ── OVERDUE ── highest priority signal in a morning review.
+       Collapsible: tap the header to toggle. State persisted in
+       localStorage by the card-collapse script at the bottom of the
+       daily view. Default is closed; user opens once and it sticks. -->
   {% if dashboard.overdue %}
-  <section class="md-card md-overdue-card" aria-labelledby="md-overdue-title">
-    <header class="md-card-head">
+  <details class="md-card md-overdue-card md-collapsible" data-card-id="overdue" aria-labelledby="md-overdue-title">
+    <summary class="md-card-head">
       <h2 class="md-card-title" id="md-overdue-title">
         <span class="md-card-icon md-overdue-icon"><i data-feather="alert-circle"></i></span>
         Overdue
         <span class="md-count-pill md-count-red">{{ c.overdue }}</span>
       </h2>
-    </header>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
 
     {# Group overdue items by project (context). Preserves input order
        so the project containing the most-overdue task appears first,
@@ -253,12 +278,14 @@
         </tbody>
       </table>
     </div>
-  </section>
+    </div>
+  </details>
   {% endif %}
 
-  <!-- ── TODAY'S AGENDA ── meetings + tasks + habits in chronological order -->
-  <section class="md-card md-agenda-card" aria-labelledby="md-agenda-title">
-    <header class="md-card-head">
+  <!-- ── TODAY'S AGENDA ── meetings + tasks in chronological order.
+       Habits are now their own card below. -->
+  <details class="md-card md-agenda-card md-collapsible" data-card-id="agenda" aria-labelledby="md-agenda-title">
+    <summary class="md-card-head">
       <h2 class="md-card-title" id="md-agenda-title">
         <span class="md-card-icon md-agenda-icon"><i data-feather="sun"></i></span>
         Today's flow
@@ -269,10 +296,12 @@
         <span class="md-legend-item"><span class="md-dot md-dot-meeting"></span>Meeting</span>
         <span class="md-legend-item"><span class="md-dot md-dot-task"></span>Task</span>
       </div>
-    </header>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
 
     {% if dashboard.today_items %}
-    <div class="md-table-wrap">
+    <div class="md-table-wrap" role="region" aria-label="Today's flow">
       <table class="md-table md-agenda-table">
         <thead>
           <tr>
@@ -366,19 +395,21 @@
     {% else %}
       <div class="empty-msg">Nothing on the board yet — add a task or schedule a meeting to get started.</div>
     {% endif %}
-  </section>
+    </div>
+  </details>
 
-  <!-- ── HABITS ── separate card so it gets its own bounded scroll
-       (Parked-style) and doesn't push Today's flow off the screen. -->
+  <!-- ── HABITS ── separate collapsible card. -->
   {% if dashboard.habits %}
-  <section class="md-card md-habits-card" aria-labelledby="md-habits-title">
-    <header class="md-card-head">
+  <details class="md-card md-habits-card md-collapsible" data-card-id="habits" aria-labelledby="md-habits-title">
+    <summary class="md-card-head">
       <h2 class="md-card-title" id="md-habits-title">
         <span class="md-card-icon md-habits-icon"><i data-feather="refresh-cw"></i></span>
         Habits
         <span class="md-count-pill md-count-green">{{ c.habits_done }}/{{ c.habits }}</span>
       </h2>
-    </header>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
     <div class="md-table-wrap" role="region" aria-label="Habits">
       <table class="md-table md-habits-table">
         <thead>
@@ -438,27 +469,31 @@
         </tbody>
       </table>
     </div>
-  </section>
+    </div>
+  </details>
   {% endif %}
 
   <!-- ── PLAN TOMORROW ── end-of-day card; surfaces today's unfinished
        tasks so the user can decide: mark done, push to tomorrow, or push
-       to next week. "Move all to tomorrow" handles the bulk case in one tap.
-       Only renders when today is the current date AND there are open
-       items — past/future days don't need a "plan tomorrow" prompt. -->
+       to next week. "Move all to tomorrow" lives inside the body now (so
+       it doesn't fight the summary's collapse-toggle on click). -->
   {% set _open_today = dashboard.today_items|rejectattr('done')|selectattr('type','equalto','task')|list %}
   {% if is_today and _open_today %}
-  <section class="md-card md-plan-card" aria-labelledby="md-plan-title" id="md-plan-card">
-    <header class="md-card-head">
+  <details class="md-card md-plan-card md-collapsible" data-card-id="plan" aria-labelledby="md-plan-title" id="md-plan-card">
+    <summary class="md-card-head">
       <h2 class="md-card-title" id="md-plan-title">
         <span class="md-card-icon md-plan-icon"><i data-feather="sunrise"></i></span>
         Plan Tomorrow
         <span class="md-count-pill md-count-blue">{{ _open_today|length }}</span>
       </h2>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
+    <div class="md-card-actions">
       <button type="button" class="md-plan-bulk" onclick="planMoveAllToTomorrow()">
         Move all to tomorrow →
       </button>
-    </header>
+    </div>
     <div class="md-table-wrap" role="region" aria-label="Today's unfinished tasks">
       <table class="md-table md-overdue-table md-plan-table">
         <thead>
@@ -497,13 +532,17 @@
         </tbody>
       </table>
     </div>
-  </section>
+    </div>
+  </details>
   {% endif %}
 
   {# ── PARKED TASKS ── 3+ days overdue. Same parking concept as the
      Eisenhower matrix — keeps the Overdue card focused on items still
      in the user's reasonable triage window (1-2 days) so they're not
-     drowning in stale work. One-tap revise pulls a parked task back. #}
+     drowning in stale work. One-tap revise pulls a parked task back.
+     This card was the design reference for collapse + bounded scroll;
+     it stays as a regular section because it already has the right
+     scroll model and a useful hint string in the head. #}
   {% if dashboard.parked %}
   <section class="md-card md-parked-card" aria-labelledby="md-parked-title">
     <header class="md-card-head">
@@ -545,14 +584,16 @@
 
   <!-- ── TODAY'S RECAP ── tasks completed today; uncheck-able if marked by mistake -->
   {% if dashboard.done_today %}
-  <section class="md-card md-recap-card" aria-labelledby="md-recap-title" id="md-recap-card">
-    <header class="md-card-head">
+  <details class="md-card md-recap-card md-collapsible" data-card-id="recap" aria-labelledby="md-recap-title" id="md-recap-card">
+    <summary class="md-card-head">
       <h2 class="md-card-title" id="md-recap-title">
         <span class="md-card-icon md-recap-icon"><i data-feather="check-circle"></i></span>
         Today's Recap
         <span class="md-count-pill md-count-green">{{ dashboard.done_today|length }}</span>
       </h2>
-    </header>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
     <div class="md-table-wrap" role="region" aria-label="Tasks completed today">
       <table class="md-table md-recap-table">
         <thead>
@@ -590,7 +631,8 @@
         </tbody>
       </table>
     </div>
-  </section>
+    </div>
+  </details>
   {% endif %}
 
   <!-- ── Reflection + AI Recap — below the fold, still one tap away ──
@@ -2009,24 +2051,35 @@ function _ensureRecapCard() {
   const reflection = document.querySelector(".md-supplement");
   if (!reflection || !reflection.parentNode) return null;
 
-  const card = document.createElement("section");
-  card.className = "md-card md-recap-card";
+  const card = document.createElement("details");
+  card.className = "md-card md-recap-card md-collapsible";
   card.id = "md-recap-card";
+  card.setAttribute("data-card-id", "recap");
   card.setAttribute("aria-labelledby", "md-recap-title");
+  // Open on creation — the user just completed a task, so they
+  // should see the recap row appear without a manual expand.
+  card.setAttribute("open", "");
   card.innerHTML = `
-    <header class="md-card-head">
+    <summary class="md-card-head">
       <h2 class="md-card-title" id="md-recap-title">
         <span class="md-card-icon md-recap-icon"><i data-feather="check-circle"></i></span>
         Today's Recap
         <span class="md-count-pill md-count-green" id="md-recap-count">0</span>
       </h2>
-    </header>
-    <div class="md-table-wrap" role="region" aria-label="Tasks completed today">
-      <table class="md-table md-recap-table">
-        <tbody id="md-recap-tbody"></tbody>
-      </table>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
+      <div class="md-table-wrap" role="region" aria-label="Tasks completed today">
+        <table class="md-table md-recap-table">
+          <tbody id="md-recap-tbody"></tbody>
+        </table>
+      </div>
     </div>`;
   reflection.parentNode.insertBefore(card, reflection);
+  // Mirror the persistence behavior of server-rendered cards.
+  card.addEventListener("toggle", () => {
+    try { localStorage.setItem("mdCard:recap", card.open ? "1" : "0"); } catch (e) {}
+  });
   if (window.feather) feather.replace();
   return document.getElementById("md-recap-tbody");
 }

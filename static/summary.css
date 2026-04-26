@@ -700,51 +700,127 @@ html.dark .reschedule-menu .reschedule-pick input[type="date"] {
 .md-table-wrap { overflow-x: auto; }
 
 /* ═══════════════════════════════════════════════════════════════════
-   BOUNDED SCROLL — desktop only.
-   Cap card body at 60vh on wider screens so a long list doesn't push
-   every later card off the page; the user can also scroll the inner
-   list with the cursor.
+   COLLAPSIBLE CARDS — Today's flow / Overdue / Habits / Plan / Recap.
+   Each card is a <details> with the existing .md-card-head as its
+   <summary>. Collapsed by default; persistent open/closed state
+   handled by the small script in summary.html.
 
-   Mobile gets *no* internal scroll: nested scroll containers feel
-   broken on touch (gesture stops at the card's inner boundary, you
-   have to lift+re-swipe to scroll the page). On phones the page
-   already scrolls vertically — let it own the whole axis.
+   When expanded, the body uses the same Parked-style bounded scroll
+   (max-height: 60vh, overflow-y: auto). Crucially we do NOT set
+   `overscroll-behavior: contain` — that would block scroll-chaining
+   and trap the user inside the card. Default `auto` lets the page
+   continue scrolling once the inner list reaches its end.
 
-   Critically, no `overscroll-behavior: contain` here. With contain,
-   once the inner list hits its end, scroll-chaining is blocked and
-   the page won't continue past the card. Default `auto` allows the
-   page to keep scrolling naturally once the card reaches its bound.
+   Side effects: search/Ctrl+F won't find content inside collapsed
+   sections (acceptable trade-off for the cleaner view).
    ═══════════════════════════════════════════════════════════════════ */
-@media (min-width: 641px) {
-  .md-overdue-card .md-table-wrap,
-  .md-agenda-card  .md-table-wrap,
-  .md-habits-card  .md-table-wrap {
-    max-height: 60vh;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
-    scrollbar-width: thin;            /* Firefox */
-    scrollbar-color: var(--color-border-strong, #cbd5e1) transparent;
+details.md-collapsible {
+  /* <details> default display:block already plays well with .md-card. */
+}
+details.md-collapsible > summary.md-card-head {
+  list-style: none;          /* Firefox */
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+details.md-collapsible > summary.md-card-head::-webkit-details-marker { display: none; }
+details.md-collapsible > summary.md-card-head::marker { content: ""; }
+
+.md-card-chevron {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  font-size: 22px; line-height: 1;
+  color: var(--color-text-tertiary, #94a3b8);
+  transition: transform 150ms ease;
+}
+details.md-collapsible[open] > summary > .md-card-chevron {
+  transform: rotate(90deg);
+}
+/* Subtle hover feedback on the whole header so it feels tappable. */
+details.md-collapsible > summary.md-card-head:hover {
+  background: color-mix(in srgb, var(--color-primary, #2563eb) 4%, transparent);
+}
+html.dark details.md-collapsible > summary.md-card-head:hover {
+  background: color-mix(in srgb, #fff 4%, transparent);
+}
+details.md-collapsible > summary.md-card-head:focus-visible {
+  outline: 2px solid var(--color-primary, #2563eb);
+  outline-offset: -2px;
+}
+
+/* Body wrapper so the table-wrap (or empty-msg) can sit inside details
+   without inheriting any quirks from the <details> element directly. */
+.md-card-body {
+  display: block;
+}
+
+/* Bulk-action strip inside Plan Tomorrow's body (the "Move all to
+   tomorrow →" button used to live in the header but moved into the
+   body so clicks don't fight the summary's collapse-toggle). */
+.md-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 18px 0;
+}
+@media (max-width: 640px) {
+  .md-card-actions { padding: 8px var(--space-4) 0; }
+}
+
+/* Bounded scroll on the body — applies on both desktop and mobile.
+   Mobile is fine because the user explicitly opted in (tapped to
+   expand). Hitting the inner end chains to the page (no `contain`). */
+.md-overdue-card  .md-card-body .md-table-wrap,
+.md-agenda-card   .md-card-body .md-table-wrap,
+.md-habits-card   .md-card-body .md-table-wrap,
+.md-plan-card     .md-card-body .md-table-wrap,
+.md-recap-card    .md-card-body .md-table-wrap {
+  max-height: 60vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;            /* Firefox */
+  scrollbar-color: var(--color-border-strong, #cbd5e1) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.md-overdue-card  .md-card-body .md-table-wrap::-webkit-scrollbar,
+.md-agenda-card   .md-card-body .md-table-wrap::-webkit-scrollbar,
+.md-habits-card   .md-card-body .md-table-wrap::-webkit-scrollbar,
+.md-plan-card     .md-card-body .md-table-wrap::-webkit-scrollbar,
+.md-recap-card    .md-card-body .md-table-wrap::-webkit-scrollbar { width: 6px; }
+.md-overdue-card  .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+.md-agenda-card   .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+.md-habits-card   .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+.md-plan-card     .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+.md-recap-card    .md-card-body .md-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong, #cbd5e1);
+  border-radius: 3px;
+}
+html.dark .md-overdue-card  .md-card-body .md-table-wrap,
+html.dark .md-agenda-card   .md-card-body .md-table-wrap,
+html.dark .md-habits-card   .md-card-body .md-table-wrap,
+html.dark .md-plan-card     .md-card-body .md-table-wrap,
+html.dark .md-recap-card    .md-card-body .md-table-wrap {
+  scrollbar-color: #475569 transparent;
+}
+html.dark .md-overdue-card  .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+html.dark .md-agenda-card   .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+html.dark .md-habits-card   .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+html.dark .md-plan-card     .md-card-body .md-table-wrap::-webkit-scrollbar-thumb,
+html.dark .md-recap-card    .md-card-body .md-table-wrap::-webkit-scrollbar-thumb { background: #475569; }
+
+/* Mobile: a slightly tighter cap so the next collapsed card always
+   peeks at the bottom of the screen, hinting more content below. */
+@media (max-width: 640px) {
+  .md-overdue-card  .md-card-body .md-table-wrap,
+  .md-agenda-card   .md-card-body .md-table-wrap,
+  .md-habits-card   .md-card-body .md-table-wrap,
+  .md-plan-card     .md-card-body .md-table-wrap,
+  .md-recap-card    .md-card-body .md-table-wrap {
+    max-height: 55vh;
   }
-  .md-overdue-card .md-table-wrap::-webkit-scrollbar,
-  .md-agenda-card  .md-table-wrap::-webkit-scrollbar,
-  .md-habits-card  .md-table-wrap::-webkit-scrollbar { width: 6px; }
-  .md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
-  .md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
-  .md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb {
-    background: var(--color-border-strong, #cbd5e1);
-    border-radius: 3px;
-  }
-  .md-overdue-card .md-table-wrap::-webkit-scrollbar-track,
-  .md-agenda-card  .md-table-wrap::-webkit-scrollbar-track,
-  .md-habits-card  .md-table-wrap::-webkit-scrollbar-track { background: transparent; }
-  html.dark .md-overdue-card .md-table-wrap,
-  html.dark .md-agenda-card  .md-table-wrap,
-  html.dark .md-habits-card  .md-table-wrap {
-    scrollbar-color: #475569 transparent;
-  }
-  html.dark .md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
-  html.dark .md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
-  html.dark .md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb { background: #475569; }
 }
 .md-table {
   width: 100%;
