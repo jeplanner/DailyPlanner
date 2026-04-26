@@ -700,50 +700,51 @@ html.dark .reschedule-menu .reschedule-pick input[type="date"] {
 .md-table-wrap { overflow-x: auto; }
 
 /* ═══════════════════════════════════════════════════════════════════
-   BOUNDED SCROLL — Parked-style ───────────────────────────────────
-   Today's flow, Overdue, and Habits each cap their body height so a
-   long list doesn't push every later card off the screen. Each card
-   becomes a self-contained scroll surface; the header stays visible
-   at the top of the card while the rows scroll within.
+   BOUNDED SCROLL — desktop only.
+   Cap card body at 60vh on wider screens so a long list doesn't push
+   every later card off the page; the user can also scroll the inner
+   list with the cursor.
+
+   Mobile gets *no* internal scroll: nested scroll containers feel
+   broken on touch (gesture stops at the card's inner boundary, you
+   have to lift+re-swipe to scroll the page). On phones the page
+   already scrolls vertically — let it own the whole axis.
+
+   Critically, no `overscroll-behavior: contain` here. With contain,
+   once the inner list hits its end, scroll-chaining is blocked and
+   the page won't continue past the card. Default `auto` allows the
+   page to keep scrolling naturally once the card reaches its bound.
    ═══════════════════════════════════════════════════════════════════ */
-.md-overdue-card .md-table-wrap,
-.md-agenda-card  .md-table-wrap,
-.md-habits-card  .md-table-wrap {
-  max-height: 60vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;       /* iOS scroll bounce stays inside */
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;              /* Firefox */
-  scrollbar-color: var(--color-border-strong, #cbd5e1) transparent;
-}
-.md-overdue-card .md-table-wrap::-webkit-scrollbar,
-.md-agenda-card  .md-table-wrap::-webkit-scrollbar,
-.md-habits-card  .md-table-wrap::-webkit-scrollbar { width: 6px; }
-.md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
-.md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
-.md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong, #cbd5e1);
-  border-radius: 3px;
-}
-.md-overdue-card .md-table-wrap::-webkit-scrollbar-track,
-.md-agenda-card  .md-table-wrap::-webkit-scrollbar-track,
-.md-habits-card  .md-table-wrap::-webkit-scrollbar-track { background: transparent; }
-html.dark .md-overdue-card .md-table-wrap,
-html.dark .md-agenda-card  .md-table-wrap,
-html.dark .md-habits-card  .md-table-wrap {
-  scrollbar-color: #475569 transparent;
-}
-html.dark .md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
-html.dark .md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
-html.dark .md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb { background: #475569; }
-@media (max-width: 640px) {
-  /* Mobile viewports are short — cap a little tighter so the next
-     section is still hinted at the bottom edge of the screen. */
+@media (min-width: 641px) {
   .md-overdue-card .md-table-wrap,
   .md-agenda-card  .md-table-wrap,
   .md-habits-card  .md-table-wrap {
-    max-height: 56vh;
+    max-height: 60vh;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;            /* Firefox */
+    scrollbar-color: var(--color-border-strong, #cbd5e1) transparent;
   }
+  .md-overdue-card .md-table-wrap::-webkit-scrollbar,
+  .md-agenda-card  .md-table-wrap::-webkit-scrollbar,
+  .md-habits-card  .md-table-wrap::-webkit-scrollbar { width: 6px; }
+  .md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
+  .md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
+  .md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb {
+    background: var(--color-border-strong, #cbd5e1);
+    border-radius: 3px;
+  }
+  .md-overdue-card .md-table-wrap::-webkit-scrollbar-track,
+  .md-agenda-card  .md-table-wrap::-webkit-scrollbar-track,
+  .md-habits-card  .md-table-wrap::-webkit-scrollbar-track { background: transparent; }
+  html.dark .md-overdue-card .md-table-wrap,
+  html.dark .md-agenda-card  .md-table-wrap,
+  html.dark .md-habits-card  .md-table-wrap {
+    scrollbar-color: #475569 transparent;
+  }
+  html.dark .md-overdue-card .md-table-wrap::-webkit-scrollbar-thumb,
+  html.dark .md-agenda-card  .md-table-wrap::-webkit-scrollbar-thumb,
+  html.dark .md-habits-card  .md-table-wrap::-webkit-scrollbar-thumb { background: #475569; }
 }
 .md-table {
   width: 100%;
