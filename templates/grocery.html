@@ -352,7 +352,12 @@ async function grLoad() {
     _userDict = {};
     (knownJ.items || []).forEach(it => {
       const key = (it.name || '').trim().toLowerCase();
-      if (key) _userDict[key] = { name: it.name, category: it.category || 'other' };
+      if (key) _userDict[key] = {
+        name:     it.name,
+        category: it.category || 'other',
+        quantity: it.quantity || '',
+        priority: it.priority || 'medium',
+      };
     });
   } catch (e) {
     _items = [];
@@ -484,18 +489,14 @@ async function grAdd(ev) {
   ev.preventDefault();
   const item = document.getElementById('gr-input-item').value.trim();
   if (!item) return;
-  // If the user typed a known item but never touched the category dropdown,
-  // map the category from the dictionary so the row lands in the right group.
-  let category = document.getElementById('gr-input-category').value;
-  const dictCat = _lookupCategory(item);
-  if (dictCat && !_catManuallySet) {
-    category = dictCat;
-    document.getElementById('gr-input-category').value = category;
-  }
+  // Apply history defaults to any field the user hasn't manually
+  // touched — this catches the case where the user typed an exact
+  // known item and submitted without picking from the dropdown.
+  _autoFillFromHistory(_resolveItem(item));
   const payload = {
     item,
     quantity: document.getElementById('gr-input-qty').value.trim(),
-    category,
+    category: document.getElementById('gr-input-category').value,
     priority: document.getElementById('gr-input-priority').value,
   };
   try {
@@ -508,14 +509,23 @@ async function grAdd(ev) {
     const j = await r.json();
     if (!r.ok || !j.ok) throw new Error(j.error || 'Failed');
     if (j.item) _items.push(j.item);
-    // Remember this item in the user's personal dictionary so future
-    // typing of the same name autocompletes — even before page reload.
+    // Remember this purchase in the user's personal dictionary so
+    // future typing of the same name autocompletes — even before
+    // page reload — with the latest qty/category/priority.
     const key = item.trim().toLowerCase();
-    if (key) _userDict[key] = { name: item, category };
+    if (key) _userDict[key] = {
+      name:     item,
+      category: payload.category,
+      quantity: payload.quantity,
+      priority: payload.priority,
+    };
     document.getElementById('gr-input-item').value = '';
     document.getElementById('gr-input-qty').value = '';
     document.getElementById('gr-input-category').value = 'other';
+    document.getElementById('gr-input-priority').value = 'medium';
     _catManuallySet = false;
+    _qtyManuallySet = false;
+    _priManuallySet = false;
     _hideAutocomplete();
     grRender();
     document.getElementById('gr-input-item').focus();
@@ -528,21 +538,50 @@ async function grAdd(ev) {
 // ─── Autocomplete ─────────────────────────────────────
 let _acIndex = -1;
 let _acMatches = [];
+// Manual-override flags — once the user touches a field, dictionary
+// auto-fill stops overwriting it. Reset after each successful add.
 let _catManuallySet = false;
+let _qtyManuallySet = false;
+let _priManuallySet = false;
 // Per-user dictionary built from "known-items" endpoint — every item
 // the user has ever added (including archived rows). Populated on
 // load and updated live after each successful add, so anything you
-// type once is suggested next time.
+// type once is suggested next time, with category/qty/priority
+// remembered from the last purchase.
 let _userDict = {};
 
-function _lookupCategory(name) {
+function _resolveItem(name) {
   if (!name) return null;
   const key = name.trim().toLowerCase();
-  // Personal dict wins over the static one — user has already
-  // categorised this item their way and we should respect that.
-  if (_userDict[key]) return _userDict[key].category;
-  const dict = window.GROCERY_DICT || {};
-  return dict[key] || null;
+  if (_userDict[key]) return _userDict[key];
+  const staticCat = (window.GROCERY_DICT || {})[key];
+  return staticCat ? { name, category: staticCat, quantity: '', priority: 'medium' } : null;
+}
+
+function _lookupCategory(name) {
+  const e = _resolveItem(name);
+  return e ? e.category : null;
+}
+
+// Apply qty/category/priority from a known entry, but only into
+// fields the user hasn't manually overridden in this submit cycle.
+function _autoFillFromHistory(entry) {
+  if (!entry) return;
+  if (!_catManuallySet && entry.category) {
+    const sel = document.getElementById('gr-input-category');
+    if (sel && Array.from(sel.options).some(o => o.value === entry.category)) {
+      sel.value = entry.category;
+    }
+  }
+  if (!_qtyManuallySet && entry.quantity) {
+    document.getElementById('gr-input-qty').value = entry.quantity;
+  }
+  if (!_priManuallySet && entry.priority) {
+    const sel = document.getElementById('gr-input-priority');
+    if (sel && Array.from(sel.options).some(o => o.value === entry.priority)) {
+      sel.value = entry.priority;
+    }
+  }
 }
 
 function _capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
@@ -573,7 +612,13 @@ function _buildSuggestions(query) {
     else if (key.includes(q))   userContains.push({ key, val });
   }
   for (const m of [...userPrefix, ...userContains]) {
-    out.push({ name: m.val.name, category: m.val.category, isHistory: true });
+    out.push({
+      name:     m.val.name,
+      category: m.val.category,
+      quantity: m.val.quantity || '',
+      priority: m.val.priority || 'medium',
+      isHistory: true,
+    });
     seen.add(m.key);
     if (out.length >= 5) break;
   }
@@ -614,16 +659,19 @@ function _acPick(i) {
   const m = _acMatches[i];
   if (!m) return;
   document.getElementById('gr-input-item').value = _capitalize(m.name);
-  if (m.category) {
-    const sel = document.getElementById('gr-input-category');
-    if (sel && Array.from(sel.options).some(o => o.value === m.category)) {
-      sel.value = m.category;
-      // The category came from the dictionary, not the user — treat as auto.
-      _catManuallySet = false;
-    }
-  }
+  // Picking a suggestion is an explicit "use these defaults" action,
+  // so reset the manual flags before applying. The user is choosing
+  // the historical bundle of category/qty/priority.
+  _catManuallySet = false;
+  _qtyManuallySet = false;
+  _priManuallySet = false;
+  _autoFillFromHistory(m);
   _hideAutocomplete();
-  document.getElementById('gr-input-qty').focus();
+  // Skip qty if it was already filled from history — jump to submit
+  // is faster than tabbing through pre-filled fields.
+  const next = m.quantity ? document.querySelector('#gr-add-form button[type="submit"]')
+                          : document.getElementById('gr-input-qty');
+  if (next && typeof next.focus === 'function') next.focus();
 }
 
 function _hideAutocomplete() {
@@ -638,15 +686,11 @@ function _onItemInput(ev) {
   _acIndex = matches.length ? 0 : -1;
   _renderAutocomplete(matches, q);
 
-  // Light auto-fill: if the typed string is a known item exactly, set the
-  // category (unless the user has manually overridden it).
-  if (!_catManuallySet) {
-    const cat = _lookupCategory(q);
-    if (cat) {
-      const sel = document.getElementById('gr-input-category');
-      if (sel && Array.from(sel.options).some(o => o.value === cat)) sel.value = cat;
-    }
-  }
+  // Light auto-fill: if what the user has typed exactly matches a
+  // known item, fill in category/qty/priority from the user's last
+  // purchase of that item (or the static dict). Manual overrides are
+  // respected via the *ManuallySet flags.
+  _autoFillFromHistory(_resolveItem(q));
 }
 
 function _onItemKey(ev) {
@@ -796,10 +840,16 @@ document.addEventListener('DOMContentLoaded', () => {
   itemInput.addEventListener('blur', () => setTimeout(_hideAutocomplete, 150));
   itemInput.addEventListener('focus', _onItemInput);
 
-  // Track manual category override so dictionary auto-fill doesn't overwrite
-  // a deliberate user choice.
+  // Track manual overrides so dictionary auto-fill doesn't overwrite
+  // a deliberate user choice. Reset after each successful add.
   document.getElementById('gr-input-category').addEventListener('change', () => {
     _catManuallySet = true;
+  });
+  document.getElementById('gr-input-qty').addEventListener('input', () => {
+    _qtyManuallySet = true;
+  });
+  document.getElementById('gr-input-priority').addEventListener('change', () => {
+    _priManuallySet = true;
   });
 });
 </script>

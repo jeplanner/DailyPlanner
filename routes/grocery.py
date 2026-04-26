@@ -101,7 +101,7 @@ def list_known_items():
             "groceries",
             params={
                 "user_id": f"eq.{user_id}",
-                "select": "item,category,created_at",
+                "select": "item,category,quantity,priority,created_at",
                 "order": "created_at.desc",
                 "limit": "1000",
             },
@@ -111,15 +111,18 @@ def list_known_items():
         return jsonify({"items": []})
 
     # Rows are ordered desc, so the first time we see a name we have
-    # the freshest category. Dedupe case-insensitively.
+    # the freshest values for category/quantity/priority. Dedupe
+    # case-insensitively.
     seen = {}
     for r in rows:
         key = (r.get("item") or "").strip().lower()
         if not key or key in seen:
             continue
         seen[key] = {
-            "name": r.get("item"),
+            "name":     r.get("item"),
             "category": r.get("category") or "other",
+            "quantity": r.get("quantity") or "",
+            "priority": r.get("priority") or "medium",
         }
     return jsonify({"items": list(seen.values())})
 
