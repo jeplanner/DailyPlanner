@@ -2,24 +2,33 @@
 consume while travelling.
 
 Endpoints:
-    GET  /travel-reads                            page render
-    GET  /api/travel-reads                        list (active)
-    POST /api/travel-reads                        add (auto-fetch metadata)
-    POST /api/travel-reads/<id>/update            edit fields
-    POST /api/travel-reads/<id>/status            change status
-    POST /api/travel-reads/<id>/archive           soft delete
-    POST /api/travel-reads/<id>/transcribe        YouTube → scribble_notes
+    GET  /travel-reads                                  page render
+    GET  /api/travel-reads                              list (active)
+    POST /api/travel-reads                              add (auto-fetch metadata)
+    POST /api/travel-reads/<id>/update                  edit fields
+    POST /api/travel-reads/<id>/status                  change status
+    POST /api/travel-reads/<id>/archive                 soft delete
+    POST /api/travel-reads/<id>/transcribe              auto-transcribe via OpenAI Whisper
+    POST /api/travel-reads/<id>/transcript-paste        save user-pasted transcript
 
 Soft-delete only — items the user "removes" set status='archived'
 (matching the project's no-hard-delete convention).
 
-Transcription is YouTube-only in v1, using the `youtube-transcript-api`
-library if installed. Generic audio/podcast transcription needs ffmpeg
-+ Whisper and is intentionally deferred.
+Transcription has two paths:
+    * Server-side (B): yt-dlp downloads the audio, OpenAI Whisper
+      transcribes. Works for YouTube, podcast feeds, and any source
+      yt-dlp supports. Requires OPENAI_API_KEY + ffmpeg on the host.
+    * Client-side (C): the user pastes a transcript captured by a
+      browser bookmarklet (or copied from YouTube's "Show transcript"
+      panel). Bypasses cloud-IP blocks on caption endpoints.
 """
 
 import logging
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -313,103 +322,151 @@ def archive_travel_read(read_id):
     return jsonify({"ok": True})
 
 
-# ─── API: transcribe (YouTube only) ─────────────────────────────
+# ─── API: transcribe (Whisper) + transcript-paste ───────────────
 
 
-def _fetch_youtube_transcript(video_id: str):
-    """Return transcript text or raise. Uses youtube-transcript-api.
+_MAX_AUDIO_SECONDS = 4 * 3600          # 4-hour cap — guard against runaway costs
+_WHISPER_MAX_BYTES = 25 * 1024 * 1024  # OpenAI Whisper per-request limit
+_MAX_PASTE_CHARS = 500_000             # ~250 pages — generous, but bounded
 
-    Supports both the v1.x API (instance.fetch / instance.list) and the
-    legacy v0.x API (classmethods get_transcript / list_transcripts).
 
-    The library may not be installed yet — caller catches ImportError
-    and returns a friendly message.
+def _yt_dlp_audio(url: str, out_dir: str) -> str:
+    """Download `url`'s audio track as a low-bitrate mono mp3 into
+    `out_dir` and return the resulting file path. Requires ffmpeg on
+    the host (yt-dlp shells out to it for audio extraction).
+
+    Raises RuntimeError on failure (length cap, no audio stream, etc.).
+    Caller catches ImportError if yt-dlp isn't installed.
     """
-    # Lazy import so the route file loads even without the dep.
-    from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import (
-        NoTranscriptFound,
-        TranscriptsDisabled,
-        VideoUnavailable,
-    )
+    import yt_dlp
+    from yt_dlp.utils import DownloadError
 
-    def _to_dicts(fetched):
-        # v1.x returns a FetchedTranscript whose snippets expose .text /
-        # .start / .duration; v0.x returned a plain list[dict]. Normalise.
-        out = []
-        for s in fetched:
-            if isinstance(s, dict):
-                out.append({
-                    "text": s.get("text") or "",
-                    "start": s.get("start", 0) or 0,
-                    "duration": s.get("duration", 0) or 0,
-                })
-            else:
-                out.append({
-                    "text": getattr(s, "text", "") or "",
-                    "start": getattr(s, "start", 0) or 0,
-                    "duration": getattr(s, "duration", 0) or 0,
-                })
-        return out
-
+    info_only_opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
     try:
-        if hasattr(YouTubeTranscriptApi, "fetch"):
-            # v1.x: must instantiate.
-            api = YouTubeTranscriptApi()
-            try:
-                fetched = api.fetch(video_id, languages=["en"])
-            except NoTranscriptFound:
-                tlist = api.list(video_id)
-                fetched = tlist.find_transcript(
-                    [t.language_code for t in tlist]
-                ).fetch()
-        else:
-            # v0.x legacy classmethods.
-            try:
-                fetched = YouTubeTranscriptApi.get_transcript(
-                    video_id, languages=["en"]
-                )
-            except NoTranscriptFound:
-                tlist = YouTubeTranscriptApi.list_transcripts(video_id)
-                fetched = tlist.find_transcript(
-                    [t.language_code for t in tlist]
-                ).fetch()
-    except (NoTranscriptFound, TranscriptsDisabled):
-        raise RuntimeError("This video has no captions available.")
-    except VideoUnavailable:
-        raise RuntimeError("Video unavailable — it may be private or deleted.")
+        with yt_dlp.YoutubeDL(info_only_opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except DownloadError as e:
+        raise RuntimeError(f"Could not read source: {e}")
 
-    entries = _to_dicts(fetched)
+    duration = int(info.get("duration") or 0)
+    if duration and duration > _MAX_AUDIO_SECONDS:
+        mins = duration // 60
+        raise RuntimeError(
+            f"Audio is {mins} min — too long for auto-transcription "
+            f"(cap is {_MAX_AUDIO_SECONDS // 60} min). Use the paste path instead."
+        )
 
-    # Group into rough paragraphs every ~12s gap or ~80 words.
-    paragraphs = []
-    buf = []
-    last_end = 0.0
-    for e in entries:
-        text = (e["text"] or "").replace("\n", " ").strip()
-        if not text:
-            continue
-        if last_end and (e["start"] - last_end > 12) and buf:
-            paragraphs.append(" ".join(buf))
-            buf = []
-        buf.append(text)
-        last_end = e["start"] + e["duration"]
-        if sum(len(s.split()) for s in buf) > 80:
-            paragraphs.append(" ".join(buf))
-            buf = []
-    if buf:
-        paragraphs.append(" ".join(buf))
-    return "\n\n".join(paragraphs).strip()
+    output_template = os.path.join(out_dir, "audio.%(ext)s")
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": output_template,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "32",   # 32 kbps — fine for Whisper, keeps files small
+        }],
+        "postprocessor_args": ["-ac", "1"],   # mono
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+    except DownloadError as e:
+        raise RuntimeError(f"Audio download failed: {e}")
+
+    for f in sorted(os.listdir(out_dir)):
+        if f.lower().endswith(".mp3"):
+            return os.path.join(out_dir, f)
+    raise RuntimeError("Audio extraction failed — is ffmpeg installed on the server?")
 
 
-@travel_reads_bp.route("/api/travel-reads/<read_id>/transcribe", methods=["POST"])
-@login_required
-def transcribe(read_id):
-    """Transcribe the linked URL and save the transcript as a scribble
-    note. Currently YouTube-only (uses youtube-transcript-api). For
-    arbitrary audio we'd need yt-dlp + Whisper — deferred.
-    """
-    user_id = session["user_id"]
+def _whisper_transcribe(audio_path: str) -> str:
+    """Send `audio_path` to OpenAI Whisper. If the file is over 25 MB
+    (Whisper's per-request cap), split into 10-minute chunks via ffmpeg
+    and concatenate the results."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set on the server.")
+
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+
+    def _send(path):
+        with open(path, "rb") as f:
+            r = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="text",
+            )
+        return r if isinstance(r, str) else getattr(r, "text", "") or ""
+
+    if os.path.getsize(audio_path) <= _WHISPER_MAX_BYTES:
+        return _send(audio_path).strip()
+
+    chunk_dir = tempfile.mkdtemp(prefix="whisper-chunks-")
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", audio_path,
+                "-f", "segment", "-segment_time", "600",
+                "-c", "copy",
+                os.path.join(chunk_dir, "chunk-%03d.mp3"),
+            ],
+            check=False, capture_output=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError("ffmpeg chunking failed — is it installed?")
+        chunks = sorted(
+            os.path.join(chunk_dir, f) for f in os.listdir(chunk_dir)
+            if f.startswith("chunk-")
+        )
+        return "\n\n".join(_send(c) for c in chunks).strip()
+    finally:
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+
+
+def _transcribe_url_with_whisper(url: str) -> str:
+    tmpdir = tempfile.mkdtemp(prefix="travel-audio-")
+    try:
+        audio_path = _yt_dlp_audio(url, tmpdir)
+        return _whisper_transcribe(audio_path)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _save_transcript_note(user_id, item, text: str, source_label: str) -> str:
+    """Persist `text` as a scribble note in the 'Transcripts' notebook
+    and link it back to the travel_reads row. Returns the note id."""
+    title = (item.get("title") or "Transcript").strip()[:200]
+    note_payload = {
+        "user_id": user_id,
+        "title": f"📝 {title}",
+        "content": (
+            f"_{source_label} from [{item.get('url')}]({item.get('url')})_\n\n"
+            + text
+        ),
+        "notebook": "Transcripts",
+        "is_pinned": False,
+    }
+    note_rows = post("scribble_notes", note_payload)
+    note_id = note_rows[0]["id"] if note_rows else None
+    if not note_id:
+        raise RuntimeError("Save returned no id.")
+    try:
+        update(
+            "travel_reads",
+            params={"id": f"eq.{item['id']}", "user_id": f"eq.{user_id}"},
+            json={"transcript_note_id": note_id},
+        )
+    except Exception as e:
+        logger.warning("link transcript_note_id failed: %s", e)
+        # Note is saved either way; don't fail the request.
+    return note_id
+
+
+def _load_item(user_id: str, read_id: str):
     rows = get(
         "travel_reads",
         params={
@@ -419,69 +476,98 @@ def transcribe(read_id):
             "limit": "1",
         },
     ) or []
-    if not rows:
+    return rows[0] if rows else None
+
+
+@travel_reads_bp.route("/api/travel-reads/<read_id>/transcribe", methods=["POST"])
+@login_required
+def transcribe(read_id):
+    """Server-side auto-transcription via yt-dlp + OpenAI Whisper.
+
+    yt-dlp grabs the audio (works for YouTube + many podcast/audio
+    sources), Whisper turns it into text, and we save the result as a
+    scribble note in the 'Transcripts' notebook.
+    """
+    user_id = session["user_id"]
+    item = _load_item(user_id, read_id)
+    if not item:
         return jsonify({"error": "Not found"}), 404
-    item = rows[0]
 
     if item.get("transcript_note_id"):
-        # Already transcribed — return existing note id.
         return jsonify({
             "ok": True,
             "already_transcribed": True,
             "note_id": item["transcript_note_id"],
         })
 
-    yt_id = _youtube_video_id(item.get("url") or "")
-    if not yt_id:
-        return jsonify({
-            "error": "Transcription is YouTube-only for now. Open the link manually for non-YouTube content.",
-        }), 400
+    url = (item.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "No URL on this item."}), 400
 
     try:
-        text = _fetch_youtube_transcript(yt_id)
-    except ImportError:
+        text = _transcribe_url_with_whisper(url)
+    except ImportError as e:
         return jsonify({
-            "error": "Transcription library not installed. Add `youtube-transcript-api` to requirements.txt and redeploy.",
+            "error": f"Server missing dependency ({e}). Install yt-dlp + ffmpeg and redeploy, or use the paste path.",
         }), 501
     except Exception as e:
-        logger.warning("transcribe failed for %s: %s", item["url"], e)
-        return jsonify({"error": str(e) or "Couldn't fetch transcript."}), 502
+        logger.warning("whisper transcribe failed for %s: %s", url, e)
+        return jsonify({"error": str(e) or "Couldn't transcribe."}), 502
 
     if not text:
-        return jsonify({"error": "Transcript was empty."}), 502
-
-    # Save as a scribble note in a 'Transcripts' notebook.
-    title = (item.get("title") or "Transcript").strip()[:200]
-    note_payload = {
-        "user_id": user_id,
-        "title": f"📝 {title}",
-        "content": (
-            f"_Auto-transcribed from [{item.get('url')}]({item.get('url')})_\n\n"
-            + text
-        ),
-        "notebook": "Transcripts",
-        "is_pinned": False,
-    }
+        return jsonify({"error": "Transcript came back empty."}), 502
 
     try:
-        note_rows = post("scribble_notes", note_payload)
+        note_id = _save_transcript_note(user_id, item, text, "Auto-transcribed via Whisper")
     except Exception as e:
-        logger.error("scribble_notes insert (transcript) failed: %s", e)
+        logger.error("save transcript note failed: %s", e)
         return jsonify({"error": "Couldn't save transcript note."}), 502
 
-    note_id = note_rows[0]["id"] if note_rows else None
-    if not note_id:
-        return jsonify({"error": "Save returned no id."}), 502
+    snippet = text[:280] + ("…" if len(text) > 280 else "")
+    return jsonify({
+        "ok": True,
+        "note_id": note_id,
+        "note_url": f"/notes/scribble/{note_id}",
+        "char_count": len(text),
+        "snippet": snippet,
+    })
+
+
+@travel_reads_bp.route("/api/travel-reads/<read_id>/transcript-paste", methods=["POST"])
+@login_required
+def transcript_paste(read_id):
+    """Save a transcript the user pasted in (option C — bypasses cloud-IP
+    blocks on YouTube's caption endpoint by using the user's residential
+    IP via a browser bookmarklet, or by copy-pasting from YouTube's
+    'Show transcript' panel).
+
+    Body: {"text": "..."}
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Paste some transcript text first."}), 400
+    if len(text) > _MAX_PASTE_CHARS:
+        return jsonify({
+            "error": f"Transcript too long — keep it under {_MAX_PASTE_CHARS:,} chars.",
+        }), 413
+
+    item = _load_item(user_id, read_id)
+    if not item:
+        return jsonify({"error": "Not found"}), 404
+    if item.get("transcript_note_id"):
+        return jsonify({
+            "ok": True,
+            "already_transcribed": True,
+            "note_id": item["transcript_note_id"],
+        })
 
     try:
-        update(
-            "travel_reads",
-            params={"id": f"eq.{read_id}", "user_id": f"eq.{user_id}"},
-            json={"transcript_note_id": note_id},
-        )
+        note_id = _save_transcript_note(user_id, item, text, "Pasted transcript")
     except Exception as e:
-        logger.warning("travel_reads link transcript_note_id failed: %s", e)
-        # Note is saved either way; don't fail the whole request.
+        logger.error("paste transcript save failed: %s", e)
+        return jsonify({"error": "Couldn't save transcript note."}), 502
 
     snippet = text[:280] + ("…" if len(text) > 280 else "")
     return jsonify({

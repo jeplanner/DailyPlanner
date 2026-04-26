@@ -175,6 +175,59 @@
     .tr-thumb { width: 96px; height: 100%; }
     .tr-actions { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; border-left: none; border-top: 1px solid var(--color-border); padding: 8px 12px; }
   }
+
+  /* Transcribe modal */
+  .tr-modal[hidden] { display: none; }
+  .tr-modal { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .tr-modal-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,.55); backdrop-filter: blur(2px); }
+  .tr-modal-card {
+    position: relative; z-index: 1; width: 100%; max-width: 560px;
+    background: var(--color-surface); color: var(--color-text);
+    border: 1px solid var(--color-border); border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(15,23,42,.25);
+    padding: 22px 22px 18px; max-height: 90vh; overflow-y: auto;
+  }
+  .tr-modal-card h3 { margin: 0 0 4px; font-size: 18px; font-weight: 800; }
+  .tr-modal-sub { margin: 0 0 14px; font-size: 13px; color: var(--color-text-secondary); word-break: break-word; }
+  .tr-modal-close {
+    position: absolute; top: 10px; right: 12px; appearance: none;
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent;
+    background: transparent; color: var(--color-text-secondary);
+    font-size: 22px; line-height: 1; cursor: pointer;
+  }
+  .tr-modal-close:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+  .tr-modal-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--color-border); margin-bottom: 14px; }
+  .tr-tab {
+    appearance: none; padding: 8px 14px; font: inherit; font-size: 13px; font-weight: 600;
+    border: 0; background: transparent; color: var(--color-text-secondary);
+    border-bottom: 2px solid transparent; cursor: pointer;
+  }
+  .tr-tab.is-active { color: var(--color-primary); border-bottom-color: var(--color-primary); }
+  .tr-tab-pane[hidden] { display: none; }
+  .tr-tab-pane p { font-size: 13.5px; color: var(--color-text-secondary); margin: 0 0 12px; line-height: 1.5; }
+  .tr-tab-pane textarea {
+    width: 100%; min-height: 180px; padding: 10px 12px; font: inherit; font-size: 13px;
+    border: 1px solid var(--color-border); border-radius: 8px; resize: vertical;
+    background: var(--color-bg-subtle, #f8fafc); color: var(--color-text);
+  }
+  .tr-tab-pane textarea:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15)); }
+  .tr-bookmarklet {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    background: color-mix(in srgb, #2563eb 10%, transparent);
+    color: #1d4ed8; text-decoration: none;
+    border: 1px dashed color-mix(in srgb, #2563eb 35%, transparent);
+    cursor: grab; user-select: none;
+  }
+  .tr-bookmarklet:hover { background: color-mix(in srgb, #2563eb 16%, transparent); }
+  .tr-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .tr-status { margin-top: 10px; font-size: 12.5px; color: var(--color-text-secondary); min-height: 18px; }
+  .tr-status.is-error { color: #b91c1c; }
+  .tr-cost {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--color-bg-subtle, #f1f5f9); font-size: 11px; font-weight: 700;
+    color: var(--color-text-secondary); margin-left: 6px;
+  }
 </style>
 </head>
 <body>
@@ -234,6 +287,54 @@
 
   <div id="tr-list-root">
     <div class="tr-empty" id="tr-loading">Loading…</div>
+  </div>
+</div>
+
+<!-- ─── Transcribe modal ───────────────────────────────── -->
+<div id="tr-modal" class="tr-modal" hidden>
+  <div class="tr-modal-backdrop" onclick="trCloseModal()"></div>
+  <div class="tr-modal-card" role="dialog" aria-modal="true" aria-labelledby="tr-modal-title">
+    <button class="tr-modal-close" type="button" onclick="trCloseModal()" aria-label="Close">×</button>
+    <h3 id="tr-modal-title">Get transcript</h3>
+    <p class="tr-modal-sub" id="tr-modal-sub"></p>
+
+    <div class="tr-modal-tabs">
+      <button type="button" class="tr-tab is-active" data-tab="auto" onclick="trSwitchTab('auto')">Auto (Whisper)</button>
+      <button type="button" class="tr-tab" data-tab="paste" onclick="trSwitchTab('paste')">Paste / Bookmarklet</button>
+    </div>
+
+    <div class="tr-tab-pane" data-pane="auto">
+      <p>
+        Server downloads the audio with <code>yt-dlp</code> and transcribes it through OpenAI Whisper.
+        <span class="tr-cost">~$0.006/min</span>
+        Works for YouTube and many podcast/audio URLs. Long files are auto-chunked.
+      </p>
+      <div class="tr-modal-actions">
+        <button type="button" class="btn btn-primary" id="tr-auto-btn" onclick="trRunAuto()">
+          <i data-feather="zap"></i> Transcribe with Whisper
+        </button>
+      </div>
+      <div class="tr-status" id="tr-auto-status"></div>
+    </div>
+
+    <div class="tr-tab-pane" data-pane="paste" hidden>
+      <p>
+        Get the transcript on your own machine — bypasses cloud-IP blocks. <b>Drag the bookmarklet</b> below to your bookmarks bar; click it while on a YouTube video to copy that video's transcript to your clipboard, then paste here.
+      </p>
+      <p>
+        <a class="tr-bookmarklet" id="tr-bookmarklet" draggable="true">📋 TravelReads → grab transcript</a>
+      </p>
+      <p style="margin-top:14px">
+        Or open YouTube's own <b>Show transcript</b> menu (⋯ button under the video), copy, and paste below.
+      </p>
+      <textarea id="tr-paste-text" placeholder="Paste transcript text here…"></textarea>
+      <div class="tr-modal-actions">
+        <button type="button" class="btn btn-primary" onclick="trRunPaste()">
+          <i data-feather="save"></i> Save transcript
+        </button>
+      </div>
+      <div class="tr-status" id="tr-paste-status"></div>
+    </div>
   </div>
 </div>
 
@@ -319,11 +420,11 @@ function _card(it) {
   if (it.duration_minutes)    meta.push(`<span>· ${escapeHtml(String(it.duration_minutes))} min</span>`);
   if (it.source)              meta.push(`<span class="tr-source">· ${escapeHtml(it.source)}</span>`);
 
-  const transcribeLabel = it.transcript_note_id ? 'View transcript' : 'Transcribe (YouTube)';
+  const transcribeLabel = it.transcript_note_id ? 'View transcript' : 'Transcribe';
   const transcribeIcon  = it.transcript_note_id ? 'file-text' : 'mic';
   const transcribeAction = it.transcript_note_id
     ? `onclick="window.open('/notes/scribble/${it.transcript_note_id}', '_blank')"`
-    : `onclick="trTranscribe('${it.id}', this)"`;
+    : `onclick="trOpenTranscribeModal('${it.id}')"`;
 
   const statusBtn = isDone
     ? `<button type="button" class="tr-icon-btn" title="Mark queued again" onclick="trStatus('${it.id}','queued')"><i data-feather="rotate-ccw"></i></button>`
@@ -442,8 +543,65 @@ async function trArchive(id) {
   }
 }
 
-async function trTranscribe(id, btn) {
-  if (btn) { btn.disabled = true; btn.style.opacity = .5; }
+// ─── Transcribe modal ─────────────────────────────────
+let _modalReadId = null;
+
+function trOpenTranscribeModal(id) {
+  _modalReadId = id;
+  const it = _items.find(x => x.id === id);
+  document.getElementById('tr-modal-sub').textContent = (it && (it.title || it.url)) || '';
+  trSwitchTab('auto');
+  _resetModalStatus();
+  document.getElementById('tr-paste-text').value = '';
+  document.getElementById('tr-modal').hidden = false;
+  if (window.feather) feather.replace();
+}
+
+function trCloseModal() {
+  document.getElementById('tr-modal').hidden = true;
+  _modalReadId = null;
+}
+
+function trSwitchTab(name) {
+  document.querySelectorAll('#tr-modal .tr-tab').forEach(b => b.classList.toggle('is-active', b.dataset.tab === name));
+  document.querySelectorAll('#tr-modal .tr-tab-pane').forEach(p => p.hidden = (p.dataset.pane !== name));
+  _resetModalStatus();
+}
+
+function _resetModalStatus() {
+  ['tr-auto-status', 'tr-paste-status'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = ''; el.classList.remove('is-error'); }
+  });
+}
+
+function _modalError(elId, msg) {
+  const el = document.getElementById(elId);
+  el.textContent = msg;
+  el.classList.add('is-error');
+}
+
+function _afterTranscriptSaved(j, id) {
+  const it = _items.find(x => x.id === id);
+  if (it) it.transcript_note_id = j.note_id;
+  trCloseModal();
+  trRender();
+  if (window.showToast) {
+    showToast(
+      j.already_transcribed ? 'Transcript already saved' : `Transcript saved (${(j.char_count || 0).toLocaleString()} chars)`,
+      'success', 4000,
+      { label: 'Open note', onClick: () => window.open(j.note_url || `/notes/scribble/${j.note_id}`, '_blank') }
+    );
+  }
+}
+
+async function trRunAuto() {
+  const id = _modalReadId; if (!id) return;
+  const btn = document.getElementById('tr-auto-btn');
+  const status = document.getElementById('tr-auto-status');
+  btn.disabled = true;
+  status.classList.remove('is-error');
+  status.textContent = 'Transcribing… this can take 30 s – 3 min depending on length. Don’t close the page.';
   try {
     const r = await fetch(`/api/travel-reads/${id}/transcribe`, {
       method: 'POST',
@@ -451,25 +609,40 @@ async function trTranscribe(id, btn) {
       credentials: 'same-origin',
     });
     const j = await r.json();
-    if (!r.ok) throw new Error(j.error || 'Failed');
-    if (j.note_id) {
-      const it = _items.find(x => x.id === id);
-      if (it) it.transcript_note_id = j.note_id;
-      trRender();
-      if (window.showToast) {
-        showToast(
-          j.already_transcribed ? 'Transcript already saved' : `Transcript saved (${j.char_count || 0} chars)`,
-          'success', 4000,
-          { label: 'Open note', onClick: () => window.open(j.note_url || `/notes/scribble/${j.note_id}`, '_blank') }
-        );
-      }
-    }
+    if (!r.ok) throw new Error(j.error || 'Transcription failed');
+    if (j.note_id) _afterTranscriptSaved(j, id);
   } catch (e) {
-    if (window.showToast) showToast(e.message || 'Could not transcribe', 'error', 4000);
+    _modalError('tr-auto-status', e.message || 'Transcription failed.');
   } finally {
-    if (btn) { btn.disabled = false; btn.style.opacity = 1; }
+    btn.disabled = false;
   }
 }
+
+async function trRunPaste() {
+  const id = _modalReadId; if (!id) return;
+  const text = document.getElementById('tr-paste-text').value.trim();
+  if (!text) { _modalError('tr-paste-status', 'Paste some text first.'); return; }
+  const status = document.getElementById('tr-paste-status');
+  status.classList.remove('is-error');
+  status.textContent = 'Saving…';
+  try {
+    const r = await fetch(`/api/travel-reads/${id}/transcript-paste`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify({ text }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Save failed');
+    if (j.note_id) _afterTranscriptSaved(j, id);
+  } catch (e) {
+    _modalError('tr-paste-status', e.message || 'Save failed.');
+  }
+}
+
+// Bookmarklet: scrape captions from the YouTube page the user is on
+// and copy the text to their clipboard. Single-line for href use.
+const TR_BOOKMARKLET = "javascript:(async()=>{try{const t=window.ytInitialPlayerResponse&&ytInitialPlayerResponse.captions&&ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer&&ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;if(!t||!t.length){alert('No captions found on this video.');return}const k=t.find(x=>x.languageCode==='en')||t[0];const r=await fetch(k.baseUrl+'&fmt=json3');const j=await r.json();const x=(j.events||[]).map(e=>(e.segs||[]).map(s=>s.utf8||'').join('')).join(' ').replace(/\\s+/g,' ').trim();if(!x){alert('Caption track was empty.');return}await navigator.clipboard.writeText(x);alert('Transcript copied to clipboard ('+x.length+' chars). Paste it into TravelReads.')}catch(e){alert('Bookmarklet error: '+e.message)}})();";
 
 function trToggleWatch(id, btn) {
   const card = document.querySelector(`.tr-card[data-id="${id}"]`);
@@ -513,6 +686,11 @@ function escapeAttr(s) { return escapeHtml(s); }
 document.addEventListener('DOMContentLoaded', () => {
   if (window.feather) feather.replace();
   trLoad();
+  const bk = document.getElementById('tr-bookmarklet');
+  if (bk) bk.setAttribute('href', TR_BOOKMARKLET);
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !document.getElementById('tr-modal').hidden) trCloseModal();
+  });
 });
 </script>
 </body>

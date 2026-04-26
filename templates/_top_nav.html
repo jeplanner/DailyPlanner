@@ -2362,13 +2362,13 @@ const HELP_PAGES = [
         ]
       },
       {
-        title: "Transcribe (YouTube only, for now)",
+        title: "Transcribe — two ways",
         items: [
-          "Click the <b>🎤 mic</b> button on a YouTube card to fetch its captions.",
-          "The transcript is saved as a regular note in a <b>Transcripts</b> notebook (find it in <b>Notes → Transcripts</b>).",
-          "After transcribing, the button changes to <b>📄 view transcript</b> and opens the saved note.",
-          "<b>Limitations:</b> only works for YouTube videos that have captions (auto-generated or manual). Doesn't work for Spotify, podcasts via RSS, or arbitrary audio URLs — those need a Whisper-based pipeline that isn't wired up yet.",
-          "Once a transcript is in Notes, you can search across it with the rest of your notebook."
+          "Click the <b>🎤 mic</b> on any card to open the transcribe modal. Pick one of two paths.",
+          "<b>Auto (Whisper):</b> server downloads the audio with yt-dlp and sends it to OpenAI Whisper. Costs roughly <b>$0.006/min</b>. Works for YouTube and any podcast/audio URL yt-dlp supports. Long files are auto-chunked.",
+          "<b>Paste / Bookmarklet:</b> for when YouTube blocks the server's IP (common on cloud hosts). Drag the <b>TravelReads → grab transcript</b> bookmarklet to your bookmarks bar — clicking it on a YouTube video page copies that video's transcript to your clipboard. Paste in the modal and save.",
+          "<b>Manual paste:</b> alternatively, open YouTube's own <b>Show transcript</b> menu (⋯ button under the video), copy, and paste in the modal — no bookmarklet needed.",
+          "Either path saves the transcript as a note in the <b>Transcripts</b> notebook (Notes → Transcripts) and changes the card's mic button to <b>📄 view transcript</b>."
         ]
       },
       {
