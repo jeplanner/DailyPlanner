@@ -811,6 +811,11 @@ html.dark .section-title{color:#f1f5f9;}
         <i data-feather="message-square"></i>
         Quotes
       </a>
+
+      <a href="/travel-reads" data-match="^/travel-reads" title="TravelReads — queue of articles, videos, and podcasts for the road">
+        <i data-feather="bookmark"></i>
+        TravelReads
+      </a>
     </div>
 
     <!-- ══ FOOTER ════════════════════════════════════════ -->
@@ -2326,6 +2331,52 @@ const HELP_PAGES = [
           "<b>The autocomplete won't trigger on emails</b> (<code>you@example.com</code>) — the <code>@</code> after a letter is left alone.",
           "If your project name has weird characters, the parser only matches plain alphanumerics. Stick to <code>@SideHustle</code> over <code>@Side-Hustle!</code>.",
           "Watch the amber <b>fallback</b> chips in the convert preview — that's your hint to either rename your tag or rename your project."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/travel-reads/,
+    title: "TravelReads — your offline-friendly queue",
+    lead: "A focused list of articles, videos, and podcasts to consume while travelling. Different from the Knowledge Base — TravelReads is a working queue: add, work through, mark done, archive.",
+    sections: [
+      {
+        title: "Adding things",
+        items: [
+          "Paste a URL in the form and pick a <b>type</b> (Article / Video / Podcast / Audio).",
+          "<b>Title and description auto-fetch</b> from the page — no manual typing in most cases.",
+          "Optional <b>Minutes</b> sets the estimated duration. The header strip totals the queued + in-progress minutes (\"4h 12m in queue\") so you can pick what fits a flight.",
+          "Optional <b>Priority</b> (High / Medium / Low) — High items float to the top of each section."
+        ]
+      },
+      {
+        title: "Working through the queue",
+        items: [
+          "Three sections show in this order: <b>In progress</b>, <b>Up next</b>, <b>Done</b>.",
+          "<i class='feather-tip'>▶ Play</i> button on a queued card → marks it <b>In progress</b> and records the started_at timestamp.",
+          "<b>✓ check</b> button on an in-progress card → marks <b>Done</b>.",
+          "<b>↺ undo</b> button on a done card → puts it back in the queue.",
+          "<b>↗ open</b> button or the title link → opens the URL in a new tab.",
+          "<b>×</b> button → soft-removes the item (still in the database; never hard-deleted)."
+        ]
+      },
+      {
+        title: "Transcribe (YouTube only, for now)",
+        items: [
+          "Click the <b>🎤 mic</b> button on a YouTube card to fetch its captions.",
+          "The transcript is saved as a regular note in a <b>Transcripts</b> notebook (find it in <b>Notes → Transcripts</b>).",
+          "After transcribing, the button changes to <b>📄 view transcript</b> and opens the saved note.",
+          "<b>Limitations:</b> only works for YouTube videos that have captions (auto-generated or manual). Doesn't work for Spotify, podcasts via RSS, or arbitrary audio URLs — those need a Whisper-based pipeline that isn't wired up yet.",
+          "Once a transcript is in Notes, you can search across it with the rest of your notebook."
+        ]
+      },
+      {
+        title: "Tips",
+        items: [
+          "TravelReads vs. Knowledge Base: TravelReads is a <b>queue</b> (you'll process and archive). Knowledge Base is a <b>library</b> (permanent, searchable, AI-queryable).",
+          "Set Minutes when you can — the queue total tells you what fits the trip.",
+          "Done items aren't auto-removed — they keep a record of what you've consumed. Use the <b>×</b> button to clear them out periodically.",
+          "Thumbnails come automatically for YouTube. Other URLs show a type icon."
         ]
       }
     ]

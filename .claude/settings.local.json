@@ -28,7 +28,10 @@
       "Read(//tmp/**)",
       "Bash(curl -sS -o /tmp/r2.json -w 'HTTP %{http_code}\\\\n' 'https://gidpxopleslvmrrycood.supabase.co/rest/v1/users?select=id&limit=1' -H 'apikey: sb_publishable_jv6-xI--WU4Tsm2Sq8wRYg_9Vf85OOi' -H 'Authorization: Bearer sb_publishable_jv6-xI--WU4Tsm2Sq8wRYg_9Vf85OOi')",
       "Bash(curl -sS 'https://gidpxopleslvmrrycood.supabase.co/rest/v1/__TRACKED_VAR__?limit=0' -H 'apikey: sb_publishable_jv6-xI--WU4Tsm2Sq8wRYg_9Vf85OOi' -H 'Authorization: Bearer sb_publishable_jv6-xI--WU4Tsm2Sq8wRYg_9Vf85OOi' -H 'Prefer: count=exact' -I)",
-      "Bash(git ls-remote *)"
+      "Bash(git ls-remote *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(awk BEGIN{open=0; close=0} {for\\(i=1;i<=length\\($0\\);i++\\){c=substr\\($0,i,1\\); if\\(c==\"{\"\\) open++; if\\(c==\"}\"\\) close++}} END{print \"open:\", open, \"close:\", close} *)"
     ]
   }
 }
