@@ -329,6 +329,18 @@ html.dark .ai-card { border-color:var(--sm-border); }
   .view-tabs .vtab { padding:6px 14px; font-size:12px; }
 }
 
+/* Compact header on mobile (≤640) — keeps tabs + date-nav on one row
+   on most phones (375+). The first fold is precious; every pixel here
+   buys a row of real content below. */
+@media (max-width: 640px) {
+  .sum-header { gap: 8px; margin-bottom: 10px; }
+  .view-tabs { border-radius: 7px; }
+  .view-tabs .vtab { padding: 6px 11px; font-size: 11.5px; }
+  .nav-arrow { width: 28px; height: 28px; }
+  .nav-arrow svg { width: 16px; height: 16px; }
+  .date-pick { padding: 4px 6px; font-size: 12px; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    MORNING DASHBOARD  (daily review view)
    One chronological agenda + a focused overdue card at the top.
@@ -936,23 +948,27 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
   .summary-app {
-    padding: var(--space-5);
+    padding: var(--space-4) var(--space-4) var(--space-5);
     max-width: 100%;
   }
 
-  /* ─── Greeting header ─── */
+  /* ─── Greeting + progress: one tight strip ───
+     The greeting and the progress bar form a single visual block. No
+     card chrome between them — the bar is treated as the bottom of the
+     greeting block so the chrome above the actual content shrinks from
+     ~150px to ~80px and the first content row clears the fold. */
   .md-greeting {
     padding: 0;
-    margin: 0 0 var(--space-6);
+    margin: 0 0 var(--space-2);
   }
   .md-greet-title {
-    font-size: 28px; line-height: 34px; font-weight: 700;
+    font-size: 22px; line-height: 28px; font-weight: 700;
     color: var(--text-primary);
-    margin: 0 0 var(--space-1);
-    letter-spacing: -.3px;
+    margin: 0 0 2px;
+    letter-spacing: -.2px;
   }
   .md-greet-date {
-    font-size: 14px; line-height: 20px; font-weight: 500;
+    font-size: 13px; line-height: 18px; font-weight: 500;
     color: var(--text-secondary);
     margin: 0;
   }
@@ -961,21 +977,20 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     font-weight: 600;
   }
 
-  /* ─── Progress-at-a-glance card ─── */
+  /* ─── Progress: slim, no card chrome on mobile ─── */
   .md-progress-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-card);
-    box-shadow: var(--shadow-card);
-    padding: var(--space-4);
-    margin: 0 0 var(--space-6);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    margin: 0 0 var(--space-4);
   }
   .md-progress-track {
-    height: 8px;
+    height: 6px;
     background: var(--bg-subtle);
     border-radius: var(--radius-pill);
     overflow: hidden;
-    margin-bottom: var(--space-3);
+    margin-bottom: 6px;
   }
   .md-progress-fill {
     height: 100%;
@@ -984,7 +999,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     transition: width 150ms ease;
   }
   .md-progress-label {
-    font-size: 14px; line-height: 20px;
+    font-size: 12.5px; line-height: 18px;
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
     margin: 0;
@@ -994,7 +1009,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     font-weight: 600;
   }
   .md-progress-empty {
-    font-size: 14px; line-height: 20px;
+    font-size: 13px; line-height: 18px;
     color: var(--text-muted);
     margin: 0;
   }
@@ -1011,17 +1026,28 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     border-radius: var(--radius-card);
     box-shadow: var(--shadow-card);
     padding: 0;
-    margin: 0 0 var(--space-6);
+    margin: 0 0 var(--space-4);
     overflow: hidden;
   }
   .md-card-head {
-    padding: var(--space-4);
+    padding: 10px var(--space-4);
     border-bottom: 1px solid var(--border);
     background: transparent;
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    min-height: 44px;
+    gap: var(--space-2);
+    min-height: 40px;
+  }
+  /* Today's Focus body: tighter padding so the focus card stops eating
+     half the first fold. */
+  .md-focus-card .md-focus-body {
+    padding: 10px var(--space-4) 12px;
+    min-height: 0;
+    gap: var(--space-2);
+  }
+  .md-focus-card .md-focus-empty {
+    padding: 10px 12px;
+    font-size: 13.5px;
   }
   .md-card-title {
     margin: 0;
@@ -1072,11 +1098,11 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   /* ─── Time-of-day section header (Morning / Afternoon / Evening / Habits) ─── */
   .md-band-row { display: block; }
   .md-band-row td {
-    padding: var(--space-4) var(--space-4) var(--space-2);
-    font-size: 13px; font-weight: 700;
-    letter-spacing: .06em;
+    padding: 10px var(--space-4) 4px;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: .08em;
     text-transform: uppercase;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     background: transparent;
     border: none;
   }
@@ -1084,14 +1110,14 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   /* ─── Row ─── */
   .md-row {
     display: grid;
-    grid-template-columns: 52px minmax(0, 1fr) auto;
+    grid-template-columns: 48px minmax(0, 1fr) auto;
     grid-template-areas:
       "time  title  status"
       "time  meta   meta";
     column-gap: var(--space-3);
-    row-gap: 2px;
-    padding: var(--space-3) var(--space-4);
-    min-height: 56px;
+    row-gap: 0;
+    padding: 8px var(--space-4);
+    min-height: 0;
     margin: 0;
     background: transparent;
     border: none;
@@ -1106,17 +1132,47 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   .md-row:hover,
   .md-row:focus-visible { background: var(--bg-base); }
 
-  /* Agenda rows — baseline-align time + title + status on row 1 so the
-     numerals, capital letters, and check circle all sit on the same line */
+  /* Agenda rows — baseline-align time + title on row 1 so the numerals
+     and capital letters sit on the same line. The status cell is its
+     own flex container so toggle/check + arrow always land at the same
+     x-position regardless of row type (task / meeting / habit / done). */
   .md-agenda-row { align-items: baseline; }
   .md-agenda-row .md-c-time   { grid-area: time; align-self: baseline; }
   .md-agenda-row .md-c-title  { grid-area: title; min-width: 0; align-self: baseline; }
   .md-agenda-row .md-c-status {
     grid-area: status; align-self: center;
-    text-align: right; min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    min-width: 44px;
   }
   .md-agenda-row .md-c-type    { display: none; }
   .md-agenda-row .md-c-context { grid-area: meta; min-width: 0; align-self: baseline; }
+
+  /* Status indicators in the agenda's right-hand cell are pinned to a
+     uniform 22×22 box so the right edge never drifts between rows.
+     The full-size 26×26 toggle is reserved for left-of-title use in
+     the Overdue / Plan Tomorrow cards (which have no status column). */
+  .md-c-status .md-task-toggle,
+  .md-c-status .md-task-toggle-status,
+  .md-c-status .md-check {
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    flex: 0 0 auto;
+  }
+  .md-c-status .md-task-toggle.is-done::after,
+  .md-c-status .md-task-toggle-status.is-done::after {
+    left: 5px; top: 1px;
+    width: 6px; height: 11px;
+  }
+  /* The arrow link keeps its 44×44 mobile tap target (≥WCAG min). It's
+     right-anchored by flex-end, so the previous negative margin trick
+     is no longer needed. */
+  .md-c-status .md-row-link {
+    margin: 0;
+  }
 
   /* Overdue rows: no time column. Title + "N days ago" share row 1
      and are baseline-aligned so they read on one visual line. */
@@ -1154,21 +1210,21 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   /* Time cell — tabular, stacked start/end */
   .md-row .md-time {
     display: block;
-    font-size: 14px; line-height: 20px; font-weight: 600;
+    font-size: 13px; line-height: 22px; font-weight: 600;
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;
     letter-spacing: -.1px;
   }
   .md-row .md-time-end {
     display: block;
-    font-size: 12px; line-height: 16px; font-weight: 500;
+    font-size: 11px; line-height: 14px; font-weight: 500;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
-    margin: 1px 0 0;
+    margin: 0;
   }
   .md-row .md-time-any {
     display: block;
-    font-size: 12px; line-height: 16px; font-weight: 500;
+    font-size: 11px; line-height: 22px; font-weight: 500;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: .04em;
@@ -1177,7 +1233,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
   /* Title — primary focus */
   .md-row .md-row-title {
     display: block;
-    font-size: 16px; line-height: 22px; font-weight: 500;
+    font-size: 15px; line-height: 22px; font-weight: 500;
     color: var(--text-primary);
     letter-spacing: -.1px;
     word-break: break-word;
@@ -1192,7 +1248,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     display: inline;
     background: transparent;
     padding: 0;
-    font-size: 14px; line-height: 20px; font-weight: 400;
+    font-size: 12.5px; line-height: 18px; font-weight: 400;
     color: var(--text-secondary);
     white-space: normal;
     max-width: 100%;
@@ -1201,7 +1257,7 @@ html.dark .md-overdue-chip { background: #3b1111; color: #fca5a5; }
     display: inline;
     background: transparent;
     padding: 0;
-    font-size: 14px; line-height: 20px; font-weight: 600;
+    font-size: 12.5px; line-height: 18px; font-weight: 600;
     color: var(--warning);
     border: none !important;
     box-shadow: none !important;
@@ -1724,6 +1780,21 @@ html.dark .peek-habit-bar {
 /* The status-cell variant of the toggle (used in Today's flow rows where
    the toggle sits in the right-hand status column instead of the left). */
 .md-task-toggle-status { margin-right: 0; }
+
+/* Overdue + Plan Tomorrow: render the toggle as a checkbox (square),
+   not a radio (circle). Overdue items are decisions ("did I do this?"),
+   not single-choice picks — a checkbox reads correctly and aligns with
+   how the rest of the planner marks tasks done. */
+.md-overdue-row .md-task-toggle,
+.md-recap-row .md-task-toggle,
+.md-plan-row .md-task-toggle {
+  border-radius: 4px;
+}
+.md-overdue-row .md-task-toggle.is-done,
+.md-recap-row .md-task-toggle.is-done,
+.md-plan-row .md-task-toggle.is-done {
+  border-radius: 4px;
+}
 
 /* Mobile: bigger tap target (Apple HIG / Material guideline = 44px), but
    the visual circle stays the same so the row doesn't feel chunky. */
