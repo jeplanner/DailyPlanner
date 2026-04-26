@@ -691,6 +691,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     overdue_all = fetch_overdue(user_id, plan_date)
     done_today = fetch_done_today(user_id, plan_date)
     intent = _fetch_daily_intent(user_id, plan_date)
+    inbox_health = fetch_inbox_health(user_id, plan_date)
 
     # The morning-agenda table merges meetings + today's tasks into one
     # chronological list. Habits render in their own band (no time).
@@ -719,6 +720,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
         "done_today": done_today,
         "habits": habits,
         "intent": intent,
+        "inbox_health": inbox_health,
         "counts": {
             "meetings": meeting_count,
             "tasks": task_count,
@@ -728,6 +730,118 @@ def build_dashboard(user_id: str, plan_date) -> dict:
             "parked":  len(parked),
             "done_today": len(done_today),
         },
+    }
+
+
+def fetch_inbox_health(user_id: str, plan_date) -> dict | None:
+    """Compute a small health snapshot of the user's default project.
+
+    Returns None when:
+      - no default project exists yet (user hasn't run a checklist
+        convert and never manually created an Inbox), OR
+      - the inbox is healthy enough that surfacing a card would be
+        noise (≤ 5 open and 0 stale).
+
+    Otherwise returns:
+      {
+        "project_id": str,
+        "project_name": str,
+        "open_count": int,
+        "no_due_count": int,             # subset of open with no due_date
+        "stale_count": int,              # open + no due_date + > 14d old
+        "stale_sample": [<title>, ...],  # up to 5 titles for the card
+        "level": "ok" | "watch" | "crowded",
+        "link": "/projects/<id>/tasks",
+      }
+    """
+    from datetime import timedelta
+
+    # Resolve default project, falling back to a project literally
+    # named "Inbox" in case the migration hasn't been run yet (or the
+    # user created one manually before is_default existed).
+    proj = _safe_get(
+        "projects",
+        params={
+            "user_id": f"eq.{user_id}",
+            "is_default": "eq.true",
+            "is_archived": "eq.false",
+            "select": "project_id,name",
+            "limit": "1",
+        },
+        action="default project fetch",
+    )
+    if not proj:
+        proj = _safe_get(
+            "projects",
+            params={
+                "user_id": f"eq.{user_id}",
+                "name": "ilike.Inbox",
+                "is_archived": "eq.false",
+                "select": "project_id,name",
+                "limit": "1",
+            },
+            action="inbox project fetch",
+        )
+    if not proj:
+        return None
+
+    project_id = proj[0]["project_id"]
+    project_name = proj[0].get("name") or "Inbox"
+
+    # Open tasks in that project. We exclude `done` and the soft-delete
+    # flags. Both legacy `is_deleted` and current `is_eliminated` are
+    # filtered to match how the project pages list tasks.
+    tasks = _safe_get(
+        "project_tasks",
+        params={
+            "project_id": f"eq.{project_id}",
+            "user_id": f"eq.{user_id}",
+            "is_eliminated": "eq.false",
+            "is_deleted": "eq.false",
+            "status": "neq.done",
+            "select": "task_id,task_text,status,due_date,created_at,priority",
+            "limit": "1000",
+        },
+        action="inbox tasks fetch",
+    )
+
+    open_count = len(tasks)
+    no_due_count = sum(1 for t in tasks if not t.get("due_date"))
+
+    stale_threshold = (plan_date - timedelta(days=14)).isoformat()
+    stale = []
+    for t in tasks:
+        if t.get("due_date"):
+            continue
+        created = (t.get("created_at") or "")[:10]
+        if created and created < stale_threshold:
+            stale.append(t)
+    # Most-stale first (oldest created_at).
+    stale.sort(key=lambda t: t.get("created_at") or "")
+    stale_sample = [(t.get("task_text") or "").strip() or "(untitled)"
+                    for t in stale[:5]]
+
+    # Don't surface the card unless there's something interesting.
+    # Threshold: ≤5 open and 0 stale → quiet.
+    if open_count <= 5 and not stale:
+        return None
+
+    if open_count > 15 or len(stale) > 3:
+        level = "crowded"
+    elif open_count > 8 or stale:
+        level = "watch"
+    else:
+        level = "ok"
+
+    return {
+        "project_id": project_id,
+        "project_name": project_name,
+        "open_count": open_count,
+        "no_due_count": no_due_count,
+        "stale_count": len(stale),
+        "stale_sample": stale_sample,
+        "level": level,
+        "link": f"/projects/{project_id}/tasks",
     }
 
 

@@ -545,6 +545,45 @@
   </details>
   {% endif %}
 
+  {# ── INBOX HEALTH ── surfaces only when the default project is
+     starting to pile up (>5 open, or anything stale > 14 days with no
+     due_date). Quiet by design — collapsed, advisory, with a link to
+     the project for triage. #}
+  {% if dashboard.inbox_health %}
+  {% set ih = dashboard.inbox_health %}
+  <details class="md-card md-inbox-health-card md-collapsible md-inbox-{{ ih.level }}"
+           data-card-id="inbox-health"
+           aria-labelledby="md-inbox-health-title">
+    <summary class="md-card-head">
+      <h2 class="md-card-title" id="md-inbox-health-title">
+        <span class="md-card-icon md-inbox-health-icon"><i data-feather="inbox"></i></span>
+        Inbox health
+        <span class="md-count-pill {% if ih.level == 'crowded' %}md-count-warn{% elif ih.level == 'watch' %}md-count-blue{% else %}md-count-green{% endif %}">{{ ih.open_count }}</span>
+      </h2>
+      <span class="md-card-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="md-card-body">
+      <div class="md-inbox-health-body">
+        <p class="md-inbox-health-summary">
+          <strong>{{ ih.open_count }}</strong> open in <strong>{{ ih.project_name }}</strong>
+          {% if ih.no_due_count %} · <strong>{{ ih.no_due_count }}</strong> with no due date{% endif %}
+          {% if ih.stale_count %} · <strong class="md-inbox-stale">{{ ih.stale_count }}</strong> stale (&gt; 14 days){% endif %}
+        </p>
+        {% if ih.stale_sample %}
+        <ul class="md-inbox-stale-list" aria-label="Sample of stale tasks">
+          {% for t in ih.stale_sample %}
+          <li>{{ t }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        <a href="{{ ih.link }}" class="md-inbox-health-link">
+          Open {{ ih.project_name }} <i data-feather="arrow-up-right"></i>
+        </a>
+      </div>
+    </div>
+  </details>
+  {% endif %}
+
   {# ── PARKED TASKS ── 3+ days overdue. Same parking concept as the
      Eisenhower matrix — keeps the Overdue card focused on items still
      in the user's reasonable triage window (1-2 days) so they're not
