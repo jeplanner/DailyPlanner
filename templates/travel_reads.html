@@ -592,7 +592,7 @@ function trToggleWatch(id, btn) {
     const ytId = slot.dataset.yt;
     if (!ytId) { card.classList.remove('is-playing'); return; }
     const iframe = document.createElement('iframe');
-    iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(ytId)}?autoplay=1&rel=0`;
+    iframe.src = `https://www.youtube.com/embed/${encodeURIComponent(ytId)}?autoplay=1&rel=0`;
     iframe.title = 'YouTube video';
     iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
     iframe.allowFullscreen = true;
