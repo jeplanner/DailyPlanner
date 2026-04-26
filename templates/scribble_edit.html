@@ -144,6 +144,12 @@
         <i data-feather="star"></i>
       </button>
 
+      <button type="button" class="icon-btn" id="checklist-convert-btn"
+              onclick="openChecklistConvert()"
+              title="Convert checklist lines to tasks (use @Today, @Tomorrow, @ProjectName, @RecurrenceDaily…)">
+        <i data-feather="check-square"></i>
+      </button>
+
       <a class="icon-btn"
          href="/notes/scribble/new{% if note and note.notebook %}?folder={{ note.notebook|urlencode }}{% endif %}"
          title="New note in this folder" aria-label="New note">
@@ -533,6 +539,104 @@
   <button type="button" onclick="copySelection()" title="Copy">
     <i data-feather="copy" style="width:14px;height:14px"></i>
   </button>
+</div>
+
+<!-- ═══════════ CHECKLIST CONVERT MODAL ═══════════ -->
+<style>
+  #checklistConvert .modal-content { max-width: 640px; }
+  .clc-help {
+    font-size: 12px; line-height: 1.6;
+    color: var(--color-text-secondary, #64748b);
+    background: var(--color-bg-subtle, #f1f5f9);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  .clc-help code {
+    background: var(--color-surface, #fff); border: 1px solid var(--color-border);
+    border-radius: 4px; padding: 1px 5px; font-size: 11.5px;
+  }
+  .clc-list {
+    max-height: 50vh; overflow-y: auto;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface, #fff);
+  }
+  .clc-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border-light, var(--color-border));
+  }
+  .clc-row:last-child { border-bottom: none; }
+  .clc-row.is-skipped { opacity: .55; }
+  .clc-title {
+    font-size: 14px; font-weight: 600; color: var(--color-text);
+    word-break: break-word; min-width: 0;
+  }
+  .clc-meta {
+    margin-top: 3px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    font-size: 11.5px; color: var(--color-text-secondary);
+  }
+  .clc-chip {
+    padding: 1px 7px; border-radius: 999px;
+    background: var(--color-bg-subtle, #f1f5f9);
+    color: var(--color-text-secondary);
+    font-weight: 600;
+  }
+  .clc-chip.is-date    { background: color-mix(in srgb, #2563eb 12%, transparent); color: #1d4ed8; }
+  .clc-chip.is-rec     { background: color-mix(in srgb, #7c3aed 12%, transparent); color: #6d28d9; }
+  .clc-chip.is-project { background: color-mix(in srgb, #16a34a 12%, transparent); color: #166534; }
+  .clc-chip.is-fallback { background: color-mix(in srgb, #f59e0b 14%, transparent); color: #92400e; }
+  .clc-chip.is-checked { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
+  .clc-status { align-self: center; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .clc-status.ok { color: #16a34a; }
+  .clc-status.err { color: #dc2626; }
+  .clc-empty { padding: 20px; text-align: center; color: var(--color-text-secondary); font-size: 14px; }
+  .clc-summary {
+    margin-top: 12px; font-size: 13px;
+    color: var(--color-text-secondary);
+  }
+  .clc-summary strong { color: var(--color-text); font-weight: 700; }
+</style>
+
+<div id="checklistConvert" class="modal hidden">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Convert checklist to tasks</h3>
+      <button class="modal-close" onclick="closeChecklistConvert()" aria-label="Close">
+        <i data-feather="x"></i>
+      </button>
+    </div>
+
+    <div class="clc-help">
+      Add <code>@Today</code>, <code>@Tomorrow</code>, <code>@NextWeek</code>,
+      <code>@2026-05-15</code>, <code>@15-Jul</code>,
+      <code>@RecurrenceDaily</code>, <code>@RecurrenceEveryFriday</code>,
+      <code>@RecurrenceMonthly</code>, or <code>@ProjectName</code> on any
+      checklist line. Tasks without a matching project go to your default
+      project.
+    </div>
+
+    <div id="clc-list" class="clc-list">
+      <div class="clc-empty">Parsing…</div>
+    </div>
+
+    <div id="clc-summary" class="clc-summary"></div>
+
+    <div class="modal-actions">
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--color-text-secondary);margin-right:auto;">
+        <input type="checkbox" id="clc-mark-done" checked>
+        Tick lines off in note after creating
+      </label>
+      <button class="btn btn-ghost" onclick="closeChecklistConvert()">Cancel</button>
+      <button class="btn btn-primary" id="clc-create-btn" onclick="confirmChecklistConvert()">
+        <i data-feather="check" style="width:14px;height:14px"></i> Create tasks
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- ═══════════ PROJECT PICKER MODAL ═══════════ -->
@@ -969,6 +1073,153 @@ async function confirmAddTasks() {
 function closeProjectPicker() {
   document.getElementById("projectPicker").classList.add("hidden");
   pendingTasks = [];
+}
+
+// ─── Checklist → tasks (smart @-tag) ────────────────────────
+let _clcLastParse = null;
+
+async function openChecklistConvert() {
+  const modal = document.getElementById("checklistConvert");
+  const listEl = document.getElementById("clc-list");
+  const sumEl  = document.getElementById("clc-summary");
+  modal.classList.remove("hidden");
+  listEl.innerHTML = `<div class="clc-empty">Parsing…</div>`;
+  sumEl.textContent = "";
+
+  try {
+    const r = await fetch("/notes/scribble/checklist/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ content: contentEl.value }),
+    });
+    const j = await r.json();
+    _clcLastParse = j;
+    _clcRender(j);
+  } catch (e) {
+    listEl.innerHTML = `<div class="clc-empty">Couldn't parse the note.</div>`;
+  }
+}
+
+function _clcRender(j) {
+  const listEl = document.getElementById("clc-list");
+  const sumEl  = document.getElementById("clc-summary");
+  const items = (j && j.items) || [];
+  if (!items.length) {
+    listEl.innerHTML = `<div class="clc-empty">No checklist lines found. Use <code>- [ ] task</code> syntax in the note body.</div>`;
+    sumEl.textContent = "";
+    document.getElementById("clc-create-btn").disabled = true;
+    return;
+  }
+  document.getElementById("clc-create-btn").disabled = false;
+
+  const rows = items.map((it) => {
+    const chips = [];
+    if (it.due_date) chips.push(`<span class="clc-chip is-date">📅 ${escapeHtml(_formatDate(it.due_date))}</span>`);
+    if (it.recurrence_type) {
+      let rec = it.recurrence_type;
+      if (it.recurrence_days && it.recurrence_days.length) {
+        const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+        rec += " · " + it.recurrence_days.map(i => dayNames[i] || "?").join(",");
+      }
+      chips.push(`<span class="clc-chip is-rec">🔁 ${escapeHtml(rec)}</span>`);
+    }
+    const projChip = it.project_resolved
+      ? `<span class="clc-chip is-project">📁 ${escapeHtml(it.effective_project_name || "Inbox")}</span>`
+      : `<span class="clc-chip is-fallback">📁 ${escapeHtml(it.effective_project_name || "Inbox")} (fallback)</span>`;
+    chips.push(projChip);
+    if (it.already_checked) chips.push(`<span class="clc-chip is-checked">✓ already done</span>`);
+
+    return `
+      <div class="clc-row ${it.already_checked ? 'is-skipped' : ''}">
+        <div>
+          <div class="clc-title">${escapeHtml(it.title)}</div>
+          <div class="clc-meta">${chips.join("")}</div>
+        </div>
+        <div class="clc-status">${it.already_checked ? '⊘' : '•'}</div>
+      </div>`;
+  });
+  listEl.innerHTML = rows.join("");
+
+  const willCreate = items.filter(i => !i.already_checked).length;
+  const skipped    = items.length - willCreate;
+  let s = `<strong>${willCreate}</strong> task${willCreate === 1 ? '' : 's'} will be created`;
+  if (skipped) s += ` · <strong>${skipped}</strong> skipped (already done)`;
+  if (j.default_project) s += ` · default: <strong>${escapeHtml(j.default_project.name)}</strong>`;
+  sumEl.innerHTML = s;
+}
+
+function closeChecklistConvert() {
+  document.getElementById("checklistConvert").classList.add("hidden");
+  _clcLastParse = null;
+}
+
+async function confirmChecklistConvert() {
+  const btn = document.getElementById("clc-create-btn");
+  const markDone = document.getElementById("clc-mark-done").checked;
+  btn.disabled = true;
+  try {
+    const r = await fetch("/notes/scribble/checklist/convert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ content: contentEl.value, skip_checked: true }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Failed");
+
+    if (markDone && j.created > 0) {
+      _tickConvertedLines(j.items || []);
+    }
+
+    if (window.showToast) {
+      const msg = `${j.created} task${j.created === 1 ? '' : 's'} created`
+        + (j.skipped ? ` · ${j.skipped} skipped` : '')
+        + (j.errors  ? ` · ${j.errors} failed`  : '');
+      showToast(msg, j.errors ? "warning" : "success");
+    }
+    closeChecklistConvert();
+  } catch (e) {
+    if (window.showToast) showToast(e.message || "Couldn't create tasks", "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function _tickConvertedLines(items) {
+  // For every item that was successfully created, mark its raw line
+  // `- [ ]` → `- [x]` so re-converting doesn't duplicate.
+  const created = items.filter(i => i.status === 'created' && i.raw);
+  if (!created.length) return;
+
+  const lines = contentEl.value.split('\n');
+  const usedRows = new Set();
+
+  for (const it of created) {
+    for (let i = 0; i < lines.length; i++) {
+      if (usedRows.has(i)) continue;
+      if (lines[i] === it.raw && /^\s*[-*]\s*\[\s*\]/.test(lines[i])) {
+        lines[i] = lines[i].replace(/^(\s*[-*]\s*)\[\s*\]/, "$1[x]");
+        usedRows.add(i);
+        break;
+      }
+    }
+  }
+  contentEl.value = lines.join('\n');
+  if (typeof autoGrow === 'function') autoGrow();
+  if (typeof markDirty === 'function') markDirty();
+}
+
+function _formatDate(iso) {
+  if (!iso) return '';
+  // iso is YYYY-MM-DD — render as "Sun, Apr 26"
+  const parts = iso.split('-');
+  if (parts.length !== 3) return iso;
+  const d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+  if (isNaN(d.getTime())) return iso;
+  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
 }
 
 // ─── Keyboard shortcuts ──────────────────────────────────────
