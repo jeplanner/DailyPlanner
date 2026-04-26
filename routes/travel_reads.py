@@ -42,7 +42,7 @@ VALID_STATUSES = {"queued", "in_progress", "done", "archived"}
 
 _MAX_TITLE = 240
 _MAX_DESC = 600
-_MAX_NOTES = 1000
+_MAX_NOTES = 10000   # ~2000 words — generous room for video summaries
 
 
 # ─── Helpers ─────────────────────────────────────────────────────

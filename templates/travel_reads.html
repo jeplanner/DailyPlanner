@@ -159,6 +159,52 @@
   .tr-player iframe { width: 100%; height: 100%; border: 0; display: block; }
   .tr-icon-btn.is-active { color: var(--color-primary); border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
 
+  /* Per-item notes panel — appears below the player when toggled */
+  .tr-notes {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg-subtle, #f8fafc);
+    padding: 12px 14px 14px;
+    display: none;
+  }
+  .tr-card.is-noting .tr-notes { display: block; }
+  .tr-notes-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--color-text-secondary);
+    margin-bottom: 8px;
+  }
+  .tr-notes-status {
+    font-size: 11px; font-weight: 500;
+    text-transform: none; letter-spacing: 0;
+    color: var(--color-text-muted, var(--color-text-secondary));
+    transition: opacity .25s;
+  }
+  .tr-notes-status.is-saved { color: #16a34a; }
+  .tr-notes-status.is-error { color: #b91c1c; }
+  .tr-notes textarea {
+    width: 100%; min-height: 130px;
+    padding: 10px 12px; font: inherit; font-size: 13.5px; line-height: 1.55;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    resize: vertical;
+  }
+  .tr-notes textarea:focus {
+    outline: none; border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  /* Indicator on the action button when this item already has notes */
+  .tr-icon-btn.has-notes {
+    color: var(--color-primary);
+    border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  }
+  .tr-icon-btn.has-notes::after {
+    content: ""; position: absolute; top: 4px; right: 4px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--color-primary, #2563eb);
+  }
+  .tr-icon-btn { position: relative; }
+
   /* Empty */
   .tr-empty {
     text-align: center;
@@ -411,8 +457,28 @@ function _card(it) {
 
   const playerSlot = ytId ? `<div class="tr-player" data-yt="${escapeAttr(ytId)}"></div>` : '';
 
+  const isNoting = _notesOpen.has(it.id);
+  const notesValue = (it._notesDraft != null) ? it._notesDraft : (it.notes || '');
+  const hasNotes  = !!(notesValue && notesValue.trim());
+  const notesBtnClass = `tr-icon-btn${hasNotes ? ' has-notes' : ''}${isNoting ? ' is-active' : ''}`;
+  const notesBtnTitle = hasNotes ? 'Notes (saved)' : 'Take notes';
+  const notesPanel = `
+    <div class="tr-notes">
+      <div class="tr-notes-head">
+        <span>Your notes</span>
+        <span class="tr-notes-status" data-id="${it.id}"></span>
+      </div>
+      <textarea data-id="${it.id}"
+                placeholder="What did you learn? Key takeaways, timestamps, questions to follow up on…"
+                oninput="_onNotesInput('${it.id}', this.value)">${escapeHtml(notesValue)}</textarea>
+    </div>`;
+
+  const cardClasses = ['tr-card'];
+  if (isDone)   cardClasses.push('is-done');
+  if (isNoting) cardClasses.push('is-noting');
+
   return `
-    <div class="tr-card ${isDone ? 'is-done' : ''}" data-id="${it.id}">
+    <div class="${cardClasses.join(' ')}" data-id="${it.id}">
       ${thumb}
       <div class="tr-body">
         <div class="tr-title-row">
@@ -425,10 +491,12 @@ function _card(it) {
         <a class="tr-icon-btn" href="${escapeAttr(it.url)}" target="_blank" rel="noopener" title="Open"><i data-feather="external-link"></i></a>
         ${watchBtn}
         ${statusBtn}
+        <button type="button" class="${notesBtnClass}" title="${notesBtnTitle}" onclick="trToggleNotes('${it.id}')"><i data-feather="edit-3"></i></button>
         <button type="button" class="tr-icon-btn" title="${transcribeLabel}" ${transcribeAction}><i data-feather="${transcribeIcon}"></i></button>
         <button type="button" class="tr-icon-btn danger" title="Remove" onclick="trArchive('${it.id}')"><i data-feather="x"></i></button>
       </div>
       ${playerSlot}
+      ${notesPanel}
     </div>`;
 }
 
@@ -580,6 +648,73 @@ async function trRunPaste() {
 // Bookmarklet: scrape captions from the YouTube page the user is on
 // and copy the text to their clipboard. Single-line for href use.
 const TR_BOOKMARKLET = "javascript:(async()=>{try{const t=window.ytInitialPlayerResponse&&ytInitialPlayerResponse.captions&&ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer&&ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;if(!t||!t.length){alert('No captions found on this video.');return}const k=t.find(x=>x.languageCode==='en')||t[0];const r=await fetch(k.baseUrl+'&fmt=json3');const j=await r.json();const x=(j.events||[]).map(e=>(e.segs||[]).map(s=>s.utf8||'').join('')).join(' ').replace(/\\s+/g,' ').trim();if(!x){alert('Caption track was empty.');return}await navigator.clipboard.writeText(x);alert('Transcript copied to clipboard ('+x.length+' chars). Paste it into TravelReads.')}catch(e){alert('Bookmarklet error: '+e.message)}})();";
+
+// ─── Per-item notes (auto-saving scratchpad) ─────────
+const _notesOpen = new Set();
+const _notesSaveTimers = {};
+
+function trToggleNotes(id) {
+  if (_notesOpen.has(id)) {
+    _notesOpen.delete(id);
+  } else {
+    _notesOpen.add(id);
+  }
+  trRender();
+  if (_notesOpen.has(id)) {
+    const ta = document.querySelector(`.tr-notes textarea[data-id="${id}"]`);
+    if (ta) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+  }
+}
+
+function _setNotesStatus(id, msg, kind) {
+  const el = document.querySelector(`.tr-notes-status[data-id="${id}"]`);
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.remove('is-saved', 'is-error');
+  if (kind === 'saved') el.classList.add('is-saved');
+  if (kind === 'error') el.classList.add('is-error');
+}
+
+function _onNotesInput(id, val) {
+  // Hold the in-progress draft on the item so a re-render restores it.
+  const it = _items.find(x => x.id === id);
+  if (it) it._notesDraft = val;
+  _setNotesStatus(id, 'Typing…');
+  if (_notesSaveTimers[id]) clearTimeout(_notesSaveTimers[id]);
+  _notesSaveTimers[id] = setTimeout(() => _saveNotes(id, val), 600);
+}
+
+async function _saveNotes(id, val) {
+  _setNotesStatus(id, 'Saving…');
+  try {
+    const r = await fetch(`/api/travel-reads/${id}/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify({ notes: val }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Save failed');
+    const it = _items.find(x => x.id === id);
+    if (it) {
+      it.notes = val;
+      delete it._notesDraft;
+    }
+    _setNotesStatus(id, 'Saved', 'saved');
+    setTimeout(() => {
+      const el = document.querySelector(`.tr-notes-status[data-id="${id}"]`);
+      if (el && el.textContent === 'Saved') _setNotesStatus(id, '');
+    }, 1800);
+    // Update the action button's "has notes" indicator without a full re-render.
+    const btn = document.querySelector(`.tr-card[data-id="${id}"] .tr-actions button[title^="Notes"], .tr-card[data-id="${id}"] .tr-actions button[title="Take notes"]`);
+    if (btn) btn.classList.toggle('has-notes', !!val.trim());
+  } catch (e) {
+    _setNotesStatus(id, 'Save failed — keep typing to retry', 'error');
+  }
+}
 
 function trToggleWatch(id, btn) {
   const card = document.querySelector(`.tr-card[data-id="${id}"]`);
