@@ -2232,15 +2232,100 @@ const HELP_PAGES = [
   },
   {
     match: /^\/notes/,
-    title: "Notes",
-    lead: "Freeform scribble notes. Jot thoughts, meeting notes, and ideas here without thinking about structure.",
+    title: "Notes — freeform writing + checklist → tasks",
+    lead: "Drop in any thought. When you want a note to spawn real tasks, write checklist lines (<code>- [ ]</code>) and tag each with <code>@Today</code>, <code>@RecurrenceDaily</code>, or <code>@ProjectName</code> — one tap converts the whole batch.",
     sections: [
+      {
+        title: "Basics",
+        items: [
+          "Each note has a title + body. <b>Save happens automatically</b> ~700ms after you stop typing.",
+          "Folders are just labels — pick from the dropdown in the editor header, or type a new one.",
+          "<b>Pin</b> with the ⭐ icon to keep important notes at the top of the list.",
+          "Press <code>?</code> anywhere to reopen this help."
+        ]
+      },
+      {
+        title: "Make a checklist",
+        items: [
+          "Type <code>- [ ] task name</code> on its own line — that's the checklist syntax.",
+          "Or select some text in the body and click the <b>☑ button</b> in the floating toolbar to wrap it as a checklist.",
+          "<b>Tick</b> a box (mark <code>- [x]</code>) to indicate the item is done — converted lines auto-tick.",
+          "Bullets without a box (<code>- something</code>) are just prose; they aren't picked up by the converter."
+        ]
+      },
+      {
+        title: "Smart @-tags (autocomplete on every '@')",
+        items: [
+          "Type <code>@</code> on a checklist line — a popover opens with every available tag, grouped Date / Recurrence / Project. Arrow keys navigate, <b>Enter</b> or <b>Tab</b> inserts.",
+          "Project names with spaces are inserted with spaces stripped (<code>@SideHustle</code>) so the parser recognises them.",
+          "Stack tags freely on one line — order doesn't matter. <code>- [ ] Buy milk @Tomorrow @Groceries</code> and <code>- [ ] Buy milk @Groceries @Tomorrow</code> are equivalent."
+        ]
+      },
+      {
+        title: "Date tags",
+        items: [
+          "<code>@Today</code> — due today.",
+          "<code>@Tomorrow</code> — due tomorrow.",
+          "<code>@NextWeek</code> — due next Monday.",
+          "<code>@2026-05-15</code> — explicit ISO date. <code>@15-Jul</code> / <code>@15Jul</code> / <code>@15-07-2026</code> also work.",
+          "Bare dates like <code>@15-Jul</code> roll forward to next year if the date has already passed."
+        ]
+      },
+      {
+        title: "Recurrence tags",
+        items: [
+          "<code>@RecurrenceDaily</code> — repeat every day.",
+          "<code>@RecurrenceWeekly</code> — repeat weekly on whatever day you set.",
+          "<code>@RecurrenceMonthly</code> — repeat monthly.",
+          "<code>@RecurrenceEveryMonday</code> through <code>@RecurrenceEverySunday</code> — repeat weekly on that day.",
+          "Combine with a date tag to set the first occurrence, e.g. <code>@2026-05-01 @RecurrenceMonthly</code> — pay rent on May 1, then every month."
+        ]
+      },
+      {
+        title: "Project tags",
+        items: [
+          "<code>@ProjectName</code> — case-insensitive match against your existing projects.",
+          "<b>No project tag</b> on a line → task lands in your default <b>Inbox</b> project (auto-created the first time).",
+          "<b>Unmatched name</b> (e.g. <code>@Wellness</code> when your project is called <code>Health</code>) → task also lands in Inbox, and the preview shows an amber <b>fallback</b> chip so you can fix it."
+        ]
+      },
+      {
+        title: "Convert: turning checklist lines into project tasks",
+        items: [
+          "Click the <b>☑ icon</b> in the editor header (top right) to open the convert preview.",
+          "The preview shows every checklist line with chips: 📅 due date, 🔁 recurrence, 📁 project (green = matched, amber = fallback to Inbox), ✓ already done (skipped).",
+          "<b>Tick lines off in note after creating</b> is on by default — keeps you from converting the same line twice.",
+          "Click <b>Create tasks</b> → tasks land in their target projects, and the lines turn into <code>- [x]</code> in the note.",
+          "An <b>Undo</b> button in the success toast (8 second window) reverses the whole batch: tasks soft-deleted, lines un-ticked."
+        ]
+      },
+      {
+        title: "Worked example",
+        items: [
+          "Note body:<br><code>- [ ] Buy charger @Tomorrow @SideProjects</code><br><code>- [ ] Standup notes @RecurrenceDaily @Work</code><br><code>- [ ] Call dentist @NextWeek</code><br><code>- [ ] Random thought to deal with later</code>",
+          "Click ☑ → preview shows: <i>3 tasks will be created</i> + <i>1 fallback to Inbox</i>.",
+          "Click <b>Create tasks</b> → \"Buy charger\" lands in <b>SideProjects</b> with due date tomorrow; \"Standup notes\" becomes a daily recurring task in <b>Work</b>; \"Call dentist\" goes to Inbox with due date next Monday; \"Random thought\" goes to Inbox with no date.",
+          "Note becomes:<br><code>- [x] Buy charger @Tomorrow @SideProjects</code><br><code>- [x] Standup notes @RecurrenceDaily @Work</code><br><code>- [x] Call dentist @NextWeek</code><br><code>- [x] Random thought to deal with later</code>",
+          "Toast: <i>4 tasks created</i> with an <b>Undo</b> button (8 seconds)."
+        ]
+      },
+      {
+        title: "Inbox health card",
+        items: [
+          "On <b>Today's Plan</b>, an <b>Inbox health</b> card surfaces when your default project starts collecting too much.",
+          "Hidden when ≤ 5 open tasks and 0 stale.",
+          "Count pill colour: <b>green</b> (ok), <b>blue</b> (watch — &gt; 8 open or any stale), <b>amber</b> (crowded — &gt; 15 open or &gt; 3 stale).",
+          "<b>Stale</b> = open task + no due date + created &gt; 14 days ago. Up to 5 sample titles show in the card body so you remember what's stuck.",
+          "Tap <b>Open Inbox →</b> to land on the project page for triage."
+        ]
+      },
       {
         title: "Tips",
         items: [
-          "Each note is a title + rich body. Save happens automatically.",
-          "Use the list view to search across all notes.",
-          "Link a note to a project by tagging it (optional)."
+          "<b>Reuse the note</b> — you don't have to delete it after converting. The <code>[x]</code> marks make it a record of what got pushed out.",
+          "<b>The autocomplete won't trigger on emails</b> (<code>you@example.com</code>) — the <code>@</code> after a letter is left alone.",
+          "If your project name has weird characters, the parser only matches plain alphanumerics. Stick to <code>@SideHustle</code> over <code>@Side-Hustle!</code>.",
+          "Watch the amber <b>fallback</b> chips in the convert preview — that's your hint to either rename your tag or rename your project."
         ]
       }
     ]

@@ -150,6 +150,12 @@
         <i data-feather="check-square"></i>
       </button>
 
+      <button type="button" class="icon-btn" id="notes-help-btn"
+              onclick="if (typeof openHelpModal === 'function') openHelpModal();"
+              title="Help — checklist syntax, @-tags, examples (or press ?)">
+        <i data-feather="help-circle"></i>
+      </button>
+
       <a class="icon-btn"
          href="/notes/scribble/new{% if note and note.notebook %}?folder={{ note.notebook|urlencode }}{% endif %}"
          title="New note in this folder" aria-label="New note">
