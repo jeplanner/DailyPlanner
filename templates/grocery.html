@@ -300,11 +300,9 @@
       </label>
       <label>
         <span class="gr-add-label">Category</span>
-        <select name="category" id="gr-input-category">
-          {% for c in suggested_categories %}
-            <option value="{{ c }}" {% if c == 'other' %}selected{% endif %}>{{ c|capitalize }}</option>
-          {% endfor %}
-        </select>
+        <input type="text" name="category" id="gr-input-category"
+               list="gr-categories" placeholder="Produce, Dairy, …"
+               autocomplete="off" autocorrect="off" spellcheck="false">
       </label>
       <label>
         <span class="gr-add-label">Priority</span>
@@ -326,6 +324,10 @@
   <div id="gr-list-root">
     <div class="gr-empty" id="gr-loading">Loading…</div>
   </div>
+
+  <!-- Shared datalist for both add and edit category inputs.
+       Refreshed on load + after every successful add. -->
+  <datalist id="gr-categories"></datalist>
 
 </div>
 
@@ -363,6 +365,7 @@ async function grLoad() {
     _items = [];
     _userDict = {};
   }
+  _refreshCategoryOptions();
   grRender();
 }
 
@@ -379,7 +382,26 @@ function _cmpItems(a, b) {
 
 function _categoryLabel(c) {
   if (!c) return 'Other';
-  return CATEGORY_LABELS[c] || (c[0].toUpperCase() + c.slice(1));
+  if (CATEGORY_LABELS[c]) return CATEGORY_LABELS[c];
+  // Custom category — backend normalises to lowercase + dashes
+  // (e.g. "Personal Care" → "personal-care"). Reverse for display.
+  return c.split(/[-_]/).filter(Boolean)
+          .map(w => w[0].toUpperCase() + w.slice(1))
+          .join(' ');
+}
+
+// Build the shared <datalist> from suggested + user-used categories.
+// Called on initial load and after every successful add so any new
+// category the user types becomes a suggestion next time.
+function _refreshCategoryOptions() {
+  const dl = document.getElementById('gr-categories');
+  if (!dl) return;
+  const set = new Set(SUGGESTED);
+  _items.forEach(it => { if (it.category) set.add(it.category); });
+  Object.values(_userDict).forEach(v => { if (v.category) set.add(v.category); });
+  // Dedupe by display label so "Produce" + "produce" don't both show.
+  const labels = Array.from(new Set(Array.from(set).map(_categoryLabel))).sort();
+  dl.innerHTML = labels.map(l => `<option value="${_escapeAttr(l)}">`).join('');
 }
 
 function grRender() {
@@ -459,9 +481,8 @@ function _renderRow(it) {
       <div class="gr-edit-grid">
         <input type="text" id="gr-edit-item-${it.id}" value="${_escapeAttr(it.item)}" placeholder="Item">
         <input type="text" id="gr-edit-qty-${it.id}" value="${_escapeAttr(it.quantity || '')}" placeholder="Qty">
-        <select id="gr-edit-cat-${it.id}">
-          ${SUGGESTED.map(c => `<option value="${c}" ${c === (it.category || 'other') ? 'selected' : ''}>${_categoryLabel(c)}</option>`).join('')}
-        </select>
+        <input type="text" id="gr-edit-cat-${it.id}" list="gr-categories"
+               value="${_escapeAttr(_categoryLabel(it.category || 'other'))}" placeholder="Category">
         <select id="gr-edit-pri-${it.id}">
           <option value="high"   ${pri === 'high'   ? 'selected' : ''}>High</option>
           <option value="medium" ${pri === 'medium' ? 'selected' : ''}>Medium</option>
@@ -511,22 +532,25 @@ async function grAdd(ev) {
     if (j.item) _items.push(j.item);
     // Remember this purchase in the user's personal dictionary so
     // future typing of the same name autocompletes — even before
-    // page reload — with the latest qty/category/priority.
+    // page reload — with the latest qty/category/priority. Use
+    // the server's response (j.item) so storage form is consistent
+    // with what the server normalised the category to.
     const key = item.trim().toLowerCase();
     if (key) _userDict[key] = {
-      name:     item,
-      category: payload.category,
-      quantity: payload.quantity,
-      priority: payload.priority,
+      name:     (j.item && j.item.item)     || item,
+      category: (j.item && j.item.category) || payload.category,
+      quantity: (j.item && j.item.quantity) || payload.quantity,
+      priority: (j.item && j.item.priority) || payload.priority,
     };
     document.getElementById('gr-input-item').value = '';
     document.getElementById('gr-input-qty').value = '';
-    document.getElementById('gr-input-category').value = 'other';
+    document.getElementById('gr-input-category').value = '';
     document.getElementById('gr-input-priority').value = 'medium';
     _catManuallySet = false;
     _qtyManuallySet = false;
     _priManuallySet = false;
     _hideAutocomplete();
+    _refreshCategoryOptions();
     grRender();
     document.getElementById('gr-input-item').focus();
     if (window.showToast) showToast('Added', 'success', 1400);
@@ -568,10 +592,10 @@ function _lookupCategory(name) {
 function _autoFillFromHistory(entry) {
   if (!entry) return;
   if (!_catManuallySet && entry.category) {
-    const sel = document.getElementById('gr-input-category');
-    if (sel && Array.from(sel.options).some(o => o.value === entry.category)) {
-      sel.value = entry.category;
-    }
+    // Category is a free-text combobox — set the readable label.
+    // Server re-normalises on submit so storage stays consistent.
+    const inp = document.getElementById('gr-input-category');
+    if (inp) inp.value = _categoryLabel(entry.category);
   }
   if (!_qtyManuallySet && entry.quantity) {
     document.getElementById('gr-input-qty').value = entry.quantity;
