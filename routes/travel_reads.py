@@ -15,12 +15,13 @@ Soft-delete only — items the user "removes" set status='archived'
 (matching the project's no-hard-delete convention).
 
 Transcription has two paths:
-    * Server-side (B): yt-dlp downloads the audio, OpenAI Whisper
-      transcribes. Works for YouTube, podcast feeds, and any source
-      yt-dlp supports. Requires OPENAI_API_KEY + ffmpeg on the host.
+    * Server-side (B): yt-dlp downloads the audio, Groq Whisper Large
+      v3 Turbo transcribes (OpenAI-compatible API, free tier). Works
+      for YouTube, podcast feeds, and any source yt-dlp supports.
+      Requires GROQ_API_KEY + ffmpeg on the host.
     * Client-side (C): the user pastes a transcript captured by a
       browser bookmarklet (or copied from YouTube's "Show transcript"
-      panel). Bypasses cloud-IP blocks on caption endpoints.
+      panel). Bypasses cloud-IP blocks on caption endpoints. Free.
 """
 
 import logging
@@ -383,20 +384,24 @@ def _yt_dlp_audio(url: str, out_dir: str) -> str:
 
 
 def _whisper_transcribe(audio_path: str) -> str:
-    """Send `audio_path` to OpenAI Whisper. If the file is over 25 MB
-    (Whisper's per-request cap), split into 10-minute chunks via ffmpeg
-    and concatenate the results."""
-    api_key = os.environ.get("OPENAI_API_KEY")
+    """Send `audio_path` to Groq's Whisper Large v3 Turbo (OpenAI-compatible API).
+    Free tier is generous; paid usage is ~$0.04/hr — about 10x cheaper than
+    OpenAI's Whisper. If the file is over 25 MB (per-request cap), split into
+    10-minute chunks via ffmpeg and concatenate the results."""
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set on the server.")
+        raise RuntimeError("GROQ_API_KEY is not set on the server.")
 
     from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
 
     def _send(path):
         with open(path, "rb") as f:
             r = client.audio.transcriptions.create(
-                model="whisper-1",
+                model="whisper-large-v3-turbo",
                 file=f,
                 response_format="text",
             )

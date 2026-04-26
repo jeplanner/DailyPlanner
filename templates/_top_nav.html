@@ -2365,7 +2365,7 @@ const HELP_PAGES = [
         title: "Transcribe — two ways",
         items: [
           "Click the <b>🎤 mic</b> on any card to open the transcribe modal. Pick one of two paths.",
-          "<b>Auto (Whisper):</b> server downloads the audio with yt-dlp and sends it to OpenAI Whisper. Costs roughly <b>$0.006/min</b>. Works for YouTube and any podcast/audio URL yt-dlp supports. Long files are auto-chunked.",
+          "<b>Auto (Whisper):</b> server downloads the audio with yt-dlp and sends it to <b>Groq Whisper Large v3 Turbo</b> (OpenAI-compatible API). <b>Free tier</b> covers personal use; paid usage is ~$0.04/hr. Works for YouTube and any podcast/audio URL yt-dlp supports. Long files are auto-chunked.",
           "<b>Paste / Bookmarklet:</b> for when YouTube blocks the server's IP (common on cloud hosts). Drag the <b>TravelReads → grab transcript</b> bookmarklet to your bookmarks bar — clicking it on a YouTube video page copies that video's transcript to your clipboard. Paste in the modal and save.",
           "<b>Manual paste:</b> alternatively, open YouTube's own <b>Show transcript</b> menu (⋯ button under the video), copy, and paste in the modal — no bookmarklet needed.",
           "Either path saves the transcript as a note in the <b>Transcripts</b> notebook (Notes → Transcripts) and changes the card's mic button to <b>📄 view transcript</b>."
