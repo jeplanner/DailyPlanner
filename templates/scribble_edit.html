@@ -541,6 +541,61 @@
   </button>
 </div>
 
+<!-- ═══════════ @-AUTOCOMPLETE POPOVER ═══════════ -->
+<style>
+  .at-popover {
+    position: absolute;
+    z-index: 9999;
+    background: var(--color-surface, #fff);
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, .12), 0 2px 6px rgba(15, 23, 42, .06);
+    padding: 4px;
+    min-width: 220px; max-width: 320px;
+    max-height: 280px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 1px;
+    font-size: 13px;
+  }
+  .at-popover.hidden { display: none; }
+  .at-section-head {
+    font-size: 10.5px; font-weight: 800;
+    letter-spacing: .06em; text-transform: uppercase;
+    color: var(--color-text-tertiary, #94a3b8);
+    padding: 6px 10px 2px;
+    user-select: none;
+  }
+  .at-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    border: none; background: transparent; cursor: pointer;
+    border-radius: 6px;
+    font: inherit; font-size: 13px;
+    text-align: left; color: var(--color-text);
+    width: 100%;
+  }
+  .at-item:hover,
+  .at-item.is-active {
+    background: color-mix(in srgb, var(--color-primary, #2563eb) 8%, transparent);
+  }
+  .at-kind {
+    font-size: 9.5px; padding: 1px 6px; border-radius: 999px;
+    font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+    flex-shrink: 0;
+  }
+  .at-kind.date    { background: color-mix(in srgb, #2563eb 14%, transparent); color: #1d4ed8; }
+  .at-kind.rec     { background: color-mix(in srgb, #7c3aed 14%, transparent); color: #6d28d9; }
+  .at-kind.project { background: color-mix(in srgb, #16a34a 14%, transparent); color: #166534; }
+  .at-label { flex: 1; min-width: 0; word-break: break-word; }
+  .at-empty { padding: 10px 12px; color: var(--color-text-secondary); font-size: 12.5px; }
+  html.dark .at-popover {
+    background: #1e293b; border-color: #334155;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .4);
+  }
+  html.dark .at-item:hover, html.dark .at-item.is-active { background: #273449; }
+</style>
+
+<div id="at-popover" class="at-popover hidden" role="listbox" aria-label="Tag suggestions"></div>
+
 <!-- ═══════════ CHECKLIST CONVERT MODAL ═══════════ -->
 <style>
   #checklistConvert .modal-content { max-width: 640px; }
@@ -1168,15 +1223,27 @@ async function confirmChecklistConvert() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || "Failed");
 
+    // Track which lines we ticked so the undo can revert them.
+    let tickedLines = [];
     if (markDone && j.created > 0) {
-      _tickConvertedLines(j.items || []);
+      tickedLines = _tickConvertedLines(j.items || []);
     }
+
+    const createdIds = (j.items || [])
+      .filter(it => it.status === 'created' && it.task_id)
+      .map(it => it.task_id);
 
     if (window.showToast) {
       const msg = `${j.created} task${j.created === 1 ? '' : 's'} created`
         + (j.skipped ? ` · ${j.skipped} skipped` : '')
         + (j.errors  ? ` · ${j.errors} failed`  : '');
-      showToast(msg, j.errors ? "warning" : "success");
+      const action = createdIds.length ? {
+        label: 'Undo',
+        onClick: () => _undoConvert(createdIds, tickedLines),
+      } : null;
+      // 8s undo window — long enough to second-guess, short enough that
+      // the toast doesn't linger forever.
+      showToast(msg, j.errors ? "warning" : "success", 8000, action);
     }
     closeChecklistConvert();
   } catch (e) {
@@ -1186,14 +1253,57 @@ async function confirmChecklistConvert() {
   }
 }
 
+async function _undoConvert(taskIds, tickedRawLines) {
+  try {
+    const r = await fetch("/notes/scribble/checklist/undo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ task_ids: taskIds }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Undo failed");
+
+    // Revert any [x] lines we ticked back to [ ] — match by the
+    // exact raw string we ticked. If the user has edited the line
+    // since, we leave it alone (cleaner than guessing).
+    if (tickedRawLines && tickedRawLines.length) {
+      const lines = contentEl.value.split('\n');
+      const usedRows = new Set();
+      for (const original of tickedRawLines) {
+        const tickedForm = original.replace(/^(\s*[-*]\s*)\[\s*\]/, "$1[x]");
+        for (let i = 0; i < lines.length; i++) {
+          if (usedRows.has(i)) continue;
+          if (lines[i] === tickedForm) {
+            lines[i] = original;
+            usedRows.add(i);
+            break;
+          }
+        }
+      }
+      contentEl.value = lines.join('\n');
+      if (typeof autoGrow === 'function') autoGrow();
+      if (typeof markDirty === 'function') markDirty();
+    }
+
+    if (window.showToast) {
+      showToast(`Undone · ${j.undone} task${j.undone === 1 ? '' : 's'} removed`, 'info', 2200);
+    }
+  } catch (e) {
+    if (window.showToast) showToast(e.message || "Couldn't undo", "error");
+  }
+}
+
 function _tickConvertedLines(items) {
   // For every item that was successfully created, mark its raw line
-  // `- [ ]` → `- [x]` so re-converting doesn't duplicate.
+  // `- [ ]` → `- [x]` so re-converting doesn't duplicate. Returns the
+  // raw lines we actually ticked so the undo path can revert them.
   const created = items.filter(i => i.status === 'created' && i.raw);
-  if (!created.length) return;
+  if (!created.length) return [];
 
   const lines = contentEl.value.split('\n');
   const usedRows = new Set();
+  const ticked = [];
 
   for (const it of created) {
     for (let i = 0; i < lines.length; i++) {
@@ -1201,6 +1311,7 @@ function _tickConvertedLines(items) {
       if (lines[i] === it.raw && /^\s*[-*]\s*\[\s*\]/.test(lines[i])) {
         lines[i] = lines[i].replace(/^(\s*[-*]\s*)\[\s*\]/, "$1[x]");
         usedRows.add(i);
+        ticked.push(it.raw);
         break;
       }
     }
@@ -1208,6 +1319,7 @@ function _tickConvertedLines(items) {
   contentEl.value = lines.join('\n');
   if (typeof autoGrow === 'function') autoGrow();
   if (typeof markDirty === 'function') markDirty();
+  return ticked;
 }
 
 function _formatDate(iso) {
@@ -1252,6 +1364,224 @@ window.addEventListener("beforeunload", (e) => {
     e.preventDefault();
     e.returnValue = "";
   }
+});
+
+// ─── @-autocomplete (popover near caret) ────────────────────
+// Triggers when the user types '@' in the body. Suggests date /
+// recurrence keywords plus the user's projects. Arrow-keys navigate,
+// Enter or Tab inserts, Escape closes. The popover hides when the
+// caret moves off the @-token (whitespace, newline, deleted '@').
+const AT_DATE_OPTIONS = [
+  { kind: 'date', label: 'Today' },
+  { kind: 'date', label: 'Tomorrow' },
+  { kind: 'date', label: 'NextWeek' },
+];
+const AT_REC_OPTIONS = [
+  { kind: 'rec', label: 'RecurrenceDaily' },
+  { kind: 'rec', label: 'RecurrenceWeekly' },
+  { kind: 'rec', label: 'RecurrenceMonthly' },
+  { kind: 'rec', label: 'RecurrenceEveryMonday' },
+  { kind: 'rec', label: 'RecurrenceEveryTuesday' },
+  { kind: 'rec', label: 'RecurrenceEveryWednesday' },
+  { kind: 'rec', label: 'RecurrenceEveryThursday' },
+  { kind: 'rec', label: 'RecurrenceEveryFriday' },
+  { kind: 'rec', label: 'RecurrenceEverySaturday' },
+  { kind: 'rec', label: 'RecurrenceEverySunday' },
+];
+let _atProjects = null;
+let _atOpen = false;
+let _atIndex = 0;
+let _atFiltered = [];
+let _atQuery = '';
+let _atStart = -1;
+
+async function _atEnsureProjects() {
+  if (_atProjects) return _atProjects;
+  try {
+    const r = await fetch('/projects/list', { credentials: 'same-origin' });
+    const j = await r.json();
+    _atProjects = Array.isArray(j) ? j : [];
+  } catch (e) { _atProjects = []; }
+  return _atProjects;
+}
+
+function _atProjectOptions() {
+  return (_atProjects || []).map(p => ({
+    kind: 'project',
+    label: (p.name || '').replace(/\s+/g, ''),  // @SideHustle (no spaces)
+    display: p.name,
+  }));
+}
+
+function _atAllOptions() {
+  return [...AT_DATE_OPTIONS, ...AT_REC_OPTIONS, ..._atProjectOptions()];
+}
+
+function _atOnInput() {
+  const pos = contentEl.selectionStart;
+  const before = contentEl.value.substring(0, pos);
+  const at = before.lastIndexOf('@');
+  if (at < 0) return _atClose();
+  const between = before.substring(at + 1);
+  if (/[\s\n]/.test(between)) return _atClose();
+  // Don't trigger on emails: @ preceded by an alphanumeric character
+  // means it's likely an email (e.g. user@host).
+  const charBefore = at > 0 ? contentEl.value[at - 1] : ' ';
+  if (charBefore && /[A-Za-z0-9]/.test(charBefore)) return _atClose();
+
+  _atStart = at;
+  _atQuery = between;
+  _atEnsureProjects().then(_atFilter);
+}
+
+function _atFilter() {
+  const q = (_atQuery || '').toLowerCase();
+  const all = _atAllOptions();
+  // Prefix match first, then substring match — keeps "Today" above
+  // "RecurrenceEveryTuesday" when the user types "to".
+  const prefix = [];
+  const sub = [];
+  for (const opt of all) {
+    const lab = (opt.label || '').toLowerCase();
+    const disp = (opt.display || opt.label || '').toLowerCase();
+    if (!q || lab.startsWith(q) || disp.startsWith(q)) {
+      prefix.push(opt);
+    } else if (lab.includes(q) || disp.includes(q)) {
+      sub.push(opt);
+    }
+  }
+  _atFiltered = prefix.concat(sub).slice(0, 12);
+  _atIndex = 0;
+  if (!_atFiltered.length) return _atClose();
+  _atRender();
+  _atShow();
+}
+
+function _atRender() {
+  const popover = document.getElementById('at-popover');
+  if (!popover) return;
+  // Group with section headers — date first, then recurrence, then project.
+  const sections = [
+    { kind: 'date',    title: 'Date' },
+    { kind: 'rec',     title: 'Recurrence' },
+    { kind: 'project', title: 'Project' },
+  ];
+  let html = '';
+  let runningIdx = 0;
+  for (const sec of sections) {
+    const items = _atFiltered.filter(it => it.kind === sec.kind);
+    if (!items.length) continue;
+    html += `<div class="at-section-head">${sec.title}</div>`;
+    for (const item of items) {
+      const myIdx = _atFiltered.indexOf(item);
+      const display = item.display || item.label;
+      html += `<button type="button" class="at-item ${myIdx === _atIndex ? 'is-active' : ''}"
+                       role="option" aria-selected="${myIdx === _atIndex}"
+                       onmousedown="event.preventDefault();_atPick(${myIdx});">
+                 <span class="at-kind ${item.kind}">${item.kind === 'rec' ? 'recur' : item.kind}</span>
+                 <span class="at-label">${escapeHtml(display)}</span>
+               </button>`;
+      runningIdx++;
+    }
+  }
+  popover.innerHTML = html || '<div class="at-empty">No matches</div>';
+}
+
+function _atShow() {
+  const popover = document.getElementById('at-popover');
+  if (!popover) return;
+  const coords = _atGetCaretCoords(contentEl, contentEl.selectionStart);
+  const rect = contentEl.getBoundingClientRect();
+  const top  = rect.top  + (coords.top  - contentEl.scrollTop) + (coords.height || 20) + 4;
+  const left = rect.left + (coords.left - contentEl.scrollLeft);
+  popover.style.top  = (top  + window.scrollY) + 'px';
+  popover.style.left = (Math.min(left, window.innerWidth - 280) + window.scrollX) + 'px';
+  popover.classList.remove('hidden');
+  _atOpen = true;
+}
+
+function _atClose() {
+  const popover = document.getElementById('at-popover');
+  if (popover) popover.classList.add('hidden');
+  _atOpen = false;
+}
+
+function _atOnKeydown(e) {
+  if (!_atOpen) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _atIndex = Math.min(_atFiltered.length - 1, _atIndex + 1);
+    _atRender();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _atIndex = Math.max(0, _atIndex - 1);
+    _atRender();
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    _atPick(_atIndex);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    _atClose();
+  }
+}
+
+function _atPick(idx) {
+  const item = _atFiltered[idx];
+  if (!item) return;
+  const insert = (item.label || '').replace(/\s+/g, '');
+  const before = contentEl.value.substring(0, _atStart);
+  const after  = contentEl.value.substring(contentEl.selectionStart);
+  const tag = '@' + insert + ' ';
+  contentEl.value = before + tag + after;
+  const newPos = before.length + tag.length;
+  contentEl.selectionStart = contentEl.selectionEnd = newPos;
+  _atClose();
+  if (typeof autoGrow === 'function') autoGrow();
+  if (typeof updateCounts === 'function') updateCounts();
+  if (typeof markDirty === 'function') markDirty();
+  contentEl.focus();
+}
+
+// Mirror-div technique to compute caret pixel coords inside a textarea.
+function _atGetCaretCoords(el, position) {
+  const div = document.createElement('div');
+  const cs = getComputedStyle(el);
+  const props = ['boxSizing','width','height','overflowX','overflowY',
+    'borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth',
+    'paddingTop','paddingRight','paddingBottom','paddingLeft',
+    'fontStyle','fontVariant','fontWeight','fontStretch','fontSize',
+    'fontSizeAdjust','lineHeight','fontFamily','textAlign','textTransform',
+    'textIndent','textDecoration','letterSpacing','wordSpacing','whiteSpace',
+    'wordWrap','tabSize','MozTabSize'];
+  props.forEach(p => { try { div.style[p] = cs[p]; } catch (e) {} });
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.top = '0'; div.style.left = '0';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.wordWrap = 'break-word';
+  div.style.width = el.offsetWidth + 'px';
+  div.textContent = el.value.substring(0, position);
+  const span = document.createElement('span');
+  span.textContent = el.value.substring(position) || '.';
+  div.appendChild(span);
+  document.body.appendChild(div);
+  const coords = {
+    top:  span.offsetTop,
+    left: span.offsetLeft,
+    height: parseInt(cs.lineHeight, 10) || 20,
+  };
+  document.body.removeChild(div);
+  return coords;
+}
+
+contentEl.addEventListener('input', _atOnInput);
+contentEl.addEventListener('keydown', _atOnKeydown, true);
+contentEl.addEventListener('blur', () => setTimeout(_atClose, 120));
+contentEl.addEventListener('click', () => setTimeout(_atOnInput, 0));
+document.addEventListener('click', (e) => {
+  if (!_atOpen) return;
+  if (e.target.closest('.at-popover') || e.target === contentEl) return;
+  _atClose();
 });
 
 // ─── Init ────────────────────────────────────────────────────

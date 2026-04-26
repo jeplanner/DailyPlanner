@@ -513,6 +513,44 @@ def checklist_convert():
     })
 
 
+@notes_bp.route("/notes/scribble/checklist/undo", methods=["POST"])
+@login_required
+def checklist_undo():
+    """Soft-delete a list of project tasks created by a recent
+    convert call. Pairs with the Undo toast in the editor.
+
+    Body: { task_ids: [<uuid>, ...] }
+    Per the no-hard-delete rule, we set `is_eliminated=true`. The rows
+    are still queryable by an admin if anything ever needs auditing.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    raw_ids = data.get("task_ids") or []
+    if not isinstance(raw_ids, list):
+        return jsonify({"error": "task_ids must be a list"}), 400
+
+    # Normalize: strip whitespace, drop empties, dedupe.
+    ids = sorted({str(x).strip() for x in raw_ids if x})
+    if not ids:
+        return jsonify({"ok": True, "undone": 0})
+
+    undone = 0
+    errors = 0
+    for tid in ids:
+        try:
+            update(
+                "project_tasks",
+                params={"task_id": f"eq.{tid}", "user_id": f"eq.{user_id}"},
+                json={"is_eliminated": True, "elimination_reason": "checklist convert undone"},
+            )
+            undone += 1
+        except Exception as e:
+            logger.warning("checklist undo failed for %s: %s", tid, e)
+            errors += 1
+
+    return jsonify({"ok": True, "undone": undone, "errors": errors})
+
+
 @notes_bp.route("/notes/scribble/folder/delete", methods=["POST"])
 @login_required
 def delete_folder():
