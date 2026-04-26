@@ -8,28 +8,21 @@ Endpoints:
     POST /api/travel-reads/<id>/update                  edit fields
     POST /api/travel-reads/<id>/status                  change status
     POST /api/travel-reads/<id>/archive                 soft delete
-    POST /api/travel-reads/<id>/transcribe              auto-transcribe via OpenAI Whisper
     POST /api/travel-reads/<id>/transcript-paste        save user-pasted transcript
 
 Soft-delete only — items the user "removes" set status='archived'
 (matching the project's no-hard-delete convention).
 
-Transcription has two paths:
-    * Server-side (B): yt-dlp downloads the audio, Groq Whisper Large
-      v3 Turbo transcribes (OpenAI-compatible API, free tier). Works
-      for YouTube, podcast feeds, and any source yt-dlp supports.
-      Requires GROQ_API_KEY + ffmpeg on the host.
-    * Client-side (C): the user pastes a transcript captured by a
-      browser bookmarklet (or copied from YouTube's "Show transcript"
-      panel). Bypasses cloud-IP blocks on caption endpoints. Free.
+Transcription is paste-only: the user captures the transcript on
+their own machine (bookmarklet that scrapes YouTube's caption track
+and copies it to the clipboard, or YouTube's own "Show transcript"
+panel) and pastes it in. Server-side auto-transcription via yt-dlp
+was removed because YouTube blocks both caption fetches AND audio
+downloads from cloud-host IPs.
 """
 
 import logging
-import os
 import re
-import shutil
-import subprocess
-import tempfile
 from datetime import datetime
 from urllib.parse import urlparse
 
@@ -323,122 +316,10 @@ def archive_travel_read(read_id):
     return jsonify({"ok": True})
 
 
-# ─── API: transcribe (Whisper) + transcript-paste ───────────────
+# ─── API: transcript-paste ──────────────────────────────────────
 
 
-_MAX_AUDIO_SECONDS = 4 * 3600          # 4-hour cap — guard against runaway costs
-_WHISPER_MAX_BYTES = 25 * 1024 * 1024  # OpenAI Whisper per-request limit
-_MAX_PASTE_CHARS = 500_000             # ~250 pages — generous, but bounded
-
-
-def _yt_dlp_audio(url: str, out_dir: str) -> str:
-    """Download `url`'s audio track as a low-bitrate mono mp3 into
-    `out_dir` and return the resulting file path. Requires ffmpeg on
-    the host (yt-dlp shells out to it for audio extraction).
-
-    Raises RuntimeError on failure (length cap, no audio stream, etc.).
-    Caller catches ImportError if yt-dlp isn't installed.
-    """
-    import yt_dlp
-    from yt_dlp.utils import DownloadError
-
-    info_only_opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
-    try:
-        with yt_dlp.YoutubeDL(info_only_opts) as ydl:
-            info = ydl.extract_info(url, download=False) or {}
-    except DownloadError as e:
-        raise RuntimeError(f"Could not read source: {e}")
-
-    duration = int(info.get("duration") or 0)
-    if duration and duration > _MAX_AUDIO_SECONDS:
-        mins = duration // 60
-        raise RuntimeError(
-            f"Audio is {mins} min — too long for auto-transcription "
-            f"(cap is {_MAX_AUDIO_SECONDS // 60} min). Use the paste path instead."
-        )
-
-    output_template = os.path.join(out_dir, "audio.%(ext)s")
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": output_template,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "32",   # 32 kbps — fine for Whisper, keeps files small
-        }],
-        "postprocessor_args": ["-ac", "1"],   # mono
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
-    except DownloadError as e:
-        raise RuntimeError(f"Audio download failed: {e}")
-
-    for f in sorted(os.listdir(out_dir)):
-        if f.lower().endswith(".mp3"):
-            return os.path.join(out_dir, f)
-    raise RuntimeError("Audio extraction failed — is ffmpeg installed on the server?")
-
-
-def _whisper_transcribe(audio_path: str) -> str:
-    """Send `audio_path` to Groq's Whisper Large v3 Turbo (OpenAI-compatible API).
-    Free tier is generous; paid usage is ~$0.04/hr — about 10x cheaper than
-    OpenAI's Whisper. If the file is over 25 MB (per-request cap), split into
-    10-minute chunks via ffmpeg and concatenate the results."""
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set on the server.")
-
-    from openai import OpenAI
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-
-    def _send(path):
-        with open(path, "rb") as f:
-            r = client.audio.transcriptions.create(
-                model="whisper-large-v3-turbo",
-                file=f,
-                response_format="text",
-            )
-        return r if isinstance(r, str) else getattr(r, "text", "") or ""
-
-    if os.path.getsize(audio_path) <= _WHISPER_MAX_BYTES:
-        return _send(audio_path).strip()
-
-    chunk_dir = tempfile.mkdtemp(prefix="whisper-chunks-")
-    try:
-        proc = subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", audio_path,
-                "-f", "segment", "-segment_time", "600",
-                "-c", "copy",
-                os.path.join(chunk_dir, "chunk-%03d.mp3"),
-            ],
-            check=False, capture_output=True,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError("ffmpeg chunking failed — is it installed?")
-        chunks = sorted(
-            os.path.join(chunk_dir, f) for f in os.listdir(chunk_dir)
-            if f.startswith("chunk-")
-        )
-        return "\n\n".join(_send(c) for c in chunks).strip()
-    finally:
-        shutil.rmtree(chunk_dir, ignore_errors=True)
-
-
-def _transcribe_url_with_whisper(url: str) -> str:
-    tmpdir = tempfile.mkdtemp(prefix="travel-audio-")
-    try:
-        audio_path = _yt_dlp_audio(url, tmpdir)
-        return _whisper_transcribe(audio_path)
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+_MAX_PASTE_CHARS = 500_000   # ~250 pages — generous, but bounded
 
 
 def _save_transcript_note(user_id, item, text: str, source_label: str) -> str:
@@ -482,60 +363,6 @@ def _load_item(user_id: str, read_id: str):
         },
     ) or []
     return rows[0] if rows else None
-
-
-@travel_reads_bp.route("/api/travel-reads/<read_id>/transcribe", methods=["POST"])
-@login_required
-def transcribe(read_id):
-    """Server-side auto-transcription via yt-dlp + OpenAI Whisper.
-
-    yt-dlp grabs the audio (works for YouTube + many podcast/audio
-    sources), Whisper turns it into text, and we save the result as a
-    scribble note in the 'Transcripts' notebook.
-    """
-    user_id = session["user_id"]
-    item = _load_item(user_id, read_id)
-    if not item:
-        return jsonify({"error": "Not found"}), 404
-
-    if item.get("transcript_note_id"):
-        return jsonify({
-            "ok": True,
-            "already_transcribed": True,
-            "note_id": item["transcript_note_id"],
-        })
-
-    url = (item.get("url") or "").strip()
-    if not url:
-        return jsonify({"error": "No URL on this item."}), 400
-
-    try:
-        text = _transcribe_url_with_whisper(url)
-    except ImportError as e:
-        return jsonify({
-            "error": f"Server missing dependency ({e}). Install yt-dlp + ffmpeg and redeploy, or use the paste path.",
-        }), 501
-    except Exception as e:
-        logger.warning("whisper transcribe failed for %s: %s", url, e)
-        return jsonify({"error": str(e) or "Couldn't transcribe."}), 502
-
-    if not text:
-        return jsonify({"error": "Transcript came back empty."}), 502
-
-    try:
-        note_id = _save_transcript_note(user_id, item, text, "Auto-transcribed via Whisper")
-    except Exception as e:
-        logger.error("save transcript note failed: %s", e)
-        return jsonify({"error": "Couldn't save transcript note."}), 502
-
-    snippet = text[:280] + ("…" if len(text) > 280 else "")
-    return jsonify({
-        "ok": True,
-        "note_id": note_id,
-        "note_url": f"/notes/scribble/{note_id}",
-        "char_count": len(text),
-        "snippet": snippet,
-    })
 
 
 @travel_reads_bp.route("/api/travel-reads/<read_id>/transcript-paste", methods=["POST"])
