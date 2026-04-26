@@ -319,6 +319,9 @@ def archive_travel_read(read_id):
 def _fetch_youtube_transcript(video_id: str):
     """Return transcript text or raise. Uses youtube-transcript-api.
 
+    Supports both the v1.x API (instance.fetch / instance.list) and the
+    legacy v0.x API (classmethods get_transcript / list_transcripts).
+
     The library may not be installed yet — caller catches ImportError
     and returns a friendly message.
     """
@@ -330,33 +333,67 @@ def _fetch_youtube_transcript(video_id: str):
         VideoUnavailable,
     )
 
+    def _to_dicts(fetched):
+        # v1.x returns a FetchedTranscript whose snippets expose .text /
+        # .start / .duration; v0.x returned a plain list[dict]. Normalise.
+        out = []
+        for s in fetched:
+            if isinstance(s, dict):
+                out.append({
+                    "text": s.get("text") or "",
+                    "start": s.get("start", 0) or 0,
+                    "duration": s.get("duration", 0) or 0,
+                })
+            else:
+                out.append({
+                    "text": getattr(s, "text", "") or "",
+                    "start": getattr(s, "start", 0) or 0,
+                    "duration": getattr(s, "duration", 0) or 0,
+                })
+        return out
+
     try:
-        # Prefer English; fall back to any available language.
-        try:
-            entries = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
-        except NoTranscriptFound:
-            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-            entries = transcripts.find_transcript(
-                [t.language_code for t in transcripts]
-            ).fetch()
+        if hasattr(YouTubeTranscriptApi, "fetch"):
+            # v1.x: must instantiate.
+            api = YouTubeTranscriptApi()
+            try:
+                fetched = api.fetch(video_id, languages=["en"])
+            except NoTranscriptFound:
+                tlist = api.list(video_id)
+                fetched = tlist.find_transcript(
+                    [t.language_code for t in tlist]
+                ).fetch()
+        else:
+            # v0.x legacy classmethods.
+            try:
+                fetched = YouTubeTranscriptApi.get_transcript(
+                    video_id, languages=["en"]
+                )
+            except NoTranscriptFound:
+                tlist = YouTubeTranscriptApi.list_transcripts(video_id)
+                fetched = tlist.find_transcript(
+                    [t.language_code for t in tlist]
+                ).fetch()
     except (NoTranscriptFound, TranscriptsDisabled):
         raise RuntimeError("This video has no captions available.")
     except VideoUnavailable:
         raise RuntimeError("Video unavailable — it may be private or deleted.")
+
+    entries = _to_dicts(fetched)
 
     # Group into rough paragraphs every ~12s gap or ~80 words.
     paragraphs = []
     buf = []
     last_end = 0.0
     for e in entries:
-        text = (e.get("text") or "").replace("\n", " ").strip()
+        text = (e["text"] or "").replace("\n", " ").strip()
         if not text:
             continue
-        if last_end and (e.get("start", 0) - last_end > 12) and buf:
+        if last_end and (e["start"] - last_end > 12) and buf:
             paragraphs.append(" ".join(buf))
             buf = []
         buf.append(text)
-        last_end = e.get("start", 0) + e.get("duration", 0)
+        last_end = e["start"] + e["duration"]
         if sum(len(s.split()) for s in buf) > 80:
             paragraphs.append(" ".join(buf))
             buf = []
