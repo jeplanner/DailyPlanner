@@ -161,23 +161,28 @@
   .gr-prio-medium { display: none; }   /* default — hide chip to reduce noise */
   .gr-prio-low    { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
 
-  .gr-row-actions { display: inline-flex; gap: 4px; align-items: center; }
+  .gr-row-actions { display: inline-flex; gap: 6px; align-items: center; }
+  /* Was transparent + tertiary text → invisible at rest. Now: tinted chip
+     so the user sees the icon without hovering. */
   .gr-icon-btn {
     appearance: none;
-    width: 30px; height: 30px;
-    padding: 0; border: 1px solid transparent; background: transparent;
+    width: 32px; height: 32px;
+    padding: 0;
+    border: 1px solid var(--color-border, #e5e7eb);
+    background: var(--color-surface-secondary, #f1f5f9);
     border-radius: 8px; cursor: pointer;
-    color: var(--color-text-tertiary, var(--color-text-secondary));
+    color: var(--color-primary, #4f46e5);
     display: inline-flex; align-items: center; justify-content: center;
     transition: background .12s, color .12s, border-color .12s;
   }
-  .gr-icon-btn svg { width: 15px; height: 15px; }
+  .gr-icon-btn svg { width: 17px; height: 17px; stroke-width: 2.25; }
   .gr-icon-btn:hover {
-    background: var(--color-surface-secondary, var(--color-bg));
+    background: #eef2ff;
     color: var(--color-primary, #2563eb);
-    border-color: var(--color-border);
+    border-color: #a5b4fc;
   }
-  .gr-icon-btn.danger:hover { color: #b91c1c; }
+  .gr-icon-btn.danger { color: #dc2626; }
+  .gr-icon-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
 
   /* ── Empty / loading ─── */
   .gr-empty {

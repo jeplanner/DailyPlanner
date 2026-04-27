@@ -373,7 +373,7 @@ function createHabitCard(habit) {
         <span class="habit-card-goal">${escapeHtml(goalText)}</span>
       </div>
       <div class="habit-card-actions">
-        <button class="habit-action-btn" onclick="editHabit('${habit.id}')" title="Edit">&#9998;</button>
+        <button class="habit-action-btn" onclick="editHabit('${habit.id}')" title="Edit">&#9999;&#65039;</button>
         <button class="habit-action-btn habit-delete-btn" onclick="deleteHabit('${habit.id}')" title="Delete">&#128465;</button>
       </div>
     </div>

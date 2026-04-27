@@ -313,15 +313,18 @@ body {
 .habit-card.completed .habit-card-name { color: var(--hab-success); }
 .habit-goal, .habit-card-goal { font-size: 11px; color: var(--hab-text3); font-weight: 500; }
 
-.habit-actions, .habit-card-actions { display: flex; gap: 2px; }
+.habit-actions, .habit-card-actions { display: flex; gap: 4px; }
+/* Was nearly invisible — now a tinted chip with a real border so the
+   user can see the icon without hovering. */
 .habit-action-btn {
-  width: 28px; height: 28px;
-  border: none; background: none; border-radius: 6px;
+  width: 32px; height: 32px;
+  border: 1px solid var(--hab-border); background: var(--hab-bg, #f7f8fa);
+  border-radius: 8px; font-size: 14px; line-height: 1;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  color: var(--hab-text3); transition: all 0.15s;
+  color: var(--hab-text); transition: all 0.15s;
 }
-.habit-action-btn:hover { background: var(--hab-border); color: var(--hab-text); }
-.habit-delete-btn:hover { color: var(--hab-danger); }
+.habit-action-btn:hover { background: #eef2ff; border-color: #a5b4fc; color: var(--hab-text); }
+.habit-delete-btn:hover { background: #fee2e2; border-color: #fca5a5; color: var(--hab-danger); }
 
 /* Habit Input Row */
 .habit-input-row {
