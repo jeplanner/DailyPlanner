@@ -144,7 +144,9 @@
         ${meta.length ? `<div class="cl-meta">${meta.join("")}</div>` : ""}
       </div>
       <button type="button" class="cl-pomo" title="Start Pomodoro 25 min" aria-label="Start Pomodoro">▶</button>
-      <button type="button" class="cl-edit" aria-label="Edit">✎</button>
+      <button type="button" class="cl-edit" title="Edit" aria-label="Edit">
+        <span class="cl-edit-glyph" aria-hidden="true">✏️</span>
+      </button>
     `;
     row.querySelector(".cl-name").textContent = it.name;
     row.querySelector(".cl-check").addEventListener("click", (e) => {
@@ -153,13 +155,16 @@
     });
     row.querySelector(".cl-edit").addEventListener("click", (e) => {
       e.stopPropagation();
-      openModal(it);
+      openModal(it, "edit");
     });
     row.querySelector(".cl-pomo").addEventListener("click", (e) => {
       e.stopPropagation();
       startChecklistPomo(it);
     });
-    row.addEventListener("click", () => toggleTick(it));
+    // Row body opens the details panel in *view* mode — no accidental ticking,
+    // and the user can read everything before deciding to Edit. The ✓ button
+    // (above) is the only thing that toggles completion.
+    row.addEventListener("click", () => openModal(it, "view"));
     return row;
   }
 
@@ -252,9 +257,13 @@
   }
 
   // ── Modal ─────────────────────────────────────────
-  function openModal(item) {
+  // mode: "view" → read-only details (Close + Edit buttons)
+  //       "edit" → editable form (Delete + Cancel + Save)
+  // New items always force "edit" since there is nothing to view.
+  function openModal(item, mode) {
     const editing = Boolean(item);
-    $("#cl-modal-title").textContent = editing ? "Edit item" : "New checklist item";
+    if (!editing) mode = "edit";
+    if (mode !== "view" && mode !== "edit") mode = "edit";
     $("#cl-item-id").value = item?.id || "";
     $("#cl-name").value = item?.name || "";
     $("#cl-notes").value = item?.notes || "";
@@ -277,11 +286,42 @@
     });
     toggleWeekdayPicker();
 
-    $("#cl-delete-btn").hidden = !editing;
+    setModalMode(mode, editing);
     $("#cl-modal").hidden = false;
-    setTimeout(() => $("#cl-name").focus(), 50);
+    if (mode === "edit") setTimeout(() => $("#cl-name").focus(), 50);
   }
   function closeModal() { $("#cl-modal").hidden = true; }
+
+  // Toggle the modal between view/edit. In view mode every input goes
+  // disabled (so the user can read but not accidentally type), the title
+  // says "Item details", and we show only Close + Edit. In edit mode the
+  // inputs are live, the title says "Edit item" / "New checklist item",
+  // and we show Delete (existing items only) + Cancel + Save.
+  function setModalMode(mode, editing) {
+    const modal = document.querySelector("#cl-modal .cl-modal");
+    if (modal) modal.dataset.mode = mode;
+
+    const fields = $$("#cl-form input, #cl-form select, #cl-form textarea");
+    fields.forEach(el => {
+      // hidden item-id stays as-is; everything else mirrors the mode
+      if (el.id === "cl-item-id") return;
+      el.disabled = (mode === "view");
+    });
+
+    if (mode === "view") {
+      $("#cl-modal-title").textContent = "Item details";
+      $("#cl-delete-btn").hidden = true;
+      $("#cl-save-btn").hidden = true;
+      $("#cl-edit-mode-btn").hidden = false;
+      $("#cl-cancel-btn").textContent = "Close";
+    } else {
+      $("#cl-modal-title").textContent = editing ? "Edit item" : "New checklist item";
+      $("#cl-delete-btn").hidden = !editing;
+      $("#cl-save-btn").hidden = false;
+      $("#cl-edit-mode-btn").hidden = true;
+      $("#cl-cancel-btn").textContent = "Cancel";
+    }
+  }
 
   function toggleWeekdayPicker() {
     $("#cl-weekdays").hidden = $("#cl-schedule").value !== "custom";
@@ -411,10 +451,16 @@
 
   // ── Wire up ───────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
-    $("#cl-add-btn").addEventListener("click", () => openModal(null));
+    $("#cl-add-btn").addEventListener("click", () => openModal(null, "edit"));
     $("#cl-modal-close").addEventListener("click", closeModal);
     $("#cl-cancel-btn").addEventListener("click", closeModal);
     $("#cl-delete-btn").addEventListener("click", deleteItem);
+    $("#cl-edit-mode-btn").addEventListener("click", () => {
+      // Switch the already-open view modal into edit mode in place —
+      // no reload, all fields keep their current values.
+      setModalMode("edit", true);
+      setTimeout(() => $("#cl-name").focus(), 30);
+    });
     $("#cl-form").addEventListener("submit", saveItem);
     $("#cl-schedule").addEventListener("change", toggleWeekdayPicker);
     $("#cl-modal").addEventListener("click", (e) => {

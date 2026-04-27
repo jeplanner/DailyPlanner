@@ -67,8 +67,11 @@
   </main>
 
   <!-- ── Add / Edit modal ─────────────────────────── -->
+  <!-- data-mode="view" makes inputs read-only; "edit" enables them.
+       Tapping a row opens "view"; the ✎ row icon (or the Edit-mode
+       button below) opens "edit". New items always start in "edit". -->
   <div class="cl-modal-backdrop" id="cl-modal" hidden>
-    <div class="cl-modal" role="dialog" aria-labelledby="cl-modal-title">
+    <div class="cl-modal" role="dialog" aria-labelledby="cl-modal-title" data-mode="view">
       <div class="cl-modal-head">
         <h2 id="cl-modal-title">New checklist item</h2>
         <button type="button" class="cl-modal-close" id="cl-modal-close" aria-label="Close">×</button>
@@ -143,8 +146,11 @@
 
         <div class="cl-form-actions">
           <button type="button" class="cl-btn cl-btn-danger" id="cl-delete-btn" hidden>Delete</button>
-          <button type="button" class="cl-btn cl-btn-ghost" id="cl-cancel-btn">Cancel</button>
-          <button type="submit" class="cl-btn cl-btn-primary">Save</button>
+          <button type="button" class="cl-btn cl-btn-ghost" id="cl-cancel-btn">Close</button>
+          <button type="button" class="cl-btn cl-btn-primary" id="cl-edit-mode-btn" hidden>
+            <span class="cl-edit-glyph" aria-hidden="true">✏️</span> Edit
+          </button>
+          <button type="submit" class="cl-btn cl-btn-primary" id="cl-save-btn">Save</button>
         </div>
       </form>
     </div>

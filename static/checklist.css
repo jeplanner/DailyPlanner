@@ -119,15 +119,29 @@ body {
   border-radius: 999px; padding: 1px 8px;
 }
 
+/* Edit pencil — was nearly invisible (transparent bg + muted gray glyph
+   on a white card). Now: tinted indigo pill, dark glyph, visible border.
+   The colourful ✏️ emoji renders consistently across iOS/Android/desktop. */
 .cl-edit {
   flex-shrink: 0;
-  width: 36px; height: 36px;
-  border: none; background: transparent;
-  color: var(--cl-text2); font-size: 18px;
-  border-radius: 8px;
+  width: 38px; height: 38px;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: var(--cl-primary-dark);
+  border-radius: 10px;
   cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, border-color .12s, transform .08s;
 }
-.cl-edit:hover { background: var(--cl-bg); color: var(--cl-text); }
+.cl-edit:hover { background: #e0e7ff; border-color: #a5b4fc; }
+.cl-edit:active { transform: scale(.94); }
+html.dark .cl-edit { background: #1e1b4b; border-color: #4338ca; color: #c7d2fe; }
+html.dark .cl-edit:hover { background: #312e81; border-color: #6366f1; }
+.cl-edit-glyph {
+  font-size: 18px; line-height: 1;
+  /* Ensure the emoji stays colorful even inside themed buttons. */
+  filter: none;
+}
 
 /* Pomodoro start button — ▶ glyph keeps the row compact; expands the
    global timer widget on click. Hidden when the item is already ticked. */
@@ -300,6 +314,21 @@ html.dark .cl-pomo-chip:hover { background: #1e3a8a; color: #bfdbfe; border-colo
 }
 .cl-field input:focus, .cl-field textarea:focus, .cl-field select:focus {
   outline: none; border-color: var(--cl-primary);
+}
+/* View mode: inputs are disabled so the user can read but not edit.
+   Override the default washed-out grey browsers apply — keep full
+   contrast text, just remove the input chrome so it reads like content. */
+.cl-modal[data-mode="view"] .cl-field input:disabled,
+.cl-modal[data-mode="view"] .cl-field textarea:disabled,
+.cl-modal[data-mode="view"] .cl-field select:disabled {
+  background: var(--cl-bg);
+  color: var(--cl-text);
+  opacity: 1;
+  -webkit-text-fill-color: var(--cl-text);
+  cursor: default;
+}
+.cl-modal[data-mode="view"] .cl-day-picker label {
+  opacity: .85; cursor: default;
 }
 .cl-hint { color: var(--cl-text2); font-size: 11.5px; }
 
