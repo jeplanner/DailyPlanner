@@ -58,7 +58,7 @@ Item shape
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable, Optional
 
 from supabase_client import get
@@ -675,6 +675,93 @@ def _sort_timed_then_untimed(items: list[dict]) -> None:
     ))
 
 
+def fetch_bucket_items(user_id: str, plan_date) -> tuple[list[dict], list[dict]]:
+    """Tasks Bucket items relevant to the dashboard for `plan_date`.
+
+    Returns (active, done_today) where each list uses the standard
+    Item shape, so the dashboard merges them alongside meetings,
+    matrix tasks, and project tasks without special-casing them in
+    the template.
+
+    Active = not done, not deleted, not in the 'future' bucket
+    (future is explicitly deferred). Items in 'now' / 'Nm' / 'Nh'
+    buckets all show up. Items with a due_at get its HH:MM as the
+    `time` field so they sort chronologically; bucket='now' shows
+    no time.
+
+    Done-today = is_done=true with done_at on `plan_date`. Used
+    only when plan_date is today — past dates skip the done set.
+    """
+    today_iso = _to_iso(plan_date)
+    rows = _safe_get(
+        "quick_bucket",
+        params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "select": "id,text,time_bucket,due_at,is_done,done_at,created_at",
+            "limit": "500",
+        },
+        action="quick_bucket fetch",
+    )
+
+    active: list[dict] = []
+    done: list[dict] = []
+    for r in rows:
+        text = (r.get("text") or "").strip()
+        if not text:
+            continue
+        is_done = bool(r.get("is_done"))
+        bucket = (r.get("time_bucket") or "now")
+
+        if is_done:
+            done_at = r.get("done_at") or ""
+            if done_at[:10] != today_iso:
+                continue  # done on a different day
+        else:
+            if bucket == "future":
+                continue  # explicitly deferred, not for today's plan
+
+        # Derive a HH:MM time from due_at when present, in the user's
+        # local zone. Falls back to None for now/future buckets.
+        time_str = None
+        due_at = r.get("due_at")
+        if due_at and not is_done:
+            try:
+                s = due_at.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                time_str = dt.astimezone().strftime("%H:%M")
+            except Exception:
+                pass
+
+        # Tag the bucket category in the context so the agenda row
+        # makes its origin obvious ("Tasks Bucket · 2H") without
+        # adding a new badge column.
+        ctx_parts = ["Tasks Bucket"]
+        if bucket and bucket not in ("now", "future"):
+            ctx_parts.append(bucket.upper())
+        ctx = " · ".join(ctx_parts)
+
+        item = {
+            "id": f"bucket-{r.get('id')}",
+            "type": "task",
+            "source": "bucket",
+            "title": text,
+            "time": time_str,
+            "end_time": None,
+            "date": today_iso,
+            "done": is_done,
+            "status": "done" if is_done else "open",
+            "priority": None,
+            "context": ctx,
+            "link": "/quick-bucket",
+            "project_id": None,
+            "recurrence": None,
+            "delegated_to": None,
+        }
+        (done if is_done else active).append(item)
+    return active, done
+
+
 def build_dashboard(user_id: str, plan_date) -> dict:
     """Morning dashboard composition.
 
@@ -692,10 +779,13 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     done_today = fetch_done_today(user_id, plan_date)
     intent = _fetch_daily_intent(user_id, plan_date)
     inbox_health = fetch_inbox_health(user_id, plan_date)
+    bucket_active, bucket_done = fetch_bucket_items(user_id, plan_date)
 
-    # The morning-agenda table merges meetings + today's tasks into one
-    # chronological list. Habits render in their own band (no time).
-    today_items = events + matrix_items + project_due_today
+    # The morning-agenda table merges meetings + today's tasks + Tasks
+    # Bucket items into one chronological list. Habits render in their
+    # own band (no time).
+    today_items = events + matrix_items + project_due_today + bucket_active
+    done_today = done_today + bucket_done
     _sort_timed_then_untimed(today_items)
 
     # Split overdue into "active overdue" (1-2 days old) and "parked"
