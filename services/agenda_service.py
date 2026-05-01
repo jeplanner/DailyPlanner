@@ -781,12 +781,21 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     inbox_health = fetch_inbox_health(user_id, plan_date)
     bucket_active, bucket_done = fetch_bucket_items(user_id, plan_date)
 
-    # The morning-agenda table merges meetings + today's tasks + Tasks
-    # Bucket items into one chronological list. Habits render in their
-    # own band (no time).
-    today_items = events + matrix_items + project_due_today + bucket_active
+    # Tasks Bucket items render in their own card so the user sees
+    # their quick captures as a distinct band (rather than buried in
+    # the agenda alongside calendar events). Active bucket rows go to
+    # `bucket_items`; done-today bucket rows still feed the global
+    # done-today list so the morning tally is correct.
+    today_items = events + matrix_items + project_due_today
     done_today = done_today + bucket_done
     _sort_timed_then_untimed(today_items)
+
+    # Sort bucket items: timed first (by HH:MM), then untimed, then
+    # within each band most-recent-first.
+    bucket_active.sort(key=lambda it: (
+        it.get("time") is None,                    # timed before untimed
+        it.get("time") or "99:99",                 # ascending within timed
+    ))
 
     # Split overdue into "active overdue" (1-2 days old) and "parked"
     # (3+ days old). Anything older than the user's reasonable triage
@@ -805,6 +814,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
 
     return {
         "today_items": today_items,
+        "bucket_items": bucket_active,
         "overdue": overdue,
         "parked":  parked,
         "done_today": done_today,
@@ -814,6 +824,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
         "counts": {
             "meetings": meeting_count,
             "tasks": task_count,
+            "bucket": len(bucket_active),
             "habits": len(habits),
             "habits_done": habits_done,
             "overdue": len(overdue),
