@@ -37,15 +37,31 @@
 /* ── Top header bar ── */
 .top-context{
   width:100%;
-  padding:10px 18px;
+  padding:8px 14px;
   display:flex;
   align-items:center;
-  gap:16px;
+  gap:10px;
   background:#ffffff;
   border-bottom:1px solid #e5e7eb;
   position:sticky;
   top:0;
   z-index:900;
+}
+/* On mobile, suppress the noisy bits in the top bar — live clock,
+   pomodoro shortcut, help button. The hamburger, search, and user
+   avatar stay (the things you actually reach for); date is on each
+   page where it matters; pomodoro lives on /quick-bucket; help is
+   in the sidebar. Keeps the top to ~ 48 px instead of ~ 64. */
+@media (max-width: 720px) {
+  .top-context { padding: 6px 10px; gap: 6px; }
+  .top-context .date-row,
+  .top-context .help-btn[aria-label="Quick Pomodoro"],
+  .top-context .help-btn[aria-label="Help"] { display: none !important; }
+  .top-context .hamburger { padding: 6px 10px; min-height: 36px; }
+  .top-context .hamburger span { display: none; } /* hide the "Menu" word, keep ☰ */
+  .top-context .help-btn { width: 34px; height: 34px; margin-left: auto; }
+  .top-context .help-btn + .help-btn { margin-left: 0; }
+  .top-context .user-avatar { width: 32px; height: 32px; font-size: 12px; }
 }
 
 /* ── Help button in top bar ── */

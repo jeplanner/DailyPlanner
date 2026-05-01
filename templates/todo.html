@@ -1284,6 +1284,19 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     </div>
   </div>
 
+  <!-- Mobile-only "+ Add task" trigger. The full quick-add row, the
+       actions row, and the bulk panel sit behind this. Tap to slide
+       them in; tap again to dismiss. Keeps the matrix above the
+       fold on phones. Hidden on desktop (where the tools always
+       show). -->
+  <button type="button" id="em-mobile-tools-trigger" class="em-mobile-tools-trigger"
+          aria-controls="em-app-root" aria-expanded="false"
+          onclick="document.body.classList.toggle('em-tools-open');this.setAttribute('aria-expanded',document.body.classList.contains('em-tools-open'));">
+    <i data-feather="plus"></i>
+    <span>Add task & filters</span>
+    <i data-feather="chevron-down" class="em-mobile-tools-chevron"></i>
+  </button>
+
   <!-- Active filter chips (shown only when filters are applied) -->
   <div id="em-filter-chips" class="em-filter-chips" style="display:none;"></div>
 
@@ -1745,6 +1758,48 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       gap: 10px !important;
     }
     .em-date-nav { gap: 4px !important; }
+
+    /* ── MOBILE TOOLS TRIGGER ─────────────────────────────────
+       Hidden on desktop (≥ 721px); visible on phones where space
+       is at a premium. Tapping toggles `body.em-tools-open` which
+       reveals the compose / actions blocks. */
+    .em-mobile-tools-trigger { display: none; }
+    @media (max-width: 720px) {
+      .em-mobile-tools-trigger {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 8px 14px; margin: 0 0 12px;
+        border-radius: 999px;
+        font: inherit; font-size: 13px; font-weight: 700; letter-spacing: .03em;
+        background: var(--em-surface, #fff);
+        border: 1px solid var(--em-border, #e5e7eb);
+        color: var(--em-text, #111827);
+        cursor: pointer;
+      }
+      .em-mobile-tools-trigger:hover {
+        background: var(--em-surface-secondary, #f3f4f6);
+      }
+      .em-mobile-tools-trigger svg { width: 14px; height: 14px; }
+      .em-mobile-tools-chevron { transition: transform .18s; }
+      body.em-tools-open .em-mobile-tools-chevron { transform: rotate(180deg); }
+
+      /* Hide the heavy compose / actions blocks by default on phones —
+         the matrix is the answer to "what now?", not the form to
+         add another task. Tapping the trigger above slides them in.
+         Quote stays visible at the bottom (where it was moved); it's
+         past the tasks so it doesn't compete for attention. */
+      .em-app .em-actions,
+      .em-app .em-quick-add,
+      #bulk-panel { display: none !important; }
+      body.em-tools-open .em-app .em-actions,
+      body.em-tools-open .em-app .em-quick-add {
+        display: flex !important;
+        animation: emToolsSlide .25s ease-out;
+      }
+      @keyframes emToolsSlide {
+        from { opacity: 0; transform: translateY(-6px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+    }
 
     /* Compact quote (now at the bottom of the page). The original
        full-bleed hero was nice but ate the top fold. Same content,
