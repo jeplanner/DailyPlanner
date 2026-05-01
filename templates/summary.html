@@ -271,6 +271,30 @@
       padding: 0 !important; border: none !important;
     }
 
+    /* ── HEADINGS-FREE DAILY VIEW ───────────────────────────
+       User wants no card headers anywhere except "Parked tasks".
+       Render order is overdue → today → parked, so the eye moves
+       through urgency without a single decorative title. */
+    .md-overdue-card > summary,
+    .md-agenda-card > summary,
+    .md-focus-card > .md-card-head,
+    .md-focus-card .md-card-icon { display: none !important; }
+    .md-overdue-card > .md-card-body,
+    .md-agenda-card > .md-card-body {
+      display: block !important;  /* override <details> closed-state hide */
+    }
+    /* No band-row dividers (Morning / Afternoon / project group). */
+    .md-band-row, .md-overdue-group-row { display: none !important; }
+    /* Visually merge the overdue + agenda cards into a single
+       continuous list so the join is invisible. */
+    .md-overdue-card { border: none !important; box-shadow: none !important;
+                        background: transparent !important; margin-bottom: 0 !important; }
+    .md-overdue-card + .md-agenda-card { margin-top: 0; }
+
+    /* Un-hide Parked — it's the only allowed heading. Even
+     when body[data-md-more] isn't set. */
+    .md-parked-card { display: block !important; }
+
     /* "More sections" expander — single button that reveals every
        hidden card at once. Ships with a count of how many are
        hidden so the user can decide whether to bother. */
@@ -367,7 +391,7 @@
        localStorage by the card-collapse script at the bottom of the
        daily view. Default is closed; user opens once and it sticks. -->
   {% if dashboard.overdue %}
-  <details class="md-card md-overdue-card md-collapsible" data-card-id="overdue" aria-labelledby="md-overdue-title">
+  <details class="md-card md-overdue-card md-collapsible" data-card-id="overdue" aria-labelledby="md-overdue-title" open>
     <summary class="md-card-head">
       <h2 class="md-card-title" id="md-overdue-title">
         <span class="md-card-icon md-overdue-icon"><i data-feather="alert-circle"></i></span>
