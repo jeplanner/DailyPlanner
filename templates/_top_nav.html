@@ -674,7 +674,15 @@ html.dark .section-title{color:#f1f5f9;}
         Inbox
       </a>
 
+      {# Old category-flavoured Tasks Bucket — disabled in nav (route /tasks-bucket
+         still works for legacy data; replaced by the simpler /quick-bucket below).
       <a href="/tasks-bucket" data-match="^/tasks-bucket" title="Tasks Bucket — quick capture that auto-classifies into modules">
+        <i data-feather="zap"></i>
+        Tasks Bucket
+      </a>
+      #}
+
+      <a href="/quick-bucket" data-match="^/quick-bucket" title="Tasks Bucket — quick capture by time bucket (now / 4h / 8h / future)">
         <i data-feather="zap"></i>
         Tasks Bucket
       </a>
