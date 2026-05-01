@@ -28,10 +28,16 @@ from supabase_client import get, post, update
 logger = logging.getLogger("daily_plan")
 quick_bucket_bp = Blueprint("quick_bucket", __name__)
 
-# Buckets in cycle order. Clicking the toggle steps to the next one;
-# wrapping around lets the user un-do an over-shoot without thinking.
-BUCKETS = ["now", "4h", "8h", "future"]
+# Buckets in display order. The pill on each row opens a popover that
+# shows every option, so the order here is what the user sees in the
+# picker — Now first, hour buckets ascending, Future last.
+BUCKETS = ["now", "1h", "2h", "3h", "4h", "5h", "6h", "7h", "8h", "future"]
 BUCKET_SET = set(BUCKETS)
+
+# Map an "Nh" bucket to its hour count. 'now' and 'future' have no
+# countdown; everything in between is a fresh deadline.
+_HOUR_BUCKETS = {f"{n}h": n for n in range(1, 9)}
+
 _MAX_TEXT_LEN = 500
 
 
@@ -44,17 +50,15 @@ def _next_bucket(cur):
 
 
 # Deadline mapping. 'now' / 'future' have no countdown — they're either
-# already actionable or deferred indefinitely. Picking 4h or 8h restamps
-# the deadline relative to the moment the user chose it (not to the
-# original creation time), so cycling 4h → 8h after 3h gives 8 fresh
-# hours rather than 5 leftover ones.
+# already actionable or deferred indefinitely. Picking an "Nh" bucket
+# stamps a fresh deadline relative to the moment the user chose it, so
+# changing 4h → 8h after 3h gives 8 fresh hours rather than 5 leftover
+# ones.
 def _due_at_for(bucket):
-    now = datetime.now(timezone.utc)
-    if bucket == "4h":
-        return (now + timedelta(hours=4)).isoformat()
-    if bucket == "8h":
-        return (now + timedelta(hours=8)).isoformat()
-    return None
+    hours = _HOUR_BUCKETS.get(bucket)
+    if hours is None:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
 
 
 # ─────────── page ─────────────────────────────────────────────

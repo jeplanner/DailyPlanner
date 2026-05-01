@@ -6,9 +6,19 @@
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const csrf = () => (document.querySelector('meta[name="csrf-token"]')?.content) || "";
 
-  const BUCKETS = window.QB_BUCKETS || ["now", "4h", "8h", "future"];
-  const BUCKET_LABEL = { now: "Now", "4h": "4h", "8h": "8h", future: "Future" };
-  const GROUP_LABEL = { now: "Now", "4h": "Within 4h", "8h": "Within 8h", future: "Future" };
+  const BUCKETS = window.QB_BUCKETS || ["now","1h","2h","3h","4h","5h","6h","7h","8h","future"];
+  const BUCKET_LABEL = {
+    now: "Now",
+    "1h": "1H", "2h": "2H", "3h": "3H", "4h": "4H",
+    "5h": "5H", "6h": "6H", "7h": "7H", "8h": "8H",
+    future: "Future",
+  };
+  // Hour buckets all live in one display group so the page doesn't
+  // sprout 10 headers; the pill on each row still shows the precise
+  // bucket and a live countdown.
+  const VISIBLE_GROUPS = ["now", "today", "future"];
+  const VISIBLE_GROUP_LABEL = { now: "Now", today: "Today", future: "Future" };
+  const HOUR_BUCKETS = new Set(["1h","2h","3h","4h","5h","6h","7h","8h"]);
   const TICK_MS = 30_000;  // recompute countdowns twice a minute
 
   let items = [];
@@ -52,7 +62,7 @@
     return Math.round((due - new Date()) / 60000);
   };
 
-  const isCountedDown = (it) => it.time_bucket === "4h" || it.time_bucket === "8h";
+  const isCountedDown = (it) => HOUR_BUCKETS.has(it.time_bucket);
 
   // Toggle pill text — static for now/future, live countdown for 4h/8h.
   const toggleLabel = (it) => {
@@ -84,11 +94,18 @@
   // ─────────── render ───────────────────────────────────────
 
   const groupItems = () => {
-    const groups = {};
-    BUCKETS.forEach(b => groups[b] = []);
+    const groups = { now: [], today: [], future: [] };
     items.forEach(it => {
-      const key = BUCKETS.includes(it.time_bucket) ? it.time_bucket : "now";
-      groups[key].push(it);
+      if (it.time_bucket === "now") groups.now.push(it);
+      else if (it.time_bucket === "future") groups.future.push(it);
+      else groups.today.push(it);  // 1h..8h
+    });
+    // Within "today" sort by deadline ascending (closest-first), so the
+    // tightest item is on top no matter which hour bucket it picked.
+    groups.today.sort((a, b) => {
+      const da = a.due_at ? new Date(a.due_at).getTime() : Number.POSITIVE_INFINITY;
+      const db = b.due_at ? new Date(b.due_at).getTime() : Number.POSITIVE_INFINITY;
+      return da - db;
     });
     return groups;
   };
@@ -102,8 +119,8 @@
       <div class="${rowCls}" data-id="${it.id}">
         <input type="checkbox" class="qb-check" data-action="done" aria-label="Mark done">
         <div class="qb-text" title="${escapeHTML(it.text)}">${escapeHTML(it.text)}</div>
-        <button class="${togCls}" data-action="cycle" type="button"
-                title="Click to cycle: Now → 4h → 8h → Future">
+        <button class="${togCls}" data-action="pick" type="button"
+                title="Click to choose when: Now / 1H–8H / Future">
           ${escapeHTML(toggleLabel(it))}
         </button>
         <button class="qb-icon-btn" data-action="archive" title="Remove">
@@ -123,12 +140,12 @@
     }
     empty.setAttribute("hidden", "");
     const groups = groupItems();
-    wrap.innerHTML = BUCKETS.map(b => {
-      const list = groups[b];
+    wrap.innerHTML = VISIBLE_GROUPS.map(g => {
+      const list = groups[g];
       if (!list.length) return "";
       return `
-        <section class="qb-group qb-group--${b}">
-          <div class="qb-group-head">${GROUP_LABEL[b]} <span class="qb-count">${list.length}</span></div>
+        <section class="qb-group qb-group--${g}">
+          <div class="qb-group-head">${VISIBLE_GROUP_LABEL[g]} <span class="qb-count">${list.length}</span></div>
           <div class="qb-list">${list.map(renderRow).join("")}</div>
         </section>`;
     }).join("");
@@ -147,18 +164,67 @@
       $("input.qb-check", row)?.addEventListener("change", (e) => {
         if (e.target.checked) markDone(it);
       });
-      $("button.qb-toggle", row)?.addEventListener("click", () => cycle(it));
+      $("button.qb-toggle", row)?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openPicker(e.currentTarget, it);
+      });
       $("button.qb-icon-btn[data-action='archive']", row)?.addEventListener("click", () => archive(it));
     });
   };
 
-  const cycle = async (it) => {
+  // ─────────── bucket picker popover ────────────────────────
+
+  const closePicker = () => {
+    const picker = $("#qb-picker");
+    if (!picker || picker.hidden) return;
+    picker.hidden = true;
+    picker.innerHTML = "";
+  };
+
+  const openPicker = (anchor, it) => {
+    const picker = $("#qb-picker");
+    if (!picker) return;
+
+    picker.innerHTML = BUCKETS.map(b => {
+      const cur = it.time_bucket === b ? "is-current" : "";
+      return `<button class="qb-pick ${cur}" data-b="${b}" type="button">${BUCKET_LABEL[b] || b}</button>`;
+    }).join("");
+
+    // Position below the toggle pill, flush-left with it. If that
+    // would overflow the viewport on the right edge, slide left.
+    const r = anchor.getBoundingClientRect();
+    picker.hidden = false;
+    const pw = picker.offsetWidth;
+    const top = r.bottom + window.scrollY + 4;
+    let left = r.left + window.scrollX;
+    if (left + pw > window.innerWidth + window.scrollX - 8) {
+      left = Math.max(8, window.innerWidth + window.scrollX - pw - 8);
+    }
+    picker.style.top = `${top}px`;
+    picker.style.left = `${left}px`;
+
+    $$(".qb-pick", picker).forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const newBucket = btn.dataset.b;
+        closePicker();
+        if (newBucket === it.time_bucket) return;
+        setBucket(it, newBucket);
+      });
+    });
+  };
+
+  const setBucket = async (it, newBucket) => {
     try {
-      const r = await apiFetch(`/api/quick-bucket/${it.id}/cycle`, { method: "POST", body: "{}" });
-      it.time_bucket = r.time_bucket;
-      it.due_at = r.due_at || null;
-      // Bucket changed → reset the "already alerted" flag so a future
-      // overdue trip will alert again.
+      const r = await apiFetch(`/api/quick-bucket/${it.id}/update`, {
+        method: "POST", body: JSON.stringify({ time_bucket: newBucket }),
+      });
+      it.time_bucket = newBucket;
+      // The /update endpoint echoes the patch back; it includes the
+      // freshly-stamped due_at (or null for now/future).
+      if (r && r.patch && "due_at" in r.patch) it.due_at = r.patch.due_at;
+      else it.due_at = null;
+      // Re-arm overdue alerts for this row — the deadline is new.
       alerted.delete(it.id);
       render();
     } catch (err) {
@@ -256,5 +322,17 @@
     // user has been ignoring across sessions.
     items.forEach(it => { if (isOverdue(it)) alerted.add(it.id); });
     startTicker();
+
+    // Close the bucket picker when the user clicks anywhere outside it.
+    document.addEventListener("click", (e) => {
+      const picker = $("#qb-picker");
+      if (!picker || picker.hidden) return;
+      if (e.target.closest("#qb-picker")) return;
+      if (e.target.closest("button.qb-toggle")) return;
+      closePicker();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closePicker();
+    });
   });
 })();

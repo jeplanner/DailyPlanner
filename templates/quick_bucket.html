@@ -62,8 +62,7 @@
     letter-spacing: 0; text-transform: none;
   }
   .qb-group--now    .qb-group-head { color: #b91c1c; }
-  .qb-group--4h     .qb-group-head { color: #b45309; }
-  .qb-group--8h     .qb-group-head { color: #1d4ed8; }
+  .qb-group--today  .qb-group-head { color: #1d4ed8; }
   .qb-group--future .qb-group-head { color: #6b7280; }
 
   .qb-list {
@@ -110,9 +109,36 @@
   }
   .qb-toggle:hover { filter: brightness(1.05); }
   .qb-toggle--now    { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-  .qb-toggle--4h     { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-  .qb-toggle--8h     { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
   .qb-toggle--future { background: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
+  /* Hour buckets share an amber-to-blue ramp so closer deadlines pop
+     more than later ones. */
+  .qb-toggle--1h, .qb-toggle--2h { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+  .qb-toggle--3h, .qb-toggle--4h { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+  .qb-toggle--5h, .qb-toggle--6h { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+  .qb-toggle--7h, .qb-toggle--8h { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+
+  /* Picker popover — anchored under the clicked toggle pill. */
+  .qb-picker {
+    position: absolute; z-index: 100;
+    display: grid; grid-template-columns: repeat(5, minmax(46px, 1fr));
+    gap: 4px; padding: 6px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 10px; box-shadow: 0 8px 24px rgba(15,23,42,.18);
+    min-width: 240px;
+  }
+  .qb-pick {
+    padding: 6px 6px; font: inherit; font-size: 12px; font-weight: 700;
+    letter-spacing: .04em; text-transform: uppercase;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text-secondary);
+    border-radius: 6px; cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .qb-pick:hover { background: var(--color-surface-secondary, #f3f4f6); color: var(--color-text); }
+  .qb-pick.is-current {
+    background: var(--color-primary); color: var(--color-on-primary);
+    border-color: var(--color-primary);
+  }
   .qb-toggle--overdue {
     background: #ef4444; color: #fff; border-color: #ef4444;
     animation: qbPulse 1.6s ease-in-out infinite;
@@ -167,6 +193,8 @@
   <div id="qb-groups"></div>
   <div id="qb-empty" class="qb-empty" hidden>Nothing in the bucket — add one above.</div>
 </main>
+
+<div id="qb-picker" class="qb-picker" role="menu" hidden></div>
 
 <script>
   window.QB_BUCKETS = {{ buckets|tojson }};
