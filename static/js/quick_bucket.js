@@ -6,20 +6,31 @@
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const csrf = () => (document.querySelector('meta[name="csrf-token"]')?.content) || "";
 
-  const BUCKETS = window.QB_BUCKETS || ["now","1h","2h","3h","4h","5h","6h","7h","8h","future"];
+  const BUCKETS = window.QB_BUCKETS || [
+    "now",
+    "5m","15m","30m","45m",
+    "1h","2h","3h","4h","5h","6h","7h","8h",
+    "future",
+  ];
   const BUCKET_LABEL = {
     now: "Now",
+    "5m": "5M", "15m": "15M", "30m": "30M", "45m": "45M",
     "1h": "1H", "2h": "2H", "3h": "3H", "4h": "4H",
     "5h": "5H", "6h": "6H", "7h": "7H", "8h": "8H",
     future: "Future",
   };
-  // Hour buckets all live in one display group so the page doesn't
-  // sprout 10 headers; the pill on each row still shows the precise
-  // bucket and a live countdown.
+  // Minute + hour buckets all live in one display group so the page
+  // doesn't sprout 12+ headers; the pill on each row still shows the
+  // precise bucket and a live countdown.
   const VISIBLE_GROUPS = ["now", "today", "future"];
   const VISIBLE_GROUP_LABEL = { now: "Now", today: "Today", future: "Future" };
-  const HOUR_BUCKETS = new Set(["1h","2h","3h","4h","5h","6h","7h","8h"]);
-  const TICK_MS = 30_000;  // recompute countdowns twice a minute
+  const COUNTED_DOWN = new Set([
+    "5m","15m","30m","45m",
+    "1h","2h","3h","4h","5h","6h","7h","8h",
+  ]);
+  // Tighter cadence — with 5/15/30/45m options, a 30s tick is too slow
+  // to feel "live". 10s keeps the label moving without burning power.
+  const TICK_MS = 10_000;
 
   let items = [];
   // Tracks rows we've already alerted on so the toast / row pulse only
@@ -62,7 +73,7 @@
     return Math.round((due - new Date()) / 60000);
   };
 
-  const isCountedDown = (it) => HOUR_BUCKETS.has(it.time_bucket);
+  const isCountedDown = (it) => COUNTED_DOWN.has(it.time_bucket);
 
   // Toggle pill text — static for now/future, live countdown for 4h/8h.
   const toggleLabel = (it) => {

@@ -110,8 +110,11 @@
   .qb-toggle:hover { filter: brightness(1.05); }
   .qb-toggle--now    { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
   .qb-toggle--future { background: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
-  /* Hour buckets share an amber-to-blue ramp so closer deadlines pop
-     more than later ones. */
+  /* Minute buckets — tightest deadlines, deep red. */
+  .qb-toggle--5m, .qb-toggle--15m,
+  .qb-toggle--30m, .qb-toggle--45m { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+  /* Hour buckets — red → amber → green → blue ramp so closer
+     deadlines pop more than later ones at a glance. */
   .qb-toggle--1h, .qb-toggle--2h { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
   .qb-toggle--3h, .qb-toggle--4h { background: #fffbeb; color: #b45309; border-color: #fde68a; }
   .qb-toggle--5h, .qb-toggle--6h { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }

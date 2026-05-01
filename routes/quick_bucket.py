@@ -30,12 +30,19 @@ quick_bucket_bp = Blueprint("quick_bucket", __name__)
 
 # Buckets in display order. The pill on each row opens a popover that
 # shows every option, so the order here is what the user sees in the
-# picker — Now first, hour buckets ascending, Future last.
-BUCKETS = ["now", "1h", "2h", "3h", "4h", "5h", "6h", "7h", "8h", "future"]
+# picker — Now first, then minute buckets, then hour buckets, then
+# Future.
+BUCKETS = [
+    "now",
+    "5m", "15m", "30m", "45m",
+    "1h", "2h", "3h", "4h", "5h", "6h", "7h", "8h",
+    "future",
+]
 BUCKET_SET = set(BUCKETS)
 
-# Map an "Nh" bucket to its hour count. 'now' and 'future' have no
-# countdown; everything in between is a fresh deadline.
+# Map a deadline bucket to its delta. 'now' and 'future' have no
+# countdown; everything in between gets a fresh deadline.
+_MIN_BUCKETS = {"5m": 5, "15m": 15, "30m": 30, "45m": 45}
 _HOUR_BUCKETS = {f"{n}h": n for n in range(1, 9)}
 
 _MAX_TEXT_LEN = 500
@@ -55,10 +62,12 @@ def _next_bucket(cur):
 # changing 4h → 8h after 3h gives 8 fresh hours rather than 5 leftover
 # ones.
 def _due_at_for(bucket):
-    hours = _HOUR_BUCKETS.get(bucket)
-    if hours is None:
-        return None
-    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+    now = datetime.now(timezone.utc)
+    if bucket in _MIN_BUCKETS:
+        return (now + timedelta(minutes=_MIN_BUCKETS[bucket])).isoformat()
+    if bucket in _HOUR_BUCKETS:
+        return (now + timedelta(hours=_HOUR_BUCKETS[bucket])).isoformat()
+    return None
 
 
 # ─────────── page ─────────────────────────────────────────────
