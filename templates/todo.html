@@ -1720,6 +1720,32 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     }
     .em-view-btn svg { width: 14px; height: 14px; }
 
+    /* ── MOBILE: collapse Schedule/Delegate/Eliminate by default ──
+       Do is the only quadrant open on landing — answers "what now?"
+       without scrolling. Lower quadrants show their header (with
+       count + chevron) so the user can tap to expand. The header
+       handler already toggles .collapsed; we just supply the CSS
+       rule that controls visibility, and seed the class via JS on
+       page-load (mobile only). */
+    .em-quad-body.collapsed { display: none !important; }
+    .em-quad-header {
+      display: flex; align-items: center; gap: 8px;
+      cursor: pointer;
+    }
+    .em-quad-header::after {
+      content: "›"; margin-left: auto;
+      font-size: 18px; font-weight: 700;
+      color: var(--em-text2, #94a3b8);
+      transition: transform .18s;
+    }
+    .em-quad:has(.em-quad-body:not(.collapsed)) .em-quad-header::after {
+      transform: rotate(90deg);
+    }
+    @media (min-width: 721px) {
+      /* Desktop never auto-collapses — kill the chevron there. */
+      .em-quad-header::after { display: none; }
+    }
+
     /* ── COMPACT QUICK ADD ──────────────────────────────────
        Default state hides everything except the text input,
        quadrant select, the More-toggle (sliders icon), and the
@@ -1921,6 +1947,17 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   </section>
 
   <script>
+    // Mobile: collapse Schedule / Delegate / Eliminate by default so
+    // Do Now is the only band open on landing. Tapping a band's
+    // header toggles its body — the existing onclick on
+    // .em-quad-header already calls .em-quad-body.classList.toggle('collapsed').
+    (function () {
+      if (!window.matchMedia || !window.matchMedia("(max-width: 720px)").matches) return;
+      document.querySelectorAll(".em-quad:not(.q-do) .em-quad-body").forEach(b => {
+        b.classList.add("collapsed");
+      });
+    })();
+
     // View-mode toggle: persists user choice. List is the default —
     // a single ordered column from Do → Eliminate, easier to scan than
     // the 2x2 grid. Grid stays one click away for batch triage.
