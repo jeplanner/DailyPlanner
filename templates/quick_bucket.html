@@ -333,6 +333,37 @@
     font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
     color: var(--color-text-secondary);
   }
+  .qb-pomo-label-input {
+    flex: 1 1 160px; min-width: 0; max-width: 240px;
+    padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600;
+    border: 1px dashed var(--color-border); border-radius: 8px;
+    background: transparent; color: var(--color-text);
+    transition: background .12s, border-color .12s, box-shadow .12s;
+  }
+  .qb-pomo-label-input::placeholder { color: var(--color-text-secondary); font-weight: 500; }
+  .qb-pomo-label-input:hover:not(:disabled) {
+    border-color: var(--color-text-tertiary, #9ca3af);
+  }
+  .qb-pomo-label-input:focus {
+    outline: none; border-style: solid;
+    border-color: var(--color-primary);
+    background: var(--color-surface);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .qb-pomo-label-input:disabled { opacity: .7; cursor: default; }
+  .qb-pomo-label-input.is-empty-flash {
+    border-color: #ef4444 !important; background: #fef2f2;
+    animation: qbShake .35s ease-in-out;
+  }
+  @keyframes qbShake {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-3px); }
+    75%      { transform: translateX(3px); }
+  }
+  .qb-pomo.is-running .qb-pomo-label-input {
+    border-color: rgba(99,102,241,.3); border-style: solid;
+    color: #4338ca;
+  }
 </style>
 </head>
 <body>
@@ -349,7 +380,10 @@
   </header>
 
   <section class="qb-pomo" id="qb-pomo" aria-label="Pomodoro timer">
-    <span class="qb-pomo-label">Focus</span>
+    <input class="qb-pomo-label-input" id="qb-pomo-label-input"
+           type="text" maxlength="200"
+           placeholder="What are you focusing on?"
+           autocomplete="off">
     <div class="qb-pomo-time" id="qb-pomo-time">25:00</div>
     <div class="qb-pomo-controls">
       <button class="qb-pomo-icon qb-pomo-icon--primary" id="qb-pomo-play" type="button" title="Start">

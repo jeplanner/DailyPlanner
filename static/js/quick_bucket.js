@@ -562,12 +562,23 @@
     root.classList.toggle("is-running", playing);
     root.classList.toggle("is-ended", pomo.state === "ended");
 
-    // Label area: shows "Focus" when no title is set, or the activity
-    // title once the user has picked one. Truncate long titles in CSS.
-    const lbl = $(".qb-pomo-label", root);
-    if (lbl) {
-      lbl.textContent = pomo.label || "Focus";
-      lbl.title = pomo.label || "Focus session";
+    // Label input: keep it disabled while running so the title can't
+    // change mid-session, but don't clobber the user's typing when
+    // they're getting ready to start.
+    const lblInput = $("#qb-pomo-label-input");
+    if (lblInput) {
+      if (playing) {
+        lblInput.value = pomo.label || "";
+        lblInput.disabled = true;
+      } else {
+        lblInput.disabled = false;
+        // Only refresh value from state when it differs from what
+        // the user is typing (e.g. on reset/end we clear it).
+        const desired = pomo.label || "";
+        if (document.activeElement !== lblInput && lblInput.value !== desired) {
+          lblInput.value = desired;
+        }
+      }
     }
 
     $$(".qb-pomo-dur").forEach(b => {
@@ -600,14 +611,23 @@
   const pomoStart = async () => {
     if (pomo.state === "running") return;
 
-    // First-time start → ask the user what they're focusing on. Resuming
-    // from a paused session (label already set) skips the prompt so the
-    // play/pause toggle stays one-tap.
+    // First-time start → require a title from the inline input. Resuming
+    // a paused session (label already set) skips this so the play/pause
+    // toggle stays one-tap.
     const isResume = pomo.state === "paused" && !!pomo.label;
     if (!isResume) {
-      const suggested = pomo.label || "";
-      const title = (window.prompt("What are you focusing on?", suggested) || "").trim();
-      if (!title) return;  // user cancelled — don't start
+      const lblInput = $("#qb-pomo-label-input");
+      const title = ((lblInput && lblInput.value) || "").trim();
+      if (!title) {
+        // No title yet → flash the input and focus it instead of starting.
+        if (lblInput) {
+          lblInput.focus();
+          lblInput.classList.add("is-empty-flash");
+          setTimeout(() => lblInput.classList.remove("is-empty-flash"), 400);
+        }
+        toast("Type what you're focusing on first", "info");
+        return;
+      }
       pomo.label = title.slice(0, 200);
     }
 
@@ -764,6 +784,13 @@
     $("#qb-pomo-reset").addEventListener("click", pomoReset);
     $$(".qb-pomo-dur").forEach(b => {
       b.addEventListener("click", () => pomoSetDuration(Number(b.dataset.min)));
+    });
+    // Pressing Enter in the title field starts the timer — saves a tap.
+    $("#qb-pomo-label-input")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && pomo.state !== "running") {
+        e.preventDefault();
+        pomoStart();
+      }
     });
   };
 
