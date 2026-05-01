@@ -170,6 +170,64 @@
     background: var(--color-surface); border: 1px dashed var(--color-border);
     border-radius: 12px;
   }
+
+  /* ── Pomodoro widget ──────────────────────────────────── */
+  .qb-pomo {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+    transition: box-shadow .2s, background .2s;
+  }
+  .qb-pomo.is-running {
+    box-shadow: 0 0 0 2px rgba(99,102,241,.35), 0 1px 3px rgba(15,23,42,.04);
+  }
+  .qb-pomo.is-ended {
+    background: linear-gradient(90deg, #fef3c7, transparent 70%);
+    border-color: #fbbf24;
+  }
+  .qb-pomo-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 28px; font-weight: 800; letter-spacing: -.02em;
+    min-width: 92px; color: var(--color-text);
+  }
+  .qb-pomo.is-running .qb-pomo-time { color: #4338ca; }
+  .qb-pomo.is-ended   .qb-pomo-time { color: #92400e; }
+  .qb-pomo-controls { display: inline-flex; gap: 6px; }
+  .qb-pomo-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: 999px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text); cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .qb-pomo-icon svg { width: 16px; height: 16px; }
+  .qb-pomo-icon:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  .qb-pomo-icon--primary {
+    background: var(--color-primary); color: var(--color-on-primary);
+    border-color: var(--color-primary);
+  }
+  .qb-pomo-icon--primary:hover {
+    background: var(--color-primary-hover); border-color: var(--color-primary-hover);
+  }
+  .qb-pomo-presets {
+    display: inline-flex; gap: 4px; margin-left: auto; flex-wrap: wrap;
+  }
+  .qb-pomo-dur {
+    padding: 4px 10px; border-radius: 999px;
+    font: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text-secondary); cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .qb-pomo-dur:hover { background: var(--color-surface-secondary, #f3f4f6); color: var(--color-text); }
+  .qb-pomo-dur.is-current {
+    background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
+  }
+  .qb-pomo-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
 </style>
 </head>
 <body>
@@ -184,6 +242,25 @@
     <h1>Tasks Bucket</h1>
     <p class="qb-sub">Quick add. Toggle when. Done when done.</p>
   </header>
+
+  <section class="qb-pomo" id="qb-pomo" aria-label="Pomodoro timer">
+    <span class="qb-pomo-label">Focus</span>
+    <div class="qb-pomo-time" id="qb-pomo-time">25:00</div>
+    <div class="qb-pomo-controls">
+      <button class="qb-pomo-icon qb-pomo-icon--primary" id="qb-pomo-play" type="button" title="Start">
+        <i data-feather="play"></i>
+      </button>
+      <button class="qb-pomo-icon" id="qb-pomo-reset" type="button" title="Reset">
+        <i data-feather="rotate-ccw"></i>
+      </button>
+    </div>
+    <div class="qb-pomo-presets">
+      <button class="qb-pomo-dur" data-min="15" type="button">15m</button>
+      <button class="qb-pomo-dur is-current" data-min="25" type="button">25m</button>
+      <button class="qb-pomo-dur" data-min="50" type="button">50m</button>
+      <button class="qb-pomo-dur" data-min="90" type="button">90m</button>
+    </div>
+  </section>
 
   <form id="qb-add-form" class="qb-add" autocomplete="off">
     <input id="qb-add-input" type="text" placeholder="What needs doing? Press Enter to add."

@@ -277,6 +277,201 @@
     }
   };
 
+  // ─────────── Pomodoro timer ───────────────────────────────
+  //
+  // State machine: idle → running → (paused | ended). Reset goes back
+  // to idle. Persisted to localStorage so a refresh mid-session keeps
+  // ticking. We store the absolute end timestamp while running, so
+  // closing the tab and re-opening it resyncs to wall-clock time.
+
+  const POMO_KEY = "qb-pomo-v1";
+  const POMO_TICK_MS = 500;
+  const POMO_PRESETS = [15, 25, 50, 90];
+  const POMO_DEFAULT_MIN = 25;
+  const PAGE_TITLE = "Tasks Bucket — DailyPlanner";
+
+  let pomo = {
+    durationMins: POMO_DEFAULT_MIN,
+    state: "idle",                                    // idle | running | paused | ended
+    endsAt: null,                                     // ms timestamp; only set when running
+    remaining: POMO_DEFAULT_MIN * 60 * 1000,          // ms; valid when paused/idle
+  };
+  let pomoTimer = null;
+
+  const loadPomo = () => {
+    try {
+      const raw = localStorage.getItem(POMO_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved === "object") Object.assign(pomo, saved);
+    } catch (_) { /* corrupt → keep defaults */ }
+  };
+  const savePomo = () => {
+    try { localStorage.setItem(POMO_KEY, JSON.stringify(pomo)); } catch (_) {}
+  };
+
+  const pomoMsRemaining = () => {
+    if (pomo.state === "running" && pomo.endsAt) {
+      return Math.max(0, pomo.endsAt - Date.now());
+    }
+    return Math.max(0, pomo.remaining || 0);
+  };
+
+  const fmtClock = (ms) => {
+    const totalSec = Math.ceil(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
+
+  const renderPomo = () => {
+    const root = $("#qb-pomo");
+    if (!root) return;
+    const ms = pomoMsRemaining();
+    $("#qb-pomo-time").textContent = fmtClock(ms);
+
+    const playBtn = $("#qb-pomo-play");
+    const playing = pomo.state === "running";
+    playBtn.innerHTML = `<i data-feather="${playing ? "pause" : "play"}"></i>`;
+    playBtn.title = playing ? "Pause" : (pomo.state === "paused" ? "Resume" : "Start");
+
+    root.classList.toggle("is-running", playing);
+    root.classList.toggle("is-ended", pomo.state === "ended");
+
+    $$(".qb-pomo-dur").forEach(b => {
+      b.classList.toggle("is-current", Number(b.dataset.min) === pomo.durationMins);
+    });
+
+    // Tab title: keep the countdown visible when the page is in the
+    // background. Restore on idle/paused/ended.
+    if (playing) {
+      document.title = `${fmtClock(ms)} • Pomodoro`;
+    } else {
+      document.title = PAGE_TITLE;
+    }
+
+    refreshFeather();
+
+    // Phase ended while running → fire once.
+    if (playing && ms <= 0) pomoEnd();
+  };
+
+  const startPomoTicker = () => {
+    if (pomoTimer) clearInterval(pomoTimer);
+    pomoTimer = setInterval(renderPomo, POMO_TICK_MS);
+  };
+  const stopPomoTicker = () => {
+    if (pomoTimer) { clearInterval(pomoTimer); pomoTimer = null; }
+  };
+
+  const pomoStart = () => {
+    if (pomo.state === "running") return;
+    const ms = pomo.state === "paused"
+      ? Math.max(0, pomo.remaining)
+      : pomo.durationMins * 60 * 1000;
+    if (ms <= 0) {
+      // Resuming a finished timer → restart fresh.
+      pomo.remaining = pomo.durationMins * 60 * 1000;
+    }
+    pomo.state = "running";
+    pomo.endsAt = Date.now() + (pomo.remaining > 0 ? pomo.remaining : pomo.durationMins * 60 * 1000);
+    pomo.remaining = pomo.endsAt - Date.now();
+    savePomo();
+    startPomoTicker();
+    renderPomo();
+  };
+
+  const pomoPause = () => {
+    if (pomo.state !== "running") return;
+    pomo.remaining = Math.max(0, pomo.endsAt - Date.now());
+    pomo.state = "paused";
+    pomo.endsAt = null;
+    savePomo();
+    stopPomoTicker();
+    renderPomo();
+  };
+
+  const pomoToggle = () => {
+    if (pomo.state === "running") pomoPause();
+    else pomoStart();
+  };
+
+  const pomoReset = () => {
+    pomo.state = "idle";
+    pomo.endsAt = null;
+    pomo.remaining = pomo.durationMins * 60 * 1000;
+    savePomo();
+    stopPomoTicker();
+    renderPomo();
+  };
+
+  const pomoSetDuration = (mins) => {
+    pomo.durationMins = mins;
+    // If we're idle/ended, snap the visible clock to the new length.
+    // Don't reach into a running session — it'll keep its current end.
+    if (pomo.state !== "running") {
+      pomo.remaining = mins * 60 * 1000;
+      pomo.state = "idle";
+      pomo.endsAt = null;
+    }
+    savePomo();
+    renderPomo();
+  };
+
+  const pomoEnd = () => {
+    pomo.state = "ended";
+    pomo.remaining = 0;
+    pomo.endsAt = null;
+    savePomo();
+    stopPomoTicker();
+    pomoBeep();
+    toast(`✅ ${pomo.durationMins}-minute focus complete`, "success");
+    if ("Notification" in window && Notification.permission === "granted") {
+      try { new Notification("Pomodoro done", { body: `${pomo.durationMins}-minute focus complete` }); } catch (_) {}
+    }
+    renderPomo();
+  };
+
+  // Short tone via Web Audio — no audio file dependency.
+  const pomoBeep = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const beepAt = (freq, t0, dur = 0.18) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime + t0);
+        gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + t0 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t0 + dur);
+        osc.start(ctx.currentTime + t0);
+        osc.stop(ctx.currentTime + t0 + dur + 0.02);
+      };
+      // Two-note chime so the end is distinct from the deadline alert.
+      beepAt(880, 0);
+      beepAt(1320, 0.22);
+      setTimeout(() => ctx.close(), 800);
+    } catch (_) {}
+  };
+
+  const wirePomo = () => {
+    $("#qb-pomo-play").addEventListener("click", () => {
+      pomoToggle();
+      // First user gesture is a good moment to ask for Notification
+      // permission so the end-of-Pomodoro notification can fire.
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    });
+    $("#qb-pomo-reset").addEventListener("click", pomoReset);
+    $$(".qb-pomo-dur").forEach(b => {
+      b.addEventListener("click", () => pomoSetDuration(Number(b.dataset.min)));
+    });
+  };
+
   // ─────────── countdown ticker + overdue alerts ────────────
 
   const fireOverdueAlert = (it) => {
@@ -318,6 +513,22 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     refreshFeather();
+
+    // Pomodoro: hydrate from localStorage. If the timer was running
+    // when the user closed the tab, the absolute end timestamp picks
+    // up where they left off (or fires the end immediately if the
+    // session has already elapsed).
+    loadPomo();
+    wirePomo();
+    if (pomo.state === "running") {
+      if (pomo.endsAt && pomo.endsAt > Date.now()) {
+        startPomoTicker();
+      } else {
+        pomoEnd();
+      }
+    }
+    renderPomo();
+
     const form = $("#qb-add-form");
     const input = $("#qb-add-input");
     form.addEventListener("submit", async (e) => {
