@@ -75,53 +75,79 @@
   <!-- ═══════════ DAILY VIEW — Morning Dashboard ═══════════ -->
   {% if view == "daily" %}
 
-  <!-- Legacy title row — hidden on mobile, still used on desktop -->
-  <div class="md-title-row">
-    <h1 class="sum-title">{{ date.strftime("%A, %B %d") }}</h1>
-    {% if is_today %}<span class="md-today-pill">Today</span>{% endif %}
-  </div>
-
   {% set c = dashboard.counts %}
-  <p class="md-hero">
-    {% if c.meetings + c.tasks == 0 and c.habits == 0 and c.overdue == 0 %}
-      Nothing scheduled — a clean slate.
-    {% else %}
-      {% if c.meetings %}<b>{{ c.meetings }}</b> meeting{{ '' if c.meetings == 1 else 's' }}{% endif %}
-      {% if c.meetings and c.tasks %} · {% endif %}
-      {% if c.tasks %}<b>{{ c.tasks }}</b> task{{ '' if c.tasks == 1 else 's' }}{% endif %}
-      {% if (c.meetings or c.tasks) and c.habits %} · {% endif %}
-      {% if c.habits %}<b>{{ c.habits_done }}/{{ c.habits }}</b> habits{% endif %}
-      {% if c.overdue %} · <span class="md-hero-overdue">{{ c.overdue }} overdue</span>{% endif %}
-    {% endif %}
-  </p>
-
-  <!-- Mobile-first greeting + date. Desktop hides this via CSS-inherited
-       mobile-only styling (the greeting is shown only at ≤ 640px).
-       Title and date sit on one row to keep the chrome tight. -->
-  <header class="md-greeting">
-    <h1 class="md-greet-title" id="md-greet-title">Good morning</h1>
-    <p class="md-greet-date">
-      {{ date.strftime("%a, %b %d") }}{% if is_today %} · <span class="md-today-tag">Today</span>{% endif %}
-    </p>
-  </header>
-
-  <!-- Progress at a glance: a single bar driven by today's items only.
-       Habits aren't counted toward task completion since they have their
-       own lifecycle (value vs. goal). -->
   {% set _today_items = dashboard.today_items %}
   {% set _total = _today_items|length %}
   {% set _done = _today_items|selectattr('done')|list|length %}
-  <section class="md-progress-card" aria-label="Today's progress">
-    {% if _total %}
-      <div class="md-progress-track" role="progressbar"
-           aria-valuemin="0" aria-valuemax="{{ _total }}" aria-valuenow="{{ _done }}">
-        <div class="md-progress-fill" style="width: {{ ((_done / _total) * 100)|round(0, 'floor') }}%;"></div>
-      </div>
-      <p class="md-progress-label"><b>{{ _done }}</b> of <b>{{ _total }}</b> done today</p>
-    {% else %}
-      <p class="md-progress-empty">Nothing scheduled yet — a clean slate.</p>
-    {% endif %}
-  </section>
+
+  <!-- ── COMPACT HEADER ───────────────────────────────────────
+       One row: greeting + date + a single progress bar with the
+       total count as a fraction. Replaces the previous stack of
+       title-row / hero line / mobile greeting / standalone
+       progress-card — same info, ~70% less vertical space. -->
+  <header class="md-tight-header">
+    <div class="md-tight-meta">
+      <h1 class="md-tight-greet" id="md-greet-title">Good morning</h1>
+      <p class="md-tight-date">
+        {{ date.strftime("%a, %b %d") }}{% if is_today %} · <span class="md-today-tag">Today</span>{% endif %}
+        {% if c.overdue %} · <span class="md-hero-overdue">{{ c.overdue }} overdue</span>{% endif %}
+      </p>
+    </div>
+    <div class="md-tight-progress" aria-label="Today's progress">
+      {% if _total %}
+        <div class="md-progress-track" role="progressbar"
+             aria-valuemin="0" aria-valuemax="{{ _total }}" aria-valuenow="{{ _done }}">
+          <div class="md-progress-fill" style="width: {{ ((_done / _total) * 100)|round(0, 'floor') }}%;"></div>
+        </div>
+        <span class="md-tight-count"><b>{{ _done }}</b>/<b>{{ _total }}</b> done</span>
+      {% else %}
+        <span class="md-tight-count md-tight-count--empty">Clean slate</span>
+      {% endif %}
+    </div>
+  </header>
+  <style>
+    .md-tight-header {
+      display: grid; grid-template-columns: 1fr auto;
+      align-items: center; gap: 12px;
+      padding: 4px 0 12px;
+    }
+    .md-tight-meta { min-width: 0; }
+    .md-tight-greet {
+      font-size: 18px; font-weight: 800; margin: 0; line-height: 1.2;
+      letter-spacing: -.01em;
+    }
+    .md-tight-date {
+      margin: 2px 0 0; font-size: 12.5px; color: var(--color-text-secondary, #475569);
+    }
+    .md-today-tag {
+      font-weight: 700; color: var(--color-primary, #4338ca);
+    }
+    .md-hero-overdue { font-weight: 700; color: #b91c1c; }
+    .md-tight-progress {
+      display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+      min-width: 130px;
+    }
+    .md-tight-progress .md-progress-track {
+      width: 130px; height: 6px;
+      background: var(--color-surface-secondary, #f3f4f6);
+      border-radius: 999px; overflow: hidden;
+    }
+    .md-tight-progress .md-progress-fill {
+      height: 100%; background: linear-gradient(90deg, #6366f1, #10b981);
+      transition: width .4s ease;
+    }
+    .md-tight-count {
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      color: var(--color-text-secondary, #475569);
+    }
+    .md-tight-count--empty { font-style: italic; font-weight: 500; }
+    @media (max-width: 520px) {
+      .md-tight-progress { min-width: 100px; }
+      .md-tight-progress .md-progress-track { width: 100px; }
+    }
+    /* Hide the legacy stacked headers entirely — replaced by the tight one. */
+    .md-title-row, .md-hero, .md-greeting, .md-progress-card { display: none !important; }
+  </style>
 
   <script>
   /* Time-of-day greeting — runs once on paint. */
@@ -293,7 +319,42 @@
 
   <!-- ── TODAY'S AGENDA ── meetings + tasks in chronological order.
        Habits are now their own card below. -->
-  <details class="md-card md-agenda-card md-collapsible" data-card-id="agenda" aria-labelledby="md-agenda-title">
+  <!-- Filter chips: live OUTSIDE the collapsible cards so they're
+       always visible regardless of card open/closed state. They
+       drive client-side filtering of the agenda + habits cards via
+       body[data-md-filter]. -->
+  {% if dashboard.today_items or dashboard.habits %}
+  {% set _bucket_n = dashboard.today_items|selectattr('source','equalto','bucket')|list|length %}
+  {% set _meet_n   = dashboard.today_items|selectattr('type','equalto','meeting')|list|length %}
+  {% set _task_n   = dashboard.today_items|selectattr('type','equalto','task')|list|length %}
+  <div class="md-filter-chips md-filter-chips--top" role="tablist" aria-label="Filter today's items">
+    <button class="md-chip is-active" data-filter="all" type="button" role="tab" aria-selected="true">
+      All <span class="md-chip-count">{{ dashboard.today_items|length + (dashboard.habits|length) }}</span>
+    </button>
+    {% if _meet_n %}
+    <button class="md-chip" data-filter="meeting" type="button" role="tab">
+      Meetings <span class="md-chip-count">{{ _meet_n }}</span>
+    </button>
+    {% endif %}
+    {% if _task_n %}
+    <button class="md-chip" data-filter="task" type="button" role="tab">
+      Tasks <span class="md-chip-count">{{ _task_n }}</span>
+    </button>
+    {% endif %}
+    {% if _bucket_n %}
+    <button class="md-chip md-chip--bucket" data-filter="bucket" type="button" role="tab">
+      Bucket <span class="md-chip-count">{{ _bucket_n }}</span>
+    </button>
+    {% endif %}
+    {% if dashboard.habits %}
+    <button class="md-chip" data-filter="habit" type="button" role="tab">
+      Habits <span class="md-chip-count">{{ dashboard.habits|length }}</span>
+    </button>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <details class="md-card md-agenda-card md-collapsible" data-card-id="agenda" aria-labelledby="md-agenda-title" open>
     <summary class="md-card-head">
       <h2 class="md-card-title" id="md-agenda-title">
         <span class="md-card-icon md-agenda-icon"><i data-feather="sun"></i></span>
@@ -310,35 +371,6 @@
     <div class="md-card-body">
 
     {% if dashboard.today_items %}
-    <!-- Filter chips: client-side filter for the unified timeline. -->
-    {% set _bucket_n = dashboard.today_items|selectattr('source','equalto','bucket')|list|length %}
-    {% set _meet_n   = dashboard.today_items|selectattr('type','equalto','meeting')|list|length %}
-    {% set _task_n   = dashboard.today_items|selectattr('type','equalto','task')|list|length %}
-    <div class="md-filter-chips" role="tablist" aria-label="Filter today's items">
-      <button class="md-chip is-active" data-filter="all" type="button" role="tab" aria-selected="true">
-        All <span class="md-chip-count">{{ dashboard.today_items|length + (dashboard.habits|length) }}</span>
-      </button>
-      {% if _meet_n %}
-      <button class="md-chip" data-filter="meeting" type="button" role="tab">
-        Meetings <span class="md-chip-count">{{ _meet_n }}</span>
-      </button>
-      {% endif %}
-      {% if _task_n %}
-      <button class="md-chip" data-filter="task" type="button" role="tab">
-        Tasks <span class="md-chip-count">{{ _task_n }}</span>
-      </button>
-      {% endif %}
-      {% if _bucket_n %}
-      <button class="md-chip md-chip--bucket" data-filter="bucket" type="button" role="tab">
-        Bucket <span class="md-chip-count">{{ _bucket_n }}</span>
-      </button>
-      {% endif %}
-      {% if dashboard.habits %}
-      <button class="md-chip" data-filter="habit" type="button" role="tab">
-        Habits <span class="md-chip-count">{{ dashboard.habits|length }}</span>
-      </button>
-      {% endif %}
-    </div>
     <div class="md-table-wrap" role="region" aria-label="Today's flow">
       <table class="md-table md-agenda-table">
         <thead>
@@ -442,6 +474,12 @@
     .md-filter-chips {
       display: flex; gap: 6px; flex-wrap: wrap;
       padding: 8px 14px 4px; margin: 0;
+    }
+    /* When chips live outside the agenda card (the new top-of-page
+       placement) they don't need internal padding — let them sit
+       flush with the surrounding section. */
+    .md-filter-chips--top {
+      padding: 0 0 12px;
     }
     .md-chip {
       display: inline-flex; align-items: center; gap: 6px;
