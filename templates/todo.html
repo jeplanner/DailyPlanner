@@ -1284,20 +1284,6 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     </div>
   </div>
 
-  <!-- ═══════════ DAILY MOTIVATIONAL QUOTE ═══════════
-       Deterministic by date so it's stable all day; the 🔄 button
-       on the right reshuffles to any of ~40 curated quotes. -->
-  <section class="em-quote" id="em-quote-hero" aria-live="polite">
-    <div class="em-quote-mark" aria-hidden="true">“</div>
-    <blockquote class="em-quote-body">
-      <p class="em-quote-text" id="em-quote-text">Loading…</p>
-      <footer class="em-quote-author" id="em-quote-author"></footer>
-    </blockquote>
-    <button type="button" class="em-quote-shuffle" onclick="shuffleQuote()" title="New quote" aria-label="Show another quote">
-      <i data-feather="refresh-cw"></i>
-    </button>
-  </section>
-
   <!-- Active filter chips (shown only when filters are applied) -->
   <div id="em-filter-chips" class="em-filter-chips" style="display:none;"></div>
 
@@ -1414,7 +1400,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
      On narrow screens the flex row wraps; the order stays consistent
      so muscle-memory survives the wrap.
      ════════════════════════════════════════════════════════════════ #}
-  <div class="em-quick-add">
+  <div class="em-quick-add em-qa-compact" id="em-quick-add">
     <input type="text" id="quick-task" class="em-quick-input" placeholder="Add a task…" onkeydown="if(event.key==='Enter')quickAdd()">
 
     <select id="quick-quad" class="em-quad-select" title="Eisenhower quadrant">
@@ -1424,26 +1410,34 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
       <option value="eliminate">⚪ Eliminate</option>
     </select>
 
-    <select id="quick-priority" class="em-quad-select" title="Priority">
+    {# ── More toggle: reveals advanced compose fields. Default is
+         compact (text + quadrant + Add) — most adds need only those. #}
+    <button type="button" class="em-action-btn em-qa-more"
+            onclick="document.getElementById('em-quick-add').classList.toggle('em-qa-compact')"
+            title="More options" aria-label="More options">
+      <i data-feather="sliders" style="width:14px;height:14px"></i>
+    </button>
+
+    <select id="quick-priority" class="em-quad-select em-qa-advanced" title="Priority">
       <option value="high">🔴 High</option>
       <option value="medium" selected>🟠 Medium</option>
       <option value="low">🟢 Low</option>
     </select>
 
     {# ── Context fields — shown inline, reveal per-quadrant ── #}
-    <div id="extra-do" class="em-extra-inline" style="display:none;">
+    <div id="extra-do" class="em-extra-inline em-qa-advanced" style="display:none;">
       <input type="time" id="quick-do-time" class="em-extra-input" step="300" title="Time of day" aria-label="Time">
     </div>
-    <div id="extra-schedule" class="em-extra-inline" style="display:none;">
+    <div id="extra-schedule" class="em-extra-inline em-qa-advanced" style="display:none;">
       <input type="date" id="quick-due" class="em-extra-input" title="Due date" aria-label="Due date">
     </div>
-    <div id="extra-delegate" class="em-extra-inline" style="display:none;">
+    <div id="extra-delegate" class="em-extra-inline em-qa-advanced" style="display:none;">
       <input type="text" id="quick-delegate" class="em-extra-input" placeholder="Delegate to…" maxlength="25" aria-label="Delegate to">
       <input type="date" id="quick-delegate-due" class="em-extra-input" title="Due date" aria-label="Due date">
     </div>
 
-    {# ── Recurrence — always visible, single-line 🔁 picker ── #}
-    <select id="quick-recurrence" class="em-quad-select" title="Repeat — once, daily, weekly or monthly" aria-label="Repeat">
+    {# ── Recurrence ── #}
+    <select id="quick-recurrence" class="em-quad-select em-qa-advanced" title="Repeat — once, daily, weekly or monthly" aria-label="Repeat">
       <option value="">🔁 Once</option>
       <option value="daily">🔁 Daily</option>
       <option value="weekly">🔁 Weekly</option>
@@ -1462,7 +1456,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     {# Multi-select project picker (Todoist-style popover). Selecting
        multiple projects creates one task per project. "(No project)"
        creates a single task with no project link. #}
-    <div class="em-proj-picker" id="em-proj-picker">
+    <div class="em-proj-picker em-qa-advanced" id="em-proj-picker">
       <button type="button" class="em-quad-select em-proj-trigger" id="em-proj-trigger"
               onclick="toggleProjPicker(event)"
               aria-haspopup="listbox" aria-expanded="false">
@@ -1493,7 +1487,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
 
     {# ── Primary action LAST: "Add" commits the compose. ── #}
     <button class="em-add-btn" onclick="quickAdd()">Add</button>
-    <button class="em-action-btn" id="em-voice-mic" onclick="startBulkVoice()" title="Voice / Bulk add" style="padding:8px;" aria-label="Voice / Bulk add">
+    <button class="em-action-btn em-qa-advanced" id="em-voice-mic" onclick="startBulkVoice()" title="Voice / Bulk add" style="padding:8px;" aria-label="Voice / Bulk add">
       <i data-feather="mic" style="width:14px;height:14px"></i>
     </button>
   </div>
@@ -1713,6 +1707,58 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     }
     .em-view-btn svg { width: 14px; height: 14px; }
 
+    /* ── COMPACT QUICK ADD ──────────────────────────────────
+       Default state hides everything except the text input,
+       quadrant select, the More-toggle (sliders icon), and the
+       Add button. Tap the toggle to reveal priority / due /
+       project / recurrence / mic.
+       This drops the compose row from ~10 visible controls to
+       just 4, so Do Now is on-screen the moment the user lands. */
+    .em-quick-add.em-qa-compact .em-qa-advanced {
+      display: none !important;
+    }
+    .em-qa-more {
+      padding: 6px 10px !important;
+      background: var(--em-surface, #fff) !important;
+      color: var(--em-text2, #475569) !important;
+    }
+    .em-qa-more:hover {
+      background: var(--em-surface-secondary, #f3f4f6) !important;
+    }
+    .em-quick-add:not(.em-qa-compact) .em-qa-more {
+      background: var(--color-primary, #4338ca) !important;
+      color: #fff !important;
+    }
+
+    /* ── COMPACT HEADER ─────────────────────────────────────
+       Smaller h1, tighter date nav so the matrix is the first
+       thing the eye lands on. */
+    .em-header h1 {
+      font-size: 18px !important;
+      font-weight: 700 !important;
+      margin: 0 !important;
+      letter-spacing: -.01em;
+    }
+    .em-header {
+      padding-bottom: 8px !important;
+      margin-bottom: 8px !important;
+      gap: 10px !important;
+    }
+    .em-date-nav { gap: 4px !important; }
+
+    /* Compact quote (now at the bottom of the page). The original
+       full-bleed hero was nice but ate the top fold. Same content,
+       lighter footprint. */
+    .em-quote.em-quote-compact {
+      margin-top: 18px;
+      padding: 14px 18px !important;
+      gap: 10px;
+    }
+    .em-quote.em-quote-compact .em-quote-mark { font-size: 36px !important; line-height: 1; opacity: .35; }
+    .em-quote.em-quote-compact .em-quote-text { font-size: 13.5px !important; line-height: 1.45 !important; }
+    .em-quote.em-quote-compact .em-quote-author { font-size: 10.5px !important; }
+    .em-quote.em-quote-compact .em-quote-shuffle { width: 32px !important; height: 32px !important; }
+
     /* ── LIST VIEW (default) ─────────────────────────────────
        The matrix becomes a single vertical column. Each quadrant
        is its own card; tasks within get visual hierarchy so the
@@ -1803,6 +1849,21 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     </div>
     {% endfor %}
   </div>
+
+  <!-- ═══════════ DAILY MOTIVATIONAL QUOTE ═══════════
+       Moved BELOW the matrix so the user lands on Do Now first —
+       a daily nudge is great as a closing thought, not as a banner
+       between the user and their action items. -->
+  <section class="em-quote em-quote-compact" id="em-quote-hero" aria-live="polite">
+    <div class="em-quote-mark" aria-hidden="true">“</div>
+    <blockquote class="em-quote-body">
+      <p class="em-quote-text" id="em-quote-text">Loading…</p>
+      <footer class="em-quote-author" id="em-quote-author"></footer>
+    </blockquote>
+    <button type="button" class="em-quote-shuffle" onclick="shuffleQuote()" title="New quote" aria-label="Show another quote">
+      <i data-feather="refresh-cw"></i>
+    </button>
+  </section>
 
   <script>
     // View-mode toggle: persists user choice. List is the default —
