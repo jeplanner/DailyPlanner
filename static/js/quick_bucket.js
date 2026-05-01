@@ -864,14 +864,14 @@
 
     // ── Mic: dictate a task with the Web Speech API ─────────
     // Three ways the dictation auto-commits as a task:
-    //   1. 5 s of silence (you stopped talking) → commit
+    //   1. 3 s of silence (you stopped talking) → commit
     //   2. you say "add" / "save" / "done" / "stop" at the end → strip
     //      that word and commit
     //   3. tap the mic button manually → text stays in the input for
     //      review (you commit by pressing Enter / tapping Add).
     // Resume after a pause: tap the mic again, your next words append
     // to whatever is already in the input.
-    const SILENCE_STOP_MS = 5_000;
+    const SILENCE_STOP_MS = 3_000;
     const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
     const micBtn = $("#qb-mic-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -882,13 +882,21 @@
       let recognition = null;
       let recognizing = false;
       let silenceTimer = null;
-      // baseValue = everything finalised so far (preserved across
-      // result events so we don't double-add). interim = the partial
-      // transcript currently being recognised. stopReason tells the
-      // onend handler whether to auto-commit or just leave the input
-      // alone.
-      let baseValue = "";
+      // initialBase = the input value when this dictation session
+      // started — preserved so pause/resume appends instead of replacing.
+      // finalsByIndex tracks the latest finalised transcript for each
+      // result slot. This handles two engine quirks at once:
+      //   * Spec-compliant engines: each utterance gets its own
+      //     index, all kept and joined.
+      //   * Cumulative engines (Samsung Internet does this): every
+      //     new "final" at the same/successive indexes contains the
+      //     entire phrase so far. We dedupe with prefix-match below
+      //     so "plan", "plan for", "plan for next" collapses to the
+      //     longest value, not three concatenated copies.
+      let initialBase = "";
+      const finalsByIndex = new Map();
       let interimText = "";
+      let baseValue = "";
       let stopReason = null; // 'silence' | 'voice' | 'manual'
 
       const clearSilenceTimer = () => {
@@ -903,6 +911,36 @@
           }
         }, SILENCE_STOP_MS);
       };
+      // Walk the per-index finals in order and collapse cumulative
+      // duplicates: if entry N's text starts with entry N-1's text,
+      // replace N-1 (engine kept extending the same utterance);
+      // otherwise it's a genuinely new phrase, keep both.
+      const dedupedFinals = () => {
+        const sorted = [...finalsByIndex.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([_, t]) => (t || "").trim())
+          .filter(Boolean);
+        const out = [];
+        for (const t of sorted) {
+          const tl = t.toLowerCase();
+          if (out.length) {
+            const prev = out[out.length - 1];
+            const pl = prev.toLowerCase();
+            if (tl.startsWith(pl)) { out[out.length - 1] = t; continue; }
+            if (pl.startsWith(tl)) { continue; }  // shorter dup
+          }
+          out.push(t);
+        }
+        return out.join(" ");
+      };
+
+      const rebuildBaseValue = () => {
+        const finals = dedupedFinals();
+        baseValue = initialBase
+          ? (finals ? `${initialBase} ${finals}` : initialBase)
+          : finals;
+      };
+
       const renderInput = () => {
         input.value = baseValue + (interimText ? (baseValue ? " " : "") + interimText : "");
       };
@@ -910,6 +948,8 @@
       // If the dictation now ends with a commit trigger word ("add" etc.)
       // strip it and tell the caller "yes, commit". Tokens are split on
       // whitespace and stripped of punctuation so "tomato. add!" works.
+      // Strips from baseValue AND from the underlying finalsByIndex so
+      // a subsequent rebuild doesn't reintroduce the trigger.
       const consumeVoiceTrigger = () => {
         const tokens = baseValue.split(/\s+/).filter(Boolean);
         if (!tokens.length) return false;
@@ -917,6 +957,21 @@
         if (!VOICE_COMMIT_TRIGGERS.has(last)) return false;
         tokens.pop();
         baseValue = tokens.join(" ").trim();
+        // Also drop the trigger from the highest-index final so the
+        // next render doesn't re-add it. Walk indexes high → low and
+        // strip a trailing trigger word from the first non-empty one.
+        const indexes = [...finalsByIndex.keys()].sort((a, b) => b - a);
+        for (const i of indexes) {
+          const v = (finalsByIndex.get(i) || "").trim();
+          if (!v) continue;
+          const vTokens = v.split(/\s+/);
+          const vLast = (vTokens[vTokens.length - 1] || "").toLowerCase().replace(/[^a-z]/g, "");
+          if (VOICE_COMMIT_TRIGGERS.has(vLast)) {
+            vTokens.pop();
+            finalsByIndex.set(i, vTokens.join(" ").trim());
+          }
+          break;
+        }
         return true;
       };
 
@@ -945,24 +1000,40 @@
 
         // Resume from whatever's already in the input — also how the
         // pause/continue flow works after manual stop or auto-stop.
-        baseValue = (input.value || "").trim();
+        // The new dictation in this session is captured in finalsByIndex
+        // (keyed by the engine's result slot) so cumulative engines that
+        // emit "plan", "plan for", "plan for next" at successive indexes
+        // collapse cleanly to "plan for next".
+        initialBase = (input.value || "").trim();
+        finalsByIndex.clear();
         interimText = "";
+        baseValue = initialBase;
         stopReason = null;
 
         recognition.onresult = (e) => {
           let interim = "";
           let gotFinal = false;
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            const t = (e.results[i][0].transcript || "").trim();
+          // Always walk the full results array, not just from
+          // resultIndex — engines vary in how reliably they expose
+          // resultIndex, and we want finalsByIndex to mirror the
+          // engine's authoritative state at all times.
+          for (let i = 0; i < e.results.length; i++) {
+            const r = e.results[i];
+            const t = ((r && r[0] && r[0].transcript) || "").trim();
             if (!t) continue;
-            if (e.results[i].isFinal) {
-              baseValue = baseValue ? `${baseValue} ${t}` : t;
-              gotFinal = true;
+            if (r.isFinal) {
+              // Replace, don't append — repeat events for the same
+              // index don't double-add.
+              if (finalsByIndex.get(i) !== t) {
+                finalsByIndex.set(i, t);
+                gotFinal = true;
+              }
             } else {
               interim += (interim ? " " : "") + t;
             }
           }
           interimText = interim;
+          rebuildBaseValue();
 
           // Voice commit trigger — only checked after a finalised phrase
           // so a fleeting interim "add" doesn't trip it.
