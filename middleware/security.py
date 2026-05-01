@@ -21,10 +21,18 @@ def apply_security_headers(app):
             "style-src-elem 'self' 'unsafe-inline' "
             "  https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
             "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data: blob: https://www.google.com https://*.supabase.co; "
+            # YouTube thumbnails live on i.ytimg.com / img.youtube.com.
+            "img-src 'self' data: blob: https://www.google.com "
+            "  https://*.supabase.co https://i.ytimg.com https://img.youtube.com; "
             "connect-src 'self' "
             "  https://unpkg.com https://cdn.jsdelivr.net https://cdn.quilljs.com "
             "  https://query1.finance.yahoo.com https://api.mfapi.in "
-            "  https://*.supabase.co;"
+            "  https://*.supabase.co; "
+            # TravelReads embeds YouTube videos via <iframe>. Without an
+            # explicit frame-src the browser falls back to default-src
+            # 'self' and the iframe shows "content blocked. contact the
+            # site owner to fix the issue."
+            "frame-src 'self' https://www.youtube.com "
+            "  https://www.youtube-nocookie.com https://player.vimeo.com;"
         )
         return response

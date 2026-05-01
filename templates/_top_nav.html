@@ -54,14 +54,15 @@
    in the sidebar. Keeps the top to ~ 48 px instead of ~ 64. */
 @media (max-width: 720px) {
   .top-context { padding: 6px 10px; gap: 6px; }
-  .top-context .date-row,
   .top-context .help-btn[aria-label="Quick Pomodoro"],
   .top-context .help-btn[aria-label="Help"] { display: none !important; }
   .top-context .hamburger { padding: 6px 10px; min-height: 36px; }
   .top-context .hamburger span { display: none; } /* hide the "Menu" word, keep ☰ */
-  .top-context .help-btn { width: 34px; height: 34px; margin-left: auto; }
-  .top-context .help-btn + .help-btn { margin-left: 0; }
+  .top-context .help-btn { width: 34px; height: 34px; }
   .top-context .user-avatar { width: 32px; height: 32px; font-size: 12px; }
+  .date-row { font-size: 11.5px; gap: 4px; }
+  .date-row--right { padding-left: 6px; }
+  .date-row #live-date { display: none; }  /* mobile: keep clock only, save width */
 }
 
 /* ── Help button in top bar ── */
@@ -420,17 +421,23 @@ html.dark .hamburger{color:#f1f5f9;}
 html.dark .hamburger:hover{background:#334155;border-color:#475569;}
 
 .date-row{
-  border-left:1px solid #e5e7eb;
-  padding-left:12px;
   display:flex;
-  gap:10px;
+  gap:6px;
   align-items:center;
-  font-size:14px;
-  color:#374151;
-  flex-wrap:wrap;
+  font-size:12.5px;
+  font-weight:500;
+  color:#475569;
+  white-space:nowrap;
 }
-html.dark .date-row{border-left-color:#334155;color:#cbd5e1;}
-.date-row .time{font-weight:600;color:#2563eb;}
+.date-row--right{
+  margin-left:auto;
+  padding-left:10px;
+  border-left:1px solid #e5e7eb;
+}
+.help-btn + .date-row--right{ margin-left:6px; }
+html.dark .date-row{color:#cbd5e1;}
+html.dark .date-row--right{border-left-color:#334155;}
+.date-row .time{font-weight:700;color:#2563eb;}
 
 /* ── Sidebar drawer ── */
 .sidebar{
@@ -875,10 +882,10 @@ html.dark .section-title{color:#f1f5f9;}
   ☰ <span>Menu</span>
 </button>
 
-  <div class="date-row">
-    <span id="live-date"></span>
-    <span class="time" id="live-time"></span>
-  </div>
+  <button type="button" class="help-btn" onclick="openSearchPalette()"
+          title="Search everything (Cmd/Ctrl+K)" aria-label="Search">
+    <i data-feather="search"></i>
+  </button>
 
   <button type="button" class="help-btn" onclick="openQuickPomo()"
           title="Quick Pomodoro — start a focus timer (no task linkage)"
@@ -886,14 +893,16 @@ html.dark .section-title{color:#f1f5f9;}
     <i data-feather="clock"></i>
   </button>
 
-  <button type="button" class="help-btn" onclick="openSearchPalette()"
-          title="Search everything (Cmd/Ctrl+K)" aria-label="Search">
-    <i data-feather="search"></i>
-  </button>
-
   <button type="button" class="help-btn" onclick="openHelpModal()" title="Help & tips for this page (press ? anywhere)" aria-label="Help">
     <i data-feather="help-circle"></i>
   </button>
+
+  {# Date+time pill, sitting next to the user avatar so the
+     identity + temporal context cluster at the right edge. #}
+  <div class="date-row date-row--right">
+    <span id="live-date"></span>
+    <span class="time" id="live-time"></span>
+  </div>
 
   {% if current_user.is_authenticated %}
     {# User-identity popover: visible on every screen so the logged-in

@@ -193,6 +193,84 @@
       font-weight: 700 !important;
     }
 
+    /* ── REMOVE CATEGORY FILTER CHIPS ───────────────────────
+       User wants a single flat list — no Meetings / Tasks /
+       Bucket / Habits filtering. Hide the chips entirely; the
+       items still render in the timeline regardless. */
+    .md-filter-chips { display: none !important; }
+
+    /* ── FLATTEN AGENDA TABLE → CHECKBOX LIST ───────────────
+       The agenda was a 5-column table (Time / Type / What /
+       Context / Status). User asked for a clean line-item list
+       with just a checkbox + title, and inline metadata
+       (overdue / time / date) sitting next to the task.
+       Click anywhere → existing openItemPeek() opens details. */
+    .md-agenda-card .md-card-head .md-legend { display: none; }
+    .md-agenda-card .md-table-wrap { overflow: visible; }
+    .md-agenda-table { border-collapse: collapse; width: 100%; }
+    .md-agenda-table thead { display: none; }
+    .md-agenda-table .md-c-type,
+    .md-agenda-table .md-type-tag,
+    .md-agenda-table .md-kr-chip,
+    .md-agenda-table .md-row-link { display: none !important; }
+    .md-agenda-table tr.md-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--color-border-light, #f1f5f9);
+      cursor: pointer; transition: background .12s;
+    }
+    .md-agenda-table tr.md-row:hover { background: rgba(99,102,241,.05); }
+    .md-agenda-table tr.md-row > td {
+      padding: 0 !important; border: none !important;
+      vertical-align: middle;
+    }
+    /* Checkbox/status on the left */
+    .md-agenda-table .md-c-status { order: 0; flex: 0 0 auto; }
+    /* Title + inline meta in the middle, takes remaining space */
+    .md-agenda-table .md-c-title { order: 1; flex: 1; min-width: 0; }
+    .md-agenda-table .md-c-title .md-row-title {
+      font-size: 14px; line-height: 1.35;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      display: inline-block; max-width: 100%;
+    }
+    /* Context (project / "Tasks Bucket · 2H" etc.) folds inline as a
+       small subtle chip after the title. */
+    .md-agenda-table .md-c-context { order: 2; flex: 0 0 auto; }
+    .md-agenda-table .md-c-context .md-context-chip {
+      font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
+      padding: 2px 8px; border-radius: 999px;
+      background: var(--color-surface-secondary, #f3f4f6);
+      color: var(--color-text-secondary, #475569);
+    }
+    /* Time on the right */
+    .md-agenda-table .md-c-time { order: 3; flex: 0 0 auto; }
+    .md-agenda-table .md-c-time .md-time {
+      font-size: 11.5px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--color-text-secondary, #475569);
+      padding: 2px 8px; border-radius: 999px;
+      background: var(--color-surface-secondary, #f3f4f6);
+    }
+    .md-agenda-table .md-c-time .md-time-any {
+      background: transparent; color: var(--color-text-tertiary, #94a3b8);
+      font-weight: 500; font-style: italic;
+    }
+    .md-agenda-table .md-c-time .md-time-end { display: none; }
+    /* Done rows visibly fade and strike through. */
+    .md-agenda-table tr.md-done .md-row-title { text-decoration: line-through; opacity: .55; }
+    /* Soft band dividers (Morning/Afternoon/Evening/Anytime). */
+    .md-agenda-table tr.md-band-row {
+      display: block; padding: 12px 12px 4px;
+      font-size: 10.5px; font-weight: 800; letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--color-text-secondary, #475569);
+      border-bottom: none;
+      background: transparent;
+    }
+    .md-agenda-table tr.md-band-row td {
+      padding: 0 !important; border: none !important;
+    }
+
     /* "More sections" expander — single button that reveals every
        hidden card at once. Ships with a count of how many are
        hidden so the user can decide whether to bother. */
