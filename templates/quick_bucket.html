@@ -17,6 +17,35 @@
   .qb-app { max-width: 720px; margin: 0 auto; padding: 24px 20px 80px; }
 
   .qb-hero { margin-bottom: 16px; }
+
+  /* Stats strip — at-a-glance progress + a daily nudge. */
+  .qb-statbar {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center; gap: 16px;
+    padding: 14px 16px; margin-bottom: 14px;
+    background: linear-gradient(135deg, #eef2ff 0%, #f0fdfa 100%);
+    border: 1px solid #c7d2fe; border-radius: 12px;
+  }
+  .qb-stat { display: flex; flex-direction: column; gap: 2px; min-width: 60px; }
+  .qb-stat-num {
+    font-size: 24px; font-weight: 800; line-height: 1;
+    color: #4338ca; font-variant-numeric: tabular-nums;
+  }
+  .qb-stat:nth-of-type(2) .qb-stat-num { color: #047857; }
+  .qb-stat-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--color-text-secondary);
+  }
+  .qb-quote {
+    font-size: 13px; line-height: 1.45; font-style: italic;
+    color: #475569; padding-left: 12px;
+    border-left: 2px solid rgba(99,102,241,.4);
+  }
+  @media (max-width: 520px) {
+    .qb-statbar { grid-template-columns: auto auto; row-gap: 10px; }
+    .qb-quote { grid-column: 1 / -1; padding-left: 0; border-left: none; }
+  }
   .qb-hero h1 { font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
   .qb-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; }
 
@@ -133,7 +162,11 @@
   .qb-text {
     font-size: 14px; color: var(--color-text);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer;
+    padding: 4px 0;
+    border-radius: 4px;
   }
+  .qb-text:hover { background: rgba(99,102,241,.06); }
 
   .qb-toggle {
     display: inline-flex; align-items: center; gap: 4px;
@@ -309,6 +342,21 @@
     background: var(--color-surface-secondary, #f3f4f6);
     font-size: 12.5px; color: var(--color-text-secondary); line-height: 1.45;
   }
+  .qb-form-note-inline {
+    font-weight: 500; text-transform: none; letter-spacing: 0;
+    color: var(--color-text-secondary); font-size: 11px;
+  }
+  .qb-edit-text-input {
+    width: 100%; box-sizing: border-box;
+    padding: 10px 12px; font: inherit; font-size: 15px; line-height: 1.45;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    resize: vertical; min-height: 60px; word-break: break-word;
+  }
+  .qb-edit-text-input:focus {
+    outline: none; border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
   .qb-row-icon-action {
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border: 1px solid transparent;
@@ -427,6 +475,18 @@
     <p class="qb-sub">Quick add. Toggle when. Done when done.</p>
   </header>
 
+  <section class="qb-statbar" id="qb-statbar" aria-label="Today's progress">
+    <div class="qb-stat">
+      <div class="qb-stat-num" id="qb-stat-open">0</div>
+      <div class="qb-stat-label">Open</div>
+    </div>
+    <div class="qb-stat">
+      <div class="qb-stat-num" id="qb-stat-done">0</div>
+      <div class="qb-stat-label">Done today</div>
+    </div>
+    <div class="qb-quote" id="qb-quote">…</div>
+  </section>
+
   <section class="qb-pomo" id="qb-pomo" aria-label="Pomodoro timer">
     <span class="qb-pomo-label" id="qb-pomo-label">Focus</span>
     <div class="qb-pomo-time" id="qb-pomo-time">25:00</div>
@@ -501,18 +561,24 @@
 
 <div id="qb-picker" class="qb-picker" role="menu" hidden></div>
 
-<!-- Move-to-category modal: choose Project Task / Checklist / Travel /
-     Grocery, fill the relevant form, save into the destination table. -->
+<!-- Edit + optional move modal: opened by tapping a row. The text is
+     always editable. Picking a category expands the form for moving
+     to a destination module. -->
 <div class="qb-modal-backdrop" id="qb-move-modal" role="dialog" aria-modal="true" aria-hidden="true">
   <div class="qb-modal">
     <div class="qb-modal-head">
-      <h3 id="qb-move-title">Move to…</h3>
+      <h3 id="qb-move-title">Edit task</h3>
       <button class="qb-row-icon-action" id="qb-move-close" type="button" aria-label="Close"><i data-feather="x"></i></button>
     </div>
     <div class="qb-modal-body">
-      <div class="qb-modal-text" id="qb-move-text">…</div>
       <div class="qb-modal-section">
-        <h4>Category</h4>
+        <h4>Task</h4>
+        <textarea id="qb-edit-text-input" class="qb-edit-text-input"
+                  rows="2" maxlength="500"
+                  placeholder="What needs doing?"></textarea>
+      </div>
+      <div class="qb-modal-section">
+        <h4>Move to module <span class="qb-form-note-inline">(optional)</span></h4>
         <div class="qb-cat-grid" id="qb-move-cats"></div>
       </div>
       <div class="qb-modal-section" id="qb-move-form-wrap" hidden>
@@ -523,8 +589,8 @@
     </div>
     <div class="qb-modal-foot">
       <button class="qb-btn" id="qb-move-cancel" type="button">Cancel</button>
-      <button class="qb-btn qb-btn-primary" id="qb-move-save" type="button" disabled>
-        <i data-feather="arrow-right-circle"></i> Save &amp; move
+      <button class="qb-btn qb-btn-primary" id="qb-move-save" type="button">
+        <i data-feather="check"></i> <span id="qb-move-save-label">Save</span>
       </button>
     </div>
   </div>

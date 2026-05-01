@@ -40,6 +40,65 @@
   const alerted = new Set();
   let tickTimer = null;
 
+  // Motivational quotes for the stats bar — one per day, deterministic
+  // so a refresh doesn't shuffle. Date-of-year picks the index.
+  const QUOTES = [
+    "Small steps every day beat big leaps once in a while.",
+    "Done is better than perfect.",
+    "Focus is saying no to a thousand good things.",
+    "Discipline equals freedom.",
+    "Action expresses priorities.",
+    "Slow is smooth, smooth is fast.",
+    "The best way to get started is to quit talking and begin doing.",
+    "Energy and persistence conquer all things.",
+    "Inch by inch life's a cinch; yard by yard it's hard.",
+    "What gets scheduled gets done.",
+    "Make it work, make it right, make it fast — in that order.",
+    "You don't have to be great to start, but you have to start to be great.",
+    "Compound interest is the eighth wonder — even on habits.",
+    "The chains of habit are too light to be felt until they are too heavy to be broken.",
+    "Motivation gets you going; habit keeps you going.",
+    "If it's not on the list, it didn't happen.",
+    "Done lists tell better stories than to-do lists.",
+    "Progress, not perfection.",
+    "One task at a time, and that one task fully.",
+    "The successful warrior is the average person, with laser-like focus.",
+    "Consistency is more important than intensity.",
+    "Tomorrow becomes never. Do it now.",
+    "Direction is more important than speed.",
+    "You'll never find time for anything. If you want time, you must make it.",
+    "When in doubt, take the smallest possible next step.",
+    "First do what's necessary, then what's possible — soon you're doing the impossible.",
+    "Plans are nothing; planning is everything.",
+    "Focus on being productive instead of busy.",
+    "The way to get started is to quit talking and begin doing.",
+    "Success is the sum of small efforts, repeated.",
+  ];
+  const quoteOfTheDay = () => {
+    const d = new Date();
+    const dayIdx = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86_400_000);
+    return QUOTES[dayIdx % QUOTES.length];
+  };
+  const isSameLocalDay = (iso) => {
+    if (!iso) return false;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return false;
+    const now = new Date();
+    return d.getFullYear() === now.getFullYear()
+        && d.getMonth() === now.getMonth()
+        && d.getDate() === now.getDate();
+  };
+  const renderStatBar = () => {
+    const open = items.filter(it => !it.is_done).length;
+    const doneToday = items.filter(it => it.is_done && isSameLocalDay(it.done_at)).length;
+    const openEl = document.getElementById("qb-stat-open");
+    const doneEl = document.getElementById("qb-stat-done");
+    const quoteEl = document.getElementById("qb-quote");
+    if (openEl) openEl.textContent = open;
+    if (doneEl) doneEl.textContent = doneToday;
+    if (quoteEl) quoteEl.textContent = `"${quoteOfTheDay()}"`;
+  };
+
   // ─────────── helpers ───────────────────────────────────────
 
   const apiFetch = async (path, opts = {}) => {
@@ -134,21 +193,20 @@
     if (it.is_done) cls.push("is-done");
     const togCls = overdue ? "qb-toggle qb-toggle--overdue" : `qb-toggle qb-toggle--${tb}`;
 
-    // Done rows get a Reopen icon in place of the move-to icon, plus
-    // the existing Archive (×). Active rows get Move-to + Archive.
+    // Done rows still get a Reopen icon. Active rows have no side
+    // action — clicking the task text itself opens the edit popup.
     const sideAction = it.is_done
       ? `<button class="qb-row-icon-action" data-action="reopen" title="Reopen">
            <i data-feather="rotate-ccw"></i>
          </button>`
-      : `<button class="qb-row-icon-action" data-action="move" title="Move to project / checklist / travel / grocery">
-           <i data-feather="arrow-right-circle"></i>
-         </button>`;
+      : `<span class="qb-row-spacer" aria-hidden="true"></span>`;
 
     return `
       <div class="${cls.join(' ')}" data-id="${it.id}">
         <input type="checkbox" class="qb-check" data-action="done"
                aria-label="Mark done" ${it.is_done ? 'checked' : ''}>
-        <div class="qb-text" title="${escapeHTML(it.text)}">${escapeHTML(it.text)}</div>
+        <div class="qb-text" data-action="edit" title="Click to edit"
+             tabindex="0" role="button">${escapeHTML(it.text)}</div>
         <button class="${togCls}" data-action="pick" type="button"
                 title="Click to choose when: Now / 1H–8H / Future">
           ${escapeHTML(toggleLabel(it))}
@@ -161,6 +219,7 @@
   };
 
   const render = () => {
+    renderStatBar();
     const wrap = $("#qb-groups");
     const empty = $("#qb-empty");
     if (!items.length) {
@@ -201,11 +260,17 @@
         openPicker(e.currentTarget, it);
       });
       $("button.qb-icon-btn[data-action='archive']", row)?.addEventListener("click", () => archive(it));
-      $("button.qb-row-icon-action[data-action='move']", row)?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openMoveModal(it);
-      });
       $("button.qb-row-icon-action[data-action='reopen']", row)?.addEventListener("click", () => reopen(it));
+      // Tapping the task text opens the edit-and-move popup. Done rows
+      // also get the popup so the user can fix typos in past entries.
+      const textEl = $(".qb-text", row);
+      textEl?.addEventListener("click", () => openEditModal(it));
+      textEl?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openEditModal(it);
+        }
+      });
     });
   };
 
@@ -362,11 +427,24 @@
     ).join("");
     $$(".qb-cat-btn", grid).forEach(btn => {
       btn.addEventListener("click", () => {
-        moveCategory = btn.dataset.cat;
+        // Clicking the same category twice clears it (text-edit only).
+        moveCategory = (moveCategory === btn.dataset.cat) ? null : btn.dataset.cat;
         renderMoveCategoryButtons();
         renderMoveForm();
+        updateSaveLabel();
       });
     });
+  };
+
+  const updateSaveLabel = () => {
+    const lbl = $("#qb-move-save-label");
+    if (!lbl) return;
+    if (moveCategory && MOVE_FIELDS[moveCategory]) {
+      const cat = MOVE_CATEGORIES.find(c => c.key === moveCategory);
+      lbl.textContent = `Save & move to ${cat ? cat.label : moveCategory}`;
+    } else {
+      lbl.textContent = "Save";
+    }
   };
 
   const renderMoveForm = () => {
@@ -421,67 +499,99 @@
     save.disabled = false;
   };
 
-  const openMoveModal = (it) => {
+  const openEditModal = (it) => {
     moveItem = it;
     moveCategory = null;
-    $("#qb-move-text").textContent = it.text || "";
+    const textInput = $("#qb-edit-text-input");
+    if (textInput) textInput.value = it.text || "";
     renderMoveCategoryButtons();
     renderMoveForm();
+    updateSaveLabel();
     $("#qb-move-modal").classList.add("is-open");
     $("#qb-move-modal").setAttribute("aria-hidden", "false");
     refreshFeather();
+    // Focus the textarea so the user can immediately start editing.
+    setTimeout(() => textInput?.focus(), 30);
   };
 
-  const closeMoveModal = () => {
+  const closeEditModal = () => {
     $("#qb-move-modal").classList.remove("is-open");
     $("#qb-move-modal").setAttribute("aria-hidden", "true");
     moveItem = null;
     moveCategory = null;
   };
 
-  const submitMove = async () => {
-    if (!moveItem || !moveCategory) return;
-    const defs = MOVE_FIELDS[moveCategory];
-    if (!defs) return;
-    const form = $("#qb-move-form");
-    const fd = new FormData(form);
-    const fields = {};
-    for (const [k, v] of fd.entries()) fields[k] = v;
-    for (const d of defs) {
-      if (d.required && !(fields[d.name] || "").trim()) {
-        toast(`${d.label} is required`, "error");
-        return;
-      }
+  const submitEdit = async () => {
+    if (!moveItem) return;
+    const newText = ($("#qb-edit-text-input")?.value || "").trim();
+    if (!newText) {
+      toast("Task text can't be empty", "error");
+      return;
     }
     const save = $("#qb-move-save");
     save.disabled = true;
     try {
+      // Always persist text edits first — even if we're also routing,
+      // this keeps the bucket row coherent if the route call fails.
+      if (newText !== moveItem.text) {
+        await apiFetch(`/api/quick-bucket/${moveItem.id}/update`, {
+          method: "POST", body: JSON.stringify({ text: newText }),
+        });
+        moveItem.text = newText;
+      }
+
+      // No category picked → text-only edit, we're done.
+      if (!moveCategory || !MOVE_FIELDS[moveCategory]) {
+        toast("Saved", "success");
+        closeEditModal();
+        render();
+        return;
+      }
+
+      // Category picked → also route into the destination module.
+      const defs = MOVE_FIELDS[moveCategory];
+      const form = $("#qb-move-form");
+      const fd = new FormData(form);
+      const fields = {};
+      for (const [k, v] of fd.entries()) fields[k] = v;
+      // Title-ish field is overridden with the latest textarea value
+      // so editing the text in the textarea wins over the original
+      // pre-fill in the form.
+      for (const d of defs) {
+        if (d.fromText) { fields[d.name] = newText; break; }
+      }
+      for (const d of defs) {
+        if (d.required && !(fields[d.name] || "").trim()) {
+          toast(`${d.label} is required`, "error");
+          save.disabled = false;
+          return;
+        }
+      }
       const r = await apiFetch(`/api/quick-bucket/${moveItem.id}/route`, {
         method: "POST",
         body: JSON.stringify({ category: moveCategory, fields }),
       });
       const where = (r.destination_table || "").replace("_", " ");
       toast(`Moved to ${where}`, "success");
-      // Bucket row is archived server-side — drop it locally too.
       items = items.filter(x => x.id !== moveItem.id);
-      closeMoveModal();
+      closeEditModal();
       render();
     } catch (err) {
-      toast(err.message || "Couldn't move", "error");
+      toast(err.message || "Couldn't save", "error");
     } finally {
       save.disabled = false;
     }
   };
 
   const wireMoveModal = () => {
-    $("#qb-move-close").addEventListener("click", closeMoveModal);
-    $("#qb-move-cancel").addEventListener("click", closeMoveModal);
-    $("#qb-move-save").addEventListener("click", submitMove);
+    $("#qb-move-close").addEventListener("click", closeEditModal);
+    $("#qb-move-cancel").addEventListener("click", closeEditModal);
+    $("#qb-move-save").addEventListener("click", submitEdit);
     $("#qb-move-modal").addEventListener("click", (e) => {
-      if (e.target.id === "qb-move-modal") closeMoveModal();
+      if (e.target.id === "qb-move-modal") closeEditModal();
     });
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeMoveModal();
+      if (e.key === "Escape") closeEditModal();
     });
   };
 
