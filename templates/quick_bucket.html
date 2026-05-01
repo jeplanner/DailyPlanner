@@ -11,7 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
-<script src="{{ url_for('static', filename='js/quick_bucket.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/quick_bucket.js') }}{% if js_v %}?v={{ js_v }}{% endif %}" defer></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .qb-app { max-width: 720px; margin: 0 auto; padding: 24px 20px 80px; }

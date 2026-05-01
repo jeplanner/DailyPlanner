@@ -93,7 +93,18 @@ def _fetch_event_id(user_id, item_id):
 @quick_bucket_bp.route("/quick-bucket", methods=["GET"])
 @login_required
 def quick_bucket_page():
-    return render_template("quick_bucket.html", buckets=BUCKETS)
+    # Cache-bust the JS by appending its mtime to the URL — without
+    # this, the 30-day SEND_FILE_MAX_AGE_DEFAULT means deploys don't
+    # reach the browser for weeks. New mtime = new URL = fresh fetch.
+    import os
+    from flask import current_app
+    js_v = ""
+    try:
+        js_path = os.path.join(current_app.static_folder, "js", "quick_bucket.js")
+        js_v = str(int(os.path.getmtime(js_path)))
+    except Exception:
+        pass
+    return render_template("quick_bucket.html", buckets=BUCKETS, js_v=js_v)
 
 
 # ─────────── list ────────────────────────────────────────────

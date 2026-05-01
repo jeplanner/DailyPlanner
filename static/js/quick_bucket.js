@@ -1187,14 +1187,16 @@
             // Log the heard text so the user can see what the engine
             // is producing — useful for tuning the wake-phrase regex.
             console.log("[qb wake] heard:", t);
-            // "OK Renga" → turn off hands-free entirely.
+            // "Bye" → turn off hands-free entirely.
             if (WAKE_STOP_RE.test(t)) {
+              console.log("[qb wake] WAKE_STOP matched on:", t);
               setHandsfree(false);
               toast("Hands-free off", "info");
               return;
             }
-            // "Hey Renga" → kick off a single dictation.
+            // "Hello" → kick off a single dictation.
             if (WAKE_START_RE.test(t)) {
+              console.log("[qb wake] WAKE_START matched on:", t);
               const now = Date.now();
               if (now - lastWakeAt < WAKE_DEBOUNCE_MS) return;
               lastWakeAt = now;
