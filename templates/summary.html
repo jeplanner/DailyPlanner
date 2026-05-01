@@ -524,18 +524,15 @@
               tabindex="0"
               role="button"
               aria-label="Open overdue task: {{ o.title }}">
-            <td class="md-c-title">
+            <td class="md-c-status">
               <button type="button" class="md-task-toggle" aria-label="Mark done"
                       onclick="markTaskDoneInRow(this, event)"></button>
-              <span class="md-cat-icon" aria-hidden="true">{{ task_categories.get(o.category, '📁') }}</span>
+            </td>
+            <td class="md-c-title">
               <span class="md-row-title">{{ o.title }}</span>
               {% if o.kr_label %}
               <span class="md-kr-chip" title="Key Result: {{ o.kr_label }}">↑ {{ o.kr_label }}</span>
               {% endif %}
-              <button type="button" class="md-reschedule-btn" aria-label="Reschedule"
-                      onclick="openRescheduleMenu(this, event)" title="Push to a later date">
-                <i data-feather="clock"></i>
-              </button>
             </td>
             <td class="md-c-due">
               <span class="md-overdue-chip"
