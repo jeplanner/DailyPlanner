@@ -24,6 +24,7 @@ create table if not exists quick_bucket (
   user_id       uuid not null,
   text          text not null,
   time_bucket   text not null default 'now',  -- now | 4h | 8h | future
+  due_at        timestamptz,                  -- deadline stamped when bucket = 4h / 8h
   is_done       boolean default false,
   is_deleted    boolean default false,
   position      int default 0,
@@ -31,6 +32,10 @@ create table if not exists quick_bucket (
   created_at    timestamptz default now(),
   updated_at    timestamptz default now()
 );
+
+-- Idempotent for installs that ran the earlier version of this file
+-- without due_at.
+alter table quick_bucket add column if not exists due_at timestamptz;
 
 -- Hot path: list every active row for one user, ordered for the UI.
 create index if not exists quick_bucket_user_active_idx

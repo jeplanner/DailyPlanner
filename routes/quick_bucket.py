@@ -18,7 +18,7 @@ Soft-delete only — see project convention (memory: no-hard-delete).
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, render_template, request, session
 
@@ -43,6 +43,20 @@ def _next_bucket(cur):
     return BUCKETS[(i + 1) % len(BUCKETS)]
 
 
+# Deadline mapping. 'now' / 'future' have no countdown — they're either
+# already actionable or deferred indefinitely. Picking 4h or 8h restamps
+# the deadline relative to the moment the user chose it (not to the
+# original creation time), so cycling 4h → 8h after 3h gives 8 fresh
+# hours rather than 5 leftover ones.
+def _due_at_for(bucket):
+    now = datetime.now(timezone.utc)
+    if bucket == "4h":
+        return (now + timedelta(hours=4)).isoformat()
+    if bucket == "8h":
+        return (now + timedelta(hours=8)).isoformat()
+    return None
+
+
 # ─────────── page ─────────────────────────────────────────────
 
 @quick_bucket_bp.route("/quick-bucket", methods=["GET"])
@@ -64,7 +78,7 @@ def list_items():
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false",
                 "is_done": "eq.false",
-                "select": "id,text,time_bucket,position,created_at,updated_at",
+                "select": "id,text,time_bucket,due_at,position,created_at,updated_at",
                 "order": "position.asc,created_at.desc",
                 "limit": "500",
             },
@@ -96,6 +110,7 @@ def add_item():
         "user_id": user_id,
         "text": text,
         "time_bucket": bucket,
+        "due_at": _due_at_for(bucket),
         "position": int(data.get("position") or 0),
         "is_done": False,
         "is_deleted": False,
@@ -127,16 +142,17 @@ def cycle_bucket(item_id):
         return jsonify({"error": "Not found"}), 404
 
     nxt = _next_bucket(rows[0].get("time_bucket"))
+    nxt_due = _due_at_for(nxt)
     try:
         update(
             "quick_bucket",
             params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-            json={"time_bucket": nxt},
+            json={"time_bucket": nxt, "due_at": nxt_due},
         )
     except Exception as e:
         logger.error("quick_bucket cycle failed: %s", e)
         return jsonify({"error": "Couldn't change — please try again."}), 502
-    return jsonify({"ok": True, "time_bucket": nxt})
+    return jsonify({"ok": True, "time_bucket": nxt, "due_at": nxt_due})
 
 
 # ─────────── update text or set bucket directly ──────────────
@@ -158,6 +174,7 @@ def update_item(item_id):
         if v not in BUCKET_SET:
             return jsonify({"error": "Invalid bucket"}), 400
         patch["time_bucket"] = v
+        patch["due_at"] = _due_at_for(v)
     if "position" in data:
         try:
             patch["position"] = int(data["position"])
