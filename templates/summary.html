@@ -272,6 +272,52 @@
       font-weight: 500; font-style: italic;
     }
     .md-agenda-table .md-c-time .md-time-end { display: none; }
+    /* ── MOBILE: switch row layout to grid so titles wrap ─────
+       The flex-row layout above truncates long titles to "..."
+       on narrow screens because the right-side pills hog space.
+       On phones, give the title its own grid row that uses the
+       full width, with the meta pills on a second line. */
+    @media (max-width: 720px) {
+      .md-agenda-table tr.md-row,
+      .md-overdue-table tr.md-row {
+        display: grid !important;
+        grid-template-columns: 22px 1fr auto;
+        grid-template-areas:
+          "status title  meta"
+          "status context meta";
+        column-gap: 10px;
+        row-gap: 2px;
+        align-items: center;
+      }
+      .md-agenda-table .md-c-status,
+      .md-overdue-table .md-c-status { grid-area: status; }
+      .md-agenda-table .md-c-title,
+      .md-overdue-table .md-c-title { grid-area: title; min-width: 0; }
+      .md-agenda-table .md-c-context,
+      .md-overdue-table .md-c-context { grid-area: context; justify-self: start; }
+      .md-agenda-table .md-c-time,
+      .md-agenda-table .md-c-due,
+      .md-overdue-table .md-c-time,
+      .md-overdue-table .md-c-due { grid-area: meta; justify-self: end; }
+      /* Allow titles to wrap to multiple lines instead of clipping
+         to ellipsis. */
+      .md-agenda-table .md-row-title,
+      .md-overdue-table .md-row-title {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        max-width: none !important;
+        display: block !important;
+        line-height: 1.35;
+      }
+      /* Hide the context pill on truly narrow screens — it's the
+         lowest-signal piece and crowds the title. */
+      @media (max-width: 380px) {
+        .md-agenda-table .md-c-context,
+        .md-overdue-table .md-c-context { display: none !important; }
+      }
+    }
+
     /* Overdue: tight red pill in the right slot. The TD itself is
        a flex item with no fill; the inner .md-overdue-chip carries
        the pill background so it sizes to the "2d" text instead of
