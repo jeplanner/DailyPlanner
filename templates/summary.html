@@ -147,6 +147,72 @@
     }
     /* Hide the legacy stacked headers entirely — replaced by the tight one. */
     .md-title-row, .md-hero, .md-greeting, .md-progress-card { display: none !important; }
+
+    /* ── DEFAULT-HIDE THE NOISE ─────────────────────────────
+       The daily dashboard had grown to 8+ cards: focus, overdue,
+       agenda, habits, plan-tomorrow, inbox-health, parked,
+       reflection. That's not a dashboard, it's a directory.
+       Reduce the default surface to: tight header + chips +
+       agenda + reflection. Everything else is one tap away in
+       the "More sections" expander below. */
+
+    /* Today's Focus only shows when the user has actually set one
+       — the empty-state pitch was nagging dead pixels. */
+    .md-focus-card:has(.md-focus-empty) { display: none; }
+
+    /* Habits live INSIDE the timeline already (md-habit-row inside
+       the agenda table). The standalone Habits card is duplicate
+       content — hide it. */
+    .md-habits-card { display: none !important; }
+
+    /* The "Plan Tomorrow" card is a power-user feature; tuck it
+       into the More expander rather than keeping it always on. */
+    .md-plan-card { display: none; }
+    body[data-md-more="1"] .md-plan-card { display: block; }
+
+    /* Inbox health and Parked tasks are diagnostic — useful when
+       you need them, noise the rest of the time. Same treatment. */
+    .md-inbox-health-card { display: none; }
+    body[data-md-more="1"] .md-inbox-health-card { display: block; }
+    .md-parked-card { display: none; }
+    body[data-md-more="1"] .md-parked-card { display: block; }
+
+    /* Compact card chrome: smaller titles, tighter padding, less
+       drop-shadow noise so the page reads as one focused
+       composition rather than a stack of competing rectangles. */
+    .md-card { box-shadow: none !important; border-radius: 12px !important; }
+    .md-card-head { padding: 10px 14px !important; }
+    .md-card-title { font-size: 14px !important; gap: 6px !important; }
+    .md-card-icon {
+      width: 24px !important; height: 24px !important;
+      background: transparent !important; border: none !important;
+    }
+    .md-card-icon svg { width: 14px !important; height: 14px !important; }
+    .md-count-pill {
+      font-size: 11px !important; padding: 1px 8px !important;
+      font-weight: 700 !important;
+    }
+
+    /* "More sections" expander — single button that reveals every
+       hidden card at once. Ships with a count of how many are
+       hidden so the user can decide whether to bother. */
+    .md-more-toggle {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; margin: 14px 0;
+      border-radius: 999px; font: inherit;
+      font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+      background: var(--color-surface, #fff);
+      border: 1px solid var(--color-border, #e5e7eb);
+      color: var(--color-text-secondary, #475569);
+      cursor: pointer;
+      transition: background .12s, color .12s;
+    }
+    .md-more-toggle:hover {
+      background: var(--color-surface-secondary, #f3f4f6);
+      color: var(--color-text, #111827);
+    }
+    .md-more-toggle svg { width: 14px; height: 14px; transition: transform .18s; }
+    body[data-md-more="1"] .md-more-toggle svg { transform: rotate(180deg); }
   </style>
 
   <script>
@@ -616,6 +682,22 @@
     </div>
     </div>
   </details>
+  {% endif %}
+
+  {# "More sections" expander. Counts up the hidden cards so the
+     button can name what's behind it; if there's nothing extra to
+     show, the button doesn't render. #}
+  {% set _hidden_n = 0 %}
+  {% if is_today and _open_today %}{% set _hidden_n = _hidden_n + 1 %}{% endif %}
+  {% if dashboard.inbox_health %}{% set _hidden_n = _hidden_n + 1 %}{% endif %}
+  {% if dashboard.parked %}{% set _hidden_n = _hidden_n + 1 %}{% endif %}
+  {% if _hidden_n %}
+  <button type="button" class="md-more-toggle" id="md-more-toggle"
+          onclick="document.body.dataset.mdMore = document.body.dataset.mdMore === '1' ? '0' : '1'; this.querySelector('.md-more-label').textContent = document.body.dataset.mdMore === '1' ? 'Hide other sections' : 'More sections (' + {{ _hidden_n }} + ')'">
+    <i data-feather="more-horizontal"></i>
+    <span class="md-more-label">More sections ({{ _hidden_n }})</span>
+    <i data-feather="chevron-down"></i>
+  </button>
   {% endif %}
 
   <!-- ── PLAN TOMORROW ── end-of-day card; surfaces today's unfinished
