@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Tasks Bucket — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tasks_bucket.js') }}" defer></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .tb-app { max-width: 920px; margin: 0 auto; padding: 24px 20px 96px; }
+
+  /* Hero */
+  .tb-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tb-hero h1 { font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+  .tb-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; }
+
+  /* Stats / gamification strip */
+  .tb-stats { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 18px; }
+  .tb-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 999px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    font-size: 12.5px; color: var(--color-text-secondary);
+  }
+  .tb-chip strong { font-weight: 800; color: var(--color-text); font-variant-numeric: tabular-nums; }
+  .tb-chip.tb-streak { background: linear-gradient(135deg, #fef3c7, #fde68a); border-color: #fbbf24; color: #92400e; }
+  .tb-chip.tb-streak strong { color: #92400e; }
+
+  /* XP bar */
+  .tb-xp {
+    flex: 1 1 200px; min-width: 200px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 999px; height: 28px; padding: 0; position: relative; overflow: hidden;
+  }
+  .tb-xp-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899);
+    transition: width .4s cubic-bezier(.2,.8,.2,1);
+  }
+  .tb-xp-label {
+    position: relative; z-index: 1; height: 100%; display: flex;
+    align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; color: var(--color-text);
+    mix-blend-mode: normal;
+  }
+
+  /* Capture card */
+  .tb-capture {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 16px; margin-bottom: 18px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+  }
+  .tb-capture-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 10px;
+  }
+  .tb-capture-head h2 { font-size: 14px; font-weight: 700; margin: 0; }
+  .tb-capture-row { display: flex; gap: 8px; align-items: stretch; }
+  .tb-capture textarea {
+    flex: 1; min-height: 44px; max-height: 200px; resize: vertical;
+    padding: 10px 12px; font: inherit; font-size: 14px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-surface); color: var(--color-text);
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .tb-capture textarea:focus {
+    outline: none; border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .tb-mic-btn, .tb-send-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 14px; min-width: 44px; border-radius: 10px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text); font: inherit; font-weight: 600; cursor: pointer;
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .tb-mic-btn svg, .tb-send-btn svg { width: 16px; height: 16px; }
+  .tb-mic-btn:hover, .tb-send-btn:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  .tb-mic-btn.is-on { background: #ef4444; color: #fff; border-color: #ef4444; animation: tbPulse 1.2s ease-in-out infinite; }
+  @keyframes tbPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.5); } 50% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
+  .tb-send-btn { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); }
+  .tb-send-btn:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+  .tb-send-btn:disabled, .tb-mic-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .tb-capture-foot {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 10px; flex-wrap: wrap;
+    font-size: 12px; color: var(--color-text-secondary);
+  }
+  .tb-countdown {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: rgba(99,102,241,.08); color: #4338ca;
+    font-weight: 600;
+  }
+  .tb-countdown.tb-countdown--idle { display: none; }
+
+  /* Group sections */
+  .tb-group { margin-bottom: 18px; }
+  .tb-group-head {
+    display: flex; align-items: center; gap: 10px;
+    margin: 0 0 8px; padding: 6px 8px; border-radius: 8px;
+    font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--color-text-secondary);
+    transition: background .12s, color .12s;
+  }
+  .tb-group-head .tb-group-count {
+    margin-left: auto; font-weight: 600; color: var(--color-text-muted, var(--color-text-secondary));
+    letter-spacing: 0; text-transform: none;
+  }
+  .tb-group.is-drop-target .tb-group-head {
+    background: rgba(99,102,241,.12); color: #4338ca;
+    box-shadow: inset 0 0 0 2px rgba(99,102,241,.45);
+  }
+  .tb-group--unclassified .tb-group-head { color: #b45309; }
+
+  .tb-list {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+    min-height: 8px;
+  }
+  .tb-list:empty::after {
+    content: "Drop items here";
+    display: block; padding: 14px; text-align: center;
+    color: var(--color-text-muted); font-size: 12px; opacity: 0;
+  }
+  .tb-group.is-drop-target .tb-list:empty::after { opacity: 1; }
+
+  .tb-row {
+    display: grid; grid-template-columns: 22px 18px minmax(0, 1fr) auto;
+    align-items: center; gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border-light, var(--color-border));
+    transition: background .12s;
+    cursor: pointer;
+  }
+  .tb-row:last-child { border-bottom: none; }
+  .tb-row:hover { background: var(--color-surface-secondary, color-mix(in srgb, var(--color-primary) 4%, transparent)); }
+  .tb-row.is-dragging { opacity: .5; }
+  .tb-row.is-pending .tb-row-text { color: var(--color-text-muted); font-style: italic; }
+
+  .tb-handle {
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--color-text-tertiary, #9ca3af); cursor: grab;
+  }
+  .tb-handle:active { cursor: grabbing; }
+  .tb-check {
+    appearance: none; width: 18px; height: 18px;
+    border: 1.5px solid var(--color-text-tertiary, #9ca3af);
+    border-radius: 4px; background: transparent;
+    cursor: pointer; position: relative; transition: background .12s, border-color .12s;
+  }
+  .tb-check:checked { background: var(--color-primary); border-color: var(--color-primary); }
+  .tb-check:checked::after {
+    content: "✓"; color: #fff; font-size: 12px; font-weight: 800;
+    position: absolute; left: 2px; top: -3px;
+  }
+
+  .tb-row-body { min-width: 0; }
+  .tb-row-text {
+    font-size: 14px; color: var(--color-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tb-row-meta {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    margin-top: 3px; font-size: 11.5px; color: var(--color-text-secondary);
+  }
+  .tb-tag {
+    display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; letter-spacing: .02em;
+    background: var(--color-surface-secondary, #f3f4f6); color: var(--color-text-secondary);
+  }
+  .tb-tag.tb-tag--Health { background: #dcfce7; color: #166534; }
+  .tb-tag.tb-tag--Grocery { background: #fef3c7; color: #92400e; }
+  .tb-tag.tb-tag--Portfolio { background: #dbeafe; color: #1e40af; }
+  .tb-tag.tb-tag--Checklist { background: #ede9fe; color: #5b21b6; }
+  .tb-tag.tb-tag--TravelReads { background: #fce7f3; color: #9d174d; }
+  .tb-tag.tb-tag--ProjectTask { background: #e0e7ff; color: #3730a3; }
+
+  .tb-row-actions { display: inline-flex; gap: 4px; }
+  .tb-icon-btn {
+    background: transparent; border: 1px solid transparent;
+    border-radius: 8px; padding: 6px;
+    color: var(--color-text-secondary); cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .tb-icon-btn:hover { background: var(--color-surface-secondary, #f3f4f6); color: var(--color-text); border-color: var(--color-border); }
+  .tb-icon-btn svg { width: 14px; height: 14px; }
+
+  /* Modal */
+  .tb-modal-backdrop {
+    position: fixed; inset: 0; background: rgba(15,23,42,.5);
+    display: none; align-items: center; justify-content: center;
+    z-index: 1000; padding: 20px;
+  }
+  .tb-modal-backdrop.is-open { display: flex; }
+  .tb-modal {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; max-width: 520px; width: 100%;
+    max-height: 90vh; overflow: auto;
+    box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  }
+  .tb-modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--color-border);
+  }
+  .tb-modal-head h3 { font-size: 15px; font-weight: 800; margin: 0; }
+  .tb-modal-body { padding: 16px; }
+  .tb-modal-foot {
+    display: flex; gap: 8px; justify-content: flex-end;
+    padding: 12px 16px; border-top: 1px solid var(--color-border);
+    flex-wrap: wrap;
+  }
+  .tb-modal .tb-row-text { white-space: normal; font-size: 15px; line-height: 1.45; }
+  .tb-modal-section { margin-top: 14px; }
+  .tb-modal-section h4 {
+    font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--color-text-secondary); margin: 0 0 6px;
+  }
+  .tb-cat-grid {
+    display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+  .tb-cat-btn {
+    padding: 8px 10px; border-radius: 8px; border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    text-align: left; transition: background .12s, border-color .12s;
+  }
+  .tb-cat-btn:hover { background: var(--color-surface-secondary, #f3f4f6); border-color: var(--color-primary); }
+  .tb-cat-btn.is-current { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); }
+
+  .tb-evidence {
+    display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+  .tb-evidence .tb-tag { background: rgba(99,102,241,.1); color: #4338ca; }
+
+  .tb-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 10px;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
+    transition: background .12s, border-color .12s;
+  }
+  .tb-btn:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  .tb-btn-primary { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); }
+  .tb-btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+  .tb-btn-danger { color: #b91c1c; border-color: #fecaca; }
+  .tb-btn-danger:hover { background: #fee2e2; }
+
+  /* Confetti canvas overlay */
+  .tb-confetti {
+    position: fixed; inset: 0; pointer-events: none; z-index: 1500;
+  }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">
+  {% include "_top_nav.html" %}
+</div>
+
+<main class="tb-app">
+
+  <header class="tb-hero">
+    <div>
+      <h1>Tasks Bucket</h1>
+      <p class="tb-sub">Dump quick thoughts. They auto-route to the right module.</p>
+    </div>
+  </header>
+
+  <div class="tb-stats" id="tb-stats">
+    <span class="tb-chip">Captured today <strong id="tb-stat-captured">0</strong></span>
+    <span class="tb-chip">Classified <strong id="tb-stat-classified">0</strong></span>
+    <span class="tb-chip">Closed <strong id="tb-stat-closed">0</strong></span>
+    <span class="tb-chip tb-streak">🔥 <strong id="tb-stat-streak">0</strong>-day streak</span>
+    <div class="tb-xp" title="Daily XP — keep capturing & closing items">
+      <div class="tb-xp-fill" id="tb-xp-fill" style="width: 0%"></div>
+      <div class="tb-xp-label" id="tb-xp-label">0 XP</div>
+    </div>
+  </div>
+
+  <section class="tb-capture">
+    <div class="tb-capture-head">
+      <h2>Quick capture</h2>
+      <span class="tb-countdown tb-countdown--idle" id="tb-countdown" aria-live="polite">
+        <span id="tb-countdown-label">Classifying in 60s</span>
+      </span>
+    </div>
+    <div class="tb-capture-row">
+      <textarea id="tb-input" rows="2"
+                placeholder="Type or dictate a thought… one item per line. Press Enter to add."></textarea>
+      <button id="tb-mic" class="tb-mic-btn" type="button" title="Toggle dictation">
+        <i data-feather="mic"></i>
+      </button>
+      <button id="tb-send" class="tb-send-btn" type="button" title="Add to bucket (Enter)">
+        <i data-feather="send"></i>
+      </button>
+    </div>
+    <div class="tb-capture-foot">
+      <span>Tip: Enter adds, Shift+Enter for newline. Auto-classifies after a 60s pause.</span>
+    </div>
+  </section>
+
+  <div id="tb-groups"></div>
+</main>
+
+<!-- Detail / classify modal -->
+<div class="tb-modal-backdrop" id="tb-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="tb-modal">
+    <div class="tb-modal-head">
+      <h3 id="tb-modal-title">Task</h3>
+      <button class="tb-icon-btn" id="tb-modal-close" type="button" aria-label="Close"><i data-feather="x"></i></button>
+    </div>
+    <div class="tb-modal-body">
+      <div class="tb-row-text" id="tb-modal-text">…</div>
+
+      <div class="tb-modal-section">
+        <h4>Category</h4>
+        <div class="tb-cat-grid" id="tb-modal-cats"></div>
+      </div>
+
+      <div class="tb-modal-section" id="tb-modal-evidence-wrap">
+        <h4>Why this category?</h4>
+        <div class="tb-evidence" id="tb-modal-evidence"></div>
+      </div>
+
+      <div class="tb-modal-section" id="tb-modal-dest-wrap" hidden>
+        <h4>Linked in</h4>
+        <a id="tb-modal-dest-link" class="tb-btn" target="_blank" rel="noopener">Open</a>
+      </div>
+    </div>
+    <div class="tb-modal-foot">
+      <button class="tb-btn tb-btn-danger" id="tb-modal-archive" type="button">
+        <i data-feather="trash-2"></i> Archive
+      </button>
+      <button class="tb-btn tb-btn-primary" id="tb-modal-close-item" type="button">
+        <i data-feather="check"></i> Mark done
+      </button>
+    </div>
+  </div>
+</div>
+
+<canvas class="tb-confetti" id="tb-confetti" hidden></canvas>
+
+<script>
+  window.TB_CATEGORIES = {{ categories|tojson }};
+</script>
+
+</body>
+</html>

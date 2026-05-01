@@ -80,6 +80,7 @@ def create_app():
     from routes.mythology import mythology_bp
     from routes.grocery import grocery_bp
     from routes.travel_reads import travel_reads_bp
+    from routes.tasks_bucket import tasks_bucket_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -109,6 +110,7 @@ def create_app():
     app.register_blueprint(mythology_bp)
     app.register_blueprint(grocery_bp)
     app.register_blueprint(travel_reads_bp)
+    app.register_blueprint(tasks_bucket_bp)
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -137,6 +139,7 @@ def create_app():
     csrf.exempt(mythology_bp)
     csrf.exempt(grocery_bp)
     csrf.exempt(travel_reads_bp)
+    csrf.exempt(tasks_bucket_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).
