@@ -885,19 +885,31 @@
     // press, one phrase, the engine ends on its own when you stop
     // talking, the task is added. To dictate another, press again.
     //
-    // This deliberately avoids continuous mode: some engines (Samsung
-    // Internet, occasionally Chrome) emit "cumulative" final results
-    // that double-add words. Single-shot has only one result, so the
-    // problem can't happen.
+    // Hands-free toggle below adds a wake-word listener so saying
+    // "start" triggers a dictation without tapping the button, and
+    // "stop" cancels an in-flight dictation early.
     const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
+    const HANDSFREE_KEY = "qb-handsfree-v1";
+    const WAKE_DEBOUNCE_MS = 2_000;
     const micBtn = $("#qb-mic-btn");
+    const handsfreeBtn = $("#qb-handsfree-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
     if (!SR) {
       micBtn.disabled = true;
       micBtn.title = "Dictation not supported in this browser";
+      if (handsfreeBtn) {
+        handsfreeBtn.disabled = true;
+        handsfreeBtn.title = "Not supported in this browser";
+      }
     } else {
-      let recognition = null;
+      let recognition = null;          // single-shot dictation recognizer
       let recognizing = false;
+      let wakeRec = null;              // continuous wake-word recognizer
+      let wakeRunning = false;
+      let wakePending = false;         // "start" detected, awaiting onend
+      let handsfreeOn = false;
+      let lastWakeAt = 0;
 
       const stripTrigger = (text) => {
         const tokens = text.split(/\s+/).filter(Boolean);
@@ -907,17 +919,11 @@
         return tokens.join(" ").trim();
       };
 
-      micBtn.addEventListener("click", () => {
-        if (recognizing) {
-          // Manual stop — engine will fire onresult (if anything was
-          // heard) then onend.
-          try { recognition?.stop(); } catch (_) {}
-          return;
-        }
+      // ── Single-shot dictation ───────────────────────────
+      const startDictation = () => {
+        if (recognizing) return;
         recognition = new SR();
         recognition.lang = navigator.language || "en-US";
-        // continuous + interimResults stay at their defaults (false).
-
         recognition.onresult = (e) => {
           const r = e.results && e.results[0];
           const transcript = ((r && r[0] && r[0].transcript) || "").trim();
@@ -927,13 +933,13 @@
           input.value = text;
           addItem(text);
           toast(`Added: ${text}`, "success");
-          // Clear the input shortly after so the user sees the captured
-          // text briefly before it's cleared for the next dictation.
           setTimeout(() => { if (input.value === text) input.value = ""; }, 800);
         };
         recognition.onend = () => {
           recognizing = false;
           micBtn.classList.remove("is-on");
+          // Resume wake listening so the next "start" works.
+          if (handsfreeOn) startWake();
         };
         recognition.onerror = (e) => {
           recognizing = false;
@@ -941,13 +947,116 @@
           if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
             toast(`Mic: ${e.error}`, "error");
           }
+          if (handsfreeOn) startWake();
         };
         try {
           recognition.start();
           recognizing = true;
           micBtn.classList.add("is-on");
         } catch (_) { /* ignore double-start */ }
+      };
+
+      micBtn.addEventListener("click", () => {
+        if (recognizing) {
+          try { recognition?.stop(); } catch (_) {}
+          return;
+        }
+        // Tapping the mic manually pauses hands-free for this dictation
+        // — wake will resume from the dictation onend.
+        stopWake();
+        startDictation();
       });
+
+      // ── Wake-word listener (continuous; opt-in) ─────────
+      // Watches transcripts for "start" → triggers dictation.
+      // For "stop": single-shot dictation ends on natural silence
+      // anyway, but if the wake listener hears "stop" while a dictation
+      // is in flight, abort the dictation early.
+      const startWake = () => {
+        if (!handsfreeOn || wakeRunning || recognizing) return;
+        wakeRunning = true;
+        wakeRec = new SR();
+        wakeRec.continuous = true;
+        wakeRec.interimResults = true;
+        wakeRec.lang = navigator.language || "en-US";
+
+        wakeRec.onresult = (e) => {
+          // Look at the latest result only — interim is enough since we
+          // just need to spot the wake word. We don't accumulate text
+          // here at all; the dictation recognizer captures the actual
+          // task once "start" has triggered it.
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = (e.results[i][0].transcript || "").toLowerCase();
+            if (/\bstart\b/.test(t)) {
+              const now = Date.now();
+              if (now - lastWakeAt < WAKE_DEBOUNCE_MS) return;
+              lastWakeAt = now;
+              wakePending = true;
+              try { wakeRec.stop(); } catch (_) {}
+              return;
+            }
+          }
+        };
+        wakeRec.onend = () => {
+          wakeRunning = false;
+          wakeRec = null;
+          if (wakePending) {
+            wakePending = false;
+            startDictation();
+            return;
+          }
+          // Engine timed out on its own — restart so the listener
+          // stays effectively always-on while the toggle is enabled.
+          if (handsfreeOn && !recognizing) {
+            setTimeout(startWake, 250);
+          }
+        };
+        wakeRec.onerror = (e) => {
+          wakeRunning = false;
+          wakeRec = null;
+          if (e.error === "not-allowed") {
+            // User denied mic permission — auto-disable hands-free.
+            setHandsfree(false);
+            toast("Mic permission denied", "error");
+            return;
+          }
+          if (handsfreeOn && !recognizing && e.error !== "aborted") {
+            setTimeout(startWake, 500);
+          }
+        };
+        try { wakeRec.start(); } catch (_) { wakeRunning = false; }
+      };
+      const stopWake = () => {
+        wakePending = false;
+        if (wakeRec) {
+          try { wakeRec.stop(); } catch (_) {}
+        }
+      };
+
+      const setHandsfree = (on) => {
+        handsfreeOn = on;
+        try { localStorage.setItem(HANDSFREE_KEY, on ? "1" : "0"); } catch (_) {}
+        if (handsfreeBtn) {
+          handsfreeBtn.classList.toggle("is-on", on);
+          handsfreeBtn.title = on
+            ? 'Hands-free on — say "start" to dictate, "stop" to cancel'
+            : 'Hands-free — say "start" to dictate';
+        }
+        if (on) startWake();
+        else stopWake();
+      };
+
+      handsfreeBtn?.addEventListener("click", () => setHandsfree(!handsfreeOn));
+
+      // Restore previous state. Note: the very first start of a
+      // SpeechRecognition needs a user gesture in some browsers — if
+      // the auto-start fails, the user can tap the toggle to retry.
+      try {
+        if (localStorage.getItem(HANDSFREE_KEY) === "1") {
+          // Defer slightly so all DOM wiring is ready.
+          setTimeout(() => setHandsfree(true), 400);
+        }
+      } catch (_) {}
     }
 
     await loadItems();
