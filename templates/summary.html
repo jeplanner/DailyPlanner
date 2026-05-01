@@ -192,81 +192,6 @@
     </div>
   </section>
 
-  <!-- ── FROM TASKS BUCKET ── quick captures from /quick-bucket that
-       belong to today. Active items only — done-today bucket rows
-       feed the done-today tally elsewhere. -->
-  {% if dashboard.bucket_items %}
-  <section class="md-card md-bucket-card" aria-labelledby="md-bucket-title">
-    <header class="md-card-head">
-      <h2 class="md-card-title" id="md-bucket-title">
-        <span class="md-card-icon md-bucket-icon"><i data-feather="zap"></i></span>
-        From Tasks Bucket
-        <span class="md-count-pill md-count-indigo">{{ dashboard.bucket_items|length }}</span>
-      </h2>
-      <a href="/quick-bucket" class="md-card-link">Open bucket →</a>
-    </header>
-    <ul class="md-bucket-list">
-      {% for it in dashboard.bucket_items %}
-      <li class="md-bucket-row">
-        <a href="{{ it.link }}" class="md-bucket-row-link">
-          {% if it.time %}
-            <span class="md-bucket-time">{{ it.time }}</span>
-          {% else %}
-            <span class="md-bucket-time md-bucket-time--now">Now</span>
-          {% endif %}
-          <span class="md-bucket-text">{{ it.title }}</span>
-          {% if it.context and it.context != "Tasks Bucket" %}
-            <span class="md-bucket-tag">{{ it.context.split(' · ')[1] if ' · ' in it.context else '' }}</span>
-          {% endif %}
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-  </section>
-  <style>
-    .md-bucket-card { margin-bottom: 14px; }
-    .md-bucket-card .md-card-head {
-      display: flex; align-items: center; justify-content: space-between;
-      gap: 10px; padding: 12px 16px;
-    }
-    .md-bucket-icon { color: #6366f1; }
-    .md-count-indigo {
-      background: #eef2ff; color: #4338ca; border: 1px solid #c7d2fe;
-    }
-    .md-card-link {
-      font-size: 12.5px; font-weight: 600; color: #4338ca; text-decoration: none;
-    }
-    .md-card-link:hover { text-decoration: underline; }
-    .md-bucket-list { list-style: none; padding: 0 8px 8px; margin: 0; }
-    .md-bucket-row { border-top: 1px solid var(--color-border-light, #e5e7eb); }
-    .md-bucket-row:first-child { border-top: none; }
-    .md-bucket-row-link {
-      display: grid; grid-template-columns: 56px 1fr auto;
-      align-items: center; gap: 10px;
-      padding: 10px 8px; color: inherit; text-decoration: none;
-      transition: background .12s;
-    }
-    .md-bucket-row-link:hover { background: rgba(99,102,241,.06); }
-    .md-bucket-time {
-      font-size: 12px; font-weight: 700; letter-spacing: .04em;
-      font-variant-numeric: tabular-nums;
-      color: #4338ca;
-    }
-    .md-bucket-time--now {
-      color: #b91c1c; text-transform: uppercase;
-    }
-    .md-bucket-text {
-      font-size: 14px; min-width: 0;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .md-bucket-tag {
-      font-size: 11px; font-weight: 700; letter-spacing: .04em;
-      padding: 2px 8px; border-radius: 999px;
-      background: #fffbeb; color: #92400e; border: 1px solid #fde68a;
-    }
-  </style>
-  {% endif %}
-
   <!-- ── OVERDUE ── highest priority signal in a morning review.
        Collapsible: tap the header to toggle. State persisted in
        localStorage by the card-collapse script at the bottom of the
@@ -385,6 +310,35 @@
     <div class="md-card-body">
 
     {% if dashboard.today_items %}
+    <!-- Filter chips: client-side filter for the unified timeline. -->
+    {% set _bucket_n = dashboard.today_items|selectattr('source','equalto','bucket')|list|length %}
+    {% set _meet_n   = dashboard.today_items|selectattr('type','equalto','meeting')|list|length %}
+    {% set _task_n   = dashboard.today_items|selectattr('type','equalto','task')|list|length %}
+    <div class="md-filter-chips" role="tablist" aria-label="Filter today's items">
+      <button class="md-chip is-active" data-filter="all" type="button" role="tab" aria-selected="true">
+        All <span class="md-chip-count">{{ dashboard.today_items|length + (dashboard.habits|length) }}</span>
+      </button>
+      {% if _meet_n %}
+      <button class="md-chip" data-filter="meeting" type="button" role="tab">
+        Meetings <span class="md-chip-count">{{ _meet_n }}</span>
+      </button>
+      {% endif %}
+      {% if _task_n %}
+      <button class="md-chip" data-filter="task" type="button" role="tab">
+        Tasks <span class="md-chip-count">{{ _task_n }}</span>
+      </button>
+      {% endif %}
+      {% if _bucket_n %}
+      <button class="md-chip md-chip--bucket" data-filter="bucket" type="button" role="tab">
+        Bucket <span class="md-chip-count">{{ _bucket_n }}</span>
+      </button>
+      {% endif %}
+      {% if dashboard.habits %}
+      <button class="md-chip" data-filter="habit" type="button" role="tab">
+        Habits <span class="md-chip-count">{{ dashboard.habits|length }}</span>
+      </button>
+      {% endif %}
+    </div>
     <div class="md-table-wrap" role="region" aria-label="Today's flow">
       <table class="md-table md-agenda-table">
         <thead>
@@ -481,6 +435,75 @@
     {% endif %}
     </div>
   </details>
+
+  <!-- Filter-chip styles + click-handler. Scoped to the agenda + habits
+       cards so chips control which rows are visible. -->
+  <style>
+    .md-filter-chips {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      padding: 8px 14px 4px; margin: 0;
+    }
+    .md-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 999px;
+      font: inherit; font-size: 12.5px; font-weight: 700;
+      letter-spacing: .04em; cursor: pointer;
+      border: 1px solid var(--color-border, #e5e7eb);
+      background: var(--color-surface, #fff); color: var(--color-text-secondary, #475569);
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .md-chip:hover { background: var(--color-surface-secondary, #f3f4f6); color: var(--color-text, #111827); }
+    .md-chip.is-active {
+      background: #4338ca; color: #fff; border-color: #4338ca;
+    }
+    .md-chip--bucket.is-active { background: #6366f1; border-color: #6366f1; }
+    .md-chip-count {
+      font-size: 11px; padding: 1px 7px; border-radius: 999px;
+      background: rgba(0,0,0,.07); font-weight: 700;
+    }
+    .md-chip.is-active .md-chip-count {
+      background: rgba(255,255,255,.22); color: #fff;
+    }
+    /* Filter rules: hide rows in the agenda + habits cards that don't
+       match the active filter on body[data-md-filter]. "all" → no
+       hides. Empty cards are hidden to avoid orphan headers. */
+    body[data-md-filter="meeting"] .md-agenda-card .md-row[data-type]:not([data-type="meeting"]),
+    body[data-md-filter="meeting"] .md-habits-card,
+    body[data-md-filter="meeting"] .md-agenda-card .md-band-row { display: none; }
+
+    body[data-md-filter="task"] .md-agenda-card .md-row[data-type]:not([data-type="task"]),
+    body[data-md-filter="task"] .md-agenda-card .md-row[data-source="bucket"],
+    body[data-md-filter="task"] .md-habits-card,
+    body[data-md-filter="task"] .md-agenda-card .md-band-row { display: none; }
+
+    body[data-md-filter="bucket"] .md-agenda-card .md-row:not([data-source="bucket"]),
+    body[data-md-filter="bucket"] .md-habits-card,
+    body[data-md-filter="bucket"] .md-agenda-card .md-band-row { display: none; }
+
+    body[data-md-filter="habit"] .md-agenda-card { display: none; }
+  </style>
+  <script>
+    (function () {
+      const chips = document.querySelectorAll(".md-filter-chips .md-chip");
+      if (!chips.length) return;
+      const KEY = "md-filter-v1";
+      const apply = (f, persist) => {
+        const filter = f || "all";
+        document.body.dataset.mdFilter = filter;
+        chips.forEach(c => c.classList.toggle("is-active", c.dataset.filter === filter));
+        if (persist) {
+          try { localStorage.setItem(KEY, filter); } catch (_) {}
+        }
+      };
+      chips.forEach(c => c.addEventListener("click", () => apply(c.dataset.filter, true)));
+      // Restore last filter on load (skip if the chip no longer exists,
+      // e.g. user had Bucket selected and now there are no bucket items).
+      let saved = "all";
+      try { saved = localStorage.getItem(KEY) || "all"; } catch (_) {}
+      const stillThere = Array.from(chips).some(c => c.dataset.filter === saved);
+      apply(stillThere ? saved : "all", false);
+    })();
+  </script>
 
   <!-- ── HABITS ── separate collapsible card. -->
   {% if dashboard.habits %}
