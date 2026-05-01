@@ -942,6 +942,13 @@
     const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
     const HANDSFREE_KEY = "qb-handsfree-v1";
     const WAKE_DEBOUNCE_MS = 2_000;
+    // Wake phrases. The "renga" alternation list catches common
+    // mis-transcriptions of the name across engines (Renga / Ranga /
+    // Rang / Reng). Add more alternatives here if Chrome hears something
+    // unexpected — print the transcript via the console.log below to see
+    // what the engine actually produced.
+    const WAKE_START_RE = /\b(?:hey|hi|hai)\s+(?:renga|ranga|rang|reng|wrangler|rangu)\b/i;
+    const WAKE_STOP_RE  = /\b(?:ok|okay|okey)\s+(?:renga|ranga|rang|reng|wrangler|rangu)\b/i;
     const micBtn = $("#qb-mic-btn");
     const handsfreeBtn = $("#qb-handsfree-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1042,7 +1049,7 @@
         if (!el) return;
         if (handsfreeOn && wakeRunning) {
           el.removeAttribute("hidden");
-          if (txt) txt.textContent = 'Listening — say "start" to dictate';
+          if (txt) txt.textContent = 'Listening — say "Hey Renga" to dictate';
         } else if (handsfreeOn && recognizing) {
           el.removeAttribute("hidden");
           if (txt) txt.textContent = "Dictating…";
@@ -1062,12 +1069,22 @@
 
         wakeRec.onresult = (e) => {
           // Look at the latest result only — interim is enough since we
-          // just need to spot the wake word. We don't accumulate text
+          // just need to spot the wake phrase. We don't accumulate text
           // here at all; the dictation recognizer captures the actual
-          // task once "start" has triggered it.
+          // task once "Hey Renga" has triggered it.
           for (let i = e.resultIndex; i < e.results.length; i++) {
             const t = (e.results[i][0].transcript || "").toLowerCase();
-            if (/\bstart\b/.test(t)) {
+            // Log the heard text so the user can see what the engine
+            // is producing — useful for tuning the wake-phrase regex.
+            console.log("[qb wake] heard:", t);
+            // "OK Renga" → turn off hands-free entirely.
+            if (WAKE_STOP_RE.test(t)) {
+              setHandsfree(false);
+              toast("Hands-free off", "info");
+              return;
+            }
+            // "Hey Renga" → kick off a single dictation.
+            if (WAKE_START_RE.test(t)) {
               const now = Date.now();
               if (now - lastWakeAt < WAKE_DEBOUNCE_MS) return;
               lastWakeAt = now;
@@ -1133,12 +1150,12 @@
         if (handsfreeBtn) {
           handsfreeBtn.classList.toggle("is-on", on);
           handsfreeBtn.title = on
-            ? 'Hands-free on — say "start" to dictate'
-            : 'Hands-free — say "start" to dictate';
+            ? 'Hands-free on — say "Hey Renga" to dictate, "OK Renga" to stop'
+            : 'Hands-free — say "Hey Renga" to dictate';
         }
         if (on) {
           startWake();
-          toast("Listening for \"start\"", "info");
+          toast('Listening — say "Hey Renga" to dictate', "info");
         } else {
           stopWake();
         }
