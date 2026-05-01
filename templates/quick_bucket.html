@@ -332,37 +332,22 @@
   .qb-pomo-label {
     font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
     color: var(--color-text-secondary);
+    max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .qb-pomo-label-input {
-    flex: 1 1 160px; min-width: 0; max-width: 240px;
-    padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600;
-    border: 1px dashed var(--color-border); border-radius: 8px;
-    background: transparent; color: var(--color-text);
-    transition: background .12s, border-color .12s, box-shadow .12s;
+  .qb-pomo.is-running .qb-pomo-label { color: #4338ca; }
+  .qb-pomo.is-ended   .qb-pomo-label { color: #92400e; }
+
+  /* Focus-title popup input — small variant for the modal. */
+  .qb-pomo-prompt-input {
+    width: 100%; box-sizing: border-box;
+    padding: 10px 12px; font: inherit; font-size: 15px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    transition: border-color .12s, box-shadow .12s;
   }
-  .qb-pomo-label-input::placeholder { color: var(--color-text-secondary); font-weight: 500; }
-  .qb-pomo-label-input:hover:not(:disabled) {
-    border-color: var(--color-text-tertiary, #9ca3af);
-  }
-  .qb-pomo-label-input:focus {
-    outline: none; border-style: solid;
-    border-color: var(--color-primary);
-    background: var(--color-surface);
+  .qb-pomo-prompt-input:focus {
+    outline: none; border-color: var(--color-primary);
     box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
-  }
-  .qb-pomo-label-input:disabled { opacity: .7; cursor: default; }
-  .qb-pomo-label-input.is-empty-flash {
-    border-color: #ef4444 !important; background: #fef2f2;
-    animation: qbShake .35s ease-in-out;
-  }
-  @keyframes qbShake {
-    0%, 100% { transform: translateX(0); }
-    25%      { transform: translateX(-3px); }
-    75%      { transform: translateX(3px); }
-  }
-  .qb-pomo.is-running .qb-pomo-label-input {
-    border-color: rgba(99,102,241,.3); border-style: solid;
-    color: #4338ca;
   }
 </style>
 </head>
@@ -380,10 +365,7 @@
   </header>
 
   <section class="qb-pomo" id="qb-pomo" aria-label="Pomodoro timer">
-    <input class="qb-pomo-label-input" id="qb-pomo-label-input"
-           type="text" maxlength="200"
-           placeholder="What are you focusing on?"
-           autocomplete="off">
+    <span class="qb-pomo-label" id="qb-pomo-label">Focus</span>
     <div class="qb-pomo-time" id="qb-pomo-time">25:00</div>
     <div class="qb-pomo-controls">
       <button class="qb-pomo-icon qb-pomo-icon--primary" id="qb-pomo-play" type="button" title="Start">
@@ -415,6 +397,30 @@
   <div id="qb-groups"></div>
   <div id="qb-empty" class="qb-empty" hidden>Nothing in the bucket — add one above.</div>
 </main>
+
+<!-- Focus-title popup for the Pomodoro: replaces the always-visible
+     inline input so the widget itself stays compact. -->
+<div class="qb-modal-backdrop" id="qb-pomo-modal" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="qb-modal" style="max-width: 380px;">
+    <div class="qb-modal-head">
+      <h3>Focus on…</h3>
+      <button class="qb-row-icon-action" id="qb-pomo-modal-close" type="button" aria-label="Close">
+        <i data-feather="x"></i>
+      </button>
+    </div>
+    <div class="qb-modal-body">
+      <input id="qb-pomo-modal-input" class="qb-pomo-prompt-input"
+             type="text" maxlength="200"
+             placeholder="What are you focusing on?" autocomplete="off">
+    </div>
+    <div class="qb-modal-foot">
+      <button class="qb-btn" id="qb-pomo-modal-cancel" type="button">Cancel</button>
+      <button class="qb-btn qb-btn-primary" id="qb-pomo-modal-start" type="button">
+        <i data-feather="play"></i> Start
+      </button>
+    </div>
+  </div>
+</div>
 
 <div id="qb-picker" class="qb-picker" role="menu" hidden></div>
 

@@ -562,23 +562,13 @@
     root.classList.toggle("is-running", playing);
     root.classList.toggle("is-ended", pomo.state === "ended");
 
-    // Label input: keep it disabled while running so the title can't
-    // change mid-session, but don't clobber the user's typing when
-    // they're getting ready to start.
-    const lblInput = $("#qb-pomo-label-input");
-    if (lblInput) {
-      if (playing) {
-        lblInput.value = pomo.label || "";
-        lblInput.disabled = true;
-      } else {
-        lblInput.disabled = false;
-        // Only refresh value from state when it differs from what
-        // the user is typing (e.g. on reset/end we clear it).
-        const desired = pomo.label || "";
-        if (document.activeElement !== lblInput && lblInput.value !== desired) {
-          lblInput.value = desired;
-        }
-      }
+    // Label area: shows "Focus" when no title is set, or the activity
+    // title once the user has picked one. The title is collected via
+    // a popup, not an inline field, so the widget stays compact.
+    const lbl = $("#qb-pomo-label");
+    if (lbl) {
+      lbl.textContent = pomo.label || "Focus";
+      lbl.title = pomo.label || "Focus session";
     }
 
     $$(".qb-pomo-dur").forEach(b => {
@@ -608,26 +598,60 @@
     if (pomoTimer) { clearInterval(pomoTimer); pomoTimer = null; }
   };
 
+  // Opens the in-page focus-title popup and resolves with the typed
+  // title (trimmed) or null if the user dismissed it.
+  const askPomoTitle = () => new Promise((resolve) => {
+    const modal = $("#qb-pomo-modal");
+    const input = $("#qb-pomo-modal-input");
+    const startBtn = $("#qb-pomo-modal-start");
+    const cancelBtn = $("#qb-pomo-modal-cancel");
+    const closeBtn = $("#qb-pomo-modal-close");
+    if (!modal || !input || !startBtn) { resolve(null); return; }
+
+    input.value = "";
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    setTimeout(() => input.focus(), 30);
+
+    const finish = (val) => {
+      modal.classList.remove("is-open");
+      modal.setAttribute("aria-hidden", "true");
+      startBtn.removeEventListener("click", onStart);
+      cancelBtn.removeEventListener("click", onCancel);
+      closeBtn.removeEventListener("click", onCancel);
+      input.removeEventListener("keydown", onKey);
+      modal.removeEventListener("click", onBackdrop);
+      resolve(val);
+    };
+    const onStart = () => {
+      const v = (input.value || "").trim();
+      if (!v) { input.focus(); return; }
+      finish(v);
+    };
+    const onCancel = () => finish(null);
+    const onKey = (e) => {
+      if (e.key === "Enter")  { e.preventDefault(); onStart(); }
+      else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    };
+    const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
+
+    startBtn.addEventListener("click", onStart);
+    cancelBtn.addEventListener("click", onCancel);
+    closeBtn.addEventListener("click", onCancel);
+    input.addEventListener("keydown", onKey);
+    modal.addEventListener("click", onBackdrop);
+  });
+
   const pomoStart = async () => {
     if (pomo.state === "running") return;
 
-    // First-time start → require a title from the inline input. Resuming
+    // First-time start → custom popup asks for the focus title. Resuming
     // a paused session (label already set) skips this so the play/pause
     // toggle stays one-tap.
     const isResume = pomo.state === "paused" && !!pomo.label;
     if (!isResume) {
-      const lblInput = $("#qb-pomo-label-input");
-      const title = ((lblInput && lblInput.value) || "").trim();
-      if (!title) {
-        // No title yet → flash the input and focus it instead of starting.
-        if (lblInput) {
-          lblInput.focus();
-          lblInput.classList.add("is-empty-flash");
-          setTimeout(() => lblInput.classList.remove("is-empty-flash"), 400);
-        }
-        toast("Type what you're focusing on first", "info");
-        return;
-      }
+      const title = await askPomoTitle();
+      if (!title) return;  // user cancelled
       pomo.label = title.slice(0, 200);
     }
 
@@ -785,13 +809,6 @@
     $$(".qb-pomo-dur").forEach(b => {
       b.addEventListener("click", () => pomoSetDuration(Number(b.dataset.min)));
     });
-    // Pressing Enter in the title field starts the timer — saves a tap.
-    $("#qb-pomo-label-input")?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && pomo.state !== "running") {
-        e.preventDefault();
-        pomoStart();
-      }
-    });
   };
 
   // ─────────── countdown ticker + overdue alerts ────────────
@@ -862,16 +879,16 @@
       input.focus();
     });
 
-    // ── Mic: dictate a task with the Web Speech API ─────────
-    // Three ways the dictation auto-commits as a task:
-    //   1. 3 s of silence (you stopped talking) → commit
-    //   2. you say "add" / "save" / "done" / "stop" at the end → strip
-    //      that word and commit
-    //   3. tap the mic button manually → text stays in the input for
-    //      review (you commit by pressing Enter / tapping Add).
-    // Resume after a pause: tap the mic again, your next words append
-    // to whatever is already in the input.
-    const SILENCE_STOP_MS = 3_000;
+    // ── Mic: dictate one task at a time (Web Speech API) ──
+    // Single-shot mode (continuous=false, interimResults=false) — same
+    // pattern the AI Assist page uses (static/js/ai_assist.js). One
+    // press, one phrase, the engine ends on its own when you stop
+    // talking, the task is added. To dictate another, press again.
+    //
+    // This deliberately avoids continuous mode: some engines (Samsung
+    // Internet, occasionally Chrome) emit "cumulative" final results
+    // that double-add words. Single-shot has only one result, so the
+    // problem can't happen.
     const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
     const micBtn = $("#qb-mic-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -881,209 +898,54 @@
     } else {
       let recognition = null;
       let recognizing = false;
-      let silenceTimer = null;
-      // initialBase = the input value when this dictation session
-      // started — preserved so pause/resume appends instead of replacing.
-      // finalsByIndex tracks the latest finalised transcript for each
-      // result slot. This handles two engine quirks at once:
-      //   * Spec-compliant engines: each utterance gets its own
-      //     index, all kept and joined.
-      //   * Cumulative engines (Samsung Internet does this): every
-      //     new "final" at the same/successive indexes contains the
-      //     entire phrase so far. We dedupe with prefix-match below
-      //     so "plan", "plan for", "plan for next" collapses to the
-      //     longest value, not three concatenated copies.
-      let initialBase = "";
-      const finalsByIndex = new Map();
-      let interimText = "";
-      let baseValue = "";
-      let stopReason = null; // 'silence' | 'voice' | 'manual'
 
-      const clearSilenceTimer = () => {
-        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-      };
-      const armSilenceTimer = () => {
-        clearSilenceTimer();
-        silenceTimer = setTimeout(() => {
-          if (recognizing) {
-            stopReason = "silence";
-            try { recognition?.stop(); } catch (_) {}
-          }
-        }, SILENCE_STOP_MS);
-      };
-      // Walk the per-index finals in order and collapse cumulative
-      // duplicates: if entry N's text starts with entry N-1's text,
-      // replace N-1 (engine kept extending the same utterance);
-      // otherwise it's a genuinely new phrase, keep both.
-      const dedupedFinals = () => {
-        const sorted = [...finalsByIndex.entries()]
-          .sort(([a], [b]) => a - b)
-          .map(([_, t]) => (t || "").trim())
-          .filter(Boolean);
-        const out = [];
-        for (const t of sorted) {
-          const tl = t.toLowerCase();
-          if (out.length) {
-            const prev = out[out.length - 1];
-            const pl = prev.toLowerCase();
-            if (tl.startsWith(pl)) { out[out.length - 1] = t; continue; }
-            if (pl.startsWith(tl)) { continue; }  // shorter dup
-          }
-          out.push(t);
-        }
-        return out.join(" ");
-      };
-
-      const rebuildBaseValue = () => {
-        const finals = dedupedFinals();
-        baseValue = initialBase
-          ? (finals ? `${initialBase} ${finals}` : initialBase)
-          : finals;
-      };
-
-      const renderInput = () => {
-        input.value = baseValue + (interimText ? (baseValue ? " " : "") + interimText : "");
-      };
-
-      // If the dictation now ends with a commit trigger word ("add" etc.)
-      // strip it and tell the caller "yes, commit". Tokens are split on
-      // whitespace and stripped of punctuation so "tomato. add!" works.
-      // Strips from baseValue AND from the underlying finalsByIndex so
-      // a subsequent rebuild doesn't reintroduce the trigger.
-      const consumeVoiceTrigger = () => {
-        const tokens = baseValue.split(/\s+/).filter(Boolean);
-        if (!tokens.length) return false;
+      const stripTrigger = (text) => {
+        const tokens = text.split(/\s+/).filter(Boolean);
+        if (!tokens.length) return text;
         const last = tokens[tokens.length - 1].toLowerCase().replace(/[^a-z]/g, "");
-        if (!VOICE_COMMIT_TRIGGERS.has(last)) return false;
-        tokens.pop();
-        baseValue = tokens.join(" ").trim();
-        // Also drop the trigger from the highest-index final so the
-        // next render doesn't re-add it. Walk indexes high → low and
-        // strip a trailing trigger word from the first non-empty one.
-        const indexes = [...finalsByIndex.keys()].sort((a, b) => b - a);
-        for (const i of indexes) {
-          const v = (finalsByIndex.get(i) || "").trim();
-          if (!v) continue;
-          const vTokens = v.split(/\s+/);
-          const vLast = (vTokens[vTokens.length - 1] || "").toLowerCase().replace(/[^a-z]/g, "");
-          if (VOICE_COMMIT_TRIGGERS.has(vLast)) {
-            vTokens.pop();
-            finalsByIndex.set(i, vTokens.join(" ").trim());
-          }
-          break;
-        }
-        return true;
-      };
-
-      const commitDictation = () => {
-        const text = (baseValue || "").trim();
-        baseValue = "";
-        interimText = "";
-        input.value = "";
-        if (text) {
-          addItem(text);
-          toast(`Added: ${text}`, "success");
-        }
+        if (VOICE_COMMIT_TRIGGERS.has(last)) tokens.pop();
+        return tokens.join(" ").trim();
       };
 
       micBtn.addEventListener("click", () => {
         if (recognizing) {
-          // User-tap stop — preserve the text for editing.
-          stopReason = "manual";
+          // Manual stop — engine will fire onresult (if anything was
+          // heard) then onend.
           try { recognition?.stop(); } catch (_) {}
           return;
         }
         recognition = new SR();
-        recognition.continuous = true;
-        recognition.interimResults = true;
         recognition.lang = navigator.language || "en-US";
-
-        // Resume from whatever's already in the input — also how the
-        // pause/continue flow works after manual stop or auto-stop.
-        // The new dictation in this session is captured in finalsByIndex
-        // (keyed by the engine's result slot) so cumulative engines that
-        // emit "plan", "plan for", "plan for next" at successive indexes
-        // collapse cleanly to "plan for next".
-        initialBase = (input.value || "").trim();
-        finalsByIndex.clear();
-        interimText = "";
-        baseValue = initialBase;
-        stopReason = null;
+        // continuous + interimResults stay at their defaults (false).
 
         recognition.onresult = (e) => {
-          let interim = "";
-          let gotFinal = false;
-          // Always walk the full results array, not just from
-          // resultIndex — engines vary in how reliably they expose
-          // resultIndex, and we want finalsByIndex to mirror the
-          // engine's authoritative state at all times.
-          for (let i = 0; i < e.results.length; i++) {
-            const r = e.results[i];
-            const t = ((r && r[0] && r[0].transcript) || "").trim();
-            if (!t) continue;
-            if (r.isFinal) {
-              // Replace, don't append — repeat events for the same
-              // index don't double-add.
-              if (finalsByIndex.get(i) !== t) {
-                finalsByIndex.set(i, t);
-                gotFinal = true;
-              }
-            } else {
-              interim += (interim ? " " : "") + t;
-            }
-          }
-          interimText = interim;
-          rebuildBaseValue();
-
-          // Voice commit trigger — only checked after a finalised phrase
-          // so a fleeting interim "add" doesn't trip it.
-          if (gotFinal && consumeVoiceTrigger()) {
-            interimText = "";
-            renderInput();
-            stopReason = "voice";
-            clearSilenceTimer();
-            try { recognition?.stop(); } catch (_) {}
-            return;
-          }
-
-          renderInput();
-          armSilenceTimer();
+          const r = e.results && e.results[0];
+          const transcript = ((r && r[0] && r[0].transcript) || "").trim();
+          if (!transcript) return;
+          const text = stripTrigger(transcript);
+          if (!text) return;
+          input.value = text;
+          addItem(text);
+          toast(`Added: ${text}`, "success");
+          // Clear the input shortly after so the user sees the captured
+          // text briefly before it's cleared for the next dictation.
+          setTimeout(() => { if (input.value === text) input.value = ""; }, 800);
         };
-        recognition.onspeechstart = clearSilenceTimer;
-        recognition.onspeechend = armSilenceTimer;
         recognition.onend = () => {
           recognizing = false;
           micBtn.classList.remove("is-on");
-          clearSilenceTimer();
-
-          // Promote any in-flight interim into base so it isn't lost.
-          if (interimText) {
-            baseValue = baseValue ? `${baseValue} ${interimText}` : interimText;
-            interimText = "";
-          }
-          // Auto-commit on silence or voice trigger; manual stop just
-          // leaves the text in the input for review/edit.
-          if (stopReason === "silence" || stopReason === "voice") {
-            commitDictation();
-          } else {
-            renderInput();
-          }
-          stopReason = null;
         };
         recognition.onerror = (e) => {
           recognizing = false;
           micBtn.classList.remove("is-on");
-          clearSilenceTimer();
           if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
             toast(`Mic: ${e.error}`, "error");
           }
-          stopReason = null;
         };
         try {
           recognition.start();
           recognizing = true;
           micBtn.classList.add("is-on");
-          armSilenceTimer();
         } catch (_) { /* ignore double-start */ }
       });
     }
