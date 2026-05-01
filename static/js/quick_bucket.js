@@ -630,7 +630,9 @@
     };
     const onCancel = () => finish(null);
     const onKey = (e) => {
-      if (e.key === "Enter")  { e.preventDefault(); onStart(); }
+      // Shift+Enter inserts a newline (the field is now a textarea so
+      // long titles wrap), plain Enter submits.
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onStart(); }
       else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
     };
     const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
