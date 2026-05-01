@@ -21,9 +21,11 @@
   };
   // Minute + hour buckets all live in one display group so the page
   // doesn't sprout 12+ headers; the pill on each row still shows the
-  // precise bucket and a live countdown.
-  const VISIBLE_GROUPS = ["now", "today", "future"];
-  const VISIBLE_GROUP_LABEL = { now: "Now", today: "Today", future: "Future" };
+  // precise bucket and a live countdown. Done items get their own
+  // group at the bottom so closed work stays visible without polluting
+  // the active list.
+  const VISIBLE_GROUPS = ["now", "today", "future", "done"];
+  const VISIBLE_GROUP_LABEL = { now: "Now", today: "Today", future: "Future", done: "Done" };
   const COUNTED_DOWN = new Set([
     "5m","15m","30m","45m",
     "1h","2h","3h","4h","5h","6h","7h","8h",
@@ -105,11 +107,12 @@
   // ─────────── render ───────────────────────────────────────
 
   const groupItems = () => {
-    const groups = { now: [], today: [], future: [] };
+    const groups = { now: [], today: [], future: [], done: [] };
     items.forEach(it => {
-      if (it.time_bucket === "now") groups.now.push(it);
+      if (it.is_done)              groups.done.push(it);
+      else if (it.time_bucket === "now")    groups.now.push(it);
       else if (it.time_bucket === "future") groups.future.push(it);
-      else groups.today.push(it);  // 1h..8h
+      else                                  groups.today.push(it);  // 1h..8h
     });
     // Within "today" sort by deadline ascending (closest-first), so the
     // tightest item is on top no matter which hour bucket it picked.
@@ -118,22 +121,39 @@
       const db = b.due_at ? new Date(b.due_at).getTime() : Number.POSITIVE_INFINITY;
       return da - db;
     });
+    // Done sorted by most-recently-closed first.
+    groups.done.sort((a, b) => (b.done_at || "").localeCompare(a.done_at || ""));
     return groups;
   };
 
   const renderRow = (it) => {
     const tb = BUCKETS.includes(it.time_bucket) ? it.time_bucket : "now";
-    const overdue = isOverdue(it);
-    const rowCls = overdue ? "qb-row is-overdue" : "qb-row";
-    const togCls = overdue ? `qb-toggle qb-toggle--overdue` : `qb-toggle qb-toggle--${tb}`;
+    const overdue = !it.is_done && isOverdue(it);
+    const cls = ["qb-row"];
+    if (overdue) cls.push("is-overdue");
+    if (it.is_done) cls.push("is-done");
+    const togCls = overdue ? "qb-toggle qb-toggle--overdue" : `qb-toggle qb-toggle--${tb}`;
+
+    // Done rows get a Reopen icon in place of the move-to icon, plus
+    // the existing Archive (×). Active rows get Move-to + Archive.
+    const sideAction = it.is_done
+      ? `<button class="qb-row-icon-action" data-action="reopen" title="Reopen">
+           <i data-feather="rotate-ccw"></i>
+         </button>`
+      : `<button class="qb-row-icon-action" data-action="move" title="Move to project / checklist / travel / grocery">
+           <i data-feather="arrow-right-circle"></i>
+         </button>`;
+
     return `
-      <div class="${rowCls}" data-id="${it.id}">
-        <input type="checkbox" class="qb-check" data-action="done" aria-label="Mark done">
+      <div class="${cls.join(' ')}" data-id="${it.id}">
+        <input type="checkbox" class="qb-check" data-action="done"
+               aria-label="Mark done" ${it.is_done ? 'checked' : ''}>
         <div class="qb-text" title="${escapeHTML(it.text)}">${escapeHTML(it.text)}</div>
         <button class="${togCls}" data-action="pick" type="button"
                 title="Click to choose when: Now / 1H–8H / Future">
           ${escapeHTML(toggleLabel(it))}
         </button>
+        ${sideAction}
         <button class="qb-icon-btn" data-action="archive" title="Remove">
           <i data-feather="x"></i>
         </button>
@@ -174,12 +194,18 @@
 
       $("input.qb-check", row)?.addEventListener("change", (e) => {
         if (e.target.checked) markDone(it);
+        else reopen(it);
       });
       $("button.qb-toggle", row)?.addEventListener("click", (e) => {
         e.stopPropagation();
         openPicker(e.currentTarget, it);
       });
       $("button.qb-icon-btn[data-action='archive']", row)?.addEventListener("click", () => archive(it));
+      $("button.qb-row-icon-action[data-action='move']", row)?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openMoveModal(it);
+      });
+      $("button.qb-row-icon-action[data-action='reopen']", row)?.addEventListener("click", () => reopen(it));
     });
   };
 
@@ -246,10 +272,23 @@
   const markDone = async (it) => {
     try {
       await apiFetch(`/api/quick-bucket/${it.id}/done`, { method: "POST", body: "{}" });
-      items = items.filter(x => x.id !== it.id);
+      it.is_done = true;
+      it.done_at = new Date().toISOString();
+      // Closed items stay in `items` so the Done group can render them.
       render();
     } catch (err) {
       toast(err.message || "Couldn't mark done", "error");
+    }
+  };
+
+  const reopen = async (it) => {
+    try {
+      await apiFetch(`/api/quick-bucket/${it.id}/reopen`, { method: "POST", body: "{}" });
+      it.is_done = false;
+      it.done_at = null;
+      render();
+    } catch (err) {
+      toast(err.message || "Couldn't reopen", "error");
     }
   };
 
@@ -261,6 +300,189 @@
     } catch (err) {
       toast(err.message || "Couldn't remove", "error");
     }
+  };
+
+  // ─────────── Move-to-category modal ───────────────────────
+  //
+  // The user clicks the → icon on a row, picks a category, fills the
+  // category-specific form, and hits Save & move. The bucket row is
+  // archived; a real row is created in the destination module.
+
+  const MOVE_CATEGORIES = [
+    { key: "ProjectTask", label: "Project Task" },
+    { key: "Checklist",   label: "Checklist" },
+    { key: "TravelReads", label: "Travel & Reads" },
+    { key: "Grocery",     label: "Grocery" },
+  ];
+  const MOVE_FIELDS = {
+    Grocery: [
+      { name: "item",     label: "Item",     type: "text",     fromText: true, required: true, max: 120 },
+      { name: "quantity", label: "Quantity", type: "text",     placeholder: "e.g. 2 lb", max: 40 },
+      { name: "category", label: "Aisle",    type: "select",   default: "other",
+        options: ["produce","dairy","staples","snacks","household","spices","frozen","beverages","meat","bakery","other"] },
+      { name: "priority", label: "Priority", type: "select",   default: "medium",
+        options: ["high","medium","low"] },
+      { name: "notes",    label: "Notes",    type: "textarea", wide: true, max: 400 },
+    ],
+    Checklist: [
+      { name: "name",          label: "Name",         type: "text",     fromText: true, required: true, max: 200 },
+      { name: "schedule",      label: "Schedule",     type: "select",   default: "daily",
+        options: ["daily","weekdays","weekends","custom"] },
+      { name: "time_of_day",   label: "When",         type: "select",   default: "anytime",
+        options: ["morning","afternoon","evening","anytime"] },
+      { name: "reminder_time", label: "Reminder",     type: "time" },
+      { name: "group_name",    label: "Group",        type: "text",     placeholder: "Optional" },
+      { name: "notes",         label: "Notes",        type: "textarea", wide: true, max: 400 },
+    ],
+    TravelReads: [
+      { name: "title",    label: "Title",    type: "text",     fromText: true, required: true, max: 200 },
+      { name: "url",      label: "URL",      type: "url",      placeholder: "https://…", wide: true },
+      { name: "kind",     label: "Kind",     type: "select",   default: "article",
+        options: ["article","video","book","podcast","newsletter","documentary","other"] },
+      { name: "priority", label: "Priority", type: "select",   default: "medium",
+        options: ["high","medium","low"] },
+      { name: "notes",    label: "Notes",    type: "textarea", wide: true },
+    ],
+    ProjectTask: [
+      { name: "name",          label: "Title",    type: "text",   fromText: true, required: true, max: 200 },
+      { name: "group_name",    label: "Group",    type: "text",   default: "Project Tasks" },
+      { name: "time_of_day",   label: "When",     type: "select", default: "anytime",
+        options: ["morning","afternoon","evening","anytime"] },
+      { name: "reminder_time", label: "Reminder", type: "time" },
+    ],
+  };
+
+  let moveItem = null;
+  let moveCategory = null;
+
+  const renderMoveCategoryButtons = () => {
+    const grid = $("#qb-move-cats");
+    grid.innerHTML = MOVE_CATEGORIES.map(c =>
+      `<button class="qb-cat-btn ${moveCategory === c.key ? 'is-current' : ''}" data-cat="${c.key}" type="button">${c.label}</button>`
+    ).join("");
+    $$(".qb-cat-btn", grid).forEach(btn => {
+      btn.addEventListener("click", () => {
+        moveCategory = btn.dataset.cat;
+        renderMoveCategoryButtons();
+        renderMoveForm();
+      });
+    });
+  };
+
+  const renderMoveForm = () => {
+    const wrap  = $("#qb-move-form-wrap");
+    const form  = $("#qb-move-form");
+    const note  = $("#qb-move-form-note");
+    const title = $("#qb-move-form-title");
+    const save  = $("#qb-move-save");
+
+    if (!moveCategory) {
+      wrap.setAttribute("hidden", "");
+      save.disabled = true;
+      return;
+    }
+    const defs = MOVE_FIELDS[moveCategory];
+    if (!defs) {
+      wrap.removeAttribute("hidden");
+      title.textContent = "Details";
+      form.innerHTML = "";
+      note.textContent = "This category isn't routable yet.";
+      note.removeAttribute("hidden");
+      save.disabled = true;
+      return;
+    }
+    wrap.removeAttribute("hidden");
+    title.textContent = `Move to ${MOVE_CATEGORIES.find(c => c.key === moveCategory)?.label || moveCategory}`;
+    note.setAttribute("hidden", "");
+    form.innerHTML = defs.map(d => {
+      const wide = d.wide ? "qb-form-field--wide" : "";
+      const placeholder = d.placeholder ? ` placeholder="${escapeHTML(d.placeholder)}"` : "";
+      const max = d.max ? ` maxlength="${d.max}"` : "";
+      const req = d.required ? " required" : "";
+      const initial = d.fromText ? (moveItem?.text || "") : (d.default ?? "");
+      let control;
+      if (d.type === "select") {
+        const opts = (d.options || []).map(o =>
+          `<option value="${escapeHTML(o)}" ${String(initial) === String(o) ? "selected" : ""}>${escapeHTML(o)}</option>`
+        ).join("");
+        control = `<select name="${d.name}"${req}>${opts}</select>`;
+      } else if (d.type === "textarea") {
+        control = `<textarea name="${d.name}" rows="3"${placeholder}${max}${req}>${escapeHTML(initial)}</textarea>`;
+      } else {
+        const t = (d.type === "url" || d.type === "time") ? d.type : "text";
+        control = `<input type="${t}" name="${d.name}" value="${escapeHTML(initial)}"${placeholder}${max}${req}>`;
+      }
+      return `
+        <div class="qb-form-field ${wide}">
+          <label>${escapeHTML(d.label)}</label>
+          ${control}
+        </div>`;
+    }).join("");
+    save.disabled = false;
+  };
+
+  const openMoveModal = (it) => {
+    moveItem = it;
+    moveCategory = null;
+    $("#qb-move-text").textContent = it.text || "";
+    renderMoveCategoryButtons();
+    renderMoveForm();
+    $("#qb-move-modal").classList.add("is-open");
+    $("#qb-move-modal").setAttribute("aria-hidden", "false");
+    refreshFeather();
+  };
+
+  const closeMoveModal = () => {
+    $("#qb-move-modal").classList.remove("is-open");
+    $("#qb-move-modal").setAttribute("aria-hidden", "true");
+    moveItem = null;
+    moveCategory = null;
+  };
+
+  const submitMove = async () => {
+    if (!moveItem || !moveCategory) return;
+    const defs = MOVE_FIELDS[moveCategory];
+    if (!defs) return;
+    const form = $("#qb-move-form");
+    const fd = new FormData(form);
+    const fields = {};
+    for (const [k, v] of fd.entries()) fields[k] = v;
+    for (const d of defs) {
+      if (d.required && !(fields[d.name] || "").trim()) {
+        toast(`${d.label} is required`, "error");
+        return;
+      }
+    }
+    const save = $("#qb-move-save");
+    save.disabled = true;
+    try {
+      const r = await apiFetch(`/api/quick-bucket/${moveItem.id}/route`, {
+        method: "POST",
+        body: JSON.stringify({ category: moveCategory, fields }),
+      });
+      const where = (r.destination_table || "").replace("_", " ");
+      toast(`Moved to ${where}`, "success");
+      // Bucket row is archived server-side — drop it locally too.
+      items = items.filter(x => x.id !== moveItem.id);
+      closeMoveModal();
+      render();
+    } catch (err) {
+      toast(err.message || "Couldn't move", "error");
+    } finally {
+      save.disabled = false;
+    }
+  };
+
+  const wireMoveModal = () => {
+    $("#qb-move-close").addEventListener("click", closeMoveModal);
+    $("#qb-move-cancel").addEventListener("click", closeMoveModal);
+    $("#qb-move-save").addEventListener("click", submitMove);
+    $("#qb-move-modal").addEventListener("click", (e) => {
+      if (e.target.id === "qb-move-modal") closeMoveModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMoveModal();
+    });
   };
 
   const addItem = async (text) => {
@@ -520,6 +742,7 @@
     // session has already elapsed).
     loadPomo();
     wirePomo();
+    wireMoveModal();
     if (pomo.state === "running") {
       if (pomo.endsAt && pomo.endsAt > Date.now()) {
         startPomoTicker();

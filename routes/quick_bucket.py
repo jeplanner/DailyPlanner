@@ -83,6 +83,9 @@ def quick_bucket_page():
 @quick_bucket_bp.route("/api/quick-bucket", methods=["GET"])
 @login_required
 def list_items():
+    """Return both active AND closed rows so the page can show a 'Done'
+    section. Archived (is_deleted) rows still stay hidden — that's the
+    soft-delete bucket for items the user removed entirely."""
     user_id = session["user_id"]
     try:
         rows = get(
@@ -90,9 +93,8 @@ def list_items():
             params={
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false",
-                "is_done": "eq.false",
-                "select": "id,text,time_bucket,due_at,position,created_at,updated_at",
-                "order": "position.asc,created_at.desc",
+                "select": "id,text,time_bucket,due_at,is_done,done_at,position,created_at,updated_at",
+                "order": "is_done.asc,position.asc,created_at.desc",
                 "limit": "500",
             },
         ) or []
@@ -225,6 +227,89 @@ def mark_done(item_id):
         logger.error("quick_bucket done failed: %s", e)
         return jsonify({"error": "Couldn't update — please try again."}), 502
     return jsonify({"ok": True})
+
+
+@quick_bucket_bp.route("/api/quick-bucket/<item_id>/reopen", methods=["POST"])
+@login_required
+def reopen(item_id):
+    """Bring a Done row back to active so the user can keep working on it."""
+    user_id = session["user_id"]
+    try:
+        update(
+            "quick_bucket",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json={"is_done": False, "done_at": None},
+        )
+    except Exception as e:
+        logger.error("quick_bucket reopen failed: %s", e)
+        return jsonify({"error": "Couldn't reopen — please try again."}), 502
+    return jsonify({"ok": True})
+
+
+# ─────────── route into a destination module ────────────────────
+#
+# When the user picks a category in the "Move to…" dialog, the form
+# fields are POSTed here. We delegate to tasks_bucket._create_destination_row
+# (already written, with per-category validation) so the schema-specific
+# logic lives in one place. On success the quick-bucket row is archived
+# — it has been "moved out" — and the destination row owns it from now
+# on.
+
+@quick_bucket_bp.route("/api/quick-bucket/<item_id>/route", methods=["POST"])
+@login_required
+def route_item(item_id):
+    from routes.tasks_bucket import _create_destination_row, ROUTABLE, CATEGORIES
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    cat = (data.get("category") or "").strip()
+    fields = data.get("fields") or {}
+
+    if cat not in CATEGORIES:
+        return jsonify({"error": "Pick a category"}), 400
+    if cat not in ROUTABLE:
+        return jsonify({"error": "This category isn't routable yet."}), 400
+
+    rows = get(
+        "quick_bucket",
+        params={
+            "id": f"eq.{item_id}",
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "select": "id,text",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    item = rows[0]
+
+    dest_table, dest_id_or_msg = _create_destination_row(
+        user_id, cat, item.get("text") or "", fields
+    )
+    if not dest_table:
+        return jsonify({"error": dest_id_or_msg or "Couldn't move."}), 502
+
+    # Archive the bucket row — it has lived its purpose.
+    try:
+        update(
+            "quick_bucket",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json={"is_deleted": True},
+        )
+    except Exception:
+        logger.exception("quick_bucket route: post-archive failed")
+        return jsonify({
+            "ok": True,
+            "warning": "Created in module but couldn't archive bucket row — refresh.",
+            "destination_table": dest_table,
+            "destination_id": dest_id_or_msg,
+        })
+
+    return jsonify({
+        "ok": True,
+        "destination_table": dest_table,
+        "destination_id": dest_id_or_msg,
+    })
 
 
 # ─────────── archive (soft-delete) ───────────────────────────
