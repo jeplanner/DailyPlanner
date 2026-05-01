@@ -272,11 +272,28 @@
       font-weight: 500; font-style: italic;
     }
     .md-agenda-table .md-c-time .md-time-end { display: none; }
-    /* Overdue gets a red "Xd late" badge instead of a time. */
+    /* Overdue: tight red pill in the right slot. The TD itself is
+       a flex item with no fill; the inner .md-overdue-chip carries
+       the pill background so it sizes to the "2d" text instead of
+       stretching to fill the cell. */
     .md-overdue-table .md-c-due {
+      background: transparent !important;
+      padding: 0 !important;
+    }
+    .md-overdue-table .md-c-due .md-overdue-chip {
+      display: inline-block;
       font-size: 11px; font-weight: 700;
       padding: 2px 8px; border-radius: 999px;
       background: #fef2f2; color: #b91c1c;
+      line-height: 1.4;
+    }
+    /* Strip the legacy left-rail tint that overdue rows inherit
+       from the original card styling — looks jagged next to the
+       flat today's-flow rows below. */
+    .md-overdue-table tr.md-row {
+      background: transparent !important;
+      border-left: none !important;
+      box-shadow: none !important;
     }
     /* Done rows visibly fade and strike through. */
     .md-agenda-table tr.md-done .md-row-title { text-decoration: line-through; opacity: .55; }
