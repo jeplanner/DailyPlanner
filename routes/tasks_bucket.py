@@ -172,10 +172,12 @@ def _create_destination_row(user_id, category, raw_text, fields):
         rt = (fields.get("reminder_time") or "").strip()
         if rt:
             payload["reminder_time"] = rt
-        # Group name: defaults to "Project Tasks" for ProjectTask category
+        # Group name: defaults to "Project Tasks" for ProjectTask, and
+        # "Tasks Bucket" for plain Checklist moves. Either way the user
+        # can override via the form. Empty after override → no group.
         group = (fields.get("group_name") or "").strip()
-        if not group and category == "ProjectTask":
-            group = "Project Tasks"
+        if not group:
+            group = "Project Tasks" if category == "ProjectTask" else "Tasks Bucket"
         if group:
             payload["group_name"] = " ".join(group.split()).title()
         re_end = (fields.get("recurrence_end") or "").strip()

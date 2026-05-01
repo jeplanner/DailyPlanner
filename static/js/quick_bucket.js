@@ -418,7 +418,9 @@
       { name: "time_of_day",   label: "When",         type: "select",   default: "anytime",
         options: ["morning","afternoon","evening","anytime"] },
       { name: "reminder_time", label: "Reminder",     type: "time" },
-      { name: "group_name",    label: "Group",        type: "text",     placeholder: "Optional" },
+      // Default to "Tasks Bucket" so moved items group together on the
+      // checklist page; the user can still rename to anything else.
+      { name: "group_name",    label: "Group",        type: "text",     default: "Tasks Bucket" },
       { name: "notes",         label: "Notes",        type: "textarea", wide: true, max: 400 },
     ],
     TravelReads: [
