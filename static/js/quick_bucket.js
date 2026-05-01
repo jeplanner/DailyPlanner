@@ -1052,13 +1052,20 @@
     const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
     const HANDSFREE_KEY = "qb-handsfree-v1";
     const WAKE_DEBOUNCE_MS = 2_000;
-    // Wake phrases. The "renga" alternation list catches common
-    // mis-transcriptions of the name across engines (Renga / Ranga /
-    // Rang / Reng). Add more alternatives here if Chrome hears something
-    // unexpected — print the transcript via the console.log below to see
-    // what the engine actually produced.
-    const WAKE_START_RE = /\b(?:hey|hi|hai)\s+(?:renga|ranga|rang|reng|wrangler|rangu)\b/i;
-    const WAKE_STOP_RE  = /\b(?:ok|okay|okey)\s+(?:renga|ranga|rang|reng|wrangler|rangu)\b/i;
+    // Wake phrases. Speech engines very rarely transcribe the proper
+    // noun "Renga" cleanly — they bend it toward English words that
+    // sound similar. The variant list below catches what Chrome and
+    // Samsung Internet typically produce. If a new mis-hearing shows
+    // up, the console.log("[qb wake] heard:", t) line in onresult
+    // prints the actual transcript so we can extend this list.
+    const WAKE_NAMES = "(?:renga|ranga|rang|reng|rangu|rangoo|raanga|"
+      + "wrangler|wrangle|wrangling|"
+      + "ringer|ringa|ringo|"
+      + "ranger|rangers)";
+    const WAKE_START_RE = new RegExp(
+      `\\b(?:hey|hi|hai|aye|hello)\\s+${WAKE_NAMES}\\b`, "i");
+    const WAKE_STOP_RE  = new RegExp(
+      `\\b(?:ok|okay|okey|done|finish|finished|stop)\\s+${WAKE_NAMES}\\b`, "i");
     const micBtn = $("#qb-mic-btn");
     const handsfreeBtn = $("#qb-handsfree-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1235,9 +1242,11 @@
         };
         try {
           wakeRec.start();
+          console.log("[qb wake] started");
         } catch (e) {
           wakeRunning = false;
           updateHandsfreeStatus();
+          console.error("[qb wake] start failed:", e);
           // Common cause: SpeechRecognition.start() called outside a
           // user gesture, which Chrome rejects. Surface the failure
           // so the toggle isn't a green-but-dead button.
