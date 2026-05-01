@@ -396,77 +396,6 @@
     </div>
   </section>
 
-  {# ── TASKS BUCKET FIRST ──────────────────────────────────────
-     Render the bucket items as a flat checkbox list at the very
-     top of the daily view, before overdue and today's items. The
-     today's-flow loop below filters them out so they don't appear
-     twice. No heading per the "no headings" rule. #}
-  {% set _bucket_items = dashboard.today_items|selectattr('source','equalto','bucket')|list %}
-  {% if _bucket_items %}
-  <ul class="md-bucket-strip" aria-label="From Tasks Bucket">
-    {% for it in _bucket_items %}
-    <li class="md-bucket-strip-row {% if it.done %}is-done{% endif %}"
-        data-id="{{ it.id }}"
-        onclick="window.location.href='{{ it.link or '/quick-bucket' }}'">
-      <span class="md-bucket-strip-check {% if it.done %}is-done{% endif %}" aria-hidden="true"></span>
-      <span class="md-bucket-strip-text">{{ it.title }}</span>
-      {% if it.context %}<span class="md-bucket-strip-ctx">{{ it.context }}</span>{% endif %}
-      {% if it.time %}<span class="md-bucket-strip-time">{{ it.time }}</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  <style>
-    .md-bucket-strip {
-      list-style: none; margin: 0 0 8px; padding: 0;
-      background: var(--color-surface, #fff);
-      border: 1px solid var(--color-border, #e5e7eb);
-      border-radius: 12px; overflow: hidden;
-    }
-    .md-bucket-strip-row {
-      display: flex; align-items: center; gap: 10px;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--color-border-light, #f1f5f9);
-      cursor: pointer; transition: background .12s;
-    }
-    .md-bucket-strip-row:last-child { border-bottom: none; }
-    .md-bucket-strip-row:hover { background: rgba(99,102,241,.05); }
-    .md-bucket-strip-row.is-done .md-bucket-strip-text { text-decoration: line-through; opacity: .5; }
-    .md-bucket-strip-check {
-      width: 16px; height: 16px; flex: 0 0 auto;
-      border: 1.5px solid var(--color-text-tertiary, #9ca3af);
-      border-radius: 4px;
-    }
-    .md-bucket-strip-check.is-done {
-      background: var(--color-primary, #4338ca);
-      border-color: var(--color-primary, #4338ca);
-      position: relative;
-    }
-    .md-bucket-strip-check.is-done::after {
-      content: "✓"; color: #fff; font-size: 11px; font-weight: 800;
-      position: absolute; left: 2px; top: -3px;
-    }
-    .md-bucket-strip-text {
-      flex: 1; min-width: 0;
-      font-size: 14px; line-height: 1.35;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .md-bucket-strip-ctx {
-      flex: 0 0 auto;
-      font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
-      padding: 2px 8px; border-radius: 999px;
-      background: #eef2ff; color: #4338ca;
-    }
-    .md-bucket-strip-time {
-      flex: 0 0 auto;
-      font-size: 11.5px; font-weight: 700;
-      font-variant-numeric: tabular-nums;
-      color: var(--color-text-secondary, #475569);
-      padding: 2px 8px; border-radius: 999px;
-      background: var(--color-surface-secondary, #f3f4f6);
-    }
-  </style>
-  {% endif %}
-
   <!-- ── OVERDUE ── highest priority signal in a morning review.
        Collapsible: tap the header to toggle. State persisted in
        localStorage by the card-collapse script at the bottom of the
@@ -632,10 +561,9 @@
           </tr>
         </thead>
         <tbody>
-          {# Bucket items render in the strip ABOVE this card, so
-             skip them here to avoid duplicates. #}
+          {# Group 1: timed items (already sorted) #}
           {% set _prev_band = {"value": None} %}
-          {% for it in dashboard.today_items if it.source != 'bucket' %}
+          {% for it in dashboard.today_items %}
             {# Soft time-band dividers so morning/afternoon scan is natural #}
             {% if it.time %}
               {% set hh = it.time.split(':')[0]|int %}
