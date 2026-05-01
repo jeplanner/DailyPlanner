@@ -1676,6 +1676,94 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     </div>
   </aside>
 
+  <!-- View toggle: List (default, scannable single column with visual
+       hierarchy by quadrant) or Grid (the classic 2x2 dense layout for
+       batch triage). State persists in localStorage. -->
+  <div class="em-view-toggle" role="tablist" aria-label="Eisenhower view mode">
+    <button class="em-view-btn is-active" data-view="list" type="button" role="tab"
+            aria-selected="true" title="Single ordered list, sorted Do → Schedule → Delegate → Eliminate">
+      <i data-feather="list"></i><span>List</span>
+    </button>
+    <button class="em-view-btn" data-view="grid" type="button" role="tab"
+            aria-selected="false" title="Classic 2×2 quadrant grid">
+      <i data-feather="grid"></i><span>Grid</span>
+    </button>
+  </div>
+
+  <style>
+    .em-view-toggle {
+      display: inline-flex; gap: 4px; padding: 4px;
+      background: var(--color-surface-secondary, #f3f4f6);
+      border: 1px solid var(--color-border, #e5e7eb);
+      border-radius: 999px;
+      margin: 0 0 12px;
+    }
+    .em-view-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 999px;
+      font: inherit; font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+      border: none; background: transparent;
+      color: var(--color-text-secondary, #475569); cursor: pointer;
+      transition: background .12s, color .12s;
+    }
+    .em-view-btn:hover { color: var(--color-text, #111827); }
+    .em-view-btn.is-active {
+      background: var(--color-primary, #4338ca);
+      color: var(--color-on-primary, #fff);
+    }
+    .em-view-btn svg { width: 14px; height: 14px; }
+
+    /* ── LIST VIEW (default) ─────────────────────────────────
+       The matrix becomes a single vertical column. Each quadrant
+       is its own card; tasks within get visual hierarchy so the
+       eye is pulled to "Do" first and only glances at "Eliminate". */
+    body:not([data-em-view="grid"]) .em-matrix {
+      display: block;
+      grid-template-columns: none;
+      gap: 0;
+    }
+    body:not([data-em-view="grid"]) .em-quad {
+      margin-bottom: 12px;
+    }
+    body:not([data-em-view="grid"]) .em-quad-body { padding: 0; }
+
+    /* Per-quadrant task hierarchy. The "Do" band is loud, "Eliminate"
+       is faded — the visual weight matches the action priority. */
+    body:not([data-em-view="grid"]) .em-task {
+      border-left: 4px solid transparent;
+      transition: background .15s;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="do"] {
+      border-left-color: #ef4444;
+      background: linear-gradient(90deg, rgba(239,68,68,.06), transparent 70%);
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="do"] .em-task-text {
+      font-size: 16px; font-weight: 700; color: #b91c1c; line-height: 1.35;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="schedule"] {
+      border-left-color: #3b82f6;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="schedule"] .em-task-text {
+      font-size: 14px; font-weight: 600; color: #1e3a8a;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="delegate"] {
+      border-left-color: #9ca3af; opacity: .92;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="delegate"] .em-task-text {
+      font-size: 13px; color: #4b5563;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="eliminate"] {
+      border-left-color: #d1d5db; opacity: .65;
+    }
+    body:not([data-em-view="grid"]) .em-task[data-quadrant="eliminate"] .em-task-text {
+      font-size: 12.5px; color: #6b7280; text-decoration: line-through;
+    }
+
+    /* The legacy 2x2 grid mode keeps the existing styles — these only
+       apply when [data-em-view="grid"] is set on body. The default
+       above already handles the list mode. */
+  </style>
+
   <!-- Matrix Grid -->
   <div class="em-matrix">
     {% for q, label, desc in [
@@ -1715,6 +1803,32 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
     </div>
     {% endfor %}
   </div>
+
+  <script>
+    // View-mode toggle: persists user choice. List is the default —
+    // a single ordered column from Do → Eliminate, easier to scan than
+    // the 2x2 grid. Grid stays one click away for batch triage.
+    (function () {
+      const btns = document.querySelectorAll(".em-view-btn");
+      if (!btns.length) return;
+      const KEY = "em-view-v1";
+      const setView = (v, persist) => {
+        const view = v === "grid" ? "grid" : "list";
+        if (view === "grid") document.body.dataset.emView = "grid";
+        else delete document.body.dataset.emView;
+        btns.forEach(b => {
+          const on = b.dataset.view === view;
+          b.classList.toggle("is-active", on);
+          b.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        if (persist) { try { localStorage.setItem(KEY, view); } catch (_) {} }
+      };
+      btns.forEach(b => b.addEventListener("click", () => setView(b.dataset.view, true)));
+      let saved = "list";
+      try { saved = localStorage.getItem(KEY) || "list"; } catch (_) {}
+      setView(saved, false);
+    })();
+  </script>
 </div>
 
 {# ══════════ PARKED TASKS — overdue items pulled out of the quadrants ══════════
