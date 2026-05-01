@@ -97,6 +97,28 @@
     if (openEl) openEl.textContent = open;
     if (doneEl) doneEl.textContent = doneToday;
     if (quoteEl) quoteEl.textContent = `"${quoteOfTheDay()}"`;
+
+    // Bucket-fill visual: ratio of today's done over today's total
+    // (open + done_today). With nothing done, the bucket is empty;
+    // tick everything off and it brims.
+    const total = open + doneToday;
+    const ratio = total > 0 ? Math.min(1, doneToday / total) : 0;
+    const fill = document.getElementById("qb-bucket-fill");
+    const line = document.getElementById("qb-bucket-line");
+    if (fill) {
+      const top = 22, bot = 80;
+      const fillH = (bot - top) * ratio;
+      const fillY = bot - fillH;
+      fill.setAttribute("y", fillY);
+      fill.setAttribute("height", fillH);
+      if (line) {
+        line.setAttribute("y1", fillY);
+        line.setAttribute("y2", fillY);
+        // Hide the surface line when the bucket is empty so we don't
+        // draw a stray bar at the very bottom of an empty bucket.
+        line.style.opacity = ratio > 0 ? "1" : "0";
+      }
+    }
   };
 
   // ─────────── helpers ───────────────────────────────────────
@@ -672,6 +694,27 @@
     root.classList.toggle("is-running", playing);
     root.classList.toggle("is-ended", pomo.state === "ended");
 
+    // Trigger button on the stats card mirrors the timer state so the
+    // user can see the countdown at a glance even when the popup is
+    // closed.
+    const trigger = $("#qb-focus-trigger");
+    const triggerLbl = $("#qb-focus-trigger-label");
+    if (trigger && triggerLbl) {
+      trigger.classList.toggle("is-running", playing);
+      trigger.classList.toggle("is-ended", pomo.state === "ended");
+      if (playing) {
+        triggerLbl.textContent = pomo.label
+          ? `${fmtClock(ms)} · ${pomo.label}`
+          : fmtClock(ms);
+      } else if (pomo.state === "paused") {
+        triggerLbl.textContent = `Paused · ${fmtClock(ms)}`;
+      } else if (pomo.state === "ended") {
+        triggerLbl.textContent = "Focus done";
+      } else {
+        triggerLbl.textContent = "Focus";
+      }
+    }
+
     // Label area: shows "Focus" when no title is set, or the activity
     // title once the user has picked one. The title is collected via
     // a popup, not an inline field, so the widget stays compact.
@@ -957,6 +1000,20 @@
     } catch (_) {}
   };
 
+  const openPomoPopup = () => {
+    const m = $("#qb-pomo-popup");
+    if (!m) return;
+    m.classList.add("is-open");
+    m.setAttribute("aria-hidden", "false");
+    refreshFeather();
+  };
+  const closePomoPopup = () => {
+    const m = $("#qb-pomo-popup");
+    if (!m) return;
+    m.classList.remove("is-open");
+    m.setAttribute("aria-hidden", "true");
+  };
+
   const wirePomo = () => {
     $("#qb-pomo-play").addEventListener("click", () => {
       pomoToggle();
@@ -969,6 +1026,18 @@
     $("#qb-pomo-reset").addEventListener("click", pomoReset);
     $$(".qb-pomo-dur").forEach(b => {
       b.addEventListener("click", () => pomoSetDuration(Number(b.dataset.min)));
+    });
+
+    // Trigger button on the stats card opens the timer popup. The
+    // timer keeps ticking even when the popup is closed; the trigger
+    // label mirrors the running countdown.
+    $("#qb-focus-trigger")?.addEventListener("click", openPomoPopup);
+    $("#qb-pomo-popup-close")?.addEventListener("click", closePomoPopup);
+    $("#qb-pomo-popup")?.addEventListener("click", (e) => {
+      if (e.target.id === "qb-pomo-popup") closePomoPopup();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closePomoPopup();
     });
   };
 
