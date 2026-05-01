@@ -763,8 +763,11 @@
     });
 
     // ── Mic: dictate a task with the Web Speech API ─────────
-    // Final transcripts auto-add as separate items so the user can
-    // rattle off a list without tapping anything between thoughts.
+    // Whatever you say lands in the input field as one piece of text;
+    // the existing Add button (or Enter) commits it as a single task.
+    // Click the mic again to stop manually; auto-stops after 5s of
+    // silence so you don't have to remember to turn it off.
+    const SILENCE_STOP_MS = 5_000;
     const micBtn = $("#qb-mic-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -773,8 +776,32 @@
     } else {
       let recognition = null;
       let recognizing = false;
+      let silenceTimer = null;
+      // baseValue = everything finalised so far (preserved across
+      // result events so we don't double-add). interim = the partial
+      // transcript currently being recognised. The input always
+      // shows baseValue + ' ' + interim.
+      let baseValue = "";
+      let interimText = "";
+
+      const clearSilenceTimer = () => {
+        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+      };
+      const armSilenceTimer = () => {
+        clearSilenceTimer();
+        silenceTimer = setTimeout(() => {
+          if (recognizing) {
+            try { recognition?.stop(); } catch (_) {}
+          }
+        }, SILENCE_STOP_MS);
+      };
+      const renderInput = () => {
+        input.value = baseValue + (interimText ? (baseValue ? " " : "") + interimText : "");
+      };
+
       micBtn.addEventListener("click", () => {
         if (recognizing) {
+          // User-tap stop — engine onend handler does the cleanup.
           try { recognition?.stop(); } catch (_) {}
           return;
         }
@@ -782,36 +809,60 @@
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = navigator.language || "en-US";
+
+        // Resume from whatever's already in the input — this is also
+        // how "pause and continue" works: stop the mic, the text stays;
+        // tap the mic again and your next words append.
+        baseValue = (input.value || "").trim();
+        interimText = "";
+
         recognition.onresult = (e) => {
           let interim = "";
           for (let i = e.resultIndex; i < e.results.length; i++) {
             const t = (e.results[i][0].transcript || "").trim();
             if (!t) continue;
             if (e.results[i].isFinal) {
-              // Each final phrase becomes its own task. Falls into 'now'
-              // by default — user can re-bucket from the row pill.
-              addItem(t);
+              // Append finalised phrase to the running base; do NOT
+              // create a task here. One dictation = one task, committed
+              // when the user taps Add / presses Enter.
+              baseValue = baseValue ? `${baseValue} ${t}` : t;
             } else {
-              interim += t + " ";
+              interim += (interim ? " " : "") + t;
             }
           }
-          // Show interim text in the input so the user sees they're heard.
-          input.value = interim.trim();
+          interimText = interim;
+          renderInput();
+          armSilenceTimer();
         };
+        recognition.onspeechstart = clearSilenceTimer;
+        recognition.onspeechend = armSilenceTimer;
         recognition.onend = () => {
           recognizing = false;
           micBtn.classList.remove("is-on");
-          input.value = "";
+          clearSilenceTimer();
+          // Promote any in-flight interim into base so the user has
+          // editable text in the input even if nothing finalised cleanly.
+          if (interimText) {
+            baseValue = baseValue ? `${baseValue} ${interimText}` : interimText;
+            interimText = "";
+            renderInput();
+          }
         };
-        recognition.onerror = () => {
+        recognition.onerror = (e) => {
           recognizing = false;
           micBtn.classList.remove("is-on");
-          toast("Dictation stopped", "info");
+          clearSilenceTimer();
+          // 'no-speech' and 'aborted' are normal stop reasons — only
+          // surface real failures.
+          if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
+            toast(`Mic: ${e.error}`, "error");
+          }
         };
         try {
           recognition.start();
           recognizing = true;
           micBtn.classList.add("is-on");
+          armSilenceTimer();
         } catch (_) { /* ignore double-start */ }
       });
     }
