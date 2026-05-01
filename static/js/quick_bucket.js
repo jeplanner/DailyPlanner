@@ -940,12 +940,14 @@
         recognition.onend = () => {
           recognizing = false;
           micBtn.classList.remove("is-on");
+          updateHandsfreeStatus();
           // Resume wake listening so the next "start" works.
           if (handsfreeOn) startWake();
         };
         recognition.onerror = (e) => {
           recognizing = false;
           micBtn.classList.remove("is-on");
+          updateHandsfreeStatus();
           if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
             toast(`Mic: ${e.error}`, "error");
           }
@@ -955,6 +957,7 @@
           recognition.start();
           recognizing = true;
           micBtn.classList.add("is-on");
+          updateHandsfreeStatus();
         } catch (_) { /* ignore double-start */ }
       };
 
@@ -974,9 +977,25 @@
       // For "stop": single-shot dictation ends on natural silence
       // anyway, but if the wake listener hears "stop" while a dictation
       // is in flight, abort the dictation early.
+      const updateHandsfreeStatus = () => {
+        const el = $("#qb-handsfree-status");
+        const txt = $("#qb-handsfree-status-text");
+        if (!el) return;
+        if (handsfreeOn && wakeRunning) {
+          el.removeAttribute("hidden");
+          if (txt) txt.textContent = 'Listening — say "start" to dictate';
+        } else if (handsfreeOn && recognizing) {
+          el.removeAttribute("hidden");
+          if (txt) txt.textContent = "Dictating…";
+        } else {
+          el.setAttribute("hidden", "");
+        }
+      };
+
       const startWake = () => {
         if (!handsfreeOn || wakeRunning || recognizing) return;
         wakeRunning = true;
+        updateHandsfreeStatus();
         wakeRec = new SR();
         wakeRec.continuous = true;
         wakeRec.interimResults = true;
@@ -1002,6 +1021,7 @@
         wakeRec.onend = () => {
           wakeRunning = false;
           wakeRec = null;
+          updateHandsfreeStatus();
           if (wakePending) {
             wakePending = false;
             startDictation();
@@ -1016,6 +1036,7 @@
         wakeRec.onerror = (e) => {
           wakeRunning = false;
           wakeRec = null;
+          updateHandsfreeStatus();
           if (e.error === "not-allowed") {
             // User denied mic permission — auto-disable hands-free.
             setHandsfree(false);
@@ -1026,13 +1047,25 @@
             setTimeout(startWake, 500);
           }
         };
-        try { wakeRec.start(); } catch (_) { wakeRunning = false; }
+        try {
+          wakeRec.start();
+        } catch (e) {
+          wakeRunning = false;
+          updateHandsfreeStatus();
+          // Common cause: SpeechRecognition.start() called outside a
+          // user gesture, which Chrome rejects. Surface the failure
+          // so the toggle isn't a green-but-dead button.
+          toast("Couldn't start mic — tap the toggle again", "error");
+          handsfreeOn = false;
+          if (handsfreeBtn) handsfreeBtn.classList.remove("is-on");
+        }
       };
       const stopWake = () => {
         wakePending = false;
         if (wakeRec) {
           try { wakeRec.stop(); } catch (_) {}
         }
+        updateHandsfreeStatus();
       };
 
       const setHandsfree = (on) => {
@@ -1041,22 +1074,28 @@
         if (handsfreeBtn) {
           handsfreeBtn.classList.toggle("is-on", on);
           handsfreeBtn.title = on
-            ? 'Hands-free on — say "start" to dictate, "stop" to cancel'
+            ? 'Hands-free on — say "start" to dictate'
             : 'Hands-free — say "start" to dictate';
         }
-        if (on) startWake();
-        else stopWake();
+        if (on) {
+          startWake();
+          toast("Listening for \"start\"", "info");
+        } else {
+          stopWake();
+        }
       };
 
       handsfreeBtn?.addEventListener("click", () => setHandsfree(!handsfreeOn));
 
-      // Restore previous state. Note: the very first start of a
-      // SpeechRecognition needs a user gesture in some browsers — if
-      // the auto-start fails, the user can tap the toggle to retry.
+      // We deliberately do NOT auto-restore from localStorage. Browsers
+      // require a user gesture for the first SpeechRecognition.start();
+      // a setTimeout-driven auto-start fires outside that gesture and
+      // Chrome silently rejects it, leaving the toggle green-but-dead.
+      // Instead, mark the toggle pre-armed if it was previously on, but
+      // wait for the user's tap to actually wire up the mic.
       try {
-        if (localStorage.getItem(HANDSFREE_KEY) === "1") {
-          // Defer slightly so all DOM wiring is ready.
-          setTimeout(() => setHandsfree(true), 400);
+        if (localStorage.getItem(HANDSFREE_KEY) === "1" && handsfreeBtn) {
+          handsfreeBtn.title = 'Hands-free was on — tap to re-enable';
         }
       } catch (_) {}
     }

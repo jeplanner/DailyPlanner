@@ -69,6 +69,23 @@
     50%      { opacity: 1; }
   }
 
+  /* Visible status under the add form so the user can tell whether
+     the wake-word listener is actually running (vs button just being
+     toggled on with mic permission denied). */
+  .qb-handsfree-status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; margin-bottom: 10px;
+    background: #ecfdf5; border: 1px solid #a7f3d0;
+    border-radius: 10px;
+    font-size: 12.5px; color: #065f46; font-weight: 600;
+  }
+  .qb-handsfree-status[hidden] { display: none; }
+  .qb-handsfree-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #10b981;
+    animation: qbBlink 1.4s ease-in-out infinite;
+  }
+
   .qb-group { margin-bottom: 16px; }
   .qb-group-head {
     display: flex; align-items: center; gap: 10px;
@@ -410,6 +427,11 @@
       <button class="qb-pomo-dur" data-min="90" type="button">90m</button>
     </div>
   </section>
+
+  <div id="qb-handsfree-status" class="qb-handsfree-status" hidden>
+    <span class="qb-handsfree-dot"></span>
+    <span id="qb-handsfree-status-text">Listening — say "start" to dictate</span>
+  </div>
 
   <form id="qb-add-form" class="qb-add" autocomplete="off">
     <input id="qb-add-input" type="text" placeholder="What needs doing? Press Enter to add."
