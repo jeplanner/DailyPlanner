@@ -24,11 +24,11 @@ logger = setup_logger()
 @planner_bp.route("/")
 @login_required
 def planner():
-    # Default landing page = Today's Plan (morning dashboard).
-    # This lands users on a daily-review screen that shows today's
-    # agenda + overdue + habits, which is the highest-value "first-thing-
-    # in-the-morning" view. Eisenhower matrix remains at /todo.
-    return redirect(url_for("planner.summary", view="daily"))
+    # Default landing page = Tasks Bucket. Quick-capture inbox is the
+    # first thing the user wants on opening the app — drop a thought,
+    # pick when, get back to it. Today's Plan still lives at
+    # /summary?view=daily; Eisenhower matrix at /todo.
+    return redirect(url_for("quick_bucket.quick_bucket_page"))
 
 
 @planner_bp.route("/calendar")
