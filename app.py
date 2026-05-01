@@ -146,19 +146,33 @@ def create_app():
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).
+    #
+    # These two files are cache-busted explicitly: SEND_FILE_MAX_AGE_DEFAULT
+    # is 30 days (great for icons and CSS), but a stale manifest means
+    # an installed PWA never picks up start_url / launch_handler changes,
+    # and a stale service-worker can serve out-of-date HTML for weeks.
+    # Tell the browser to revalidate every load.
+    def _no_cache(resp):
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+
     @app.route("/service-worker.js")
     def _service_worker():
-        return send_from_directory(
+        resp = send_from_directory(
             app.static_folder, "service-worker.js",
             mimetype="application/javascript",
         )
+        return _no_cache(resp)
 
     @app.route("/manifest.json")
     def _manifest():
-        return send_from_directory(
+        resp = send_from_directory(
             app.static_folder, "manifest.json",
             mimetype="application/manifest+json",
         )
+        return _no_cache(resp)
 
     # ── Start the push reminder scheduler (idempotent) ──
     try:

@@ -3,14 +3,14 @@
   "name": "DailyPlanner",
   "short_name": "Planner",
   "description": "Personal daily planner with checklists, habits, and reminders.",
-  "start_url": "/checklist",
+  "start_url": "/quick-bucket",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f7f8fa",
   "theme_color": "#6366f1",
   "launch_handler": {
-    "client_mode": ["navigate-existing", "focus-existing", "auto"]
+    "client_mode": ["focus-existing", "auto"]
   },
   "icons": [
     {
