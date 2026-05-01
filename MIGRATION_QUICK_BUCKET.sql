@@ -24,7 +24,8 @@ create table if not exists quick_bucket (
   user_id       uuid not null,
   text          text not null,
   time_bucket   text not null default 'now',  -- now | 4h | 8h | future
-  due_at        timestamptz,                  -- deadline stamped when bucket = 4h / 8h
+  due_at        timestamptz,                  -- deadline stamped when bucket = 5m..8h
+  google_event_id text,                       -- Google Calendar event id (mirror)
   is_done       boolean default false,
   is_deleted    boolean default false,
   position      int default 0,
@@ -34,8 +35,9 @@ create table if not exists quick_bucket (
 );
 
 -- Idempotent for installs that ran the earlier version of this file
--- without due_at.
-alter table quick_bucket add column if not exists due_at timestamptz;
+-- without due_at / google_event_id.
+alter table quick_bucket add column if not exists due_at         timestamptz;
+alter table quick_bucket add column if not exists google_event_id text;
 
 -- Hot path: list every active row for one user, ordered for the UI.
 create index if not exists quick_bucket_user_active_idx
