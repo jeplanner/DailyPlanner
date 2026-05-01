@@ -218,13 +218,31 @@
     position: fixed; inset: 0; background: rgba(15,23,42,.5);
     display: none; align-items: center; justify-content: center;
     z-index: 1000; padding: 16px;
+    /* Allow the modal to scroll with the page if it grows past the
+       viewport on tiny screens — beats the modal getting clipped. */
+    overflow-y: auto;
   }
   .qb-modal-backdrop.is-open { display: flex; }
   .qb-modal {
     background: var(--color-surface); border: 1px solid var(--color-border);
     border-radius: 14px; max-width: 520px; width: 100%;
-    max-height: 90vh; overflow: auto;
+    /* dvh = dynamic viewport height. Unlike vh it shrinks when the
+       browser address bar and the on-screen keyboard show up, so the
+       modal never gets pushed off-screen on mobile. */
+    max-height: calc(100dvh - 32px); overflow: auto;
     box-shadow: 0 20px 50px rgba(0,0,0,.25);
+  }
+  /* On phones the centered-flex layout gets shoved around when the
+     soft keyboard opens. Anchor to the top with breathing room so the
+     popup stays where the user can see it. */
+  @media (max-width: 639px) {
+    .qb-modal-backdrop {
+      align-items: flex-start;
+      padding: 24px 12px;
+    }
+    .qb-modal {
+      max-height: calc(100dvh - 48px);
+    }
   }
   .qb-modal-head {
     display: flex; align-items: center; justify-content: space-between;
