@@ -1052,20 +1052,13 @@
     const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
     const HANDSFREE_KEY = "qb-handsfree-v1";
     const WAKE_DEBOUNCE_MS = 2_000;
-    // Wake phrases. Speech engines very rarely transcribe the proper
-    // noun "Renga" cleanly — they bend it toward English words that
-    // sound similar. The variant list below catches what Chrome and
-    // Samsung Internet typically produce. If a new mis-hearing shows
-    // up, the console.log("[qb wake] heard:", t) line in onresult
-    // prints the actual transcript so we can extend this list.
-    const WAKE_NAMES = "(?:renga|ranga|rang|reng|rangu|rangoo|raanga|"
-      + "wrangler|wrangle|wrangling|"
-      + "ringer|ringa|ringo|"
-      + "ranger|rangers)";
-    const WAKE_START_RE = new RegExp(
-      `\\b(?:hey|hi|hai|aye|hello)\\s+${WAKE_NAMES}\\b`, "i");
-    const WAKE_STOP_RE  = new RegExp(
-      `\\b(?:ok|okay|okey|done|finish|finished|stop)\\s+${WAKE_NAMES}\\b`, "i");
+    // Wake phrases — plain English words the engine transcribes
+    // reliably. "hello" begins a dictation, "bye" turns hands-free
+    // off. The console.log("[qb wake] heard:", t) line in onresult
+    // prints the live transcript so it's easy to verify the engine
+    // is hearing what you say.
+    const WAKE_START_RE = /\b(?:hello|helo|hallo)\b/i;
+    const WAKE_STOP_RE  = /\b(?:bye|goodbye|bye-bye|bye bye)\b/i;
     const micBtn = $("#qb-mic-btn");
     const handsfreeBtn = $("#qb-handsfree-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1166,7 +1159,7 @@
         if (!el) return;
         if (handsfreeOn && wakeRunning) {
           el.removeAttribute("hidden");
-          if (txt) txt.textContent = 'Listening — say "Hey Renga" to dictate';
+          if (txt) txt.textContent = 'Listening — say "Hello" to dictate';
         } else if (handsfreeOn && recognizing) {
           el.removeAttribute("hidden");
           if (txt) txt.textContent = "Dictating…";
@@ -1269,12 +1262,12 @@
         if (handsfreeBtn) {
           handsfreeBtn.classList.toggle("is-on", on);
           handsfreeBtn.title = on
-            ? 'Hands-free on — say "Hey Renga" to dictate, "OK Renga" to stop'
-            : 'Hands-free — say "Hey Renga" to dictate';
+            ? 'Hands-free on — say "Hello" to dictate, "Bye" to stop'
+            : 'Hands-free — say "Hello" to dictate';
         }
         if (on) {
           startWake();
-          toast('Listening — say "Hey Renga" to dictate', "info");
+          toast('Listening — say "Hello" to dictate', "info");
         } else {
           stopWake();
         }
