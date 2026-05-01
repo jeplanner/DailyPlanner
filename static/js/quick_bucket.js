@@ -517,6 +517,8 @@
     state: "idle",                                    // idle | running | paused | ended
     endsAt: null,                                     // ms timestamp; only set when running
     remaining: POMO_DEFAULT_MIN * 60 * 1000,          // ms; valid when paused/idle
+    label: null,                                      // what the user is focusing on
+    serverLogId: null,                                // task_time_logs row id (server-side mirror)
   };
   let pomoTimer = null;
 
@@ -560,6 +562,14 @@
     root.classList.toggle("is-running", playing);
     root.classList.toggle("is-ended", pomo.state === "ended");
 
+    // Label area: shows "Focus" when no title is set, or the activity
+    // title once the user has picked one. Truncate long titles in CSS.
+    const lbl = $(".qb-pomo-label", root);
+    if (lbl) {
+      lbl.textContent = pomo.label || "Focus";
+      lbl.title = pomo.label || "Focus session";
+    }
+
     $$(".qb-pomo-dur").forEach(b => {
       b.classList.toggle("is-current", Number(b.dataset.min) === pomo.durationMins);
     });
@@ -567,7 +577,8 @@
     // Tab title: keep the countdown visible when the page is in the
     // background. Restore on idle/paused/ended.
     if (playing) {
-      document.title = `${fmtClock(ms)} • Pomodoro`;
+      const tail = pomo.label ? ` — ${pomo.label}` : " • Pomodoro";
+      document.title = `${fmtClock(ms)}${tail}`;
     } else {
       document.title = PAGE_TITLE;
     }
@@ -586,8 +597,20 @@
     if (pomoTimer) { clearInterval(pomoTimer); pomoTimer = null; }
   };
 
-  const pomoStart = () => {
+  const pomoStart = async () => {
     if (pomo.state === "running") return;
+
+    // First-time start → ask the user what they're focusing on. Resuming
+    // from a paused session (label already set) skips the prompt so the
+    // play/pause toggle stays one-tap.
+    const isResume = pomo.state === "paused" && !!pomo.label;
+    if (!isResume) {
+      const suggested = pomo.label || "";
+      const title = (window.prompt("What are you focusing on?", suggested) || "").trim();
+      if (!title) return;  // user cancelled — don't start
+      pomo.label = title.slice(0, 200);
+    }
+
     const ms = pomo.state === "paused"
       ? Math.max(0, pomo.remaining)
       : pomo.durationMins * 60 * 1000;
@@ -598,9 +621,43 @@
     pomo.state = "running";
     pomo.endsAt = Date.now() + (pomo.remaining > 0 ? pomo.remaining : pomo.durationMins * 60 * 1000);
     pomo.remaining = pomo.endsAt - Date.now();
+
+    // Open a server-side log so this session lands in the Focus Log.
+    // Skipped on resume (we already have a log id from the original
+    // start). Best-effort — local timer keeps working if the API fails.
+    if (!pomo.serverLogId) {
+      try {
+        const r = await apiFetch("/api/v2/timer/start", {
+          method: "POST",
+          body: JSON.stringify({
+            source: "adhoc",
+            label: pomo.label,
+            mode: "pomodoro",
+            target_seconds: pomo.durationMins * 60,
+          }),
+        });
+        pomo.serverLogId = (r && r.id) || null;
+      } catch (err) {
+        console.warn("pomodoro: server log start failed", err);
+      }
+    }
+
     savePomo();
     startPomoTicker();
     renderPomo();
+  };
+
+  const closeServerLog = async () => {
+    if (!pomo.serverLogId) return;
+    const id = pomo.serverLogId;
+    pomo.serverLogId = null;
+    try {
+      await apiFetch("/api/v2/timer/stop", {
+        method: "POST", body: JSON.stringify({ id }),
+      });
+    } catch (err) {
+      console.warn("pomodoro: server log stop failed", err);
+    }
   };
 
   const pomoPause = () => {
@@ -618,10 +675,15 @@
     else pomoStart();
   };
 
-  const pomoReset = () => {
+  const pomoReset = async () => {
+    // Close the server log so a partial session is recorded with whatever
+    // duration accrued. Then clear local state — including label so the
+    // next Start prompts again for a fresh activity.
+    await closeServerLog();
     pomo.state = "idle";
     pomo.endsAt = null;
     pomo.remaining = pomo.durationMins * 60 * 1000;
+    pomo.label = null;
     savePomo();
     stopPomoTicker();
     renderPomo();
@@ -640,16 +702,27 @@
     renderPomo();
   };
 
-  const pomoEnd = () => {
+  const pomoEnd = async () => {
+    const finishedLabel = pomo.label;
+    // Close the server log first so the focus session lands in the Focus
+    // Log with the right duration. Errors here are non-fatal.
+    await closeServerLog();
     pomo.state = "ended";
     pomo.remaining = 0;
     pomo.endsAt = null;
+    // Clear label so the next Start prompts for a fresh activity.
+    pomo.label = null;
     savePomo();
     stopPomoTicker();
     pomoBeep();
-    toast(`✅ ${pomo.durationMins}-minute focus complete`, "success");
+    const what = finishedLabel ? ` — ${finishedLabel}` : "";
+    toast(`✅ ${pomo.durationMins}-minute focus complete${what}`, "success");
     if ("Notification" in window && Notification.permission === "granted") {
-      try { new Notification("Pomodoro done", { body: `${pomo.durationMins}-minute focus complete` }); } catch (_) {}
+      try {
+        new Notification("Pomodoro done", {
+          body: `${pomo.durationMins}-minute focus complete${what}`,
+        });
+      } catch (_) {}
     }
     renderPomo();
   };
