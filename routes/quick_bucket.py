@@ -107,6 +107,32 @@ def quick_bucket_page():
     return render_template("quick_bucket.html", buckets=BUCKETS, js_v=js_v)
 
 
+# ─────────── lookup: projects (used by the move dialog) ─────
+
+@quick_bucket_bp.route("/api/quick-bucket/projects", methods=["GET"])
+@login_required
+def list_user_projects():
+    """Return active projects for the current user so the front-end
+    can populate a Projects dropdown when moving a task to a real
+    Project Task."""
+    user_id = session["user_id"]
+    try:
+        rows = get(
+            "projects",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_archived": "eq.false",
+                "select": "project_id,name",
+                "order": "name.asc",
+                "limit": "200",
+            },
+        ) or []
+    except Exception:
+        logger.exception("quick_bucket projects lookup failed")
+        rows = []
+    return jsonify({"projects": rows})
+
+
 # ─────────── list ────────────────────────────────────────────
 
 @quick_bucket_bp.route("/api/quick-bucket", methods=["GET"])

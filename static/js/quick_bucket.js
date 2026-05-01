@@ -433,16 +433,32 @@
       { name: "notes",    label: "Notes",    type: "textarea", wide: true },
     ],
     ProjectTask: [
-      { name: "name",          label: "Title",    type: "text",   fromText: true, required: true, max: 200 },
-      { name: "group_name",    label: "Group",    type: "text",   default: "Project Tasks" },
-      { name: "time_of_day",   label: "When",     type: "select", default: "anytime",
-        options: ["morning","afternoon","evening","anytime"] },
-      { name: "reminder_time", label: "Reminder", type: "time" },
+      { name: "task_text",  label: "Title", type: "text", fromText: true, required: true, max: 500 },
+      // The project dropdown is populated on modal open via
+      // /api/quick-bucket/projects. When picked, the route endpoint
+      // inserts into project_tasks (visible at /projects/<id>/tasks).
+      // Leave blank to fall back to a Checklist row in the
+      // "Project Tasks" group.
+      { name: "project_id", label: "Project", type: "select-projects" },
+      { name: "start_date", label: "Start date", type: "date" },
+      { name: "notes",      label: "Notes", type: "textarea", wide: true, max: 400 },
     ],
   };
 
   let moveItem = null;
   let moveCategory = null;
+  let projectsCache = null;  // {project_id, name}[] — lazy-loaded once per session
+
+  const ensureProjectsLoaded = async () => {
+    if (projectsCache !== null) return projectsCache;
+    try {
+      const r = await apiFetch("/api/quick-bucket/projects");
+      projectsCache = (r && r.projects) || [];
+    } catch (_) {
+      projectsCache = [];
+    }
+    return projectsCache;
+  };
 
   const renderMoveCategoryButtons = () => {
     const grid = $("#qb-move-cats");
@@ -508,10 +524,20 @@
           `<option value="${escapeHTML(o)}" ${String(initial) === String(o) ? "selected" : ""}>${escapeHTML(o)}</option>`
         ).join("");
         control = `<select name="${d.name}"${req}>${opts}</select>`;
+      } else if (d.type === "select-projects") {
+        // Populated async on modal open via ensureProjectsLoaded().
+        const list = projectsCache || [];
+        const opts = list.map(p =>
+          `<option value="${escapeHTML(p.project_id)}">${escapeHTML(p.name || "(unnamed project)")}</option>`
+        ).join("");
+        const placeholderOpt = list.length
+          ? `<option value="" selected>— pick a project —</option>`
+          : `<option value="">No active projects (creates a Checklist row instead)</option>`;
+        control = `<select name="${d.name}">${placeholderOpt}${opts}</select>`;
       } else if (d.type === "textarea") {
         control = `<textarea name="${d.name}" rows="3"${placeholder}${max}${req}>${escapeHTML(initial)}</textarea>`;
       } else {
-        const t = (d.type === "url" || d.type === "time") ? d.type : "text";
+        const t = (d.type === "url" || d.type === "time" || d.type === "date") ? d.type : "text";
         control = `<input type="${t}" name="${d.name}" value="${escapeHTML(initial)}"${placeholder}${max}${req}>`;
       }
       return `
@@ -536,6 +562,18 @@
     refreshFeather();
     // Focus the textarea so the user can immediately start editing.
     setTimeout(() => textInput?.focus(), 30);
+
+    // Lazy-fetch projects so picking ProjectTask category gets a real
+    // dropdown without an empty-flash on first open. If user picks
+    // ProjectTask before the fetch finishes, renderMoveForm rerenders
+    // once the cache is populated.
+    if (projectsCache === null) {
+      ensureProjectsLoaded().then(() => {
+        if (moveItem === it && moveCategory === "ProjectTask") {
+          renderMoveForm();
+        }
+      });
+    }
   };
 
   const closeEditModal = () => {
@@ -595,8 +633,25 @@
         method: "POST",
         body: JSON.stringify({ category: moveCategory, fields }),
       });
-      const where = (r.destination_table || "").replace("_", " ");
-      toast(`Moved to ${where}`, "success");
+      // Friendlier "where did it go?" message — name the actual page
+      // the user can open to find it.
+      let where = "";
+      switch (r.destination_table) {
+        case "project_tasks":
+          // Find the picked project's name from the cache for context.
+          const picked = (projectsCache || []).find(p => p.project_id === fields.project_id);
+          where = picked
+            ? `Moved to project "${picked.name}" (open Projects → ${picked.name})`
+            : "Moved to project tasks";
+          break;
+        case "checklist_items":
+          where = `Moved to Checklist (group: ${fields.group_name || "Tasks Bucket"})`;
+          break;
+        case "groceries":     where = "Moved to Grocery"; break;
+        case "travel_reads":  where = "Moved to Travel & Reads"; break;
+        default:              where = `Moved to ${(r.destination_table || "").replace("_", " ")}`;
+      }
+      toast(where, "success");
       items = items.filter(x => x.id !== moveItem.id);
       closeEditModal();
       render();
@@ -706,14 +761,14 @@
       trigger.classList.toggle("is-ended", pomo.state === "ended");
       if (playing) {
         triggerLbl.textContent = pomo.label
-          ? `${fmtClock(ms)} · ${pomo.label}`
-          : fmtClock(ms);
+          ? `Pomodoro · ${fmtClock(ms)} · ${pomo.label}`
+          : `Pomodoro · ${fmtClock(ms)}`;
       } else if (pomo.state === "paused") {
-        triggerLbl.textContent = `Paused · ${fmtClock(ms)}`;
+        triggerLbl.textContent = `Pomodoro · paused · ${fmtClock(ms)}`;
       } else if (pomo.state === "ended") {
-        triggerLbl.textContent = "Focus done";
+        triggerLbl.textContent = "Pomodoro done";
       } else {
-        triggerLbl.textContent = "Focus";
+        triggerLbl.textContent = "Pomodoro";
       }
     }
 
@@ -885,7 +940,10 @@
     const elapsedText = minutes >= 60
       ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
       : `${minutes}m`;
-    const text = `🎯 ${label} — ${elapsedText} focus`;
+    // Cleaner format: the task title stays a normal-looking line, the
+    // Pomodoro suffix is small and parenthetical so it reads like any
+    // other completed task in the Done section.
+    const text = `${label} (Pomodoro · ${elapsedText})`;
     try {
       const r = await apiFetch("/api/quick-bucket", {
         method: "POST",

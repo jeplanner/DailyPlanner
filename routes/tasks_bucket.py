@@ -152,6 +152,38 @@ def _create_destination_row(user_id, category, raw_text, fields):
             logger.exception("route: grocery insert failed")
         return None, "Couldn't create grocery item"
 
+    if category == "ProjectTask":
+        # If the user picked a specific Project from the dropdown, route
+        # this as a real entry in the project_tasks table — the user
+        # sees it on /projects/<project_id>/tasks. Otherwise fall through
+        # to the checklist-based "Project Tasks" group below.
+        project_id = (fields.get("project_id") or "").strip()
+        if project_id:
+            from datetime import date as _date
+            task_text = (fields.get("task_text") or fields.get("name")
+                         or text or "").strip()[:500]
+            if not task_text:
+                return None, "Title is required"
+            start_date = (fields.get("start_date") or "").strip() or _date.today().isoformat()
+            payload = {
+                "project_id": project_id,
+                "user_id": user_id,
+                "task_text": task_text,
+                "status": "backlog",
+                "start_date": start_date,
+                "order_index": 9999,  # top of the backlog; user can reorder
+            }
+            notes = (fields.get("notes") or "").strip()
+            if notes:
+                payload["notes"] = notes[:400]
+            try:
+                rows = post("project_tasks", payload)
+                if rows:
+                    return "project_tasks", rows[0].get("id")
+            except Exception:
+                logger.exception("route: project_tasks insert failed")
+            return None, "Couldn't create project task"
+
     if category in ("Checklist", "ProjectTask"):
         name = (fields.get("name") or text or "").strip()[:200]
         if not name:
