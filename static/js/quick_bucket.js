@@ -706,6 +706,45 @@
     }
   };
 
+  // Compute how many ms have elapsed in the current Pomodoro session,
+  // taking into account whether the timer is running (use endsAt) or
+  // paused (use remaining).
+  const pomoElapsedMs = () => {
+    const dur = pomo.durationMins * 60 * 1000;
+    if (pomo.state === "running" && pomo.endsAt) {
+      return Math.max(0, dur - Math.max(0, pomo.endsAt - Date.now()));
+    }
+    if (pomo.state === "paused") {
+      return Math.max(0, dur - Math.max(0, pomo.remaining || 0));
+    }
+    if (pomo.state === "ended") return dur;
+    return 0;
+  };
+
+  // Drop a Done-marked entry into the Tasks Bucket so today's focus
+  // sessions are visible inline. Best-effort — failures don't block
+  // the rest of the Pomodoro lifecycle.
+  const recordFocusInDone = async (label, elapsedMs) => {
+    if (!label || elapsedMs < 30_000) return;  // ignore <30s blips
+    const minutes = Math.round(elapsedMs / 60_000);
+    const elapsedText = minutes >= 60
+      ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+      : `${minutes}m`;
+    const text = `🎯 ${label} — ${elapsedText} focus`;
+    try {
+      const r = await apiFetch("/api/quick-bucket", {
+        method: "POST",
+        body: JSON.stringify({ text, time_bucket: "future", is_done: true }),
+      });
+      if (r && r.item) {
+        items.unshift(r.item);
+        render();
+      }
+    } catch (err) {
+      console.warn("pomodoro: focus-done insert failed", err);
+    }
+  };
+
   const pomoPause = () => {
     if (pomo.state !== "running") return;
     pomo.remaining = Math.max(0, pomo.endsAt - Date.now());
@@ -722,10 +761,16 @@
   };
 
   const pomoReset = async () => {
-    // Close the server log so a partial session is recorded with whatever
-    // duration accrued. Then clear local state — including label so the
-    // next Start prompts again for a fresh activity.
+    // Capture state BEFORE closing the log, so a partial session can
+    // also land in the Done section with the right minutes count.
+    const elapsedBefore = pomoElapsedMs();
+    const labelBefore = pomo.label;
+
     await closeServerLog();
+    if (labelBefore && elapsedBefore > 30_000) {
+      recordFocusInDone(labelBefore, elapsedBefore);
+    }
+
     pomo.state = "idle";
     pomo.endsAt = null;
     pomo.remaining = pomo.durationMins * 60 * 1000;
@@ -750,9 +795,13 @@
 
   const pomoEnd = async () => {
     const finishedLabel = pomo.label;
+    const fullDurationMs = pomo.durationMins * 60 * 1000;
     // Close the server log first so the focus session lands in the Focus
     // Log with the right duration. Errors here are non-fatal.
     await closeServerLog();
+    if (finishedLabel) {
+      recordFocusInDone(finishedLabel, fullDurationMs);
+    }
     pomo.state = "ended";
     pomo.remaining = 0;
     pomo.endsAt = null;
@@ -897,6 +946,12 @@
     const handsfreeBtn = $("#qb-handsfree-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+    // Diagnostic logs so the user can see in the browser console
+    // exactly what state the mic boot ended up in. If the listening
+    // toggle "does nothing", look here first.
+    console.log("[qb mic] boot",
+      { hasMic: !!micBtn, hasHandsfree: !!handsfreeBtn, hasSR: !!SR });
+
     if (!SR) {
       micBtn.disabled = true;
       micBtn.title = "Dictation not supported in this browser";
@@ -904,6 +959,10 @@
         handsfreeBtn.disabled = true;
         handsfreeBtn.title = "Not supported in this browser";
       }
+      // Tap-feedback even when disabled — surface why nothing happens.
+      handsfreeBtn?.addEventListener("click", () => {
+        toast("Speech Recognition isn't available in this browser", "error");
+      });
     } else {
       let recognition = null;          // single-shot dictation recognizer
       let recognizing = false;
@@ -1085,7 +1144,14 @@
         }
       };
 
-      handsfreeBtn?.addEventListener("click", () => setHandsfree(!handsfreeOn));
+      if (handsfreeBtn) {
+        handsfreeBtn.addEventListener("click", () => {
+          console.log("[qb mic] handsfree toggle click; was on?", handsfreeOn);
+          setHandsfree(!handsfreeOn);
+        });
+      } else {
+        console.warn("[qb mic] handsfree button not found in DOM");
+      }
 
       // We deliberately do NOT auto-restore from localStorage. Browsers
       // require a user gesture for the first SpeechRecognition.start();

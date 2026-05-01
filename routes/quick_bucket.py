@@ -139,15 +139,18 @@ def add_item():
     if bucket not in BUCKET_SET:
         bucket = "now"
 
+    is_done = bool(data.get("is_done", False))
     payload = {
         "user_id": user_id,
         "text": text,
         "time_bucket": bucket,
-        "due_at": _due_at_for(bucket),
+        "due_at": _due_at_for(bucket) if not is_done else None,
         "position": int(data.get("position") or 0),
-        "is_done": False,
+        "is_done": is_done,
         "is_deleted": False,
     }
+    if is_done:
+        payload["done_at"] = datetime.utcnow().isoformat()
     try:
         rows = post("quick_bucket", payload)
     except Exception as e:
