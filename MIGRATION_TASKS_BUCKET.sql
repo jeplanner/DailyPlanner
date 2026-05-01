@@ -41,15 +41,22 @@ create table if not exists tasks_bucket (
   matched_keywords    jsonb default '[]'::jsonb,  -- explanation: tokens that drove the call
   status              text not null default 'pending',  -- pending|classified|unclassified|closed
   manual_override     boolean default false,
-  destination_table   text,                       -- 'groceries' | 'checklist_items' | null
+  destination_table   text,                       -- 'groceries' | 'checklist_items' | 'travel_reads' | null
   destination_id      uuid,
   position            int default 0,
+  is_priority         boolean default false,      -- toggle: "do this immediately"
+  effort_minutes      int,                        -- 5|15|30|60|120|180|240 or null (cycled in UI)
   classified_at       timestamptz,
   closed_at           timestamptz,
   is_deleted          boolean default false,
   created_at          timestamptz default now(),
   updated_at          timestamptz default now()
 );
+
+-- Idempotent for installs that ran the earlier version of this file
+-- without is_priority / effort_minutes.
+alter table tasks_bucket add column if not exists is_priority    boolean default false;
+alter table tasks_bucket add column if not exists effort_minutes int;
 
 create index if not exists tasks_bucket_user_active_idx
   on tasks_bucket (user_id, position, created_at desc)

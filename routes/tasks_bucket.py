@@ -36,6 +36,11 @@ tasks_bucket_bp = Blueprint("tasks_bucket", __name__)
 
 _MAX_TEXT_LEN = 500
 
+# Effort options surfaced in the UI as a cycle: 5m → 15m → 30m → 1h →
+# 2h → 3h → 4h → cleared. Stored as minutes so the value is sortable
+# and survives label changes later.
+VALID_EFFORTS = {5, 15, 30, 60, 120, 180, 240}
+
 
 # ─────────── stat helper ───────────────────────────────────────
 
@@ -84,49 +89,138 @@ def _bump_stat(user_id, field, by=1):
 
 
 # ─────────── routing into destination modules ─────────────────
+#
+# Two-step flow:
+#   1. classify_item only sets the category — never auto-creates a
+#      destination row. The user keeps control of what actually moves.
+#   2. /route is called from the detail modal once the user has filled
+#      in the destination-specific fields (quantity, schedule, URL, …)
+#      and wants to commit. It builds the destination row with those
+#      values and back-links destination_table/destination_id so the
+#      bucket row mirrors the destination's status.
+#
+# Routable categories: Grocery, Checklist, TravelReads, ProjectTask
+# (the last reuses checklist_items with group_name='Project Tasks').
+# Health and Portfolio are intentionally not routable: their schemas
+# need details (habit cadence, ticker, encrypted folio, …) that don't
+# fit a quick-capture flow. Those rows stay in the bucket and the
+# user closes them from there once handled.
 
-def _route_to_module(user_id, category, raw_text):
-    """Create a row in the destination module when the schema is simple
-    enough (Grocery, Checklist). Returns (table, dest_id) or (None, None).
+VALID_GROCERY_CATEGORIES = {
+    "produce", "dairy", "staples", "snacks", "household", "spices",
+    "frozen", "beverages", "meat", "bakery", "other",
+}
+VALID_GROCERY_PRIORITIES = {"low", "medium", "high"}
+VALID_CHECKLIST_SCHEDULES = {"daily", "weekdays", "weekends", "custom"}
+VALID_CHECKLIST_TIMES = {"morning", "afternoon", "evening", "anytime"}
+VALID_TR_KINDS = {"article", "video", "book", "podcast", "newsletter", "documentary", "other"}
+VALID_TR_PRIORITIES = {"low", "medium", "high"}
+ROUTABLE = {"Grocery", "Checklist", "TravelReads", "ProjectTask"}
 
-    Health, Portfolio, TravelReads need fields the user has to fill in
-    by hand (vitals, ticker / quantity, URL) — leave those in the bucket
-    only and let the user open the destination module to add details."""
+
+def _create_destination_row(user_id, category, raw_text, fields):
+    """Build the destination row from user-supplied form fields.
+    Returns (table, dest_id) on success, (None, reason) on skip/failure."""
     text = (raw_text or "").strip()
-    if not text:
-        return None, None
+    fields = fields or {}
 
     if category == "Grocery":
+        item = (fields.get("item") or text or "").strip()[:120]
+        if not item:
+            return None, "Item name is required"
+        cat = (fields.get("category") or "other").strip().lower()
+        if cat not in VALID_GROCERY_CATEGORIES:
+            cat = "other"
+        prio = (fields.get("priority") or "medium").strip().lower()
+        if prio not in VALID_GROCERY_PRIORITIES:
+            prio = "medium"
+        payload = {
+            "user_id": user_id,
+            "item": item,
+            "quantity": ((fields.get("quantity") or "").strip() or None) and (fields.get("quantity") or "").strip()[:40],
+            "category": cat,
+            "notes": ((fields.get("notes") or "").strip() or None) and (fields.get("notes") or "").strip()[:400],
+            "priority": prio,
+            "is_purchased": False,
+            "is_archived": False,
+        }
         try:
-            rows = post("groceries", {
-                "user_id": user_id,
-                "item": text[:120],
-                "category": "other",
-                "priority": "medium",
-                "is_purchased": False,
-                "is_archived": False,
-            })
+            rows = post("groceries", payload)
             if rows:
                 return "groceries", rows[0].get("id")
         except Exception:
-            logger.exception("route_to_module: grocery insert failed")
-        return None, None
+            logger.exception("route: grocery insert failed")
+        return None, "Couldn't create grocery item"
 
-    if category == "Checklist":
+    if category in ("Checklist", "ProjectTask"):
+        name = (fields.get("name") or text or "").strip()[:200]
+        if not name:
+            return None, "Name is required"
+        sched = (fields.get("schedule") or "daily").strip().lower()
+        if sched not in VALID_CHECKLIST_SCHEDULES:
+            sched = "daily"
+        tod = (fields.get("time_of_day") or "anytime").strip().lower()
+        if tod not in VALID_CHECKLIST_TIMES:
+            tod = "anytime"
+        payload = {
+            "user_id": user_id,
+            "name": name,
+            "schedule": sched,
+            "time_of_day": tod,
+        }
+        # Reminder time: 'HH:MM' or 'HH:MM:SS'
+        rt = (fields.get("reminder_time") or "").strip()
+        if rt:
+            payload["reminder_time"] = rt
+        # Group name: defaults to "Project Tasks" for ProjectTask category
+        group = (fields.get("group_name") or "").strip()
+        if not group and category == "ProjectTask":
+            group = "Project Tasks"
+        if group:
+            payload["group_name"] = " ".join(group.split()).title()
+        re_end = (fields.get("recurrence_end") or "").strip()
+        if re_end:
+            payload["recurrence_end"] = re_end
+        notes = (fields.get("notes") or "").strip()
+        if notes:
+            payload["notes"] = notes[:400]
         try:
-            rows = post("checklist_items", {
-                "user_id": user_id,
-                "name": text[:200],
-                "schedule": "daily",
-                "time_of_day": "anytime",
-            })
+            rows = post("checklist_items", payload)
             if rows:
                 return "checklist_items", rows[0].get("id")
         except Exception:
-            logger.exception("route_to_module: checklist insert failed")
-        return None, None
+            logger.exception("route: checklist insert failed")
+        return None, "Couldn't create checklist item"
 
-    return None, None
+    if category == "TravelReads":
+        title = (fields.get("title") or text or "").strip()[:200]
+        if not title:
+            return None, "Title is required"
+        kind = (fields.get("kind") or "article").strip().lower()
+        if kind not in VALID_TR_KINDS:
+            kind = "article"
+        prio = (fields.get("priority") or "medium").strip().lower()
+        if prio not in VALID_TR_PRIORITIES:
+            prio = "medium"
+        payload = {
+            "user_id": user_id,
+            "title": title,
+            "url": (fields.get("url") or "").strip() or None,
+            "kind": kind,
+            "priority": prio,
+            "notes": (fields.get("notes") or "").strip() or None,
+            "status": "queued",
+        }
+        try:
+            rows = post("travel_reads", payload)
+            if rows:
+                return "travel_reads", rows[0].get("id")
+        except Exception:
+            logger.exception("route: travel_reads insert failed")
+        return None, "Couldn't create reading-list item"
+
+    # Health, Portfolio — not routable (schema mismatch with quick capture).
+    return None, "This category stays in the bucket — handle from here."
 
 
 # ─────────── page ─────────────────────────────────────────────
@@ -153,9 +247,12 @@ def list_items():
                 "select": (
                     "id,raw_text,category,confidence,matched_keywords,"
                     "status,manual_override,destination_table,destination_id,"
-                    "position,classified_at,created_at,updated_at"
+                    "position,is_priority,effort_minutes,"
+                    "classified_at,created_at,updated_at"
                 ),
-                "order": "position.asc,created_at.desc",
+                # Priority items always float to the top; within a
+                # priority bucket, manual position wins over recency.
+                "order": "is_priority.desc.nullslast,position.asc,created_at.desc",
                 "limit": "500",
             },
         ) or []
@@ -182,7 +279,16 @@ def add_item():
         "raw_text": text,
         "status": "pending",
         "position": int(data.get("position") or 0),
+        "is_priority": bool(data.get("is_priority") or False),
     }
+    eff = data.get("effort_minutes")
+    if eff is not None:
+        try:
+            eff_int = int(eff)
+            if eff_int in VALID_EFFORTS:
+                payload["effort_minutes"] = eff_int
+        except (TypeError, ValueError):
+            pass
     try:
         rows = post("tasks_bucket", payload)
     except Exception as e:
@@ -226,13 +332,6 @@ def classify_item(item_id):
         "classified_at": datetime.utcnow().isoformat(),
     }
 
-    dest_table, dest_id = (None, None)
-    if cat:
-        dest_table, dest_id = _route_to_module(user_id, cat, item.get("raw_text"))
-    if dest_table:
-        patch["destination_table"] = dest_table
-        patch["destination_id"] = dest_id
-
     try:
         update(
             "tasks_bucket",
@@ -250,8 +349,6 @@ def classify_item(item_id):
         "category": cat,
         "confidence": conf,
         "matched": matched,
-        "destination_table": dest_table,
-        "destination_id": dest_id,
     })
 
 
@@ -291,15 +388,6 @@ def reclassify_item(item_id):
         "classified_at": datetime.utcnow().isoformat(),
     }
 
-    # If we haven't routed yet (or category changed in a way we can route),
-    # try to push into the destination module.
-    dest_table, dest_id = (None, None)
-    if not item.get("destination_id"):
-        dest_table, dest_id = _route_to_module(user_id, cat, item.get("raw_text"))
-    if dest_table:
-        patch["destination_table"] = dest_table
-        patch["destination_id"] = dest_id
-
     try:
         update(
             "tasks_bucket",
@@ -312,11 +400,84 @@ def reclassify_item(item_id):
 
     if not was_classified:
         _bump_stat(user_id, "classified", 1)
+    return jsonify({"ok": True, "category": cat})
+
+
+# ─────────── route into destination module ────────────────────
+
+@tasks_bucket_bp.route("/api/tasks-bucket/<item_id>/route", methods=["POST"])
+@login_required
+def route_item(item_id):
+    """Create a row in the destination module from user-supplied form
+    fields. Called when the user clicks "Save & move" in the detail
+    modal. Idempotent: if the bucket row is already linked to a
+    destination, returns the existing link without creating a duplicate.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    fields = data.get("fields") or {}
+    cat_override = data.get("category")
+
+    rows = get(
+        "tasks_bucket",
+        params={
+            "id": f"eq.{item_id}",
+            "user_id": f"eq.{user_id}",
+            "select": "id,raw_text,category,destination_table,destination_id,status",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    item = rows[0]
+
+    if item.get("destination_id"):
+        return jsonify({
+            "ok": True,
+            "already_routed": True,
+            "destination_table": item.get("destination_table"),
+            "destination_id": item.get("destination_id"),
+        })
+
+    cat = cat_override or item.get("category")
+    if cat not in CATEGORIES:
+        return jsonify({"error": "Pick a category first"}), 400
+    if cat not in ROUTABLE:
+        return jsonify({"error": "This category stays in the bucket — Health and Portfolio entries aren't auto-moved."}), 400
+
+    dest_table, dest_id_or_msg = _create_destination_row(
+        user_id, cat, item.get("raw_text") or "", fields
+    )
+    if not dest_table:
+        return jsonify({"error": dest_id_or_msg or "Couldn't move — please try again."}), 502
+
+    patch = {
+        "destination_table": dest_table,
+        "destination_id": dest_id_or_msg,
+        "category": cat,
+        "status": "classified",
+    }
+    if cat_override:
+        patch["manual_override"] = True
+    try:
+        update(
+            "tasks_bucket",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json=patch,
+        )
+    except Exception:
+        logger.exception("route_item: link update failed")
+        return jsonify({
+            "ok": True,
+            "warning": "Created in module but couldn't update bucket — refresh the page.",
+            "destination_table": dest_table,
+            "destination_id": dest_id_or_msg,
+        })
+
     return jsonify({
         "ok": True,
-        "category": cat,
         "destination_table": dest_table,
-        "destination_id": dest_id,
+        "destination_id": dest_id_or_msg,
     })
 
 
@@ -357,6 +518,58 @@ def archive_item(item_id):
         logger.error("archive failed: %s", e)
         return jsonify({"error": "Couldn't remove — please try again."}), 502
     return jsonify({"ok": True})
+
+
+# ─────────── update inline fields (priority toggle, effort cycle) ──
+
+@tasks_bucket_bp.route("/api/tasks-bucket/<item_id>/update", methods=["POST"])
+@login_required
+def update_item(item_id):
+    """Patch a small set of inline fields on a bucket row. The UI uses
+    this for the priority toggle and the effort cycle button without
+    having to open the full detail modal."""
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+
+    patch = {}
+    if "is_priority" in data:
+        patch["is_priority"] = bool(data.get("is_priority"))
+    if "effort_minutes" in data:
+        v = data.get("effort_minutes")
+        if v in (None, "", "null"):
+            patch["effort_minutes"] = None
+        else:
+            try:
+                v_int = int(v)
+            except (TypeError, ValueError):
+                return jsonify({"error": "Invalid effort value"}), 400
+            if v_int not in VALID_EFFORTS:
+                return jsonify({"error": "Effort must be 5/15/30/60/120/180/240"}), 400
+            patch["effort_minutes"] = v_int
+    if "raw_text" in data:
+        v = (data.get("raw_text") or "").strip()
+        if not v:
+            return jsonify({"error": "Text required"}), 400
+        patch["raw_text"] = v[:_MAX_TEXT_LEN]
+    if "position" in data:
+        try:
+            patch["position"] = int(data["position"])
+        except (TypeError, ValueError):
+            pass
+
+    if not patch:
+        return jsonify({"ok": True, "noop": True})
+
+    try:
+        update(
+            "tasks_bucket",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json=patch,
+        )
+    except Exception as e:
+        logger.error("tasks_bucket update failed: %s", e)
+        return jsonify({"error": "Couldn't save — please try again."}), 502
+    return jsonify({"ok": True, "patch": patch})
 
 
 # ─────────── reorder / drag-drop between categories ───────────

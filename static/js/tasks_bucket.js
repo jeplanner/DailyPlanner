@@ -10,7 +10,67 @@
   const DEBOUNCE_MS = 60_000;            // 60s idle window before auto-classify
   const PENDING_POLL_MS = 1_000;         // countdown tick rate
   const MILESTONES = [10, 25, 50, 100, 250, 500];
-  const DEST_PAGE = { groceries: "/grocery", checklist_items: "/checklist" };
+  const DEST_PAGE = { groceries: "/grocery", checklist_items: "/checklist", travel_reads: "/travel-reads" };
+
+  // Effort cycle: clicking the effort button steps through these values.
+  // null → 5 → 15 → 30 → 60 → 120 → 180 → 240 → null …
+  const EFFORTS = [null, 5, 15, 30, 60, 120, 180, 240];
+  const effortLabel = (m) => {
+    if (m == null) return "—";
+    if (m < 60) return `${m}m`;
+    return `${m / 60}h`;
+  };
+  const nextEffort = (cur) => {
+    const i = EFFORTS.indexOf(cur == null ? null : Number(cur));
+    return EFFORTS[(i < 0 ? 0 : (i + 1) % EFFORTS.length)];
+  };
+
+  // Per-category form defs for the "Save & move" modal. fromRaw=true
+  // means prefill this field with the bucket row's raw_text.
+  const FIELD_DEFS = {
+    Grocery: [
+      { name: "item",     label: "Item",     type: "text",     fromRaw: true, required: true, max: 120 },
+      { name: "quantity", label: "Quantity", type: "text",     placeholder: "e.g. 2 lb",      max: 40  },
+      { name: "category", label: "Aisle",    type: "select",   default: "other",
+        options: ["produce","dairy","staples","snacks","household","spices","frozen","beverages","meat","bakery","other"] },
+      { name: "priority", label: "Priority", type: "select",   default: "medium",
+        options: ["high","medium","low"] },
+      { name: "notes",    label: "Notes",    type: "textarea", wide: true,    max: 400  },
+    ],
+    Checklist: [
+      { name: "name",          label: "Name",         type: "text",     fromRaw: true, required: true, max: 200 },
+      { name: "schedule",      label: "Schedule",     type: "select",   default: "daily",
+        options: ["daily","weekdays","weekends","custom"] },
+      { name: "time_of_day",   label: "When",         type: "select",   default: "anytime",
+        options: ["morning","afternoon","evening","anytime"] },
+      { name: "reminder_time", label: "Reminder",     type: "time",     placeholder: "HH:MM" },
+      { name: "group_name",    label: "Group",        type: "text",     placeholder: "Optional" },
+      { name: "notes",         label: "Notes",        type: "textarea", wide: true, max: 400 },
+    ],
+    TravelReads: [
+      { name: "title",    label: "Title",    type: "text",     fromRaw: true, required: true, max: 200 },
+      { name: "url",      label: "URL",      type: "url",      placeholder: "https://…", wide: true },
+      { name: "kind",     label: "Kind",     type: "select",   default: "article",
+        options: ["article","video","book","podcast","newsletter","documentary","other"] },
+      { name: "priority", label: "Priority", type: "select",   default: "medium",
+        options: ["high","medium","low"] },
+      { name: "notes",    label: "Notes",    type: "textarea", wide: true },
+    ],
+    ProjectTask: [
+      { name: "name",          label: "Title",      type: "text",   fromRaw: true, required: true, max: 200 },
+      { name: "group_name",    label: "Group",      type: "text",   default: "Project Tasks" },
+      { name: "time_of_day",   label: "When",       type: "select", default: "anytime",
+        options: ["morning","afternoon","evening","anytime"] },
+      { name: "reminder_time", label: "Reminder",   type: "time" },
+    ],
+    // Health & Portfolio: not routable from the bucket.
+    Health: null,
+    Portfolio: null,
+  };
+  const NON_ROUTABLE_NOTE = {
+    Health: "Health items stay in this bucket — log the actual habit/measurement directly in the Health module when you're ready.",
+    Portfolio: "Portfolio items stay in this bucket — open the Investments module to add the holding with full details (broker, ticker, quantity, …).",
+  };
 
   let items = [];
   let stats = { today: { captured: 0, classified: 0, closed: 0 }, streak: 0 };
@@ -86,7 +146,17 @@
   const groupItems = () => {
     const groups = { Unclassified: [] };
     CATEGORIES.forEach(c => groups[c] = []);
-    items.forEach(it => {
+    // Stable sort: priority first, then position, then most-recent first.
+    const sorted = items.slice().sort((a, b) => {
+      const pa = a.is_priority ? 1 : 0;
+      const pb = b.is_priority ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      const xa = a.position == null ? 9999 : a.position;
+      const xb = b.position == null ? 9999 : b.position;
+      if (xa !== xb) return xa - xb;
+      return (b.created_at || "").localeCompare(a.created_at || "");
+    });
+    sorted.forEach(it => {
       const key = it.category && CATEGORIES.includes(it.category) ? it.category : "Unclassified";
       groups[key].push(it);
     });
@@ -102,16 +172,31 @@
       ? `<span class="tb-tag tb-tag--${it.category}">${it.category}</span>`
       : (it.status === "pending" ? `<span class="tb-tag">Pending</span>` : `<span class="tb-tag">Unclassified</span>`);
     const dest = it.destination_table && DEST_PAGE[it.destination_table]
-      ? `<span class="tb-tag" title="Synced to ${it.destination_table}">↗ ${it.destination_table}</span>`
+      ? `<span class="tb-tag" title="Synced to ${it.destination_table}">↗ ${it.destination_table.replace('_', ' ')}</span>`
       : "";
+    const isPrio = !!it.is_priority;
+    const eff = it.effort_minutes;
+    const cls = [
+      "tb-row",
+      it.status === "pending" ? "is-pending" : "",
+      isPrio ? "is-priority" : "",
+    ].filter(Boolean).join(" ");
     return `
-      <div class="tb-row ${it.status === 'pending' ? 'is-pending' : ''}" data-id="${it.id}" draggable="true">
+      <div class="${cls}" data-id="${it.id}" draggable="true">
         <span class="tb-handle" aria-hidden="true"><i data-feather="menu"></i></span>
         <input type="checkbox" class="tb-check" data-action="close" aria-label="Mark done">
         <div class="tb-row-body">
           <div class="tb-row-text">${escapeHTML(it.raw_text)}</div>
           <div class="tb-row-meta">${tag} ${dest}</div>
         </div>
+        <button class="tb-prio-btn ${isPrio ? 'is-on' : ''}" data-action="priority"
+                title="${isPrio ? 'Priority — click to clear' : 'Mark as immediate priority'}">
+          <i data-feather="flag"></i>${isPrio ? '<span>HIGH</span>' : ''}
+        </button>
+        <button class="tb-effort-btn ${eff ? 'is-set' : ''}" data-action="effort"
+                title="Effort estimate (click to cycle)">
+          <i data-feather="clock"></i><span>${effortLabel(eff)}</span>
+        </button>
         <div class="tb-row-actions">
           <button class="tb-icon-btn" data-action="classify" title="Classify now"><i data-feather="zap"></i></button>
           <button class="tb-icon-btn" data-action="open" title="Details"><i data-feather="more-horizontal"></i></button>
@@ -155,10 +240,13 @@
       const it = items.find(x => x.id === id);
       if (!it) return;
 
-      // Click anywhere except the checkbox / icon buttons → open detail.
+      // Click anywhere outside interactive controls → open detail.
       row.addEventListener("click", (e) => {
         const t = e.target;
-        if (t.closest("input.tb-check") || t.closest("button.tb-icon-btn")) return;
+        if (t.closest("input.tb-check") ||
+            t.closest("button.tb-icon-btn") ||
+            t.closest("button.tb-prio-btn") ||
+            t.closest("button.tb-effort-btn")) return;
         openDetail(it);
       });
 
@@ -174,7 +262,42 @@
           else if (action === "classify") classifyOne(it.id, true);
         });
       });
+
+      $('button.tb-prio-btn', row)?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePriority(it);
+      });
+      $('button.tb-effort-btn', row)?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        cycleEffort(it);
+      });
     });
+  };
+
+  const togglePriority = async (it) => {
+    const want = !it.is_priority;
+    try {
+      await apiFetch(`/api/tasks-bucket/${it.id}/update`, {
+        method: "POST", body: JSON.stringify({ is_priority: want }),
+      });
+      it.is_priority = want;
+      render();
+    } catch (err) {
+      toast(err.message || "Couldn't update priority", "error");
+    }
+  };
+
+  const cycleEffort = async (it) => {
+    const next = nextEffort(it.effort_minutes);
+    try {
+      await apiFetch(`/api/tasks-bucket/${it.id}/update`, {
+        method: "POST", body: JSON.stringify({ effort_minutes: next }),
+      });
+      it.effort_minutes = next;
+      render();
+    } catch (err) {
+      toast(err.message || "Couldn't update effort", "error");
+    }
   };
 
   // ─────────── drag & drop between categories ────────────────
@@ -423,6 +546,79 @@
 
   let modalItemId = null;
 
+  const renderFormFields = (defs, raw) => {
+    return defs.map(d => {
+      const wide = d.wide ? "tb-form-field--wide" : "";
+      const placeholder = d.placeholder ? ` placeholder="${escapeHTML(d.placeholder)}"` : "";
+      const max = d.max ? ` maxlength="${d.max}"` : "";
+      const req = d.required ? " required" : "";
+      const initial = d.fromRaw ? (raw || "") : (d.default ?? "");
+      let control = "";
+      if (d.type === "select") {
+        const opts = (d.options || []).map(o =>
+          `<option value="${escapeHTML(o)}" ${String(initial) === String(o) ? "selected" : ""}>${escapeHTML(o)}</option>`
+        ).join("");
+        control = `<select name="${d.name}"${req}>${opts}</select>`;
+      } else if (d.type === "textarea") {
+        control = `<textarea name="${d.name}" rows="3"${placeholder}${max}${req}>${escapeHTML(initial)}</textarea>`;
+      } else {
+        const t = (d.type === "url" || d.type === "time") ? d.type : "text";
+        control = `<input type="${t}" name="${d.name}" value="${escapeHTML(initial)}"${placeholder}${max}${req}>`;
+      }
+      return `
+        <div class="tb-form-field ${wide}">
+          <label for="${d.name}">${escapeHTML(d.label)}</label>
+          ${control}
+        </div>`;
+    }).join("");
+  };
+
+  const refreshModalForm = (it) => {
+    const formWrap = $("#tb-modal-form-wrap");
+    const form = $("#tb-modal-form");
+    const note = $("#tb-modal-form-note");
+    const formTitle = $("#tb-modal-form-title");
+    const routeBtn = $("#tb-modal-route");
+
+    // Already routed → no form, just a "linked in" line + disabled save.
+    if (it.destination_table && it.destination_id) {
+      formWrap.setAttribute("hidden", "");
+      routeBtn.disabled = true;
+      routeBtn.style.display = "none";
+      return;
+    }
+
+    // No category yet → user must pick one first.
+    if (!it.category) {
+      formWrap.removeAttribute("hidden");
+      formTitle.textContent = "Move to module";
+      form.innerHTML = "";
+      note.textContent = "Pick a category above to see the move form.";
+      note.removeAttribute("hidden");
+      routeBtn.disabled = true;
+      routeBtn.style.display = "";
+      return;
+    }
+
+    const defs = FIELD_DEFS[it.category];
+    formWrap.removeAttribute("hidden");
+    formTitle.textContent = `Move to ${it.category}`;
+    routeBtn.style.display = "";
+
+    if (!defs) {
+      // Health / Portfolio: show informational note, hide save button.
+      form.innerHTML = "";
+      note.textContent = NON_ROUTABLE_NOTE[it.category] || "This category stays in the bucket.";
+      note.removeAttribute("hidden");
+      routeBtn.disabled = true;
+      return;
+    }
+
+    form.innerHTML = renderFormFields(defs, it.raw_text || "");
+    note.setAttribute("hidden", "");
+    routeBtn.disabled = false;
+  };
+
   const openDetail = (it) => {
     modalItemId = it.id;
     $("#tb-modal-title").textContent = it.category || (it.status === "pending" ? "Pending" : "Unclassified");
@@ -438,16 +634,12 @@
         const cat = btn.dataset.cat;
         if (cat === it.category) return;
         try {
-          const r = await apiFetch(`/api/tasks-bucket/${it.id}/reclassify`, {
+          await apiFetch(`/api/tasks-bucket/${it.id}/reclassify`, {
             method: "POST", body: JSON.stringify({ category: cat }),
           });
           it.category = cat;
           it.manual_override = true;
           it.status = "classified";
-          if (r.destination_table) {
-            it.destination_table = r.destination_table;
-            it.destination_id = r.destination_id;
-          }
           openDetail(it);  // re-render modal with new state
           render();
           loadStats();
@@ -457,6 +649,9 @@
         }
       });
     });
+
+    // Category-specific form (or non-routable note)
+    refreshModalForm(it);
 
     // Evidence (matched tokens)
     const ev = $("#tb-modal-evidence");
@@ -469,12 +664,12 @@
       wrap.setAttribute("hidden", "");
     }
 
-    // Destination link
+    // Destination link (if already routed)
     const destWrap = $("#tb-modal-dest-wrap");
     const destLink = $("#tb-modal-dest-link");
     if (it.destination_table && DEST_PAGE[it.destination_table]) {
       destWrap.removeAttribute("hidden");
-      destLink.textContent = `Open in ${it.destination_table}`;
+      destLink.textContent = `Open in ${it.destination_table.replace('_', ' ')}`;
       destLink.href = DEST_PAGE[it.destination_table];
     } else {
       destWrap.setAttribute("hidden", "");
@@ -483,6 +678,47 @@
     $("#tb-modal").classList.add("is-open");
     $("#tb-modal").setAttribute("aria-hidden", "false");
     refreshFeather();
+  };
+
+  const submitRoute = async () => {
+    if (!modalItemId) return;
+    const it = items.find(x => x.id === modalItemId);
+    if (!it) return;
+    if (!it.category || !FIELD_DEFS[it.category]) return;
+    if (it.destination_id) return;
+
+    const form = $("#tb-modal-form");
+    const fd = new FormData(form);
+    const fields = {};
+    for (const [k, v] of fd.entries()) fields[k] = v;
+
+    // Client-side guard: required fields
+    for (const d of FIELD_DEFS[it.category]) {
+      if (d.required && !(fields[d.name] || "").trim()) {
+        toast(`${d.label} is required`, "error");
+        return;
+      }
+    }
+
+    const btn = $("#tb-modal-route");
+    btn.disabled = true;
+    try {
+      const r = await apiFetch(`/api/tasks-bucket/${it.id}/route`, {
+        method: "POST", body: JSON.stringify({ fields }),
+      });
+      it.destination_table = r.destination_table;
+      it.destination_id = r.destination_id;
+      it.status = "classified";
+      const where = (r.destination_table || "").replace("_", " ");
+      toast(`Moved to ${where}`, "success");
+      closeModal();
+      render();
+      loadStats();
+    } catch (err) {
+      toast(err.message || "Couldn't move", "error");
+    } finally {
+      btn.disabled = false;
+    }
   };
 
   const closeModal = () => {
@@ -509,6 +745,7 @@
       const row = $(`#tb-groups .tb-row[data-id="${id}"]`);
       await closeItem(id, row);
     });
+    $("#tb-modal-route").addEventListener("click", submitRoute);
   };
 
   // ─────────── confetti (no library, simple particles) ───────
