@@ -763,11 +763,16 @@
     });
 
     // ── Mic: dictate a task with the Web Speech API ─────────
-    // Whatever you say lands in the input field as one piece of text;
-    // the existing Add button (or Enter) commits it as a single task.
-    // Click the mic again to stop manually; auto-stops after 5s of
-    // silence so you don't have to remember to turn it off.
+    // Three ways the dictation auto-commits as a task:
+    //   1. 5 s of silence (you stopped talking) → commit
+    //   2. you say "add" / "save" / "done" / "stop" at the end → strip
+    //      that word and commit
+    //   3. tap the mic button manually → text stays in the input for
+    //      review (you commit by pressing Enter / tapping Add).
+    // Resume after a pause: tap the mic again, your next words append
+    // to whatever is already in the input.
     const SILENCE_STOP_MS = 5_000;
+    const VOICE_COMMIT_TRIGGERS = new Set(["add", "save", "done", "stop", "submit"]);
     const micBtn = $("#qb-mic-btn");
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -779,10 +784,12 @@
       let silenceTimer = null;
       // baseValue = everything finalised so far (preserved across
       // result events so we don't double-add). interim = the partial
-      // transcript currently being recognised. The input always
-      // shows baseValue + ' ' + interim.
+      // transcript currently being recognised. stopReason tells the
+      // onend handler whether to auto-commit or just leave the input
+      // alone.
       let baseValue = "";
       let interimText = "";
+      let stopReason = null; // 'silence' | 'voice' | 'manual'
 
       const clearSilenceTimer = () => {
         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
@@ -791,6 +798,7 @@
         clearSilenceTimer();
         silenceTimer = setTimeout(() => {
           if (recognizing) {
+            stopReason = "silence";
             try { recognition?.stop(); } catch (_) {}
           }
         }, SILENCE_STOP_MS);
@@ -799,9 +807,34 @@
         input.value = baseValue + (interimText ? (baseValue ? " " : "") + interimText : "");
       };
 
+      // If the dictation now ends with a commit trigger word ("add" etc.)
+      // strip it and tell the caller "yes, commit". Tokens are split on
+      // whitespace and stripped of punctuation so "tomato. add!" works.
+      const consumeVoiceTrigger = () => {
+        const tokens = baseValue.split(/\s+/).filter(Boolean);
+        if (!tokens.length) return false;
+        const last = tokens[tokens.length - 1].toLowerCase().replace(/[^a-z]/g, "");
+        if (!VOICE_COMMIT_TRIGGERS.has(last)) return false;
+        tokens.pop();
+        baseValue = tokens.join(" ").trim();
+        return true;
+      };
+
+      const commitDictation = () => {
+        const text = (baseValue || "").trim();
+        baseValue = "";
+        interimText = "";
+        input.value = "";
+        if (text) {
+          addItem(text);
+          toast(`Added: ${text}`, "success");
+        }
+      };
+
       micBtn.addEventListener("click", () => {
         if (recognizing) {
-          // User-tap stop — engine onend handler does the cleanup.
+          // User-tap stop — preserve the text for editing.
+          stopReason = "manual";
           try { recognition?.stop(); } catch (_) {}
           return;
         }
@@ -810,27 +843,38 @@
         recognition.interimResults = true;
         recognition.lang = navigator.language || "en-US";
 
-        // Resume from whatever's already in the input — this is also
-        // how "pause and continue" works: stop the mic, the text stays;
-        // tap the mic again and your next words append.
+        // Resume from whatever's already in the input — also how the
+        // pause/continue flow works after manual stop or auto-stop.
         baseValue = (input.value || "").trim();
         interimText = "";
+        stopReason = null;
 
         recognition.onresult = (e) => {
           let interim = "";
+          let gotFinal = false;
           for (let i = e.resultIndex; i < e.results.length; i++) {
             const t = (e.results[i][0].transcript || "").trim();
             if (!t) continue;
             if (e.results[i].isFinal) {
-              // Append finalised phrase to the running base; do NOT
-              // create a task here. One dictation = one task, committed
-              // when the user taps Add / presses Enter.
               baseValue = baseValue ? `${baseValue} ${t}` : t;
+              gotFinal = true;
             } else {
               interim += (interim ? " " : "") + t;
             }
           }
           interimText = interim;
+
+          // Voice commit trigger — only checked after a finalised phrase
+          // so a fleeting interim "add" doesn't trip it.
+          if (gotFinal && consumeVoiceTrigger()) {
+            interimText = "";
+            renderInput();
+            stopReason = "voice";
+            clearSilenceTimer();
+            try { recognition?.stop(); } catch (_) {}
+            return;
+          }
+
           renderInput();
           armSilenceTimer();
         };
@@ -840,23 +884,29 @@
           recognizing = false;
           micBtn.classList.remove("is-on");
           clearSilenceTimer();
-          // Promote any in-flight interim into base so the user has
-          // editable text in the input even if nothing finalised cleanly.
+
+          // Promote any in-flight interim into base so it isn't lost.
           if (interimText) {
             baseValue = baseValue ? `${baseValue} ${interimText}` : interimText;
             interimText = "";
+          }
+          // Auto-commit on silence or voice trigger; manual stop just
+          // leaves the text in the input for review/edit.
+          if (stopReason === "silence" || stopReason === "voice") {
+            commitDictation();
+          } else {
             renderInput();
           }
+          stopReason = null;
         };
         recognition.onerror = (e) => {
           recognizing = false;
           micBtn.classList.remove("is-on");
           clearSilenceTimer();
-          // 'no-speech' and 'aborted' are normal stop reasons — only
-          // surface real failures.
           if (e.error && e.error !== "no-speech" && e.error !== "aborted") {
             toast(`Mic: ${e.error}`, "error");
           }
+          stopReason = null;
         };
         try {
           recognition.start();
