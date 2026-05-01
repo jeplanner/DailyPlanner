@@ -71,6 +71,23 @@ def _due_at_for(bucket):
     return None
 
 
+def _fetch_event_id(user_id, item_id):
+    """Get the google_event_id for a row, tolerating installs that
+    haven't run the latest migration (column missing → return None
+    rather than 500-ing the request)."""
+    try:
+        rows = get(
+            "quick_bucket",
+            params={
+                "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
+                "select": "google_event_id", "limit": "1",
+            },
+        ) or []
+    except Exception:
+        return None
+    return rows[0].get("google_event_id") if rows else None
+
+
 # ─────────── page ─────────────────────────────────────────────
 
 @quick_bucket_bp.route("/quick-bucket", methods=["GET"])
@@ -179,8 +196,8 @@ def cycle_bucket(item_id):
 
     # Calendar mirror: delete if we moved to now/future (no deadline);
     # otherwise sync the fresh due_at to the existing event (or create one).
-    old_event_id = cur.get("google_event_id")
-    item_after = {**cur, "time_bucket": nxt, "due_at": nxt_due}
+    old_event_id = _fetch_event_id(user_id, item_id)
+    item_after = {**cur, "time_bucket": nxt, "due_at": nxt_due, "google_event_id": old_event_id}
     cal_sync.sync_async(
         user_id, item_id, item_after,
         old_event_id=old_event_id,
@@ -218,13 +235,14 @@ def update_item(item_id):
     if not patch:
         return jsonify({"ok": True, "noop": True})
 
-    # Pull the row so we know the prior google_event_id for sync logic.
+    # Pull the row (sans google_event_id, which may not exist yet on
+    # installs that haven't run the latest migration).
     cur_rows = get(
         "quick_bucket",
         params={
             "id": f"eq.{item_id}",
             "user_id": f"eq.{user_id}",
-            "select": "id,text,time_bucket,due_at,google_event_id,is_done,is_deleted",
+            "select": "id,text,time_bucket,due_at,is_done,is_deleted",
             "limit": "1",
         },
     ) or []
@@ -242,8 +260,8 @@ def update_item(item_id):
 
     # If the time_bucket changed, sync (or delete) the calendar mirror.
     if "time_bucket" in patch and cur:
-        old_event_id = cur.get("google_event_id")
-        item_after = {**cur, **patch}
+        old_event_id = _fetch_event_id(user_id, item_id)
+        item_after = {**cur, **patch, "google_event_id": old_event_id}
         cal_sync.sync_async(
             user_id, item_id, item_after,
             old_event_id=old_event_id,
@@ -259,13 +277,7 @@ def update_item(item_id):
 @login_required
 def mark_done(item_id):
     user_id = session["user_id"]
-    cur_rows = get(
-        "quick_bucket",
-        params={
-            "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
-            "select": "id,google_event_id", "limit": "1",
-        },
-    ) or []
+    old_event_id = _fetch_event_id(user_id, item_id)
     try:
         update(
             "quick_bucket",
@@ -276,10 +288,8 @@ def mark_done(item_id):
         logger.error("quick_bucket done failed: %s", e)
         return jsonify({"error": "Couldn't update — please try again."}), 502
 
-    if cur_rows and cur_rows[0].get("google_event_id"):
-        cal_sync.sync_async(
-            user_id, item_id, {}, old_event_id=cur_rows[0]["google_event_id"], force_delete=True,
-        )
+    if old_event_id:
+        cal_sync.sync_async(user_id, item_id, {}, old_event_id=old_event_id, force_delete=True)
     return jsonify({"ok": True})
 
 
@@ -304,7 +314,7 @@ def reopen(item_id):
         "quick_bucket",
         params={
             "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
-            "select": "id,text,time_bucket,due_at,google_event_id",
+            "select": "id,text,time_bucket,due_at",
             "limit": "1",
         },
     ) or []
@@ -343,13 +353,14 @@ def route_item(item_id):
             "id": f"eq.{item_id}",
             "user_id": f"eq.{user_id}",
             "is_deleted": "eq.false",
-            "select": "id,text,google_event_id",
+            "select": "id,text",
             "limit": "1",
         },
     ) or []
     if not rows:
         return jsonify({"error": "Not found"}), 404
     item = rows[0]
+    old_event_id = _fetch_event_id(user_id, item_id)
 
     dest_table, dest_id_or_msg = _create_destination_row(
         user_id, cat, item.get("text") or "", fields
@@ -376,10 +387,8 @@ def route_item(item_id):
     # Drop the calendar mirror — the destination module owns the
     # reminder now (checklist has its own calendar sync; the rest
     # don't push to calendar at all).
-    if item.get("google_event_id"):
-        cal_sync.sync_async(
-            user_id, item_id, {}, old_event_id=item["google_event_id"], force_delete=True,
-        )
+    if old_event_id:
+        cal_sync.sync_async(user_id, item_id, {}, old_event_id=old_event_id, force_delete=True)
 
     return jsonify({
         "ok": True,
@@ -396,13 +405,7 @@ def archive_item(item_id):
     """Soft-delete: hide the row but keep it in storage. No hard delete
     — see project convention (memory: no-hard-delete)."""
     user_id = session["user_id"]
-    cur_rows = get(
-        "quick_bucket",
-        params={
-            "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
-            "select": "id,google_event_id", "limit": "1",
-        },
-    ) or []
+    old_event_id = _fetch_event_id(user_id, item_id)
     try:
         update(
             "quick_bucket",
@@ -413,8 +416,6 @@ def archive_item(item_id):
         logger.error("quick_bucket archive failed: %s", e)
         return jsonify({"error": "Couldn't remove — please try again."}), 502
 
-    if cur_rows and cur_rows[0].get("google_event_id"):
-        cal_sync.sync_async(
-            user_id, item_id, {}, old_event_id=cur_rows[0]["google_event_id"], force_delete=True,
-        )
+    if old_event_id:
+        cal_sync.sync_async(user_id, item_id, {}, old_event_id=old_event_id, force_delete=True)
     return jsonify({"ok": True})

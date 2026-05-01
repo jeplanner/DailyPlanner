@@ -49,6 +49,14 @@
   }
   .qb-btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
   .qb-btn:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  #qb-mic-btn.is-on {
+    background: #ef4444; color: #fff; border-color: #ef4444;
+    animation: qbMicPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes qbMicPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.5); }
+    50%      { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
+  }
 
   .qb-group { margin-bottom: 16px; }
   .qb-group-head {
@@ -362,6 +370,9 @@
   <form id="qb-add-form" class="qb-add" autocomplete="off">
     <input id="qb-add-input" type="text" placeholder="What needs doing? Press Enter to add."
            maxlength="500" autofocus>
+    <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
+      <i data-feather="mic"></i>
+    </button>
     <button id="qb-add-btn" class="qb-btn qb-btn-primary" type="submit">
       <i data-feather="plus"></i> Add
     </button>

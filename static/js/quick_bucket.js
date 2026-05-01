@@ -761,6 +761,61 @@
       await addItem(v);
       input.focus();
     });
+
+    // ── Mic: dictate a task with the Web Speech API ─────────
+    // Final transcripts auto-add as separate items so the user can
+    // rattle off a list without tapping anything between thoughts.
+    const micBtn = $("#qb-mic-btn");
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      micBtn.disabled = true;
+      micBtn.title = "Dictation not supported in this browser";
+    } else {
+      let recognition = null;
+      let recognizing = false;
+      micBtn.addEventListener("click", () => {
+        if (recognizing) {
+          try { recognition?.stop(); } catch (_) {}
+          return;
+        }
+        recognition = new SR();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = navigator.language || "en-US";
+        recognition.onresult = (e) => {
+          let interim = "";
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = (e.results[i][0].transcript || "").trim();
+            if (!t) continue;
+            if (e.results[i].isFinal) {
+              // Each final phrase becomes its own task. Falls into 'now'
+              // by default — user can re-bucket from the row pill.
+              addItem(t);
+            } else {
+              interim += t + " ";
+            }
+          }
+          // Show interim text in the input so the user sees they're heard.
+          input.value = interim.trim();
+        };
+        recognition.onend = () => {
+          recognizing = false;
+          micBtn.classList.remove("is-on");
+          input.value = "";
+        };
+        recognition.onerror = () => {
+          recognizing = false;
+          micBtn.classList.remove("is-on");
+          toast("Dictation stopped", "info");
+        };
+        try {
+          recognition.start();
+          recognizing = true;
+          micBtn.classList.add("is-on");
+        } catch (_) { /* ignore double-start */ }
+      });
+    }
+
     await loadItems();
     // After the first render, prime the alerted set with currently-
     // overdue items so we don't fire a wall of toasts for tasks the
