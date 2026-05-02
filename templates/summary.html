@@ -106,45 +106,48 @@
     </div>
   </header>
   <style>
+    /* ═══════════════════════════════════════════════════════════
+       DAILY VIEW — single coherent design pass.
+       Palette:  #0f172a (text)  #64748b (muted)  #4f46e5 (accent)
+                 #dc2626 (overdue)  #f1f5f9 (divider)  white (page)
+       Type:     system stack, tabular numerics, 3 sizes
+                 (22 / 15 / 12). No custom fonts.
+       Density:  generous line-height, no card chrome competing
+                 with the page background. List rhythm, not
+                 stack-of-rectangles.
+       ═══════════════════════════════════════════════════════════ */
     .md-tight-header {
       display: grid; grid-template-columns: 1fr auto;
-      align-items: center; gap: 12px;
-      padding: 4px 0 12px;
+      align-items: end; gap: 16px;
+      padding: 8px 0 14px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #f1f5f9;
     }
     .md-tight-meta { min-width: 0; }
     .md-tight-greet {
-      font-size: 18px; font-weight: 800; margin: 0; line-height: 1.2;
-      letter-spacing: -.01em;
+      font-size: 22px; font-weight: 600; margin: 0;
+      line-height: 1.15; letter-spacing: -.02em;
+      color: #0f172a;
     }
     .md-tight-date {
-      margin: 2px 0 0; font-size: 12.5px; color: var(--color-text-secondary, #475569);
+      margin: 4px 0 0; font-size: 13px;
+      color: #64748b; font-weight: 400;
     }
-    .md-today-tag {
-      font-weight: 700; color: var(--color-primary, #4338ca);
-    }
-    .md-hero-overdue { font-weight: 700; color: #b91c1c; }
+    .md-today-tag { color: #4f46e5; font-weight: 600; }
+    .md-hero-overdue { color: #dc2626; font-weight: 600; }
+    /* Progress: ditch the gimmicky gradient bar, render as crisp
+       fraction text. Tabular numerics so the digits don't dance. */
     .md-tight-progress {
-      display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
-      min-width: 130px;
+      display: flex; flex-direction: column; align-items: flex-end; gap: 0;
     }
-    .md-tight-progress .md-progress-track {
-      width: 130px; height: 6px;
-      background: var(--color-surface-secondary, #f3f4f6);
-      border-radius: 999px; overflow: hidden;
-    }
-    .md-tight-progress .md-progress-fill {
-      height: 100%; background: linear-gradient(90deg, #6366f1, #10b981);
-      transition: width .4s ease;
-    }
+    .md-tight-progress .md-progress-track { display: none; }
     .md-tight-count {
-      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
-      color: var(--color-text-secondary, #475569);
+      font-size: 28px; font-weight: 600; line-height: 1;
+      color: #0f172a; font-variant-numeric: tabular-nums;
+      letter-spacing: -.02em;
     }
-    .md-tight-count--empty { font-style: italic; font-weight: 500; }
-    @media (max-width: 520px) {
-      .md-tight-progress { min-width: 100px; }
-      .md-tight-progress .md-progress-track { width: 100px; }
-    }
+    .md-tight-count b { font-weight: 700; }
+    .md-tight-count--empty { font-size: 14px; font-style: italic; color: #94a3b8; }
     /* Hide the legacy stacked headers entirely — replaced by the tight one. */
     .md-title-row, .md-hero, .md-greeting, .md-progress-card { display: none !important; }
 
