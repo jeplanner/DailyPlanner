@@ -2760,15 +2760,40 @@ const HELP_PAGES = [
   },
   {
     match: /^\/inbox/,
-    title: "Inbox",
-    lead: "Drop everything here first. Triage into tasks, notes, or the knowledge base later.",
+    title: "Inbox — save URLs, search YouTube + articles",
+    lead: "Three jobs in one box: <b>paste a URL to save it</b>, <b>type a search query to find videos and articles</b>, or just keep what you've already saved organised by status.",
     sections: [
       {
-        title: "How to use it",
+        title: "Saving",
         items: [
-          "Capture anything as a single-line item without committing to a destination.",
-          "During weekly review, triage: convert to a task, note, or reference — or delete.",
-          "Keeping inbox empty is the goal, not the default."
+          "<b>Paste a URL</b> — auto-saves the moment it lands. Title and description are fetched in the background, plus an AI-generated summary if your meta description is weak.",
+          "Use the <b>Paste</b> button to grab whatever's currently on your clipboard.",
+          "When the tab regains focus and a fresh URL is in the clipboard, a small banner offers to save it with one click."
+        ]
+      },
+      {
+        title: "Searching",
+        items: [
+          "Type any text query — the page hits both <b>YouTube</b> and <b>Articles</b> in parallel and shows two stacked sections.",
+          "<b>YouTube</b> uses the YouTube Data API v3 (needs <code>GOOGLE_API_KEY</code>).",
+          "<b>Articles</b> uses Google Programmable Search Engine (needs <code>GOOGLE_API_KEY</code> + <code>GOOGLE_CSE_ID</code>). The CSE itself controls which publishers are searched — Medium, Substack, dev.to, freecodecamp, etc.",
+          "Click the <b>+</b> on any result to save it. The card moves to your inbox list below."
+        ]
+      },
+      {
+        title: "Organising",
+        items: [
+          "Each saved card gets a <b>status</b>: Unread / Reading / Saved / Done. Click the dropdown to change it.",
+          "<b>Star</b> a card to favourite it (left border lights up).",
+          "<b>Trash</b> soft-deletes with a 4-second Undo toast.",
+          "Filter chips at the top (All / Unread / Reading / Saved / Done) plus a free-text search box on the right."
+        ]
+      },
+      {
+        title: "If search isn't returning results",
+        items: [
+          "The page now surfaces the actual API error in a red banner under each section.",
+          "Most common cause: the API key has 'Restrict key' set in Google Cloud Console without the relevant API in its allowlist. Fix in <b>APIs & Services → Credentials → click the key → API restrictions</b>."
         ]
       }
     ]

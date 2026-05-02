@@ -145,6 +145,57 @@ def delete_inbox(item_id):
     return jsonify({"success": True})
 
 
+# Google API error reasons → human hints. Lets the Inbox surface the
+# actual cause (e.g. key missing YouTube Data API in its allowlist)
+# instead of a vague "search unavailable" so the user can fix it.
+_GOOGLE_ERROR_HINTS = {
+    "API_KEY_SERVICE_BLOCKED": (
+        "API key isn't authorised for this service. In Google Cloud Console "
+        "→ APIs & Services → Credentials, open the key, and either pick "
+        "'Don't restrict key' or add this API to the allowed list."
+    ),
+    "API_DISABLED": (
+        "API not enabled on this Google Cloud project. Enable it under "
+        "APIs & Services → Library."
+    ),
+    "rateLimitExceeded": "Daily quota exceeded — try again tomorrow.",
+    "quotaExceeded": "Daily quota exceeded — try again tomorrow.",
+    "keyInvalid": "API key is invalid. Check GOOGLE_API_KEY in .env.",
+    "keyExpired": "API key has expired.",
+    "ipRefererBlocked": (
+        "API key has HTTP-referrer / IP restrictions that block server-side "
+        "calls. Remove or relax those restrictions on the key."
+    ),
+}
+
+
+def _google_error_hint(payload):
+    """Pull the actionable hint from a Google API error body. Looks at the
+    structured `error.details[].reason` first (newer APIs), then falls back
+    to legacy `error.errors[].reason`, then to `error.message`."""
+    err = (payload or {}).get("error", {}) or {}
+    for det in err.get("details", []) or []:
+        reason = det.get("reason")
+        if reason in _GOOGLE_ERROR_HINTS:
+            return _GOOGLE_ERROR_HINTS[reason]
+    for e in err.get("errors", []) or []:
+        reason = e.get("reason")
+        if reason in _GOOGLE_ERROR_HINTS:
+            return _GOOGLE_ERROR_HINTS[reason]
+    return err.get("message") or "Search unavailable"
+
+
+def _cse_thumbnail(item):
+    """CSE thumbnails appear under different pagemap keys depending on the
+    site. Pick the first one that exists, return "" otherwise."""
+    pagemap = item.get("pagemap", {}) or {}
+    for k in ("cse_thumbnail", "cse_image"):
+        arr = pagemap.get(k) or []
+        if arr and arr[0].get("src"):
+            return arr[0]["src"]
+    return ""
+
+
 @inbox_bp.route("/api/inbox/search", methods=["GET"])
 @login_required
 def search_web():
@@ -155,7 +206,7 @@ def search_web():
 
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     if not api_key:
-        return jsonify({"error": "Search not configured"}), 503
+        return jsonify({"error": "GOOGLE_API_KEY not set in .env."}), 503
 
     try:
         r = http_requests.get(
@@ -167,11 +218,16 @@ def search_web():
                 "maxResults": 6,
                 "key": api_key,
             },
-            timeout=6,
+            timeout=8,
         )
         if r.status_code != 200:
-            logger.warning("YouTube search failed: %s %s", r.status_code, r.text[:200])
-            return jsonify({"error": "YouTube search unavailable"}), 503
+            try:
+                payload = r.json()
+            except Exception:
+                payload = {}
+            hint = _google_error_hint(payload)
+            logger.warning("YouTube search failed: %s %s", r.status_code, hint)
+            return jsonify({"error": f"YouTube: {hint}"}), 503
 
         results = []
         for item in r.json().get("items", []):
@@ -187,4 +243,69 @@ def search_web():
         return jsonify(results)
     except Exception as e:
         logger.warning("YouTube search error: %s", e)
-        return jsonify({"error": "Search failed"}), 500
+        return jsonify({"error": f"YouTube: {e}"}), 500
+
+
+@inbox_bp.route("/api/inbox/search-articles", methods=["GET"])
+@login_required
+def search_articles():
+    """Search articles via Google Programmable Search Engine (CSE).
+
+    The CSE — created at https://programmablesearchengine.google.com/ —
+    is the thing that decides which publishers are searched (Medium,
+    Substack, dev.to, freecodecamp, etc.). This endpoint just relays
+    the query and reformats results to match the YouTube payload shape
+    so the frontend can render both side by side.
+    """
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    cse_id = os.environ.get("GOOGLE_CSE_ID", "")
+    if not api_key:
+        return jsonify({"error": "GOOGLE_API_KEY not set in .env."}), 503
+    if not cse_id:
+        return jsonify({
+            "error": (
+                "Articles search not configured. Create a Programmable "
+                "Search Engine at programmablesearchengine.google.com, set "
+                "GOOGLE_CSE_ID in .env, and add 'Custom Search API' to your "
+                "GOOGLE_API_KEY's allowed services."
+            )
+        }), 503
+
+    try:
+        r = http_requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params={
+                "q": query,
+                "cx": cse_id,
+                "num": 6,
+                "key": api_key,
+                "safe": "off",
+            },
+            timeout=8,
+        )
+        if r.status_code != 200:
+            try:
+                payload = r.json()
+            except Exception:
+                payload = {}
+            hint = _google_error_hint(payload)
+            logger.warning("CSE search failed: %s %s", r.status_code, hint)
+            return jsonify({"error": f"Articles: {hint}"}), 503
+
+        results = []
+        for item in r.json().get("items", []):
+            results.append({
+                "url": item.get("link", ""),
+                "title": item.get("title", ""),
+                "description": (item.get("snippet", "") or "")[:240],
+                "source": item.get("displayLink", ""),
+                "thumbnail": _cse_thumbnail(item),
+            })
+        return jsonify(results)
+    except Exception as e:
+        logger.warning("CSE search error: %s", e)
+        return jsonify({"error": f"Articles: {e}"}), 500

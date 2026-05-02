@@ -453,7 +453,8 @@ In Render → Your service → **Environment** tab → Add these:
 | `FLASK_SECRET_KEY` | Generate: `python -c "import secrets; print(secrets.token_hex(32))"` | **Yes** |
 | `FLASK_ENV` | `production` | **Yes** |
 | `ENCRYPTION_KEY` | Any memorable passphrase (e.g., `MySecretPhrase2026`) | **Yes** |
-| `GOOGLE_API_KEY` | From Google Cloud → Gemini API key | For AI features |
+| `GOOGLE_API_KEY` | From Google Cloud → Gemini API key | For AI features + Inbox search |
+| `GOOGLE_CSE_ID` | From [programmablesearchengine.google.com](https://programmablesearchengine.google.com/) | For Inbox → Articles search (Medium, Substack, dev.to, etc.) |
 | `GROQ_API_KEY` | From [groq.com](https://groq.com) → API Keys | For AI fallback |
 | `GOOGLE_CLIENT_ID` | From Google Cloud → OAuth credentials | For Google Calendar |
 | `GOOGLE_CLIENT_SECRET` | From Google Cloud → OAuth credentials | For Google Calendar |
@@ -482,6 +483,30 @@ Click **Create Web Service**. Render will:
 1. Go to [console.groq.com](https://console.groq.com/)
 2. Sign up → **API Keys** → **Create**
 3. Copy the key → Set as `GROQ_API_KEY` in Render
+
+### 4.2b Inbox search APIs (YouTube + Articles)
+
+The `/inbox` page can search YouTube videos and articles (Medium,
+Substack, dev.to, etc.) inline so you can save them with one click.
+Both share the same `GOOGLE_API_KEY`; the API key just needs the right
+services enabled and **listed in its own allowlist**.
+
+1. **Enable the APIs** on your Google Cloud project:
+   - APIs & Services → Library → enable **YouTube Data API v3**
+   - APIs & Services → Library → enable **Custom Search API**
+2. **Allow the key to use them**: APIs & Services → Credentials → click your `GOOGLE_API_KEY` → **API restrictions**:
+   - Either pick **"Don't restrict key"**, OR
+   - Pick **"Restrict key"** and add both **YouTube Data API v3** and **Custom Search API** to the allowed list.
+3. **Create a Programmable Search Engine** for the Articles section:
+   - Go to [programmablesearchengine.google.com](https://programmablesearchengine.google.com/) → **Add**
+   - Name it (e.g. *Reading sources*)
+   - Under **Sites to search**, list publishers you read: `medium.com`, `substack.com`, `dev.to`, `freecodecamp.org`, `smashingmagazine.com`, `hackernoon.com`, etc. — one per line.
+   - Save → on the engine's overview page, copy the **Search engine ID** (looks like `017abc...`)
+   - Set as `GOOGLE_CSE_ID` in `.env` / Render
+
+If a search section is broken, the Inbox page now surfaces the actual
+Google error in a red banner — usually a missing API in the key's
+allowlist (step 2).
 
 ### 4.3 Google Calendar OAuth
 
@@ -536,7 +561,8 @@ To get daily portfolio snapshots even when you don't open the app:
 | `FLASK_SECRET_KEY` | Session encryption | `python -c "import secrets; print(secrets.token_hex(32))"` |
 | `FLASK_ENV` | `production` or `development` | Set manually |
 | `ENCRYPTION_KEY` | Encrypts sensitive data | Choose a passphrase |
-| `GOOGLE_API_KEY` | Gemini AI | Google AI Studio |
+| `GOOGLE_API_KEY` | Gemini AI + Inbox YouTube/Articles search | Google AI Studio |
+| `GOOGLE_CSE_ID` | Inbox Articles search (Medium, Substack, etc.) | Programmable Search Engine |
 | `GROQ_API_KEY` | Groq AI (fallback) | Groq Console |
 | `GOOGLE_CLIENT_ID` | Google Calendar OAuth | Google Cloud Console |
 | `GOOGLE_CLIENT_SECRET` | Google Calendar OAuth | Google Cloud Console |
@@ -552,5 +578,7 @@ To get daily portfolio snapshots even when you don't open the app:
 | Database errors | Make sure all tables are created in Supabase SQL editor. |
 | Google Calendar not syncing | Visit `/google-login` to authorize. Check OAuth redirect URI matches your Render URL. |
 | AI features not working | Check `GOOGLE_API_KEY` and `GROQ_API_KEY` are set. |
+| Inbox search shows red banner | Add the named API to your `GOOGLE_API_KEY`'s allowlist — see Step 4.2b. |
+| Inbox Articles section says "not configured" | Set `GOOGLE_CSE_ID` and create a Programmable Search Engine — see Step 4.2b. |
 | Encryption errors | Make sure `ENCRYPTION_KEY` is set in Render. |
 | Free tier sleeps | Render free tier sleeps after 15 min inactivity. First request takes ~30s to wake up. Upgrade to Starter ($7/mo) for always-on. |
