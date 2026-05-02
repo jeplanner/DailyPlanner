@@ -563,6 +563,22 @@
        numerics for clock columns. No custom fonts.
        ═══════════════════════════════════════════════════════════ */
 
+    /* Cap content width on desktop so the daily view doesn't sprawl
+       across a 1920 px monitor. Centered, comfortable column. */
+    .summary-app, .md-app {
+      max-width: 880px;
+      margin-left: auto !important;
+      margin-right: auto !important;
+    }
+
+    /* Amazon Ember is proprietary; system stack is the closest free
+       approximation Amazon also uses as a fallback on amazon.com. */
+    .summary-app, .md-app, .dly-section, .dly-row, .md-tight-header {
+      font-family: "Amazon Ember", "Inter", -apple-system, BlinkMacSystemFont,
+                   "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
     /* Section heading — small caps with count pill. */
     .dly-section { margin: 0 0 28px; }
     .dly-section-head {
@@ -650,18 +666,20 @@
       transform: rotate(45deg);
     }
 
-    /* Title + context */
+    /* Title + context — bumped one step in size + contrast so the
+       page reads easily on a phone in daylight. */
     .dly-title {
       grid-area: title;
-      font-size: 15px; line-height: 1.45;
-      color: #0F1111; font-weight: 400;
+      font-size: 16px; line-height: 1.45;
+      color: #0F1111; font-weight: 500;
       min-width: 0; word-break: break-word;
       align-self: center;
+      letter-spacing: -.005em;
     }
     .dly-ctx {
       grid-area: ctx;
-      font-size: 12.5px; line-height: 1.35;
-      color: #6F7373; font-weight: 400;
+      font-size: 13px; line-height: 1.4;
+      color: #565959; font-weight: 400;
       align-self: start;
     }
 
@@ -674,7 +692,7 @@
       align-self: center;
       padding-left: 12px;
     }
-    .dly-meta--anytime { color: #B0B5B5; font-style: italic; font-weight: 400; }
+    .dly-meta--anytime { color: #6F7373; font-style: italic; font-weight: 400; }
     .dly-meta--overdue { color: #B12704; font-weight: 700; }
     .dly-meta--time    { color: #0F1111; font-weight: 600; }
 
@@ -686,6 +704,29 @@
     /* Hide the legacy agenda + overdue tables — dly-list replaces them. */
     .md-overdue-card .md-table-wrap,
     .md-agenda-card .md-table-wrap { display: none !important; }
+
+    /* Hide Future, the More-sections expander, and other low-signal
+       items the user explicitly wanted dropped. Tomorrow / This week /
+       Parked are the only "upcoming" sections that show. */
+    .dly-section[aria-label="Future"] { display: none !important; }
+    .md-more-toggle { display: none !important; }
+    .md-focus-card { display: none !important; }   /* hide the empty-state pitch and cap clutter */
+
+    /* Tomorrow / This week / Parked: cap height + scroll inside so
+       long lists don't push the page down forever. The user
+       specifically asked for parked-style scrolling on these. */
+    .dly-section[aria-label="Tomorrow"] .dly-list,
+    .dly-section[aria-label="This week"] .dly-list {
+      max-height: 360px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      border-bottom: 1px solid #EAEDED;
+    }
+    .md-parked-card .md-parked-body {
+      max-height: 360px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
 
     /* ── HEADER + ACCENTS ── repaint the tight header in the same
        Amazon palette so it doesn't clash with the new list. */
@@ -795,7 +836,7 @@
     </header>
     <ul class="dly-list">
       {% for it in dashboard.overdue %}
-      <li class="dly-row {{ 'is-done' if it.done }}"
+      <li class="dly-row md-row {{ 'is-done' if it.done }}"
           data-id="{{ it.id }}" data-type="task" data-source="{{ it.source or '' }}"
           data-title="{{ it.title }}" data-context="{{ it.context or '' }}"
           data-priority="{{ it.priority or '' }}" data-date="{{ it.due_date or '' }}"
@@ -814,7 +855,7 @@
       </li>
       {% endfor %}
       {% for it in dashboard.today_items %}
-      <li class="dly-row {{ 'is-done' if it.done }}"
+      <li class="dly-row md-row {{ 'is-done' if it.done }}"
           data-id="{{ it.id }}" data-type="{{ it.type }}" data-source="{{ it.source or '' }}"
           data-title="{{ it.title }}" data-time="{{ it.time or '' }}"
           data-end-time="{{ it.end_time or '' }}" data-date="{{ it.date or '' }}"
@@ -1092,7 +1133,7 @@
      ────────────────────────────────────────────────────────── #}
   {% set _u = dashboard.upcoming %}
   {% macro upcoming_row(it, meta_text) %}
-    <li class="dly-row" data-id="{{ it.id }}" data-type="task" data-source="matrix"
+    <li class="dly-row md-row" data-id="{{ it.id }}" data-type="task" data-source="matrix"
         data-title="{{ it.title }}" data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
         data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
         data-link="{{ it.link or '' }}" data-done="0"
