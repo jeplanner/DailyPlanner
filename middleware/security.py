@@ -22,7 +22,11 @@ def apply_security_headers(app):
             "  https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdn.quilljs.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             # YouTube thumbnails live on i.ytimg.com / img.youtube.com.
+            # *.gstatic.com is the redirect target Google's favicon service
+            # (www.google.com/s2/favicons) hands out — t0..t3.gstatic.com,
+            # so an explicit allow keeps the Inbox card favicons visible.
             "img-src 'self' data: blob: https://www.google.com "
+            "  https://*.gstatic.com "
             "  https://*.supabase.co https://i.ytimg.com https://img.youtube.com; "
             "connect-src 'self' "
             "  https://unpkg.com https://cdn.jsdelivr.net https://cdn.quilljs.com "
