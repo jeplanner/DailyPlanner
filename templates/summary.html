@@ -1277,11 +1277,34 @@
        window.cheer — defined once, used by markTaskDoneInRow and
        the peek modal so the user only sees ONE toast per close. */
     window.cheer = window.cheer || (function () {
+      // Curated motivational quotes — mantras, attributed classics, and
+      // short one-liners. Keep each ≤ ~90 chars so the toast doesn't wrap.
       const QUOTES = [
-        "Boom!", "Crushed it.", "One down.", "Look at you go.",
-        "Way to go!", "Onward 💪", "Nice work.", "Momentum!",
-        "That's the way.", "Good progress.", "Stacking wins.",
-        "Done & dusted.", "Solid.", "Keep rolling.",
+        "Progress, not perfection.",
+        "Done is better than perfect.",
+        "Show up. Do the work. Repeat.",
+        "Slow is smooth. Smooth is fast.",
+        "Compounding starts with a single rep.",
+        "Inch by inch, anything's a cinch.",
+        "Win the morning, win the day.",
+        "Small daily wins compound into big ones.",
+        "Habits become character.",
+        "Effort, repeated daily, becomes destiny.",
+        "Hard choices, easy life. — Jerzy Gregorek",
+        "Discipline equals freedom. — Jocko Willink",
+        "Well done is better than well said. — Franklin",
+        "Energy and persistence conquer all. — Franklin",
+        "You miss 100% of the shots you don't take. — Gretzky",
+        "The secret of getting ahead is getting started. — Twain",
+        "What you do today improves all your tomorrows. — Marston",
+        "Start where you are, use what you have. — Arthur Ashe",
+        "Excellence is the gradual result of striving. — Pat Riley",
+        "Action is the foundational key to all success. — Picasso",
+        "Diligence is the mother of good fortune. — Cervantes",
+        "A river cuts through rock by persistence, not power.",
+        "Great things never came from comfort zones.",
+        "Fall seven times, stand up eight. — Japanese proverb",
+        "The best way out is always through. — Robert Frost",
       ];
       return () => QUOTES[Math.floor(Math.random() * QUOTES.length)];
     })();

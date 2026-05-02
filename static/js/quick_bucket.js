@@ -469,12 +469,35 @@
     }
   };
 
-  // Rotating one-liner celebrations so closing a task feels good.
+  // Rotating motivational quotes so closing a task feels meaningful.
+  // Mix of mantras, famous quotes (attributed where short enough), and
+  // punchy one-liners. Keep each line ≤ ~90 chars so toasts don't wrap.
   const CHEERS = [
-    "Boom!", "Crushed it.", "One down.", "Look at you go.",
-    "Way to go!", "Onward 💪", "Nice work.", "Momentum!",
-    "That's the way.", "Solid.", "Stacking wins.", "Done & dusted.",
-    "Keep rolling.", "Good progress.",
+    "Progress, not perfection.",
+    "Done is better than perfect.",
+    "Show up. Do the work. Repeat.",
+    "Slow is smooth. Smooth is fast.",
+    "Compounding starts with a single rep.",
+    "Inch by inch, anything's a cinch.",
+    "Win the morning, win the day.",
+    "Small daily wins compound into big ones.",
+    "Habits become character.",
+    "Effort, repeated daily, becomes destiny.",
+    "Hard choices, easy life. — Jerzy Gregorek",
+    "Discipline equals freedom. — Jocko Willink",
+    "Well done is better than well said. — Franklin",
+    "Energy and persistence conquer all. — Franklin",
+    "You miss 100% of the shots you don't take. — Gretzky",
+    "The secret of getting ahead is getting started. — Twain",
+    "What you do today improves all your tomorrows. — Marston",
+    "Start where you are, use what you have. — Arthur Ashe",
+    "Excellence is the gradual result of striving. — Pat Riley",
+    "Action is the foundational key to all success. — Picasso",
+    "Diligence is the mother of good fortune. — Cervantes",
+    "A river cuts through rock by persistence, not power.",
+    "Great things never came from comfort zones.",
+    "Fall seven times, stand up eight. — Japanese proverb",
+    "The best way out is always through. — Robert Frost",
   ];
   const cheer = () => CHEERS[Math.floor(Math.random() * CHEERS.length)];
 
