@@ -98,20 +98,38 @@
     if (doneEl) doneEl.textContent = doneToday;
     if (quoteEl) quoteEl.textContent = `"${quoteOfTheDay()}"`;
 
-    // Progress ring: arc fills based on done / (done + open). The
-    // r=32 circle has circumference 2π·32 ≈ 201; stroke-dashoffset
-    // controls how much of that is hidden.
+    // Fancy bucket: water-rect height/y based on done / (done +
+    // open). Inner bucket is roughly y=29..96 → 67 px of vertical
+    // space. The wave path rides on the water surface.
     const total = open + doneToday;
     const ratio = total > 0 ? Math.min(1, doneToday / total) : 0;
-    const CIRCUM = 2 * Math.PI * 32;  // ≈ 201.06
-    const ringFill = document.getElementById("qb-ring-fill");
-    const ringPct  = document.getElementById("qb-ring-pct");
-    if (ringFill) {
-      ringFill.setAttribute("stroke-dasharray", CIRCUM.toFixed(1));
-      ringFill.setAttribute("stroke-dashoffset", (CIRCUM * (1 - ratio)).toFixed(1));
+    const TOP = 29, BOTTOM = 96;
+    const fillH = (BOTTOM - TOP) * ratio;
+    const fillY = BOTTOM - fillH;
+    const water = document.getElementById("qb-water-fill");
+    const wave  = document.getElementById("qb-wave");
+    if (water) {
+      water.setAttribute("y", fillY);
+      water.setAttribute("height", fillH);
     }
-    if (ringPct) {
-      ringPct.textContent = Math.round(ratio * 100) + "%";
+    if (wave) {
+      // Wide wavy path so the CSS-translated drift never shows seams.
+      // Crest height ~1.5 px above the rect's y; the wave is a
+      // smooth sine-like curve.
+      const y = fillY;
+      const d = `M -10 ${y}
+                 Q 5 ${y - 1.5} 20 ${y}
+                 T 50 ${y} T 80 ${y} T 110 ${y}
+                 L 110 ${y + 4} L -10 ${y + 4} Z`;
+      wave.setAttribute("d", d);
+      // Hide the wave (and bubbles) when the bucket is empty.
+      const visible = ratio > 0.02 ? "" : "0";
+      wave.style.opacity = visible;
+      document.querySelectorAll(".qb-bucket-fancy .qb-bubble").forEach(b => {
+        b.style.opacity = visible;
+        // Move bubble origin up so they animate from the water level.
+        b.setAttribute("cy", fillY + fillH * 0.5);
+      });
     }
   };
 

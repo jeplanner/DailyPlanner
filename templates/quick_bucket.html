@@ -28,11 +28,33 @@
     background: linear-gradient(135deg, #eef2ff 0%, #f0fdfa 100%);
     border: 1px solid #c7d2fe; border-radius: 14px;
   }
-  .qb-progress-ring {
-    width: 80px; height: 80px; display: block;
+  .qb-bucket-fancy {
+    width: 80px; height: 90px; display: block;
+    filter: drop-shadow(0 3px 6px rgba(15,23,42,.10));
   }
-  .qb-progress-ring .qb-ring-fill {
-    transition: stroke-dashoffset .6s cubic-bezier(.2,.8,.2,1);
+  .qb-bucket-fancy #qb-water-fill,
+  .qb-bucket-fancy #qb-wave {
+    transition: y .6s cubic-bezier(.2,.8,.2,1),
+                height .6s cubic-bezier(.2,.8,.2,1),
+                d .6s cubic-bezier(.2,.8,.2,1);
+  }
+  /* Animated wave drift left-right so the water surface feels alive. */
+  .qb-bucket-fancy #qb-wave-group { animation: qbWaveDrift 4s linear infinite; }
+  @keyframes qbWaveDrift {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-30px); }
+  }
+  /* Subtle bubble rise. */
+  .qb-bucket-fancy .qb-bubble {
+    animation: qbBubble 5s ease-in infinite;
+    transform-origin: center;
+  }
+  .qb-bucket-fancy #qb-b2 { animation-duration: 4s; animation-delay: 1.4s; }
+  .qb-bucket-fancy #qb-b3 { animation-duration: 6s; animation-delay: 2.6s; }
+  @keyframes qbBubble {
+    0%   { transform: translateY(0) scale(1); opacity: 0; }
+    15%  { opacity: .8; }
+    100% { transform: translateY(-60px) scale(1.4); opacity: 0; }
   }
   .qb-stats-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .qb-stats-row {
@@ -85,7 +107,7 @@
       grid-template-rows: auto auto;
       column-gap: 12px;
     }
-    .qb-progress-ring { width: 64px; height: 64px; }
+    .qb-bucket-fancy { width: 64px; height: 72px; }
     .qb-focus-trigger {
       grid-column: 1 / -1; justify-self: stretch; justify-content: center;
     }
@@ -525,22 +547,100 @@
   <section class="qb-statbar" id="qb-statbar" aria-label="Today's progress">
     <!-- Bucket icon. The interior rect's height is updated in JS to
          visualise today's completion ratio (filled = done). -->
-    <!-- Circular progress ring — track + filled arc + centred %.
-         Cleaner than the previous bucket SVG, works small. -->
-    <svg class="qb-progress-ring" viewBox="0 0 80 80" aria-hidden="true">
-      <circle class="qb-ring-track"
-              cx="40" cy="40" r="32"
-              fill="none" stroke="#EAEDED" stroke-width="6"/>
-      <circle id="qb-ring-fill" class="qb-ring-fill"
-              cx="40" cy="40" r="32"
-              fill="none" stroke="#007185" stroke-width="6"
-              stroke-linecap="round"
-              stroke-dasharray="201" stroke-dashoffset="201"
-              transform="rotate(-90 40 40)"/>
-      <text id="qb-ring-pct" class="qb-ring-pct"
-            x="40" y="46" text-anchor="middle"
-            font-family="inherit" font-size="20" font-weight="700"
-            fill="#0F1111">0%</text>
+    <!-- ── FANCY BUCKET ──────────────────────────────────────
+         Metallic bucket with a wooden handle, soft ground shadow,
+         and water inside that fills as today's done count rises.
+         The water surface has an animated wave so it feels alive.
+         Water height is updated in JS via the qb-water-fill rect. -->
+    <svg class="qb-bucket-fancy" viewBox="0 0 100 112" aria-hidden="true">
+      <defs>
+        <!-- Brushed-metal sheen for the bucket body. -->
+        <linearGradient id="qbMetalGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stop-color="#6B7785"/>
+          <stop offset="22%"  stop-color="#C8D1DA"/>
+          <stop offset="50%"  stop-color="#F1F4F8"/>
+          <stop offset="78%"  stop-color="#A6B0BB"/>
+          <stop offset="100%" stop-color="#566270"/>
+        </linearGradient>
+        <linearGradient id="qbRimGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#566270"/>
+          <stop offset="50%"  stop-color="#A6B0BB"/>
+          <stop offset="100%" stop-color="#3F4750"/>
+        </linearGradient>
+        <linearGradient id="qbWaterGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#67E8F9"/>
+          <stop offset="55%"  stop-color="#0891B2"/>
+          <stop offset="100%" stop-color="#0E5870"/>
+        </linearGradient>
+        <linearGradient id="qbHandleGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#7B3F00"/>
+          <stop offset="50%"  stop-color="#A86A2A"/>
+          <stop offset="100%" stop-color="#5C2D02"/>
+        </linearGradient>
+        <radialGradient id="qbGroundShadow" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="rgba(0,0,0,.32)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+        </radialGradient>
+        <clipPath id="qbBucketInside">
+          <!-- Inner shape, slightly inset from the body so water
+               stays inside the metal walls. -->
+          <path d="M 24 30 Q 24 29, 50 29 Q 76 29, 76 30 L 71 92 Q 71 96, 50 96 Q 29 96, 29 92 Z"/>
+        </clipPath>
+      </defs>
+
+      <!-- Soft ground shadow under the bucket. -->
+      <ellipse cx="50" cy="103" rx="34" ry="4" fill="url(#qbGroundShadow)"/>
+
+      <!-- Wooden handle, drawn behind the body. -->
+      <path d="M 26 27 Q 26 5, 50 5 Q 74 5, 74 27"
+            fill="none" stroke="url(#qbHandleGrad)" stroke-width="3.2"
+            stroke-linecap="round"/>
+      <!-- Handle attachment rivets. -->
+      <circle cx="26" cy="27" r="2.6" fill="#3F4750"/>
+      <circle cx="74" cy="27" r="2.6" fill="#3F4750"/>
+      <circle cx="26" cy="27" r="1.0" fill="#1F2937"/>
+      <circle cx="74" cy="27" r="1.0" fill="#1F2937"/>
+
+      <!-- Bucket body fill (metallic). -->
+      <path d="M 22 28 Q 22 27, 50 27 Q 78 27, 78 28 L 73 92 Q 73 96, 50 96 Q 27 96, 27 92 Z"
+            fill="url(#qbMetalGrad)"/>
+
+      <!-- Water inside — height/Y updated in JS, wave overlay
+           translates left-right for liveliness. -->
+      <g clip-path="url(#qbBucketInside)">
+        <rect id="qb-water-fill" x="0" y="96" width="100" height="0"
+              fill="url(#qbWaterGrad)"/>
+        <!-- Crest of the water: animated wave. -->
+        <g id="qb-wave-group">
+          <path id="qb-wave" d=""
+                fill="rgba(255,255,255,.22)"/>
+        </g>
+        <!-- Subtle bubbles drifting up. -->
+        <circle class="qb-bubble" id="qb-b1" cx="36" cy="0" r="1.2" fill="rgba(255,255,255,.55)"/>
+        <circle class="qb-bubble" id="qb-b2" cx="58" cy="0" r="0.9" fill="rgba(255,255,255,.45)"/>
+        <circle class="qb-bubble" id="qb-b3" cx="48" cy="0" r="0.7" fill="rgba(255,255,255,.4)"/>
+      </g>
+
+      <!-- Vertical body highlights. -->
+      <path d="M 32 31 Q 30 60, 33 90" stroke="rgba(255,255,255,.55)"
+            stroke-width="1.1" fill="none" stroke-linecap="round"/>
+      <path d="M 68 31 Q 70 60, 67 90" stroke="rgba(0,0,0,.18)"
+            stroke-width="1.4" fill="none" stroke-linecap="round"/>
+
+      <!-- Bucket rim (elliptical band). -->
+      <ellipse cx="50" cy="27" rx="28.2" ry="5.2"
+               fill="url(#qbRimGrad)" stroke="#3F4750" stroke-width=".8"/>
+      <!-- Inside opening (dark hole). -->
+      <ellipse cx="50" cy="27" rx="25" ry="3.6" fill="#1A2027"/>
+      <!-- Inner rim highlight. -->
+      <ellipse cx="50" cy="25.5" rx="22" ry="1.4"
+               fill="none" stroke="rgba(255,255,255,.25)" stroke-width=".7"/>
+
+      <!-- Bottom rim band. -->
+      <ellipse cx="50" cy="92" rx="23" ry="4"
+               fill="none" stroke="#3F4750" stroke-width=".8"/>
+      <ellipse cx="50" cy="93" rx="23" ry="4"
+               fill="none" stroke="rgba(255,255,255,.15)" stroke-width=".5"/>
     </svg>
     <div class="qb-stats-text">
       <div class="qb-stats-row">
