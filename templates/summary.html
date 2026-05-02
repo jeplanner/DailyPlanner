@@ -382,58 +382,166 @@
       content: "";
     }
 
-    /* ── ALIGNMENT GUARANTEE: every row in any md-table has the
-       same flex layout. Strong overrides so this can't be
-       defeated by older legacy rules. */
+    /* ═══════════════════════════════════════════════════════════
+       ROW LAYOUT — definitive overrides.
+       Legacy summary.css has .md-task-toggle with margin-right:10
+       (22 px on desktop / 26 px on mobile) and .md-overdue-row
+       .md-c-title with display:flex. Both fight the container
+       layout. Overriding aggressively so the row is robust:
+         status (28 px column)  title  context  time
+       Title cell is plain block — no inner flex. Toggle has zero
+       margin and stays in its column. On mobile the context
+       wraps to a second line under the title, indented to
+       align with the title (40 px from left edge).
+       ═══════════════════════════════════════════════════════════ */
+
+    /* Reset legacy toggle styling to fit the new column width. */
+    .md-table .md-task-toggle,
+    .md-table .md-task-toggle-status {
+      width: 18px !important;
+      height: 18px !important;
+      margin: 0 !important;
+      border-radius: 5px !important;
+      border: 1.5px solid #cbd5e1 !important;
+      background: transparent !important;
+      flex: 0 0 auto !important;
+    }
+    .md-table .md-task-toggle:hover,
+    .md-table .md-task-toggle-status:hover {
+      border-color: #4f46e5 !important;
+      background: rgba(79, 70, 229, .06) !important;
+    }
+    .md-table .md-task-toggle.is-done {
+      border-color: #4f46e5 !important;
+      background: #4f46e5 !important;
+    }
+    .md-table .md-task-toggle.is-done::after {
+      left: 5px !important; top: 1px !important;
+      width: 5px !important; height: 9px !important;
+      border-width: 0 2px 2px 0 !important;
+    }
+    @media (max-width: 640px) {
+      .md-table .md-task-toggle,
+      .md-table .md-task-toggle-status {
+        width: 20px !important; height: 20px !important;
+      }
+      .md-table .md-task-toggle.is-done::after {
+        left: 6px !important; top: 2px !important;
+      }
+    }
+
+    /* Row container — flex with explicit ordering. */
     .md-table tr.md-row {
       display: flex !important;
+      flex-direction: row !important;
       align-items: flex-start !important;
-      gap: 12px !important;
+      flex-wrap: wrap !important;
+      gap: 0 !important;
       padding: 14px 0 !important;
+      margin: 0 !important;
+      border: none !important;
       border-bottom: 1px solid #f1f5f9 !important;
-      cursor: pointer;
       background: transparent !important;
-      border-left: none !important;
       box-shadow: none !important;
+      cursor: pointer;
+      transition: background .15s;
     }
+    .md-table tr.md-row:hover { background: #fafbfc !important; }
+    .md-table tr.md-row:last-child { border-bottom: none !important; }
     .md-table tr.md-row > td {
       padding: 0 !important;
+      margin: 0 !important;
       border: none !important;
       display: block !important;
       vertical-align: top;
     }
+
+    /* Cells — fixed widths and order. */
     .md-table tr.md-row .md-c-status {
       order: 0 !important;
-      flex: 0 0 24px !important;
-      max-width: 24px !important;
-      padding-top: 1px !important;
+      flex: 0 0 28px !important;
+      width: 28px !important;
+      max-width: 28px !important;
+      padding-top: 2px !important;
     }
     .md-table tr.md-row .md-c-title {
       order: 1 !important;
-      flex: 1 1 auto !important;
+      flex: 1 1 0 !important;
       min-width: 0 !important;
+      max-width: 100% !important;
+      display: block !important;       /* defeat legacy display:flex */
+      align-items: initial !important;
+      gap: 0 !important;
     }
     .md-table tr.md-row .md-c-context {
-      order: 2 !important;
-      flex: 0 0 auto !important;
-      align-self: center !important;
+      order: 3 !important;
+      flex: 1 1 100% !important;
+      margin: 4px 0 0 28px !important; /* second-line, aligned with title */
+      align-self: flex-start !important;
     }
     .md-table tr.md-row .md-c-time,
     .md-table tr.md-row .md-c-due {
-      order: 3 !important;
+      order: 2 !important;
       flex: 0 0 auto !important;
+      margin-left: 12px !important;
       align-self: center !important;
     }
-    @media (max-width: 720px) {
-      /* Mobile: wrap context to a second line under the title so
-         the title gets full width. */
-      .md-table tr.md-row { flex-wrap: wrap !important; row-gap: 4px !important; }
-      .md-table tr.md-row .md-c-context {
-        flex: 1 0 calc(100% - 36px) !important;
-        order: 4 !important;
-        align-self: flex-start !important;
-        margin-left: 36px !important;
-      }
+
+    /* Title and meta typography. */
+    .md-table .md-row-title {
+      font-size: 15px !important;
+      line-height: 1.42 !important;
+      color: #0f172a !important;
+      font-weight: 400 !important;
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      max-width: none !important;
+      display: block !important;
+      flex: initial !important;
+    }
+    .md-table tr.md-done .md-row-title {
+      color: #94a3b8 !important;
+      text-decoration: line-through !important;
+    }
+    .md-table .md-context-chip {
+      font-size: 12.5px !important;
+      font-weight: 400 !important;
+      color: #64748b !important;
+      letter-spacing: 0 !important;
+      padding: 0 !important;
+      background: transparent !important;
+      border: none !important;
+    }
+    .md-table .md-time {
+      font-size: 13px !important;
+      font-weight: 500 !important;
+      font-variant-numeric: tabular-nums !important;
+      color: #64748b !important;
+      padding: 0 !important;
+      background: transparent !important;
+      border: none !important;
+      white-space: nowrap !important;
+    }
+    .md-table .md-time-any {
+      color: #cbd5e1 !important; font-style: italic !important; font-weight: 400 !important;
+    }
+    .md-table .md-time-end { display: none !important; }
+    .md-overdue-table .md-c-due {
+      background: transparent !important; padding: 0 !important;
+    }
+    .md-overdue-table .md-overdue-chip {
+      display: inline-block !important;
+      font-size: 13px !important; font-weight: 600 !important;
+      color: #dc2626 !important;
+      padding: 0 !important; background: transparent !important;
+      border: none !important;
+      white-space: nowrap !important;
+    }
+
+    /* Hide context entirely on very narrow screens. */
+    @media (max-width: 380px) {
+      .md-table tr.md-row .md-c-context { display: none !important; }
     }
 
     /* ── MORE SECTIONS expander — quiet text link ────────── */
