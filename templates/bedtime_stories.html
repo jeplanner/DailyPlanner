@@ -10,9 +10,39 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/font_scale.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .bs-app { max-width: 880px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  /* Font-size toolbar (shared markup across story pages) */
+  .fs-bar {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface);
+  }
+  .fs-bar button {
+    width: 28px; height: 28px;
+    border: none; background: transparent;
+    border-radius: 50%;
+    font: inherit; font-weight: 700; font-size: 13px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  .fs-bar button:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+  .fs-bar button:active { transform: scale(.94); }
+  .fs-bar button small { font-size: 10px; margin-left: 1px; font-weight: 700; }
+  .fs-bar [data-fs-readout] {
+    min-width: 40px; text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px; color: var(--color-text-muted);
+    font-weight: 600;
+    padding: 0 4px;
+  }
 
   .bs-hero { margin-bottom: 18px; }
   .bs-hero h1 {
@@ -101,7 +131,8 @@
   }
   .bs-teaser {
     font-family: 'Crimson Pro', serif;
-    font-size: 16px; line-height: 1.65;
+    font-size: calc(16px * var(--story-font-scale, 1));
+    line-height: 1.65;
     color: var(--color-text-secondary);
     margin: 0 0 10px;
     display: -webkit-box;
@@ -167,7 +198,7 @@
     .bs-hero h1 { font-size: 26px; }
     .bs-card { padding: 16px 18px; border-radius: 14px; }
     .bs-title { font-size: 19px; min-width: 0; }
-    .bs-teaser { font-size: 15px; }
+    .bs-teaser { font-size: calc(15px * var(--story-font-scale, 1)); }
   }
 </style>
 </head>
@@ -192,6 +223,12 @@
       <a href="{{ url_for('bedtime_stories.stories_index', source=src) }}"
          class="bs-chip {% if active_source == src %}is-active{% endif %}">{{ src }}</a>
     {% endfor %}
+    <div class="fs-bar" id="fs-bar" role="group" aria-label="Text size" style="margin-left:auto">
+      <button type="button" data-fs-action="dec" title="Smaller (−)" aria-label="Decrease text size">A<small>−</small></button>
+      <span data-fs-readout>100%</span>
+      <button type="button" data-fs-action="inc" title="Larger (+)" aria-label="Increase text size">A<small>+</small></button>
+      <button type="button" data-fs-action="reset" title="Reset (0)" aria-label="Reset text size">↺</button>
+    </div>
   </nav>
   {% endif %}
 
@@ -248,6 +285,7 @@
 
 <script>
   if (window.feather) feather.replace();
+  if (window.FontScale) FontScale.attach({ container: "#fs-bar" });
 </script>
 </body>
 </html>

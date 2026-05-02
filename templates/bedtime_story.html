@@ -10,9 +10,46 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/font_scale.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .bs-read { max-width: 720px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  /* Font-size toolbar (shared markup across story pages) */
+  .fs-bar {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface);
+    vertical-align: middle;
+  }
+  .fs-bar button {
+    width: 28px; height: 28px;
+    border: none; background: transparent;
+    border-radius: 50%;
+    font: inherit; font-weight: 700; font-size: 13px;
+    cursor: pointer;
+    color: var(--color-text-secondary);
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1;
+  }
+  .fs-bar button:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+  .fs-bar button:active { transform: scale(.94); }
+  .fs-bar button small { font-size: 10px; margin-left: 1px; font-weight: 700; }
+  .fs-bar [data-fs-readout] {
+    min-width: 40px; text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px; color: var(--color-text-muted);
+    font-weight: 600;
+    padding: 0 4px;
+  }
+  .fs-toprow {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .fs-toprow .bs-back { margin-bottom: 0; }
 
   .bs-back {
     display: inline-flex; align-items: center; gap: 6px;
@@ -36,7 +73,8 @@
 
   .bs-title {
     font-family: 'Crimson Pro', serif;
-    font-size: 36px; font-weight: 700; line-height: 1.15;
+    font-size: calc(36px * var(--story-font-scale, 1));
+    font-weight: 700; line-height: 1.15;
     letter-spacing: -.01em;
     margin: 0 0 22px;
     color: var(--color-text);
@@ -44,13 +82,15 @@
 
   .bs-body p {
     font-family: 'Crimson Pro', serif;
-    font-size: 19px; line-height: 1.75;
+    font-size: calc(19px * var(--story-font-scale, 1));
+    line-height: 1.75;
     color: var(--color-text);
     margin: 0 0 16px;
   }
   .bs-body p:first-of-type::first-letter {
     font-family: 'Crimson Pro', serif;
-    font-size: 56px; font-weight: 700;
+    font-size: calc(56px * var(--story-font-scale, 1));
+    font-weight: 700;
     float: left; line-height: 1; padding: 4px 8px 0 0;
     color: var(--color-primary);
   }
@@ -74,7 +114,8 @@
   html.dark .bs-moral-label { color: #fcd34d; }
   .bs-moral-text {
     font-family: 'Crimson Pro', serif;
-    font-size: 17px; font-style: italic; line-height: 1.55;
+    font-size: calc(17px * var(--story-font-scale, 1));
+    font-style: italic; line-height: 1.55;
     margin: 0;
     color: var(--color-text);
   }
@@ -113,10 +154,10 @@
 
   @media (max-width: 640px) {
     .bs-read { padding: 20px 14px 80px; }
-    .bs-title { font-size: 28px; }
-    .bs-body p { font-size: 17px; line-height: 1.7; }
-    .bs-body p:first-of-type::first-letter { font-size: 44px; }
-    .bs-moral-text { font-size: 16px; }
+    .bs-title { font-size: calc(28px * var(--story-font-scale, 1)); }
+    .bs-body p { font-size: calc(17px * var(--story-font-scale, 1)); line-height: 1.7; }
+    .bs-body p:first-of-type::first-letter { font-size: calc(44px * var(--story-font-scale, 1)); }
+    .bs-moral-text { font-size: calc(16px * var(--story-font-scale, 1)); }
   }
 </style>
 </head>
@@ -125,9 +166,17 @@
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
 <main class="bs-read">
-  <a href="{{ url_for('bedtime_stories.stories_index') }}" class="bs-back">
-    <i data-feather="arrow-left"></i> All stories
-  </a>
+  <div class="fs-toprow">
+    <a href="{{ url_for('bedtime_stories.stories_index') }}" class="bs-back">
+      <i data-feather="arrow-left"></i> All stories
+    </a>
+    <div class="fs-bar" id="fs-bar" role="group" aria-label="Text size">
+      <button type="button" data-fs-action="dec" title="Smaller (−)" aria-label="Decrease text size">A<small>−</small></button>
+      <span data-fs-readout>100%</span>
+      <button type="button" data-fs-action="inc" title="Larger (+)" aria-label="Increase text size">A<small>+</small></button>
+      <button type="button" data-fs-action="reset" title="Reset (0)" aria-label="Reset text size">↺</button>
+    </div>
+  </div>
 
   <span class="bs-source-pill">{{ story.source }}</span>
   <h1 class="bs-title">{{ story.title }}</h1>
@@ -166,6 +215,7 @@
 
 <script>
   if (window.feather) feather.replace();
+  if (window.FontScale) FontScale.attach({ container: "#fs-bar" });
 </script>
 </body>
 </html>
