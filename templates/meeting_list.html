@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Meetings — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .mt-app { max-width: 1200px; margin: 0 auto; padding: 22px 24px 64px; }
+    .mt-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+    .mt-head h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 4px; }
+    .mt-head p { margin: 0; color: var(--color-text-muted); font-size: 13.5px; }
+
+    .mt-cta {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 16px;
+      background: var(--color-primary); color: var(--color-on-primary);
+      border: none; border-radius: 10px;
+      font: inherit; font-size: 13.5px; font-weight: 600;
+      text-decoration: none; cursor: pointer;
+    }
+    .mt-cta:hover { background: var(--color-primary-hover); }
+    .mt-cta svg { width: 14px; height: 14px; }
+
+    /* Tabs */
+    .mt-tabs {
+      display: flex; gap: 4px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--color-border);
+      margin-bottom: 18px;
+    }
+    .mt-tab {
+      padding: 10px 16px;
+      border: none; background: transparent;
+      color: var(--color-text-secondary);
+      font: inherit; font-size: 14px; font-weight: 600;
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      cursor: pointer;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .mt-tab:hover { color: var(--color-text); }
+    .mt-tab.is-active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+    }
+    .mt-tab-count {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: var(--color-surface-sunken);
+      color: var(--color-text-muted);
+      font-size: 11.5px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .mt-tab.is-active .mt-tab-count {
+      background: var(--color-primary-light);
+      color: var(--color-primary);
+    }
+    html.dark .mt-tab.is-active .mt-tab-count { background: rgba(37,99,235,.22); color: #93c5fd; }
+
+    .mt-toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; align-items: center; }
+    .mt-search {
+      flex: 1 1 280px; min-width: 0;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 14px;
+      border: 1px solid var(--color-border); border-radius: 10px;
+      background: var(--color-surface);
+    }
+    .mt-search:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring); }
+    .mt-search svg { width: 16px; height: 16px; color: var(--color-text-muted); }
+    .mt-search input {
+      flex: 1; min-width: 0;
+      padding: 0; border: none; outline: none;
+      background: transparent;
+      font: inherit; font-size: 14px; color: var(--color-text);
+    }
+
+    /* Cards */
+    .mt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px;
+    }
+    .mt-card {
+      position: relative;
+      display: flex; flex-direction: column;
+      padding: 16px 16px 14px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      color: var(--color-text);
+      text-decoration: none;
+      transition: border-color .12s, box-shadow .14s;
+      min-height: 160px;
+    }
+    .mt-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    html.dark .mt-card { background: #111a2c; border-color: #28344a; }
+    html.dark .mt-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+
+    .mt-card.is-imminent {
+      border-left: 3px solid #f59e0b;
+    }
+    .mt-card.is-overdue {
+      border-left: 3px solid #dc2626;
+    }
+
+    .mt-card-status {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      width: fit-content;
+      margin-bottom: 8px;
+    }
+    .mt-card-status.upcoming { background: #dbeafe; color: #1d4ed8; }
+    .mt-card-status.done { background: #dcfce7; color: #166534; }
+    .mt-card-status.cancelled { background: var(--color-surface-sunken); color: var(--color-text-muted); }
+    html.dark .mt-card-status.upcoming { background: rgba(37,99,235,.22); color: #93c5fd; }
+    html.dark .mt-card-status.done { background: rgba(22,163,74,.22); color: #86efac; }
+
+    .mt-card-title {
+      font-size: 16px; font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 6px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .mt-card-when {
+      font-size: 12.5px; color: var(--color-text-secondary);
+      margin-bottom: 8px;
+      display: inline-flex; align-items: center; gap: 5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .mt-card-when svg { width: 12px; height: 12px; }
+    .mt-card-when.is-imminent { color: #b45309; font-weight: 700; }
+    .mt-card-when.is-overdue { color: #b91c1c; font-weight: 700; }
+    html.dark .mt-card-when.is-imminent { color: #fbbf24; }
+    html.dark .mt-card-when.is-overdue { color: #fca5a5; }
+
+    .mt-card-ask {
+      font-size: 13px; color: var(--color-text-secondary);
+      line-height: 1.5;
+      flex: 1;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .mt-card-ask.empty { color: var(--color-text-muted); font-style: italic; }
+    .mt-card-ask-label {
+      font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 4px;
+    }
+
+    .mt-card-foot {
+      margin-top: 12px; padding-top: 10px;
+      border-top: 1px solid var(--color-border-light);
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px;
+      font-size: 11.5px; color: var(--color-text-muted);
+    }
+    .mt-card-attendees {
+      max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .mt-empty {
+      grid-column: 1 / -1;
+      padding: 56px 24px;
+      text-align: center;
+      color: var(--color-text-secondary);
+      background: var(--color-surface);
+      border: 1px dashed var(--color-border);
+      border-radius: 16px;
+    }
+    .mt-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+    .mt-empty h2 { font-size: 20px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+    .mt-empty p { max-width: 56ch; margin: 0 auto 18px; line-height: 1.55; font-size: 14px; }
+
+    .mt-framework {
+      margin-top: 24px;
+      padding: 18px 22px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      text-align: left;
+    }
+    html.dark .mt-framework { background: #111a2c; border-color: #28344a; }
+    .mt-framework h3 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+    .mt-framework p { margin: 0 0 10px; font-size: 13px; line-height: 1.55; color: var(--color-text-secondary); text-align: left; }
+    .mt-framework ol {
+      margin: 0; padding-left: 20px;
+      font-size: 13px; line-height: 1.7;
+      color: var(--color-text-secondary);
+    }
+
+    @media (max-width: 700px) {
+      .mt-app { padding: 16px 14px 80px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="mt-app">
+
+  <header class="mt-head">
+    <div>
+      <h1>Meetings</h1>
+      <p>Prep sheets for executive meetings: BLUF → SCQA → support → Q&amp;A → outcome.</p>
+    </div>
+    <a href="/meetings/new" class="mt-cta">
+      <i data-feather="plus"></i>
+      New prep
+    </a>
+  </header>
+
+  <div class="mt-tabs" role="tablist">
+    <a href="/meetings?status=upcoming" class="mt-tab {% if active_status == 'upcoming' %}is-active{% endif %}">
+      <i data-feather="clock"></i> Upcoming
+      <span class="mt-tab-count">{{ counts.upcoming }}</span>
+    </a>
+    <a href="/meetings?status=done" class="mt-tab {% if active_status == 'done' %}is-active{% endif %}">
+      <i data-feather="check-circle"></i> Past
+      <span class="mt-tab-count">{{ counts.done }}</span>
+    </a>
+    <a href="/meetings?status=cancelled" class="mt-tab {% if active_status == 'cancelled' %}is-active{% endif %}">
+      <i data-feather="slash"></i> Cancelled
+      <span class="mt-tab-count">{{ counts.cancelled }}</span>
+    </a>
+    <a href="/meetings?status=all" class="mt-tab {% if active_status == 'all' %}is-active{% endif %}">
+      All <span class="mt-tab-count">{{ counts.total }}</span>
+    </a>
+  </div>
+
+  <div class="mt-toolbar">
+    <form method="get" class="mt-search" role="search" autocomplete="off">
+      <i data-feather="search"></i>
+      <input type="text" name="q" placeholder="Search title, attendees, ask, outcome…" value="{{ q or '' }}">
+      {% if active_status %}<input type="hidden" name="status" value="{{ active_status }}">{% endif %}
+    </form>
+  </div>
+
+  {% if preps %}
+    <div class="mt-grid">
+      {% for p in preps %}
+        {% set md = p.meeting_date or '' %}
+        {% set is_overdue = (active_status == 'upcoming' and md and md < now_iso) %}
+        {# imminent = within ~36h of now (rough — done in JS for accuracy) #}
+        <a class="mt-card {{ p.status }}"
+           href="/meetings/{{ p.id }}"
+           data-meeting-date="{{ md }}"
+           data-status="{{ p.status }}">
+          <span class="mt-card-status {{ p.status }}">{{ p.status }}</span>
+          <div class="mt-card-title">{{ p.title or 'Untitled meeting' }}</div>
+          {% if md %}
+            <div class="mt-card-when" data-when="{{ md }}">
+              <i data-feather="calendar"></i>
+              <span class="mt-card-when-text">{{ md[:16].replace('T', ' ') }}</span>
+            </div>
+          {% else %}
+            <div class="mt-card-when" style="color: var(--color-text-muted)">
+              <i data-feather="calendar"></i> no date set
+            </div>
+          {% endif %}
+
+          <div class="mt-card-ask-label">The ask</div>
+          {% if p.ask_recommendation %}
+            <div class="mt-card-ask">{{ p.ask_recommendation[:200] }}{% if p.ask_recommendation|length > 200 %}…{% endif %}</div>
+          {% else %}
+            <div class="mt-card-ask empty">No recommendation yet — open to draft</div>
+          {% endif %}
+
+          <div class="mt-card-foot">
+            <span class="mt-card-attendees" title="{{ p.attendees }}">
+              {% if p.attendees %}
+                <i data-feather="users" style="width:11px;height:11px;vertical-align:-1px"></i>
+                {{ p.attendees[:50] }}{% if p.attendees|length > 50 %}…{% endif %}
+              {% else %}—{% endif %}
+            </span>
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="mt-empty">
+      <i data-feather="users"></i>
+      <h2>{% if q %}No matches{% elif active_status == 'upcoming' %}No upcoming meetings{% elif active_status == 'done' %}Nothing past yet{% else %}No prep sheets yet{% endif %}</h2>
+      <p>
+        {% if q %}
+          Nothing matched "<strong>{{ q }}</strong>".
+        {% else %}
+          A prep sheet walks you through the structure that lands well with execs:
+          recommendation up front, supporting evidence, anticipated questions,
+          and a pre-brief plan so nobody is surprised in the room.
+        {% endif %}
+      </p>
+
+      {% if not q %}
+      <a href="/meetings/new" class="mt-cta">
+        <i data-feather="plus"></i>
+        Start a prep sheet
+      </a>
+
+      <div class="mt-framework">
+        <h3>The 5 sections each prep covers</h3>
+        <ol>
+          <li><strong>The ask (BLUF)</strong> — recommendation, decision needed, by-when, from-whom</li>
+          <li><strong>SCQA opener</strong> — Situation → Complication → Question → Answer (4 sentences)</li>
+          <li><strong>Supporting points</strong> — 3 reasons, with evidence under each</li>
+          <li><strong>Anticipated Q&amp;A</strong> — 5 hardest questions, one-line answer + backup-slide ref</li>
+          <li><strong>Pre-brief plan</strong> — who you'll meet 1:1 in the 24h before</li>
+        </ol>
+      </div>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+
+    // Highlight imminent (< 36h) and overdue meetings on upcoming cards.
+    const now = Date.now();
+    document.querySelectorAll(".mt-card[data-status='upcoming']").forEach(card => {
+      const md = card.dataset.meetingDate;
+      if (!md) return;
+      const ts = Date.parse(md);
+      if (Number.isNaN(ts)) return;
+      const hoursAway = (ts - now) / (1000 * 60 * 60);
+      if (hoursAway < 0) {
+        card.classList.add("is-overdue");
+        card.querySelector(".mt-card-when")?.classList.add("is-overdue");
+      } else if (hoursAway < 36) {
+        card.classList.add("is-imminent");
+        card.querySelector(".mt-card-when")?.classList.add("is-imminent");
+      }
+    });
+
+    // Render meeting dates in the user's local zone for readability.
+    document.querySelectorAll(".mt-card-when[data-when]").forEach(el => {
+      const md = el.dataset.when;
+      if (!md) return;
+      const d = new Date(md);
+      if (Number.isNaN(d.getTime())) return;
+      const opts = { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+      const text = el.querySelector(".mt-card-when-text");
+      if (text) text.textContent = d.toLocaleString(undefined, opts);
+    });
+  });
+
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "n" || e.key === "N") { e.preventDefault(); location.href = "/meetings/new"; }
+  });
+</script>
+
+</body>
+</html>

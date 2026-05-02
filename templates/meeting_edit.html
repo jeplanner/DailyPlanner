@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{{ prep.title if prep else 'New meeting prep' }} — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .mp-app { max-width: 880px; margin: 0 auto; padding: 18px 20px 80px; }
+
+    .mp-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .mp-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .mp-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .mp-back svg { width: 14px; height: 14px; }
+
+    .mp-status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+    }
+    .mp-status-pill.upcoming { background: #dbeafe; color: #1d4ed8; }
+    .mp-status-pill.done { background: #dcfce7; color: #166534; }
+    .mp-status-pill.cancelled { background: var(--color-surface-sunken); color: var(--color-text-muted); }
+    html.dark .mp-status-pill.upcoming { background: rgba(37,99,235,.22); color: #93c5fd; }
+    html.dark .mp-status-pill.done { background: rgba(22,163,74,.22); color: #86efac; }
+
+    .mp-status-controls {
+      display: inline-flex; gap: 6px; margin-left: 8px;
+    }
+    .mp-status-controls button {
+      padding: 5px 10px;
+      background: transparent;
+      border: 1px solid var(--color-border); border-radius: 7px;
+      color: var(--color-text-secondary);
+      font: inherit; font-size: 12px; cursor: pointer;
+    }
+    .mp-status-controls button:hover { border-color: var(--color-border-strong); color: var(--color-text); }
+    .mp-status-controls button.is-active {
+      background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
+    }
+
+    .mp-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
+    .mp-status.saved { color: #16a34a; }
+    .mp-status.saving { color: var(--color-primary); }
+    .mp-status.error { color: var(--color-danger); }
+
+    .mp-delete {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      background: transparent; color: var(--color-text-muted);
+      border: 1px solid var(--color-border); border-radius: 8px;
+      font: inherit; font-size: 12.5px; cursor: pointer;
+    }
+    .mp-delete:hover { color: var(--color-danger); border-color: var(--color-danger); }
+    .mp-delete svg { width: 13px; height: 13px; }
+
+    /* Title + meta row */
+    .mp-title-input {
+      width: 100%;
+      padding: 8px 0;
+      border: none; outline: none; background: transparent;
+      font: inherit;
+      font-size: 28px; font-weight: 800; letter-spacing: -.02em;
+      color: var(--color-text);
+      margin-bottom: 4px;
+    }
+    .mp-title-input::placeholder { color: var(--color-text-muted); font-weight: 700; }
+
+    .mp-meta-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .mp-meta-input {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid var(--color-border); border-radius: 8px;
+      background: var(--color-surface);
+      font: inherit; font-size: 13.5px; color: var(--color-text);
+    }
+    .mp-meta-input:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-ring);
+    }
+
+    /* Sections */
+    .mp-section {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
+    }
+    html.dark .mp-section { background: #111a2c; border-color: #28344a; }
+
+    .mp-section-head {
+      display: flex; align-items: baseline; gap: 10px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--color-border-light);
+    }
+    .mp-section-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--color-primary); color: var(--color-on-primary);
+      font-size: 11px; font-weight: 700;
+      flex: 0 0 auto;
+      align-self: center;
+    }
+    .mp-section-title { font-size: 15px; font-weight: 700; }
+    .mp-section-help {
+      margin-left: auto;
+      font-size: 12px; color: var(--color-text-muted);
+      font-style: italic;
+    }
+
+    .mp-section.post .mp-section-num { background: #16a34a; }
+
+    .mp-field { margin-bottom: 12px; }
+    .mp-field:last-child { margin-bottom: 0; }
+    .mp-field-label {
+      display: block;
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 6px;
+    }
+    .mp-field-help {
+      font-size: 11.5px; color: var(--color-text-muted);
+      font-weight: 500; text-transform: none; letter-spacing: 0;
+      font-style: italic;
+      margin-left: 6px;
+    }
+
+    .mp-input, .mp-textarea {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid var(--color-border); border-radius: 8px;
+      background: var(--color-bg);
+      font: inherit; font-size: 14px; color: var(--color-text);
+    }
+    html.dark .mp-input, html.dark .mp-textarea { background: #0b1220; }
+
+    .mp-input:focus, .mp-textarea:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-ring);
+    }
+    .mp-input::placeholder, .mp-textarea::placeholder { color: var(--color-text-muted); }
+    .mp-textarea {
+      min-height: 70px;
+      line-height: 1.55;
+      resize: vertical;
+    }
+
+    .mp-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* Post-meeting section gets a softer background to signal "after" */
+    .mp-section.post {
+      background: linear-gradient(180deg, rgba(22,163,74,.04), transparent);
+      border-color: #86efac;
+    }
+    html.dark .mp-section.post {
+      background: linear-gradient(180deg, rgba(22,163,74,.08), transparent);
+      border-color: rgba(22,163,74,.4);
+    }
+
+    @media (max-width: 700px) {
+      .mp-app { padding: 14px 12px 80px; }
+      .mp-title-input { font-size: 22px; }
+      .mp-meta-row { grid-template-columns: 1fr; }
+      .mp-grid-2 { grid-template-columns: 1fr; }
+      .mp-section-help { display: none; }
+      .mp-status { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="mp-app">
+
+  <div class="mp-bar">
+    <a href="/meetings" class="mp-back">
+      <i data-feather="arrow-left"></i> Meetings
+    </a>
+    {% set current_status = (prep.status if prep else 'upcoming') %}
+    <span class="mp-status-pill {{ current_status }}" id="mp-status-pill">
+      {{ current_status }}
+    </span>
+    {% if prep %}
+    <div class="mp-status-controls" id="mp-status-controls">
+      <button type="button" data-status="upcoming" class="{% if current_status == 'upcoming' %}is-active{% endif %}">Upcoming</button>
+      <button type="button" data-status="done" class="{% if current_status == 'done' %}is-active{% endif %}">Done</button>
+      <button type="button" data-status="cancelled" class="{% if current_status == 'cancelled' %}is-active{% endif %}">Cancelled</button>
+    </div>
+    {% endif %}
+    <span class="mp-status" id="mp-save-status">{% if not prep %}Not saved yet{% else %}Saved{% endif %}</span>
+    {% if prep %}
+      <button type="button" class="mp-delete" onclick="deletePrep()">
+        <i data-feather="trash-2"></i> Delete
+      </button>
+    {% endif %}
+  </div>
+
+  <input
+    type="text" class="mp-title-input" id="mp-title"
+    placeholder="Meeting title — e.g. Q3 Roadmap Review with CTO"
+    value="{{ prep.title if prep else '' }}"
+    autocomplete="off"
+  >
+
+  <div class="mp-meta-row">
+    <input
+      type="datetime-local" class="mp-meta-input" id="mp-meeting-date"
+      value="{{ (prep.meeting_date[:16] if prep and prep.meeting_date else '') }}"
+    >
+    <input
+      type="text" class="mp-meta-input" id="mp-attendees"
+      placeholder="Attendees — names, comma-separated"
+      value="{{ prep.attendees if prep else '' }}"
+      autocomplete="off"
+    >
+  </div>
+
+  <!-- ─── Section 1: BLUF / The ask ─── -->
+  <div class="mp-section">
+    <div class="mp-section-head">
+      <span class="mp-section-num">1</span>
+      <span class="mp-section-title">The ask <span class="mp-field-help">(BLUF — first 30 seconds)</span></span>
+      <span class="mp-section-help">say it on slide 1</span>
+    </div>
+
+    <div class="mp-field">
+      <label class="mp-field-label">Recommendation</label>
+      <textarea class="mp-textarea" id="mp-ask-recommendation"
+        placeholder="One-line recommendation. e.g. Approve $400k for the platform rebuild, starting next quarter."
+      >{{ prep.ask_recommendation if prep else '' }}</textarea>
+    </div>
+
+    <div class="mp-grid-2">
+      <div class="mp-field">
+        <label class="mp-field-label">Decision needed</label>
+        <textarea class="mp-textarea" id="mp-ask-decision"
+          placeholder="What decision are you asking for? (Go/no-go on X)"
+        >{{ prep.ask_decision_needed if prep else '' }}</textarea>
+      </div>
+      <div class="mp-field">
+        <label class="mp-field-label">By when</label>
+        <input class="mp-input" id="mp-ask-by-when"
+          placeholder="e.g. Friday, end-of-quarter"
+          value="{{ prep.ask_by_when if prep else '' }}"
+        >
+        <label class="mp-field-label" style="margin-top: 12px">From whom</label>
+        <input class="mp-input" id="mp-ask-from-whom"
+          placeholder="e.g. CTO, exec team, board"
+          value="{{ prep.ask_from_whom if prep else '' }}"
+        >
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Section 2: SCQA opener ─── -->
+  <div class="mp-section">
+    <div class="mp-section-head">
+      <span class="mp-section-num">2</span>
+      <span class="mp-section-title">SCQA opener</span>
+      <span class="mp-section-help">4 sentences, top of deck</span>
+    </div>
+
+    <div class="mp-field">
+      <label class="mp-field-label">Situation <span class="mp-field-help">— what's true today (they nod)</span></label>
+      <textarea class="mp-textarea" id="mp-scqa-situation"
+        placeholder="The platform has served us well for 4 years and supports 15M monthly users."
+      >{{ prep.scqa_situation if prep else '' }}</textarea>
+    </div>
+    <div class="mp-field">
+      <label class="mp-field-label">Complication <span class="mp-field-help">— what changed / what's at risk</span></label>
+      <textarea class="mp-textarea" id="mp-scqa-complication"
+        placeholder="Latency has tripled in 6 months and on-call pages are up 4x. Each new feature takes 2x longer to ship."
+      >{{ prep.scqa_complication if prep else '' }}</textarea>
+    </div>
+    <div class="mp-field">
+      <label class="mp-field-label">Question <span class="mp-field-help">— the decision in front of us</span></label>
+      <textarea class="mp-textarea" id="mp-scqa-question"
+        placeholder="Do we patch incrementally for another year, or rebuild the core now?"
+      >{{ prep.scqa_question if prep else '' }}</textarea>
+    </div>
+    <div class="mp-field">
+      <label class="mp-field-label">Answer <span class="mp-field-help">— your recommendation</span></label>
+      <textarea class="mp-textarea" id="mp-scqa-answer"
+        placeholder="Rebuild now. Cost recovers in 18 months from reduced ops + faster shipping."
+      >{{ prep.scqa_answer if prep else '' }}</textarea>
+    </div>
+  </div>
+
+  <!-- ─── Section 3: Supporting points ─── -->
+  <div class="mp-section">
+    <div class="mp-section-head">
+      <span class="mp-section-num">3</span>
+      <span class="mp-section-title">Supporting points</span>
+      <span class="mp-section-help">3 reasons + evidence under each</span>
+    </div>
+
+    <div class="mp-field">
+      <textarea class="mp-textarea" id="mp-supporting-points" style="min-height: 160px;"
+        placeholder="1. [reason] — [evidence: chart on slide 4, customer quotes]&#10;2. [reason] — [evidence: cost model, slide 6]&#10;3. [reason] — [evidence: competitor benchmark, slide 8]"
+      >{{ prep.supporting_points if prep else '' }}</textarea>
+    </div>
+  </div>
+
+  <!-- ─── Section 4: Anticipated Q&A ─── -->
+  <div class="mp-section">
+    <div class="mp-section-head">
+      <span class="mp-section-num">4</span>
+      <span class="mp-section-title">Anticipated Q&amp;A</span>
+      <span class="mp-section-help">5 hardest questions, one-line answer + backup slide</span>
+    </div>
+
+    <div class="mp-field">
+      <textarea class="mp-textarea" id="mp-anticipated-questions" style="min-height: 200px;"
+        placeholder="Q: Why not buy instead of build?&#10;A: Vendor pricing is 3x by year 3 + we lose differentiation.&#10;Backup: slide 12 (TCO comparison)&#10;&#10;Q: What if we lose the senior infra hire?&#10;A: Plan B: contract with [firm] for the migration phase only.&#10;Backup: slide 14"
+      >{{ prep.anticipated_questions if prep else '' }}</textarea>
+    </div>
+  </div>
+
+  <!-- ─── Section 5: Pre-brief plan ─── -->
+  <div class="mp-section">
+    <div class="mp-section-head">
+      <span class="mp-section-num">5</span>
+      <span class="mp-section-title">Pre-brief plan</span>
+      <span class="mp-section-help">no surprises in the room</span>
+    </div>
+
+    <div class="mp-field">
+      <textarea class="mp-textarea" id="mp-pre-brief-plan" style="min-height: 120px;"
+        placeholder="• [Most senior person] — coffee Thu morning, walk through ask + risks&#10;• [Most likely opposer] — 1:1 Wed PM, surface objection, get reaction&#10;• [Allied stakeholder] — ping with deck Tue, ask for feedback"
+      >{{ prep.pre_brief_plan if prep else '' }}</textarea>
+    </div>
+  </div>
+
+  <!-- ─── Post-meeting section ─── -->
+  <div class="mp-section post">
+    <div class="mp-section-head">
+      <span class="mp-section-num">✓</span>
+      <span class="mp-section-title">After the meeting</span>
+      <span class="mp-section-help">capture before the day ends</span>
+    </div>
+
+    <div class="mp-field">
+      <label class="mp-field-label">Outcome <span class="mp-field-help">— what was actually decided</span></label>
+      <textarea class="mp-textarea" id="mp-outcome"
+        placeholder="Decision: approved with conditions. Conditions: monthly status reports, 90-day re-evaluation."
+      >{{ prep.outcome if prep else '' }}</textarea>
+    </div>
+    <div class="mp-field">
+      <label class="mp-field-label">Follow-ups <span class="mp-field-help">— action items, owners, dates</span></label>
+      <textarea class="mp-textarea" id="mp-follow-ups"
+        placeholder="• Send signed scope doc to legal by Fri (me)&#10;• Schedule kickoff with infra team next Tue (me)&#10;• Status report template due Mar 15 (me)"
+      >{{ prep.follow_ups if prep else '' }}</textarea>
+    </div>
+    <div class="mp-field">
+      <label class="mp-field-label">Retro <span class="mp-field-help">— what to do differently next time</span></label>
+      <textarea class="mp-textarea" id="mp-retro"
+        placeholder="• Pre-brief with CFO worked — she defended the budget point&#10;• Should have had the cost-of-delay chart on slide 1, not slide 9&#10;• Don't open with the architecture diagram — execs don't care"
+      >{{ prep.retro if prep else '' }}</textarea>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const PREP_ID = {{ (prep.id if prep else 'null')|tojson }};
+  let _currentId = PREP_ID;
+  let _saveTimer = null;
+  let _saving = false;
+
+  const statusEl = document.getElementById("mp-save-status");
+
+  function _setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "mp-status " + (cls || "");
+  }
+
+  function _gather() {
+    return {
+      id: _currentId,
+      title: document.getElementById("mp-title").value,
+      meeting_date: document.getElementById("mp-meeting-date").value || null,
+      attendees: document.getElementById("mp-attendees").value,
+
+      ask_recommendation: document.getElementById("mp-ask-recommendation").value,
+      ask_decision_needed: document.getElementById("mp-ask-decision").value,
+      ask_by_when: document.getElementById("mp-ask-by-when").value,
+      ask_from_whom: document.getElementById("mp-ask-from-whom").value,
+
+      scqa_situation: document.getElementById("mp-scqa-situation").value,
+      scqa_complication: document.getElementById("mp-scqa-complication").value,
+      scqa_question: document.getElementById("mp-scqa-question").value,
+      scqa_answer: document.getElementById("mp-scqa-answer").value,
+
+      supporting_points: document.getElementById("mp-supporting-points").value,
+      anticipated_questions: document.getElementById("mp-anticipated-questions").value,
+      pre_brief_plan: document.getElementById("mp-pre-brief-plan").value,
+
+      outcome: document.getElementById("mp-outcome").value,
+      follow_ups: document.getElementById("mp-follow-ups").value,
+      retro: document.getElementById("mp-retro").value,
+    };
+  }
+
+  async function _save() {
+    if (_saving) return;
+    _saving = true;
+    _setStatus("Saving…", "saving");
+    try {
+      const r = await fetch("/meetings/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(_gather()),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (data.id) {
+        _currentId = data.id;
+        if (history.replaceState) {
+          history.replaceState({}, "", "/meetings/" + data.id);
+        }
+      }
+      _setStatus("Saved", "saved");
+    } catch (e) {
+      _setStatus("Save failed", "error");
+    } finally {
+      _saving = false;
+    }
+  }
+
+  function _scheduleSave() {
+    _setStatus("Editing…", "");
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(_save, 800);
+  }
+
+  // Wire every field to autosave.
+  [
+    "mp-title", "mp-meeting-date", "mp-attendees",
+    "mp-ask-recommendation", "mp-ask-decision", "mp-ask-by-when", "mp-ask-from-whom",
+    "mp-scqa-situation", "mp-scqa-complication", "mp-scqa-question", "mp-scqa-answer",
+    "mp-supporting-points", "mp-anticipated-questions", "mp-pre-brief-plan",
+    "mp-outcome", "mp-follow-ups", "mp-retro",
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", _scheduleSave);
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (_saveTimer) {
+      clearTimeout(_saveTimer);
+      navigator.sendBeacon?.("/meetings/save",
+        new Blob([JSON.stringify(_gather())], { type: "application/json" })
+      );
+    }
+  });
+
+  async function deletePrep() {
+    if (!_currentId) return;
+    if (!confirm("Delete this prep sheet?\n\nIt's a soft-delete — recoverable from the database, never visible here again.")) return;
+    try {
+      const r = await fetch(`/meetings/${_currentId}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      location.href = "/meetings";
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't delete", "error");
+    }
+  }
+
+  // Status switcher (only shown when the prep already exists).
+  document.querySelectorAll("#mp-status-controls button").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!_currentId) return;
+      const newStatus = btn.dataset.status;
+      try {
+        const r = await fetch(`/meetings/${_currentId}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newStatus }),
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        document.querySelectorAll("#mp-status-controls button").forEach(b => b.classList.toggle("is-active", b === btn));
+        const pill = document.getElementById("mp-status-pill");
+        pill.className = "mp-status-pill " + newStatus;
+        pill.textContent = newStatus;
+        if (window.showToast) showToast(`Marked ${newStatus}`, "success", 1200);
+      } catch (e) {
+        if (window.showToast) showToast("Couldn't update status", "error");
+      }
+    });
+  });
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+    // Auto-grow textareas as you type.
+    document.querySelectorAll(".mp-textarea").forEach(t => {
+      const grow = () => {
+        t.style.height = "auto";
+        t.style.height = Math.max(t.scrollHeight, 70) + "px";
+      };
+      t.addEventListener("input", grow);
+      grow();
+    });
+  });
+</script>
+
+</body>
+</html>

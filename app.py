@@ -84,6 +84,7 @@ def create_app():
     from routes.quick_bucket import quick_bucket_bp
     from routes.bedtime_stories import bedtime_stories_bp, user_allowed as _bedtime_allowed
     from routes.study import study_bp
+    from routes.meetings import meetings_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -117,6 +118,7 @@ def create_app():
     app.register_blueprint(quick_bucket_bp)
     app.register_blueprint(bedtime_stories_bp)
     app.register_blueprint(study_bp)
+    app.register_blueprint(meetings_bp)
 
     # Expose the bedtime-stories allowlist flag to every template so the
     # nav can hide the link from non-allowed users without each template
@@ -159,6 +161,7 @@ def create_app():
     csrf.exempt(quick_bucket_bp)
     csrf.exempt(bedtime_stories_bp)
     csrf.exempt(study_bp)
+    csrf.exempt(meetings_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).
