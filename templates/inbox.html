@@ -1019,12 +1019,14 @@ function renderCards() {
         </select>
         <div class="card-btns">
           ${primaryBtn}
+          <button class="card-btn" onclick="watchToday('${x.id}', this)"
+                  title="Add to Today's Plan"><i data-feather="calendar" style="width:14px;height:14px"></i></button>
           ${ytId ? `<button class="card-btn" onclick="toggleChannelUploads('${x.id}','${ytId}')"
                      title="More from this channel"><i data-feather="list" style="width:14px;height:14px"></i></button>` : ""}
           ${ytId ? (x.transcript_note_id
-              ? `<button class="card-btn" onclick="window.open('/notes/scribble/${x.transcript_note_id}','_blank')"
+              ? `<button class="card-btn" id="tx-btn-${x.id}" onclick="window.open('/notes/scribble/${x.transcript_note_id}','_blank')"
                      title="View transcript"><i data-feather="file-text" style="width:14px;height:14px;color:var(--ib-success)"></i></button>`
-              : `<button class="card-btn" onclick="openTranscribeModal('${x.id}','${esc(x.title || '')}')"
+              : `<button class="card-btn" id="tx-btn-${x.id}" onclick="openTranscribeModal('${x.id}','${esc(x.title || '')}')"
                      title="Transcribe (paste from YouTube)"><i data-feather="mic" style="width:14px;height:14px"></i></button>`
             ) : ""}
           <button class="card-btn" onclick="moveToTravel('${x.id}', this)"
@@ -1137,6 +1139,12 @@ function extractYouTubeId(url) {
 // Toggle inline YouTube player. Mounts an iframe lazily so unopened
 // cards don't load YouTube assets; tears it down on collapse so audio
 // stops and bandwidth doesn't keep flowing.
+//
+// On open, also fires a silent best-effort auto-transcript fetch.
+// If it succeeds, the mic icon flips to green file-text without any
+// user interruption. If it fails (YouTube blocks cloud-IP fetches
+// for many videos), the mic icon stays as-is and the user can still
+// click it to manually paste.
 function toggleYouTube(itemId, ytId) {
   const card = document.getElementById("card-" + itemId);
   const slot = document.getElementById("media-" + itemId);
@@ -1163,6 +1171,66 @@ function toggleYouTube(itemId, ytId) {
     card.classList.add("is-open");
     btn?.classList.add("is-active");
     btn && (btn.title = "Close");
+
+    // Fire-and-forget auto-transcript. Doesn't block playback.
+    autoFetchTranscript(itemId);
+  }
+}
+
+// Background best-effort. Server tries youtube-transcript-api; on
+// success the inbox row is patched and the mic flips to file-text.
+// On failure (cloud-IP block or no captions), nothing user-visible
+// happens — the mic stays clickable for manual paste.
+async function autoFetchTranscript(itemId) {
+  const item = allItems.find(x => x.id === itemId);
+  if (!item || item.transcript_note_id) return;   // already done
+  try {
+    const r = await fetch(`/api/inbox/${itemId}/transcript-auto`, {
+      method: "POST",
+    });
+    if (!r.ok) return;   // 422 fallback="paste" lands here, silent
+    const data = await r.json();
+    if (data.ok && data.note_id) {
+      item.transcript_note_id = data.note_id;
+      // Re-render only this card's button bar, not the whole list
+      // (renderCards would close the open player).
+      const txBtn = document.getElementById("tx-btn-" + itemId);
+      if (txBtn) {
+        txBtn.title = "View transcript";
+        txBtn.setAttribute(
+          "onclick",
+          `window.open('/notes/scribble/${data.note_id}','_blank')`,
+        );
+        txBtn.innerHTML = `<i data-feather="file-text" style="width:14px;height:14px;color:var(--ib-success)"></i>`;
+        if (typeof feather !== "undefined") feather.replace();
+      }
+      if (data.auto) showToast("Transcript captured", "success", 2000);
+    }
+  } catch {
+    /* silent — manual paste is always available */
+  }
+}
+
+// "Watch today" — schedule this item as a task on Today's Plan.
+// Backend creates a project task in the user's default project
+// with due_date = today; flips inbox status to Reading.
+async function watchToday(itemId, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/api/inbox/${itemId}/watch-today`, { method: "POST" });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      showToast(data.error || "Could not add to today", "error");
+      if (btn) btn.disabled = false;
+      return;
+    }
+    showToast("Added to Today's Plan", "success", 2200);
+    const item = allItems.find(x => x.id === itemId);
+    if (item) item.status = "Reading";
+    renderCards();
+  } catch {
+    showToast("Network error", "error");
+    if (btn) btn.disabled = false;
   }
 }
 

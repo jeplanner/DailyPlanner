@@ -18,3 +18,9 @@ pytz
 openai>=1.30.0
 pywebpush>=1.14.0
 APScheduler>=3.10.0
+# Best-effort YouTube transcript fetcher. Used by the Inbox auto-
+# transcript flow when a YouTube video is played. YouTube blocks the
+# captions endpoint from cloud-host IPs (Render, AWS, GCP), so a
+# meaningful fraction of fetches will fail — when they do, the UI
+# falls back to the manual paste modal. Free, no API key needed.
+youtube-transcript-api>=0.6.2
