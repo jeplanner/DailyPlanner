@@ -99,7 +99,7 @@ def get_inbox():
     params = {
         "user_id": f"eq.{user_id}",
         "order": "created_at.desc",
-        "select": "id,url,title,description,content_type,is_favorite,category,status,created_at",
+        "select": "id,url,title,description,content_type,is_favorite,category,status,created_at,transcript_note_id",
     }
     if status_filter:
         params["status"] = f"eq.{status_filter}"
@@ -548,6 +548,91 @@ def _extract_readable_html(html: str) -> dict:
         "content": cleaned,
         "length": len(cleaned),
     }
+
+
+_MAX_TRANSCRIPT_CHARS = 500_000   # ~250 pages, generous but bounded
+
+
+@inbox_bp.route("/api/inbox/<item_id>/transcript-paste", methods=["POST"])
+@login_required
+def transcript_paste(item_id):
+    """Save a transcript the user pasted in. Mirrors the TravelReads
+    flow: server-side fetching of YouTube captions is blocked from
+    cloud-host IPs, so the user grabs the transcript on their own
+    machine (via bookmarklet or YouTube's "Show transcript" panel)
+    and pastes it here.
+
+    The transcript is stored as a scribble note in the 'Transcripts'
+    notebook with a markdown link back to the original YouTube URL.
+    The note id is back-referenced on the inbox row so the card can
+    show "View transcript" instead of "Transcribe" on subsequent
+    visits.
+
+    Body: {"text": "..."}
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Paste some transcript text first."}), 400
+    if len(text) > _MAX_TRANSCRIPT_CHARS:
+        return jsonify({
+            "error": f"Transcript too long — keep it under {_MAX_TRANSCRIPT_CHARS:,} chars.",
+        }), 413
+
+    rows = get("inbox_links", params={
+        "id": f"eq.{item_id}",
+        "user_id": f"eq.{user_id}",
+        "select": "id,url,title,transcript_note_id",
+        "limit": "1",
+    }) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    item = rows[0]
+
+    # If a transcript already exists, hand back the existing note id
+    # rather than silently appending — keeps notes deduplicated.
+    if item.get("transcript_note_id"):
+        return jsonify({
+            "ok": True,
+            "note_id": item["transcript_note_id"],
+            "existing": True,
+        })
+
+    title = (item.get("title") or "Transcript").strip()[:200]
+    url = item.get("url") or ""
+    note_payload = {
+        "user_id": user_id,
+        "title": f"📝 {title}",
+        "content": (
+            f"_Transcript from [{url}]({url})_\n\n"
+            + text
+        ),
+        "notebook": "Transcripts",
+        "is_pinned": False,
+    }
+    try:
+        note_rows = post("scribble_notes", note_payload)
+        note_id = note_rows[0]["id"] if note_rows else None
+        if not note_id:
+            raise RuntimeError("Note save returned no id.")
+    except Exception as e:
+        logger.warning("transcript_paste note insert failed: %s", e)
+        return jsonify({"error": f"Could not save transcript: {e}"}), 500
+
+    try:
+        update(
+            "inbox_links",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json={"transcript_note_id": note_id},
+        )
+    except Exception as e:
+        # Note is saved either way; don't fail the request just because
+        # the back-reference didn't persist. The user can still find
+        # the transcript via Notes → Transcripts.
+        logger.warning("transcript_paste back-link failed: %s", e)
+
+    return jsonify({"ok": True, "note_id": note_id, "existing": False})
 
 
 @inbox_bp.route("/api/inbox/<item_id>/move-to-travel", methods=["POST"])

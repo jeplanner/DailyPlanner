@@ -299,6 +299,60 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
   font-size:10px;font-weight:700;letter-spacing:.04em;
   text-transform:uppercase;margin-right:4px;
 }
+
+/* Transcribe modal: matches the design language of the existing
+   inbox cards (rounded card, accent primary), kept compact so it
+   doesn't feel like its own page. */
+.ib-tx-modal{
+  position:fixed;inset:0;z-index:9990;
+  background:rgba(15,23,42,0.55);backdrop-filter:blur(3px);
+  display:flex;align-items:center;justify-content:center;
+  padding:20px;
+}
+.ib-tx-modal[hidden]{display:none;}
+.ib-tx-card{
+  width:min(560px,100%);max-height:90vh;
+  background:var(--ib-surface);color:var(--ib-text);
+  border:1px solid var(--ib-border);border-radius:14px;
+  box-shadow:0 24px 64px rgba(15,23,42,.28);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.ib-tx-head{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:14px 18px;border-bottom:1px solid var(--ib-border);
+}
+.ib-tx-head h3{margin:0;font-size:16px;font-weight:700;}
+.ib-tx-close{
+  appearance:none;width:32px;height:32px;border:none;background:transparent;
+  font-size:22px;line-height:1;cursor:pointer;border-radius:8px;color:var(--ib-text3);
+}
+.ib-tx-close:hover{background:var(--ib-border);color:var(--ib-text);}
+.ib-tx-body{
+  padding:14px 18px;overflow-y:auto;
+  font-size:13px;line-height:1.5;color:var(--ib-text2);
+}
+.ib-tx-body p{margin:0 0 10px;}
+.ib-tx-lead{font-size:13px;}
+.ib-tx-alt{color:var(--ib-text3);font-size:12px;}
+.ib-tx-bookmarklet{
+  display:inline-block;padding:8px 14px;
+  background:var(--ib-primary-light);color:var(--ib-primary);
+  border:1px dashed var(--ib-primary);border-radius:8px;
+  font-weight:700;font-size:13px;text-decoration:none;cursor:grab;
+}
+.ib-tx-bookmarklet:hover{background:color-mix(in srgb,var(--ib-primary) 16%,transparent);}
+#ib-tx-text{
+  width:100%;min-height:160px;
+  padding:10px 12px;font:inherit;font-size:13px;line-height:1.45;
+  border:1px solid var(--ib-border);border-radius:8px;
+  background:var(--ib-surface);color:var(--ib-text);resize:vertical;
+}
+#ib-tx-text:focus{outline:none;border-color:var(--ib-primary);
+  box-shadow:0 0 0 3px rgba(37,99,235,.18);}
+.ib-tx-foot{
+  display:flex;justify-content:flex-end;gap:8px;
+  padding:12px 18px;border-top:1px solid var(--ib-border);
+}
 .sr-save-btn{
   width:32px;height:32px;border:1.5px solid var(--ib-primary);background:none;
   color:var(--ib-primary);border-radius:8px;cursor:pointer;display:flex;
@@ -383,6 +437,45 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
 
   <!-- Cards -->
   <div id="inbox-list"></div>
+</div>
+
+<!-- ───────── Transcribe modal ─────────
+     Paste-only because YouTube blocks the captions endpoint from
+     cloud-host IPs. Bookmarklet runs on the user's machine, scrapes
+     the captions track, copies it to the clipboard. User clicks back
+     to this tab and pastes. Mirror of TravelReads' implementation. -->
+<div id="ib-tx-modal" class="ib-tx-modal" hidden role="dialog" aria-modal="true" aria-labelledby="ib-tx-title">
+  <div class="ib-tx-card">
+    <div class="ib-tx-head">
+      <h3 id="ib-tx-title">Paste transcript</h3>
+      <button type="button" class="ib-tx-close" onclick="closeTranscribeModal()" aria-label="Close">×</button>
+    </div>
+    <div class="ib-tx-body">
+      <p class="ib-tx-lead">
+        YouTube blocks server-side caption fetching, so capture the
+        transcript on your own machine and paste it here.
+        <b>Drag the bookmarklet</b> below to your bookmarks bar — clicking
+        it while on a YouTube video copies that video's transcript to
+        your clipboard.
+      </p>
+      <p>
+        <a class="ib-tx-bookmarklet" id="ib-tx-bookmarklet" draggable="true">📋 DailyPlanner → grab transcript</a>
+      </p>
+      <p class="ib-tx-alt">
+        Or open YouTube's own <b>Show transcript</b> menu (⋯ button under
+        the video), copy, and paste below.
+      </p>
+      <textarea id="ib-tx-text" placeholder="Paste transcript text here…"></textarea>
+    </div>
+    <div class="ib-tx-foot">
+      <button type="button" class="qa-paste-btn" onclick="closeTranscribeModal()">Cancel</button>
+      <button type="button" class="qa-save-btn" id="ib-tx-save"
+              style="width:auto;padding:7px 14px;gap:6px;"
+              onclick="saveTranscriptFromModal()">
+        <i data-feather="save"></i> Save transcript
+      </button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -928,6 +1021,12 @@ function renderCards() {
           ${primaryBtn}
           ${ytId ? `<button class="card-btn" onclick="toggleChannelUploads('${x.id}','${ytId}')"
                      title="More from this channel"><i data-feather="list" style="width:14px;height:14px"></i></button>` : ""}
+          ${ytId ? (x.transcript_note_id
+              ? `<button class="card-btn" onclick="window.open('/notes/scribble/${x.transcript_note_id}','_blank')"
+                     title="View transcript"><i data-feather="file-text" style="width:14px;height:14px;color:var(--ib-success)"></i></button>`
+              : `<button class="card-btn" onclick="openTranscribeModal('${x.id}','${esc(x.title || '')}')"
+                     title="Transcribe (paste from YouTube)"><i data-feather="mic" style="width:14px;height:14px"></i></button>`
+            ) : ""}
           <button class="card-btn" onclick="moveToTravel('${x.id}', this)"
                   title="Send to TravelReads"><i data-feather="bookmark" style="width:14px;height:14px"></i></button>
           <button class="card-btn ${x.is_favorite?'fav-on':''}" onclick="toggleFav('${x.id}')" title="Favorite">
@@ -1214,6 +1313,82 @@ async function toggleChannelUploads(itemId, ytId) {
     slot.innerHTML = `<div class="card-channel-list"><div class="card-reader-error">Network error: ${esc(e.message || "")}</div></div>`;
   }
 }
+
+// "Transcribe" — open the paste modal for a YouTube card. The
+// bookmarklet runs on the user's machine, scrapes the captions track,
+// copies it to the clipboard. User pastes it here and we save as a
+// scribble note in the Transcripts notebook. Same pattern as
+// TravelReads — YouTube blocks server-side caption fetches from
+// cloud-host IPs so paste-only is the only reliable path.
+const IB_TX_BOOKMARKLET = "javascript:(async()=>{try{const t=window.ytInitialPlayerResponse&&ytInitialPlayerResponse.captions&&ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer&&ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;if(!t||!t.length){alert('No captions found on this video.');return}const k=t.find(x=>x.languageCode==='en')||t[0];const r=await fetch(k.baseUrl+'&fmt=json3');const j=await r.json();const x=(j.events||[]).map(e=>(e.segs||[]).map(s=>s.utf8||'').join('')).join(' ').replace(/\\s+/g,' ').trim();if(!x){alert('Caption track was empty.');return}await navigator.clipboard.writeText(x);alert('Transcript copied to clipboard ('+x.length+' chars). Paste it into DailyPlanner Inbox.')}catch(e){alert('Bookmarklet error: '+e.message)}})();";
+
+let _txItemId = null;
+function openTranscribeModal(itemId, title) {
+  _txItemId = itemId;
+  const modal = document.getElementById("ib-tx-modal");
+  const text = document.getElementById("ib-tx-text");
+  const heading = document.getElementById("ib-tx-title");
+  if (heading && title) heading.textContent = `Transcript — ${title.slice(0, 60)}`;
+  if (text) text.value = "";
+  // Bookmarklet has to live on the <a href> attribute (not src) so
+  // the browser treats it as a draggable bookmark when dropped on
+  // the bookmarks bar.
+  const bk = document.getElementById("ib-tx-bookmarklet");
+  if (bk) bk.setAttribute("href", IB_TX_BOOKMARKLET);
+  if (modal) modal.hidden = false;
+  setTimeout(() => text?.focus(), 50);
+  if (typeof feather !== "undefined") feather.replace();
+}
+
+function closeTranscribeModal() {
+  _txItemId = null;
+  const modal = document.getElementById("ib-tx-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function saveTranscriptFromModal() {
+  if (!_txItemId) return;
+  const text = (document.getElementById("ib-tx-text")?.value || "").trim();
+  if (!text) {
+    showToast("Paste some transcript text first", "error");
+    return;
+  }
+  const btn = document.getElementById("ib-tx-save");
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/api/inbox/${_txItemId}/transcript-paste`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) {
+      showToast(data.error || "Save failed", "error");
+      if (btn) btn.disabled = false;
+      return;
+    }
+    // Patch the local card so the mic icon flips to "View transcript"
+    // immediately, instead of forcing a full reload.
+    const item = allItems.find(x => x.id === _txItemId);
+    if (item) item.transcript_note_id = data.note_id;
+    closeTranscribeModal();
+    renderCards();
+    const msg = data.existing ? "Already transcribed — opened existing note" : "Transcript saved";
+    showToast(msg, "success", 2500);
+  } catch (e) {
+    showToast("Network error", "error");
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Esc closes the modal — matches keyboard behaviour the user has
+// already learned from the help / search palettes.
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    const modal = document.getElementById("ib-tx-modal");
+    if (modal && !modal.hidden) closeTranscribeModal();
+  }
+});
 
 // "Send to TravelReads" — copies the inbox row into travel_reads,
 // marks the inbox row Done. Card disappears from the default Unread
