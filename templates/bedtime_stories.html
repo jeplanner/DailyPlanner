@@ -14,7 +14,7 @@
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .bs-app { max-width: 880px; margin: 0 auto; padding: 28px 20px 80px; }
 
-  .bs-hero { margin-bottom: 22px; }
+  .bs-hero { margin-bottom: 18px; }
   .bs-hero h1 {
     font-family: 'Crimson Pro', serif;
     font-size: 32px; font-weight: 700; letter-spacing: -.01em;
@@ -23,6 +23,36 @@
   .bs-sub {
     color: var(--color-text-secondary); font-size: 14px; line-height: 1.55;
     max-width: 60ch; margin: 0;
+  }
+  .bs-count {
+    margin-top: 8px;
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--color-surface-sunken);
+    color: var(--color-text-secondary);
+    font-size: 12px; font-weight: 600;
+  }
+
+  .bs-filters {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin: 18px 0 22px;
+  }
+  .bs-chip {
+    appearance: none;
+    display: inline-flex; align-items: center;
+    padding: 6px 13px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; text-decoration: none;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .bs-chip:hover { background: var(--color-primary-light); color: var(--color-primary); border-color: var(--color-primary); }
+  .bs-chip.is-active {
+    background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
   }
 
   .bs-list { display: flex; flex-direction: column; gap: 14px; }
@@ -74,7 +104,6 @@
     font-size: 16px; line-height: 1.65;
     color: var(--color-text-secondary);
     margin: 0 0 10px;
-    /* Two-line preview so the card stays compact. */
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -87,6 +116,51 @@
     display: inline-flex; align-items: center; gap: 4px;
   }
   .bs-read svg { width: 14px; height: 14px; }
+
+  .bs-empty {
+    background: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: 16px;
+    padding: 56px 24px;
+    text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .bs-empty h2 { font-size: 16px; font-weight: 700; color: var(--color-text); margin: 0 0 6px; }
+  .bs-empty p { font-size: 13.5px; margin: 0; max-width: 50ch; margin-left: auto; margin-right: auto; line-height: 1.55; }
+  .bs-empty code {
+    background: var(--color-surface-sunken);
+    padding: 1px 6px; border-radius: 4px; font-size: 12.5px;
+  }
+
+  .bs-pager {
+    margin-top: 28px;
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; flex-wrap: wrap;
+  }
+  .bs-page-btn {
+    min-width: 36px; height: 36px;
+    padding: 0 12px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    border-radius: 8px;
+    color: var(--color-text);
+    font: inherit; font-size: 13px; font-weight: 600;
+    text-decoration: none;
+    transition: background .12s, border-color .12s;
+  }
+  .bs-page-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .bs-page-btn.is-current {
+    background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
+    cursor: default;
+  }
+  .bs-page-btn.is-disabled {
+    opacity: .4; pointer-events: none;
+  }
+  .bs-page-info {
+    font-size: 12.5px; color: var(--color-text-secondary);
+    margin-left: 6px;
+  }
 
   @media (max-width: 640px) {
     .bs-app { padding: 20px 14px 80px; }
@@ -104,26 +178,71 @@
 <main class="bs-app">
   <header class="bs-hero">
     <h1>Bedtime Stories</h1>
-    <p class="bs-sub">A small collection of moral tales from the Indian
-      tradition — Panchatantra, Ambulimama-style folk tales, Tenali Raman,
-      Akbar &amp; Birbal. Tap a story to read.</p>
+    <p class="bs-sub">Moral tales from around the world — Panchatantra,
+      Aesop, Tenali Raman, Akbar &amp; Birbal, Jataka, Grimm, Tolstoy and
+      more. Tap a story to read.</p>
+    <span class="bs-count">{{ total }} {% if total == 1 %}story{% else %}stories{% endif %}</span>
   </header>
 
-  <div class="bs-list">
-    {% for s in stories %}
-      <a href="{{ url_for('bedtime_stories.story_detail', slug=s.slug) }}" class="bs-card">
-        <div class="bs-card-head">
-          <span class="bs-num">{{ loop.index }}</span>
-          <span class="bs-source">{{ s.source }}</span>
-          <h2 class="bs-title">{{ s.title }}</h2>
-        </div>
-        <p class="bs-teaser">{{ s.body[0] }}</p>
-        <span class="bs-read">
-          Read story <i data-feather="arrow-right"></i>
-        </span>
-      </a>
+  {% if sources %}
+  <nav class="bs-filters" aria-label="Filter by source">
+    <a href="{{ url_for('bedtime_stories.stories_index') }}"
+       class="bs-chip {% if not active_source %}is-active{% endif %}">All</a>
+    {% for src in sources %}
+      <a href="{{ url_for('bedtime_stories.stories_index', source=src) }}"
+         class="bs-chip {% if active_source == src %}is-active{% endif %}">{{ src }}</a>
     {% endfor %}
-  </div>
+  </nav>
+  {% endif %}
+
+  {% if cards %}
+    <div class="bs-list">
+      {% for c in cards %}
+        <a href="{{ url_for('bedtime_stories.story_detail', slug=c.slug) }}" class="bs-card">
+          <div class="bs-card-head">
+            <span class="bs-num">{{ c.number }}</span>
+            <span class="bs-source">{{ c.source }}</span>
+            <h2 class="bs-title">{{ c.title }}</h2>
+          </div>
+          <p class="bs-teaser">{{ c.teaser }}</p>
+          <span class="bs-read">
+            Read story <i data-feather="arrow-right"></i>
+          </span>
+        </a>
+      {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <nav class="bs-pager" aria-label="Pagination">
+      {% set base_args = {} %}
+      {% if active_source %}{% set _ = base_args.update({'source': active_source}) %}{% endif %}
+
+      <a class="bs-page-btn {% if page <= 1 %}is-disabled{% endif %}"
+         href="{{ url_for('bedtime_stories.stories_index', page=page-1, **base_args) if page > 1 else '#' }}">
+        ← Prev
+      </a>
+      {% for p in range(1, total_pages + 1) %}
+        {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+          <a class="bs-page-btn {% if p == page %}is-current{% endif %}"
+             href="{{ url_for('bedtime_stories.stories_index', page=p, **base_args) }}">{{ p }}</a>
+        {% elif p == page - 3 or p == page + 3 %}
+          <span class="bs-page-info">…</span>
+        {% endif %}
+      {% endfor %}
+      <a class="bs-page-btn {% if page >= total_pages %}is-disabled{% endif %}"
+         href="{{ url_for('bedtime_stories.stories_index', page=page+1, **base_args) if page < total_pages else '#' }}">
+        Next →
+      </a>
+      <span class="bs-page-info">Page {{ page }} of {{ total_pages }}</span>
+    </nav>
+    {% endif %}
+  {% else %}
+    <div class="bs-empty">
+      <h2>No stories yet</h2>
+      <p>Run the seed script to populate the corpus:
+         <code>python3 scripts/seed_bedtime_stories.py</code></p>
+    </div>
+  {% endif %}
 </main>
 
 <script>
