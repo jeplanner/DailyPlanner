@@ -478,6 +478,19 @@
   .qb-pomo-icon--primary:hover {
     background: var(--color-primary-hover); border-color: var(--color-primary-hover);
   }
+  /* Stop button: red tint when there's an active session, neutral when idle */
+  .qb-pomo-icon--stop.is-active {
+    background: #fee2e2; color: #b91c1c; border-color: #fca5a5;
+  }
+  .qb-pomo-icon--stop.is-active:hover {
+    background: #fecaca; border-color: #f87171;
+  }
+  html.dark .qb-pomo-icon--stop.is-active {
+    background: rgba(220,38,38,.22); color: #fca5a5; border-color: rgba(220,38,38,.45);
+  }
+  html.dark .qb-pomo-icon--stop.is-active:hover {
+    background: rgba(220,38,38,.32); border-color: rgba(248,113,113,.6);
+  }
   .qb-pomo-presets {
     display: inline-flex; gap: 4px; margin-left: auto; flex-wrap: wrap;
   }
@@ -699,8 +712,8 @@
           <button class="qb-pomo-icon qb-pomo-icon--primary" id="qb-pomo-play" type="button" title="Start">
             <i data-feather="play"></i>
           </button>
-          <button class="qb-pomo-icon" id="qb-pomo-reset" type="button" title="Reset">
-            <i data-feather="rotate-ccw"></i>
+          <button class="qb-pomo-icon qb-pomo-icon--stop" id="qb-pomo-reset" type="button" title="Stop">
+            <i data-feather="square"></i>
           </button>
         </div>
         <div class="qb-pomo-presets">

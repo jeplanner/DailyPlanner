@@ -894,6 +894,18 @@
     playBtn.innerHTML = `<i data-feather="${playing ? "pause" : "play"}"></i>`;
     playBtn.title = playing ? "Pause" : (pomo.state === "paused" ? "Resume" : "Start");
 
+    // Stop button stays a square always; tint red while there's an
+    // in-flight session (running or paused) so it's obviously the way
+    // to end. When idle/ended it acts as a quiet "clear".
+    const stopBtn = $("#qb-pomo-reset");
+    if (stopBtn) {
+      const hasSession = playing || pomo.state === "paused";
+      stopBtn.classList.toggle("is-active", hasSession);
+      stopBtn.title = hasSession
+        ? "Stop & save partial focus"
+        : (pomo.state === "ended" ? "Clear" : "Reset");
+    }
+
     root.classList.toggle("is-running", playing);
     root.classList.toggle("is-ended", pomo.state === "ended");
 
