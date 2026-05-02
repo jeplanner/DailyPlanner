@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Review queue — Study</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .rv-app { max-width: 760px; margin: 0 auto; padding: 24px 20px 80px; }
+
+    .rv-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .rv-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .rv-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .rv-back svg { width: 14px; height: 14px; }
+
+    .rv-progress {
+      margin-left: auto;
+      font-size: 13px;
+      color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .rv-progress strong { color: var(--color-text); }
+
+    .rv-bar-bg {
+      height: 6px;
+      background: var(--color-surface-sunken);
+      border-radius: 999px;
+      margin-bottom: 24px;
+      overflow: hidden;
+    }
+    .rv-bar-fill {
+      height: 100%;
+      background: #16a34a;
+      transition: width .35s ease;
+    }
+
+    /* The flashcard */
+    .rv-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 18px;
+      padding: 28px 28px 24px;
+      box-shadow: 0 6px 22px rgba(15,23,42,.05);
+      min-height: 360px;
+      display: flex; flex-direction: column;
+    }
+    html.dark .rv-card {
+      background: #111a2c; border-color: #28344a;
+      box-shadow: 0 8px 28px rgba(0,0,0,.4);
+    }
+
+    .rv-card-method {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 10px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      width: fit-content;
+      margin-bottom: 10px;
+    }
+    .rv-card-method.cornell { background: #dbeafe; color: #1d4ed8; }
+    .rv-card-method.feynman { background: #fef3c7; color: #92400e; }
+    html.dark .rv-card-method.cornell { background: rgba(37,99,235,.22); color: #93c5fd; }
+    html.dark .rv-card-method.feynman { background: rgba(217,119,6,.25); color: #fbbf24; }
+
+    .rv-card-title {
+      font-size: 22px; font-weight: 800; letter-spacing: -.01em;
+      line-height: 1.3;
+      margin-bottom: 8px;
+    }
+    .rv-card-source {
+      font-size: 12.5px; color: var(--color-text-muted);
+      margin-bottom: 18px;
+    }
+
+    /* Question (cues for cornell, concept for feynman) */
+    .rv-prompt {
+      padding: 16px 18px;
+      background: var(--color-primary-light);
+      border-left: 3px solid var(--color-primary);
+      border-radius: 8px;
+      font-size: 15.5px; line-height: 1.6;
+      white-space: pre-wrap;
+      color: var(--color-text);
+    }
+    html.dark .rv-prompt {
+      background: rgba(37,99,235,.16);
+      color: #e2e8f0;
+    }
+    .rv-prompt-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 8px;
+    }
+
+    .rv-self-check {
+      margin-top: 18px;
+      padding: 14px 16px;
+      background: var(--color-surface-sunken);
+      border: 1px dashed var(--color-border);
+      border-radius: 10px;
+      font-size: 13.5px; color: var(--color-text-secondary);
+      line-height: 1.55;
+    }
+    html.dark .rv-self-check { background: #0f1729; border-color: #28344a; }
+
+    /* Hidden answer pane — revealed on click */
+    .rv-answer {
+      margin-top: 18px;
+      padding: 16px 18px;
+      background: var(--color-surface-sunken);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      display: none;
+      animation: fadein .2s ease-out;
+    }
+    .rv-answer.is-shown { display: block; }
+    .rv-answer-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 6px;
+    }
+    .rv-answer-body {
+      font-size: 14.5px; line-height: 1.65;
+      white-space: pre-wrap;
+      color: var(--color-text);
+    }
+    .rv-answer-body + .rv-answer-label { margin-top: 14px; }
+
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(-3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Action row */
+    .rv-actions {
+      display: flex; gap: 10px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    .rv-btn {
+      flex: 1;
+      padding: 12px 16px;
+      border: none; border-radius: 10px;
+      font: inherit; font-size: 14.5px; font-weight: 700;
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      transition: background .12s, transform .08s;
+    }
+    .rv-btn:active { transform: scale(.98); }
+    .rv-btn.show {
+      background: var(--color-surface);
+      color: var(--color-text);
+      border: 1px solid var(--color-border);
+      flex: 0 0 auto;
+      padding: 12px 24px;
+    }
+    .rv-btn.show:hover { border-color: var(--color-border-strong); }
+    .rv-btn.forgot {
+      background: #fee2e2; color: #b91c1c;
+    }
+    .rv-btn.forgot:hover { background: #fecaca; }
+    html.dark .rv-btn.forgot { background: rgba(220,38,38,.18); color: #fca5a5; }
+
+    .rv-btn.remembered {
+      background: #16a34a; color: #fff;
+    }
+    .rv-btn.remembered:hover { background: #15803d; }
+
+    .rv-btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+    .rv-edit-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-top: 12px;
+      font-size: 12.5px;
+      color: var(--color-text-muted);
+      text-decoration: none;
+    }
+    .rv-edit-link:hover { color: var(--color-primary); }
+    .rv-edit-link svg { width: 12px; height: 12px; }
+
+    /* Done state */
+    .rv-done {
+      text-align: center;
+      padding: 56px 24px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 18px;
+    }
+    html.dark .rv-done { background: #111a2c; border-color: #28344a; }
+    .rv-done svg.big { width: 56px; height: 56px; color: #16a34a; margin-bottom: 16px; }
+    .rv-done h2 { margin: 0 0 10px; font-size: 22px; font-weight: 800; }
+    .rv-done p { margin: 0 0 20px; color: var(--color-text-secondary); font-size: 14px; line-height: 1.55; }
+    .rv-done .rv-cta {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 18px;
+      background: var(--color-primary); color: var(--color-on-primary);
+      border-radius: 10px; text-decoration: none; font-weight: 600;
+    }
+    .rv-done .rv-cta:hover { background: var(--color-primary-hover); }
+
+    @media (max-width: 600px) {
+      .rv-app { padding: 16px 12px 80px; }
+      .rv-card { padding: 20px 18px; }
+      .rv-card-title { font-size: 19px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="rv-app">
+
+  <div class="rv-bar">
+    <a href="/study" class="rv-back">
+      <i data-feather="arrow-left"></i> Study
+    </a>
+    <span class="rv-progress" id="rv-progress">
+      {% if notes %}<strong>1</strong> of {{ notes|length }} due{% else %}0 due{% endif %}
+    </span>
+  </div>
+
+  <div class="rv-bar-bg" {% if not notes %}style="display:none"{% endif %}>
+    <div class="rv-bar-fill" id="rv-bar-fill" style="width: 0%"></div>
+  </div>
+
+  {% if not notes %}
+    <div class="rv-done">
+      <i data-feather="check-circle" class="big"></i>
+      <h2>Nothing due 🎉</h2>
+      <p>
+        You're caught up. New notes you create today will show up here tomorrow,
+        and the spacing extends as you remember each one (1d → 3d → 7d → 21d → mastered).
+      </p>
+      <a href="/study" class="rv-cta">
+        <i data-feather="arrow-left"></i> Back to Study
+      </a>
+    </div>
+  {% else %}
+
+  <div id="rv-card-host">
+    {# The active card lives here; JS swaps it out as the user reviews. #}
+  </div>
+
+  {% endif %}
+</div>
+
+<script>
+  const QUEUE = {{ notes|tojson }};
+  let _idx = 0;
+  let _busy = false;
+
+  const host = document.getElementById("rv-card-host");
+  const progressEl = document.getElementById("rv-progress");
+  const barFill = document.getElementById("rv-bar-fill");
+
+  function _escape(s) {
+    const div = document.createElement("div");
+    div.textContent = s ?? "";
+    return div.innerHTML;
+  }
+
+  function _renderCurrent() {
+    const n = QUEUE[_idx];
+    if (!n) {
+      host.innerHTML = `
+        <div class="rv-done">
+          <i data-feather="check-circle" class="big"></i>
+          <h2>Done for today 🎉</h2>
+          <p>You reviewed every due note. The next one is scheduled based on how each card landed.</p>
+          <a href="/study" class="rv-cta">
+            <i data-feather="arrow-left"></i> Back to Study
+          </a>
+        </div>
+      `;
+      progressEl.innerHTML = `<strong>${QUEUE.length}</strong> of ${QUEUE.length} done`;
+      barFill.style.width = "100%";
+      if (window.feather) feather.replace();
+      return;
+    }
+
+    progressEl.innerHTML = `<strong>${_idx + 1}</strong> of ${QUEUE.length} due`;
+    barFill.style.width = ((_idx) / QUEUE.length * 100).toFixed(1) + "%";
+
+    const isCornell = n.method === "cornell";
+    const promptLabel = isCornell ? "Cues" : "Concept";
+    const promptText = (isCornell ? n.cornell_cues : n.feynman_concept) || "(no prompt — review what you remember)";
+    const source = n.source_text || n.source_url || "";
+
+    let answerHTML = "";
+    if (isCornell) {
+      const summary = (n.cornell_summary || "").trim();
+      const notes = (n.cornell_notes || "").trim();
+      if (summary) {
+        answerHTML += `<div class="rv-answer-label">Summary</div>
+                       <div class="rv-answer-body">${_escape(summary)}</div>`;
+      }
+      if (notes) {
+        answerHTML += `<div class="rv-answer-label">Notes</div>
+                       <div class="rv-answer-body">${_escape(notes)}</div>`;
+      }
+    } else {
+      const refined = (n.feynman_refined || "").trim();
+      const simple = (n.feynman_simple || "").trim();
+      if (refined) {
+        answerHTML += `<div class="rv-answer-label">Refined explanation</div>
+                       <div class="rv-answer-body">${_escape(refined)}</div>`;
+      }
+      if (simple) {
+        answerHTML += `<div class="rv-answer-label">Simple explanation</div>
+                       <div class="rv-answer-body">${_escape(simple)}</div>`;
+      }
+    }
+    if (!answerHTML) answerHTML = `<div class="rv-answer-body" style="color:var(--color-text-muted);font-style:italic">No body — open the note to flesh it out.</div>`;
+
+    host.innerHTML = `
+      <div class="rv-card">
+        <span class="rv-card-method ${n.method}">
+          ${isCornell ? "Cornell" : "Feynman"}
+        </span>
+        <div class="rv-card-title">${_escape(n.title || "Untitled")}</div>
+        ${source ? `<div class="rv-card-source">${_escape(source)}</div>` : ""}
+
+        <div class="rv-prompt-label">${promptLabel}</div>
+        <div class="rv-prompt">${_escape(promptText)}</div>
+
+        <div class="rv-self-check">
+          Try to explain it from memory <em>before</em> revealing the answer. Even a partial attempt strengthens the trace.
+        </div>
+
+        <div class="rv-answer" id="rv-answer">
+          ${answerHTML}
+        </div>
+
+        <div class="rv-actions" id="rv-actions-row">
+          <button type="button" class="rv-btn show" id="rv-show-btn" onclick="revealAnswer()">
+            <i data-feather="eye"></i> Show answer
+          </button>
+        </div>
+
+        <a href="/study/${n.id}" class="rv-edit-link">
+          <i data-feather="edit-2"></i> Open note to edit
+        </a>
+      </div>
+    `;
+    if (window.feather) feather.replace();
+  }
+
+  function revealAnswer() {
+    document.getElementById("rv-answer").classList.add("is-shown");
+    document.getElementById("rv-actions-row").innerHTML = `
+      <button type="button" class="rv-btn forgot" onclick="advance('forgot')">
+        <i data-feather="rotate-ccw"></i> Review again
+      </button>
+      <button type="button" class="rv-btn remembered" onclick="advance('remembered')">
+        <i data-feather="check"></i> Got it
+      </button>
+    `;
+    if (window.feather) feather.replace();
+  }
+
+  async function advance(result) {
+    if (_busy) return;
+    _busy = true;
+    const n = QUEUE[_idx];
+    document.querySelectorAll("#rv-actions-row .rv-btn").forEach(b => b.disabled = true);
+    try {
+      const r = await fetch(`/study/${n.id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (window.showToast) {
+        const msg = data.mastered
+          ? "★ Mastered — no more reviews"
+          : (result === "remembered" ? "Got it — bumped" : "Back to 1-day bucket");
+        showToast(msg, "success", 1400);
+      }
+      _idx++;
+      _renderCurrent();
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't update", "error");
+      document.querySelectorAll("#rv-actions-row .rv-btn").forEach(b => b.disabled = false);
+    } finally {
+      _busy = false;
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+    if (QUEUE.length) _renderCurrent();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!QUEUE.length || _idx >= QUEUE.length) return;
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") return;
+    const ans = document.getElementById("rv-answer");
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      if (ans && !ans.classList.contains("is-shown")) revealAnswer();
+    } else if (ans && ans.classList.contains("is-shown")) {
+      if (e.key === "1" || e.key === "f" || e.key === "F") { e.preventDefault(); advance("forgot"); }
+      if (e.key === "2" || e.key === "g" || e.key === "G") { e.preventDefault(); advance("remembered"); }
+    }
+  });
+</script>
+
+</body>
+</html>

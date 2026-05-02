@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{{ note.title if note else 'New Feynman pass' }} — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .fe-app { max-width: 880px; margin: 0 auto; padding: 18px 20px 80px; }
+
+    .fe-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .fe-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .fe-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .fe-back svg { width: 14px; height: 14px; }
+
+    .fe-method-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      background: #fef3c7; color: #92400e;
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+    }
+    html.dark .fe-method-pill { background: rgba(217,119,6,.25); color: #fbbf24; }
+
+    .fe-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
+    .fe-status.saved { color: #16a34a; }
+    .fe-status.saving { color: var(--color-primary); }
+    .fe-status.error { color: var(--color-danger); }
+
+    .fe-delete {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      background: transparent; color: var(--color-text-muted);
+      border: 1px solid var(--color-border); border-radius: 8px;
+      font: inherit; font-size: 12.5px; cursor: pointer;
+    }
+    .fe-delete:hover { color: var(--color-danger); border-color: var(--color-danger); }
+    .fe-delete svg { width: 13px; height: 13px; }
+
+    .fe-iterate {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      background: #f59e0b; color: #fff;
+      border: none; border-radius: 8px;
+      font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+    }
+    .fe-iterate:hover { background: #d97706; }
+    .fe-iterate svg { width: 13px; height: 13px; }
+
+    .fe-title-input {
+      width: 100%;
+      padding: 8px 0;
+      border: none; outline: none; background: transparent;
+      font: inherit;
+      font-size: 28px; font-weight: 800; letter-spacing: -.02em;
+      color: var(--color-text);
+      margin-bottom: 4px;
+    }
+    .fe-title-input::placeholder { color: var(--color-text-muted); font-weight: 700; }
+
+    .fe-source-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .fe-source-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--color-border); border-radius: 8px;
+      background: var(--color-surface);
+      font: inherit; font-size: 13px; color: var(--color-text);
+    }
+    .fe-source-input:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-ring);
+    }
+
+    /* Iteration timeline (parent + sibling passes) */
+    .fe-chain {
+      margin-bottom: 22px;
+      padding: 12px 14px;
+      background: var(--color-surface-sunken);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      font-size: 12.5px;
+    }
+    html.dark .fe-chain { background: #0f1729; border-color: #28344a; }
+    .fe-chain-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 8px;
+    }
+    .fe-chain-list {
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .fe-chain-item {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 10px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      font-size: 12px;
+    }
+    .fe-chain-item:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+    .fe-chain-item.is-current {
+      background: var(--color-primary-light); color: var(--color-primary);
+      border-color: var(--color-primary);
+      font-weight: 700;
+    }
+    html.dark .fe-chain-item.is-current { background: rgba(37,99,235,.22); color: #93c5fd; }
+    .fe-chain-num { font-variant-numeric: tabular-nums; opacity: .65; }
+
+    /* The 4-step Feynman layout: stacked sections */
+    .fe-step {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    html.dark .fe-step { background: #111a2c; border-color: #28344a; }
+
+    .fe-step-head {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 8px;
+    }
+    .fe-step-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      background: var(--color-primary); color: var(--color-on-primary);
+      font-size: 12px; font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .fe-step-title {
+      font-size: 14.5px; font-weight: 700;
+    }
+    .fe-step-help {
+      margin-left: auto;
+      font-size: 11.5px; color: var(--color-text-muted);
+      font-style: italic;
+    }
+
+    .fe-textarea {
+      width: 100%;
+      min-height: 70px;
+      border: none; outline: none; background: transparent;
+      resize: none;
+      font: inherit; font-size: 14.5px; line-height: 1.6;
+      color: var(--color-text);
+    }
+    .fe-textarea::placeholder { color: var(--color-text-muted); }
+    .fe-textarea.concept {
+      font-size: 16px; font-weight: 600;
+      min-height: 36px;
+    }
+
+    .fe-stage {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11.5px; color: var(--color-text-muted);
+    }
+
+    @media (max-width: 700px) {
+      .fe-app { padding: 14px 12px 80px; }
+      .fe-title-input { font-size: 22px; }
+      .fe-source-row { grid-template-columns: 1fr; }
+      .fe-step-help { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="fe-app">
+
+  <div class="fe-bar">
+    <a href="/study" class="fe-back">
+      <i data-feather="arrow-left"></i> Study
+    </a>
+    <span class="fe-method-pill">
+      <i data-feather="message-circle"></i> Feynman
+    </span>
+    {% if note %}
+      <span class="fe-stage" title="Spaced-review stage (0=new, 5=mastered)">
+        <i data-feather="zap"></i>
+        stage {{ note.review_stage or 0 }}/5
+      </span>
+      <button type="button" class="fe-iterate" onclick="iteratePass()" title="Start a fresh pass — keeps this one as history">
+        <i data-feather="repeat"></i> Iterate
+      </button>
+    {% endif %}
+    <span class="fe-status" id="fe-status">{% if not note %}Not saved yet{% else %}Saved{% endif %}</span>
+    {% if note %}
+      <button type="button" class="fe-delete" onclick="deleteNote()">
+        <i data-feather="trash-2"></i> Delete
+      </button>
+    {% endif %}
+  </div>
+
+  <input
+    type="text" class="fe-title-input" id="fe-title"
+    placeholder="What concept are you trying to understand?"
+    value="{{ note.title if note else '' }}"
+    autocomplete="off"
+  >
+
+  <div class="fe-source-row">
+    <input
+      type="url" class="fe-source-input" id="fe-source-url"
+      placeholder="Source URL (auto-links to TravelReads if it matches)"
+      value="{{ note.source_url if note else prefill_url }}"
+      autocomplete="off"
+    >
+    <input
+      type="text" class="fe-source-input" id="fe-source-text"
+      placeholder="Citation — book, paper, video"
+      value="{{ note.source_text if note else prefill_title }}"
+      autocomplete="off"
+    >
+  </div>
+
+  {% if iteration_chain and iteration_chain|length > 1 %}
+  <div class="fe-chain">
+    <div class="fe-chain-label">Iteration chain ({{ iteration_chain|length }} passes)</div>
+    <div class="fe-chain-list">
+      {% for p in iteration_chain %}
+        <a class="fe-chain-item {% if note and p.id == note.id %}is-current{% endif %}"
+           href="/study/{{ p.id }}"
+           title="{{ p.feynman_concept or p.title or 'pass ' ~ loop.index }}">
+          <span class="fe-chain-num">#{{ loop.index }}</span>
+          <span>{{ (p.title or p.feynman_concept or 'untitled')[:32] }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="fe-step">
+    <div class="fe-step-head">
+      <span class="fe-step-num">1</span>
+      <span class="fe-step-title">Concept</span>
+      <span class="fe-step-help">one line — what are you explaining?</span>
+    </div>
+    <textarea
+      class="fe-textarea concept" id="fe-concept"
+      placeholder="e.g. How does spaced repetition strengthen memory?"
+    >{{ note.feynman_concept if note else '' }}</textarea>
+  </div>
+
+  <div class="fe-step">
+    <div class="fe-step-head">
+      <span class="fe-step-num">2</span>
+      <span class="fe-step-title">Explain it simply</span>
+      <span class="fe-step-help">as if to a 12-year-old — no jargon</span>
+    </div>
+    <textarea
+      class="fe-textarea" id="fe-simple"
+      placeholder="Write it out in plain words. If you reach for jargon, that's the gap to capture below."
+    >{{ note.feynman_simple if note else '' }}</textarea>
+  </div>
+
+  <div class="fe-step">
+    <div class="fe-step-head">
+      <span class="fe-step-num">3</span>
+      <span class="fe-step-title">Gaps</span>
+      <span class="fe-step-help">where did you get stuck or hand-wave?</span>
+    </div>
+    <textarea
+      class="fe-textarea" id="fe-gaps"
+      placeholder="• I couldn't explain why X works without using the word Y&#10;• I'm not sure how this connects to Z&#10;• I skipped over how Q gets initialised"
+    >{{ note.feynman_gaps if note else '' }}</textarea>
+  </div>
+
+  <div class="fe-step">
+    <div class="fe-step-head">
+      <span class="fe-step-num">4</span>
+      <span class="fe-step-title">Refine + analogies</span>
+      <span class="fe-step-help">go back, fill the gaps, find an analogy</span>
+    </div>
+    <textarea
+      class="fe-textarea" id="fe-refined"
+      placeholder="Re-explain after closing the gaps. Use analogies — compare it to something physical, everyday, or already-understood."
+    >{{ note.feynman_refined if note else '' }}</textarea>
+  </div>
+
+</div>
+
+<script>
+  const NOTE_ID = {{ (note.id if note else 'null')|tojson }};
+  let _currentId = NOTE_ID;
+  let _saveTimer = null;
+  let _saving = false;
+
+  const statusEl = document.getElementById("fe-status");
+
+  function _setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "fe-status " + (cls || "");
+  }
+
+  function _gather() {
+    return {
+      id: _currentId,
+      method: "feynman",
+      title: document.getElementById("fe-title").value,
+      source_url: document.getElementById("fe-source-url").value,
+      source_text: document.getElementById("fe-source-text").value,
+      feynman_concept: document.getElementById("fe-concept").value,
+      feynman_simple: document.getElementById("fe-simple").value,
+      feynman_gaps: document.getElementById("fe-gaps").value,
+      feynman_refined: document.getElementById("fe-refined").value,
+    };
+  }
+
+  async function _save() {
+    if (_saving) return;
+    _saving = true;
+    _setStatus("Saving…", "saving");
+    try {
+      const r = await fetch("/study/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(_gather()),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (data.id) {
+        _currentId = data.id;
+        if (history.replaceState) {
+          history.replaceState({}, "", "/study/" + data.id);
+        }
+      }
+      _setStatus("Saved", "saved");
+    } catch (e) {
+      _setStatus("Save failed", "error");
+    } finally {
+      _saving = false;
+    }
+  }
+
+  function _scheduleSave() {
+    _setStatus("Editing…", "");
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(_save, 800);
+  }
+
+  ["fe-title", "fe-source-url", "fe-source-text", "fe-concept",
+   "fe-simple", "fe-gaps", "fe-refined"]
+    .forEach(id => {
+      document.getElementById(id).addEventListener("input", _scheduleSave);
+    });
+
+  window.addEventListener("beforeunload", () => {
+    if (_saveTimer) {
+      clearTimeout(_saveTimer);
+      navigator.sendBeacon?.("/study/save",
+        new Blob([JSON.stringify(_gather())], { type: "application/json" })
+      );
+    }
+  });
+
+  async function deleteNote() {
+    if (!_currentId) return;
+    if (!confirm("Delete this note?\n\nIt's a soft-delete — recoverable from the database, never visible here again.")) return;
+    try {
+      const r = await fetch(`/study/${_currentId}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      location.href = "/study";
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't delete", "error");
+    }
+  }
+
+  async function iteratePass() {
+    if (!_currentId) return;
+    // Force-save anything pending so the parent has the user's latest before
+    // we copy fields into the new pass.
+    if (_saveTimer) { clearTimeout(_saveTimer); await _save(); }
+    try {
+      const r = await fetch(`/study/${_currentId}/iterate`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (data.id) location.href = "/study/" + data.id;
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't create iteration", "error");
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+    document.querySelectorAll(".fe-textarea").forEach(t => {
+      const min = t.classList.contains("concept") ? 36 : 70;
+      const grow = () => {
+        t.style.height = "auto";
+        t.style.height = Math.max(t.scrollHeight, min) + "px";
+      };
+      t.addEventListener("input", grow);
+      grow();
+    });
+  });
+</script>
+
+</body>
+</html>

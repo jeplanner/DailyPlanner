@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Study — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .st-app { max-width: 1200px; margin: 0 auto; padding: 22px 24px 64px; }
+    .st-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+    .st-head h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 4px; }
+    .st-head p { margin: 0; color: var(--color-text-muted); font-size: 13.5px; }
+
+    .st-cta-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .st-cta {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px;
+      background: var(--color-primary); color: var(--color-on-primary);
+      border: none; border-radius: 10px;
+      font: inherit; font-size: 13.5px; font-weight: 600;
+      text-decoration: none; cursor: pointer;
+    }
+    .st-cta:hover { background: var(--color-primary-hover); }
+    .st-cta.secondary {
+      background: var(--color-surface); color: var(--color-text);
+      border: 1px solid var(--color-border);
+    }
+    .st-cta.secondary:hover { border-color: var(--color-border-strong); }
+    .st-cta.review {
+      background: #16a34a; color: #fff;
+    }
+    .st-cta.review:hover { background: #15803d; }
+    .st-cta svg { width: 14px; height: 14px; }
+
+    /* Tabs */
+    .st-tabs {
+      display: flex; gap: 4px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--color-border);
+      margin-bottom: 18px;
+    }
+    .st-tab {
+      padding: 10px 16px;
+      border: none; background: transparent;
+      color: var(--color-text-secondary);
+      font: inherit; font-size: 14px; font-weight: 600;
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      cursor: pointer;
+      transition: color .12s, border-color .12s;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .st-tab:hover { color: var(--color-text); }
+    .st-tab.is-active {
+      color: var(--color-primary);
+      border-bottom-color: var(--color-primary);
+    }
+    .st-tab-count {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: var(--color-surface-sunken);
+      color: var(--color-text-muted);
+      font-size: 11.5px; font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .st-tab.is-active .st-tab-count {
+      background: var(--color-primary-light);
+      color: var(--color-primary);
+    }
+    html.dark .st-tab.is-active .st-tab-count { background: rgba(37,99,235,.22); color: #93c5fd; }
+    .st-tab-count.due { background: #fef3c7; color: #92400e; }
+    html.dark .st-tab-count.due { background: rgba(217,119,6,.25); color: #fbbf24; }
+
+    /* Search */
+    .st-toolbar {
+      display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;
+      align-items: center;
+    }
+    .st-search {
+      flex: 1 1 280px; min-width: 0;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 14px;
+      border: 1px solid var(--color-border); border-radius: 10px;
+      background: var(--color-surface);
+    }
+    .st-search:focus-within { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-ring); }
+    .st-search svg { width: 16px; height: 16px; color: var(--color-text-muted); }
+    .st-search input {
+      flex: 1; min-width: 0;
+      padding: 0; border: none; outline: none;
+      background: transparent;
+      font: inherit; font-size: 14px; color: var(--color-text);
+    }
+
+    /* Cards */
+    .st-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .st-card {
+      position: relative;
+      display: flex; flex-direction: column;
+      padding: 16px 16px 14px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      color: var(--color-text);
+      text-decoration: none;
+      transition: border-color .12s, box-shadow .14s, transform .08s;
+      min-height: 160px;
+    }
+    .st-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    html.dark .st-card { background: #111a2c; border-color: #28344a; }
+    html.dark .st-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+
+    .st-card-method {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      margin-bottom: 8px;
+      width: fit-content;
+    }
+    .st-card-method.cornell { background: #dbeafe; color: #1d4ed8; }
+    .st-card-method.feynman { background: #fef3c7; color: #92400e; }
+    html.dark .st-card-method.cornell { background: rgba(37,99,235,.22); color: #93c5fd; }
+    html.dark .st-card-method.feynman { background: rgba(217,119,6,.25); color: #fbbf24; }
+
+    .st-card-title {
+      font-size: 15.5px; font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 6px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .st-card-preview {
+      font-size: 13px; color: var(--color-text-secondary);
+      line-height: 1.5;
+      flex: 1;
+      display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .st-card-preview.empty { color: var(--color-text-muted); font-style: italic; }
+
+    .st-card-foot {
+      margin-top: 12px; padding-top: 10px;
+      border-top: 1px solid var(--color-border-light);
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px;
+      font-size: 11.5px; color: var(--color-text-muted);
+    }
+    .st-card-foot .source {
+      max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .st-card-foot .stage {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-variant-numeric: tabular-nums;
+    }
+    .st-card-foot .stage.due { color: #b45309; font-weight: 700; }
+    html.dark .st-card-foot .stage.due { color: #fbbf24; }
+    .st-card-foot .stage.mastered { color: #16a34a; font-weight: 700; }
+
+    .st-empty {
+      grid-column: 1 / -1;
+      padding: 56px 24px;
+      text-align: center;
+      color: var(--color-text-secondary);
+      background: var(--color-surface);
+      border: 1px dashed var(--color-border);
+      border-radius: 16px;
+    }
+    .st-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+    .st-empty h2 { font-size: 20px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+    .st-empty p { max-width: 56ch; margin: 0 auto 18px; line-height: 1.55; font-size: 14px; }
+
+    .st-method-explainer {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .st-method-card {
+      padding: 18px 20px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+    }
+    html.dark .st-method-card { background: #111a2c; border-color: #28344a; }
+    .st-method-card h3 {
+      margin: 0 0 8px;
+      font-size: 15px; font-weight: 700;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .st-method-card p {
+      margin: 0 0 12px;
+      font-size: 13px; line-height: 1.55;
+      color: var(--color-text-secondary);
+    }
+    .st-method-card ul {
+      margin: 0 0 14px; padding-left: 18px;
+      font-size: 12.5px; line-height: 1.55;
+      color: var(--color-text-secondary);
+    }
+    .st-method-card .st-cta { font-size: 12.5px; padding: 7px 12px; }
+
+    @media (max-width: 700px) {
+      .st-app { padding: 16px 14px 80px; }
+      .st-method-explainer { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="st-app">
+
+  <header class="st-head">
+    <div>
+      <h1>Study</h1>
+      <p>Cornell + Feynman notes with spaced review.</p>
+    </div>
+    <div class="st-cta-row">
+      {% if counts.due > 0 %}
+      <a href="/study/review" class="st-cta review">
+        <i data-feather="zap"></i>
+        Review {{ counts.due }} due
+      </a>
+      {% endif %}
+      <a href="/study/new?method=cornell" class="st-cta">
+        <i data-feather="plus"></i>
+        New Cornell
+      </a>
+      <a href="/study/new?method=feynman" class="st-cta secondary">
+        <i data-feather="plus"></i>
+        New Feynman
+      </a>
+    </div>
+  </header>
+
+  <div class="st-tabs" role="tablist">
+    <a href="/study" class="st-tab {% if active_method == 'all' %}is-active{% endif %}">
+      All <span class="st-tab-count">{{ counts.total }}</span>
+    </a>
+    <a href="/study?method=cornell" class="st-tab {% if active_method == 'cornell' %}is-active{% endif %}">
+      <i data-feather="columns"></i> Cornell
+      <span class="st-tab-count">{{ counts.cornell }}</span>
+    </a>
+    <a href="/study?method=feynman" class="st-tab {% if active_method == 'feynman' %}is-active{% endif %}">
+      <i data-feather="message-circle"></i> Feynman
+      <span class="st-tab-count">{{ counts.feynman }}</span>
+    </a>
+    <a href="/study/review" class="st-tab">
+      <i data-feather="zap"></i> Review queue
+      <span class="st-tab-count {% if counts.due > 0 %}due{% endif %}">{{ counts.due }}</span>
+    </a>
+  </div>
+
+  <div class="st-toolbar">
+    <form method="get" class="st-search" role="search" autocomplete="off">
+      <i data-feather="search"></i>
+      <input type="text" name="q" placeholder="Search title or content…" value="{{ q or '' }}">
+      {% if active_method != 'all' %}<input type="hidden" name="method" value="{{ active_method }}">{% endif %}
+    </form>
+  </div>
+
+  {% if notes %}
+    <div class="st-grid">
+      {% for n in notes %}
+        {% set title = n.title or "Untitled" %}
+        {% if n.method == 'cornell' %}
+          {% set preview = (n.cornell_summary or n.cornell_notes or '')|trim %}
+        {% else %}
+          {% set preview = (n.feynman_simple or n.feynman_concept or '')|trim %}
+        {% endif %}
+        {% set source = n.source_text or n.source_url or '' %}
+        {% set stage = n.review_stage or 0 %}
+        {% set due_today = n.next_review_at and n.next_review_at|string <= (now_iso or '') %}
+        <a class="st-card" href="/study/{{ n.id }}">
+          <span class="st-card-method {{ n.method }}">
+            {% if n.method == 'cornell' %}Cornell{% else %}Feynman{% endif %}
+          </span>
+          <div class="st-card-title">{{ title }}</div>
+          {% if preview %}
+            <div class="st-card-preview">{{ preview[:240] }}{% if preview|length > 240 %}…{% endif %}</div>
+          {% else %}
+            <div class="st-card-preview empty">Empty — open to start writing</div>
+          {% endif %}
+          <div class="st-card-foot">
+            <span class="source" title="{{ source }}">{{ source if source else '—' }}</span>
+            {% if stage >= 5 %}
+              <span class="stage mastered" title="Mastered (no more reviews)">★ mastered</span>
+            {% else %}
+              <span class="stage" title="Review stage {{ stage }} of 5">stage {{ stage }}/5</span>
+            {% endif %}
+          </div>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="st-empty">
+      <i data-feather="book-open"></i>
+      <h2>{% if q %}No matches{% else %}No study notes yet{% endif %}</h2>
+      <p>
+        {% if q %}
+          Nothing matched "<strong>{{ q }}</strong>". Try a different term.
+        {% else %}
+          Capture what you read with one of two methods. Each note enters a
+          spaced-review queue automatically.
+        {% endif %}
+      </p>
+
+      {% if not q %}
+      <div class="st-method-explainer">
+        <div class="st-method-card">
+          <h3><i data-feather="columns"></i> Cornell Notes</h3>
+          <p>For lectures, articles, and textbook chapters.</p>
+          <ul>
+            <li><strong>Notes</strong> — capture as you read</li>
+            <li><strong>Cues</strong> — keywords/questions, written after</li>
+            <li><strong>Summary</strong> — your own words, 2-3 sentences</li>
+          </ul>
+          <a href="/study/new?method=cornell" class="st-cta">
+            <i data-feather="plus"></i> Start a Cornell note
+          </a>
+        </div>
+        <div class="st-method-card">
+          <h3><i data-feather="message-circle"></i> Feynman Technique</h3>
+          <p>For genuinely understanding a concept.</p>
+          <ul>
+            <li>Pick one concept</li>
+            <li>Explain it as if to a 12-year-old</li>
+            <li>Mark gaps where you got stuck</li>
+            <li>Refine with analogies — iterate</li>
+          </ul>
+          <a href="/study/new?method=feynman" class="st-cta">
+            <i data-feather="plus"></i> Start a Feynman pass
+          </a>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "c" || e.key === "C") { e.preventDefault(); location.href = "/study/new?method=cornell"; }
+    if (e.key === "f" || e.key === "F") { e.preventDefault(); location.href = "/study/new?method=feynman"; }
+    if (e.key === "r" || e.key === "R") { e.preventDefault(); location.href = "/study/review"; }
+  });
+</script>
+
+</body>
+</html>

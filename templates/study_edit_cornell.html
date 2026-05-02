@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{{ note.title if note else 'New Cornell note' }} — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .ce-app { max-width: 1200px; margin: 0 auto; padding: 18px 20px 80px; }
+
+    .ce-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .ce-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .ce-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .ce-back svg { width: 14px; height: 14px; }
+
+    .ce-method-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      background: #dbeafe; color: #1d4ed8;
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+    }
+    html.dark .ce-method-pill { background: rgba(37,99,235,.22); color: #93c5fd; }
+
+    .ce-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
+    .ce-status.saved { color: #16a34a; }
+    .ce-status.saving { color: var(--color-primary); }
+    .ce-status.error { color: var(--color-danger); }
+
+    .ce-delete {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      background: transparent; color: var(--color-text-muted);
+      border: 1px solid var(--color-border); border-radius: 8px;
+      font: inherit; font-size: 12.5px; cursor: pointer;
+    }
+    .ce-delete:hover { color: var(--color-danger); border-color: var(--color-danger); }
+    .ce-delete svg { width: 13px; height: 13px; }
+
+    /* Title + source row */
+    .ce-title-input {
+      width: 100%;
+      padding: 8px 0;
+      border: none; outline: none; background: transparent;
+      font: inherit;
+      font-size: 28px; font-weight: 800; letter-spacing: -.02em;
+      color: var(--color-text);
+      margin-bottom: 4px;
+    }
+    .ce-title-input::placeholder { color: var(--color-text-muted); font-weight: 700; }
+
+    .ce-source-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .ce-source-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--color-border); border-radius: 8px;
+      background: var(--color-surface);
+      font: inherit; font-size: 13px; color: var(--color-text);
+    }
+    .ce-source-input:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-ring);
+    }
+
+    /* The 3-pane Cornell layout */
+    .ce-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(0, 2.5fr);
+      grid-template-rows: minmax(360px, auto) auto;
+      gap: 14px;
+      grid-template-areas:
+        "cues notes"
+        "summary summary";
+    }
+    .ce-pane {
+      display: flex; flex-direction: column;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      padding: 14px;
+      min-height: 200px;
+    }
+    html.dark .ce-pane { background: #111a2c; border-color: #28344a; }
+
+    .ce-pane-cues { grid-area: cues; }
+    .ce-pane-notes { grid-area: notes; }
+    .ce-pane-summary { grid-area: summary; min-height: 160px; }
+
+    .ce-pane-label {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .ce-pane-label h3 {
+      margin: 0;
+      font-size: 12px; font-weight: 700; letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+    }
+    .ce-pane-help {
+      font-size: 11px; color: var(--color-text-muted);
+      font-style: italic;
+    }
+
+    .ce-textarea {
+      width: 100%;
+      flex: 1; min-height: 180px;
+      border: none; outline: none; background: transparent;
+      resize: none;
+      font: inherit; font-size: 14.5px; line-height: 1.6;
+      color: var(--color-text);
+    }
+    .ce-textarea.cues {
+      font-size: 13.5px;
+      line-height: 1.7;
+    }
+    .ce-textarea::placeholder { color: var(--color-text-muted); }
+
+    .ce-pane-summary .ce-textarea { min-height: 120px; }
+
+    .ce-stage {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11.5px; color: var(--color-text-muted);
+      margin-left: 10px;
+    }
+
+    @media (max-width: 800px) {
+      .ce-app { padding: 14px 12px 80px; }
+      .ce-title-input { font-size: 22px; }
+      .ce-source-row { grid-template-columns: 1fr; }
+      .ce-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+        grid-template-areas:
+          "notes"
+          "cues"
+          "summary";
+      }
+      .ce-pane-cues, .ce-pane-summary { min-height: 140px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="ce-app">
+
+  <div class="ce-bar">
+    <a href="/study" class="ce-back">
+      <i data-feather="arrow-left"></i> Study
+    </a>
+    <span class="ce-method-pill">
+      <i data-feather="columns"></i> Cornell
+    </span>
+    {% if note %}
+      <span class="ce-stage" title="Spaced-review stage (0=new, 5=mastered)">
+        <i data-feather="zap"></i>
+        stage {{ note.review_stage or 0 }}/5
+      </span>
+    {% endif %}
+    <span class="ce-status" id="ce-status">{% if not note %}Not saved yet{% else %}Saved{% endif %}</span>
+    {% if note %}
+      <button type="button" class="ce-delete" onclick="deleteNote()">
+        <i data-feather="trash-2"></i> Delete
+      </button>
+    {% endif %}
+  </div>
+
+  <input
+    type="text" class="ce-title-input" id="ce-title"
+    placeholder="Note title — chapter, lecture, article…"
+    value="{{ note.title if note else '' }}"
+    autocomplete="off"
+  >
+
+  <div class="ce-source-row">
+    <input
+      type="url" class="ce-source-input" id="ce-source-url"
+      placeholder="Source URL (auto-links to TravelReads if it matches)"
+      value="{{ note.source_url if note else prefill_url }}"
+      autocomplete="off"
+    >
+    <input
+      type="text" class="ce-source-input" id="ce-source-text"
+      placeholder="Citation — e.g. Make It Stick, ch. 3"
+      value="{{ note.source_text if note else prefill_title }}"
+      autocomplete="off"
+    >
+  </div>
+
+  <div class="ce-grid">
+
+    <div class="ce-pane ce-pane-cues">
+      <div class="ce-pane-label">
+        <h3>Cues</h3>
+        <span class="ce-pane-help">keywords / questions</span>
+      </div>
+      <textarea
+        class="ce-textarea cues" id="ce-cues"
+        placeholder="• Key term&#10;• What question does this answer?&#10;• A trigger word"
+      >{{ note.cornell_cues if note else '' }}</textarea>
+    </div>
+
+    <div class="ce-pane ce-pane-notes">
+      <div class="ce-pane-label">
+        <h3>Notes</h3>
+        <span class="ce-pane-help">capture as you read</span>
+      </div>
+      <textarea
+        class="ce-textarea" id="ce-notes"
+        placeholder="Take notes here while reading. Use bullets, paragraphs, whatever. Once you're done, fill the cues column on the left and the summary below."
+      >{{ note.cornell_notes if note else '' }}</textarea>
+    </div>
+
+    <div class="ce-pane ce-pane-summary">
+      <div class="ce-pane-label">
+        <h3>Summary</h3>
+        <span class="ce-pane-help">2–3 sentences in your own words, written after</span>
+      </div>
+      <textarea
+        class="ce-textarea" id="ce-summary"
+        placeholder="In your own words: what was the main point? What stuck?"
+      >{{ note.cornell_summary if note else '' }}</textarea>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+  const NOTE_ID = {{ (note.id if note else 'null')|tojson }};
+  let _currentId = NOTE_ID;
+  let _saveTimer = null;
+  let _saving = false;
+
+  const statusEl = document.getElementById("ce-status");
+
+  function _setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "ce-status " + (cls || "");
+  }
+
+  function _gather() {
+    return {
+      id: _currentId,
+      method: "cornell",
+      title: document.getElementById("ce-title").value,
+      source_url: document.getElementById("ce-source-url").value,
+      source_text: document.getElementById("ce-source-text").value,
+      cornell_cues: document.getElementById("ce-cues").value,
+      cornell_notes: document.getElementById("ce-notes").value,
+      cornell_summary: document.getElementById("ce-summary").value,
+    };
+  }
+
+  async function _save() {
+    if (_saving) return;
+    _saving = true;
+    _setStatus("Saving…", "saving");
+    try {
+      const r = await fetch("/study/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(_gather()),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (data.id) {
+        _currentId = data.id;
+        // Update URL silently so reload doesn't recreate the note.
+        if (history.replaceState) {
+          history.replaceState({}, "", "/study/" + data.id);
+        }
+      }
+      _setStatus("Saved", "saved");
+    } catch (e) {
+      _setStatus("Save failed", "error");
+    } finally {
+      _saving = false;
+    }
+  }
+
+  function _scheduleSave() {
+    _setStatus("Editing…", "");
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(_save, 800);
+  }
+
+  ["ce-title", "ce-source-url", "ce-source-text", "ce-cues", "ce-notes", "ce-summary"]
+    .forEach(id => {
+      document.getElementById(id).addEventListener("input", _scheduleSave);
+    });
+
+  // Save before leaving the page if anything is queued.
+  window.addEventListener("beforeunload", () => {
+    if (_saveTimer) {
+      clearTimeout(_saveTimer);
+      // synchronous best-effort — the browser may still drop it
+      navigator.sendBeacon?.("/study/save",
+        new Blob([JSON.stringify(_gather())], { type: "application/json" })
+      );
+    }
+  });
+
+  async function deleteNote() {
+    if (!_currentId) return;
+    if (!confirm("Delete this note?\n\nIt's a soft-delete — recoverable from the database, never visible here again.")) return;
+    try {
+      const r = await fetch(`/study/${_currentId}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      location.href = "/study";
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't delete", "error");
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+    // Auto-grow textareas as you type so you don't need a scrollbar in
+    // the middle of a thought.
+    document.querySelectorAll(".ce-textarea").forEach(t => {
+      const grow = () => {
+        t.style.height = "auto";
+        t.style.height = Math.max(t.scrollHeight, 180) + "px";
+      };
+      t.addEventListener("input", grow);
+      grow();
+    });
+  });
+</script>
+
+</body>
+</html>
