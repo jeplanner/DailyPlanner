@@ -849,6 +849,103 @@ def search_web():
         return jsonify({"error": f"YouTube: {e}"}), 500
 
 
+@inbox_bp.route("/api/inbox/search-discover", methods=["GET"])
+@login_required
+def search_discover():
+    """Free-of-charge cross-source search. Hits Hacker News (Algolia)
+    and dev.to in parallel, both keyless and uncapped. Quota-free,
+    bill-free — sits alongside the YouTube and CSE Articles searches
+    as a third "Discover" panel.
+
+    HN: real full-text search across all submitted stories. Returns
+    points + comment counts as decision signals.
+    dev.to: their public API has no free-text search, only tag
+    filtering. We try the query as a tag (lowercased, alphanumerics
+    only); if it doesn't match a tag, dev.to silently returns []."""
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify([])
+
+    results = []
+
+    # ── Hacker News via Algolia ─────────────────────────────────
+    try:
+        r = http_requests.get(
+            "https://hn.algolia.com/api/v1/search",
+            params={
+                "query": query,
+                "tags": "story",
+                "hitsPerPage": 5,
+            },
+            timeout=6,
+        )
+        if r.status_code == 200:
+            for hit in r.json().get("hits", []):
+                # Stories without a URL are Ask HN / Show HN posts —
+                # they live only on news.ycombinator.com. Use the HN
+                # discussion URL instead so the user can still save
+                # something useful.
+                story_url = hit.get("url") or (
+                    f"https://news.ycombinator.com/item?id={hit.get('objectID')}"
+                    if hit.get("objectID") else None
+                )
+                if not story_url or not hit.get("title"):
+                    continue
+                results.append({
+                    "url": story_url,
+                    "title": hit["title"],
+                    "source": "Hacker News",
+                    "points": hit.get("points") or 0,
+                    "comments": hit.get("num_comments") or 0,
+                    "discussion_url": (
+                        f"https://news.ycombinator.com/item?id={hit['objectID']}"
+                        if hit.get("objectID") else None
+                    ),
+                })
+        else:
+            logger.warning("HN search http=%s body=%r", r.status_code, r.text[:200])
+    except Exception as e:
+        logger.warning("HN search exception: %s", e)
+
+    # ── dev.to by tag ──────────────────────────────────────────
+    # The public API filters articles by tag (?tag=…), but has no
+    # free-text search endpoint. Strip the query down to a single
+    # tag-shaped token and try it; tag misses just yield no items
+    # which is fine — Hacker News covers the multi-word case.
+    tag = re.sub(r"[^a-z0-9]", "", query.lower())[:30]
+    if tag:
+        try:
+            r = http_requests.get(
+                "https://dev.to/api/articles",
+                params={"tag": tag, "per_page": 5, "top": "7"},
+                timeout=6,
+                headers={"Accept": "application/json"},
+            )
+            if r.status_code == 200:
+                for art in r.json():
+                    if not art.get("url") or not art.get("title"):
+                        continue
+                    user = art.get("user") or {}
+                    results.append({
+                        "url": art["url"],
+                        "title": art["title"],
+                        "source": "dev.to",
+                        "reactions": art.get("public_reactions_count") or 0,
+                        "comments": art.get("comments_count") or 0,
+                        "author": user.get("name") or "",
+                        "reading_time": art.get("reading_time_minutes") or 0,
+                    })
+            else:
+                logger.warning("devto http=%s body=%r", r.status_code, r.text[:200])
+        except Exception as e:
+            logger.warning("devto exception: %s", e)
+
+    logger.info(
+        "Discover search: q=%r items=%d (hn+devto)", query[:80], len(results),
+    )
+    return jsonify(results)
+
+
 @inbox_bp.route("/api/inbox/search-articles", methods=["GET"])
 @login_required
 def search_articles():

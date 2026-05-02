@@ -288,6 +288,17 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
   font-size:11.5px;color:var(--ib-text2);margin-top:2px;line-height:1.4;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
 }
+
+/* Source pill on Discover-section results: small uppercase chip
+   anchored before the metadata so the source (HN vs dev.to vs …)
+   is the first thing the eye lands on. */
+.sr-source-pill{
+  display:inline-block;
+  padding:1px 6px;border-radius:10px;
+  background:var(--ib-primary-light);color:var(--ib-primary);
+  font-size:10px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;margin-right:4px;
+}
 .sr-save-btn{
   width:32px;height:32px;border:1.5px solid var(--ib-primary);background:none;
   color:var(--ib-primary);border-radius:8px;cursor:pointer;display:flex;
@@ -489,6 +500,7 @@ async function doSearchAll(query) {
       <div class="sr-loading">Searching YouTube…</div>
     </div>
     <div class="sr-section" id="sr-articles"></div>
+    <div class="sr-section" id="sr-discover"></div>
     ${buildFallbackSearch(query)}
     <div class="sr-header" style="margin-top:6px;">
       <span></span>
@@ -496,7 +508,7 @@ async function doSearchAll(query) {
     </div>
   `;
 
-  // Fire both in parallel — neither blocks the other.
+  // Fire all three sources in parallel — none blocks the others.
   const fetchOne = async (url) => {
     try {
       const r = await fetch(url);
@@ -505,9 +517,10 @@ async function doSearchAll(query) {
       return { error: "Network error: " + (e.message || "fetch failed") };
     }
   };
-  const [yt, art] = await Promise.all([
+  const [yt, art, disc] = await Promise.all([
     fetchOne(`/api/inbox/search?q=${encodeURIComponent(query)}`),
     fetchOne(`/api/inbox/search-articles?q=${encodeURIComponent(query)}`),
+    fetchOne(`/api/inbox/search-discover?q=${encodeURIComponent(query)}`),
   ]);
 
   // Both updates are guarded against null — when the user types
@@ -530,7 +543,53 @@ async function doSearchAll(query) {
     else artEl.remove();
   }
 
+  // Discover (HN + dev.to): free, keyless, uncapped — render only when
+  // items came back; collapse silently otherwise.
+  const discHtml = renderDiscoverSectionMaybe(disc);
+  const discEl = document.getElementById("sr-discover");
+  if (discEl) {
+    if (discHtml) discEl.innerHTML = discHtml;
+    else discEl.remove();
+  }
+
   if (typeof feather !== "undefined") feather.replace();
+}
+
+// Render the Discover section (Hacker News + dev.to). Returns "" when
+// nothing came back so doSearchAll can drop the whole section.
+function renderDiscoverSectionMaybe(data) {
+  if (!data || data.error) return "";
+  const items = Array.isArray(data) ? data : [];
+  if (!items.length) return "";
+
+  return `${renderSectionHeader("Discover · Hacker News + dev.to", items.length)}
+    ${items.map(r => {
+      // Each row carries source-specific metadata: HN gets points +
+      // comments, dev.to gets reading time + reactions + author.
+      const bits = [];
+      if (r.source === "Hacker News") {
+        if (r.points) bits.push(`▲ ${formatCount(r.points)} pts`);
+        if (r.comments) bits.push(`💬 ${formatCount(r.comments)}`);
+      } else if (r.source === "dev.to") {
+        if (r.reading_time) bits.push(`📖 ${r.reading_time} min`);
+        if (r.reactions) bits.push(`♥ ${formatCount(r.reactions)}`);
+        if (r.author) bits.push(`by ${esc(r.author)}`);
+      }
+      const initial = (r.source || "?").trim().charAt(0).toUpperCase();
+      return `
+        <div class="sr-item">
+          <div class="sr-thumb sr-thumb--icon">${esc(initial)}</div>
+          <div class="sr-info">
+            <div class="sr-title">${esc(r.title)}</div>
+            <div class="sr-channel">
+              <span class="sr-source-pill">${esc(r.source)}</span>
+              ${bits.length ? ` · ${bits.join(" · ")}` : ""}
+            </div>
+          </div>
+          <button class="sr-save-btn" onclick="saveSearchResult(this, '${esc(r.url)}')"
+                  title="Save to inbox"><i data-feather="plus"></i></button>
+        </div>`;
+    }).join("")}`;
 }
 
 // Like renderArticlesSection but returns "" (instead of an error
