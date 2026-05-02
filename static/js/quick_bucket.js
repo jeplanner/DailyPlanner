@@ -923,9 +923,12 @@
           : `Pomodoro · ${fmtClock(ms)}`;
       } else if (pomo.state === "paused") {
         triggerLbl.textContent = `Pomodoro · paused · ${fmtClock(ms)}`;
-      } else if (pomo.state === "ended") {
-        triggerLbl.textContent = "Pomodoro done";
       } else {
+        // Idle, ended, and any other non-running/non-paused state all
+        // show the same neutral "Pomodoro" label — once the session is
+        // over there is nothing meaningful to convey beyond "ready for
+        // the next one". (Was "Pomodoro done", which felt like a stuck
+        // status badge after the user had already acknowledged it.)
         triggerLbl.textContent = "Pomodoro";
       }
     }
@@ -1317,10 +1320,28 @@
 
     const form = $("#qb-add-form");
     const input = $("#qb-add-input");
+
+    // The capture field is now a <textarea>, so it would insert a
+    // literal newline on Enter and never fire form submit. Bind Enter
+    // → submit (Shift+Enter keeps the newline) and auto-grow the box
+    // up to the CSS max-height so multi-line capture has room.
+    const autosizeInput = () => {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 240) + "px";
+    };
+    input.addEventListener("input", autosizeInput);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const v = input.value;
       input.value = "";
+      autosizeInput();
       await addItem(v);
       input.focus();
     });

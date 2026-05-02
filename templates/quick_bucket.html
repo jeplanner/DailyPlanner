@@ -115,22 +115,44 @@
   .qb-hero h1 { font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
   .qb-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; }
 
+  /* Two-row capture: large textarea on top, action buttons underneath.
+     Replaces the older single-row layout where the text input was
+     squeezed between three buttons and felt cramped on every viewport. */
   .qb-add {
-    display: flex; gap: 8px;
+    display: flex; flex-direction: column; gap: 10px;
     background: var(--color-surface); border: 1px solid var(--color-border);
-    border-radius: 12px; padding: 10px; margin-bottom: 18px;
+    border-radius: 12px; padding: 12px; margin-bottom: 18px;
     box-shadow: 0 1px 3px rgba(15,23,42,.04);
   }
-  .qb-add input {
-    flex: 1; min-width: 0;
-    padding: 9px 12px; font: inherit; font-size: 14px;
+  .qb-add textarea {
+    width: 100%; min-width: 0;
+    padding: 10px 12px; font: inherit; font-size: 14.5px; line-height: 1.45;
     border: 1px solid var(--color-border); border-radius: 8px;
     background: var(--color-surface); color: var(--color-text);
     transition: border-color .12s, box-shadow .12s;
+    resize: none;             /* JS auto-grows so resize handle is redundant */
+    min-height: 64px;
+    max-height: 240px;
+    overflow-y: auto;
+    font-family: inherit;
   }
-  .qb-add input:focus {
+  .qb-add textarea:focus {
     outline: none; border-color: var(--color-primary);
     box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .qb-add-actions {
+    display: flex; gap: 8px; align-items: center;
+    flex-wrap: wrap;
+  }
+  .qb-add-actions .qb-add-spacer { flex: 1; }
+  .qb-add-hint {
+    font-size: 11.5px; color: var(--color-text-secondary);
+    margin-right: auto;
+  }
+  @media (max-width: 480px) {
+    .qb-add-actions { gap: 6px; }
+    .qb-add-actions .qb-btn { flex: 1; justify-content: center; }
+    .qb-add-hint { display: none; }
   }
   .qb-btn {
     display: inline-flex; align-items: center; gap: 6px;
@@ -673,18 +695,22 @@
   </div>
 
   <form id="qb-add-form" class="qb-add" autocomplete="off">
-    <input id="qb-add-input" type="text" placeholder="What needs doing? Press Enter to add."
-           maxlength="500">
-    <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
-      <i data-feather="mic"></i>
-    </button>
-    <button id="qb-handsfree-btn" class="qb-btn" type="button"
-            title="Hands-free — say &quot;Hello&quot; to dictate, &quot;Bye&quot; to stop">
-      <i data-feather="radio"></i>
-    </button>
-    <button id="qb-add-btn" class="qb-btn qb-btn-primary" type="submit">
-      <i data-feather="plus"></i> Add
-    </button>
+    <textarea id="qb-add-input"
+              placeholder="What needs doing? Enter adds, Shift+Enter newline."
+              maxlength="500" rows="2"></textarea>
+    <div class="qb-add-actions">
+      <span class="qb-add-hint">↵ to add · ⇧↵ for a new line</span>
+      <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
+        <i data-feather="mic"></i>
+      </button>
+      <button id="qb-handsfree-btn" class="qb-btn" type="button"
+              title="Hands-free — say &quot;Hello&quot; to dictate, &quot;Bye&quot; to stop">
+        <i data-feather="radio"></i>
+      </button>
+      <button id="qb-add-btn" class="qb-btn qb-btn-primary" type="submit">
+        <i data-feather="plus"></i> Add
+      </button>
+    </div>
   </form>
 
   <div id="qb-groups"></div>
