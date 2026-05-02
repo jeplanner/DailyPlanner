@@ -545,107 +545,159 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
-       NEW DLY-* row component — completely sidesteps the legacy
-       .md-table system. Used for Today / Tomorrow / This week /
-       Future / Parked sections so the daily view is one coherent
-       visual recipe with zero conflict from the legacy CSS.
+       DAILY VIEW — Amazon-inspired palette + dly-* components.
+
+       Amazon-derived palette:
+         --amz-text       : #0F1111   (titles, important text)
+         --amz-text-muted : #565959   (meta, body text)
+         --amz-text-faded : #6F7373   (secondary meta, "Anytime")
+         --amz-border     : #D5D9D9   (1 px borders)
+         --amz-divider    : #EAEDED   (row separators)
+         --amz-bg-hover   : #F7FAFA   (row hover tint)
+         --amz-link       : #007185   (links / accent / done state)
+         --amz-link-hover : #C7511F   (active link / CTA hover)
+         --amz-success    : #007600   (positive)
+         --amz-warning    : #B12704   (overdue / error)
+
+       Type: system stack, three sizes (15 / 13 / 11), tabular
+       numerics for clock columns. No custom fonts.
        ═══════════════════════════════════════════════════════════ */
+
+    /* Section heading — small caps with count pill. */
     .dly-section { margin: 0 0 28px; }
     .dly-section-head {
       display: flex; align-items: baseline; gap: 10px;
-      padding: 0 0 8px;
+      padding: 0 0 6px;
       font-size: 11px; font-weight: 700;
-      letter-spacing: .12em; text-transform: uppercase;
-      color: #64748b;
+      letter-spacing: .14em; text-transform: uppercase;
+      color: #565959;
     }
     .dly-section-count {
       font-size: 11px; font-weight: 700;
-      padding: 1px 8px; border-radius: 999px;
-      background: #f1f5f9; color: #475569;
+      padding: 1px 8px; border-radius: 12px;
+      background: #EAEDED; color: #565959;
       letter-spacing: 0;
     }
 
+    /* List + row */
     .dly-list {
       list-style: none; padding: 0; margin: 0;
-      border-top: 1px solid #f1f5f9;
+      border-top: 1px solid #EAEDED;
     }
     .dly-row {
       display: grid;
-      grid-template-columns: 28px 1fr auto;
+      grid-template-columns: 36px 1fr auto;
       grid-template-areas:
         "check title meta"
         "check ctx   meta";
-      column-gap: 12px;
-      row-gap: 2px;
+      column-gap: 14px;
+      row-gap: 3px;
       padding: 14px 4px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid #EAEDED;
       cursor: pointer;
-      transition: background .15s;
+      transition: background .12s;
       align-items: start;
     }
-    .dly-row:hover { background: #fafbfc; }
-    .dly-row.is-done .dly-title { color: #94a3b8; text-decoration: line-through; }
+    .dly-row:hover { background: #F7FAFA; }
+    .dly-row.is-done .dly-title { color: #6F7373; text-decoration: line-through; }
+    .dly-row.is-done .dly-ctx   { color: #B0B5B5; }
 
+    /* ── CHECKBOX ─────────────────────────────────────────────
+       Larger (22 × 22), thicker border (2 px), more contrasted
+       so it reads as obviously tappable. Hover shows a faint
+       tint + darker border. Done state fills Amazon teal-blue
+       (#007185) with a clean white tick — visibility against
+       both white backgrounds and the hover wash. */
     .dly-check {
       grid-area: check;
-      width: 18px; height: 18px;
-      margin-top: 2px;
-      border: 1.5px solid #cbd5e1;
-      border-radius: 5px;
-      background: transparent;
+      width: 22px; height: 22px;
+      margin-top: 0;
+      border: 2px solid #888C8C;
+      border-radius: 6px;
+      background: #fff;
       cursor: pointer;
       padding: 0;
-      transition: border-color .15s, background .15s;
+      transition: border-color .12s, background .12s, box-shadow .1s, transform .08s;
       position: relative;
       flex-shrink: 0;
+      box-shadow: 0 1px 0 rgba(0,0,0,.04);
     }
-    .dly-check:hover { border-color: #4f46e5; background: rgba(79,70,229,.06); }
-    .dly-check.is-done { background: #4f46e5; border-color: #4f46e5; }
+    .dly-check:hover {
+      border-color: #007185;
+      background: #F0F7F8;
+    }
+    .dly-check:focus-visible {
+      outline: none;
+      border-color: #007185;
+      box-shadow: 0 0 0 3px rgba(0,113,133,.25);
+    }
+    .dly-check:active { transform: scale(.92); }
+    .dly-check.is-done {
+      background: #007185;
+      border-color: #007185;
+    }
+    .dly-check.is-done:hover {
+      background: #005965;
+      border-color: #005965;
+    }
     .dly-check.is-done::after {
-      content: ""; position: absolute;
-      left: 4px; top: 1px;
-      width: 5px; height: 9px;
+      content: "";
+      position: absolute;
+      left: 6px; top: 2px;
+      width: 6px; height: 11px;
       border: solid #fff;
-      border-width: 0 2px 2px 0;
+      border-width: 0 2.5px 2.5px 0;
       transform: rotate(45deg);
     }
 
+    /* Title + context */
     .dly-title {
       grid-area: title;
       font-size: 15px; line-height: 1.45;
-      color: #0f172a; font-weight: 400;
-      min-width: 0;
+      color: #0F1111; font-weight: 400;
+      min-width: 0; word-break: break-word;
       align-self: center;
     }
-    .dly-row .dly-title strong { font-weight: 500; }
     .dly-ctx {
       grid-area: ctx;
       font-size: 12.5px; line-height: 1.35;
-      color: #94a3b8; font-weight: 400;
+      color: #6F7373; font-weight: 400;
       align-self: start;
     }
+
+    /* Meta — right-side time / due indicator */
     .dly-meta {
       grid-area: meta;
       font-size: 13px; font-weight: 500;
       font-variant-numeric: tabular-nums;
-      color: #64748b; white-space: nowrap;
+      color: #565959; white-space: nowrap;
       align-self: center;
-      padding-left: 10px;
+      padding-left: 12px;
     }
-    .dly-meta--anytime { color: #cbd5e1; font-style: italic; font-weight: 400; }
-    .dly-meta--overdue { color: #dc2626; font-weight: 600; }
-    .dly-meta--time {
-      color: #0f172a; font-weight: 600;
-    }
+    .dly-meta--anytime { color: #B0B5B5; font-style: italic; font-weight: 400; }
+    .dly-meta--overdue { color: #B12704; font-weight: 700; }
+    .dly-meta--time    { color: #0F1111; font-weight: 600; }
 
     @media (max-width: 380px) {
-      .dly-row { grid-template-columns: 24px 1fr auto; column-gap: 10px; }
+      .dly-row { grid-template-columns: 32px 1fr auto; column-gap: 12px; }
       .dly-row .dly-ctx { display: none; }
     }
 
-    /* Hide the legacy agenda + overdue tables — we render via dly-* instead. */
+    /* Hide the legacy agenda + overdue tables — dly-list replaces them. */
     .md-overdue-card .md-table-wrap,
     .md-agenda-card .md-table-wrap { display: none !important; }
+
+    /* ── HEADER + ACCENTS ── repaint the tight header in the same
+       Amazon palette so it doesn't clash with the new list. */
+    .md-tight-greet { color: #0F1111; }
+    .md-tight-date { color: #565959; }
+    .md-today-tag { color: #007185; font-weight: 700; }
+    .md-hero-overdue { color: #B12704; font-weight: 700; }
+    .md-tight-count { color: #0F1111; }
+    .md-tight-header { border-bottom-color: #EAEDED; }
+    /* Quiet expander link uses Amazon teal. */
+    .md-more-toggle { color: #007185; }
+    .md-more-toggle:hover { color: #C7511F; }
 
     /* ── MORE SECTIONS expander — quiet text link ────────── */
     .md-more-toggle {
