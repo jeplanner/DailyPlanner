@@ -536,8 +536,17 @@ async function doSearchAll(query) {
 // Like renderArticlesSection but returns "" (instead of an error
 // banner) when the API failed or returned zero items. The caller
 // decides whether to render or drop the section entirely.
+//
+// Exception: kind === "quota" means the user hit their daily Custom
+// Search cap. That's expected, actionable info ("you've used today's
+// 100 free queries") rather than misconfiguration noise, so we DO
+// surface it as a banner instead of hiding.
 function renderArticlesSectionMaybe(data) {
-  if (!data || data.error) return "";
+  if (!data) return "";
+  if (data.error) {
+    if (data.kind === "quota") return renderError("Articles", data.error);
+    return "";
+  }
   const items = Array.isArray(data) ? data : [];
   if (!items.length) return "";
   return renderArticlesSection(data);

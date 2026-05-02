@@ -175,8 +175,18 @@ _GOOGLE_ERROR_HINTS = {
         "API not enabled on this Google Cloud project. Enable it under "
         "APIs & Services → Library."
     ),
-    "rateLimitExceeded": "Daily quota exceeded — try again tomorrow.",
-    "quotaExceeded": "Daily quota exceeded — try again tomorrow.",
+    "rateLimitExceeded": (
+        "Daily search limit reached (100 free queries/day). Resets at "
+        "midnight US Pacific time. Raise the cap in Google Cloud Console "
+        "if you want more (Custom Search bills $5 per 1,000 queries above "
+        "the free tier)."
+    ),
+    "quotaExceeded": (
+        "Daily search limit reached (100 free queries/day). Resets at "
+        "midnight US Pacific time. Raise the cap in Google Cloud Console "
+        "if you want more (Custom Search bills $5 per 1,000 queries above "
+        "the free tier)."
+    ),
     "keyInvalid": "API key is invalid. Check GOOGLE_API_KEY in .env.",
     "keyExpired": "API key has expired.",
     "ipRefererBlocked": (
@@ -184,6 +194,26 @@ _GOOGLE_ERROR_HINTS = {
         "calls. Remove or relax those restrictions on the key."
     ),
 }
+
+# Reasons we want the frontend to show as a *visible* banner instead of
+# hiding the section. Quota errors are expected, actionable info; config
+# errors (key restrictions, billing) are noise after the user has set up
+# the integration once.
+_GOOGLE_QUOTA_REASONS = {"rateLimitExceeded", "quotaExceeded"}
+
+
+def _google_error_kind(payload):
+    """Classify a Google error response as 'quota' (worth showing to the
+    user) or 'config' (worth hiding once setup is done). Returned as a
+    side-channel so the frontend can pick which one to surface."""
+    err = (payload or {}).get("error", {}) or {}
+    for det in err.get("details", []) or []:
+        if det.get("reason") in _GOOGLE_QUOTA_REASONS:
+            return "quota"
+    for e in err.get("errors", []) or []:
+        if e.get("reason") in _GOOGLE_QUOTA_REASONS:
+            return "quota"
+    return "config"
 
 
 def _google_error_hint(payload):
@@ -874,7 +904,8 @@ def search_articles():
             except Exception:
                 payload = {}
             hint = _google_error_hint(payload)
-            return jsonify({"error": f"Articles: {hint}"}), 503
+            kind = _google_error_kind(payload)
+            return jsonify({"error": f"Articles: {hint}", "kind": kind}), 503
 
         items = r.json().get("items", [])
         logger.info("CSE search: q=%r items=%d", query[:80], len(items))
