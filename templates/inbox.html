@@ -365,6 +365,13 @@ async function pasteFromClipboard() {
 
 // Single entry point. Renders a loading skeleton, fires both APIs in
 // parallel, then swaps in a YouTube section + an Articles section.
+//
+// Error policy: YouTube errors render a loud red banner because YouTube
+// is the headline feature. Articles errors are *hidden* — Google's CSE
+// has a long tail of project / billing / ownership traps that not every
+// user has bothered to set up; dragging the user through them every
+// time they search is hostile. The help modal still documents how to
+// enable Articles for users who want it.
 async function doSearchAll(query) {
   const panel = document.getElementById("search-results");
   panel.classList.remove("hidden");
@@ -372,9 +379,7 @@ async function doSearchAll(query) {
     <div class="sr-section" id="sr-youtube">
       <div class="sr-loading">Searching YouTube…</div>
     </div>
-    <div class="sr-section" id="sr-articles">
-      <div class="sr-loading">Searching articles…</div>
-    </div>
+    <div class="sr-section" id="sr-articles"></div>
     ${buildFallbackSearch(query)}
     <div class="sr-header" style="margin-top:6px;">
       <span></span>
@@ -397,9 +402,25 @@ async function doSearchAll(query) {
   ]);
 
   document.getElementById("sr-youtube").innerHTML  = renderYouTubeSection(yt);
-  document.getElementById("sr-articles").innerHTML = renderArticlesSection(art);
+  // Articles section: render only when there are actual results.
+  // Errors and empty responses both collapse to nothing so the YouTube
+  // panel can breathe.
+  const artHtml = renderArticlesSectionMaybe(art);
+  const artEl = document.getElementById("sr-articles");
+  if (artHtml) artEl.innerHTML = artHtml;
+  else artEl.remove();
 
   if (typeof feather !== "undefined") feather.replace();
+}
+
+// Like renderArticlesSection but returns "" (instead of an error
+// banner) when the API failed or returned zero items. The caller
+// decides whether to render or drop the section entirely.
+function renderArticlesSectionMaybe(data) {
+  if (!data || data.error) return "";
+  const items = Array.isArray(data) ? data : [];
+  if (!items.length) return "";
+  return renderArticlesSection(data);
 }
 
 function renderSectionHeader(label, count) {
