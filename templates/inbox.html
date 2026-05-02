@@ -197,6 +197,52 @@ html.dark .card-reader{background:#0f172a;border-color:#334155;}
   padding-bottom:10px;border-bottom:1px solid var(--ib-border);
 }
 
+/* Compact metadata row on search results: ▶ 5:42 · 👁 2.1M · 👥 240K
+   Helps decide whether to add or skip. Subscribers are dimmed so they
+   read as channel-context, not headline stats. */
+.sr-meta{
+  font-size:11px;color:var(--ib-text3);margin-top:3px;
+  display:flex;gap:10px;flex-wrap:wrap;
+}
+.sr-meta b{color:var(--ib-text2);font-weight:600;}
+
+/* Channel-uploads expansion: a sibling to .card-reader / .card-media-yt.
+   Re-uses the .card-media slot, just renders a list of mini cards. */
+.card-channel-list{
+  display:flex;flex-direction:column;gap:8px;
+  background:#fafbfc;border:1px solid var(--ib-border);
+  border-radius:8px;padding:12px;
+}
+html.dark .card-channel-list{background:#0f172a;border-color:#334155;}
+.card-channel-head{
+  display:flex;align-items:center;gap:10px;
+  padding-bottom:10px;border-bottom:1px solid var(--ib-border);
+  margin-bottom:6px;
+}
+.card-channel-head img{width:32px;height:32px;border-radius:50%;}
+.card-channel-head .ch-name{font-weight:700;font-size:14px;}
+.card-channel-head .ch-sub{font-size:11px;color:var(--ib-text3);}
+.cu-item{
+  display:flex;gap:10px;align-items:center;
+  padding:6px 8px;border-radius:6px;cursor:default;
+}
+.cu-item:hover{background:var(--ib-primary-light);}
+.cu-item img{width:64px;height:36px;object-fit:cover;border-radius:4px;background:var(--ib-border);}
+.cu-info{flex:1;min-width:0;}
+.cu-title{
+  font-size:13px;font-weight:600;color:var(--ib-text);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.cu-meta{font-size:11px;color:var(--ib-text3);margin-top:2px;}
+.cu-save{
+  width:30px;height:30px;border:1.5px solid var(--ib-primary);background:none;
+  color:var(--ib-primary);border-radius:6px;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;flex-shrink:0;transition:all 0.15s;
+}
+.cu-save:hover{background:var(--ib-primary);color:#fff;}
+.cu-save.saved{background:var(--ib-success);border-color:var(--ib-success);color:#fff;pointer-events:none;}
+.cu-save svg{width:14px;height:14px;}
+
 .card-date{font-size:10px;color:var(--ib-text3);}
 
 .empty-state{text-align:center;color:var(--ib-text3);padding:48px 0;font-size:14px;}
@@ -517,17 +563,48 @@ function renderYouTubeSection(data) {
       <div class="sr-loading">No video results</div>`;
   }
   return `${renderSectionHeader("YouTube", items.length)}
-    ${items.map(r => `
+    ${items.map(r => {
+      // Compose a single metadata line: duration · views · subscribers.
+      // Each piece appears only if we got it back (enrichment is
+      // best-effort so individual fields can be missing).
+      const bits = [];
+      if (r.duration_seconds) bits.push(`<b>${formatDuration(r.duration_seconds)}</b>`);
+      if (r.view_count != null) bits.push(`👁 ${formatCount(r.view_count)} views`);
+      if (r.subscriber_count != null) bits.push(`👥 ${formatCount(r.subscriber_count)} subs`);
+      const meta = bits.length ? `<div class="sr-meta">${bits.join(" · ")}</div>` : "";
+      return `
       <div class="sr-item">
         <img class="sr-thumb" src="${esc(r.thumbnail)}" alt=""
              onerror="this.style.display='none'">
         <div class="sr-info">
           <div class="sr-title">${esc(r.title)}</div>
           <div class="sr-channel">${esc(r.channel || "")}</div>
+          ${meta}
         </div>
         <button class="sr-save-btn" onclick="saveSearchResult(this, '${esc(r.url)}')"
                 title="Save to inbox"><i data-feather="plus"></i></button>
-      </div>`).join("")}`;
+      </div>`;
+    }).join("")}`;
+}
+
+// Pretty seconds → "5:42" or "1:23:45". Matches the YouTube thumbnail
+// overlay format users already recognise.
+function formatDuration(secs) {
+  if (!secs || secs < 0) return "";
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+  return `${m}:${String(s).padStart(2,"0")}`;
+}
+
+// Compact view/subscriber counts: 2147483 → "2.1M".
+function formatCount(n) {
+  if (n == null) return "";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, "") + "K";
+  if (n < 1_000_000_000) return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0).replace(/\.0$/, "") + "M";
+  return (n / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B";
 }
 
 function renderArticlesSection(data) {
@@ -781,6 +858,10 @@ function renderCards() {
         </select>
         <div class="card-btns">
           ${primaryBtn}
+          ${ytId ? `<button class="card-btn" onclick="toggleChannelUploads('${x.id}','${ytId}')"
+                     title="More from this channel"><i data-feather="list" style="width:14px;height:14px"></i></button>` : ""}
+          <button class="card-btn" onclick="moveToTravel('${x.id}', this)"
+                  title="Send to TravelReads"><i data-feather="bookmark" style="width:14px;height:14px"></i></button>
           <button class="card-btn ${x.is_favorite?'fav-on':''}" onclick="toggleFav('${x.id}')" title="Favorite">
             ${x.is_favorite ? "★" : "☆"}
           </button>
@@ -994,6 +1075,103 @@ function closeAllOpenCards(excludeId) {
     const btn = document.getElementById("primary-" + id);
     btn?.classList.remove("is-active");
   });
+}
+
+// "More from this channel" — fetches the channel's recent uploads via
+// /api/inbox/channel-uploads?videoId=… and renders them inline. Each
+// upload has its own + button to save into the inbox.
+const _channelCache = {};
+async function toggleChannelUploads(itemId, ytId) {
+  const card = document.getElementById("card-" + itemId);
+  const slot = document.getElementById("media-" + itemId);
+  if (!card || !slot) return;
+  const isOpen = card.classList.contains("is-open");
+  // If the card is already open with channel content, close it.
+  if (isOpen && slot.innerHTML.includes("card-channel-list")) {
+    card.classList.remove("is-open");
+    slot.innerHTML = "";
+    return;
+  }
+  closeAllOpenCards(itemId);
+  card.classList.add("is-open");
+
+  if (_channelCache[ytId]) {
+    slot.innerHTML = _channelCache[ytId];
+    if (typeof feather !== "undefined") feather.replace();
+    return;
+  }
+
+  slot.innerHTML = `<div class="card-channel-list"><div class="sr-loading">Loading channel videos…</div></div>`;
+  try {
+    const r = await fetch(`/api/inbox/channel-uploads?videoId=${encodeURIComponent(ytId)}`);
+    const data = await r.json();
+    if (!r.ok || data.error) {
+      slot.innerHTML = `<div class="card-channel-list"><div class="card-reader-error">${esc(data.error || "Could not load channel")}</div></div>`;
+      return;
+    }
+    const ch = data.channel || {};
+    const uploads = data.uploads || [];
+    const subs = ch.subscriber_count != null
+      ? `${formatCount(ch.subscriber_count)} subscribers`
+      : "";
+    const html = `
+      <div class="card-channel-list">
+        <div class="card-channel-head">
+          ${ch.thumbnail ? `<img src="${esc(ch.thumbnail)}" alt="" onerror="this.style.display='none'">` : ""}
+          <div>
+            <div class="ch-name">${esc(ch.title || "Channel")}</div>
+            ${subs ? `<div class="ch-sub">${esc(subs)}</div>` : ""}
+          </div>
+        </div>
+        ${uploads.length ? uploads.map(u => {
+          const bits = [];
+          if (u.duration_seconds) bits.push(formatDuration(u.duration_seconds));
+          if (u.view_count != null) bits.push(`${formatCount(u.view_count)} views`);
+          return `
+            <div class="cu-item">
+              <img src="${esc(u.thumbnail)}" alt="" onerror="this.style.display='none'">
+              <div class="cu-info">
+                <div class="cu-title">${esc(u.title)}</div>
+                ${bits.length ? `<div class="cu-meta">${bits.join(" · ")}</div>` : ""}
+              </div>
+              <button class="cu-save" onclick="saveSearchResult(this, '${esc(u.url)}')"
+                      title="Save to inbox"><i data-feather="plus"></i></button>
+            </div>`;
+        }).join("") : '<div class="sr-loading">No recent uploads</div>'}
+      </div>`;
+    _channelCache[ytId] = html;
+    slot.innerHTML = html;
+    if (typeof feather !== "undefined") feather.replace();
+  } catch (e) {
+    slot.innerHTML = `<div class="card-channel-list"><div class="card-reader-error">Network error: ${esc(e.message || "")}</div></div>`;
+  }
+}
+
+// "Send to TravelReads" — copies the inbox row into travel_reads,
+// marks the inbox row Done. Card disappears from the default Unread
+// view; recoverable via Done filter if the user regrets it.
+async function moveToTravel(itemId, btn) {
+  if (!confirm("Send this item to TravelReads?")) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`/api/inbox/${itemId}/move-to-travel`, { method: "POST" });
+    const data = await r.json();
+    if (!r.ok || !data.success) {
+      showToast(data.error || "Could not send to TravelReads", "error");
+      if (btn) btn.disabled = false;
+      return;
+    }
+    const mins = data.duration_minutes ? ` (${data.duration_minutes} min)` : "";
+    showToast(`Sent to TravelReads${mins}`, "success", 2500);
+    // Mark the local copy Done and re-render so the card dims/disappears
+    // depending on the current filter, instead of forcing a full reload.
+    const item = allItems.find(x => x.id === itemId);
+    if (item) item.status = "Done";
+    renderCards();
+  } catch (e) {
+    showToast("Network error", "error");
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* ══════════════════════════════════════════════════════

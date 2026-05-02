@@ -238,6 +238,115 @@ def _ai_response_is_useful(text):
     return True
 
 
+_YT_ID_RE_PY = re.compile(
+    r"(?:youtube\.com/(?:watch\?v=|embed/|shorts/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})"
+)
+
+
+def _yt_extract_id(url: str) -> str | None:
+    m = _YT_ID_RE_PY.search(url or "")
+    return m.group(1) if m else None
+
+
+def _yt_parse_duration(iso: str) -> int:
+    """ISO 8601 duration ('PT1H23M45S', 'PT5M30S') → total seconds.
+    Returns 0 for unparseable input rather than raising — view fields
+    should never blow up the search response."""
+    if not iso or not iso.startswith("PT"):
+        return 0
+    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso)
+    if not m:
+        return 0
+    h, mi, s = (int(g) if g else 0 for g in m.groups())
+    return h * 3600 + mi * 60 + s
+
+
+def _yt_enrich(items: list, api_key: str) -> list:
+    """Decorate YouTube search results with duration, view count,
+    channel id, and subscriber count. One videos.list call (≤50 ids)
+    plus one channels.list call (≤50 ids) — 2 quota units total.
+
+    Best-effort: any sub-call failure leaves the field as None and
+    returns the items as-is rather than failing the whole search."""
+    if not items:
+        return items
+    video_ids = [_yt_extract_id(it.get("url") or "") for it in items]
+    video_ids = [v for v in video_ids if v]
+    if not video_ids:
+        return items
+
+    # videos.list — duration + viewCount + channelId
+    video_meta = {}
+    try:
+        r = http_requests.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={
+                "id": ",".join(video_ids),
+                "part": "contentDetails,statistics,snippet",
+                "key": api_key,
+            },
+            timeout=8,
+        )
+        if r.status_code == 200:
+            for v in r.json().get("items", []):
+                video_meta[v["id"]] = {
+                    "duration_seconds": _yt_parse_duration(
+                        v.get("contentDetails", {}).get("duration", "")
+                    ),
+                    "view_count": int(
+                        v.get("statistics", {}).get("viewCount", 0) or 0
+                    ),
+                    "channel_id": v.get("snippet", {}).get("channelId", ""),
+                }
+        else:
+            logger.warning("yt_enrich videos.list http=%s body=%r",
+                           r.status_code, r.text[:200])
+    except Exception as e:
+        logger.warning("yt_enrich videos.list exception: %s", e)
+
+    # channels.list — subscriberCount
+    channel_ids = list({m["channel_id"] for m in video_meta.values() if m.get("channel_id")})
+    channel_subs = {}
+    if channel_ids:
+        try:
+            r = http_requests.get(
+                "https://www.googleapis.com/youtube/v3/channels",
+                params={
+                    "id": ",".join(channel_ids),
+                    "part": "statistics",
+                    "key": api_key,
+                },
+                timeout=8,
+            )
+            if r.status_code == 200:
+                for c in r.json().get("items", []):
+                    stats = c.get("statistics", {}) or {}
+                    # YouTube hides subs for some channels; treat as None.
+                    if stats.get("hiddenSubscriberCount"):
+                        channel_subs[c["id"]] = None
+                    else:
+                        channel_subs[c["id"]] = int(stats.get("subscriberCount", 0) or 0)
+            else:
+                logger.warning("yt_enrich channels.list http=%s body=%r",
+                               r.status_code, r.text[:200])
+        except Exception as e:
+            logger.warning("yt_enrich channels.list exception: %s", e)
+
+    # Merge back into the original items list, preserving order.
+    enriched = []
+    for it in items:
+        vid = _yt_extract_id(it.get("url") or "") or ""
+        meta = video_meta.get(vid, {})
+        cid = meta.get("channel_id") or ""
+        out = dict(it)
+        out["duration_seconds"] = meta.get("duration_seconds", 0)
+        out["view_count"] = meta.get("view_count", 0)
+        out["channel_id"] = cid
+        out["subscriber_count"] = channel_subs.get(cid)
+        enriched.append(out)
+    return enriched
+
+
 def _cse_thumbnail(item):
     """CSE thumbnails appear under different pagemap keys depending on the
     site. Pick the first one that exists, return "" otherwise."""
@@ -411,6 +520,208 @@ def _extract_readable_html(html: str) -> dict:
     }
 
 
+@inbox_bp.route("/api/inbox/<item_id>/move-to-travel", methods=["POST"])
+@login_required
+def move_to_travel(item_id):
+    """Copy an inbox item into travel_reads, then soft-delete the inbox row.
+    Per project policy (no hard delete), the original is marked done so
+    the user can still find it via the Done filter if they regret it."""
+    user_id = session["user_id"]
+
+    rows = get("inbox_links", params={
+        "id": f"eq.{item_id}",
+        "user_id": f"eq.{user_id}",
+        "select": "id,url,title,description,content_type,category",
+    }) or []
+    if not rows:
+        return jsonify({"error": "not found"}), 404
+
+    src = rows[0]
+    url = src.get("url") or ""
+    if not url:
+        return jsonify({"error": "saved row has no url"}), 422
+
+    # Map inbox content_type → travel_reads kind. Inbox uses "video" for
+    # YouTube already; everything else collapses to "article".
+    kind = "video" if (src.get("content_type") or "").lower() == "video" else "article"
+    domain = ""
+    try:
+        from urllib.parse import urlparse
+        domain = urlparse(url).hostname or ""
+        domain = domain.replace("www.", "")
+    except Exception:
+        pass
+
+    # If it's a YouTube URL, fetch real duration so the queue total is
+    # accurate without the user having to type a number.
+    duration_minutes = None
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if api_key:
+        vid = _yt_extract_id(url)
+        if vid:
+            try:
+                r = http_requests.get(
+                    "https://www.googleapis.com/youtube/v3/videos",
+                    params={"id": vid, "part": "contentDetails", "key": api_key},
+                    timeout=6,
+                )
+                if r.status_code == 200:
+                    items = r.json().get("items", [])
+                    if items:
+                        secs = _yt_parse_duration(
+                            items[0].get("contentDetails", {}).get("duration", "")
+                        )
+                        if secs:
+                            duration_minutes = max(1, round(secs / 60))
+            except Exception:
+                pass
+
+    travel_row = {
+        "user_id": user_id,
+        "url": url,
+        "title": (src.get("title") or url)[:240],
+        "description": (src.get("description") or "")[:600],
+        "source": domain,
+        "kind": kind,
+        "priority": "medium",
+        "status": "queued",
+    }
+    if duration_minutes:
+        travel_row["duration_minutes"] = duration_minutes
+
+    try:
+        post("travel_reads", travel_row)
+    except Exception as e:
+        logger.warning("move_to_travel insert failed: %s", e)
+        return jsonify({"error": "Could not add to TravelReads"}), 500
+
+    # Soft-delete: mark Done in inbox so it disappears from the default
+    # "Unread" filter but is still recoverable via the Done filter.
+    update(
+        "inbox_links",
+        params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+        json={"status": "Done"},
+    )
+    return jsonify({"success": True, "kind": kind, "duration_minutes": duration_minutes})
+
+
+@inbox_bp.route("/api/inbox/channel-uploads", methods=["GET"])
+@login_required
+def channel_uploads():
+    """List recent uploads from a YouTube channel, given either the
+    channel's id (cheaper, 2 calls) or a video id from that channel
+    (3 calls — first looks up the channel from the video).
+
+    Returns the same shape as /api/inbox/search results, including
+    duration / view count, so the frontend can reuse its render path."""
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "GOOGLE_API_KEY not set"}), 503
+
+    channel_id = request.args.get("channelId", "").strip()
+    video_id = request.args.get("videoId", "").strip()
+
+    # If the caller only knows a video id, look up its channel first.
+    if not channel_id and video_id:
+        try:
+            r = http_requests.get(
+                "https://www.googleapis.com/youtube/v3/videos",
+                params={"id": video_id, "part": "snippet", "key": api_key},
+                timeout=6,
+            )
+            if r.status_code != 200:
+                return jsonify({"error": "Could not look up video"}), 502
+            items = r.json().get("items", [])
+            if not items:
+                return jsonify({"error": "video not found"}), 404
+            channel_id = items[0]["snippet"].get("channelId", "")
+        except Exception as e:
+            logger.warning("channel_uploads video lookup failed: %s", e)
+            return jsonify({"error": "lookup failed"}), 500
+
+    if not channel_id:
+        return jsonify({"error": "channelId or videoId required"}), 400
+
+    try:
+        # channels.list → uploads playlist id + channel name + sub count
+        r = http_requests.get(
+            "https://www.googleapis.com/youtube/v3/channels",
+            params={
+                "id": channel_id,
+                "part": "contentDetails,snippet,statistics",
+                "key": api_key,
+            },
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return jsonify({"error": "channel lookup failed"}), 502
+        chans = r.json().get("items", [])
+        if not chans:
+            return jsonify({"error": "channel not found"}), 404
+        chan = chans[0]
+        uploads_id = (
+            chan.get("contentDetails", {})
+                .get("relatedPlaylists", {})
+                .get("uploads", "")
+        )
+        chan_title = chan.get("snippet", {}).get("title", "")
+        chan_thumb = (
+            chan.get("snippet", {}).get("thumbnails", {})
+                .get("default", {}).get("url", "")
+        )
+        chan_stats = chan.get("statistics", {}) or {}
+        subs = (
+            None if chan_stats.get("hiddenSubscriberCount")
+            else int(chan_stats.get("subscriberCount", 0) or 0)
+        )
+
+        # playlistItems.list → 10 most recent uploads
+        r = http_requests.get(
+            "https://www.googleapis.com/youtube/v3/playlistItems",
+            params={
+                "playlistId": uploads_id,
+                "part": "snippet",
+                "maxResults": 10,
+                "key": api_key,
+            },
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return jsonify({"error": "uploads lookup failed"}), 502
+        uploads = []
+        for it in r.json().get("items", []):
+            snip = it.get("snippet", {}) or {}
+            vid = (snip.get("resourceId") or {}).get("videoId", "")
+            if not vid:
+                continue
+            uploads.append({
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "title": snip.get("title", ""),
+                "description": (snip.get("description") or "")[:200],
+                "thumbnail": (snip.get("thumbnails") or {})
+                              .get("medium", {}).get("url", ""),
+                "channel": chan_title,
+                "channel_id": channel_id,
+            })
+
+        # Enrich with duration + view count for each. Reuses the same
+        # helper the search endpoint uses, so the frontend can render
+        # uploads with the exact same component.
+        uploads = _yt_enrich(uploads, api_key)
+        return jsonify({
+            "channel": {
+                "id": channel_id,
+                "title": chan_title,
+                "thumbnail": chan_thumb,
+                "subscriber_count": subs,
+            },
+            "uploads": uploads,
+        })
+    except Exception as e:
+        logger.warning("channel_uploads exception: %s", e)
+        return jsonify({"error": f"failed: {e}"}), 500
+
+
 @inbox_bp.route("/api/inbox/preview", methods=["GET"])
 @login_required
 def inbox_preview():
@@ -498,6 +809,10 @@ def search_web():
                 "thumbnail": snip.get("thumbnails", {}).get("medium", {}).get("url", ""),
                 "channel": snip.get("channelTitle", ""),
             })
+        # Enrich with duration / view count / subscriber count so the
+        # frontend can show "5:42 · 2.1M views · 240K subs" and the
+        # user can decide whether to add or skip.
+        results = _yt_enrich(results, api_key)
         return jsonify(results)
     except Exception as e:
         logger.exception("YouTube search exception: q=%r err=%s", query[:80], e)
