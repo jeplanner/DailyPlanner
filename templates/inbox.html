@@ -401,14 +401,25 @@ async function doSearchAll(query) {
     fetchOne(`/api/inbox/search-articles?q=${encodeURIComponent(query)}`),
   ]);
 
-  document.getElementById("sr-youtube").innerHTML  = renderYouTubeSection(yt);
+  // Both updates are guarded against null — when the user types
+  // quickly, debounced calls overlap; an earlier call's await may
+  // resolve after a later call has already wiped the panel and
+  // re-mounted (or removed) the section divs. Without these guards
+  // the previous version threw "Cannot read properties of null
+  // (reading 'remove')" mid-render and aborted the whole panel,
+  // which made YouTube look broken too.
+  const ytEl = document.getElementById("sr-youtube");
+  if (ytEl) ytEl.innerHTML = renderYouTubeSection(yt);
+
   // Articles section: render only when there are actual results.
-  // Errors and empty responses both collapse to nothing so the YouTube
-  // panel can breathe.
+  // Errors and empty responses both collapse to nothing so the
+  // YouTube panel can breathe.
   const artHtml = renderArticlesSectionMaybe(art);
   const artEl = document.getElementById("sr-articles");
-  if (artHtml) artEl.innerHTML = artHtml;
-  else artEl.remove();
+  if (artEl) {
+    if (artHtml) artEl.innerHTML = artHtml;
+    else artEl.remove();
+  }
 
   if (typeof feather !== "undefined") feather.replace();
 }
