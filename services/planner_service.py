@@ -828,6 +828,72 @@ def get_weekly_summary(start_date, end_date, planner_mode="slots"):
                 completed_minutes += 30
 
     # ----------------------------
+    # ENRICH days {} WITH OTHER TASK SOURCES
+    # The legacy weekly/monthly view only pulled daily_events /
+    # daily_slots. Users who track tasks in the Eisenhower matrix
+    # (todo_matrix) or as project tasks (project_tasks) had a
+    # day-by-day view that was empty for most days. Fold those
+    # rows in too so the monthly review actually shows what was
+    # on the user's plate each day.
+    try:
+        matrix_rows = get(
+            "todo_matrix",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "plan_date": f"gte.{start_date}",
+                "and": f"(plan_date.lte.{end_date})",
+                "select": "id,plan_date,task_text,task_time,is_done,status,quadrant",
+                "order": "plan_date.asc,task_time.asc.nullslast",
+                "limit": "2000",
+            },
+        ) or []
+    except Exception:
+        matrix_rows = []
+    for r in matrix_rows:
+        d = r.get("plan_date")
+        text = (r.get("task_text") or "").strip()
+        if not d or not text:
+            continue
+        tt = (r.get("task_time") or "")[:5]
+        days.setdefault(d, []).append({
+            "id": "matrix-" + str(r.get("id")),
+            "slot": None,
+            "label": tt or "Anytime",
+            "text": text,
+            "done": bool(r.get("is_done")) or r.get("status") == "done",
+        })
+    # Project tasks dated within the range
+    try:
+        proj_rows = get(
+            "project_tasks",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_eliminated": "eq.false",
+                "or": f"(start_date.gte.{start_date},revised_due_date.gte.{start_date})",
+                "and": f"(or(start_date.lte.{end_date},revised_due_date.lte.{end_date}))",
+                "select": "id,start_date,revised_due_date,task_text,status",
+                "limit": "2000",
+            },
+        ) or []
+    except Exception:
+        proj_rows = []
+    for r in proj_rows:
+        d = r.get("revised_due_date") or r.get("start_date")
+        text = (r.get("task_text") or "").strip()
+        if not d or not text:
+            continue
+        if d < str(start_date) or d > str(end_date):
+            continue
+        days.setdefault(d, []).append({
+            "id": "pt-" + str(r.get("id")),
+            "slot": None,
+            "label": "Project",
+            "text": text,
+            "done": r.get("status") == "done",
+        })
+
+    # ----------------------------
     # META PROCESSING
     # ----------------------------
     habit_days = 0

@@ -264,6 +264,49 @@
     refreshFeather();
     wireRows();
     wireDragDrop();
+    wireSwipeRight();
+  };
+
+  // ─────────── swipe-right on a row to mark done ────────────
+  const wireSwipeRight = () => {
+    const TH = 90, YT = 30;
+    $$("#qb-groups .qb-row").forEach(row => {
+      const id = row.dataset.id;
+      const it = items.find(x => x.id === id);
+      if (!it || it.is_done) return;
+      let sx = 0, sy = 0, active = false;
+      const reset = () => {
+        row.style.transition = "transform .2s ease, background .15s";
+        row.style.transform = ""; row.style.background = "";
+        active = false;
+      };
+      row.addEventListener("touchstart", (e) => {
+        if (!e.touches || e.touches.length !== 1) return;
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+        active = true; row.style.transition = "background .15s";
+      }, { passive: true });
+      row.addEventListener("touchmove", (e) => {
+        if (!active || !e.touches?.length) return;
+        const dx = e.touches[0].clientX - sx;
+        const dy = Math.abs(e.touches[0].clientY - sy);
+        if (dy > YT) { reset(); return; }
+        if (dx > 0) {
+          row.style.transform = `translateX(${Math.min(dx, 200)}px)`;
+          row.style.background = dx >= TH ? "#E6F4F1" : "";
+        }
+      }, { passive: true });
+      row.addEventListener("touchend", (e) => {
+        if (!active) return;
+        const dx = (e.changedTouches?.[0]?.clientX ?? sx) - sx;
+        if (dx >= TH) {
+          row.style.transition = "transform .25s ease";
+          row.style.transform = "translateX(110%)";
+          markDone(it);
+          setTimeout(reset, 260);
+        } else { reset(); }
+      }, { passive: true });
+      row.addEventListener("touchcancel", reset, { passive: true });
+    });
   };
 
   // ─────────── drag-and-drop reorder ────────────────────────
@@ -414,11 +457,21 @@
     }
   };
 
+  // Rotating one-liner celebrations so closing a task feels good.
+  const CHEERS = [
+    "Boom!", "Crushed it.", "One down.", "Look at you go.",
+    "Way to go!", "Onward 💪", "Nice work.", "Momentum!",
+    "That's the way.", "Solid.", "Stacking wins.", "Done & dusted.",
+    "Keep rolling.", "Good progress.",
+  ];
+  const cheer = () => CHEERS[Math.floor(Math.random() * CHEERS.length)];
+
   const markDone = async (it) => {
     try {
       await apiFetch(`/api/quick-bucket/${it.id}/done`, { method: "POST", body: "{}" });
       it.is_done = true;
       it.done_at = new Date().toISOString();
+      toast(cheer(), "success");
       // Closed items stay in `items` so the Done group can render them.
       render();
     } catch (err) {
