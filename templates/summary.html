@@ -344,6 +344,46 @@
     /* Done rows visibly fade and strike through. */
     .md-agenda-table tr.md-done .md-row-title { text-decoration: line-through; opacity: .55; }
 
+    /* ── UNIFIED CHECKBOX SIZE ───────────────────────────────
+       Both today's-flow and overdue rows render the toggle the
+       same way, so the left column is visually identical across
+       sections. Sized to ~ 20 px (touch-friendly on mobile). */
+    .md-c-status .md-task-toggle,
+    .md-c-status .md-task-toggle-status {
+      width: 20px; height: 20px;
+      border-radius: 4px;
+      border: 1.5px solid var(--color-text-tertiary, #9ca3af);
+      background: transparent; cursor: pointer;
+      flex: 0 0 auto;
+      padding: 0;
+      transition: background .12s, border-color .12s;
+    }
+    .md-c-status .md-task-toggle:hover,
+    .md-c-status .md-task-toggle-status:hover {
+      border-color: var(--color-primary, #4338ca);
+    }
+    .md-c-status .md-task-toggle::after,
+    .md-c-status .md-task-toggle-status::after {
+      content: ""; display: block;
+    }
+    .md-c-status .md-check {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px;
+      border-radius: 4px;
+    }
+    .md-c-status .md-check-done {
+      background: var(--color-primary, #4338ca);
+      border: 1.5px solid var(--color-primary, #4338ca);
+      color: #fff;
+    }
+    .md-c-status .md-check-done svg { width: 12px; height: 12px; }
+    .md-c-status .md-check-open {
+      border: 1.5px solid var(--color-text-tertiary, #9ca3af);
+    }
+    /* Constrain the status column so the title aligns at the same
+       x-coordinate across all rows. */
+    .md-c-status { min-width: 24px; max-width: 24px; }
+
     /* ── HEADINGS-FREE DAILY VIEW ───────────────────────────
        User wants no card headers anywhere except "Parked tasks".
        Render order is overdue → today → parked, so the eye moves
