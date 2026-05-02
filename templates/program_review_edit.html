@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{{ review.program_name if review else 'New program review' }} — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .pe-app { max-width: 980px; margin: 0 auto; padding: 18px 20px 80px; }
+
+    /* Top bar */
+    .pe-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .pe-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .pe-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .pe-back svg { width: 14px; height: 14px; }
+
+    .pe-status { margin-left: auto; font-size: 12.5px; color: var(--color-text-muted); }
+    .pe-status.saved { color: #16a34a; }
+    .pe-status.saving { color: var(--color-primary); }
+    .pe-status.error { color: var(--color-danger); }
+
+    .pe-icon-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      background: transparent; color: var(--color-text-muted);
+      border: 1px solid var(--color-border); border-radius: 8px;
+      font: inherit; font-size: 12.5px; cursor: pointer;
+      text-decoration: none;
+    }
+    .pe-icon-btn:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+    .pe-icon-btn.danger:hover { color: var(--color-danger); border-color: var(--color-danger); }
+    .pe-icon-btn.primary {
+      background: #f59e0b; color: #fff; border-color: #f59e0b;
+    }
+    .pe-icon-btn.primary:hover { background: #d97706; border-color: #d97706; color: #fff; }
+    .pe-icon-btn svg { width: 13px; height: 13px; }
+
+    /* Title */
+    .pe-title-input {
+      width: 100%;
+      padding: 8px 0;
+      border: none; outline: none; background: transparent;
+      font: inherit;
+      font-size: 28px; font-weight: 800; letter-spacing: -.02em;
+      color: var(--color-text);
+      margin-bottom: 4px;
+    }
+    .pe-title-input::placeholder { color: var(--color-text-muted); font-weight: 700; }
+
+    .pe-meta-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .pe-input, .pe-select {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid var(--color-border); border-radius: 8px;
+      background: var(--color-surface);
+      font: inherit; font-size: 13.5px; color: var(--color-text);
+    }
+    .pe-input:focus, .pe-select:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-ring);
+    }
+
+    /* History strip */
+    .pe-history-strip {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 10px 14px;
+      background: var(--color-surface-sunken);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      margin-bottom: 18px;
+      font-size: 12px;
+    }
+    html.dark .pe-history-strip { background: #0f1729; border-color: #28344a; }
+    .pe-history-label {
+      font-weight: 700; color: var(--color-text-muted);
+      text-transform: uppercase; letter-spacing: .05em;
+      font-size: 11px;
+      align-self: center;
+      margin-right: 4px;
+    }
+    .pe-history-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 999px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .pe-history-chip:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+    .pe-history-chip.is-current {
+      background: var(--color-primary-light); color: var(--color-primary);
+      border-color: var(--color-primary); font-weight: 700;
+    }
+    html.dark .pe-history-chip.is-current { background: rgba(37,99,235,.22); color: #93c5fd; }
+    .pe-history-rag {
+      width: 8px; height: 8px; border-radius: 50%;
+    }
+    .pe-history-rag.red { background: #dc2626; }
+    .pe-history-rag.amber { background: #f59e0b; }
+    .pe-history-rag.green { background: #16a34a; }
+
+    /* Sections */
+    .pe-section {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 14px;
+    }
+    html.dark .pe-section { background: #111a2c; border-color: #28344a; }
+
+    .pe-section-head {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--color-border-light);
+    }
+    .pe-section-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--color-primary); color: var(--color-on-primary);
+      font-size: 11px; font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .pe-section-title { font-size: 15px; font-weight: 700; }
+    .pe-section-help {
+      margin-left: auto;
+      font-size: 12px; color: var(--color-text-muted);
+      font-style: italic;
+    }
+
+    .pe-field { margin-bottom: 12px; }
+    .pe-field:last-child { margin-bottom: 0; }
+    .pe-field-label {
+      display: block;
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-bottom: 6px;
+    }
+    .pe-field-help {
+      font-size: 11.5px; color: var(--color-text-muted);
+      font-weight: 500; text-transform: none; letter-spacing: 0;
+      font-style: italic;
+      margin-left: 6px;
+    }
+
+    .pe-textarea {
+      width: 100%;
+      min-height: 70px;
+      padding: 9px 12px;
+      border: 1px solid var(--color-border); border-radius: 8px;
+      background: var(--color-bg);
+      font: inherit; font-size: 14px; color: var(--color-text);
+      line-height: 1.55;
+      resize: vertical;
+    }
+    html.dark .pe-textarea { background: #0b1220; }
+    .pe-textarea:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: 0 0 0 3px var(--color-primary-ring);
+    }
+    .pe-textarea::placeholder { color: var(--color-text-muted); }
+
+    .pe-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .pe-grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* RAG selector */
+    .pe-rag-group {
+      display: inline-flex; gap: 4px;
+      padding: 3px;
+      background: var(--color-surface-sunken);
+      border-radius: 8px;
+    }
+    .pe-rag-btn {
+      padding: 5px 14px;
+      border: none; background: transparent;
+      font: inherit; font-size: 12px; font-weight: 700;
+      letter-spacing: .04em; text-transform: uppercase;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--color-text-muted);
+    }
+    .pe-rag-btn:hover { color: var(--color-text); }
+    .pe-rag-btn.is-active.red { background: #fee2e2; color: #b91c1c; }
+    .pe-rag-btn.is-active.amber { background: #fef3c7; color: #92400e; }
+    .pe-rag-btn.is-active.green { background: #dcfce7; color: #166534; }
+    html.dark .pe-rag-btn.is-active.red { background: rgba(220,38,38,.22); color: #fca5a5; }
+    html.dark .pe-rag-btn.is-active.amber { background: rgba(245,158,11,.22); color: #fbbf24; }
+    html.dark .pe-rag-btn.is-active.green { background: rgba(22,163,74,.22); color: #86efac; }
+
+    /* Row-editor (workstreams, milestones, risks, decisions) */
+    .pe-rows { display: flex; flex-direction: column; gap: 8px; }
+    .pe-row {
+      display: grid;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      align-items: start;
+    }
+    html.dark .pe-row { background: #0b1220; }
+
+    .pe-row.workstream {
+      grid-template-columns: minmax(140px, 1.5fr) minmax(120px, 1fr) auto minmax(220px, 2.5fr) auto;
+    }
+    .pe-row.milestone {
+      grid-template-columns: minmax(160px, 2fr) 140px 120px auto;
+    }
+    .pe-row.risk {
+      grid-template-columns: minmax(180px, 1.8fr) 110px 110px minmax(140px, 1.4fr) 130px 120px auto;
+    }
+    .pe-row.decision {
+      grid-template-columns: minmax(140px, 1.2fr) minmax(220px, 2fr) minmax(160px, 1.4fr) minmax(180px, 1.4fr) auto;
+    }
+
+    .pe-row .pe-input {
+      padding: 7px 10px; font-size: 13px;
+    }
+    .pe-row .pe-textarea {
+      min-height: 38px; padding: 7px 10px; font-size: 13px;
+    }
+    .pe-row-rm {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px;
+      border: none; border-radius: 6px;
+      background: transparent; color: var(--color-text-muted);
+      cursor: pointer;
+      align-self: center;
+    }
+    .pe-row-rm:hover { background: rgba(220,38,38,.12); color: #b91c1c; }
+    .pe-row-rm svg { width: 14px; height: 14px; }
+
+    .pe-row-rag {
+      display: inline-flex; gap: 2px;
+      padding: 2px;
+      background: var(--color-surface-sunken);
+      border-radius: 6px;
+      align-self: center;
+    }
+    .pe-row-rag button {
+      width: 26px; height: 26px;
+      border: none; background: transparent;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 700; font-size: 11px;
+      color: var(--color-text-muted);
+    }
+    .pe-row-rag button.is-active.red { background: #dc2626; color: #fff; }
+    .pe-row-rag button.is-active.amber { background: #f59e0b; color: #fff; }
+    .pe-row-rag button.is-active.green { background: #16a34a; color: #fff; }
+
+    .pe-row-status {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 5px 10px;
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      background: var(--color-surface);
+      font-size: 12px; font-weight: 600;
+      cursor: pointer;
+      min-width: 95px;
+      align-self: center;
+    }
+    .pe-row-status.hit { background: #dcfce7; color: #166534; border-color: #86efac; }
+    .pe-row-status.slipped { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+    .pe-row-status.missed { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+    .pe-row-status.upcoming { background: var(--color-surface); color: var(--color-text-muted); }
+
+    .pe-add-row {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 12px;
+      background: transparent;
+      border: 1px dashed var(--color-border); border-radius: 8px;
+      color: var(--color-text-muted);
+      font: inherit; font-size: 12.5px; font-weight: 600;
+      cursor: pointer;
+      align-self: flex-start;
+    }
+    .pe-add-row:hover {
+      background: var(--color-surface-secondary);
+      border-color: var(--color-border-strong);
+      color: var(--color-text);
+    }
+    .pe-add-row svg { width: 13px; height: 13px; }
+
+    .pe-rows-empty {
+      padding: 14px;
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 12.5px;
+      font-style: italic;
+    }
+
+    /* Mobile collapse: stack row fields vertically */
+    @media (max-width: 800px) {
+      .pe-app { padding: 14px 12px 80px; }
+      .pe-title-input { font-size: 22px; }
+      .pe-meta-row { grid-template-columns: 1fr; }
+      .pe-grid-2, .pe-grid-3 { grid-template-columns: 1fr; }
+      .pe-row.workstream, .pe-row.milestone, .pe-row.risk, .pe-row.decision {
+        grid-template-columns: 1fr auto;
+      }
+      .pe-row > * { grid-column: 1; }
+      .pe-row .pe-row-rm { grid-column: 2; grid-row: 1; }
+      .pe-section-help { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="pe-app">
+
+  <div class="pe-bar">
+    <a href="/programs" class="pe-back">
+      <i data-feather="arrow-left"></i> Programs
+    </a>
+    <span class="pe-status" id="pe-save-status">{% if not review %}Not saved yet{% else %}Saved{% endif %}</span>
+    {% if review %}
+      <button type="button" class="pe-icon-btn primary" onclick="cloneReview()" title="Spawn next-period review (workstreams + milestones carry over, statuses reset)">
+        <i data-feather="copy"></i> Clone for next period
+      </button>
+      <button type="button" class="pe-icon-btn danger" onclick="deleteReview()">
+        <i data-feather="trash-2"></i> Delete
+      </button>
+    {% endif %}
+  </div>
+
+  <input
+    type="text" class="pe-title-input" id="pe-program-name"
+    placeholder="Program name — e.g. Platform Modernization"
+    value="{{ review.program_name if review else prefill_program }}"
+    list="pe-programs-list"
+    autocomplete="off"
+  >
+  <datalist id="pe-programs-list">
+    {% for name in existing_programs %}
+      <option value="{{ name }}">
+    {% endfor %}
+  </datalist>
+
+  <div class="pe-meta-row">
+    <input
+      type="date" class="pe-input" id="pe-review-date"
+      value="{{ review.review_date if review else '' }}"
+    >
+    <select class="pe-select" id="pe-cadence">
+      {% set cur_cadence = (review.cadence if review else 'monthly') %}
+      <option value="weekly" {% if cur_cadence == 'weekly' %}selected{% endif %}>Weekly</option>
+      <option value="monthly" {% if cur_cadence == 'monthly' %}selected{% endif %}>Monthly</option>
+      <option value="quarterly" {% if cur_cadence == 'quarterly' %}selected{% endif %}>Quarterly</option>
+      <option value="board" {% if cur_cadence == 'board' %}selected{% endif %}>Board</option>
+      <option value="adhoc" {% if cur_cadence == 'adhoc' %}selected{% endif %}>Ad-hoc</option>
+    </select>
+    <div class="pe-rag-group" id="pe-overall-rag" data-rag="{{ review.overall_rag if review else 'green' }}">
+      <button type="button" class="pe-rag-btn red" data-val="red">Red</button>
+      <button type="button" class="pe-rag-btn amber" data-val="amber">Amber</button>
+      <button type="button" class="pe-rag-btn green" data-val="green">Green</button>
+    </div>
+  </div>
+
+  {% if history and history|length > 0 %}
+  <div class="pe-history-strip">
+    <span class="pe-history-label">History:</span>
+    {% for h in history %}
+      <a class="pe-history-chip {% if review and h.id == review.id %}is-current{% endif %}"
+         href="/programs/{{ h.id }}">
+        <span class="pe-history-rag {{ h.overall_rag or 'green' }}"></span>
+        {{ h.review_date or '—' }}
+      </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- ─── Section 1: Scorecard ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">1</span>
+      <span class="pe-section-title">Scorecard <span class="pe-field-help">(the one-pager)</span></span>
+      <span class="pe-section-help">what they read 24h before the meeting</span>
+    </div>
+
+    <div class="pe-field">
+      <label class="pe-field-label">Overall status (one line)</label>
+      <input class="pe-input" id="pe-overall-status"
+        placeholder="e.g. On track with risk — workstream B 2 weeks behind"
+        value="{{ review.overall_status if review else '' }}"
+      >
+    </div>
+
+    <div class="pe-field">
+      <label class="pe-field-label">Executive summary <span class="pe-field-help">(5 bullets max)</span></label>
+      <textarea class="pe-textarea" id="pe-exec-summary" style="min-height: 110px"
+        placeholder="• 3 milestones hit, 1 slipped&#10;• Budget at 45%, on plan&#10;• Workstream B 2 weeks behind — contractor ramp underway&#10;• Top risk: senior infra hire still open&#10;• Need: $200k bridge approved this meeting"
+      >{{ review.exec_summary if review else '' }}</textarea>
+    </div>
+
+    <div class="pe-grid-2">
+      <div class="pe-field">
+        <label class="pe-field-label">Timeline status</label>
+        <input class="pe-input" id="pe-timeline-status"
+          placeholder="e.g. 2 weeks behind on workstream B"
+          value="{{ review.timeline_status if review else '' }}"
+        >
+      </div>
+      <div class="pe-field">
+        <label class="pe-field-label">Top risk headline</label>
+        <input class="pe-input" id="pe-top-risk"
+          placeholder="e.g. Senior infra hire still open (60 days)"
+          value="{{ review.top_risk_headline if review else '' }}"
+        >
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Section 2: Objectives ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">2</span>
+      <span class="pe-section-title">Program objectives</span>
+      <span class="pe-section-help">recap — in business terms</span>
+    </div>
+
+    <div class="pe-field">
+      <textarea class="pe-textarea" id="pe-objectives" style="min-height: 90px"
+        placeholder="Why this program exists. Outcomes (not features). What success looks like in customer / revenue / risk terms."
+      >{{ review.objectives if review else '' }}</textarea>
+    </div>
+  </div>
+
+  <!-- ─── Section 3: Workstreams (RAG table) ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">3</span>
+      <span class="pe-section-title">Workstreams (RAG)</span>
+      <span class="pe-section-help">each track, owner, status, this-period update</span>
+    </div>
+    <div class="pe-rows" id="pe-workstreams"></div>
+    <button type="button" class="pe-add-row" onclick="WORKSTREAMS.add()">
+      <i data-feather="plus"></i> Add workstream
+    </button>
+  </div>
+
+  <!-- ─── Section 4: Milestones ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">4</span>
+      <span class="pe-section-title">Milestones</span>
+      <span class="pe-section-help">past 90d + next 90d, click status to cycle</span>
+    </div>
+    <div class="pe-rows" id="pe-milestones"></div>
+    <button type="button" class="pe-add-row" onclick="MILESTONES.add()">
+      <i data-feather="plus"></i> Add milestone
+    </button>
+  </div>
+
+  <!-- ─── Section 5: Financials ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">5</span>
+      <span class="pe-section-title">Financials</span>
+      <span class="pe-section-help">budget vs actual</span>
+    </div>
+
+    <div class="pe-grid-3">
+      <div class="pe-field">
+        <label class="pe-field-label">Total budget</label>
+        <input type="number" class="pe-input" id="pe-budget-total" min="0" step="0.01"
+          placeholder="e.g. 4000000"
+          value="{{ review.budget_total if review and review.budget_total is not none else '' }}"
+        >
+      </div>
+      <div class="pe-field">
+        <label class="pe-field-label">Spent to date</label>
+        <input type="number" class="pe-input" id="pe-budget-spent" min="0" step="0.01"
+          placeholder="e.g. 1800000"
+          value="{{ review.budget_spent if review and review.budget_spent is not none else '' }}"
+        >
+      </div>
+      <div class="pe-field">
+        <label class="pe-field-label">Currency</label>
+        <input class="pe-input" id="pe-budget-currency" maxlength="6"
+          placeholder="USD"
+          value="{{ review.budget_currency if review else 'USD' }}"
+        >
+      </div>
+    </div>
+    <div class="pe-field">
+      <label class="pe-field-label">Variance note</label>
+      <input class="pe-input" id="pe-budget-variance"
+        placeholder="e.g. on plan / over by $80k due to vendor X / under by $100k, deferring training"
+        value="{{ review.budget_variance_note if review else '' }}"
+      >
+    </div>
+  </div>
+
+  <!-- ─── Section 6: Risks ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">6</span>
+      <span class="pe-section-title">Top risks + mitigations</span>
+      <span class="pe-section-help">3 max — likelihood × impact, with owner</span>
+    </div>
+    <div class="pe-rows" id="pe-risks"></div>
+    <button type="button" class="pe-add-row" onclick="RISKS.add()">
+      <i data-feather="plus"></i> Add risk
+    </button>
+  </div>
+
+  <!-- ─── Section 7: Business impact ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">7</span>
+      <span class="pe-section-title">Business impact</span>
+      <span class="pe-section-help">technical → revenue / customer / risk</span>
+    </div>
+
+    <div class="pe-field">
+      <textarea class="pe-textarea" id="pe-business-impact" style="min-height: 100px"
+        placeholder="e.g. Deployment time cut from 45 min → 6 min for 80% of services. Engineers shipping 2.3× more frequently. Two months from full rollout."
+      >{{ review.business_impact if review else '' }}</textarea>
+    </div>
+  </div>
+
+  <!-- ─── Section 8: Decisions needed ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">8</span>
+      <span class="pe-section-title">Decisions needed</span>
+      <span class="pe-section-help">one row per decision</span>
+    </div>
+    <div class="pe-rows" id="pe-decisions"></div>
+    <button type="button" class="pe-add-row" onclick="DECISIONS.add()">
+      <i data-feather="plus"></i> Add decision
+    </button>
+  </div>
+
+  <!-- ─── Section 9: Asks ─── -->
+  <div class="pe-section">
+    <div class="pe-section-head">
+      <span class="pe-section-num">9</span>
+      <span class="pe-section-title">Asks &amp; dependencies</span>
+      <span class="pe-section-help">people, money, air cover</span>
+    </div>
+
+    <div class="pe-field">
+      <textarea class="pe-textarea" id="pe-asks" style="min-height: 100px"
+        placeholder="• Approve $200k contractor bridge for workstream B&#10;• Need CFO endorsement for vendor extension by Fri&#10;• Block 2hr/week from CTO Q&A office hours for next 4 weeks"
+      >{{ review.asks if review else '' }}</textarea>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const REVIEW_ID = {{ (review.id if review else 'null')|tojson }};
+  const INITIAL_WORKSTREAMS = {{ (review.workstreams if review else [])|tojson }};
+  const INITIAL_MILESTONES = {{ (review.milestones if review else [])|tojson }};
+  const INITIAL_RISKS = {{ (review.risks if review else [])|tojson }};
+  const INITIAL_DECISIONS = {{ (review.decisions if review else [])|tojson }};
+
+  let _currentId = REVIEW_ID;
+  let _saveTimer = null;
+  let _saving = false;
+
+  const statusEl = document.getElementById("pe-save-status");
+  function _setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "pe-status " + (cls || "");
+  }
+
+  function _esc(s) {
+    const d = document.createElement("div");
+    d.textContent = s ?? "";
+    return d.innerHTML;
+  }
+
+  // ─── Row-editor factory ──────────────────────────────────────
+  function makeRowEditor(opts) {
+    // opts: { hostId, rowClass, columns: [{key, type, placeholder, render?}], makeEmpty }
+    const host = document.getElementById(opts.hostId);
+    const rows = [];
+
+    function _rerender() {
+      host.innerHTML = "";
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "pe-rows-empty";
+        empty.textContent = opts.emptyHint || "Click 'Add' below to start.";
+        host.appendChild(empty);
+        return;
+      }
+      rows.forEach((row, idx) => {
+        const el = document.createElement("div");
+        el.className = "pe-row " + opts.rowClass;
+        el.dataset.idx = idx;
+
+        opts.columns.forEach(col => {
+          const slot = col.render
+            ? col.render(row, idx, _scheduleSave, _rerender)
+            : _renderInput(col, row, idx);
+          el.appendChild(slot);
+        });
+
+        const rm = document.createElement("button");
+        rm.type = "button"; rm.className = "pe-row-rm"; rm.title = "Remove row";
+        rm.innerHTML = '<i data-feather="x"></i>';
+        rm.addEventListener("click", () => { rows.splice(idx, 1); _rerender(); _scheduleSave(); });
+        el.appendChild(rm);
+
+        host.appendChild(el);
+      });
+      if (window.feather) feather.replace();
+    }
+
+    function _renderInput(col, row, idx) {
+      const tag = col.type === "textarea" ? "textarea" : "input";
+      const node = document.createElement(tag);
+      node.className = (col.type === "textarea") ? "pe-textarea" : "pe-input";
+      if (col.type && col.type !== "textarea") node.type = col.type;
+      if (col.placeholder) node.placeholder = col.placeholder;
+      node.value = row[col.key] ?? "";
+      node.addEventListener("input", () => {
+        rows[idx][col.key] = node.value;
+        _scheduleSave();
+      });
+      return node;
+    }
+
+    return {
+      load(arr) {
+        rows.length = 0;
+        (arr || []).forEach(r => rows.push({ ...r }));
+        _rerender();
+      },
+      add() {
+        rows.push(opts.makeEmpty());
+        _rerender();
+        _scheduleSave();
+      },
+      data() { return rows.map(r => ({ ...r })); },
+    };
+  }
+
+  // ─── RAG selector helper (for inline workstream RAG) ──────────
+  function _renderRagPicker(row, idx, scheduleSave) {
+    const wrap = document.createElement("div");
+    wrap.className = "pe-row-rag";
+    ["red", "amber", "green"].forEach(v => {
+      const b = document.createElement("button");
+      b.type = "button"; b.dataset.val = v; b.textContent = v[0].toUpperCase();
+      if ((row.rag || "green") === v) b.classList.add("is-active", v);
+      b.addEventListener("click", () => {
+        row.rag = v;
+        wrap.querySelectorAll("button").forEach(x => {
+          x.classList.remove("is-active", "red", "amber", "green");
+          if (x.dataset.val === v) x.classList.add("is-active", v);
+        });
+        scheduleSave();
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
+  // ─── Status cycler for milestones ────────────────────────────
+  const MILESTONE_STATUSES = ["upcoming", "hit", "slipped", "missed"];
+  const MILESTONE_LABELS = { upcoming: "upcoming", hit: "✓ hit", slipped: "⚠ slipped", missed: "✗ missed" };
+
+  function _renderMilestoneStatus(row, idx, scheduleSave) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const cur = row.status || "upcoming";
+    btn.className = "pe-row-status " + cur;
+    btn.textContent = MILESTONE_LABELS[cur];
+    btn.title = "Click to cycle status";
+    btn.addEventListener("click", () => {
+      const i = MILESTONE_STATUSES.indexOf(row.status || "upcoming");
+      const next = MILESTONE_STATUSES[(i + 1) % MILESTONE_STATUSES.length];
+      row.status = next;
+      btn.className = "pe-row-status " + next;
+      btn.textContent = MILESTONE_LABELS[next];
+      scheduleSave();
+    });
+    return btn;
+  }
+
+  // ─── Build the four editors ──────────────────────────────────
+  const WORKSTREAMS = makeRowEditor({
+    hostId: "pe-workstreams", rowClass: "workstream",
+    emptyHint: "Add a workstream — e.g. 'Platform rebuild', 'Data migration'",
+    columns: [
+      { key: "name", placeholder: "Workstream name" },
+      { key: "owner", placeholder: "Owner" },
+      { key: "rag", render: _renderRagPicker },
+      { key: "update", type: "textarea", placeholder: "This-period update" },
+    ],
+    makeEmpty: () => ({ name: "", owner: "", rag: "green", update: "" }),
+  });
+
+  const MILESTONES = makeRowEditor({
+    hostId: "pe-milestones", rowClass: "milestone",
+    emptyHint: "Add a milestone — past or upcoming.",
+    columns: [
+      { key: "label", placeholder: "Milestone label" },
+      { key: "due_date", type: "date" },
+      { key: "status", render: _renderMilestoneStatus },
+    ],
+    makeEmpty: () => ({ label: "", due_date: "", status: "upcoming" }),
+  });
+
+  const RISKS = makeRowEditor({
+    hostId: "pe-risks", rowClass: "risk",
+    emptyHint: "Add a top risk — keep to 3 for the exec deck.",
+    columns: [
+      { key: "risk", placeholder: "What could go wrong?" },
+      { key: "likelihood", placeholder: "low / med / high" },
+      { key: "impact", placeholder: "low / med / high" },
+      { key: "mitigation", placeholder: "Mitigation plan" },
+      { key: "owner", placeholder: "Owner" },
+      { key: "target_date", type: "date" },
+    ],
+    makeEmpty: () => ({ risk: "", likelihood: "med", impact: "med", mitigation: "", owner: "", target_date: "" }),
+  });
+
+  const DECISIONS = makeRowEditor({
+    hostId: "pe-decisions", rowClass: "decision",
+    emptyHint: "Add a decision the room needs to make.",
+    columns: [
+      { key: "title", placeholder: "Decision title" },
+      { key: "context", type: "textarea", placeholder: "1-line context" },
+      { key: "options", type: "textarea", placeholder: "Options on the table" },
+      { key: "recommendation", type: "textarea", placeholder: "Your recommendation" },
+    ],
+    makeEmpty: () => ({ title: "", context: "", options: "", recommendation: "" }),
+  });
+
+  // ─── Overall RAG selector ────────────────────────────────────
+  const ragGroup = document.getElementById("pe-overall-rag");
+  function _refreshRagButtons() {
+    const cur = ragGroup.dataset.rag || "green";
+    ragGroup.querySelectorAll(".pe-rag-btn").forEach(b => {
+      b.classList.toggle("is-active", b.dataset.val === cur);
+      ["red","amber","green"].forEach(c => b.classList.remove(c));
+      if (b.dataset.val === cur) b.classList.add(cur);
+    });
+  }
+  ragGroup.querySelectorAll(".pe-rag-btn").forEach(b => {
+    b.addEventListener("click", () => {
+      ragGroup.dataset.rag = b.dataset.val;
+      _refreshRagButtons();
+      _scheduleSave();
+    });
+  });
+
+  // ─── Save plumbing ───────────────────────────────────────────
+  function _gather() {
+    return {
+      id: _currentId,
+      program_name: document.getElementById("pe-program-name").value,
+      review_date: document.getElementById("pe-review-date").value || null,
+      cadence: document.getElementById("pe-cadence").value,
+      overall_rag: ragGroup.dataset.rag || "green",
+      overall_status: document.getElementById("pe-overall-status").value,
+      exec_summary: document.getElementById("pe-exec-summary").value,
+      timeline_status: document.getElementById("pe-timeline-status").value,
+      top_risk_headline: document.getElementById("pe-top-risk").value,
+      budget_total: document.getElementById("pe-budget-total").value,
+      budget_spent: document.getElementById("pe-budget-spent").value,
+      budget_currency: document.getElementById("pe-budget-currency").value,
+      budget_variance_note: document.getElementById("pe-budget-variance").value,
+      objectives: document.getElementById("pe-objectives").value,
+      workstreams: WORKSTREAMS.data(),
+      milestones: MILESTONES.data(),
+      risks: RISKS.data(),
+      decisions: DECISIONS.data(),
+      business_impact: document.getElementById("pe-business-impact").value,
+      asks: document.getElementById("pe-asks").value,
+    };
+  }
+
+  async function _save() {
+    if (_saving) return;
+    _saving = true;
+    _setStatus("Saving…", "saving");
+    try {
+      const r = await fetch("/programs/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(_gather()),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (data.id) {
+        _currentId = data.id;
+        if (history.replaceState) history.replaceState({}, "", "/programs/" + data.id);
+      }
+      _setStatus("Saved", "saved");
+    } catch (e) {
+      _setStatus("Save failed", "error");
+    } finally {
+      _saving = false;
+    }
+  }
+
+  function _scheduleSave() {
+    _setStatus("Editing…", "");
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(_save, 800);
+  }
+
+  // Wire every plain field to autosave.
+  [
+    "pe-program-name", "pe-review-date", "pe-cadence",
+    "pe-overall-status", "pe-exec-summary", "pe-timeline-status", "pe-top-risk",
+    "pe-budget-total", "pe-budget-spent", "pe-budget-currency", "pe-budget-variance",
+    "pe-objectives", "pe-business-impact", "pe-asks",
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("input", _scheduleSave);
+      el.addEventListener("change", _scheduleSave);
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (_saveTimer) {
+      clearTimeout(_saveTimer);
+      navigator.sendBeacon?.("/programs/save",
+        new Blob([JSON.stringify(_gather())], { type: "application/json" })
+      );
+    }
+  });
+
+  async function deleteReview() {
+    if (!_currentId) return;
+    if (!confirm("Delete this review?\n\nIt's a soft-delete — recoverable from the database, never visible here again.")) return;
+    try {
+      const r = await fetch(`/programs/${_currentId}/delete`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      location.href = "/programs";
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't delete", "error");
+    }
+  }
+
+  async function cloneReview() {
+    if (!_currentId) return;
+    if (_saveTimer) { clearTimeout(_saveTimer); await _save(); }
+    if (!confirm("Spawn the next-period review?\n\nWorkstreams + milestones carry over (with statuses reset). Risks and decisions start blank.")) return;
+    try {
+      const r = await fetch(`/programs/${_currentId}/clone`, { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      if (data.id) location.href = "/programs/" + data.id;
+    } catch (e) {
+      if (window.showToast) showToast("Couldn't clone", "error");
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    _refreshRagButtons();
+    WORKSTREAMS.load(INITIAL_WORKSTREAMS);
+    MILESTONES.load(INITIAL_MILESTONES);
+    RISKS.load(INITIAL_RISKS);
+    DECISIONS.load(INITIAL_DECISIONS);
+    if (window.feather) feather.replace();
+  });
+</script>
+
+</body>
+</html>

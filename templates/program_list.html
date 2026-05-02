@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Programs — DailyPlanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+  <script src="https://unpkg.com/feather-icons"></script>
+  <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+  <style>
+    body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+    html.dark body { background: #0b1220; }
+
+    .pg-app { max-width: 1280px; margin: 0 auto; padding: 22px 24px 64px; }
+    .pg-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+    .pg-head h1 { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 4px; }
+    .pg-head p { margin: 0; color: var(--color-text-muted); font-size: 13.5px; }
+
+    .pg-cta {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 16px;
+      background: var(--color-primary); color: var(--color-on-primary);
+      border: none; border-radius: 10px;
+      font: inherit; font-size: 13.5px; font-weight: 600;
+      text-decoration: none; cursor: pointer;
+    }
+    .pg-cta:hover { background: var(--color-primary-hover); }
+    .pg-cta svg { width: 14px; height: 14px; }
+
+    /* RAG portfolio strip */
+    .pg-portfolio {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .pg-rag-tile {
+      padding: 14px 18px;
+      border-radius: 12px;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      display: flex; align-items: center; gap: 12px;
+    }
+    html.dark .pg-rag-tile { background: #111a2c; border-color: #28344a; }
+    .pg-rag-dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 3px rgba(0,0,0,.06);
+    }
+    .pg-rag-dot.red { background: #dc2626; }
+    .pg-rag-dot.amber { background: #f59e0b; }
+    .pg-rag-dot.green { background: #16a34a; }
+    .pg-rag-count {
+      font-size: 22px; font-weight: 800; line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .pg-rag-label {
+      font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      margin-top: 2px;
+    }
+
+    /* Program cards */
+    .pg-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 14px;
+    }
+    .pg-card {
+      position: relative;
+      display: flex; flex-direction: column;
+      padding: 18px 18px 16px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-left: 4px solid var(--color-border);
+      border-radius: 14px;
+      color: var(--color-text);
+      text-decoration: none;
+      transition: border-color .12s, box-shadow .14s;
+      min-height: 220px;
+    }
+    .pg-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+    html.dark .pg-card { background: #111a2c; border-color: #28344a; }
+    html.dark .pg-card:hover { border-color: #3b4865; box-shadow: 0 8px 22px rgba(0,0,0,.45); }
+
+    .pg-card.rag-red { border-left-color: #dc2626; }
+    .pg-card.rag-amber { border-left-color: #f59e0b; }
+    .pg-card.rag-green { border-left-color: #16a34a; }
+
+    .pg-card-head {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .pg-card-name {
+      font-size: 16.5px; font-weight: 800; letter-spacing: -.01em;
+      line-height: 1.3;
+      flex: 1; min-width: 0;
+    }
+    .pg-card-rag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 9px;
+      font-size: 10.5px; font-weight: 800; letter-spacing: .04em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      flex: 0 0 auto;
+    }
+    .pg-card-rag.red { background: #fee2e2; color: #b91c1c; }
+    .pg-card-rag.amber { background: #fef3c7; color: #92400e; }
+    .pg-card-rag.green { background: #dcfce7; color: #166534; }
+    html.dark .pg-card-rag.red { background: rgba(220,38,38,.22); color: #fca5a5; }
+    html.dark .pg-card-rag.amber { background: rgba(245,158,11,.22); color: #fbbf24; }
+    html.dark .pg-card-rag.green { background: rgba(22,163,74,.22); color: #86efac; }
+
+    .pg-card-meta {
+      display: flex; flex-wrap: wrap; gap: 8px 14px;
+      font-size: 11.5px; color: var(--color-text-muted);
+      margin-bottom: 10px;
+    }
+    .pg-card-meta span { display: inline-flex; align-items: center; gap: 4px; }
+    .pg-card-meta svg { width: 11px; height: 11px; }
+
+    .pg-card-status {
+      font-size: 13.5px; line-height: 1.5;
+      color: var(--color-text-secondary);
+      margin-bottom: 10px;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+      overflow: hidden;
+      flex: 1;
+    }
+    .pg-card-status.empty { color: var(--color-text-muted); font-style: italic; }
+
+    .pg-card-stats {
+      display: flex; gap: 12px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--color-border-light);
+      font-size: 11.5px;
+    }
+    .pg-card-stat {
+      display: inline-flex; align-items: center; gap: 4px;
+      color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .pg-card-stat strong { color: var(--color-text); font-weight: 700; }
+    .pg-card-stat.has-warn strong { color: #b45309; }
+    html.dark .pg-card-stat.has-warn strong { color: #fbbf24; }
+    .pg-card-stat.has-bad strong { color: #b91c1c; }
+    html.dark .pg-card-stat.has-bad strong { color: #fca5a5; }
+
+    .pg-card-budget {
+      margin-top: 8px;
+      font-size: 12px; color: var(--color-text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .pg-card-budget-bar {
+      height: 4px; background: var(--color-surface-sunken);
+      border-radius: 2px; margin-top: 4px; overflow: hidden;
+    }
+    .pg-card-budget-fill {
+      height: 100%; background: var(--color-primary);
+      transition: width .3s ease;
+    }
+    .pg-card-budget-fill.over { background: #dc2626; }
+
+    /* History view */
+    .pg-history-bar {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 18px;
+    }
+    .pg-back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 12px;
+      color: var(--color-text-secondary);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+    }
+    .pg-back:hover { background: var(--color-surface-secondary); color: var(--color-text); }
+    .pg-back svg { width: 14px; height: 14px; }
+
+    .pg-history-list {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    html.dark .pg-history-list { background: #111a2c; border-color: #28344a; }
+    .pg-history-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--color-border-light);
+      color: var(--color-text);
+      text-decoration: none;
+    }
+    .pg-history-row:last-child { border-bottom: none; }
+    .pg-history-row:hover { background: var(--color-surface-secondary); }
+    .pg-history-rag-dot {
+      width: 12px; height: 12px; border-radius: 50%;
+      flex: 0 0 auto;
+    }
+    .pg-history-rag-dot.red { background: #dc2626; }
+    .pg-history-rag-dot.amber { background: #f59e0b; }
+    .pg-history-rag-dot.green { background: #16a34a; }
+    .pg-history-date {
+      font-size: 13.5px; font-weight: 700; min-width: 110px;
+      font-variant-numeric: tabular-nums;
+    }
+    .pg-history-cadence {
+      font-size: 11.5px; color: var(--color-text-muted);
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .pg-history-spacer { flex: 1; }
+    .pg-history-arrow svg { width: 14px; height: 14px; color: var(--color-text-muted); }
+
+    .pg-empty {
+      grid-column: 1 / -1;
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--color-text-secondary);
+      background: var(--color-surface);
+      border: 1px dashed var(--color-border);
+      border-radius: 16px;
+    }
+    .pg-empty svg { width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px; }
+    .pg-empty h2 { font-size: 20px; font-weight: 700; color: var(--color-text); margin: 0 0 8px; }
+    .pg-empty p { max-width: 60ch; margin: 0 auto 18px; line-height: 1.55; font-size: 14px; }
+
+    .pg-format {
+      margin-top: 24px;
+      padding: 18px 22px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 14px;
+      text-align: left;
+      max-width: 720px;
+      margin-left: auto; margin-right: auto;
+    }
+    html.dark .pg-format { background: #111a2c; border-color: #28344a; }
+    .pg-format h3 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+    .pg-format ol {
+      margin: 0; padding-left: 20px;
+      font-size: 13px; line-height: 1.7;
+      color: var(--color-text-secondary);
+    }
+
+    @media (max-width: 700px) {
+      .pg-app { padding: 16px 14px 80px; }
+      .pg-portfolio { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="pg-app">
+
+  {% if history is defined and history_program_name %}
+    <!-- ─── History view: every review for one program ─── -->
+    <div class="pg-history-bar">
+      <a href="/programs" class="pg-back">
+        <i data-feather="arrow-left"></i> Programs
+      </a>
+      <div>
+        <h1 style="margin:0;font-size:22px;font-weight:800;letter-spacing:-.01em">{{ history_program_name }}</h1>
+        <p style="margin:0;font-size:12.5px;color:var(--color-text-muted)">
+          {{ history|length }} review{{ 's' if history|length != 1 else '' }} on file
+        </p>
+      </div>
+      <div style="margin-left:auto">
+        <a href="/programs/new?program={{ history_program_name|urlencode }}" class="pg-cta">
+          <i data-feather="plus"></i> New review
+        </a>
+      </div>
+    </div>
+
+    {% if history %}
+      <div class="pg-history-list">
+        {% for r in history %}
+          <a class="pg-history-row" href="/programs/{{ r.id }}">
+            <span class="pg-history-rag-dot {{ r.overall_rag or 'green' }}"
+                  title="overall RAG: {{ r.overall_rag or 'green' }}"></span>
+            <span class="pg-history-date">{{ r.review_date or '—' }}</span>
+            <span class="pg-history-cadence">{{ r.cadence or 'monthly' }}</span>
+            <span class="pg-history-spacer"></span>
+            <span class="pg-history-arrow"><i data-feather="chevron-right"></i></span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="pg-empty">
+        <i data-feather="clock"></i>
+        <h2>No reviews yet for this program</h2>
+        <p>Start the first one — future reviews can clone the workstream and milestone list, so you only fill the changing bits.</p>
+        <a href="/programs/new?program={{ history_program_name|urlencode }}" class="pg-cta">
+          <i data-feather="plus"></i> New review
+        </a>
+      </div>
+    {% endif %}
+
+  {% else %}
+    <!-- ─── Default view: portfolio + program cards ─── -->
+    <header class="pg-head">
+      <div>
+        <h1>Programs</h1>
+        <p>IT program reviews — exec scorecard, RAG by workstream, risks, decisions.</p>
+      </div>
+      <a href="/programs/new" class="pg-cta">
+        <i data-feather="plus"></i> New review
+      </a>
+    </header>
+
+    {% if programs %}
+      <div class="pg-portfolio">
+        <div class="pg-rag-tile">
+          <span class="pg-rag-dot red"></span>
+          <div>
+            <div class="pg-rag-count">{{ rag_counts.red }}</div>
+            <div class="pg-rag-label">Red</div>
+          </div>
+        </div>
+        <div class="pg-rag-tile">
+          <span class="pg-rag-dot amber"></span>
+          <div>
+            <div class="pg-rag-count">{{ rag_counts.amber }}</div>
+            <div class="pg-rag-label">Amber</div>
+          </div>
+        </div>
+        <div class="pg-rag-tile">
+          <span class="pg-rag-dot green"></span>
+          <div>
+            <div class="pg-rag-count">{{ rag_counts.green }}</div>
+            <div class="pg-rag-label">Green</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pg-grid">
+        {% for p in programs %}
+          {% set rag = p.overall_rag or 'green' %}
+          {% set mc = p._milestone_counts %}
+          {% set ws = p._workstream_count %}
+          {% set risks = p._open_risk_count %}
+          {% set hc = p._history_count %}
+          <a class="pg-card rag-{{ rag }}" href="/programs/{{ p.id }}">
+            <div class="pg-card-head">
+              <div class="pg-card-name">{{ p.program_name or '(untitled program)' }}</div>
+              <span class="pg-card-rag {{ rag }}">{{ rag }}</span>
+            </div>
+            <div class="pg-card-meta">
+              <span>
+                <i data-feather="calendar"></i>
+                {{ p.review_date or 'no date' }} · {{ p.cadence or 'monthly' }}
+              </span>
+              {% if hc > 1 %}
+                <a href="/programs/history/{{ (p.program_name or '')|urlencode }}"
+                   onclick="event.stopPropagation()"
+                   style="color:var(--color-primary);text-decoration:none">
+                  <i data-feather="clock"></i> {{ hc }} reviews
+                </a>
+              {% endif %}
+            </div>
+            {% if p.overall_status %}
+              <div class="pg-card-status">{{ p.overall_status }}</div>
+            {% elif p.exec_summary %}
+              <div class="pg-card-status">{{ p.exec_summary[:200] }}{% if p.exec_summary|length > 200 %}…{% endif %}</div>
+            {% else %}
+              <div class="pg-card-status empty">No status set — open to fill</div>
+            {% endif %}
+
+            {% if p.budget_total %}
+              {% set spent = p.budget_spent or 0 %}
+              {% set pct = (spent / p.budget_total * 100) if p.budget_total > 0 else 0 %}
+              <div class="pg-card-budget">
+                {{ p.budget_currency or 'USD' }}
+                {{ '%.0f'|format(spent) }} / {{ '%.0f'|format(p.budget_total) }}
+                ({{ '%.0f'|format(pct) }}%)
+              </div>
+              <div class="pg-card-budget-bar">
+                <div class="pg-card-budget-fill {% if pct > 100 %}over{% endif %}"
+                     style="width: {{ [pct, 100]|min }}%"></div>
+              </div>
+            {% endif %}
+
+            <div class="pg-card-stats">
+              <span class="pg-card-stat">
+                <i data-feather="grid"></i> <strong>{{ ws }}</strong> workstream{{ 's' if ws != 1 else '' }}
+              </span>
+              <span class="pg-card-stat {% if mc.slipped > 0 %}has-warn{% endif %} {% if mc.missed > 0 %}has-bad{% endif %}">
+                <i data-feather="flag"></i>
+                <strong>{{ mc.hit }}✓ {{ mc.slipped }}⚠ {{ mc.missed }}✗</strong>
+              </span>
+              <span class="pg-card-stat {% if risks > 0 %}has-warn{% endif %}">
+                <i data-feather="alert-triangle"></i> <strong>{{ risks }}</strong> risk{{ 's' if risks != 1 else '' }}
+              </span>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="pg-empty">
+        <i data-feather="grid"></i>
+        <h2>No program reviews yet</h2>
+        <p>
+          Each review is a snapshot of one program at a point in time —
+          scorecard, workstreams, milestones, risks, and decisions needed.
+          Future reviews can clone the workstream + milestone list from the
+          previous one, so you only fill the changing bits.
+        </p>
+        <a href="/programs/new" class="pg-cta">
+          <i data-feather="plus"></i> Start your first review
+        </a>
+
+        <div class="pg-format">
+          <h3>The recommended exec format (10 slides)</h3>
+          <ol>
+            <li>Title + RAG scorecard</li>
+            <li>Executive summary (5 bullets)</li>
+            <li>Program objectives (recap)</li>
+            <li>Workstream status (RAG table)</li>
+            <li>Roadmap & milestones</li>
+            <li>Financials (budget vs actual)</li>
+            <li>Top 3 risks + mitigations</li>
+            <li>Business impact / metrics</li>
+            <li>Decisions needed</li>
+            <li>Asks & dependencies</li>
+          </ol>
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "n" || e.key === "N") { e.preventDefault(); location.href = "/programs/new"; }
+  });
+</script>
+
+</body>
+</html>
