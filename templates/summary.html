@@ -544,6 +544,109 @@
       .md-table tr.md-row .md-c-context { display: none !important; }
     }
 
+    /* ═══════════════════════════════════════════════════════════
+       NEW DLY-* row component — completely sidesteps the legacy
+       .md-table system. Used for Today / Tomorrow / This week /
+       Future / Parked sections so the daily view is one coherent
+       visual recipe with zero conflict from the legacy CSS.
+       ═══════════════════════════════════════════════════════════ */
+    .dly-section { margin: 0 0 28px; }
+    .dly-section-head {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 0 0 8px;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: .12em; text-transform: uppercase;
+      color: #64748b;
+    }
+    .dly-section-count {
+      font-size: 11px; font-weight: 700;
+      padding: 1px 8px; border-radius: 999px;
+      background: #f1f5f9; color: #475569;
+      letter-spacing: 0;
+    }
+
+    .dly-list {
+      list-style: none; padding: 0; margin: 0;
+      border-top: 1px solid #f1f5f9;
+    }
+    .dly-row {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      grid-template-areas:
+        "check title meta"
+        "check ctx   meta";
+      column-gap: 12px;
+      row-gap: 2px;
+      padding: 14px 4px;
+      border-bottom: 1px solid #f1f5f9;
+      cursor: pointer;
+      transition: background .15s;
+      align-items: start;
+    }
+    .dly-row:hover { background: #fafbfc; }
+    .dly-row.is-done .dly-title { color: #94a3b8; text-decoration: line-through; }
+
+    .dly-check {
+      grid-area: check;
+      width: 18px; height: 18px;
+      margin-top: 2px;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 5px;
+      background: transparent;
+      cursor: pointer;
+      padding: 0;
+      transition: border-color .15s, background .15s;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .dly-check:hover { border-color: #4f46e5; background: rgba(79,70,229,.06); }
+    .dly-check.is-done { background: #4f46e5; border-color: #4f46e5; }
+    .dly-check.is-done::after {
+      content: ""; position: absolute;
+      left: 4px; top: 1px;
+      width: 5px; height: 9px;
+      border: solid #fff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+
+    .dly-title {
+      grid-area: title;
+      font-size: 15px; line-height: 1.45;
+      color: #0f172a; font-weight: 400;
+      min-width: 0;
+      align-self: center;
+    }
+    .dly-row .dly-title strong { font-weight: 500; }
+    .dly-ctx {
+      grid-area: ctx;
+      font-size: 12.5px; line-height: 1.35;
+      color: #94a3b8; font-weight: 400;
+      align-self: start;
+    }
+    .dly-meta {
+      grid-area: meta;
+      font-size: 13px; font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: #64748b; white-space: nowrap;
+      align-self: center;
+      padding-left: 10px;
+    }
+    .dly-meta--anytime { color: #cbd5e1; font-style: italic; font-weight: 400; }
+    .dly-meta--overdue { color: #dc2626; font-weight: 600; }
+    .dly-meta--time {
+      color: #0f172a; font-weight: 600;
+    }
+
+    @media (max-width: 380px) {
+      .dly-row { grid-template-columns: 24px 1fr auto; column-gap: 10px; }
+      .dly-row .dly-ctx { display: none; }
+    }
+
+    /* Hide the legacy agenda + overdue tables — we render via dly-* instead. */
+    .md-overdue-card .md-table-wrap,
+    .md-agenda-card .md-table-wrap { display: none !important; }
+
     /* ── MORE SECTIONS expander — quiet text link ────────── */
     .md-more-toggle {
       display: inline-flex; align-items: center; gap: 6px;
@@ -626,13 +729,62 @@
     </div>
   </section>
 
-  {# Today section label sits above the overdue + today's-flow block
-     so the user sees "Today" as a clear horizon header. #}
+  {# ════════════════════════════════════════════════════════════════
+     TODAY block — overdue + today's-flow rendered as one clean
+     dly-list. Bypasses the legacy .md-table CSS which was fighting
+     every flex/grid override I tried. The peek modal still opens
+     by id since each row carries data-id + data-link.
+     ════════════════════════════════════════════════════════════════ #}
   {% if dashboard.overdue or dashboard.today_items %}
-  <h2 class="md-section-label md-section-label--today">
-    Today
-    <span class="md-section-count">{{ (dashboard.overdue|length) + (dashboard.today_items|length) }}</span>
-  </h2>
+  <section class="dly-section">
+    <header class="dly-section-head">
+      Today
+      <span class="dly-section-count">{{ (dashboard.overdue|length) + (dashboard.today_items|length) }}</span>
+    </header>
+    <ul class="dly-list">
+      {% for it in dashboard.overdue %}
+      <li class="dly-row {{ 'is-done' if it.done }}"
+          data-id="{{ it.id }}" data-type="task" data-source="{{ it.source or '' }}"
+          data-title="{{ it.title }}" data-context="{{ it.context or '' }}"
+          data-priority="{{ it.priority or '' }}" data-date="{{ it.due_date or '' }}"
+          data-days-overdue="{{ it.days_overdue or 0 }}" data-link="{{ it.link or '' }}"
+          data-done="0" tabindex="0" role="button"
+          onclick="openItemPeek(this, event)"
+          aria-label="Open overdue task: {{ it.title }}">
+        <button type="button" class="dly-check" aria-label="Mark done"
+                onclick="markTaskDoneInRow(this, event)"></button>
+        <span class="dly-title">{{ it.title }}</span>
+        {% if it.context %}<span class="dly-ctx">{{ it.context }}</span>{% endif %}
+        <span class="dly-meta dly-meta--overdue">
+          {% if it.days_overdue and it.days_overdue > 0 %}{{ it.days_overdue }}d late
+          {% else %}today{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+      {% for it in dashboard.today_items %}
+      <li class="dly-row {{ 'is-done' if it.done }}"
+          data-id="{{ it.id }}" data-type="{{ it.type }}" data-source="{{ it.source or '' }}"
+          data-title="{{ it.title }}" data-time="{{ it.time or '' }}"
+          data-end-time="{{ it.end_time or '' }}" data-date="{{ it.date or '' }}"
+          data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
+          data-status="{{ it.status or '' }}" data-recurrence="{{ it.recurrence or '' }}"
+          data-link="{{ it.link or '' }}" data-done="{{ 1 if it.done else 0 }}"
+          tabindex="0" role="button"
+          onclick="openItemPeek(this, event)"
+          aria-label="Open {{ it.type }}: {{ it.title }}">
+        <button type="button" class="dly-check {{ 'is-done' if it.done }}" aria-label="Mark done"
+                onclick="markTaskDoneInRow(this, event)"></button>
+        <span class="dly-title">{{ it.title }}</span>
+        {% if it.context %}<span class="dly-ctx">{{ it.context }}</span>{% endif %}
+        {% if it.time %}
+          <span class="dly-meta dly-meta--time">{{ it.time }}</span>
+        {% else %}
+          <span class="dly-meta dly-meta--anytime">Anytime</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
   {% endif %}
 
   <!-- ── OVERDUE ── highest priority signal in a morning review.
@@ -887,89 +1039,58 @@
      as today + overdue, separated by a small caps label.
      ────────────────────────────────────────────────────────── #}
   {% set _u = dashboard.upcoming %}
+  {% macro upcoming_row(it, meta_text) %}
+    <li class="dly-row" data-id="{{ it.id }}" data-type="task" data-source="matrix"
+        data-title="{{ it.title }}" data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
+        data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
+        data-link="{{ it.link or '' }}" data-done="0"
+        tabindex="0" role="button"
+        onclick="openItemPeek(this, event)"
+        aria-label="Open task: {{ it.title }}">
+      <button type="button" class="dly-check" aria-label="Mark done"
+              onclick="markTaskDoneInRow(this, event)"></button>
+      <span class="dly-title">{{ it.title }}</span>
+      {% if it.context %}<span class="dly-ctx">{{ it.context }}</span>{% endif %}
+      <span class="dly-meta dly-meta--time">{{ meta_text }}</span>
+    </li>
+  {% endmacro %}
+
   {% if _u.tomorrow %}
-  <section class="md-section md-section--upcoming" aria-label="Tomorrow">
-    <h2 class="md-section-label">Tomorrow <span class="md-section-count">{{ _u.tomorrow|length }}</span></h2>
-    <table class="md-table md-agenda-table">
-      <tbody>
-        {% for it in _u.tomorrow %}
-        <tr class="md-row md-agenda-row md-type-task" data-id="{{ it.id }}"
-            data-type="task" data-source="matrix" data-title="{{ it.title }}"
-            data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
-            data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
-            data-link="{{ it.link or '' }}" data-done="0"
-            onclick="openItemPeek(this, event)" tabindex="0" role="button"
-            aria-label="Open task: {{ it.title }}">
-          <td class="md-c-status">
-            <button type="button" class="md-task-toggle" aria-label="Mark done"
-                    onclick="markTaskDoneInRow(this, event)"></button>
-          </td>
-          <td class="md-c-title"><span class="md-row-title">{{ it.title }}</span></td>
-          {% if it.context %}<td class="md-c-context"><span class="md-context-chip">{{ it.context }}</span></td>{% endif %}
-          <td class="md-c-time">
-            {% if it.time %}<span class="md-time">{{ it.time }}</span>{% else %}<span class="md-time md-time-any">Anytime</span>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <section class="dly-section" aria-label="Tomorrow">
+    <header class="dly-section-head">
+      Tomorrow
+      <span class="dly-section-count">{{ _u.tomorrow|length }}</span>
+    </header>
+    <ul class="dly-list">
+      {% for it in _u.tomorrow %}{{ upcoming_row(it, it.time or '—') }}{% endfor %}
+    </ul>
   </section>
   {% endif %}
 
   {% if _u.this_week %}
-  <section class="md-section md-section--upcoming" aria-label="This week">
-    <h2 class="md-section-label">This week <span class="md-section-count">{{ _u.this_week|length }}</span></h2>
-    <table class="md-table md-agenda-table">
-      <tbody>
-        {% for it in _u.this_week %}
-        <tr class="md-row md-agenda-row md-type-task" data-id="{{ it.id }}"
-            data-type="task" data-source="matrix" data-title="{{ it.title }}"
-            data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
-            data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
-            data-link="{{ it.link or '' }}" data-done="0"
-            onclick="openItemPeek(this, event)" tabindex="0" role="button"
-            aria-label="Open task: {{ it.title }}">
-          <td class="md-c-status">
-            <button type="button" class="md-task-toggle" aria-label="Mark done"
-                    onclick="markTaskDoneInRow(this, event)"></button>
-          </td>
-          <td class="md-c-title"><span class="md-row-title">{{ it.title }}</span></td>
-          {% if it.context %}<td class="md-c-context"><span class="md-context-chip">{{ it.context }}</span></td>{% endif %}
-          <td class="md-c-time">
-            {% set _d = (it.date or '')[5:10] %}
-            <span class="md-time">{{ _d }}{% if it.time %} · {{ it.time }}{% endif %}</span>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <section class="dly-section" aria-label="This week">
+    <header class="dly-section-head">
+      This week
+      <span class="dly-section-count">{{ _u.this_week|length }}</span>
+    </header>
+    <ul class="dly-list">
+      {% for it in _u.this_week %}
+        {%- set _d = (it.date or '')[5:10] -%}
+        {{ upcoming_row(it, _d ~ (' · ' ~ it.time if it.time else '')) }}
+      {% endfor %}
+    </ul>
   </section>
   {% endif %}
 
   {% if _u.future %}
-  <section class="md-section md-section--upcoming" aria-label="Future">
-    <h2 class="md-section-label">Future <span class="md-section-count">{{ _u.future|length }}</span></h2>
-    <table class="md-table md-agenda-table">
-      <tbody>
-        {% for it in _u.future %}
-        <tr class="md-row md-agenda-row md-type-task" data-id="{{ it.id }}"
-            data-type="task" data-source="matrix" data-title="{{ it.title }}"
-            data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
-            data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
-            data-link="{{ it.link or '' }}" data-done="0"
-            onclick="openItemPeek(this, event)" tabindex="0" role="button"
-            aria-label="Open task: {{ it.title }}">
-          <td class="md-c-status">
-            <button type="button" class="md-task-toggle" aria-label="Mark done"
-                    onclick="markTaskDoneInRow(this, event)"></button>
-          </td>
-          <td class="md-c-title"><span class="md-row-title">{{ it.title }}</span></td>
-          {% if it.context %}<td class="md-c-context"><span class="md-context-chip">{{ it.context }}</span></td>{% endif %}
-          <td class="md-c-time"><span class="md-time">{{ it.date }}</span></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <section class="dly-section" aria-label="Future">
+    <header class="dly-section-head">
+      Future
+      <span class="dly-section-count">{{ _u.future|length }}</span>
+    </header>
+    <ul class="dly-list">
+      {% for it in _u.future %}{{ upcoming_row(it, it.date or '') }}{% endfor %}
+    </ul>
   </section>
   {% endif %}
 
