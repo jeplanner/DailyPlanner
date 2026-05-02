@@ -5,8 +5,9 @@ allowlist (BEDTIME_STORIES_USER_EMAILS env var). Users not on the
 list see a 404 so the route is invisible to them and the nav link
 is hidden by a context flag.
 
-Schema lives in MIGRATION_BEDTIME_STORIES.sql.
-Seed corpus lives in scripts/seed_bedtime_stories.py (idempotent).
+Schema and seed corpus both live in MIGRATION_BEDTIME_STORIES.sql.
+Add new rows by editing the migration's INSERT block, or by running
+INSERT statements directly against Supabase.
 """
 import logging
 import os

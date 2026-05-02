@@ -239,8 +239,9 @@
   {% else %}
     <div class="bs-empty">
       <h2>No stories yet</h2>
-      <p>Run the seed script to populate the corpus:
-         <code>python3 scripts/seed_bedtime_stories.py</code></p>
+      <p>Run the migration <code>MIGRATION_BEDTIME_STORIES.sql</code>
+         against your Supabase to create and seed the
+         <code>bedtime_stories</code> table.</p>
     </div>
   {% endif %}
 </main>
