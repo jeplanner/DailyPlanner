@@ -668,28 +668,25 @@ html.dark .section-title{color:#f1f5f9;}
 
   <nav class="sidebar-nav">
 
-    <!-- ══ TODAY — the cockpit. Morning lands here. ══════ -->
+    <!-- ══ TODAY — the cockpit. Morning lands here. ══════
+         Quick Pomodoro is intentionally NOT here — it lives in the top
+         bar (clock icon) and is reachable from any page with one tap. -->
     <div class="nav-group">
       <div class="nav-group-title">Today</div>
-
-      <a href="/quick-bucket" data-match="^/quick-bucket" title="Tasks Bucket — quick capture by time bucket (now / 4h / 8h / future)">
-        <i data-feather="zap"></i>
-        Tasks Bucket
-      </a>
 
       <a href="/summary?view=daily" data-match="^/summary.*view=daily" title="Morning dashboard — today's agenda, habits, overdue">
         <i data-feather="sun"></i>
         Today's Plan
       </a>
 
-      <a href="/todo" data-match="^/todo" title="Eisenhower matrix — what to do first">
-        <i data-feather="grid"></i>
-        Priorities
+      <a href="/quick-bucket" data-match="^/quick-bucket" title="Tasks Bucket — quick capture by time bucket (now / 4h / 8h / future)">
+        <i data-feather="zap"></i>
+        Tasks Bucket
       </a>
 
-      <a href="/checklist" data-match="^/checklist" title="Daily checklist — recurring items with optional push reminders">
-        <i data-feather="check-square"></i>
-        Checklist
+      <a href="/todo" data-match="^/todo" title="Priorities — Eisenhower matrix, what to do first">
+        <i data-feather="grid"></i>
+        Priorities
       </a>
 
       <a href="/calendar" data-match="^/calendar" title="Calendar — day and week view">
@@ -702,32 +699,24 @@ html.dark .section-title{color:#f1f5f9;}
         Inbox
       </a>
 
-      {# Old category-flavoured Tasks Bucket — disabled in nav (route /tasks-bucket
-         still works for legacy data; replaced by the simpler /quick-bucket below).
-      <a href="/tasks-bucket" data-match="^/tasks-bucket" title="Tasks Bucket — quick capture that auto-classifies into modules">
-        <i data-feather="zap"></i>
-        Tasks Bucket
-      </a>
-      #}
-
-      <a href="javascript:void(0)"
-         onclick="event.preventDefault();closeSidebar();openQuickPomo();"
-         title="Quick Pomodoro — start a focus timer (no task linkage)">
-        <i data-feather="clock"></i>
-        Quick Pomodoro
+      <a href="/checklist" data-match="^/checklist" title="Daily checklist — recurring items with optional push reminders">
+        <i data-feather="check-square"></i>
+        Checklist
       </a>
     </div>
 
-    <!-- ══ WORK — ongoing projects & goals ═══════════════ -->
+    <!-- ══ WORK — projects, goals & professional artifacts ═
+         Meetings and Programs moved here (from Knowledge) because they
+         are deliverables tied to ongoing work, not reference material. -->
     <div class="nav-group">
       <div class="nav-group-title">Work</div>
 
-      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects">
+      <a href="/projects" data-match="^/projects(/|$|\?)" title="All projects with task counts and progress">
         <i data-feather="briefcase"></i>
         Projects
       </a>
 
-      <a href="/projects/timeline" data-match="^/projects/timeline" title="Roadmap — projects over time">
+      <a href="/projects/timeline" data-match="^/projects/timeline" title="Roadmap — every project on one shared timeline">
         <i data-feather="git-branch"></i>
         Roadmap
       </a>
@@ -737,19 +726,21 @@ html.dark .section-title{color:#f1f5f9;}
         OKRs
       </a>
 
-      {% if project is defined %}
-      <a href="/projects/{{ project.project_id }}/tasks" title="Tasks for this project">
-        <i data-feather="trello"></i>
-        Project Tasks
+      <a href="/meetings" data-match="^/meetings" title="Meeting prep sheets — BLUF, SCQA, anticipated Q&A, retro">
+        <i data-feather="users"></i>
+        Meetings
       </a>
-      <a href="/projects/{{ project.project_id }}/gantt" title="Gantt chart for this project">
-        <i data-feather="bar-chart"></i>
-        Gantt Chart
+
+      <a href="/programs" data-match="^/programs" title="IT program reviews — RAG scorecard, workstreams, risks, decisions">
+        <i data-feather="layers"></i>
+        Programs
       </a>
-      {% endif %}
     </div>
 
-    <!-- ══ REVIEW — analytics & reflection ═══════════════ -->
+    <!-- ══ REVIEW — metrics & reflection ═════════════════
+         Was 6 items pointing at /summary?view=… and a hash anchor; now
+         a single "Reviews" entry — the page itself has tabs for
+         Daily / Weekly / Monthly / Yearly so we don't need 4 nav rows. -->
     <div class="nav-group">
       <div class="nav-group-title">Review</div>
 
@@ -758,57 +749,60 @@ html.dark .section-title{color:#f1f5f9;}
         Reports
       </a>
 
-      <a href="/focus-log" data-match="^/focus-log" title="Focus Log — where your Quick Pomodoro time has gone, by activity">
+      <a href="/summary?view=weekly" data-match="^/summary(?!.*view=daily)" title="Reviews — switch between Daily / Weekly / Monthly / Yearly with the tabs at the top of the page">
+        <i data-feather="bar-chart-2"></i>
+        Reviews
+      </a>
+
+      <a href="/focus-log" data-match="^/focus-log" title="Focus Log — where your Pomodoro time went, grouped by activity">
         <i data-feather="clock"></i>
         Focus Log
       </a>
+    </div>
 
-      <a href="/summary?view=daily#reflection" title="End-of-day reflection — gratitude, what to change tomorrow">
+    <!-- ══ KNOWLEDGE — capture, study, read ══════════════
+         Photos moved to Life (memories, not reference). Quotes stays
+         here as inspirational reading material. Meetings and Programs
+         moved to Work. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Knowledge</div>
+
+      <a href="/references" data-match="^/references" title="Knowledge Base — saved articles, links, and AI search across them">
+        <i data-feather="book-open"></i>
+        Knowledge Base
+      </a>
+
+      <a href="/notes/scribble" data-match="^/notes" title="Notes — freeform writing with @-tag → task conversion">
         <i data-feather="edit-3"></i>
-        Daily Review
+        Notes
       </a>
 
-      <a href="/summary?view=weekly" data-match="^/summary.*view=weekly" title="Weekly review — aggregate stats, AI narrative">
-        <i data-feather="bar-chart-2"></i>
-        Weekly Review
+      <a href="/study" data-match="^/study" title="Study — Cornell + Feynman notes with spaced review">
+        <i data-feather="book"></i>
+        Study
       </a>
 
-      <a href="/summary?view=monthly" data-match="^/summary.*view=monthly" title="Monthly review — month-over-month trends, structured prompts">
-        <i data-feather="calendar"></i>
-        Monthly Review
+      <a href="/travel-reads" data-match="^/travel-reads" title="TravelReads — queue of articles, videos, podcasts for the road">
+        <i data-feather="bookmark"></i>
+        TravelReads
       </a>
 
-      <a href="/summary?view=annual" data-match="^/summary.*view=annual" title="Year in review — annual stats, themes, what next">
-        <i data-feather="award"></i>
-        Annual Review
+      <a href="/quotes" data-match="^/quotes" title="Quotes — motivational corpus, filter by category, star favorites">
+        <i data-feather="message-square"></i>
+        Quotes
       </a>
     </div>
 
-    <!-- ══ LIFE & FINANCE ════════════════════════════════ -->
+    <!-- ══ LIFE — wellbeing, home, family ═══════════════
+         Split out of "Life & Finance"; money lives in its own group
+         because it has a separate security model (vault password). -->
     <div class="nav-group">
-      <div class="nav-group-title">Life & Finance</div>
+      <div class="nav-group-title">Life</div>
 
       <a href="/health" data-match="^/health" title="Habits, sleep, exercise, daily wellness markers">
         <i data-feather="heart"></i>
         Health
       </a>
-
-      <a href="/prayer" data-match="^/prayer" title="A quiet moment of devotion">
-        <i data-feather="sun"></i>
-        Prayer
-      </a>
-
-      <a href="/mythology" data-match="^/mythology" title="Five date-stable Hindu mythological stories from the Ramayana and Mahabharata">
-        <i data-feather="book-open"></i>
-        Mythology
-      </a>
-
-      {% if bedtime_stories_enabled %}
-      <a href="/bedtime-stories" data-match="^/bedtime-stories" title="Indian moral tales — Panchatantra, Tenali Raman, Akbar-Birbal, folk stories">
-        <i data-feather="moon"></i>
-        Bedtime Stories
-      </a>
-      {% endif %}
 
       <a href="/relationships" data-match="^/relationships" title="Stay in touch with the people who matter">
         <i data-feather="users"></i>
@@ -820,59 +814,43 @@ html.dark .section-title{color:#f1f5f9;}
         Grocery
       </a>
 
-      <a href="/portfolio" data-match="^/portfolio" title="Portfolio — stocks, mutual funds, bonds, gold">
-        <i data-feather="trending-up"></i>
-        Investments
-      </a>
-
-      <a href="/refcards" data-match="^/refcards" title="Password-locked vault — bank accounts, cards, documents, ESOPs, credentials">
-        <i data-feather="shield"></i>
-        Vault
-      </a>
-    </div>
-
-    <!-- ══ KNOWLEDGE — second brain ══════════════════════ -->
-    <div class="nav-group">
-      <div class="nav-group-title">Knowledge</div>
-
-      <a href="/references" data-match="^/references" title="Articles, links, and AI-powered search across your saved content">
-        <i data-feather="book-open"></i>
-        Knowledge Base
-      </a>
-
-      <a href="/notes/scribble" data-match="^/notes" title="Freeform notes">
-        <i data-feather="edit-3"></i>
-        Notes
-      </a>
-
-      <a href="/study" data-match="^/study" title="Cornell + Feynman study notes with spaced review">
-        <i data-feather="zap"></i>
-        Study
-      </a>
-
-      <a href="/meetings" data-match="^/meetings" title="Executive meeting prep — BLUF, SCQA, anticipated Q&A">
-        <i data-feather="users"></i>
-        Meetings
-      </a>
-
-      <a href="/programs" data-match="^/programs" title="IT program reviews — RAG scorecard, workstreams, risks, decisions">
-        <i data-feather="grid"></i>
-        Programs
-      </a>
-
-      <a href="/photos" data-match="^/photos" title="Photo album — uploads to Supabase Storage, year-long browser cache">
+      <a href="/photos" data-match="^/photos" title="Photo album — memories with year-long browser cache">
         <i data-feather="image"></i>
         Photos
       </a>
 
-      <a href="/quotes" data-match="^/quotes" title="Browse the motivational quotes corpus — filter by category, star favorites">
-        <i data-feather="message-square"></i>
-        Quotes
+      <a href="/prayer" data-match="^/prayer" title="A quiet moment of devotion">
+        <i data-feather="sun"></i>
+        Prayer
       </a>
 
-      <a href="/travel-reads" data-match="^/travel-reads" title="TravelReads — queue of articles, videos, and podcasts for the road">
-        <i data-feather="bookmark"></i>
-        TravelReads
+      <a href="/mythology" data-match="^/mythology" title="Five date-stable Hindu stories from the Ramayana and Mahabharata">
+        <i data-feather="book-open"></i>
+        Mythology
+      </a>
+
+      {% if bedtime_stories_enabled %}
+      <a href="/bedtime-stories" data-match="^/bedtime-stories" title="Indian moral tales — Panchatantra, Tenali Raman, Akbar-Birbal, folk stories">
+        <i data-feather="moon"></i>
+        Bedtime Stories
+      </a>
+      {% endif %}
+    </div>
+
+    <!-- ══ MONEY — assets, bills, sensitive documents ═══
+         Separate group because the vault uses its own password and
+         every page here moves real ₹/$. Distinct from Life. -->
+    <div class="nav-group">
+      <div class="nav-group-title">Money</div>
+
+      <a href="/portfolio" data-match="^/portfolio" title="Investments — stocks, mutual funds, bonds, gold">
+        <i data-feather="trending-up"></i>
+        Investments
+      </a>
+
+      <a href="/refcards" data-match="^/refcards" title="Password-locked vault — bank accounts, cards, documents, ESOPs">
+        <i data-feather="shield"></i>
+        Vault
       </a>
     </div>
 
@@ -2051,7 +2029,260 @@ setInterval(updateDateTime, 1000);
    CONTEXTUAL HELP MODAL — content keyed by URL path
    ═══════════════════════════════════════════════════════════ */
 
+/* HELP_PAGES — order matters: more specific patterns must come before
+   broader ones so they match first. _currentHelpEntry() returns the
+   FIRST regex hit, not the longest. */
 const HELP_PAGES = [
+  {
+    match: /^\/quick-bucket/,
+    title: "Tasks Bucket — quick capture by time horizon",
+    lead: "One screen, four buckets. Drop every loose thought into the bucket that matches when you need it done — <b>Now</b>, <b>4 hours</b>, <b>8 hours</b>, or <b>Future</b>.",
+    sections: [
+      {
+        title: "How to use it",
+        items: [
+          "Pick a bucket and type the task — <code>Enter</code> adds it.",
+          "Drag a card between buckets as deadlines shift.",
+          "Tap a card to edit, mark done, or delete (soft-delete only).",
+          "Use this when you don't yet know the project — pick a project later from the task detail."
+        ]
+      },
+      {
+        title: "Where it fits",
+        items: [
+          "<b>Inbox</b> is for raw, untriaged capture.",
+          "<b>Tasks Bucket</b> is for capture with a rough time hint.",
+          "<b>Priorities (Eisenhower)</b> is the more deliberate quadrant view for today's plan."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/checklist/,
+    title: "Checklist — recurring daily items",
+    lead: "Things you do every day, every weekday, or on a specific cadence. Each item can fire a push reminder at a chosen time.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Add an item, pick its <b>recurrence</b> (daily, weekdays, weekly on a chosen day, monthly).",
+          "Set a <b>reminder time</b> — push notification fires at that time on days the item is due (needs notifications enabled in your browser).",
+          "Group items into named <b>checklist groups</b> for visual structure (e.g. Morning, Evening).",
+          "Tap the box to tick — yesterday's checks don't carry over, the list resets each day."
+        ]
+      },
+      {
+        title: "Tips",
+        items: [
+          "Use <b>Sync to Calendar</b> to surface checked items in the calendar view as completed time blocks.",
+          "Set a <b>recurrence end date</b> for habits you're trialling for a month.",
+          "Drag to reorder — order is preserved per group."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/focus-log/,
+    title: "Focus Log — where your Pomodoro time went",
+    lead: "Every Quick Pomodoro is logged under a label. This page rolls them up by activity so you can see what you actually spent the week on.",
+    sections: [
+      {
+        title: "What you'll see",
+        items: [
+          "<b>Activity totals</b> — minutes by label, biggest first.",
+          "<b>Day-by-day breakdown</b> — when you actually focused.",
+          "<b>Archive</b> stale activities so they fall out of the picker without losing history."
+        ]
+      },
+      {
+        title: "Tips",
+        items: [
+          "Re-use labels — \"Read Atomic Habits\" is more useful than \"reading\" because it groups all sessions on the same task.",
+          "Start the timer from the <b>clock icon</b> in the top bar, anywhere in the app.",
+          "Stale = no session for 30+ days. Archive cleans up the autocomplete in Quick Pomodoro."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/meetings/,
+    title: "Meetings — executive prep sheets",
+    lead: "Structured prep for any meeting where you need to show up sharp. <b>BLUF</b> at the top, <b>SCQA</b> for the narrative arc, anticipated <b>Q&A</b>, and a retro section for after.",
+    sections: [
+      {
+        title: "The structure",
+        items: [
+          "<b>BLUF</b> — Bottom Line Up Front. The one sentence the room needs to hear.",
+          "<b>SCQA</b> — Situation, Complication, Question, Answer. Use this to script your opening.",
+          "<b>Anticipated Q&A</b> — every awkward question someone might ask, with your answer pre-baked.",
+          "<b>Retro</b> — fill in after the meeting: what landed, what didn't, what to do differently next time."
+        ]
+      },
+      {
+        title: "What you can do",
+        items: [
+          "Click <b>New</b> to start a prep sheet — title it after the meeting and pick a date.",
+          "Update <b>status</b> (Draft / Ready / Done) so the list shows what's coming up.",
+          "<b>Clone</b> a recurring meeting's prep to copy structure into the next instance."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/programs/,
+    title: "Programs — IT program reviews",
+    lead: "A repeatable monthly review template for any large IT program. <b>RAG scorecard</b>, milestones, risks, decisions — exactly what the steerco needs to see.",
+    sections: [
+      {
+        title: "Sections",
+        items: [
+          "<b>RAG status</b> — Red / Amber / Green per workstream, with one-line rationale.",
+          "<b>Milestones</b> — what just shipped, what's next, what slipped.",
+          "<b>Risks</b> — top 3–5 with mitigations and owner.",
+          "<b>Decisions</b> — what was decided this period, what's open for the steerco."
+        ]
+      },
+      {
+        title: "What you can do",
+        items: [
+          "<b>New review</b> from the program list, or <b>Clone</b> last month's to keep continuity.",
+          "<b>History</b> view — every past review for one program, side-by-side trend.",
+          "Soft-delete a review by mistake? It's recoverable from the trash, never hard-deleted."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/study/,
+    title: "Study — Cornell + Feynman with spaced review",
+    lead: "Two of the best note-taking systems wired together. Capture in <b>Cornell</b> (cue / notes / summary), iterate to plain-language understanding with <b>Feynman</b>, then surface for review on a spaced schedule.",
+    sections: [
+      {
+        title: "The two formats",
+        items: [
+          "<b>Cornell</b> — three-pane layout: cue questions on the left, expanded notes on the right, summary at the bottom. Best for live capture during a lecture or reading.",
+          "<b>Feynman</b> — explain it as if to a 12-year-old. Forces you to find the gaps in your understanding."
+        ]
+      },
+      {
+        title: "Spaced review",
+        items: [
+          "Each note has a next-review date that pushes out (1d → 3d → 7d → 14d → 30d) every time you mark a successful recall.",
+          "<b>Review</b> tab shows everything due today.",
+          "<b>Iterate</b> on any note to take a Cornell sketch and re-write it as Feynman — the cleaner format reinforces the concept."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/quotes/,
+    title: "Quotes — daily motivation",
+    lead: "Browse a curated corpus of motivational quotes. Filter by category, star favourites, add your own.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Filter by <b>category</b> (focus, resilience, leadership, etc.) using the chips at the top.",
+          "<b>Star</b> a quote to add it to favourites — favourites appear first by default.",
+          "<b>Add your own</b> — your additions are tagged so you can filter them out of the system corpus.",
+          "The <b>refresh</b> button on Today's Plan and Priorities pulls a new random quote each time."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/photos/,
+    title: "Photos — your album",
+    lead: "Upload, view, and organise images. Files live in Supabase Storage with a year-long browser cache so revisits are instant.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "<b>Upload</b> one or more images at once — JPEG, PNG, HEIC.",
+          "<b>Rename</b> any photo to give it a meaningful title.",
+          "<b>Delete</b> is soft — items move to trash, never lost.",
+          "Click any photo to open the lightbox; arrow keys move between images."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/grocery/,
+    title: "Grocery — your shopping list",
+    lead: "Items to buy, grouped by category. Tap to mark purchased; clear the list periodically.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Type an item and pick a <b>category</b> (Produce, Dairy, Pantry, etc.) — the picker auto-suggests from your usual items.",
+          "Tap an item to mark <b>purchased</b> — it greys out but stays visible until you clear.",
+          "<b>Clear purchased</b> sweeps everything ticked off in one tap.",
+          "<b>Archive</b> hides items you don't need this trip without deleting them."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/relationships/,
+    title: "Relationships — stay in touch",
+    lead: "A lightweight CRM for the people who matter. Set a desired cadence (every week / month / quarter), log when you last spoke, and the page surfaces who's overdue.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Add a person with name, relationship, contact details, and a <b>cadence</b>.",
+          "Log a check-in (call, text, in-person) — the next-due date recalculates automatically.",
+          "Sort by <b>most overdue</b> to see who needs a ping today.",
+          "Add notes after each interaction so you remember what they're working on."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/prayer/,
+    title: "Prayer — a quiet moment",
+    lead: "A simple devotion page with rotating photo backgrounds (Kavasam, Rangapura).",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Browse <b>Kavasam</b> and <b>Rangapura</b> photo collections.",
+          "<b>Upload</b> your own photos to either collection.",
+          "Open in full-screen for distraction-free meditation."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/mythology/,
+    title: "Mythology — daily story",
+    lead: "Five date-stable stories from the Ramayana and Mahabharata, rotating so each day surfaces a different one. Each story includes a moral and a date-locked context.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Read today's story — the rotation is deterministic, so the same date shows the same story across devices.",
+          "Use the <b>A− / A+</b> control to adjust text size for comfortable reading.",
+          "Open older stories from the date picker."
+        ]
+      }
+    ]
+  },
+  {
+    match: /^\/bedtime-stories/,
+    title: "Bedtime Stories — Indian moral tales",
+    lead: "Panchatantra, Tenali Raman, Akbar-Birbal, and folk classics. One story per page, with the moral at the end.",
+    sections: [
+      {
+        title: "What you can do",
+        items: [
+          "Browse the index by collection, or pick today's surfaced story.",
+          "<b>A− / A+</b> control adjusts text size for reading aloud.",
+          "Stories work offline once visited — useful for bedtime without wifi."
+        ]
+      }
+    ]
+  },
   {
     match: /^\/$|^\/todo/,
     title: "Eisenhower Matrix — your daily priorities",
@@ -2256,17 +2487,26 @@ const HELP_PAGES = [
   },
   {
     match: /^\/summary/,
-    title: "Weekly Review",
-    lead: "Step back and see the arc. Aggregate stats, AI narrative, day-by-day breakdown.",
+    title: "Reviews — weekly, monthly, yearly",
+    lead: "Step back and see the arc. The tabs at the top switch horizon: <b>Daily</b> (morning dashboard), <b>Weekly</b>, <b>Monthly</b>, <b>Yearly</b>. Each one shows aggregate stats, charts, and structured prompts for that period.",
     sections: [
       {
-        title: "What's in the view",
+        title: "What's in each view",
         items: [
-          "<b>Focus hours</b>, <b>completion rate</b>, and <b>habit days</b> for the selected week.",
-          "<b>Charts</b> — daily activity bar chart + completion pie.",
-          "<b>Insights</b> — brief narrative bullets from your data (more detailed with an AI key configured).",
-          "<b>Day-by-day</b> accordion at the bottom — tap a day to see its tasks.",
-          "Switch to <b>Monthly</b> or <b>Yearly</b> with the tabs above for longer-horizon reviews."
+          "<b>Focus hours</b>, <b>completion rate</b>, and <b>habit days</b> for the selected period.",
+          "<b>Charts</b> — daily / weekly activity bars + completion pie.",
+          "<b>Insights</b> — narrative bullets from your data (richer with an AI key configured).",
+          "<b>Reflection prompts</b> — what went well, what to change, what to keep doing. Saves on blur.",
+          "<b>Day-by-day</b> accordion at the bottom — tap a day to see its tasks."
+        ]
+      },
+      {
+        title: "How to use it",
+        items: [
+          "<b>Weekly</b> on Sunday or Monday — what shipped, what's stuck.",
+          "<b>Monthly</b> at month-end — themes, repeats, course corrections.",
+          "<b>Yearly</b> in December / January — wins, lessons, themes for next year.",
+          "<b>Daily</b> = the morning dashboard. Use <b>Today's Plan</b> in the sidebar for direct entry."
         ]
       }
     ]
@@ -2556,36 +2796,39 @@ function _currentHelpEntry(){
     if (e.match.test(path)) return e;
   }
   return {
-    title: "DailyPlanner — your professional daily & financial planner",
-    lead: "A single workspace for your tasks, habits, health, knowledge, and money. Use the menu (top-left) to navigate. Press <code>?</code> on any page for context-specific help.",
+    title: "DailyPlanner — overview & navigation",
+    lead: "A single workspace for your tasks, habits, knowledge, life, and money. Open the menu (top-left ☰) to navigate. Press <code>?</code> on any page for context-specific help.",
     sections: [
       {
-        title: "Navigation — five workflow stages",
+        title: "Six menu groups",
         items: [
-          "<b>Today</b> — Today's Plan (morning dashboard), Priorities (Eisenhower), Calendar, Inbox.",
-          "<b>Work</b> — Projects, Roadmap, OKRs.",
-          "<b>Review</b> — Reports (4 lenses), Weekly Review.",
-          "<b>Life &amp; Finance</b> — Health, Investments, Vault (password-locked — financial instruments + documents).",
-          "<b>Knowledge</b> — Knowledge Base (AI + search), Notes."
+          "<b>Today</b> — the daily cockpit. Today's Plan (morning dashboard), Tasks Bucket, Priorities (Eisenhower), Calendar, Inbox, Checklist.",
+          "<b>Work</b> — Projects, Roadmap, OKRs, Meetings (BLUF/SCQA prep), Programs (RAG reviews).",
+          "<b>Review</b> — Reports (4 dashboards), Reviews (daily/weekly/monthly/yearly via tabs), Focus Log.",
+          "<b>Knowledge</b> — Knowledge Base (AI search), Notes (with @-tag → task), Study (Cornell/Feynman), TravelReads, Quotes.",
+          "<b>Life</b> — Health, Relationships, Grocery, Photos, Prayer, Mythology, Bedtime Stories.",
+          "<b>Money</b> — Investments, Vault (password-locked: bank, cards, ESOPs, documents)."
         ]
       },
       {
-        title: "Top-bar shortcuts — available on every page",
+        title: "Top-bar shortcuts — on every page",
         items: [
-          "<code>🔍</code> — jump to the Knowledge Base to search your saved content or ask AI a natural-language question.",
-          "<code>?</code> or <code>Shift + /</code> — open this help panel for the current page.",
-          "<code>n</code> — start a new task (focuses the quick-add on task pages; opens the Eisenhower composer elsewhere).",
-          "<code>/</code> — focus the quick-add / search on task pages.",
+          "<b>☰ Menu</b> — open the sidebar nav.",
+          "<b>🔍 Search</b> — global palette across tasks, notes, references, projects (<code>Cmd/Ctrl + K</code>).",
+          "<b>⏱ Clock</b> — start a Quick Pomodoro from anywhere.",
+          "<b>? Help</b> — open this panel; press <code>?</code> or <code>Shift + /</code> to summon it from the keyboard.",
+          "<b>👤 Avatar</b> — settings, dark mode, sign out.",
           "<code>Esc</code> — close any open panel or modal."
         ]
       },
       {
         title: "Features worth knowing about",
         items: [
-          "<b>Voice dictation</b> with natural-language date parsing (\"tomorrow\", \"next monday\", \"weekly\") on the Eisenhower matrix and project tasks.",
+          "<b>Voice dictation</b> with natural-language date parsing (\"tomorrow\", \"next monday\", \"weekly\") on Priorities and project tasks.",
+          "<b>Notes → tasks</b>: write <code>- [ ] Buy milk @Tomorrow @Groceries</code> in any note, then one tap creates the task in the right project with the right due date.",
           "<b>AI answers</b> against your Knowledge Base (needs a Gemini or Groq key in <code>.env</code>).",
-          "<b>Vault</b> protects sensitive data with a separate password and auto-lock. Copy-to-clipboard auto-clears in 30s.",
-          "<b>Reports</b> gives you productivity, habits, and financial dashboards with week / month / quarter / year ranges."
+          "<b>Vault</b> uses a separate password from login. Copy-to-clipboard auto-clears in 30s; auto-locks after inactivity.",
+          "<b>Reports</b> — productivity, habits, and financial dashboards with week / month / quarter / year ranges."
         ]
       }
     ]
