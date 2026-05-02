@@ -313,6 +313,142 @@ def _log_google_failure(label, response, query, api_key, cx=None):
     )
 
 
+def _extract_readable_html(html: str) -> dict:
+    """Heuristic article-content extractor. Looks for the densest text
+    container (<article>, <main>, or the <div> with the most direct text),
+    strips chrome (nav/aside/footer/script), and sanitises with bleach
+    so we never inject untrusted markup straight into the page.
+
+    Returns {title, byline, content, length} where content is sanitised
+    HTML safe to drop into innerHTML."""
+    from bs4 import BeautifulSoup
+    import bleach
+
+    soup = BeautifulSoup(html or "", "lxml")
+
+    # Title: prefer og:title, then <title>.
+    title = ""
+    og_title = soup.find("meta", attrs={"property": "og:title"})
+    if og_title and og_title.get("content"):
+        title = og_title["content"].strip()
+    if not title and soup.title:
+        title = (soup.title.get_text() or "").strip()
+
+    # Byline: try common author meta tags.
+    byline = ""
+    for sel in (
+        ("meta", {"name": "author"}),
+        ("meta", {"property": "article:author"}),
+    ):
+        tag = soup.find(*sel)
+        if tag and tag.get("content"):
+            byline = tag["content"].strip()
+            break
+
+    # Strip stuff that's never article content. Removed in-place so the
+    # remaining tree only has body-ish elements when we look for the
+    # main container below.
+    for tag_name in (
+        "script", "style", "noscript", "iframe", "form", "button",
+        "nav", "aside", "footer", "header", "menu",
+    ):
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
+    # Strip elements with role="navigation" / "banner" / "contentinfo".
+    for tag in soup.find_all(attrs={"role": ["navigation", "banner", "contentinfo"]}):
+        tag.decompose()
+
+    # Find the densest text container. <article> is the canonical hint;
+    # fall back to <main>, then to whichever <div> has the most direct
+    # paragraph text.
+    container = soup.find("article") or soup.find("main")
+    if not container:
+        candidates = []
+        for div in soup.find_all(["div", "section"]):
+            text = div.get_text(" ", strip=True)
+            if len(text) > 200:
+                candidates.append((len(text), div))
+        if candidates:
+            candidates.sort(reverse=True)
+            container = candidates[0][1]
+    if not container:
+        container = soup.body or soup
+
+    # Sanitise — keep only readable tags + safe attrs.
+    raw = str(container)
+    allowed_tags = [
+        "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
+        "a", "ul", "ol", "li", "blockquote", "pre", "code",
+        "em", "strong", "i", "b", "u", "s",
+        "img", "figure", "figcaption",
+        "table", "thead", "tbody", "tr", "th", "td",
+        "div", "span",
+    ]
+    allowed_attrs = {
+        "*": ["class"],
+        "a": ["href", "title", "rel", "target"],
+        "img": ["src", "alt", "width", "height"],
+    }
+    cleaned = bleach.clean(
+        raw,
+        tags=allowed_tags,
+        attributes=allowed_attrs,
+        strip=True,
+    )
+    # Force every link to open in a new tab — we're showing a remote
+    # article inline, links should not nuke the planner page.
+    cleaned = bleach.linkify(
+        cleaned,
+        callbacks=[bleach.callbacks.target_blank, bleach.callbacks.nofollow],
+        skip_tags=["pre", "code"],
+    )
+
+    return {
+        "title": title,
+        "byline": byline,
+        "content": cleaned,
+        "length": len(cleaned),
+    }
+
+
+@inbox_bp.route("/api/inbox/preview", methods=["GET"])
+@login_required
+def inbox_preview():
+    """Server-side reader-mode for an article URL. Fetches the page,
+    extracts the main content with BeautifulSoup heuristics, sanitises
+    with bleach, and returns clean HTML the frontend can drop inline.
+
+    Used by the Inbox "Read" button so users can read articles without
+    leaving the planner — and works for sites that block iframe
+    embedding via X-Frame-Options."""
+    url = request.args.get("url", "").strip()
+    if not url or not url.startswith(("http://", "https://")):
+        return jsonify({"error": "valid URL required"}), 400
+
+    try:
+        r = http_requests.get(
+            url,
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; DailyPlanner/1.0)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            allow_redirects=True,
+        )
+        if r.status_code >= 400:
+            logger.warning("inbox_preview fetch %s: http=%s", url, r.status_code)
+            return jsonify({"error": f"Source returned {r.status_code}"}), 502
+        # Cap response size so a giant page can't blow up the parser.
+        html = r.text[:1_000_000]
+        result = _extract_readable_html(html)
+        if not result.get("content") or result["length"] < 100:
+            return jsonify({"error": "Could not extract readable content"}), 422
+        return jsonify(result)
+    except Exception as e:
+        logger.warning("inbox_preview exception %s: %s", url, e)
+        return jsonify({"error": f"Fetch failed: {e}"}), 500
+
+
 @inbox_bp.route("/api/inbox/search", methods=["GET"])
 @login_required
 def search_web():
