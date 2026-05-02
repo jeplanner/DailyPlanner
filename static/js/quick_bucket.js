@@ -263,6 +263,64 @@
     }).join("");
     refreshFeather();
     wireRows();
+    wireDragDrop();
+  };
+
+  // ─────────── drag-and-drop reorder ────────────────────────
+  // HTML5 native — no library. Drag a row anywhere within its
+  // group; on drop, persist the new order via POST /reorder.
+  // Cross-group drags (e.g. Now → Future) are handled by the
+  // existing toggle pill, not by drag.
+  let _dragId = null;
+  const wireDragDrop = () => {
+    $$("#qb-groups .qb-row").forEach(row => {
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        _dragId = row.dataset.id;
+        row.classList.add("is-dragging");
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", _dragId); } catch (_) {}
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("is-dragging");
+        _dragId = null;
+        document.querySelectorAll("#qb-groups .qb-row.is-drop-target")
+          .forEach(r => r.classList.remove("is-drop-target"));
+      });
+      row.addEventListener("dragover", (e) => {
+        if (!_dragId || _dragId === row.dataset.id) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const draggingEl = document.querySelector(`#qb-groups .qb-row[data-id="${_dragId}"]`);
+        if (!draggingEl) return;
+        // Only reorder within the same group container.
+        if (draggingEl.parentElement !== row.parentElement) return;
+        const rect = row.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        if (before) row.parentElement.insertBefore(draggingEl, row);
+        else row.parentElement.insertBefore(draggingEl, row.nextSibling);
+      });
+      row.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        const groupEl = row.parentElement;
+        const newOrder = Array.from(groupEl.querySelectorAll(".qb-row"))
+          .map(r => r.dataset.id);
+        // Reorder local state to match
+        const orderMap = new Map(newOrder.map((id, i) => [id, i]));
+        const inGroup = items.filter(x => orderMap.has(x.id));
+        const others  = items.filter(x => !orderMap.has(x.id));
+        inGroup.sort((a, b) => orderMap.get(a.id) - orderMap.get(b.id));
+        items = others.concat(inGroup);
+        try {
+          await apiFetch("/api/quick-bucket/reorder", {
+            method: "POST",
+            body: JSON.stringify({ ids: newOrder }),
+          });
+        } catch (err) {
+          toast(err.message || "Couldn't save order", "error");
+        }
+      });
+    });
   };
 
   // ─────────── interactions ─────────────────────────────────

@@ -705,6 +705,11 @@
     .md-overdue-card .md-table-wrap,
     .md-agenda-card .md-table-wrap { display: none !important; }
 
+    /* Drag-drop visuals on dly rows. */
+    .dly-row[draggable="true"] { cursor: grab; }
+    .dly-row.is-dragging { opacity: 0.45; cursor: grabbing; background: #F0F7F8; }
+    .dly-row.is-dragging * { pointer-events: none; }
+
     /* Hide Future, the More-sections expander, and other low-signal
        items the user explicitly wanted dropped. Tomorrow / This week /
        Parked are the only "upcoming" sections that show. */
@@ -1259,6 +1264,74 @@
       try { saved = localStorage.getItem(KEY) || "all"; } catch (_) {}
       const stillThere = Array.from(chips).some(c => c.dataset.filter === saved);
       apply(stillThere ? saved : "all", false);
+    })();
+  </script>
+
+  <script>
+    /* Daily-view drag-drop reorder.
+       Each dly-list keeps its own order in localStorage keyed by
+       the section's aria-label ("Today", "Tomorrow", "This week",
+       etc.). On load the saved order is applied; on drop the new
+       order is saved. Pure DOM reorder — no server roundtrip
+       needed since today's-plan rows come from many tables. */
+    (function () {
+      const lists = document.querySelectorAll(".dly-list");
+      if (!lists.length) return;
+      const KEY = (name) => "dlyOrder:" + name;
+
+      // Restore saved order per section
+      lists.forEach(list => {
+        const sec = list.closest(".dly-section");
+        const name = sec ? (sec.getAttribute("aria-label") || "today") : "today";
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(KEY(name)) || "null"); } catch (_) {}
+        if (!Array.isArray(saved) || !saved.length) return;
+        const byId = new Map();
+        Array.from(list.querySelectorAll(".dly-row")).forEach(r => byId.set(r.dataset.id, r));
+        // Append known rows in saved order; then append leftovers
+        const seen = new Set();
+        saved.forEach(id => {
+          const el = byId.get(id);
+          if (el) { list.appendChild(el); seen.add(id); }
+        });
+        byId.forEach((el, id) => { if (!seen.has(id)) list.appendChild(el); });
+      });
+
+      // Wire drag handlers
+      let dragId = null;
+      lists.forEach(list => {
+        Array.from(list.querySelectorAll(".dly-row")).forEach(row => {
+          row.draggable = true;
+          row.addEventListener("dragstart", (e) => {
+            dragId = row.dataset.id;
+            row.classList.add("is-dragging");
+            e.dataTransfer.effectAllowed = "move";
+            try { e.dataTransfer.setData("text/plain", dragId); } catch (_) {}
+          });
+          row.addEventListener("dragend", () => {
+            row.classList.remove("is-dragging");
+            dragId = null;
+          });
+          row.addEventListener("dragover", (e) => {
+            if (!dragId || dragId === row.dataset.id) return;
+            const draggingEl = list.querySelector(`.dly-row[data-id="${dragId}"]`);
+            if (!draggingEl || draggingEl.parentElement !== list) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            const rect = row.getBoundingClientRect();
+            const before = (e.clientY - rect.top) < rect.height / 2;
+            if (before) list.insertBefore(draggingEl, row);
+            else list.insertBefore(draggingEl, row.nextSibling);
+          });
+          row.addEventListener("drop", (e) => {
+            e.preventDefault();
+            const sec = list.closest(".dly-section");
+            const name = sec ? (sec.getAttribute("aria-label") || "today") : "today";
+            const ids = Array.from(list.querySelectorAll(".dly-row")).map(r => r.dataset.id);
+            try { localStorage.setItem(KEY(name), JSON.stringify(ids)); } catch (_) {}
+          });
+        });
+      });
     })();
   </script>
 

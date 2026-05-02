@@ -194,6 +194,9 @@
   }
   .qb-row:last-child { border-bottom: none; }
   .qb-row:hover { background: var(--color-surface-secondary, color-mix(in srgb, var(--color-primary) 4%, transparent)); }
+  .qb-row[draggable="true"] { cursor: grab; }
+  .qb-row.is-dragging { opacity: 0.4; cursor: grabbing; }
+  .qb-row.is-dragging * { pointer-events: none; }
 
   .qb-check {
     appearance: none; width: 18px; height: 18px;

@@ -313,6 +313,33 @@ def update_item(item_id):
 
 # ─────────── mark done ───────────────────────────────────────
 
+@quick_bucket_bp.route("/api/quick-bucket/reorder", methods=["POST"])
+@login_required
+def reorder():
+    """Persist a new ordering after the user drag-drops rows.
+    Body: { "ids": ["id1", "id2", ...] } in new visual order.
+    Each id's `position` is set to its index so the next list
+    fetch returns rows in that order (the list endpoint sorts
+    by position asc)."""
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    ids = data.get("ids") or []
+    if not isinstance(ids, list):
+        return jsonify({"error": "ids must be a list"}), 400
+    for idx, item_id in enumerate(ids):
+        if not item_id:
+            continue
+        try:
+            update(
+                "quick_bucket",
+                params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                json={"position": idx},
+            )
+        except Exception:
+            logger.exception("quick_bucket reorder: position update failed for %s", item_id)
+    return jsonify({"ok": True, "count": len(ids)})
+
+
 @quick_bucket_bp.route("/api/quick-bucket/<item_id>/done", methods=["POST"])
 @login_required
 def mark_done(item_id):
