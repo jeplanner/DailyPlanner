@@ -803,6 +803,13 @@ html.dark .section-title{color:#f1f5f9;}
         Mythology
       </a>
 
+      {% if bedtime_stories_enabled %}
+      <a href="/bedtime-stories" data-match="^/bedtime-stories" title="Indian moral tales — Panchatantra, Tenali Raman, Akbar-Birbal, folk stories">
+        <i data-feather="moon"></i>
+        Bedtime Stories
+      </a>
+      {% endif %}
+
       <a href="/relationships" data-match="^/relationships" title="Stay in touch with the people who matter">
         <i data-feather="users"></i>
         Relationships

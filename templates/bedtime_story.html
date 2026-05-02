@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>{{ story.title }} — Bedtime Stories</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Crimson+Pro:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .bs-read { max-width: 720px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  .bs-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600;
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    margin-bottom: 18px;
+  }
+  .bs-back:hover { color: var(--color-primary); }
+  .bs-back svg { width: 14px; height: 14px; }
+
+  .bs-source-pill {
+    display: inline-block;
+    padding: 3px 11px; border-radius: 999px;
+    background: rgba(99,102,241,.10); color: #4338ca;
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .06em;
+    margin-bottom: 10px;
+  }
+  html.dark .bs-source-pill { background: rgba(99,102,241,.18); color: #c7d2fe; }
+
+  .bs-title {
+    font-family: 'Crimson Pro', serif;
+    font-size: 36px; font-weight: 700; line-height: 1.15;
+    letter-spacing: -.01em;
+    margin: 0 0 22px;
+    color: var(--color-text);
+  }
+
+  .bs-body p {
+    font-family: 'Crimson Pro', serif;
+    font-size: 19px; line-height: 1.75;
+    color: var(--color-text);
+    margin: 0 0 16px;
+  }
+  .bs-body p:first-of-type::first-letter {
+    font-family: 'Crimson Pro', serif;
+    font-size: 56px; font-weight: 700;
+    float: left; line-height: 1; padding: 4px 8px 0 0;
+    color: var(--color-primary);
+  }
+
+  .bs-moral {
+    margin-top: 28px;
+    border-left: 4px solid #fcd34d;
+    background: rgba(245,158,11,.08);
+    padding: 16px 20px;
+    border-radius: 0 12px 12px 0;
+  }
+  html.dark .bs-moral {
+    background: rgba(245,158,11,.14);
+    border-left-color: #b45309;
+  }
+  .bs-moral-label {
+    font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .08em;
+    color: #92400e; margin: 0 0 4px;
+  }
+  html.dark .bs-moral-label { color: #fcd34d; }
+  .bs-moral-text {
+    font-family: 'Crimson Pro', serif;
+    font-size: 17px; font-style: italic; line-height: 1.55;
+    margin: 0;
+    color: var(--color-text);
+  }
+
+  .bs-pager {
+    margin-top: 36px;
+    display: flex; justify-content: space-between; gap: 12px;
+    border-top: 1px solid var(--color-border);
+    padding-top: 18px;
+  }
+  .bs-pager a {
+    flex: 1; max-width: 48%;
+    display: flex; flex-direction: column;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+    text-decoration: none; color: var(--color-text);
+    transition: border-color .14s, box-shadow .14s;
+  }
+  .bs-pager a:hover { border-color: var(--color-border-strong); box-shadow: 0 4px 12px rgba(15,23,42,.06); }
+  .bs-pager .bs-pager-label {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .06em;
+    color: var(--color-text-muted);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .bs-pager .bs-pager-label svg { width: 12px; height: 12px; }
+  .bs-pager .bs-pager-title {
+    font-family: 'Crimson Pro', serif;
+    font-size: 16px; font-weight: 600; line-height: 1.3;
+    margin-top: 4px;
+  }
+  .bs-pager .bs-next { text-align: right; align-items: flex-end; }
+  .bs-pager-spacer { flex: 1; max-width: 48%; }
+
+  @media (max-width: 640px) {
+    .bs-read { padding: 20px 14px 80px; }
+    .bs-title { font-size: 28px; }
+    .bs-body p { font-size: 17px; line-height: 1.7; }
+    .bs-body p:first-of-type::first-letter { font-size: 44px; }
+    .bs-moral-text { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<main class="bs-read">
+  <a href="{{ url_for('bedtime_stories.stories_index') }}" class="bs-back">
+    <i data-feather="arrow-left"></i> All stories
+  </a>
+
+  <span class="bs-source-pill">{{ story.source }}</span>
+  <h1 class="bs-title">{{ story.title }}</h1>
+
+  <div class="bs-body">
+    {% for para in story.body %}
+      <p>{{ para }}</p>
+    {% endfor %}
+  </div>
+
+  <div class="bs-moral">
+    <p class="bs-moral-label">Moral</p>
+    <p class="bs-moral-text">{{ story.moral }}</p>
+  </div>
+
+  <nav class="bs-pager">
+    {% if prev_story %}
+      <a href="{{ url_for('bedtime_stories.story_detail', slug=prev_story.slug) }}">
+        <span class="bs-pager-label"><i data-feather="arrow-left"></i> Previous</span>
+        <span class="bs-pager-title">{{ prev_story.title }}</span>
+      </a>
+    {% else %}
+      <span class="bs-pager-spacer"></span>
+    {% endif %}
+
+    {% if next_story %}
+      <a class="bs-next" href="{{ url_for('bedtime_stories.story_detail', slug=next_story.slug) }}">
+        <span class="bs-pager-label">Next <i data-feather="arrow-right"></i></span>
+        <span class="bs-pager-title">{{ next_story.title }}</span>
+      </a>
+    {% else %}
+      <span class="bs-pager-spacer"></span>
+    {% endif %}
+  </nav>
+</main>
+
+<script>
+  if (window.feather) feather.replace();
+</script>
+</body>
+</html>
