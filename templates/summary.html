@@ -353,6 +353,89 @@
       font-size: 12px; color: #94a3b8; margin: 0 0 8px;
     }
 
+    /* ── SECTION LABELS (Today / Tomorrow / This week / etc.) ──
+       Small caps, muted, with a thin top divider. The whole page
+       reads like a planner journal: each horizon is an obvious
+       band, but nothing shouts. */
+    .md-section--upcoming {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #f1f5f9;
+    }
+    .md-section-label {
+      font-size: 11px; font-weight: 700; letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #64748b; margin: 0 0 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .md-section-count {
+      font-size: 11px; font-weight: 700;
+      padding: 1px 8px; border-radius: 999px;
+      background: #f1f5f9; color: #475569;
+      letter-spacing: 0;
+    }
+    .md-section-label--today {
+      margin-top: 18px;
+    }
+    /* Insert a "Today" label before the overdue+agenda block. */
+    .md-overdue-card::before, .md-agenda-card:first-of-type::before {
+      content: "";
+    }
+
+    /* ── ALIGNMENT GUARANTEE: every row in any md-table has the
+       same flex layout. Strong overrides so this can't be
+       defeated by older legacy rules. */
+    .md-table tr.md-row {
+      display: flex !important;
+      align-items: flex-start !important;
+      gap: 12px !important;
+      padding: 14px 0 !important;
+      border-bottom: 1px solid #f1f5f9 !important;
+      cursor: pointer;
+      background: transparent !important;
+      border-left: none !important;
+      box-shadow: none !important;
+    }
+    .md-table tr.md-row > td {
+      padding: 0 !important;
+      border: none !important;
+      display: block !important;
+      vertical-align: top;
+    }
+    .md-table tr.md-row .md-c-status {
+      order: 0 !important;
+      flex: 0 0 24px !important;
+      max-width: 24px !important;
+      padding-top: 1px !important;
+    }
+    .md-table tr.md-row .md-c-title {
+      order: 1 !important;
+      flex: 1 1 auto !important;
+      min-width: 0 !important;
+    }
+    .md-table tr.md-row .md-c-context {
+      order: 2 !important;
+      flex: 0 0 auto !important;
+      align-self: center !important;
+    }
+    .md-table tr.md-row .md-c-time,
+    .md-table tr.md-row .md-c-due {
+      order: 3 !important;
+      flex: 0 0 auto !important;
+      align-self: center !important;
+    }
+    @media (max-width: 720px) {
+      /* Mobile: wrap context to a second line under the title so
+         the title gets full width. */
+      .md-table tr.md-row { flex-wrap: wrap !important; row-gap: 4px !important; }
+      .md-table tr.md-row .md-c-context {
+        flex: 1 0 calc(100% - 36px) !important;
+        order: 4 !important;
+        align-self: flex-start !important;
+        margin-left: 36px !important;
+      }
+    }
+
     /* ── MORE SECTIONS expander — quiet text link ────────── */
     .md-more-toggle {
       display: inline-flex; align-items: center; gap: 6px;
@@ -434,6 +517,15 @@
       {% endif %}
     </div>
   </section>
+
+  {# Today section label sits above the overdue + today's-flow block
+     so the user sees "Today" as a clear horizon header. #}
+  {% if dashboard.overdue or dashboard.today_items %}
+  <h2 class="md-section-label md-section-label--today">
+    Today
+    <span class="md-section-count">{{ (dashboard.overdue|length) + (dashboard.today_items|length) }}</span>
+  </h2>
+  {% endif %}
 
   <!-- ── OVERDUE ── highest priority signal in a morning review.
        Collapsible: tap the header to toggle. State persisted in
@@ -681,6 +773,97 @@
     {% endif %}
     </div>
   </details>
+
+  {# ──────────────────────────────────────────────────────────
+     UPCOMING — Tomorrow / This week / Future. Same row recipe
+     as today + overdue, separated by a small caps label.
+     ────────────────────────────────────────────────────────── #}
+  {% set _u = dashboard.upcoming %}
+  {% if _u.tomorrow %}
+  <section class="md-section md-section--upcoming" aria-label="Tomorrow">
+    <h2 class="md-section-label">Tomorrow <span class="md-section-count">{{ _u.tomorrow|length }}</span></h2>
+    <table class="md-table md-agenda-table">
+      <tbody>
+        {% for it in _u.tomorrow %}
+        <tr class="md-row md-agenda-row md-type-task" data-id="{{ it.id }}"
+            data-type="task" data-source="matrix" data-title="{{ it.title }}"
+            data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
+            data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
+            data-link="{{ it.link or '' }}" data-done="0"
+            onclick="openItemPeek(this, event)" tabindex="0" role="button"
+            aria-label="Open task: {{ it.title }}">
+          <td class="md-c-status">
+            <button type="button" class="md-task-toggle" aria-label="Mark done"
+                    onclick="markTaskDoneInRow(this, event)"></button>
+          </td>
+          <td class="md-c-title"><span class="md-row-title">{{ it.title }}</span></td>
+          {% if it.context %}<td class="md-c-context"><span class="md-context-chip">{{ it.context }}</span></td>{% endif %}
+          <td class="md-c-time">
+            {% if it.time %}<span class="md-time">{{ it.time }}</span>{% else %}<span class="md-time md-time-any">Anytime</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  {% if _u.this_week %}
+  <section class="md-section md-section--upcoming" aria-label="This week">
+    <h2 class="md-section-label">This week <span class="md-section-count">{{ _u.this_week|length }}</span></h2>
+    <table class="md-table md-agenda-table">
+      <tbody>
+        {% for it in _u.this_week %}
+        <tr class="md-row md-agenda-row md-type-task" data-id="{{ it.id }}"
+            data-type="task" data-source="matrix" data-title="{{ it.title }}"
+            data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
+            data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
+            data-link="{{ it.link or '' }}" data-done="0"
+            onclick="openItemPeek(this, event)" tabindex="0" role="button"
+            aria-label="Open task: {{ it.title }}">
+          <td class="md-c-status">
+            <button type="button" class="md-task-toggle" aria-label="Mark done"
+                    onclick="markTaskDoneInRow(this, event)"></button>
+          </td>
+          <td class="md-c-title"><span class="md-row-title">{{ it.title }}</span></td>
+          {% if it.context %}<td class="md-c-context"><span class="md-context-chip">{{ it.context }}</span></td>{% endif %}
+          <td class="md-c-time">
+            {% set _d = (it.date or '')[5:10] %}
+            <span class="md-time">{{ _d }}{% if it.time %} · {{ it.time }}{% endif %}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  {% if _u.future %}
+  <section class="md-section md-section--upcoming" aria-label="Future">
+    <h2 class="md-section-label">Future <span class="md-section-count">{{ _u.future|length }}</span></h2>
+    <table class="md-table md-agenda-table">
+      <tbody>
+        {% for it in _u.future %}
+        <tr class="md-row md-agenda-row md-type-task" data-id="{{ it.id }}"
+            data-type="task" data-source="matrix" data-title="{{ it.title }}"
+            data-time="{{ it.time or '' }}" data-date="{{ it.date or '' }}"
+            data-context="{{ it.context or '' }}" data-priority="{{ it.priority or '' }}"
+            data-link="{{ it.link or '' }}" data-done="0"
+            onclick="openItemPeek(this, event)" tabindex="0" role="button"
+            aria-label="Open task: {{ it.title }}">
+          <td class="md-c-status">
+            <button type="button" class="md-task-toggle" aria-label="Mark done"
+                    onclick="markTaskDoneInRow(this, event)"></button>
+          </td>
+          <td class="md-c-title"><span class="md-row-title">{{ it.title }}</span></td>
+          {% if it.context %}<td class="md-c-context"><span class="md-context-chip">{{ it.context }}</span></td>{% endif %}
+          <td class="md-c-time"><span class="md-time">{{ it.date }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
 
   <!-- Filter-chip styles + click-handler. Scoped to the agenda + habits
        cards so chips control which rows are visible. -->

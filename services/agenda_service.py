@@ -762,6 +762,74 @@ def fetch_bucket_items(user_id: str, plan_date) -> tuple[list[dict], list[dict]]
     return active, done
 
 
+def fetch_upcoming(user_id: str, plan_date) -> dict:
+    """Open matrix tasks dated AFTER plan_date, grouped by horizon.
+
+    Returns a dict with three buckets so the morning dashboard can
+    render Tomorrow / This week / Future sections under the today
+    list — answers the user's question "what's coming up" without
+    them having to navigate to the matrix or calendar.
+    """
+    from datetime import timedelta as _td
+    today = plan_date if hasattr(plan_date, "year") else date.fromisoformat(_to_iso(plan_date))
+    tomorrow_iso = _to_iso(today + _td(days=1))
+    week_end_iso = _to_iso(today + _td(days=7))
+
+    rows = _safe_get(
+        "todo_matrix",
+        params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "is_done": "eq.false",
+            "plan_date": f"gt.{_to_iso(today)}",
+            "select": "id,task_text,plan_date,project_id,priority,quadrant,task_time,task_date",
+            "order": "plan_date.asc",
+            "limit": "200",
+        },
+        action="upcoming matrix fetch",
+    )
+    project_name_map = _project_name_map(
+        user_id, (r.get("project_id") for r in rows),
+    )
+
+    def _normalise(r):
+        title = (r.get("task_text") or "").strip()
+        if not title:
+            return None
+        return {
+            "id": "matrix-" + str(r.get("id")),
+            "type": "task",
+            "source": "matrix",
+            "title": title,
+            "time": ((r.get("task_time") or "")[:5]) or None,
+            "end_time": None,
+            "date": r.get("plan_date"),
+            "done": False,
+            "status": "open",
+            "priority": r.get("priority"),
+            "context": project_name_map.get(r.get("project_id"))
+                       or QUADRANT_LABELS.get(r.get("quadrant")),
+            "link": "/todo",
+            "project_id": r.get("project_id"),
+        }
+
+    tomorrow: list[dict] = []
+    this_week: list[dict] = []
+    future:    list[dict] = []
+    for r in rows:
+        item = _normalise(r)
+        if not item:
+            continue
+        d = item["date"] or ""
+        if d == tomorrow_iso:
+            tomorrow.append(item)
+        elif d <= week_end_iso:
+            this_week.append(item)
+        else:
+            future.append(item)
+    return {"tomorrow": tomorrow, "this_week": this_week, "future": future}
+
+
 def build_dashboard(user_id: str, plan_date) -> dict:
     """Morning dashboard composition.
 
@@ -780,6 +848,7 @@ def build_dashboard(user_id: str, plan_date) -> dict:
     intent = _fetch_daily_intent(user_id, plan_date)
     inbox_health = fetch_inbox_health(user_id, plan_date)
     bucket_active, bucket_done = fetch_bucket_items(user_id, plan_date)
+    upcoming = fetch_upcoming(user_id, plan_date)
 
     # Single timeline: meetings + matrix tasks + project tasks + Tasks
     # Bucket items merged chronologically. The template's filter chips
@@ -813,10 +882,14 @@ def build_dashboard(user_id: str, plan_date) -> dict:
         "habits": habits,
         "intent": intent,
         "inbox_health": inbox_health,
+        "upcoming": upcoming,
         "counts": {
             "meetings": meeting_count,
             "tasks": task_count,
             "bucket": len(bucket_active),
+            "tomorrow":  len(upcoming["tomorrow"]),
+            "this_week": len(upcoming["this_week"]),
+            "future":    len(upcoming["future"]),
             "habits": len(habits),
             "habits_done": habits_done,
             "overdue": len(overdue),
