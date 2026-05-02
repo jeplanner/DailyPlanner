@@ -492,29 +492,6 @@
   .qb-pomo-dur.is-current {
     background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
   }
-  .qb-pomo-label {
-    font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--color-text-secondary);
-    /* Wrap to up to 2 lines instead of truncating with ellipsis so the
-       user can actually read what they're focusing on. */
-    max-width: 240px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    line-height: 1.25;
-    word-break: break-word;
-  }
-  .qb-pomo.is-running .qb-pomo-label { color: #4338ca; }
-  .qb-pomo.is-ended   .qb-pomo-label { color: #92400e; }
-
-  /* Focus-title popup — sized for mobile, content wraps. */
-  .qb-pomo-modal-body-wrap { max-width: 420px; }
-  .qb-modal-hint {
-    margin: 0 0 12px;
-    font-size: 13px; line-height: 1.45;
-    color: var(--color-text-secondary);
-  }
   .qb-pomo-prompt-input {
     width: 100%; box-sizing: border-box;
     padding: 10px 12px; font: inherit; font-size: 15px; line-height: 1.4;
@@ -528,6 +505,24 @@
   .qb-pomo-prompt-input:focus {
     outline: none; border-color: var(--color-primary);
     box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  /* Inline focus-title input, lives directly inside the timer popup. */
+  #qb-pomo-inline-title { margin-bottom: 12px; }
+  #qb-pomo-inline-title.is-shake {
+    animation: qbShake .35s ease;
+    border-color: #b91c1c;
+    box-shadow: 0 0 0 3px rgba(185,28,28,.15);
+  }
+  #qb-pomo-inline-title:disabled,
+  #qb-pomo-inline-title[readonly] {
+    background: var(--color-surface-secondary, #f3f4f6);
+    color: var(--color-text);
+    cursor: default;
+  }
+  @keyframes qbShake {
+    0%, 100% { transform: translateX(0); }
+    20%, 60% { transform: translateX(-6px); }
+    40%, 80% { transform: translateX(6px); }
   }
 </style>
 </head>
@@ -694,8 +689,11 @@
       </button>
     </div>
     <div class="qb-modal-body">
+      <textarea id="qb-pomo-inline-title" class="qb-pomo-prompt-input"
+                rows="2" maxlength="200"
+                placeholder="What are you focusing on?"
+                autocomplete="off"></textarea>
       <section class="qb-pomo" id="qb-pomo" aria-label="Pomodoro timer">
-        <span class="qb-pomo-label" id="qb-pomo-label">Focus</span>
         <div class="qb-pomo-time" id="qb-pomo-time">25:00</div>
         <div class="qb-pomo-controls">
           <button class="qb-pomo-icon qb-pomo-icon--primary" id="qb-pomo-play" type="button" title="Start">
@@ -712,35 +710,6 @@
           <button class="qb-pomo-dur" data-min="90" type="button">90m</button>
         </div>
       </section>
-    </div>
-  </div>
-</div>
-
-<!-- Focus-title popup for the Pomodoro: replaces the always-visible
-     inline input so the widget itself stays compact. -->
-<div class="qb-modal-backdrop" id="qb-pomo-modal" role="dialog" aria-modal="true" aria-hidden="true">
-  <div class="qb-modal qb-pomo-modal-body-wrap">
-    <div class="qb-modal-head">
-      <h3>What are you focusing on?</h3>
-      <button class="qb-row-icon-action" id="qb-pomo-modal-close" type="button" aria-label="Close">
-        <i data-feather="x"></i>
-      </button>
-    </div>
-    <div class="qb-modal-body">
-      <p class="qb-modal-hint">
-        Type a short title for this focus session. It'll be saved in your
-        Focus Log so you can see what you spent the day on.
-      </p>
-      <textarea id="qb-pomo-modal-input" class="qb-pomo-prompt-input"
-                rows="2" maxlength="200"
-                placeholder="e.g. Migration spec • Email triage • Read paper X"
-                autocomplete="off"></textarea>
-    </div>
-    <div class="qb-modal-foot">
-      <button class="qb-btn" id="qb-pomo-modal-cancel" type="button">Cancel</button>
-      <button class="qb-btn qb-btn-primary" id="qb-pomo-modal-start" type="button">
-        <i data-feather="play"></i> Start focus
-      </button>
     </div>
   </div>
 </div>

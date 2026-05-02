@@ -895,13 +895,20 @@
       }
     }
 
-    // Label area: shows "Focus" when no title is set, or the activity
-    // title once the user has picked one. The title is collected via
-    // a popup, not an inline field, so the widget stays compact.
-    const lbl = $("#qb-pomo-label");
-    if (lbl) {
-      lbl.textContent = pomo.label || "Focus";
-      lbl.title = pomo.label || "Focus session";
+    // Inline title field lives in the popup itself. While running or
+    // paused, lock it (readonly) so the title can't drift mid-session;
+    // on idle/ended, allow editing for the next session. pomoReset and
+    // pomoEnd explicitly clear the input value when they fire.
+    const inlineTitle = $("#qb-pomo-inline-title");
+    if (inlineTitle) {
+      const locked = playing || pomo.state === "paused";
+      inlineTitle.readOnly = locked;
+      // While locked, mirror the saved label into the input so it
+      // stays visible. While editable, leave whatever the user is
+      // typing alone.
+      if (locked && pomo.label && inlineTitle.value !== pomo.label) {
+        inlineTitle.value = pomo.label;
+      }
     }
 
     $$(".qb-pomo-dur").forEach(b => {
@@ -931,62 +938,34 @@
     if (pomoTimer) { clearInterval(pomoTimer); pomoTimer = null; }
   };
 
-  // Opens the in-page focus-title popup and resolves with the typed
-  // title (trimmed) or null if the user dismissed it.
-  const askPomoTitle = () => new Promise((resolve) => {
-    const modal = $("#qb-pomo-modal");
-    const input = $("#qb-pomo-modal-input");
-    const startBtn = $("#qb-pomo-modal-start");
-    const cancelBtn = $("#qb-pomo-modal-cancel");
-    const closeBtn = $("#qb-pomo-modal-close");
-    if (!modal || !input || !startBtn) { resolve(null); return; }
-
-    input.value = "";
-    modal.classList.add("is-open");
-    modal.setAttribute("aria-hidden", "false");
-    setTimeout(() => input.focus(), 30);
-
-    const finish = (val) => {
-      modal.classList.remove("is-open");
-      modal.setAttribute("aria-hidden", "true");
-      startBtn.removeEventListener("click", onStart);
-      cancelBtn.removeEventListener("click", onCancel);
-      closeBtn.removeEventListener("click", onCancel);
-      input.removeEventListener("keydown", onKey);
-      modal.removeEventListener("click", onBackdrop);
-      resolve(val);
-    };
-    const onStart = () => {
-      const v = (input.value || "").trim();
-      if (!v) { input.focus(); return; }
-      finish(v);
-    };
-    const onCancel = () => finish(null);
-    const onKey = (e) => {
-      // Shift+Enter inserts a newline (the field is now a textarea so
-      // long titles wrap), plain Enter submits.
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onStart(); }
-      else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-    };
-    const onBackdrop = (e) => { if (e.target === modal) onCancel(); };
-
-    startBtn.addEventListener("click", onStart);
-    cancelBtn.addEventListener("click", onCancel);
-    closeBtn.addEventListener("click", onCancel);
-    input.addEventListener("keydown", onKey);
-    modal.addEventListener("click", onBackdrop);
-  });
+  // Reads the inline title input. Returns the trimmed value, or "" if
+  // empty. On empty, briefly shakes/highlights the field so the user
+  // sees they need to fill it in before pressing play.
+  const readInlineTitle = () => {
+    const input = $("#qb-pomo-inline-title");
+    if (!input) return "";
+    const v = (input.value || "").trim();
+    if (!v) {
+      input.classList.remove("is-shake");
+      // Force reflow so the animation re-runs on repeated empty taps.
+      void input.offsetWidth;
+      input.classList.add("is-shake");
+      setTimeout(() => input.classList.remove("is-shake"), 400);
+      input.focus();
+    }
+    return v;
+  };
 
   const pomoStart = async () => {
     if (pomo.state === "running") return;
 
-    // First-time start → custom popup asks for the focus title. Resuming
+    // First-time start → read the title from the inline input. Resuming
     // a paused session (label already set) skips this so the play/pause
     // toggle stays one-tap.
     const isResume = pomo.state === "paused" && !!pomo.label;
     if (!isResume) {
-      const title = await askPomoTitle();
-      if (!title) return;  // user cancelled
+      const title = readInlineTitle();
+      if (!title) return;  // empty: shake-feedback already fired
       pomo.label = title.slice(0, 200);
     }
 
@@ -1111,6 +1090,8 @@
     pomo.endsAt = null;
     pomo.remaining = pomo.durationMins * 60 * 1000;
     pomo.label = null;
+    const inlineTitle = $("#qb-pomo-inline-title");
+    if (inlineTitle) inlineTitle.value = "";
     savePomo();
     stopPomoTicker();
     renderPomo();
@@ -1143,6 +1124,8 @@
     pomo.endsAt = null;
     // Clear label so the next Start prompts for a fresh activity.
     pomo.label = null;
+    const inlineTitle = $("#qb-pomo-inline-title");
+    if (inlineTitle) inlineTitle.value = "";
     savePomo();
     stopPomoTicker();
     pomoBeep();
@@ -1189,6 +1172,12 @@
     m.classList.add("is-open");
     m.setAttribute("aria-hidden", "false");
     refreshFeather();
+    // Focus the inline title field if it's editable so the user can
+    // start typing the focus title immediately.
+    const input = $("#qb-pomo-inline-title");
+    if (input && !input.readOnly) {
+      setTimeout(() => input.focus(), 30);
+    }
   };
   const closePomoPopup = () => {
     const m = $("#qb-pomo-popup");
@@ -1209,6 +1198,15 @@
     $("#qb-pomo-reset").addEventListener("click", pomoReset);
     $$(".qb-pomo-dur").forEach(b => {
       b.addEventListener("click", () => pomoSetDuration(Number(b.dataset.min)));
+    });
+
+    // Plain Enter inside the inline title triggers Start; Shift+Enter
+    // inserts a newline so long activity titles can wrap.
+    $("#qb-pomo-inline-title")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        if (pomo.state !== "running") pomoStart();
+      }
     });
 
     // Trigger button on the stats card opens the timer popup. The
