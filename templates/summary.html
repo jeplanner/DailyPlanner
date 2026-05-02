@@ -1268,54 +1268,26 @@
   </script>
 
   <script>
-    /* ── SWIPE-RIGHT to mark done + motivational toast ──────────
+    /* ── SWIPE-RIGHT to mark done ──────────────────────────────
        Touch a task row and slide right ≥ 90 px → row marks done
        (delegates to markTaskDoneInRow which the existing checkbox
        handler already calls). The row also follows the finger
-       with a translateX so the gesture feels physical. */
-    (function () {
-      const THRESHOLD = 90;        // px of horizontal travel = commit
-      const Y_TOLERANCE = 30;      // px vertical wobble allowed
+       with a translateX so the gesture feels physical.
+       The motivational quote that fires on completion lives on
+       window.cheer — defined once, used by markTaskDoneInRow and
+       the peek modal so the user only sees ONE toast per close. */
+    window.cheer = window.cheer || (function () {
       const QUOTES = [
         "Boom!", "Crushed it.", "One down.", "Look at you go.",
         "Way to go!", "Onward 💪", "Nice work.", "Momentum!",
         "That's the way.", "Good progress.", "Stacking wins.",
         "Done & dusted.", "Solid.", "Keep rolling.",
       ];
-      const cheer = () => {
-        const msg = QUOTES[Math.floor(Math.random() * QUOTES.length)];
-        if (window.showToast) window.showToast(msg, "success");
-        else if (window.toast?.show) window.toast.show(msg, "success");
-      };
-      // Wrap the existing markTaskDoneInRow so completions also cheer.
-      // markTaskDoneInRow is defined in a later <script> block in this
-      // template — at parse time it isn't on window yet. Defer the
-      // wrap to DOMContentLoaded so the function exists.
-      const wrapMark = () => {
-        const origMark = window.markTaskDoneInRow;
-        if (typeof origMark !== "function") return false;
-        if (origMark.__withCheer) return true;     // already wrapped
-        const wrapped = async function (btn, ev) {
-          const row = btn.closest(".md-row");
-          const wasOpen = row && row.dataset.done !== "1";
-          await origMark.call(this, btn, ev);
-          if (wasOpen && row && row.dataset.done === "1") cheer();
-        };
-        wrapped.__withCheer = true;
-        window.markTaskDoneInRow = wrapped;
-        return true;
-      };
-      if (!wrapMark()) {
-        // Defer until DOM is fully parsed so all script blocks have
-        // run and registered their globals.
-        if (document.readyState === "loading") {
-          document.addEventListener("DOMContentLoaded", wrapMark);
-        } else {
-          // Already past DOMContentLoaded but function still missing —
-          // wait one tick and try again, then give up gracefully.
-          setTimeout(wrapMark, 0);
-        }
-      }
+      return () => QUOTES[Math.floor(Math.random() * QUOTES.length)];
+    })();
+    (function () {
+      const THRESHOLD = 90;        // px of horizontal travel = commit
+      const Y_TOLERANCE = 30;      // px vertical wobble allowed
 
       const rows = document.querySelectorAll(".dly-row");
       rows.forEach(row => {
@@ -3027,7 +2999,7 @@ async function _markTaskDone(item) {
       }
     }
 
-    if (window.showToast) showToast("Marked done", "success", 1800);
+    if (window.showToast) showToast((window.cheer && window.cheer()) || "Done", "success", 1800);
     closeItemPeek();
   } catch (e) {
     console.error("_markTaskDone failed:", e);
@@ -3290,7 +3262,7 @@ async function markTaskDoneInRow(btn, ev) {
     _recapMoveTimers.set(row, moveTimer);
 
     if (window.showToast) {
-      showToast("Marked done", "success", 5000, {
+      showToast((window.cheer && window.cheer()) || "Done", "success", 5000, {
         label: "Undo",
         onClick: async () => {
           const t = _recapMoveTimers.get(row);
@@ -3727,7 +3699,7 @@ async function markSlotDoneInRow(btn, ev) {
 
     if (window.showToast) {
       if (makeDone) {
-        showToast("Marked done", "success", 5000, {
+        showToast((window.cheer && window.cheer()) || "Done", "success", 5000, {
           label: "Undo",
           onClick: () => markSlotDoneInRow(btn, null),
         });
@@ -3770,7 +3742,7 @@ async function markEventDoneInRow(btn, ev) {
 
     if (window.showToast) {
       if (makeDone) {
-        showToast("Marked done", "success", 5000, {
+        showToast((window.cheer && window.cheer()) || "Done", "success", 5000, {
           label: "Undo",
           onClick: () => markEventDoneInRow(btn, null),
         });
