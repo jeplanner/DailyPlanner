@@ -1288,16 +1288,33 @@
         else if (window.toast?.show) window.toast.show(msg, "success");
       };
       // Wrap the existing markTaskDoneInRow so completions also cheer.
-      // Only intercept when the row was open (not already done) so
-      // un-checking doesn't fire a celebration.
-      const origMark = window.markTaskDoneInRow;
-      if (typeof origMark === "function") {
-        window.markTaskDoneInRow = async function (btn, ev) {
+      // markTaskDoneInRow is defined in a later <script> block in this
+      // template — at parse time it isn't on window yet. Defer the
+      // wrap to DOMContentLoaded so the function exists.
+      const wrapMark = () => {
+        const origMark = window.markTaskDoneInRow;
+        if (typeof origMark !== "function") return false;
+        if (origMark.__withCheer) return true;     // already wrapped
+        const wrapped = async function (btn, ev) {
           const row = btn.closest(".md-row");
           const wasOpen = row && row.dataset.done !== "1";
           await origMark.call(this, btn, ev);
           if (wasOpen && row && row.dataset.done === "1") cheer();
         };
+        wrapped.__withCheer = true;
+        window.markTaskDoneInRow = wrapped;
+        return true;
+      };
+      if (!wrapMark()) {
+        // Defer until DOM is fully parsed so all script blocks have
+        // run and registered their globals.
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", wrapMark);
+        } else {
+          // Already past DOMContentLoaded but function still missing —
+          // wait one tick and try again, then give up gracefully.
+          setTimeout(wrapMark, 0);
+        }
       }
 
       const rows = document.querySelectorAll(".dly-row");
