@@ -247,8 +247,12 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
     <textarea id="inp-desc" class="qa-desc" placeholder="Add a note (optional — AI will generate a description if blank)"></textarea>
     <div class="qa-status" id="save-status"></div>
 
-    <!-- Search results panel -->
-    <div id="search-results" class="search-results hidden"></div>
+    {# id is namespaced (inbox-search-results) so it doesn't collide with
+       the global Cmd+K search palette in _top_nav.html, which also uses
+       #search-results. Without the prefix, getElementById returns the
+       palette modal (parent display:none) and every search result was
+       being written into an invisible DOM node. #}
+    <div id="inbox-search-results" class="search-results hidden"></div>
   </div>
 
   <!-- Toolbar -->
@@ -373,7 +377,7 @@ async function pasteFromClipboard() {
 // time they search is hostile. The help modal still documents how to
 // enable Articles for users who want it.
 async function doSearchAll(query) {
-  const panel = document.getElementById("search-results");
+  const panel = document.getElementById("inbox-search-results");
   panel.classList.remove("hidden");
   panel.innerHTML = `
     <div class="sr-section" id="sr-youtube">
@@ -538,8 +542,8 @@ async function saveSearchResult(btn, url) {
 }
 
 function hideSearchResults() {
-  document.getElementById("search-results").classList.add("hidden");
-  document.getElementById("search-results").innerHTML = "";
+  document.getElementById("inbox-search-results").classList.add("hidden");
+  document.getElementById("inbox-search-results").innerHTML = "";
 }
 
 /* ══════════════════════════════════════════════════════
