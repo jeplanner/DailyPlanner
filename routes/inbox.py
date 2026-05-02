@@ -196,6 +196,48 @@ def _cse_thumbnail(item):
     return ""
 
 
+def _log_google_failure(label, response, query):
+    """Dump everything useful from a Google API failure: status, the exact
+    machine-readable reason codes (errors[].reason + details[].reason +
+    metadata.consumer/service), the message, response headers that hint
+    at quota / billing, and a truncated body. Lets a future read of the
+    log answer "why did this 403?" without having to reproduce."""
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+    err = (payload or {}).get("error", {}) or {}
+    reasons = [e.get("reason") for e in err.get("errors", []) or [] if e.get("reason")]
+    detail_reasons = [d.get("reason") for d in err.get("details", []) or [] if d.get("reason")]
+    consumer = service = None
+    for d in err.get("details", []) or []:
+        md = d.get("metadata") or {}
+        if md.get("consumer") and not consumer:
+            consumer = md["consumer"]
+        if md.get("service") and not service:
+            service = md["service"]
+    quota_headers = {
+        k: response.headers.get(k)
+        for k in ("X-Goog-Quota-User", "Retry-After", "X-RateLimit-Remaining")
+        if response.headers.get(k)
+    }
+    logger.warning(
+        "%s search FAILED: http=%s status=%s reasons=%s details=%s "
+        "consumer=%s service=%s quota_headers=%s msg=%r query=%r body=%r",
+        label,
+        response.status_code,
+        err.get("status"),
+        reasons,
+        detail_reasons,
+        consumer,
+        service,
+        quota_headers,
+        (err.get("message") or "")[:300],
+        query[:80],
+        response.text[:500],
+    )
+
+
 @inbox_bp.route("/api/inbox/search", methods=["GET"])
 @login_required
 def search_web():
@@ -206,7 +248,13 @@ def search_web():
 
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     if not api_key:
+        logger.warning("YouTube search: GOOGLE_API_KEY missing")
         return jsonify({"error": "GOOGLE_API_KEY not set in .env."}), 503
+
+    logger.info(
+        "YouTube search: q=%r key_prefix=%s key_suffix=%s",
+        query[:80], api_key[:8], api_key[-4:],
+    )
 
     try:
         r = http_requests.get(
@@ -221,16 +269,18 @@ def search_web():
             timeout=8,
         )
         if r.status_code != 200:
+            _log_google_failure("YouTube", r, query)
             try:
                 payload = r.json()
             except Exception:
                 payload = {}
             hint = _google_error_hint(payload)
-            logger.warning("YouTube search failed: %s %s", r.status_code, hint)
             return jsonify({"error": f"YouTube: {hint}"}), 503
 
+        items = r.json().get("items", [])
+        logger.info("YouTube search: q=%r items=%d", query[:80], len(items))
         results = []
-        for item in r.json().get("items", []):
+        for item in items:
             vid = item["id"].get("videoId", "")
             snip = item.get("snippet", {})
             results.append({
@@ -242,7 +292,7 @@ def search_web():
             })
         return jsonify(results)
     except Exception as e:
-        logger.warning("YouTube search error: %s", e)
+        logger.exception("YouTube search exception: q=%r err=%s", query[:80], e)
         return jsonify({"error": f"YouTube: {e}"}), 500
 
 
@@ -264,8 +314,10 @@ def search_articles():
     api_key = os.environ.get("GOOGLE_API_KEY", "")
     cse_id = os.environ.get("GOOGLE_CSE_ID", "")
     if not api_key:
+        logger.warning("CSE search: GOOGLE_API_KEY missing")
         return jsonify({"error": "GOOGLE_API_KEY not set in .env."}), 503
     if not cse_id:
+        logger.warning("CSE search: GOOGLE_CSE_ID missing")
         return jsonify({
             "error": (
                 "Articles search not configured. Create a Programmable "
@@ -274,6 +326,11 @@ def search_articles():
                 "GOOGLE_API_KEY's allowed services."
             )
         }), 503
+
+    logger.info(
+        "CSE search: q=%r key_prefix=%s key_suffix=%s cx=%s",
+        query[:80], api_key[:8], api_key[-4:], cse_id,
+    )
 
     try:
         r = http_requests.get(
@@ -288,16 +345,18 @@ def search_articles():
             timeout=8,
         )
         if r.status_code != 200:
+            _log_google_failure("CSE", r, query)
             try:
                 payload = r.json()
             except Exception:
                 payload = {}
             hint = _google_error_hint(payload)
-            logger.warning("CSE search failed: %s %s", r.status_code, hint)
             return jsonify({"error": f"Articles: {hint}"}), 503
 
+        items = r.json().get("items", [])
+        logger.info("CSE search: q=%r items=%d", query[:80], len(items))
         results = []
-        for item in r.json().get("items", []):
+        for item in items:
             results.append({
                 "url": item.get("link", ""),
                 "title": item.get("title", ""),
@@ -307,5 +366,5 @@ def search_articles():
             })
         return jsonify(results)
     except Exception as e:
-        logger.warning("CSE search error: %s", e)
+        logger.exception("CSE search exception: q=%r err=%s", query[:80], e)
         return jsonify({"error": f"Articles: {e}"}), 500
