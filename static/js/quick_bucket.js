@@ -98,26 +98,20 @@
     if (doneEl) doneEl.textContent = doneToday;
     if (quoteEl) quoteEl.textContent = `"${quoteOfTheDay()}"`;
 
-    // Bucket-fill visual: ratio of today's done over today's total
-    // (open + done_today). With nothing done, the bucket is empty;
-    // tick everything off and it brims.
+    // Progress ring: arc fills based on done / (done + open). The
+    // r=32 circle has circumference 2π·32 ≈ 201; stroke-dashoffset
+    // controls how much of that is hidden.
     const total = open + doneToday;
     const ratio = total > 0 ? Math.min(1, doneToday / total) : 0;
-    const fill = document.getElementById("qb-bucket-fill");
-    const line = document.getElementById("qb-bucket-line");
-    if (fill) {
-      const top = 22, bot = 80;
-      const fillH = (bot - top) * ratio;
-      const fillY = bot - fillH;
-      fill.setAttribute("y", fillY);
-      fill.setAttribute("height", fillH);
-      if (line) {
-        line.setAttribute("y1", fillY);
-        line.setAttribute("y2", fillY);
-        // Hide the surface line when the bucket is empty so we don't
-        // draw a stray bar at the very bottom of an empty bucket.
-        line.style.opacity = ratio > 0 ? "1" : "0";
-      }
+    const CIRCUM = 2 * Math.PI * 32;  // ≈ 201.06
+    const ringFill = document.getElementById("qb-ring-fill");
+    const ringPct  = document.getElementById("qb-ring-pct");
+    if (ringFill) {
+      ringFill.setAttribute("stroke-dasharray", CIRCUM.toFixed(1));
+      ringFill.setAttribute("stroke-dashoffset", (CIRCUM * (1 - ratio)).toFixed(1));
+    }
+    if (ringPct) {
+      ringPct.textContent = Math.round(ratio * 100) + "%";
     }
   };
 

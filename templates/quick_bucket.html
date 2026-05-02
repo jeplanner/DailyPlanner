@@ -28,15 +28,11 @@
     background: linear-gradient(135deg, #eef2ff 0%, #f0fdfa 100%);
     border: 1px solid #c7d2fe; border-radius: 14px;
   }
-  .qb-bucket-svg {
-    width: 80px; height: 92px; display: block;
+  .qb-progress-ring {
+    width: 80px; height: 80px; display: block;
   }
-  .qb-bucket-svg #qb-bucket-fill,
-  .qb-bucket-svg #qb-bucket-line {
-    transition: y .6s cubic-bezier(.2,.8,.2,1),
-                height .6s cubic-bezier(.2,.8,.2,1),
-                y1 .6s cubic-bezier(.2,.8,.2,1),
-                y2 .6s cubic-bezier(.2,.8,.2,1);
+  .qb-progress-ring .qb-ring-fill {
+    transition: stroke-dashoffset .6s cubic-bezier(.2,.8,.2,1);
   }
   .qb-stats-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .qb-stats-row {
@@ -89,7 +85,7 @@
       grid-template-rows: auto auto;
       column-gap: 12px;
     }
-    .qb-bucket-svg { width: 64px; height: 74px; }
+    .qb-progress-ring { width: 64px; height: 64px; }
     .qb-focus-trigger {
       grid-column: 1 / -1; justify-self: stretch; justify-content: center;
     }
@@ -529,31 +525,22 @@
   <section class="qb-statbar" id="qb-statbar" aria-label="Today's progress">
     <!-- Bucket icon. The interior rect's height is updated in JS to
          visualise today's completion ratio (filled = done). -->
-    <svg class="qb-bucket-svg" viewBox="0 0 80 92" aria-hidden="true">
-      <defs>
-        <clipPath id="qbBucketShape">
-          <path d="M 14 22 L 66 22 L 60 80 L 20 80 Z"/>
-        </clipPath>
-        <linearGradient id="qbBucketGradient" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%"   stop-color="#34d399"/>
-          <stop offset="100%" stop-color="#059669"/>
-        </linearGradient>
-      </defs>
-      <!-- Fill (clipped to bucket interior). Height/Y updated in JS. -->
-      <rect id="qb-bucket-fill" x="14" y="80" width="52" height="0"
-            fill="url(#qbBucketGradient)" clip-path="url(#qbBucketShape)"/>
-      <!-- Surface line at top of fill -->
-      <line id="qb-bucket-line" x1="14" y1="80" x2="66" y2="80"
-            stroke="#10b981" stroke-width="2"/>
-      <!-- Bucket body outline (above fill so the rim shows clean) -->
-      <path d="M 14 22 L 66 22 L 60 80 L 20 80 Z"
-            fill="none" stroke="#4338ca" stroke-width="3" stroke-linejoin="round"/>
-      <!-- Bucket rim (top oval) -->
-      <ellipse cx="40" cy="22" rx="26" ry="4"
-               fill="#eef2ff" stroke="#4338ca" stroke-width="3"/>
-      <!-- Handle -->
-      <path d="M 22 18 Q 22 6, 40 6 Q 58 6, 58 18"
-            stroke="#4338ca" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <!-- Circular progress ring — track + filled arc + centred %.
+         Cleaner than the previous bucket SVG, works small. -->
+    <svg class="qb-progress-ring" viewBox="0 0 80 80" aria-hidden="true">
+      <circle class="qb-ring-track"
+              cx="40" cy="40" r="32"
+              fill="none" stroke="#EAEDED" stroke-width="6"/>
+      <circle id="qb-ring-fill" class="qb-ring-fill"
+              cx="40" cy="40" r="32"
+              fill="none" stroke="#007185" stroke-width="6"
+              stroke-linecap="round"
+              stroke-dasharray="201" stroke-dashoffset="201"
+              transform="rotate(-90 40 40)"/>
+      <text id="qb-ring-pct" class="qb-ring-pct"
+            x="40" y="46" text-anchor="middle"
+            font-family="inherit" font-size="20" font-weight="700"
+            fill="#0F1111">0%</text>
     </svg>
     <div class="qb-stats-text">
       <div class="qb-stats-row">
