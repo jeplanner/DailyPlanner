@@ -39,8 +39,72 @@ class _MetaParser(HTMLParser):
             self.title += data
 
 
+_YT_ID_RE = re.compile(
+    r"(?:youtube\.com/(?:watch\?v=|embed/|v/|shorts/)|youtu\.be/)([A-Za-z0-9_-]{11})"
+)
+
+
+def _extract_youtube_id(url: str) -> str | None:
+    """Pull the 11-char video id out of any common YouTube URL form."""
+    m = _YT_ID_RE.search(url or "")
+    return m.group(1) if m else None
+
+
+def _fetch_youtube_via_api(video_id: str) -> dict | None:
+    """Hit the YouTube Data API for the real title + description + channel.
+    Returns None if the API key is missing or the call fails — callers fall
+    back to HTML scraping. The API gives the full uploader-written
+    description, which the public HTML never serves until JavaScript runs."""
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        return None
+    try:
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={"id": video_id, "part": "snippet", "key": api_key},
+            timeout=6,
+        )
+        if r.status_code != 200:
+            logger.warning(
+                "fetch_meta YouTube API non-200: video_id=%s http=%s body=%r",
+                video_id, r.status_code, r.text[:300],
+            )
+            return None
+        items = r.json().get("items") or []
+        if not items:
+            return None
+        snip = items[0].get("snippet") or {}
+        title = snip.get("title") or ""
+        desc = snip.get("description") or ""
+        channel = snip.get("channelTitle") or ""
+        # Compose a one-line description: first non-empty paragraph, with
+        # the channel name prepended for context. YouTube uploader
+        # descriptions are often paragraphs of links — we want the first
+        # readable sentence.
+        first_para = next((p.strip() for p in desc.split("\n\n") if p.strip()), "")
+        composed = f"[{channel}] {first_para}".strip() if channel else first_para
+        return {
+            "title": title or video_id,
+            "description": composed[:500],
+        }
+    except Exception as e:
+        logger.warning("fetch_meta YouTube API failed: video_id=%s err=%s", video_id, e)
+        return None
+
+
 def fetch_meta(url: str) -> dict:
-    """Returns {title, description} fetched from the page."""
+    """Returns {title, description} fetched from the page.
+
+    YouTube URLs go through the Data API first because their HTML doesn't
+    include the real description (it's hydrated client-side). Everything
+    else uses an HTML meta scrape with og:title/og:description/<title>."""
+    yt_id = _extract_youtube_id(url)
+    if yt_id:
+        yt_meta = _fetch_youtube_via_api(yt_id)
+        if yt_meta and (yt_meta.get("title") or yt_meta.get("description")):
+            return yt_meta
+        # Fall through to HTML scrape if API miss.
+
     try:
         r = requests.get(
             url, timeout=6,

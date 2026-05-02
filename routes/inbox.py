@@ -1,5 +1,6 @@
 import uuid
 import os
+import re
 import requests as http_requests
 import logging
 from flask import Blueprint, request, jsonify, session, render_template
@@ -36,19 +37,35 @@ def create_inbox():
     content_type = detect_type(url)
     category = auto_categorize(url, title, raw_desc)
 
-    # AI-powered description if user didn't provide one and meta description is weak
+    # AI-powered description if user didn't provide one and meta description
+    # is weak. Skipped entirely for YouTube URLs because fetch_meta() now
+    # gets the real description via the YouTube Data API — no need to ask
+    # the AI to invent one.
     description = raw_desc
-    if not data.get("description", "").strip() and len(raw_desc) < 50:
+    is_youtube = bool(re.search(r"(?:youtube\.com|youtu\.be)", url, re.IGNORECASE))
+    if (
+        not data.get("description", "").strip()
+        and len(raw_desc) < 50
+        and not is_youtube
+    ):
         try:
             from services.ai_service import call_gemini
+            # Prompt is explicit that the AI should NOT try to fetch the
+            # URL — earlier prompts asked "describe what this webpage is
+            # about" and Gemini interpreted that as needing to visit the
+            # page, then refused with "I don't have the ability to access
+            # the webpage directly..." which leaked into descriptions.
             prompt = (
-                f"Write a 1-2 sentence description of what this webpage is about. "
-                f"Be concise and factual.\n\n"
-                f"URL: {url}\nTitle: {title}\nMeta: {raw_desc}"
+                "Write a one-sentence factual description of this link "
+                "based ONLY on the title and URL below. Do NOT try to "
+                "fetch the page. If you have no useful information, "
+                "reply with the single word: SKIP.\n\n"
+                f"Title: {title}\n"
+                f"URL: {url}"
             )
-            ai_desc = call_gemini(prompt)
-            if ai_desc and len(ai_desc) > 10 and not ai_desc.startswith("AI service"):
-                description = ai_desc.strip()[:500]
+            ai_desc = (call_gemini(prompt) or "").strip()
+            if _ai_response_is_useful(ai_desc):
+                description = ai_desc[:500]
         except Exception:
             pass  # Fall back to raw meta description
 
@@ -183,6 +200,42 @@ def _google_error_hint(payload):
         if reason in _GOOGLE_ERROR_HINTS:
             return _GOOGLE_ERROR_HINTS[reason]
     return err.get("message") or "Search unavailable"
+
+
+# LLM refusal phrases we don't want leaking into the description field.
+# Gemini in particular loves to apologise when it can't do what you
+# asked; these openers are the dead giveaway. Match is case-insensitive
+# and only at the start of the response so legitimate descriptions
+# containing these phrases are not over-filtered.
+_AI_REFUSAL_PREFIXES = (
+    "unfortunately",
+    "i don't have",
+    "i do not have",
+    "i can't",
+    "i cannot",
+    "i'm unable",
+    "i am unable",
+    "without more",
+    "without further",
+    "as an ai",
+    "i'm sorry",
+    "i am sorry",
+    "ai service",   # historic prefix our wrapper used for upstream errors
+    "skip",         # explicit signal we asked for in the prompt
+)
+
+
+def _ai_response_is_useful(text):
+    """Return True only if the AI gave us something we'd actually want to
+    save as a description — long enough to be informative and not opening
+    with a refusal / apology / SKIP signal."""
+    if not text or len(text) < 15:
+        return False
+    lowered = text.lower().lstrip("*-_ \t\n")
+    for prefix in _AI_REFUSAL_PREFIXES:
+        if lowered.startswith(prefix):
+            return False
+    return True
 
 
 def _cse_thumbnail(item):
