@@ -196,12 +196,28 @@ def _cse_thumbnail(item):
     return ""
 
 
-def _log_google_failure(label, response, query):
+def _key_fingerprint(api_key):
+    """Render the API key as <first 8>...<last 5> so it's identifiable
+    in logs without exposing the secret. Five trailing chars matches
+    the user's request and makes it trivial to compare with what's in
+    Google Cloud Console (which shows the full key on click)."""
+    if not api_key:
+        return "<missing>"
+    if len(api_key) <= 13:
+        return "<short:%d>" % len(api_key)
+    return "%s...%s" % (api_key[:8], api_key[-5:])
+
+
+def _log_google_failure(label, response, query, api_key, cx=None):
     """Dump everything useful from a Google API failure: status, the exact
     machine-readable reason codes (errors[].reason + details[].reason +
     metadata.consumer/service), the message, response headers that hint
     at quota / billing, and a truncated body. Lets a future read of the
-    log answer "why did this 403?" without having to reproduce."""
+    log answer "why did this 403?" without having to reproduce.
+
+    project_number is parsed out of the consumer field ("projects/12345")
+    and given its own slot so you can read it at a glance — answering
+    "did Google see the call hit the project I expected?"."""
     try:
         payload = response.json()
     except Exception:
@@ -216,21 +232,27 @@ def _log_google_failure(label, response, query):
             consumer = md["consumer"]
         if md.get("service") and not service:
             service = md["service"]
+    project_number = None
+    if consumer and consumer.startswith("projects/"):
+        project_number = consumer.split("/", 1)[1]
     quota_headers = {
         k: response.headers.get(k)
         for k in ("X-Goog-Quota-User", "Retry-After", "X-RateLimit-Remaining")
         if response.headers.get(k)
     }
     logger.warning(
-        "%s search FAILED: http=%s status=%s reasons=%s details=%s "
-        "consumer=%s service=%s quota_headers=%s msg=%r query=%r body=%r",
+        "%s search FAILED: http=%s status=%s key=%s cx=%s "
+        "project_number=%s service=%s reasons=%s details=%s "
+        "quota_headers=%s msg=%r query=%r body=%r",
         label,
         response.status_code,
         err.get("status"),
+        _key_fingerprint(api_key),
+        cx or "<n/a>",
+        project_number,
+        service,
         reasons,
         detail_reasons,
-        consumer,
-        service,
         quota_headers,
         (err.get("message") or "")[:300],
         query[:80],
@@ -251,10 +273,7 @@ def search_web():
         logger.warning("YouTube search: GOOGLE_API_KEY missing")
         return jsonify({"error": "GOOGLE_API_KEY not set in .env."}), 503
 
-    logger.info(
-        "YouTube search: q=%r key_prefix=%s key_suffix=%s",
-        query[:80], api_key[:8], api_key[-4:],
-    )
+    logger.info("YouTube search: q=%r key=%s", query[:80], _key_fingerprint(api_key))
 
     try:
         r = http_requests.get(
@@ -269,7 +288,7 @@ def search_web():
             timeout=8,
         )
         if r.status_code != 200:
-            _log_google_failure("YouTube", r, query)
+            _log_google_failure("YouTube", r, query, api_key)
             try:
                 payload = r.json()
             except Exception:
@@ -328,8 +347,8 @@ def search_articles():
         }), 503
 
     logger.info(
-        "CSE search: q=%r key_prefix=%s key_suffix=%s cx=%s",
-        query[:80], api_key[:8], api_key[-4:], cse_id,
+        "CSE search: q=%r key=%s cx=%s",
+        query[:80], _key_fingerprint(api_key), cse_id,
     )
 
     try:
@@ -345,7 +364,7 @@ def search_articles():
             timeout=8,
         )
         if r.status_code != 200:
-            _log_google_failure("CSE", r, query)
+            _log_google_failure("CSE", r, query, api_key, cx=cse_id)
             try:
                 payload = r.json()
             except Exception:
