@@ -121,6 +121,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <h1>Portfolio</h1>
     <div class="pf-header-btns">
       <button class="btn btn-ghost btn-sm" onclick="refreshAllPrices()" id="refresh-btn"><i data-feather="refresh-cw" style="width:14px;height:14px"></i> Refresh Prices</button>
+      <button class="btn btn-ghost btn-sm" onclick="resolveSymbols()" id="resolve-btn" title="Map ICICI broker codes (OILIND, STEWIL, …) to Yahoo tickers (OIL.NS, …) so live prices work"><i data-feather="search" style="width:14px;height:14px"></i> Resolve Symbols</button>
       <a class="btn btn-ghost btn-sm" href="/portfolio/coverage" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;" title="See which financial years you've imported"><i data-feather="calendar" style="width:14px;height:14px"></i> Coverage</a>
       <button class="btn btn-ghost btn-sm" onclick="openImport()"><i data-feather="upload" style="width:14px;height:14px"></i> Import</button>
       <button class="btn btn-primary btn-sm" onclick="openAdd()"><i data-feather="plus" style="width:14px;height:14px"></i> Add</button>
@@ -976,6 +977,30 @@ async function refreshAllPrices(){
     await loadHoldings();loadSummary();loadPortfolioXirr();
   }catch(e){showToast("Refresh failed","error");}
   btn.disabled=false;btn.innerHTML='<i data-feather="refresh-cw" style="width:14px;height:14px"></i> Refresh Prices';
+  feather.replace();
+}
+
+// Walk every stock/ETF holding and ask the server to resolve its
+// broker code to a Yahoo ticker. One call per holding can take a
+// few seconds for a large portfolio — show progress in the button
+// label so the user knows it's still working.
+async function resolveSymbols(){
+  const btn=document.getElementById("resolve-btn");
+  btn.disabled=true;btn.innerHTML='<span>Resolving…</span>';
+  try{
+    const r=await fetch("/api/portfolio/resolve-symbols",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'Failed');
+    const msg=`Resolved ${d.resolved} of ${d.examined} symbol${d.examined===1?'':'s'}`+
+      (d.skipped_no_match?` · ${d.skipped_no_match} couldn't be matched (try editing those manually)`:'')+
+      (d.skipped_already_resolved?` · ${d.skipped_already_resolved} already had a Yahoo ticker`:'');
+    showToast(msg,"success",6000);
+    await loadHoldings();
+    // Auto-chain into a price refresh — that's almost always what
+    // the user wants right after resolving symbols.
+    if(d.resolved>0) await refreshAllPrices();
+  }catch(e){showToast(e.message||"Resolve failed","error");}
+  btn.disabled=false;btn.innerHTML='<i data-feather="search" style="width:14px;height:14px"></i> Resolve Symbols';
   feather.replace();
 }
 

@@ -670,10 +670,14 @@ def refresh_all_prices():
                     if nav_data:
                         price = float(nav_data[0].get("nav", 0))
             else:
-                # Yahoo Finance
-                yf_symbol = symbol
-                if asset_type in ("stock", "etf") and not any(s in symbol for s in [".NS", ".BO", "."]):
-                    yf_symbol = f"{symbol}.NS"  # Default to NSE
+                # Prefer the resolved Yahoo ticker (e.g. "NTPC.NS",
+                # "OIL.NS") over the broker's internal short code,
+                # which Yahoo mostly doesn't recognise. Fall back to
+                # symbol+.NS for un-resolved rows so the existing
+                # workflow still works.
+                yf_symbol = (h.get("yahoo_symbol") or "").strip() or symbol
+                if asset_type in ("stock", "etf") and not any(s in yf_symbol for s in [".NS", ".BO", "."]):
+                    yf_symbol = f"{yf_symbol}.NS"  # Default to NSE
 
                 r = http_requests.get(
                     f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_symbol}",
@@ -694,6 +698,137 @@ def refresh_all_prices():
             logger.warning("Price refresh failed for %s: %s", symbol, e)
 
     return jsonify({"status": "ok", "updated": updated, "total": len(holdings)})
+
+
+# ═══════════════════════════════════════════════════
+# YAHOO SYMBOL RESOLUTION
+# ═══════════════════════════════════════════════════
+#
+# ICICI Direct's tradeBook export uses internal short codes
+# (OILIND, STEWIL, JKCEME, HINDAL, ...) that mostly don't map
+# 1:1 onto Yahoo Finance tickers (OIL.NS, JKCEMENT.NS,
+# HINDALCO.NS, ...). This endpoint walks every holding without
+# a yahoo_symbol, asks Yahoo Search to find the closest NSE/BSE
+# ticker for that code, and caches the result.
+#
+# Conservative match rules:
+#   1. Exact-symbol hit on .NS or .BO wins immediately.
+#   2. Otherwise pick the top quoteType=EQUITY result on NSE
+#      ("NSI" exchange in Yahoo's data), falling back to BSE.
+#   3. Skip the holding if neither rule matches — better to
+#      leave yahoo_symbol NULL and have the user fix it
+#      manually than guess a wrong company.
+
+def _yahoo_search(query: str) -> list:
+    try:
+        r = http_requests.get(
+            "https://query1.finance.yahoo.com/v1/finance/search",
+            params={"q": query, "quotesCount": 10, "newsCount": 0},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=6,
+        )
+        if not r.ok:
+            return []
+        return r.json().get("quotes", []) or []
+    except Exception as e:
+        logger.warning("yahoo_search %r failed: %s", query, e)
+        return []
+
+
+def _pick_indian_quote(quotes: list, original_symbol: str) -> dict | None:
+    """Pick the best NSE/BSE result from a Yahoo search response.
+
+    Yahoo encodes NSE as 'NSI' and BSE as 'BSE' in the `exchange`
+    field. We prefer NSE because most Indian retail traders track
+    NSE prices, and ICICI's NSE code usually has higher liquidity.
+    Equity-only filter avoids picking up futures/options listings
+    that share the underlying name."""
+    if not quotes:
+        return None
+    nse, bse = [], []
+    sym_upper = (original_symbol or "").upper()
+    for q in quotes:
+        if (q.get("quoteType") or "").upper() != "EQUITY":
+            continue
+        ex = (q.get("exchange") or "").upper()
+        sym = (q.get("symbol") or "").upper()
+        # Exact-symbol hit on either exchange — strongest signal.
+        if sym == f"{sym_upper}.NS" or sym == f"{sym_upper}.BO":
+            return q
+        if ex == "NSI":
+            nse.append(q)
+        elif ex == "BSE":
+            bse.append(q)
+    return (nse or bse or [None])[0]
+
+
+@portfolio_bp.route("/api/portfolio/resolve-symbols", methods=["POST"])
+@login_required
+def resolve_symbols():
+    """Look up Yahoo tickers for stock/ETF holdings whose
+    yahoo_symbol is NULL. One Yahoo search call per holding.
+
+    Body (optional): {"force": true} — re-resolves even rows that
+    already have a yahoo_symbol, useful when the user suspects a
+    wrong match was cached."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get("force"))
+
+    rows = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "id,symbol,yahoo_symbol,asset_type,name",
+        "limit": "5000",
+    }) or []
+    decrypt_rows(rows, ENCRYPTED_FIELDS)
+
+    resolved = 0
+    skipped_already = 0
+    skipped_no_match = 0
+    examined = 0
+
+    for h in rows:
+        asset_type = (h.get("asset_type") or "stock").lower()
+        if asset_type not in ("stock", "etf"):
+            continue   # MFs use AMFI scheme codes; not Yahoo
+        sym = (h.get("symbol") or "").strip()
+        if not sym:
+            continue
+        if h.get("yahoo_symbol") and not force:
+            skipped_already += 1
+            continue
+        examined += 1
+
+        # Try the broker code first; if Yahoo doesn't recognise it
+        # and a name exists, fall back to a name search.
+        quotes = _yahoo_search(sym)
+        picked = _pick_indian_quote(quotes, sym)
+        if not picked and h.get("name") and h["name"] != sym:
+            quotes = _yahoo_search(h["name"])
+            picked = _pick_indian_quote(quotes, sym)
+
+        if not picked or not picked.get("symbol"):
+            skipped_no_match += 1
+            continue
+
+        try:
+            update(
+                "portfolio_holdings",
+                params={"id": f"eq.{h['id']}", "user_id": f"eq.{user_id}"},
+                json={"yahoo_symbol": picked["symbol"]},
+            )
+            resolved += 1
+        except Exception as e:
+            logger.warning("resolve_symbols update %s failed: %s", sym, e)
+
+    return jsonify({
+        "ok": True,
+        "examined": examined,
+        "resolved": resolved,
+        "skipped_already_resolved": skipped_already,
+        "skipped_no_match": skipped_no_match,
+    })
 
 
 # ═══════════════════════════════════════════════════
