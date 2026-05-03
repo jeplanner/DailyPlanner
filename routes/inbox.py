@@ -1542,3 +1542,164 @@ def drive_queue_api():
         "items": picked,
         "candidate_count": len(candidates),
     })
+
+
+@inbox_bp.route("/api/inbox/backfill", methods=["POST"])
+@login_required
+def backfill_metadata():
+    """One-shot backfill for rows saved before labels / duration_seconds /
+    published_at columns existed.
+
+    YouTube rows: re-fetch via videos.list (batches of 50, 1 quota unit
+    each) and fill in the missing columns. Skips rows that already have
+    a value — no clobber.
+
+    All rows: re-run auto_label() and write the result, but ONLY when
+    the row currently has zero labels. This means user-edited labels
+    survive — backfill is additive for old rows, untouched for new.
+
+    Operates on the caller's user_id only. Returns a summary the UI
+    surfaces in a toast so you can see what happened."""
+    user_id = session["user_id"]
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+
+    # ── Inbox rows ───────────────────────────────────────────────────
+    inbox_rows = get("inbox_links", params={
+        "user_id": f"eq.{user_id}",
+        "select": (
+            "id,url,title,description,content_type,"
+            "labels,duration_seconds,published_at"
+        ),
+        "limit": "5000",
+    }) or []
+
+    yt_meta: dict[str, dict] = {}
+    if api_key:
+        # Collect every YouTube id whose row is missing duration OR
+        # publish date. Dedupe so the same id isn't fetched twice.
+        ids_to_fetch = []
+        for r in inbox_rows:
+            vid = _yt_extract_id(r.get("url") or "")
+            if not vid:
+                continue
+            if r.get("duration_seconds") and r.get("published_at"):
+                continue
+            ids_to_fetch.append(vid)
+        ids_to_fetch = list(dict.fromkeys(ids_to_fetch))
+
+        # videos.list caps at 50 ids per call. Each batch is 1 quota unit.
+        for i in range(0, len(ids_to_fetch), 50):
+            chunk = ids_to_fetch[i:i + 50]
+            try:
+                resp = http_requests.get(
+                    "https://www.googleapis.com/youtube/v3/videos",
+                    params={
+                        "id": ",".join(chunk),
+                        "part": "snippet,contentDetails",
+                        "key": api_key,
+                    },
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "backfill YouTube batch http=%s body=%r",
+                        resp.status_code, resp.text[:200],
+                    )
+                    continue
+                for v in resp.json().get("items", []):
+                    snip = v.get("snippet", {}) or {}
+                    cd = v.get("contentDetails", {}) or {}
+                    yt_meta[v["id"]] = {
+                        "duration_seconds": _yt_parse_duration(cd.get("duration", "")),
+                        "published_at": snip.get("publishedAt", ""),
+                    }
+            except Exception as e:
+                logger.warning("backfill YouTube batch exception: %s", e)
+
+    inbox_updated = 0
+    inbox_youtube_enriched = 0
+    for r in inbox_rows:
+        patch = {}
+        vid = _yt_extract_id(r.get("url") or "")
+        if vid and vid in yt_meta:
+            ym = yt_meta[vid]
+            if ym["duration_seconds"] and not r.get("duration_seconds"):
+                patch["duration_seconds"] = ym["duration_seconds"]
+            if ym["published_at"] and not r.get("published_at"):
+                patch["published_at"] = ym["published_at"]
+            if patch:
+                inbox_youtube_enriched += 1
+
+        # Recompute labels only when the row currently has none. A user
+        # who already toggled chips by hand owns those labels — backfill
+        # must not silently rewrite them.
+        if not (r.get("labels") or []):
+            duration_for_label = (
+                patch.get("duration_seconds")
+                or r.get("duration_seconds") or 0
+            )
+            new_labels = auto_label(
+                r.get("url") or "",
+                r.get("title") or "",
+                r.get("description") or "",
+                r.get("content_type") or "",
+                duration_for_label,
+            )
+            if new_labels:
+                patch["labels"] = new_labels
+
+        if not patch:
+            continue
+        try:
+            update(
+                "inbox_links",
+                params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                json=patch,
+            )
+            inbox_updated += 1
+        except Exception as e:
+            logger.warning("backfill inbox row %s failed: %s", r.get("id"), e)
+
+    # ── TravelReads rows ─────────────────────────────────────────────
+    # Only label rows that have none yet — same no-clobber rule. We
+    # don't enrich duration_minutes here because the user-supplied
+    # value is authoritative for travel_reads (no API fetch on save).
+    tr_rows = get("travel_reads", params={
+        "user_id": f"eq.{user_id}",
+        "status": "neq.archived",
+        "select": "id,url,title,description,kind,duration_minutes,labels",
+        "limit": "5000",
+    }) or []
+
+    tr_updated = 0
+    for r in tr_rows:
+        if r.get("labels"):
+            continue
+        secs = (r.get("duration_minutes") or 0) * 60
+        new_labels = auto_label(
+            r.get("url") or "",
+            r.get("title") or "",
+            r.get("description") or "",
+            r.get("kind") or "",
+            secs,
+        )
+        if not new_labels:
+            continue
+        try:
+            update(
+                "travel_reads",
+                params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                json={"labels": new_labels},
+            )
+            tr_updated += 1
+        except Exception as e:
+            logger.warning("backfill travel row %s failed: %s", r.get("id"), e)
+
+    return jsonify({
+        "ok": True,
+        "inbox_total": len(inbox_rows),
+        "inbox_updated": inbox_updated,
+        "inbox_youtube_enriched": inbox_youtube_enriched,
+        "travel_total": len(tr_rows),
+        "travel_updated": tr_updated,
+    })

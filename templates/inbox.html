@@ -439,7 +439,12 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
   <div class="inbox-header">
     <h1>Inbox</h1>
     <span class="inbox-count" id="item-count"></span>
-    <a href="/drive-queue" class="filter-btn" style="margin-left:auto;text-decoration:none;display:inline-flex;align-items:center;gap:4px;" title="Build a drive playlist from drivable items">
+    <button id="backfill-btn" class="filter-btn" style="margin-left:auto;cursor:pointer;"
+            onclick="runBackfill(this)"
+            title="One-shot: re-fetch YouTube duration/published-at and apply labels to old items">
+      Backfill metadata
+    </button>
+    <a href="/drive-queue" class="filter-btn" style="text-decoration:none;display:inline-flex;align-items:center;gap:4px;" title="Build a drive playlist from drivable items">
       🎧 Drive Queue
     </a>
   </div>
@@ -1067,6 +1072,35 @@ function toggleLabelPicker(itemId) {
                        onclick="toggleLabel('${itemId}','${l.id}')">${l.label}</span>`;
       }).join("")}
     </div>`;
+}
+
+async function runBackfill(btn) {
+  if (btn.dataset.busy === "1") return;
+  btn.dataset.busy = "1";
+  const original = btn.textContent;
+  btn.textContent = "Backfilling…";
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/inbox/backfill", { method: "POST" });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Backfill failed");
+    const msg =
+      `Inbox: ${data.inbox_updated}/${data.inbox_total} updated ` +
+      `(${data.inbox_youtube_enriched} YouTube enriched). ` +
+      `TravelReads: ${data.travel_updated}/${data.travel_total} labelled.`;
+    if (window.showToast) showToast(msg, "success", 6000);
+    else alert(msg);
+    // Re-pull rows so the new labels/duration/publish-date show up
+    // without a full page reload.
+    await load();
+  } catch (e) {
+    if (window.showToast) showToast(e.message || "Backfill failed", "error");
+    else alert("Backfill failed: " + (e.message || ""));
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+    btn.dataset.busy = "0";
+  }
 }
 
 async function toggleLabel(itemId, label) {
