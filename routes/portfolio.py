@@ -787,7 +787,7 @@ def purge_bad_snapshots():
     user_id = session["user_id"]
     rows = get("portfolio_snapshots", params={
         "user_id": f"eq.{user_id}",
-        "select": "id,xirr,total_value,total_invested",
+        "select": "id,xirr,current_value,invested",
         "limit": "100000",
     }) or []
 
@@ -803,8 +803,10 @@ def purge_bad_snapshots():
         except (TypeError, ValueError):
             bad_ids.append(r["id"])
             continue
-        # Same sanity check on stored value/invested.
-        for k in ("total_value", "total_invested"):
+        # Same sanity check on stored value/invested. Column names
+        # match the schema (current_value, invested), NOT the
+        # earlier total_value / total_invested I'd typed by mistake.
+        for k in ("current_value", "invested"):
             v = r.get(k)
             try:
                 if v is not None and abs(float(v)) > 1e12:
