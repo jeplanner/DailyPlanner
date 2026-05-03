@@ -1245,10 +1245,16 @@ function mapLedgerRow(headers,cols){
   // else gets dropped at the server-side filter.
   const norm = action.startsWith('b') ? 'buy'
              : action.startsWith('s') ? 'sell' : '';
+  // ICICI tradeBook uses 'stock' (just the ticker, no separate name
+  // column). PortFolioEqtAll uses 'stock symbol' + 'company name'.
+  // Look in both lists and reuse the symbol as the name when no
+  // dedicated name column exists — better than dropping the row.
+  const symbol = get(['stock symbol','symbol','stock','scrip code','code','ticker']).toUpperCase();
+  const name   = get(['company name','scheme name','name','stock name','scrip name','security']) || symbol;
   return {
     action: norm,
-    symbol: get(['stock symbol','symbol','scrip code','code','ticker']).toUpperCase(),
-    name:   get(['company name','scheme name','name','stock name','scrip name','security']),
+    symbol,
+    name,
     isin:   get(['isin code','isin']),
     quantity: get(['quantity','qty','units']),
     price:    get(['transaction price','price','rate','trade price']),
