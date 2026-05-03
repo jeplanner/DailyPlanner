@@ -20,6 +20,16 @@ ENCRYPTED_FIELDS = ["name", "symbol", "folio_number", "broker", "notes",
                     "institution", "account_ref"]
 
 
+@portfolio_bp.before_request
+def _gate_with_vault():
+    """Sit every portfolio route — page and API — behind the same vault
+    password as /refcards. Imported lazily so the routes/refcards module
+    is fully initialised before this resolves (both blueprints are
+    imported by app.py at startup, but the order isn't guaranteed)."""
+    from routes.refcards import vault_gate_for_blueprint
+    return vault_gate_for_blueprint(page_label="Portfolio")
+
+
 # ═══════════════════════════════════════════════════
 # PAGE
 # ═══════════════════════════════════════════════════

@@ -53,7 +53,7 @@ import uuid
 from datetime import date, datetime
 from functools import wraps
 
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import IST
@@ -145,6 +145,49 @@ def vault_unlocked_required(fn):
         _vault_touch()
         return fn(*args, **kwargs)
     return wrapper
+
+
+def vault_gate_for_blueprint(page_label: str):
+    """Blueprint-level vault gate. Returns a Flask response when the
+    vault is unsetup or locked, else None to let the request proceed.
+
+    Designed to be invoked from `before_request` on any blueprint that
+    should sit behind the same vault password as /refcards. Distinguishes
+    API vs page requests by URL prefix:
+      - /api/* paths get a JSON 403 with a code the caller can act on.
+      - Page paths render a standalone lock template that posts the
+        password to the existing vault unlock endpoint, then reloads.
+
+    Unauth requests return None so flask_login's redirect-to-login
+    behaviour still wins on the per-route @login_required decorator."""
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    vrow = _vault_row(user_id)
+    is_api = request.path.startswith("/api/")
+    if not vrow:
+        if is_api:
+            return jsonify({
+                "error": "Vault not configured",
+                "code": "vault_not_set",
+            }), 403
+        # User hasn't set a vault password yet. Send them to /refcards
+        # where the setup UI lives — re-implementing setup here would
+        # duplicate code that's already polished.
+        return redirect(url_for("refcards.refcards_page"))
+    if not _vault_is_unlocked(user_id):
+        if is_api:
+            return jsonify({
+                "error": "Vault is locked",
+                "code": "vault_locked",
+            }), 403
+        return render_template(
+            "vault_lock_gate.html",
+            page_label=page_label,
+            return_to=request.full_path.rstrip("?") or request.path,
+        )
+    _vault_touch()
+    return None
 
 
 # ─────────────────────────────────────────────────────

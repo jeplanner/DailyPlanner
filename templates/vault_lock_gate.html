@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>{{ page_label }} — Vault locked</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .lock {
+    width: min(420px, 100%);
+    background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 16px;
+    padding: 28px; text-align: center;
+    box-shadow: 0 12px 40px rgba(15,23,42,.10);
+  }
+  .lock-badge {
+    width: 56px; height: 56px; border-radius: 50%;
+    margin: 0 auto 16px;
+    display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
+  }
+  .lock-badge svg { width: 28px; height: 28px; }
+  .lock h1 { font-size: 20px; font-weight: 800; margin: 0 0 6px; letter-spacing: -.01em; }
+  .lock p  { color: var(--color-text-secondary); font-size: 13.5px; line-height: 1.5; margin: 0 0 18px; }
+  .lock .sub { font-size: 12.5px; color: var(--color-text-muted); margin-top: 14px; }
+  input[type=password] {
+    width: 100%; padding: 11px 14px; font: inherit; font-size: 15px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-surface); color: var(--color-text);
+    box-sizing: border-box;
+  }
+  input[type=password]:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+  button {
+    width: 100%; margin-top: 12px; padding: 11px 14px; font: inherit; font-size: 14px; font-weight: 700;
+    background: var(--color-primary); color: var(--color-on-primary); border: 1px solid var(--color-primary);
+    border-radius: 10px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: #b91c1c; font-size: 12.5px; margin-top: 10px; min-height: 16px; }
+  .escape { display: block; margin-top: 14px; font-size: 12.5px; color: var(--color-text-secondary); text-decoration: none; }
+  .escape:hover { color: var(--color-primary); }
+</style>
+</head>
+<body>
+<form class="lock" id="lock-form" autocomplete="off">
+  <div class="lock-badge">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
+  </div>
+  <h1>Vault is locked</h1>
+  <p>{{ page_label }} is gated by your vault password — same one you use on Reference Cards.</p>
+  <input type="password" id="pw" placeholder="Vault password" autofocus required>
+  <button type="submit" id="submit-btn">Unlock</button>
+  <div class="err" id="err"></div>
+  <a class="escape" href="/">Back to dashboard</a>
+  <div class="sub">Auto-locks again after the inactivity window you set in vault settings.</div>
+</form>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+const RETURN_TO = {{ return_to | tojson }};
+const form = document.getElementById('lock-form');
+const pw = document.getElementById('pw');
+const btn = document.getElementById('submit-btn');
+const err = document.getElementById('err');
+
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  err.textContent = '';
+  btn.disabled = true; btn.textContent = 'Unlocking…';
+  try {
+    const r = await fetch('/api/refcards/vault/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify({ password: pw.value }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.success) {
+      err.textContent = j.error || 'Unlock failed';
+      btn.disabled = false; btn.textContent = 'Unlock';
+      pw.select();
+      return;
+    }
+    // Vault is open. Reload the page they were trying to reach so the
+    // before_request gate now passes through to the actual content.
+    window.location.replace(RETURN_TO || '/');
+  } catch (e) {
+    err.textContent = 'Network error — try again.';
+    btn.disabled = false; btn.textContent = 'Unlock';
+  }
+});
+</script>
+</body>
+</html>
