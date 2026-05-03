@@ -133,6 +133,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <div class="pf-header-btns">
       <button class="btn btn-ghost btn-sm" onclick="refreshAllPrices()" id="refresh-btn"><i data-feather="refresh-cw" style="width:14px;height:14px"></i> Refresh Prices</button>
       <button class="btn btn-ghost btn-sm" onclick="resolveSymbols()" id="resolve-btn" title="Map ICICI broker codes (OILIND, STEWIL, …) to Yahoo tickers (OIL.NS, …) so live prices work"><i data-feather="search" style="width:14px;height:14px"></i> Resolve Symbols</button>
+      <button class="btn btn-ghost btn-sm" onclick="cleanupEmpty()" id="cleanup-btn" title="Hard-delete orphan placeholder holdings (qty=0 AND no transactions). Closed positions with real trade history are kept."><i data-feather="trash-2" style="width:14px;height:14px"></i> Cleanup</button>
       <a class="btn btn-ghost btn-sm" href="/portfolio/coverage" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;" title="See which financial years you've imported"><i data-feather="calendar" style="width:14px;height:14px"></i> Coverage</a>
       <button class="btn btn-ghost btn-sm" onclick="openImport()"><i data-feather="upload" style="width:14px;height:14px"></i> Import</button>
       <button class="btn btn-primary btn-sm" onclick="openAdd()"><i data-feather="plus" style="width:14px;height:14px"></i> Add</button>
@@ -168,6 +169,11 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <button class="type-tab" onclick="filterOwner('Chitra',this)">Chitra</button>
     <button class="type-tab" onclick="filterOwner('Shreya',this)">Shreya</button>
     <button class="type-tab" onclick="filterOwner('Sethu',this)">Sethu</button>
+    <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--pf-text2);cursor:pointer;">
+      <input type="checkbox" id="show-closed-toggle" onchange="toggleShowClosed(this.checked)" style="cursor:pointer;">
+      Show closed positions
+    </label>
+    <span id="closed-hint" style="font-size:11px;color:var(--pf-text3);font-style:italic;"></span>
   </div>
 
   <!-- Holdings Table (primary content — first) -->
@@ -443,6 +449,12 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 
 <script>
 let holdings=[], editId=null, importRows=[], curType='all', curOwner='all';
+// Hide qty=0 rows by default — they're either real closed positions
+// (sold out completely) or sell-only-from-an-incomplete-import (e.g.,
+// recent FY imported but earlier buy history isn't). Either way they
+// just clutter the active-portfolio view. User can toggle back via
+// the "Show closed" checkbox.
+let showClosed = false;
 const INR=v=>v!=null?'₹'+Number(v).toLocaleString('en-IN',{maximumFractionDigits:2}):'—';
 const esc=s=>{const d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;};
 
@@ -662,7 +674,19 @@ function renderTable(){
   const tbody=document.getElementById("holdings-body");
   let items=curType==='all'?holdings:holdings.filter(h=>h.asset_type===curType);
   if(curOwner!=='all')items=items.filter(h=>h.held_by===curOwner);
-  if(!items.length){tbody.innerHTML=`<tr><td colspan="9"><div class="empty">No holdings yet. Add or import to get started.</div></td></tr>`;return;}
+  // Closed-position filter — applied after asset/owner filters so the
+  // "X hidden" count below reflects holdings the user could see if
+  // they toggled the switch.
+  const beforeClosedFilter = items.length;
+  if(!showClosed) items = items.filter(h => parseFloat(h.quantity || 0) > 0);
+  const hidden = beforeClosedFilter - items.length;
+  const hint = document.getElementById("closed-hint");
+  if (hint) {
+    hint.textContent = hidden > 0
+      ? `${hidden} closed/empty position${hidden === 1 ? '' : 's'} hidden`
+      : '';
+  }
+  if(!items.length){tbody.innerHTML=`<tr><td colspan="9"><div class="empty">No active holdings. ${hidden ? `<a href="#" onclick="toggleShowClosed(true);return false;" style="color:var(--pf-primary)">Show ${hidden} closed</a>` : 'Add or import to get started.'}</div></td></tr>`;return;}
 
   tbody.innerHTML=items.map(h=>{
     const qty=parseFloat(h.quantity)||0;
@@ -992,6 +1016,35 @@ async function refreshAllPrices(){
     await loadHoldings();loadSummary();loadPortfolioXirr();
   }catch(e){showToast("Refresh failed","error");}
   btn.disabled=false;btn.innerHTML='<i data-feather="refresh-cw" style="width:14px;height:14px"></i> Refresh Prices';
+  feather.replace();
+}
+
+function toggleShowClosed(checked){
+  showClosed = !!checked;
+  // Keep the checkbox + the inline link/button in sync — the empty-
+  // state link calls this directly, so we may need to flip the box.
+  const cb = document.getElementById('show-closed-toggle');
+  if (cb) cb.checked = showClosed;
+  renderTable();
+}
+
+// Hard-purge truly-orphan holdings (qty=0 AND zero transactions).
+// These are leftovers from earlier failed imports — never user data.
+// Closed positions with real trade history aren't touched.
+async function cleanupEmpty(){
+  if(!confirm("Hard-delete holdings that have ZERO quantity AND ZERO transactions?\n\nClosed positions with real trade history (sold to zero from earlier buys) are NOT affected — only orphan placeholders from failed imports.")) return;
+  const btn=document.getElementById("cleanup-btn");
+  btn.disabled=true;btn.innerHTML='<span>Cleaning…</span>';
+  try{
+    const r=await fetch("/api/portfolio/cleanup-empty",{method:"POST"});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||'Failed');
+    showToast(`Removed ${d.purged} orphan holding${d.purged===1?'':'s'}` +
+              (d.kept_with_history ? ` · kept ${d.kept_with_history} closed position${d.kept_with_history===1?'':'s'} (had transactions)` : ''),
+              "success", 6000);
+    await loadHoldings();loadSummary();
+  }catch(e){showToast(e.message||"Cleanup failed","error");}
+  btn.disabled=false;btn.innerHTML='<i data-feather="trash-2" style="width:14px;height:14px"></i> Cleanup';
   feather.replace();
 }
 
@@ -1398,9 +1451,10 @@ async function doImport(){
     await loadHoldings(); loadSummary();
     closeImport();
     if(importMode==="ledger"){
+      const undeleted = d.holdings_undeleted ? ` · ${d.holdings_undeleted} previously-deleted re-activated` : '';
       showToast(
-        `${d.txn_inserted} transactions imported · ${d.holdings_created} new holdings · ${d.txn_skipped_dupe} duplicates skipped`,
-        "success", 6000
+        `${d.txn_inserted} transactions imported · ${d.holdings_created} new holdings${undeleted} · ${d.txn_skipped_dupe} duplicates skipped`,
+        "success", 7000
       );
     } else {
       showToast(`Imported ${d.imported} holdings`,"success");

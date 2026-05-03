@@ -331,10 +331,13 @@ def import_transactions():
         by_symbol.setdefault(sym, []).append(r)
 
     # Pull existing holdings once, keyed by symbol — saves N round-trips.
+    # Include soft-deleted rows so a delete-then-reimport doesn't create
+    # a duplicate holding for the same ticker (the main cause of bloat
+    # in users' tables). When we match a deleted row, we'll undelete it
+    # and re-attach the new transactions.
     existing_holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
-        "is_deleted": "is.false",
-        "select": "id,symbol,name,exchange,asset_type",
+        "select": "id,symbol,name,exchange,asset_type,is_deleted",
     }) or []
     decrypt_rows(existing_holdings, ENCRYPTED_FIELDS)
     holdings_by_sym = {
@@ -344,10 +347,25 @@ def import_transactions():
     txn_inserted = 0
     txn_skipped = 0
     holdings_created = 0
+    holdings_undeleted = 0
 
     for sym, group in by_symbol.items():
         # ── Find or create the holding ────────────────────────────
         holding = holdings_by_sym.get(sym)
+        if holding and holding.get("is_deleted"):
+            # User had soft-deleted this earlier. Re-importing the same
+            # ticker is them re-asserting interest — undelete instead of
+            # creating a parallel row.
+            try:
+                update(
+                    "portfolio_holdings",
+                    params={"id": f"eq.{holding['id']}", "user_id": f"eq.{user_id}"},
+                    json={"is_deleted": False, "deleted_at": None},
+                )
+                holding["is_deleted"] = False
+                holdings_undeleted += 1
+            except Exception as e:
+                logger.warning("import-txn undelete %s failed: %s", sym, e)
         if not holding:
             sample = group[0]
             new_h = {
@@ -492,6 +510,7 @@ def import_transactions():
         "txn_inserted": txn_inserted,
         "txn_skipped_dupe": txn_skipped,
         "holdings_created": holdings_created,
+        "holdings_undeleted": holdings_undeleted,
         "holdings_touched": len(by_symbol),
     })
 
@@ -698,6 +717,67 @@ def refresh_all_prices():
             logger.warning("Price refresh failed for %s: %s", symbol, e)
 
     return jsonify({"status": "ok", "updated": updated, "total": len(holdings)})
+
+
+# ═══════════════════════════════════════════════════
+# CLEANUP — orphan placeholder holdings
+# ═══════════════════════════════════════════════════
+#
+# The earlier date-parsing bug created a holdings row before the
+# date check failed, so users ended up with phantom rows that
+# have quantity=0 AND zero transactions. They aren't recoverable
+# (no data backs them) so it's safe to hard-delete. This is
+# distinct from "closed positions" (qty=0 but transactions exist)
+# which represent real history and stay.
+
+@portfolio_bp.route("/api/portfolio/cleanup-empty", methods=["POST"])
+@login_required
+def cleanup_empty_holdings():
+    user_id = session["user_id"]
+
+    holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "id,symbol,quantity",
+        "limit": "5000",
+    }) or []
+
+    candidates = [
+        h for h in holdings
+        if not float(h.get("quantity") or 0)
+    ]
+
+    purged = 0
+    for h in candidates:
+        # Only remove if there are no real transactions backing this
+        # holding. A separate count call per candidate is wasteful at
+        # scale but the candidate list is usually <100 — fine.
+        txns = get("portfolio_transactions", params={
+            "holding_id": f"eq.{h['id']}",
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "is.false",
+            "select": "id",
+            "limit": "1",
+        }) or []
+        if txns:
+            continue
+        try:
+            delete("portfolio_holdings", params={
+                "id": f"eq.{h['id']}",
+                "user_id": f"eq.{user_id}",
+            })
+            purged += 1
+        except Exception as e:
+            logger.warning(
+                "cleanup_empty delete %s failed: %s", h.get("symbol"), e,
+            )
+
+    return jsonify({
+        "ok": True,
+        "examined_zero_qty": len(candidates),
+        "purged": purged,
+        "kept_with_history": len(candidates) - purged,
+    })
 
 
 # ═══════════════════════════════════════════════════
