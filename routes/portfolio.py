@@ -217,9 +217,22 @@ def import_holdings():
 # because transactions are deduped on (holding_id, txn_type,
 # txn_date, quantity, price).
 
+_MONTH_ABBREV = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
 def _parse_dmy_or_iso(s: str):
-    """ICICI uses DD-MM-YYYY ('15-08-2024'). Tolerate ISO too in case
-    the user pre-cleaned the file. Returns YYYY-MM-DD or None."""
+    """Normalise a date string into ISO (YYYY-MM-DD).
+
+    Accepts:
+      - ISO already: 2026-03-30
+      - Numeric DMY: 30-03-2026, 30/03/2026
+      - Month-name DMY (ICICI tradeBook): 30-Mar-2026, 30/March/2026
+
+    Returns None for anything we can't parse. The import filter drops
+    rows with None so a single malformed row doesn't poison a batch."""
     if not s:
         return None
     s = str(s).strip()
@@ -228,7 +241,6 @@ def _parse_dmy_or_iso(s: str):
     # ISO already?
     if len(s) >= 10 and s[4] == "-" and s[7] == "-":
         return s[:10]
-    # Try DD-MM-YYYY or DD/MM/YYYY
     sep = "-" if "-" in s else "/" if "/" in s else None
     if not sep:
         return None
@@ -236,7 +248,16 @@ def _parse_dmy_or_iso(s: str):
     if len(parts) < 3:
         return None
     try:
-        d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+        d = int(parts[0])
+        m_raw = parts[1].strip().lower()
+        if m_raw.isdigit():
+            m = int(m_raw)
+        else:
+            # First 3-4 chars covers Jan/Feb/.../Sept etc.
+            m = _MONTH_ABBREV.get(m_raw[:4]) or _MONTH_ABBREV.get(m_raw[:3])
+            if m is None:
+                return None
+        y = int(parts[2])
         if y < 100:
             y += 2000
         return f"{y:04d}-{m:02d}-{d:02d}"

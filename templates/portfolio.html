@@ -1241,6 +1241,8 @@ function parseFile(file){
 
 function mapLedgerRow(headers,cols){
   const get=(keys)=>{for(const k of keys){const i=headers.indexOf(k);if(i>=0&&cols[i])return cols[i].trim();}return '';};
+  const num=(v)=>{const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,''));return isFinite(n)?n:0;};
+
   const action = get(['action','transaction type','txn type','type']).toLowerCase();
   // Tolerate ICICI's bracketed labels like "Buy" / "Sell"; everything
   // else gets dropped at the server-side filter.
@@ -1252,6 +1254,16 @@ function mapLedgerRow(headers,cols){
   // dedicated name column exists — better than dropping the row.
   const symbol = get(['stock symbol','symbol','stock','scrip code','code','ticker']).toUpperCase();
   const name   = get(['company name','scheme name','name','stock name','scrip name','security']) || symbol;
+
+  // ICICI tradeBook splits fees across four columns: Brokerage incl.
+  // taxes (or "Brokerage + Service Tax"), STT, Stamp Duty, and
+  // Transaction and SEBI Turnover charges. Server treats fees as
+  // brokerage + charges; sum the non-brokerage three into `charges`
+  // so the cashflow `amount` reflects the real cash impact.
+  const brokerage = get(['brokerage incl. taxes','brokerage + service tax','brokerage','broker charges']);
+  const otherFees = num(get(['transaction and sebi turnover charges','transaction charges','exchange charges','sebi turnover charges','total charges']))
+                  + num(get(['stt','securities transaction tax']))
+                  + num(get(['stamp duty','stampduty']));
   return {
     action: norm,
     symbol,
@@ -1259,8 +1271,8 @@ function mapLedgerRow(headers,cols){
     isin:   get(['isin code','isin']),
     quantity: get(['quantity','qty','units']),
     price:    get(['transaction price','price','rate','trade price']),
-    brokerage: get(['brokerage','broker charges']),
-    charges:   get(['transaction charges','exchange charges','total charges']),
+    brokerage,
+    charges: otherFees ? String(otherFees) : '',
     txn_date:  get(['transaction date','date','trade date']),
     exchange:  get(['exchange','segment']),
   };
