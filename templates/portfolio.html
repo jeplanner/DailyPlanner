@@ -173,6 +173,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <div class="kpi"><span class="kpi-label">P&L</span><div class="kpi-val" id="kpi-pnl">—</div><div class="kpi-sub" id="kpi-pnl-pct"></div></div>
     <div class="kpi"><span class="kpi-label">Holdings</span><div class="kpi-val" id="kpi-count">0</div><div class="kpi-sub" id="kpi-count-sub"></div></div>
     <div class="kpi"><span class="kpi-label">Trades</span><div class="kpi-val" id="kpi-txns">0</div><div class="kpi-sub" id="kpi-txns-sub"></div></div>
+    <div class="kpi" title="Cash gain/loss already booked from past sells. Computed using weighted-average cost at the moment of each sell."><span class="kpi-label">Realised P&L</span><div class="kpi-val" id="kpi-realised">—</div><div class="kpi-sub" id="kpi-realised-sub">from past sells</div></div>
     <div class="kpi"><span class="kpi-label">XIRR</span><div class="kpi-val" id="kpi-xirr">—</div><div class="kpi-sub">annualized return</div></div>
   </div>
 
@@ -502,6 +503,11 @@ let sellOnlyQty = {};
 // the user sold at. Renders alongside the qty so the badge tells
 // the full story of what actually happened.
 let sellOnlyAvg = {};
+// Map of {holding_id: {realised, sold_qty, avg_sell_price, sells_count,
+// incomplete_history}}. Populated by loadRealised() — drives the
+// per-row "Realised: +₹X" line under each P&L cell and the
+// portfolio-wide Realised P&L KPI tile.
+let realisedByHolding = {};
 // Hide qty=0 rows by default — they're either real closed positions
 // (sold out completely) or sell-only-from-an-incomplete-import (e.g.,
 // recent FY imported but earlier buy history isn't). Either way they
@@ -514,12 +520,43 @@ const esc=s=>{const d=document.createElement("div");d.textContent=String(s||"");
 async function init(){
   await loadHoldings();
   loadSummary();
+  loadRealised();
   feather.replace();
   // Only consolidated XIRR auto-loads. Per-holding XIRR is on-demand.
   setTimeout(()=>loadPortfolioXirr(), 500);
   setTimeout(()=>loadCharts(), 1000);
   setTimeout(()=>loadTrendCharts(), 1500);
   setTimeout(()=>autoSnapshot(), 2500);
+}
+
+// Pull realised P&L per holding + portfolio total. Independent of
+// loadSummary so it can be re-fired after import without paying
+// the (more expensive) summary recompute.
+async function loadRealised(){
+  try {
+    const r = await fetch("/api/portfolio/realised-pnl");
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed');
+    realisedByHolding = d.by_holding || {};
+    const total = d.total_realised || 0;
+    const tile = document.getElementById("kpi-realised");
+    const sub  = document.getElementById("kpi-realised-sub");
+    if (tile) {
+      tile.textContent = (total >= 0 ? '+' : '') + INR(total);
+      tile.className = 'kpi-val ' + (total >= 0 ? 'up' : (total < 0 ? 'down' : ''));
+    }
+    if (sub) {
+      const incomplete = d.incomplete_holdings_count || 0;
+      sub.textContent = incomplete
+        ? `from past sells · ${incomplete} excluded (incomplete history)`
+        : 'from past sells';
+      sub.style.color = incomplete ? '#b91c1c' : '';
+    }
+    // Re-render so per-row realised lines pick up new data.
+    if (typeof renderTable === 'function') renderTable();
+  } catch (e) {
+    console.warn('Realised P&L load failed', e);
+  }
 }
 
 /* ── Auto-snapshot + backfill: runs once per day on page load ── */
@@ -805,7 +842,24 @@ function renderTable(){
     const cmpDisplay  = INR(cmp);   // always show market price
     const invDisplay  = isSellOnly ? dash : INR(invested);
     const curDisplay  = isSellOnly ? dash : INR(current);
-    const pnlDisplay  = isSellOnly ? dash : `${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small>`;
+    // Realised P&L sub-line — only show when this holding has had
+    // sells. Excluded for sell-only rows (incomplete cost basis;
+    // the badge already explains the situation).
+    const realisedInfo = realisedByHolding[h.id];
+    let realisedLine = '';
+    if (realisedInfo && !isSellOnly) {
+      if (realisedInfo.incomplete_history) {
+        realisedLine = '<br><small style="color:var(--pf-text3);font-style:italic;">realised: incomplete</small>';
+      } else if (realisedInfo.sells_count > 0) {
+        const r = realisedInfo.realised || 0;
+        const sign = r >= 0 ? '+' : '';
+        const cls = r >= 0 ? 'pnl-up' : 'pnl-down';
+        realisedLine = `<br><small style="color:var(--pf-text3);">realised: <span class="${cls}" style="font-weight:600;">${sign}${INR(r)}</span></small>`;
+      }
+    }
+    const pnlDisplay  = isSellOnly
+      ? dash
+      : `${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small>${realisedLine}`;
     return `<tr data-id="${h.id}" class="${isSellOnly?'row-sell-only':''}">
       <td><div class="name-cell">${esc(h.name)} ${sellOnlyBadge}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.payout_type&&h.payout_type!=='cumulative'?' · '+h.payout_type:''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
       <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
@@ -1626,7 +1680,7 @@ async function doImport(){
     if(!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
 
     progress.textContent='Refreshing holdings…';
-    await loadHoldings(); loadSummary();
+    await loadHoldings(); loadSummary(); loadRealised();
     closeImport();
     if(importMode==="ledger"){
       const undeleted = d.holdings_undeleted ? ` · ${d.holdings_undeleted} previously-deleted re-activated` : '';

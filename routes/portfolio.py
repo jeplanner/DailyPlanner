@@ -1926,6 +1926,126 @@ def portfolio_summary():
 
 
 # ═══════════════════════════════════════════════════
+# REALISED P&L — gains/losses on past sells, per-holding + total
+# ═══════════════════════════════════════════════════
+#
+# For every holding, walks its transactions in date order using
+# weighted-average cost (WAC). Each Sell crystallises a realised
+# gain or loss = (sell_price − running_wac) × sell_qty. Buys
+# don't realise anything, just shift the running WAC.
+#
+# Conservative on incomplete history: if a Sell ever tries to
+# pop more units than the running ledger has bought, we mark the
+# whole holding as `incomplete_history` and skip its realised P&L
+# from the total — better to under-report than to overstate gains
+# using a fabricated cost basis.
+#
+# WAC chosen over FIFO because the holdings table already shows
+# avg_price as WAC; mixing methods would make per-row vs per-sell
+# numbers confusing. Indian tax filing uses FIFO — that's a
+# separate /portfolio/tax-report we can build later.
+
+def _compute_realised(transactions):
+    qty = 0.0
+    wac = 0.0
+    realised = 0.0
+    sold_qty = 0.0
+    sold_value = 0.0
+    sells_count = 0
+    incomplete = False
+
+    for t in sorted(
+        transactions,
+        key=lambda r: (r.get("txn_date") or "", r.get("created_at") or "")
+    ):
+        action = (t.get("txn_type") or "").lower()
+        try:
+            q = float(t.get("quantity") or 0)
+            p = float(t.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if q <= 0:
+            continue
+
+        if action == "buy":
+            if qty <= 0:
+                qty = q
+                wac = p
+            else:
+                wac = (qty * wac + q * p) / (qty + q)
+                qty += q
+        elif action == "sell":
+            if q > qty + 1e-9:
+                # Selling more than we know we own → buys are
+                # missing. Stop trying to compute realised P&L
+                # for this holding; mark it.
+                incomplete = True
+                continue
+            realised += (p - wac) * q
+            sold_qty += q
+            sold_value += q * p
+            sells_count += 1
+            qty -= q
+            if qty <= 1e-9:
+                qty = 0.0
+                wac = 0.0
+
+    return {
+        "realised": round(realised, 2),
+        "sold_qty": round(sold_qty, 4),
+        "avg_sell_price": round(sold_value / sold_qty, 2) if sold_qty else 0.0,
+        "sells_count": sells_count,
+        "incomplete_history": incomplete,
+    }
+
+
+@portfolio_bp.route("/api/portfolio/realised-pnl", methods=["GET"])
+@login_required
+def realised_pnl():
+    user_id = session["user_id"]
+
+    holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "id",
+        "limit": "5000",
+    }) or []
+    holding_ids = [h["id"] for h in holdings]
+
+    txns = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "holding_id,txn_type,txn_date,quantity,price,created_at",
+        "limit": "100000",
+    }) or []
+
+    by_holding: dict[str, list] = {}
+    for t in txns:
+        hid = t.get("holding_id")
+        if hid:
+            by_holding.setdefault(hid, []).append(t)
+
+    by_holding_out: dict[str, dict] = {}
+    total_realised = 0.0
+    incomplete_count = 0
+    for hid in holding_ids:
+        info = _compute_realised(by_holding.get(hid, []))
+        if info["sells_count"] == 0:
+            continue   # buy-only holdings have nothing realised
+        by_holding_out[hid] = info
+        if info["incomplete_history"]:
+            incomplete_count += 1
+        else:
+            total_realised += info["realised"]
+
+    return jsonify({
+        "total_realised": round(total_realised, 2),
+        "by_holding": by_holding_out,
+        "incomplete_holdings_count": incomplete_count,
+    })
+
+
+# ═══════════════════════════════════════════════════
 # COVERAGE — what years of trade history have been imported
 # ═══════════════════════════════════════════════════
 #
