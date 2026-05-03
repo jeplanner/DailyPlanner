@@ -145,7 +145,8 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <div class="kpi"><span class="kpi-label">Invested</span><div class="kpi-val" id="kpi-invested">—</div></div>
     <div class="kpi"><span class="kpi-label">Current Value</span><div class="kpi-val" id="kpi-current">—</div></div>
     <div class="kpi"><span class="kpi-label">P&L</span><div class="kpi-val" id="kpi-pnl">—</div><div class="kpi-sub" id="kpi-pnl-pct"></div></div>
-    <div class="kpi"><span class="kpi-label">Holdings</span><div class="kpi-val" id="kpi-count">0</div></div>
+    <div class="kpi"><span class="kpi-label">Holdings</span><div class="kpi-val" id="kpi-count">0</div><div class="kpi-sub" id="kpi-count-sub"></div></div>
+    <div class="kpi"><span class="kpi-label">Trades</span><div class="kpi-val" id="kpi-txns">0</div><div class="kpi-sub" id="kpi-txns-sub"></div></div>
     <div class="kpi"><span class="kpi-label">XIRR</span><div class="kpi-val" id="kpi-xirr">—</div><div class="kpi-sub">annualized return</div></div>
   </div>
 
@@ -725,6 +726,32 @@ async function loadSummary(){
     pnlEl.className='kpi-val '+(d.total_pnl>=0?'up':'down');
     document.getElementById("kpi-pnl-pct").textContent=`(${d.total_pnl_pct}%)`;
     document.getElementById("kpi-count").textContent=d.holdings_count;
+    // Sub-line: split active vs closed so the user instantly sees how
+    // many positions are actually open today vs. fully exited.
+    const closed = d.closed_holdings_count || 0;
+    const active = d.active_holdings_count != null ? d.active_holdings_count : (d.holdings_count - closed);
+    document.getElementById("kpi-count-sub").textContent =
+      closed ? `${active} active · ${closed} closed` : `${active} active`;
+
+    // Trades tile + "awaiting older buys" hint. The latter is the
+    // count of positions where we only have sell transactions in the
+    // imported data — meaning the original buy lives in an earlier
+    // FY the user hasn't pulled from ICICI yet.
+    const txns = d.transactions_count || 0;
+    document.getElementById("kpi-txns").textContent = txns.toLocaleString('en-IN');
+    const sellOnly = d.sell_only_count || 0;
+    const sub = document.getElementById("kpi-txns-sub");
+    if (sellOnly) {
+      sub.textContent = `${sellOnly} awaiting older buys`;
+      sub.style.color = '#b91c1c';
+      sub.title = 'These holdings have sells but no buys in your imported data — import an earlier FY to fill in their original purchase.';
+    } else if (txns) {
+      sub.textContent = `imported transactions`;
+      sub.style.color = '';
+      sub.title = '';
+    } else {
+      sub.textContent = '';
+    }
   }catch(e){console.warn(e);}
 }
 

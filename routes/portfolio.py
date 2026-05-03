@@ -1794,8 +1794,44 @@ def portfolio_summary():
         "is_deleted": "is.false",
     }) or []
 
+    # Pull transactions for the trade-count tile and the "awaiting
+    # older buy history" hint. Restricted to active holdings + active
+    # transactions so the count matches what the user can actually
+    # see in the Coverage page.
+    txns = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "txn_type,holding_id,quantity",
+        "limit": "100000",
+    }) or []
+
+    # Group transactions by holding to identify "sells without buys"
+    # — those are positions where the user imported recent FY data
+    # but the originating buy lives in an earlier un-imported file.
+    # Distinct from genuinely closed positions (had buys, sold out).
+    by_holding: dict[str, dict] = {}
+    for t in txns:
+        hid = t.get("holding_id")
+        if not hid:
+            continue
+        slot = by_holding.setdefault(hid, {"buys": 0, "sells": 0})
+        ttype = (t.get("txn_type") or "").lower()
+        if ttype == "buy":
+            slot["buys"] += 1
+        elif ttype == "sell":
+            slot["sells"] += 1
+
+    sell_only_count = 0
+    closed_count = 0
+    active_holding_ids = {h["id"] for h in holdings}
+    for hid in active_holding_ids:
+        slot = by_holding.get(hid, {"buys": 0, "sells": 0})
+        if slot["sells"] > 0 and slot["buys"] == 0:
+            sell_only_count += 1
+
     total_invested = 0
     total_current = 0
+    active_count = 0
     by_type = {}
 
     for h in holdings:
@@ -1807,6 +1843,10 @@ def portfolio_summary():
 
         total_invested += invested
         total_current += current
+        if qty > 0:
+            active_count += 1
+        else:
+            closed_count += 1
 
         t = h.get("asset_type", "other")
         if t not in by_type:
@@ -1824,6 +1864,10 @@ def portfolio_summary():
         "total_pnl": round(total_pnl, 2),
         "total_pnl_pct": total_pnl_pct,
         "holdings_count": len(holdings),
+        "active_holdings_count": active_count,
+        "closed_holdings_count": closed_count,
+        "sell_only_count": sell_only_count,
+        "transactions_count": len(txns),
         "by_type": by_type,
     })
 
