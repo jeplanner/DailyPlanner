@@ -1055,7 +1055,7 @@ const INSTRUMENT_TYPES = [
       { k: "notes",                   lbl: "Notes (83(b) filed, AMT expected, double-trigger, etc.)", as: "textarea" },
     ]
   },
-  { type: "fixed_deposit", group: "Investments", label: "Fixed deposit", sub: "FD / CD / Bond", icon: "lock",
+  { type: "fixed_deposit", group: "Savings",     label: "Fixed deposit", sub: "FD / CD / Bond", icon: "lock",
     countries: ["IN","US","BOTH"],
     fields: [
       { k: "provider",          lbl: "Bank / issuer *",       required: true },
@@ -1068,7 +1068,7 @@ const INSTRUMENT_TYPES = [
       { k: "notes",             lbl: "Notes",                 as: "textarea" },
     ]
   },
-  { type: "retirement",    group: "Investments", label: "Retirement",   sub: "PPF / EPF / NPS / 401k / IRA", icon: "shield",
+  { type: "retirement",    group: "Savings",     label: "Retirement",   sub: "PPF / EPF / NPS / 401k / IRA", icon: "shield",
     countries: ["IN","US","BOTH"],
     fields: [
       { k: "provider",          lbl: "Plan / provider *",     required: true, placeholder: "e.g., Fidelity 401k, EPFO" },
@@ -1082,7 +1082,7 @@ const INSTRUMENT_TYPES = [
       { k: "notes",             lbl: "Notes",                 as: "textarea" },
     ]
   },
-  { type: "insurance",     group: "Investments", label: "Insurance",    sub: "Life / health / auto", icon: "umbrella",
+  { type: "insurance",     group: "Insurance",   label: "Insurance",    sub: "Life / health / auto", icon: "umbrella",
     countries: ["IN","US","BOTH"],
     fields: [
       { k: "provider",          lbl: "Insurer *",             required: true, placeholder: "e.g., LIC, Geico" },
