@@ -181,6 +181,10 @@ def import_holdings():
     data = request.get_json() or {}
     rows = data.get("rows", [])
     broker = data.get("broker", "ICICI Direct")
+    # Family-member assignment from the import dialog. Falls back to
+    # None so the column is omitted entirely (Postgres default applies)
+    # rather than written as the string "" which would break filters.
+    held_by = (data.get("held_by") or "").strip() or None
 
     if not rows:
         return jsonify({"error": "No rows to import"}), 400
@@ -207,6 +211,7 @@ def import_holdings():
                 "currency": r.get("currency", "INR"),
                 "folio_number": (r.get("folio_number") or "").strip() or None,
                 "broker": broker,
+                "held_by": held_by,
                 "sector": (r.get("sector") or "").strip() or None,
             }
             encrypt_fields(row_data, ENCRYPTED_FIELDS)
@@ -333,6 +338,7 @@ def import_transactions():
     data = request.get_json() or {}
     rows = data.get("rows", []) or []
     broker = data.get("broker") or "ICICI Direct"
+    held_by = (data.get("held_by") or "").strip() or None
     if not rows:
         return jsonify({"error": "No rows to import"}), 400
 
@@ -353,7 +359,7 @@ def import_transactions():
     # and re-attach the new transactions.
     existing_holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
-        "select": "id,symbol,name,exchange,asset_type,is_deleted",
+        "select": "id,symbol,name,exchange,asset_type,is_deleted,held_by",
     }) or []
     decrypt_rows(existing_holdings, ENCRYPTED_FIELDS)
     holdings_by_sym = {
@@ -389,6 +395,20 @@ def import_transactions():
                 holdings_undeleted += 1
             except Exception as e:
                 logger.warning("import-txn undelete %s failed: %s", sym, e)
+        # Backfill held_by on an existing row that doesn't have one
+        # yet — covers holdings created by the pre-held-by-import code.
+        # Never overwrite a non-empty held_by, since that could yank
+        # someone else's portfolio entry from under them.
+        if holding and held_by and not (holding.get("held_by") or "").strip():
+            try:
+                update(
+                    "portfolio_holdings",
+                    params={"id": f"eq.{holding['id']}", "user_id": f"eq.{user_id}"},
+                    json={"held_by": held_by},
+                )
+                holding["held_by"] = held_by
+            except Exception as e:
+                logger.warning("import-txn set held_by %s failed: %s", sym, e)
         if not holding:
             sample = group[0]
             new_h = {
@@ -399,6 +419,7 @@ def import_transactions():
                 "asset_type": "stock",
                 "exchange": (sample.get("exchange") or "NSE").strip().upper(),
                 "currency": "INR",
+                "held_by": held_by,
                 "broker": broker,
                 "quantity": 0,
                 "avg_price": 0,

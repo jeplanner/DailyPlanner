@@ -443,6 +443,14 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
       Also works with Zerodha, Groww, or any CSV with columns: Name, Symbol, Qty, Avg Price.
     </p>
     <div class="fr">
+      <div class="fg"><label>Held by</label>
+        <select id="imp-held-by" class="fi" title="Which family member's portfolio this CSV belongs to. Sets held_by on every row created or matched. Existing rows with a different held_by are NOT overwritten.">
+          <option value="Venghatesh">Venghatesh</option>
+          <option value="Chitra">Chitra</option>
+          <option value="Shreya">Shreya</option>
+          <option value="Sethu">Sethu</option>
+        </select>
+      </div>
       <div class="fg"><label>Broker</label>
         <select id="imp-broker" class="fi">
           <option value="ICICI Direct">ICICI Direct</option>
@@ -1561,6 +1569,7 @@ function showImportPreview(){
 async function doImport(){
   if(!importRows.length)return;
   const broker=document.getElementById("imp-broker").value;
+  const heldBy=(document.getElementById("imp-held-by")?.value || '').trim();
   const endpoint = importMode==="ledger"
     ? "/api/portfolio/import-transactions"
     : "/api/portfolio/import";
@@ -1581,7 +1590,7 @@ async function doImport(){
     : `Sending ${importRows.length} holdings…`;
 
   try{
-    const res=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker})});
+    const res=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker,held_by:heldBy})});
     const d=await res.json();
     if(!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
 
