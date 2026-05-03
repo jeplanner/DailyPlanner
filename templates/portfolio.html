@@ -494,6 +494,10 @@ let holdings=[], editId=null, importRows=[], curType='all', curOwner='all';
 // and the XIRR tile warns that the number is overstated until the
 // missing buy history is imported.
 let sellOnlyIds = new Set();
+// Map of {holding_id: total_sold_qty} so the badge can read "sold 16"
+// instead of just "buys missing" — answers the user's question of
+// "why does qty say 0 when I sold N?"
+let sellOnlyQty = {};
 // Hide qty=0 rows by default — they're either real closed positions
 // (sold out completely) or sell-only-from-an-incomplete-import (e.g.,
 // recent FY imported but earlier buy history isn't). Either way they
@@ -778,20 +782,35 @@ function renderTable(){
     // "Buy history missing" badge: this row has sells in our data
     // but no matching buy. Stays in the table (the data IS real),
     // but flagged so users know the qty/avg are not the true
-    // current position until earlier FYs are imported.
+    // current position until earlier FYs are imported. Includes the
+    // total sold quantity so the row reads as "you sold N — current
+    // position unknown" instead of the misleading qty=0.
     const isSellOnly = sellOnlyIds.has(h.id);
+    const soldQty = sellOnlyQty[h.id] || 0;
     const sellOnlyBadge = isSellOnly
-      ? `<span class="badge-warn" title="Imported data has only sells for this stock — the original buy lives in an earlier FY you haven't imported yet. Quantity, avg price, and XIRR are all unreliable until you import older tradeBook data.">⚠ buys missing</span>`
+      ? `<span class="badge-warn" title="You sold ${soldQty} of this stock in the imported data, but the original purchase happened in an earlier FY you haven't imported yet. Until you do, qty/avg/CMP/P&L are all unknown for this row.">⚠ sold ${soldQty} · buys missing</span>`
       : '';
+    // For sell-only rows, the "current position" math gives 0 (you
+    // sold what we don't see you owning). That number is misleading
+    // — the true current position is unknown. Show "—" everywhere
+    // numeric for clarity; the badge already shows the sold qty.
+    const qtyDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : qty;
+    const avgDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(avg);
+    const cmpDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(cmp);
+    const invDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(invested);
+    const curDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(current);
+    const pnlDisplay  = isSellOnly
+      ? '<span style="color:var(--pf-text3)">—</span>'
+      : `${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small>`;
     return `<tr data-id="${h.id}" class="${isSellOnly?'row-sell-only':''}">
       <td><div class="name-cell">${esc(h.name)} ${sellOnlyBadge}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.payout_type&&h.payout_type!=='cumulative'?' · '+h.payout_type:''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
       <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
-      <td class="num">${qty}</td>
-      <td class="num">${INR(avg)}</td>
-      <td class="num">${INR(cmp)}</td>
-      <td class="num hide-m">${INR(invested)}</td>
-      <td class="num">${INR(current)}</td>
-      <td class="num ${cls}">${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small></td>
+      <td class="num">${qtyDisplay}</td>
+      <td class="num">${avgDisplay}</td>
+      <td class="num">${cmpDisplay}</td>
+      <td class="num hide-m">${invDisplay}</td>
+      <td class="num">${curDisplay}</td>
+      <td class="num ${isSellOnly?'':cls}">${pnlDisplay}</td>
       <td class="num hide-m" id="xirr-${h.id}"><button class="xirr-calc-btn" onclick="calcHoldingXirr('${h.id}')" title="Calculate XIRR">Calc</button></td>
       <td class="hide-m">${h._lastTxn?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;${h._lastTxn.txn_type==='buy'?'background:#fef2f2;color:#dc2626':'background:#ecfdf5;color:#059669'}">${h._lastTxn.txn_type}</span><div class="symbol">${h._lastTxn.txn_date||''}</div>`:`${h.buy_date?`<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:#fef2f2;color:#dc2626;">BUY</span><div class="symbol">${h.buy_date}</div>`:'—'}`}</td>
       <td><button class="row-btn" onclick="openTxn('${h.id}','${esc(h.name)}')" title="Transactions">&#128200;</button><button class="row-btn" onclick="editHolding('${h.id}')" title="Edit">&#9999;&#65039;</button><button class="row-btn del" onclick="delHolding('${h.id}')" title="Delete">&#128465;</button></td>
@@ -837,10 +856,12 @@ async function loadSummary(){
       sub.textContent = '';
     }
 
-    // Flag the affected rows. Stash the IDs on a module-level Set so
-    // the table renderer (which doesn't get d directly) can read it.
+    // Flag the affected rows. Stash the IDs + sold quantities on
+    // module-level state so the table renderer (which doesn't get d
+    // directly) can read them.
     const newSet = new Set(d.sell_only_ids || []);
     sellOnlyIds = newSet;
+    sellOnlyQty = d.sell_only_qty || {};
     // The table may already be rendered without the flag; re-render
     // so the badge appears without waiting for the next holdings
     // refresh. Cheap — just walks the in-memory holdings array.

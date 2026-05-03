@@ -1830,27 +1830,33 @@ def portfolio_summary():
     # — those are positions where the user imported recent FY data
     # but the originating buy lives in an earlier un-imported file.
     # Distinct from genuinely closed positions (had buys, sold out).
+    # Also track total sold quantity per holding so the UI can show
+    # "sold N" in the flag instead of just "0" in the qty column.
     by_holding: dict[str, dict] = {}
     for t in txns:
         hid = t.get("holding_id")
         if not hid:
             continue
-        slot = by_holding.setdefault(hid, {"buys": 0, "sells": 0})
+        slot = by_holding.setdefault(hid, {"buys": 0, "sells": 0, "sold_qty": 0.0})
         ttype = (t.get("txn_type") or "").lower()
+        q = float(t.get("quantity") or 0)
         if ttype == "buy":
             slot["buys"] += 1
         elif ttype == "sell":
             slot["sells"] += 1
+            slot["sold_qty"] += q
 
     sell_only_count = 0
     sell_only_ids: list[str] = []
+    sell_only_qty: dict[str, float] = {}
     closed_count = 0
     active_holding_ids = {h["id"] for h in holdings}
     for hid in active_holding_ids:
-        slot = by_holding.get(hid, {"buys": 0, "sells": 0})
+        slot = by_holding.get(hid, {"buys": 0, "sells": 0, "sold_qty": 0.0})
         if slot["sells"] > 0 and slot["buys"] == 0:
             sell_only_count += 1
             sell_only_ids.append(hid)
+            sell_only_qty[hid] = round(slot["sold_qty"], 4)
 
     total_invested = 0
     total_current = 0
@@ -1891,6 +1897,7 @@ def portfolio_summary():
         "closed_holdings_count": closed_count,
         "sell_only_count": sell_only_count,
         "sell_only_ids": sell_only_ids,
+        "sell_only_qty": sell_only_qty,
         "transactions_count": len(txns),
         "by_type": by_type,
     })
