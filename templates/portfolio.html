@@ -1153,33 +1153,87 @@ document.addEventListener('drop', (e) => {
 // "ledger" = transaction history (action + date + price).
 let importMode="snapshot";
 
+// ICICI's "CSV" files are sometimes tab- or pipe-delimited despite
+// the .csv extension. Sniff the header line: whichever delimiter
+// produces the most columns wins. Falls back to comma if none look
+// reasonable. Returns the delimiter character.
+function detectDelimiter(headerLine){
+  const candidates=[',','\t','|',';'];
+  let best=',', bestCount=0;
+  for(const d of candidates){
+    const n=splitDelim(headerLine,d).length;
+    if(n>bestCount){bestCount=n; best=d;}
+  }
+  return best;
+}
+
+function splitDelim(line, delim){
+  const r=[]; let cur='', inQ=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'){
+      if(inQ&&line[i+1]==='"'){cur+='"'; i++;}
+      else inQ=!inQ;
+    } else if(c===delim && !inQ){
+      r.push(cur); cur='';
+    } else cur+=c;
+  }
+  r.push(cur); return r;
+}
+
 function parseFile(file){
   const reader=new FileReader();
   reader.onload=function(e){
-    const lines=e.target.result.split('\n').map(l=>l.trim()).filter(l=>l);
-    if(lines.length<2){showToast("Empty CSV","error");return;}
+    try {
+      const text=e.target.result || '';
+      const lines=text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
+      if(lines.length<2){showToast("Empty CSV","error");return;}
 
-    const headers=parseCSVLine(lines[0]).map(h=>h.toLowerCase().trim());
-    const broker=document.getElementById("imp-broker").value;
-    const assetType=document.getElementById("imp-type").value;
+      // Sniff delimiter from the header line so tab- or pipe-separated
+      // files work without forcing the user to re-save in Excel.
+      const delim=detectDelimiter(lines[0]);
+      const headers=splitDelim(lines[0],delim).map(h=>h.toLowerCase().trim());
 
-    // Ledger detection: ICICI's PortFolioEqtAll-style export has both
-    // an Action column and a Transaction Date — that's the signal we
-    // should run replay-based import instead of snapshot import.
-    const isLedger = headers.includes("action") &&
-      (headers.includes("transaction date") || headers.includes("date"));
-    importMode = isLedger ? "ledger" : "snapshot";
+      const broker=document.getElementById("imp-broker").value;
+      const assetType=document.getElementById("imp-type").value;
 
-    importRows=[];
-    for(let i=1;i<lines.length;i++){
-      const cols=parseCSVLine(lines[i]);
-      const row = isLedger
-        ? mapLedgerRow(headers,cols)
-        : mapCSVRow(headers,cols,broker,assetType);
-      if(row && (row.symbol || row.name))importRows.push(row);
+      // Ledger detection: ICICI's PortFolioEqtAll / tradeBook exports
+      // have an Action column AND a Transaction Date — that's the
+      // signal we should run replay-based import instead of snapshot.
+      const isLedger = headers.includes("action") &&
+        (headers.includes("transaction date") || headers.includes("date"));
+      importMode = isLedger ? "ledger" : "snapshot";
+
+      importRows=[];
+      for(let i=1;i<lines.length;i++){
+        const cols=splitDelim(lines[i],delim);
+        const row = isLedger
+          ? mapLedgerRow(headers,cols)
+          : mapCSVRow(headers,cols,broker,assetType);
+        if(row && (row.symbol || row.name))importRows.push(row);
+      }
+
+      // Loud diagnostic if nothing matched. Lists the headers we saw
+      // so the user (or a bug report) can compare them to what the
+      // parser expects.
+      if(importRows.length===0){
+        const sample=headers.slice(0,8).join(' | ');
+        showToast(`Couldn't read any rows. Headers found: ${sample}${headers.length>8?' …':''}`,"error", 8000);
+        console.warn('CSV import: 0 rows parsed. Delimiter=', JSON.stringify(delim),
+                     'headers=', headers, 'isLedger=', isLedger);
+        return;
+      }
+
+      const delimName = delim===',' ? 'comma' : delim==='\t' ? 'tab' : delim==='|' ? 'pipe' : 'semicolon';
+      showToast(`Read ${importRows.length} row${importRows.length===1?'':'s'} (${delimName}-separated, ${importMode})`, "success", 2500);
+      showImportPreview();
+    } catch (err) {
+      console.error('parseFile failed', err);
+      showToast(`Parse failed: ${err.message || err}`, "error", 8000);
     }
-
-    showImportPreview();
+  };
+  reader.onerror=function(){
+    showToast("Couldn't read the file. Try Browse instead of drag-drop.","error", 6000);
   };
   reader.readAsText(file);
 }
@@ -1205,16 +1259,6 @@ function mapLedgerRow(headers,cols){
   };
 }
 
-function parseCSVLine(line){
-  const r=[];let cur='',inQ=false;
-  for(let i=0;i<line.length;i++){
-    const c=line[i];
-    if(c==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
-    else if(c===','&&!inQ){r.push(cur);cur='';}
-    else cur+=c;
-  }
-  r.push(cur);return r;
-}
 
 function mapCSVRow(headers,cols,broker,assetType){
   const get=(keys)=>{for(const k of keys){const i=headers.indexOf(k);if(i>=0&&cols[i])return cols[i].trim();}return '';};
