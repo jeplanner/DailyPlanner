@@ -60,7 +60,10 @@ from config import IST
 from utils.user_tz import user_now, user_today
 from services.login_service import login_required
 from supabase_client import delete, get, post, update
-from utils.encryption import decrypt, decrypt_fields, decrypt_rows, encrypt, encrypt_fields
+from utils.encryption import (
+    decrypt, decrypt_fields, decrypt_rows, encrypt, encrypt_fields,
+    is_active as encryption_is_active,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +275,14 @@ def vault_update_settings():
 @refcards_bp.route("/refcards")
 @login_required
 def refcards_page():
-    return render_template("refcards.html")
+    # encryption_active=False means ENCRYPTION_KEY is missing on the
+    # server, so any vault writes are landing as plaintext. The
+    # template renders a sticky warning banner so this can't silently
+    # regress (e.g. if the env var gets cleared during a Render edit).
+    return render_template(
+        "refcards.html",
+        encryption_active=encryption_is_active(),
+    )
 
 
 # ═══════════════════════════════════════════════════

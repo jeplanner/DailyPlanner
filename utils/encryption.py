@@ -35,6 +35,13 @@ def _get_fernet():
 _fernet = _get_fernet()
 
 
+def is_active() -> bool:
+    """True if ENCRYPTION_KEY was set at import time and a working
+    Fernet instance was built. Cheap (no recomputation) — safe to call
+    on every request to drive a "vault is unencrypted" warning banner."""
+    return _fernet is not None
+
+
 def encrypt(value):
     if not value or not _fernet:
         return value

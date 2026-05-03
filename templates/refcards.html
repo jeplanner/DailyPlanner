@@ -62,6 +62,27 @@ button { font-family: inherit; }
 /* ── Layout ────────────────────────────────────────────── */
 .v-app { max-width: 1100px; margin: 0 auto; padding: 16px 20px 80px; }
 
+/* Encryption-off banner. Sticky at the top of the page so it stays
+   visible even after scrolling — the user must keep noticing this
+   condition until they fix the env var. z-index sits above the
+   lock screen overlay (100) so the warning is visible even before
+   they unlock. Red palette signals real risk, not a notice. */
+.v-enc-banner {
+  position: sticky; top: 0; z-index: 200;
+  display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap;
+  padding: 12px 18px;
+  background: #b91c1c; color: #fff;
+  border-bottom: 1px solid #7f1d1d;
+  font-size: 13.5px; line-height: 1.45;
+  box-shadow: 0 4px 12px rgba(127,29,29,.25);
+}
+.v-enc-banner strong { font-weight: 800; flex-shrink: 0; }
+.v-enc-banner code {
+  background: rgba(0,0,0,.22); padding: 1px 6px; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
 /* ── Lock screen (first thing the user sees) ─────────────────── */
 .v-lock {
   position: fixed; inset: 0;
@@ -652,6 +673,19 @@ html.dark .v-port-warn {
 </head>
 <body>
 {% include "_top_nav.html" %}
+
+{% if not encryption_active %}
+<div class="v-enc-banner" role="alert" aria-live="assertive">
+  <strong>⚠ Encryption is OFF.</strong>
+  <span>
+    The <code>ENCRYPTION_KEY</code> env var is missing on the server, so anything you save
+    here lands in Supabase as <b>plaintext JSON</b> — including card numbers, CVVs,
+    Aadhaar, passport, and SSN.
+    Stop adding sensitive data until you set <code>ENCRYPTION_KEY</code> in Render →
+    Environment, then redeploy.
+  </span>
+</div>
+{% endif %}
 
 <!-- ══════════════════ LOCK SCREEN (always rendered first) ══════════════════ -->
 <div id="v-lock" class="v-lock">
