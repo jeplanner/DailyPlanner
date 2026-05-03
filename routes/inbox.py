@@ -72,7 +72,7 @@ def create_inbox():
         except Exception:
             pass  # Fall back to raw meta description
 
-    post("inbox_links", {
+    row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
         "url": url,
@@ -81,7 +81,12 @@ def create_inbox():
         "content_type": content_type,
         "category": category,
         "status": "Unread",
-    })
+    }
+    # Source publish date — only YouTube fills this in today (via the
+    # Data API), so non-YouTube saves leave the column NULL.
+    if meta.get("published_at"):
+        row["published_at"] = meta["published_at"]
+    post("inbox_links", row)
 
     return jsonify({
         "success": True,
@@ -102,7 +107,7 @@ def get_inbox():
     params = {
         "user_id": f"eq.{user_id}",
         "order": "created_at.desc",
-        "select": "id,url,title,description,content_type,is_favorite,category,status,created_at,transcript_note_id",
+        "select": "id,url,title,description,content_type,is_favorite,category,status,created_at,published_at,transcript_note_id",
     }
     if status_filter:
         params["status"] = f"eq.{status_filter}"
@@ -1062,6 +1067,7 @@ def channel_uploads():
                               .get("medium", {}).get("url", ""),
                 "channel": chan_title,
                 "channel_id": channel_id,
+                "published_at": snip.get("publishedAt", ""),
             })
 
         # Enrich with duration + view count for each. Reuses the same
@@ -1173,6 +1179,7 @@ def search_web():
                 "thumbnail": snip.get("thumbnails", {}).get("medium", {}).get("url", ""),
                 "channel": snip.get("channelTitle", ""),
                 "channel_id": cid,
+                "published_at": snip.get("publishedAt", ""),
             })
         # Enrich with duration / view count / subscriber count. We pass
         # the channel ids harvested from the search response so the

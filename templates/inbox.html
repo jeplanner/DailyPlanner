@@ -732,6 +732,8 @@ function renderYouTubeSection(data) {
       if (r.duration_seconds) bits.push(`<b>${formatDuration(r.duration_seconds)}</b>`);
       if (r.view_count != null) bits.push(`👁 ${formatCount(r.view_count)} views`);
       if (r.subscriber_count != null) bits.push(`👥 ${formatCount(r.subscriber_count)} subs`);
+      const pubAgo = publishedAgo(r.published_at);
+      if (pubAgo) bits.push(`📅 ${pubAgo}`);
       const meta = bits.length ? `<div class="sr-meta">${bits.join(" · ")}</div>` : "";
       return `
       <div class="sr-item">
@@ -985,6 +987,7 @@ function renderCards() {
     const domain = getDomain(x.url);
     const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
     const ago = timeAgo(x.created_at);
+    const pub = publishedAgo(x.published_at);
     const ytId = extractYouTubeId(x.url);
     // Primary action: "Watch" for YouTube, "Read" for everything else.
     // Both expand the card to a media slot below the body — no leaving
@@ -1004,7 +1007,7 @@ function renderCards() {
       <div class="card-favicon"><img src="${favicon}" alt="" onerror="this.style.display='none'"></div>
       <div class="card-body">
         <div class="card-title"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></div>
-        <div class="card-domain">${esc(domain)} · ${ago}</div>
+        <div class="card-domain">${esc(domain)} · added ${ago}${pub ? ` · published ${pub}` : ""}</div>
         ${x.description ? `<div class="card-desc">${esc(x.description)}</div>` : ""}
         <div class="card-tags">
           ${x.content_type ? `<span class="tag tag-type">${esc(x.content_type)}</span>` : ""}
@@ -1362,6 +1365,8 @@ async function toggleChannelUploads(itemId, ytId) {
           const bits = [];
           if (u.duration_seconds) bits.push(formatDuration(u.duration_seconds));
           if (u.view_count != null) bits.push(`${formatCount(u.view_count)} views`);
+          const upAgo = publishedAgo(u.published_at);
+          if (upAgo) bits.push(upAgo);
           return `
             <div class="cu-item">
               <img src="${esc(u.thumbnail)}" alt="" onerror="this.style.display='none'">
@@ -1510,6 +1515,24 @@ function timeAgo(dateStr) {
   const days = Math.floor(hrs / 24);
   if (days < 7) return days + "d ago";
   return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// Source-content age helper. Differs from timeAgo() by spelling out
+// weeks / months / years past the 7-day mark instead of switching to
+// a calendar date — for a "is this video stale?" glance, "2y ago"
+// reads better than "Mar 14".
+function publishedAgo(dateStr) {
+  if (!dateStr) return "";
+  const ms = Date.now() - new Date(dateStr).getTime();
+  if (isNaN(ms) || ms < 0) return "";
+  const days = Math.floor(ms / 86400000);
+  if (days < 1) return "today";
+  if (days < 7) return days + "d ago";
+  if (days < 30) return Math.floor(days / 7) + "w ago";
+  if (days < 365) return Math.floor(days / 30) + "mo ago";
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days - years * 365) / 30);
+  return months > 0 ? `${years}y ${months}mo ago` : `${years}y ago`;
 }
 
 /* ── Keyboard shortcuts ── */

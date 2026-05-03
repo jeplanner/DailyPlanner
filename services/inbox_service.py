@@ -77,6 +77,7 @@ def _fetch_youtube_via_api(video_id: str) -> dict | None:
         title = snip.get("title") or ""
         desc = snip.get("description") or ""
         channel = snip.get("channelTitle") or ""
+        published_at = snip.get("publishedAt") or ""
         # Compose a one-line description: first non-empty paragraph, with
         # the channel name prepended for context. YouTube uploader
         # descriptions are often paragraphs of links — we want the first
@@ -86,6 +87,7 @@ def _fetch_youtube_via_api(video_id: str) -> dict | None:
         return {
             "title": title or video_id,
             "description": composed[:500],
+            "published_at": published_at,
         }
     except Exception as e:
         logger.warning("fetch_meta YouTube API failed: video_id=%s err=%s", video_id, e)
@@ -116,10 +118,11 @@ def fetch_meta(url: str) -> dict:
         return {
             "title": parser.title.strip() or url,
             "description": parser.description.strip()[:300],
+            "published_at": "",
         }
     except Exception as e:
         logger.warning("fetch_meta failed for %s: %s", url, e)
-        return {"title": url, "description": ""}
+        return {"title": url, "description": "", "published_at": ""}
 
 
 # kept for backward compat
