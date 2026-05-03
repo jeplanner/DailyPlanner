@@ -362,20 +362,25 @@ def import_transactions():
         holding_id = holding["id"]
 
         # ── Pre-fetch existing transactions for dedupe ────────────
+        # Dedupe key includes `amount` (which folds in brokerage +
+        # statutory charges) so two same-day trades at the same qty
+        # and price but different brokerage are treated as distinct.
+        # Same-day-same-everything-including-fees is the genuine
+        # duplicate case we want to skip on re-import.
         existing_txns = get("portfolio_transactions", params={
             "holding_id": f"eq.{holding_id}",
             "user_id": f"eq.{user_id}",
             "is_deleted": "is.false",
-            "select": "txn_type,txn_date,quantity,price",
+            "select": "txn_type,txn_date,quantity,price,amount",
             "limit": "5000",
         }) or []
-        # Round to handle float comparison reliably.
         seen = {
             (
                 (t.get("txn_type") or "").lower(),
                 t.get("txn_date") or "",
                 round(float(t.get("quantity") or 0), 4),
                 round(float(t.get("price") or 0), 4),
+                round(float(t.get("amount") or 0), 2),
             )
             for t in existing_txns
         }
@@ -397,12 +402,6 @@ def import_transactions():
             if not date_iso:
                 continue
 
-            key = (action, date_iso, round(qty, 4), round(price, 4))
-            if key in seen:
-                txn_skipped += 1
-                continue
-            seen.add(key)
-
             # Brokerage + statutory charges. Buys cost more; sells net
             # less. Folding them into the cashflow makes XIRR honest.
             try:
@@ -414,6 +413,12 @@ def import_transactions():
                 fees = 0.0
             base = qty * price
             amount = round(base + fees, 2) if action == "buy" else round(base - fees, 2)
+
+            key = (action, date_iso, round(qty, 4), round(price, 4), amount)
+            if key in seen:
+                txn_skipped += 1
+                continue
+            seen.add(key)
 
             txn = {
                 "id": str(uuid.uuid4()),
