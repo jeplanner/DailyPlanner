@@ -413,7 +413,7 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
          ondragover="event.preventDefault();this.classList.add('dragover')"
          ondragleave="this.classList.remove('dragover')"
          ondrop="handleDrop(event)">
-      <p style="font-size:13px;color:var(--pf-text2);">Drag & drop CSV or</p>
+      <p style="font-size:13px;color:var(--pf-text2);">Drop the CSV anywhere in this dialog — or click</p>
       <label class="btn btn-primary btn-sm" style="margin-top:8px;cursor:pointer;">Browse<input type="file" accept=".csv" onchange="handleFile(event)" style="display:none;"></label>
     </div>
     <div id="imp-preview" style="display:none;">
@@ -1125,6 +1125,28 @@ function closeImport(){document.getElementById("import-modal").classList.add("hi
 
 function handleDrop(e){e.preventDefault();document.getElementById("imp-drop").classList.remove("dragover");if(e.dataTransfer.files[0])parseFile(e.dataTransfer.files[0]);}
 function handleFile(e){if(e.target.files[0])parseFile(e.target.files[0]);}
+
+// Page-wide drag-drop guard. The browser's default action when you
+// drop a file anywhere on a page is to navigate to file://… and open
+// it as the document — which silently destroys the planner state. We
+// suppress that everywhere, then route any CSV drop into parseFile
+// while the import modal is open. Means the user can drop on any
+// part of the modal (or even slightly outside the dashed zone) and
+// it still works.
+document.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const modal = document.getElementById('import-modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  if (!/\.csv$/i.test(file.name)) {
+    if (window.showToast) showToast('Only .csv files supported', 'error');
+    return;
+  }
+  document.getElementById('imp-drop')?.classList.remove('dragover');
+  parseFile(file);
+});
 
 // Track which CSV format we detected so doImport() routes to the
 // right endpoint. "snapshot" = current holdings (qty + avg).
