@@ -754,6 +754,63 @@ def refresh_all_prices():
 # distinct from "closed positions" (qty=0 but transactions exist)
 # which represent real history and stay.
 
+@portfolio_bp.route("/api/portfolio/purge-bad-snapshots", methods=["POST"])
+@login_required
+def purge_bad_snapshots():
+    """Hard-delete snapshots with absurd XIRR values (|xirr| > 1000%)
+    or with NaN/Inf-looking magnitudes. The previous _xirr could
+    return rates like 1.7×10^14% on imbalanced cashflows; those got
+    stored in portfolio_snapshots and now poison the trend chart.
+    Re-running daily snapshots after the _xirr fix produces sane
+    values, so removing the bad ones lets the chart recover."""
+    user_id = session["user_id"]
+    rows = get("portfolio_snapshots", params={
+        "user_id": f"eq.{user_id}",
+        "select": "id,xirr,total_value,total_invested",
+        "limit": "100000",
+    }) or []
+
+    bad_ids = []
+    for r in rows:
+        xirr = r.get("xirr")
+        try:
+            if xirr is not None and (
+                abs(float(xirr)) > 1000.0 or float(xirr) != float(xirr)
+            ):
+                bad_ids.append(r["id"])
+                continue
+        except (TypeError, ValueError):
+            bad_ids.append(r["id"])
+            continue
+        # Same sanity check on stored value/invested.
+        for k in ("total_value", "total_invested"):
+            v = r.get(k)
+            try:
+                if v is not None and abs(float(v)) > 1e12:
+                    bad_ids.append(r["id"])
+                    break
+            except (TypeError, ValueError):
+                bad_ids.append(r["id"])
+                break
+
+    purged = 0
+    for sid in bad_ids:
+        try:
+            delete("portfolio_snapshots", params={
+                "id": f"eq.{sid}",
+                "user_id": f"eq.{user_id}",
+            })
+            purged += 1
+        except Exception as e:
+            logger.warning("purge_bad_snapshots delete %s failed: %s", sid, e)
+
+    return jsonify({
+        "ok": True,
+        "examined": len(rows),
+        "purged": purged,
+    })
+
+
 @portfolio_bp.route("/api/portfolio/sync-deleted-txns", methods=["POST"])
 @login_required
 def sync_deleted_transactions():
@@ -1091,46 +1148,101 @@ def delete_transaction(txn_id):
 # XIRR CALCULATION
 # ═══════════════════════════════════════════════════
 
+_XIRR_RATE_MIN = -0.99       # rates ≤ -100% are mathematical garbage
+_XIRR_RATE_MAX = 10.0        # 1000% annualised — anything beyond is divergence
+_XIRR_RESIDUAL_TOL = 0.001   # |NPV| / |gross cashflow| must fall below this
+
+
 def _xirr(cashflows):
-    """
-    Compute XIRR (annualized IRR) using Newton's method.
-    cashflows: list of (date, amount) tuples.
-    Negative amounts = outflow (buy), positive = inflow (sell/current value).
-    Returns annualized rate as decimal (0.12 = 12%), or None if can't converge.
+    """Compute XIRR (annualised IRR) and return as percent (12.5 = 12.5%).
+    Returns None when the cashflows can't yield a meaningful rate.
+
+    Defensive — without these guards Newton's method on pathological
+    inputs (e.g., post-deletion state with sells but no buys, or
+    cashflows that don't bracket a sign change) returned rates like
+    1.7×10^14 % which then poisoned every downstream chart.
+
+    Three guards:
+      1. Sign check — XIRR is undefined when all cashflows are
+         same-sign. Return None.
+      2. Bounded Newton — the guess is clamped to [-99%, 1000%]
+         every step, with a numerical derivative (more stable near
+         the rate=-1 asymptote).
+      3. Residual check — at the "converged" rate, |NPV| must be
+         small relative to total cashflow magnitude. If not, fall
+         back to bisection over the bounded range; if bisection
+         can't bracket either, return None.
     """
     if len(cashflows) < 2:
         return None
 
-    from datetime import date as dt_date
-
-    # Sort by date
     cashflows = sorted(cashflows, key=lambda x: x[0])
+
+    # Guard 1: sign check.
+    has_pos = any(amt > 0 for _, amt in cashflows)
+    has_neg = any(amt < 0 for _, amt in cashflows)
+    if not (has_pos and has_neg):
+        return None
+
+    abs_total = sum(abs(amt) for _, amt in cashflows)
+    if abs_total <= 0:
+        return None
+
     d0 = cashflows[0][0]
 
     def _days(d):
         return (d - d0).days
 
     def _npv(rate):
-        return sum(amt / (1 + rate) ** (_days(d) / 365.0) for d, amt in cashflows)
+        try:
+            base = 1.0 + rate
+            if base <= 0:
+                return float("inf")
+            return sum(amt / base ** (_days(d) / 365.0) for d, amt in cashflows)
+        except (ZeroDivisionError, OverflowError, ValueError):
+            return float("inf")
 
-    def _dnpv(rate):
-        return sum(-(_days(d) / 365.0) * amt / (1 + rate) ** (_days(d) / 365.0 + 1)
-                    for d, amt in cashflows)
-
-    # Newton's method
+    # Guard 2: bounded Newton with numerical derivative.
     guess = 0.1
-    for _ in range(200):
+    for _ in range(100):
         npv = _npv(guess)
-        dnpv = _dnpv(guess)
-        if abs(dnpv) < 1e-12:
+        if not isinstance(npv, (int, float)) or npv != npv or npv == float("inf"):
+            break
+        h = 1e-6
+        dnpv = (_npv(guess + h) - npv) / h
+        if dnpv != dnpv or abs(dnpv) < 1e-12:
             break
         new_guess = guess - npv / dnpv
+        if new_guess < _XIRR_RATE_MIN:
+            new_guess = _XIRR_RATE_MIN
+        elif new_guess > _XIRR_RATE_MAX:
+            new_guess = _XIRR_RATE_MAX
         if abs(new_guess - guess) < 1e-9:
-            return round(new_guess * 100, 2)
+            guess = new_guess
+            break
         guess = new_guess
-        # Clamp to avoid divergence
-        if guess < -0.99:
-            guess = -0.99
+
+    # Guard 3: residual check; bisect on failure.
+    if abs(_npv(guess)) > _XIRR_RESIDUAL_TOL * abs_total:
+        lo, hi = _XIRR_RATE_MIN, _XIRR_RATE_MAX
+        f_lo, f_hi = _npv(lo), _npv(hi)
+        if f_lo == float("inf") or f_hi == float("inf") or f_lo * f_hi > 0:
+            return None
+        for _ in range(80):
+            mid = (lo + hi) / 2
+            f_mid = _npv(mid)
+            if f_lo * f_mid < 0:
+                hi, f_hi = mid, f_mid
+            else:
+                lo, f_lo = mid, f_mid
+            if hi - lo < 1e-7:
+                break
+        guess = (lo + hi) / 2
+        if abs(_npv(guess)) > _XIRR_RESIDUAL_TOL * abs_total:
+            return None
+
+    if not (_XIRR_RATE_MIN <= guess <= _XIRR_RATE_MAX):
+        return None
 
     return round(guess * 100, 2)
 

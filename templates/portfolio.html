@@ -1032,26 +1032,33 @@ function toggleShowClosed(checked){
 // These are leftovers from earlier failed imports — never user data.
 // Closed positions with real trade history aren't touched.
 async function cleanupEmpty(){
-  if(!confirm("Run cleanup?\n\nThis (1) syncs the soft-deleted state of any orphan transactions left behind by the older delete logic — fixes the 'KPIs still show values after I deleted everything' bug — and (2) hard-deletes holdings with ZERO quantity AND ZERO transactions.\n\nClosed positions with real trade history are NOT affected.")) return;
+  if(!confirm("Run cleanup?\n\nThis (1) syncs the soft-deleted state of any orphan transactions left behind by the older delete logic, (2) hard-deletes holdings with ZERO quantity AND ZERO transactions, and (3) purges snapshots with absurd XIRR values (the trend-chart noise).\n\nClosed positions with real trade history are NOT affected.")) return;
   const btn=document.getElementById("cleanup-btn");
   btn.disabled=true;btn.innerHTML='<span>Cleaning…</span>';
   try{
     // Step 1: re-sync the soft-deleted state of transactions belonging
-    // to soft-deleted holdings. Older delete_holding versions skipped
-    // this, so summary/XIRR kept counting them.
+    // to soft-deleted holdings.
     const sync = await fetch("/api/portfolio/sync-deleted-txns",{method:"POST"});
     const syncData = await sync.json();
     // Step 2: purge orphan placeholder rows.
     const r=await fetch("/api/portfolio/cleanup-empty",{method:"POST"});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||'Failed');
+    // Step 3: purge bad snapshots (rates like 1.7×10^14% from the
+    // pre-fix XIRR divergence). Lets the trend charts recover once
+    // tonight's snapshot writes a sane value.
+    const sn = await fetch("/api/portfolio/purge-bad-snapshots",{method:"POST"});
+    const snData = await sn.json();
     const parts=[];
-    if(syncData.fixed) parts.push(`Synced ${syncData.fixed} deleted holding${syncData.fixed===1?'':'s'} so their transactions are hidden too`);
+    if(syncData.fixed) parts.push(`Synced ${syncData.fixed} deleted holding${syncData.fixed===1?'':'s'}`);
     parts.push(`Removed ${d.purged} orphan placeholder${d.purged===1?'':'s'}`);
     if(d.kept_with_history) parts.push(`Kept ${d.kept_with_history} closed position${d.kept_with_history===1?'':'s'} with history`);
+    if(snData.purged) parts.push(`Purged ${snData.purged} bad snapshot${snData.purged===1?'':'s'}`);
     showToast(parts.join(' · '), "success", 8000);
     await loadHoldings();loadSummary();
     if(typeof loadPortfolioXirr==="function") loadPortfolioXirr();
+    if(typeof loadTrendCharts==="function") loadTrendCharts();
+    if(typeof loadCharts==="function") loadCharts();
   }catch(e){showToast(e.message||"Cleanup failed","error");}
   btn.disabled=false;btn.innerHTML='<i data-feather="trash-2" style="width:14px;height:14px"></i> Cleanup';
   feather.replace();
