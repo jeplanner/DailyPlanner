@@ -121,6 +121,34 @@
   .tr-pill.kind-other    { background: color-mix(in srgb, #6b7280 14%, transparent); color: #4b5563; }
   .tr-pill.prio-high     { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #92400e; }
   .tr-pill.prio-low      { background: color-mix(in srgb, #6b7280 12%, transparent); color: #4b5563; }
+
+  /* Drive-mode label chips. Hue tells you at a glance whether an
+     item is consumable while driving. Click toggles the chip off;
+     "+ label" opens the picker over each card. */
+  .tr-lbl {
+    display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: none;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .tr-lbl-drivable { background: #dcfce7; color: #166534; }
+  .tr-lbl-visual   { background: #fee2e2; color: #b91c1c; }
+  .tr-lbl-quick    { background: #fef3c7; color: #92400e; }
+  .tr-lbl-long     { background: #dbeafe; color: #1e40af; }
+  .tr-lbl-priority { background: #fce7f3; color: #9d174d; }
+  .tr-lbl-other    { background: #f1f5f9; color: #475569; }
+  .tr-lbl-add {
+    background: transparent; color: var(--color-text-secondary);
+    border: 1px dashed var(--color-border); padding: 0px 7px;
+  }
+  .tr-lbl-add:hover { color: var(--color-text); border-color: var(--color-text-secondary); }
+  .tr-lbl-picker {
+    display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 8px; padding: 6px 8px;
+    box-shadow: 0 4px 14px rgba(15,23,42,.08);
+  }
+  .tr-lbl-picker .tr-lbl.is-off { opacity: .45; filter: grayscale(.4); }
+
   .tr-source { color: var(--color-text-muted); font-weight: 500; }
   .tr-desc { font-size: 13px; color: var(--color-text-secondary); line-height: 1.45; }
   .tr-desc.is-clamped {
@@ -279,6 +307,9 @@
       <h1>TravelReads</h1>
       <p class="tr-sub">Things to read, watch, and listen to on the road. Add a URL — we'll fetch the title.</p>
     </div>
+    <a class="btn btn-primary" href="/drive-queue" title="Build a drive playlist">
+      🎧 Drive Queue
+    </a>
   </header>
 
   <div class="tr-stats" id="tr-stats">
@@ -370,6 +401,63 @@ const KIND_ICON = {
   other:   'link',
 };
 
+// Drive-mode label vocabulary — mirrors the inbox copy. Kept here
+// rather than imported to keep travel_reads.html self-contained;
+// any future edit needs to touch both files (deliberate, since the
+// vocab is small and stable).
+const TR_KNOWN_LABELS = [
+  { id: 'drivable', label: '🎧 Drivable' },
+  { id: 'visual',   label: '👀 Visual'   },
+  { id: 'quick',    label: '⚡ Quick'    },
+  { id: 'long',     label: '🕐 Long'     },
+  { id: 'priority', label: '⭐ Priority' },
+];
+const TR_KNOWN_LABEL_IDS = new Set(TR_KNOWN_LABELS.map(l => l.id));
+const TR_LABEL_DISPLAY = Object.fromEntries(TR_KNOWN_LABELS.map(l => [l.id, l.label]));
+
+function trToggleLabelPicker(itemId) {
+  const slot = document.getElementById('tr-picker-' + itemId);
+  if (!slot) return;
+  if (slot.firstChild) { slot.innerHTML = ''; return; }
+  const item = _items.find(x => x.id === itemId);
+  if (!item) return;
+  const cur = new Set(item.labels || []);
+  slot.innerHTML = `
+    <div class="tr-lbl-picker">
+      ${TR_KNOWN_LABELS.map(l => {
+        const on = cur.has(l.id);
+        return `<span class="tr-lbl tr-lbl-${l.id}${on ? '' : ' is-off'}"
+                       onclick="trToggleLabel('${itemId}','${l.id}')">${l.label}</span>`;
+      }).join('')}
+    </div>`;
+}
+
+async function trToggleLabel(itemId, label) {
+  const item = _items.find(x => x.id === itemId);
+  if (!item) return;
+  const cur = new Set(item.labels || []);
+  if (cur.has(label)) cur.delete(label); else cur.add(label);
+  const next = Array.from(cur);
+  const prev = item.labels;
+  item.labels = next;
+  trRender();
+  trToggleLabelPicker(itemId);   // keep the picker open for chained edits
+  try {
+    const r = await fetch(`/api/travel-reads/${itemId}/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      credentials: 'same-origin',
+      body: JSON.stringify({ labels: next }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'save failed');
+  } catch (e) {
+    item.labels = prev;
+    trRender();
+    if (window.showToast) showToast("Couldn't save labels", 'error');
+  }
+}
+
 async function trLoad() {
   try {
     const r = await fetch('/api/travel-reads', { credentials: 'same-origin' });
@@ -438,6 +526,14 @@ function _card(it) {
   if (it.priority === 'low')  meta.push(`<span class="tr-pill prio-low">Low</span>`);
   if (it.duration_minutes)    meta.push(`<span>· ${escapeHtml(String(it.duration_minutes))} min</span>`);
   if (it.source)              meta.push(`<span class="tr-source">· ${escapeHtml(it.source)}</span>`);
+  // Drive-mode label chips. Click to remove; "+ label" opens the
+  // picker that toggles each known label on/off.
+  for (const lbl of (it.labels || [])) {
+    const cls = TR_KNOWN_LABEL_IDS.has(lbl) ? `tr-lbl-${lbl}` : 'tr-lbl-other';
+    const text = TR_LABEL_DISPLAY[lbl] || lbl;
+    meta.push(`<span class="tr-lbl ${cls}" onclick="event.stopPropagation();trToggleLabel('${it.id}','${lbl}')" title="Remove">${escapeHtml(text)}</span>`);
+  }
+  meta.push(`<span class="tr-lbl tr-lbl-add" onclick="trToggleLabelPicker('${it.id}')">+ label</span>`);
 
   const transcribeLabel = it.transcript_note_id ? 'View transcript' : 'Transcribe';
   const transcribeIcon  = it.transcript_note_id ? 'file-text' : 'mic';
@@ -486,6 +582,7 @@ function _card(it) {
         </div>
         ${it.description ? `<div class="tr-desc is-clamped">${escapeHtml(it.description)}</div>` : ''}
         <div class="tr-meta">${meta.join('')}</div>
+        <div id="tr-picker-${it.id}"></div>
       </div>
       <div class="tr-actions">
         <a class="tr-icon-btn" href="${escapeAttr(it.url)}" target="_blank" rel="noopener" title="Open"><i data-feather="external-link"></i></a>

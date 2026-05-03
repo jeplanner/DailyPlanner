@@ -50,6 +50,21 @@ def _extract_youtube_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+_ISO_DURATION_RE = re.compile(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?")
+
+
+def _parse_iso_duration(iso: str) -> int:
+    """ISO 8601 duration ('PT1H23M45S') → total seconds. Returns 0 for
+    unparseable input rather than raising — duration is decorative."""
+    if not iso or not iso.startswith("PT"):
+        return 0
+    m = _ISO_DURATION_RE.match(iso)
+    if not m:
+        return 0
+    h, mi, s = (int(g) if g else 0 for g in m.groups())
+    return h * 3600 + mi * 60 + s
+
+
 def _fetch_youtube_via_api(video_id: str) -> dict | None:
     """Hit the YouTube Data API for the real title + description + channel.
     Returns None if the API key is missing or the call fails — callers fall
@@ -61,7 +76,11 @@ def _fetch_youtube_via_api(video_id: str) -> dict | None:
     try:
         r = requests.get(
             "https://www.googleapis.com/youtube/v3/videos",
-            params={"id": video_id, "part": "snippet", "key": api_key},
+            params={
+                "id": video_id,
+                "part": "snippet,contentDetails",
+                "key": api_key,
+            },
             timeout=6,
         )
         if r.status_code != 200:
@@ -73,11 +92,14 @@ def _fetch_youtube_via_api(video_id: str) -> dict | None:
         items = r.json().get("items") or []
         if not items:
             return None
-        snip = items[0].get("snippet") or {}
+        item0 = items[0]
+        snip = item0.get("snippet") or {}
         title = snip.get("title") or ""
         desc = snip.get("description") or ""
         channel = snip.get("channelTitle") or ""
         published_at = snip.get("publishedAt") or ""
+        duration_iso = (item0.get("contentDetails") or {}).get("duration", "")
+        duration_seconds = _parse_iso_duration(duration_iso)
         # Compose a one-line description: first non-empty paragraph, with
         # the channel name prepended for context. YouTube uploader
         # descriptions are often paragraphs of links — we want the first
@@ -88,6 +110,7 @@ def _fetch_youtube_via_api(video_id: str) -> dict | None:
             "title": title or video_id,
             "description": composed[:500],
             "published_at": published_at,
+            "duration_seconds": duration_seconds,
         }
     except Exception as e:
         logger.warning("fetch_meta YouTube API failed: video_id=%s err=%s", video_id, e)
@@ -119,10 +142,14 @@ def fetch_meta(url: str) -> dict:
             "title": parser.title.strip() or url,
             "description": parser.description.strip()[:300],
             "published_at": "",
+            "duration_seconds": 0,
         }
     except Exception as e:
         logger.warning("fetch_meta failed for %s: %s", url, e)
-        return {"title": url, "description": "", "published_at": ""}
+        return {
+            "title": url, "description": "",
+            "published_at": "", "duration_seconds": 0,
+        }
 
 
 # kept for backward compat
@@ -220,3 +247,95 @@ Reply with only the category name, nothing else."""
 
 def generate_summary(description: str) -> str:
     return description.strip()[:500] if description else ""
+
+
+# ── Drive-mode label heuristics ───────────────────────────────────────────────
+# Small fixed vocabulary the UI suggests on save. The user can toggle
+# any of these on/off after the fact — these are seed values, not gospel.
+#
+#   drivable  🎧  audio-only safe (talks, podcasts, lectures)
+#   visual    👀  needs the screen (code, demos, diagrams)
+#   quick     ⚡  ≤10 min — fits a coffee break
+#   long      🕐  ≥30 min — needs a real slot
+#   priority  ⭐  user-only, never auto-set
+
+_LABEL_DRIVABLE = "drivable"
+_LABEL_VISUAL = "visual"
+_LABEL_QUICK = "quick"
+_LABEL_LONG = "long"
+
+KNOWN_LABELS = {_LABEL_DRIVABLE, _LABEL_VISUAL, _LABEL_QUICK, _LABEL_LONG, "priority"}
+
+# Title/description keywords that strongly suggest "I can listen while
+# driving with the screen off". Compiled once at import.
+_DRIVABLE_HINTS = re.compile(
+    r"\b(podcast|interview|fireside|keynote|lecture|talk|conversation|"
+    r"discussion|panel|debate|ama|episode|\bep\.?\s*\d|history of|story of|"
+    r"explained|deep[\s-]?dive|q&a|narrative|memoir)\b",
+    re.IGNORECASE,
+)
+
+# Counter-signals: the content needs you to look at the screen. These
+# beat the drivable hints when both are present.
+_VISUAL_HINTS = re.compile(
+    r"\b(tutorial|walkthrough|demo|hands[\s-]?on|step[\s-]?by[\s-]?step|"
+    r"build (?:a|an|with)|let'?s build|coding|code review|live[\s-]?coding|"
+    r"how to (?:make|build|design|create|use)|screencast|screen[\s-]?cap|"
+    r"diagram|whiteboard|figma|design (?:review|critique)|ui|dashboard)\b",
+    re.IGNORECASE,
+)
+
+# Domains that are essentially audio-only (Spotify pages, podcast hosts).
+_DRIVABLE_DOMAINS = re.compile(
+    r"(open\.spotify\.com|podcasts\.apple\.com|soundcloud\.com|"
+    r"overcast\.fm|pca\.st|anchor\.fm|simplecast\.com|libsyn\.com|"
+    r"acast\.com|stitcher\.com|player\.fm)",
+    re.IGNORECASE,
+)
+
+
+def auto_label(
+    url: str,
+    title: str,
+    description: str,
+    content_type: str = "",
+    duration_seconds: int = 0,
+) -> list[str]:
+    """Suggest an initial set of labels for a freshly-saved item.
+
+    Returns a sorted, de-duplicated list. Empty list is fine — better
+    to under-label than to mis-label, since the user fixes labels by
+    toggling chips. Heuristic priority:
+      1. Length tag from duration (quick / long), if known.
+      2. Drivable / visual mode from URL, content type, and keyword
+         match in title+description. Visual hints win over drivable
+         hints when both fire (a "podcast about UI design" with a
+         demo segment is still a screen activity).
+    """
+    out: set[str] = set()
+    haystack = f"{title or ''}\n{description or ''}"
+
+    # Length — only emit when we actually know it.
+    if duration_seconds:
+        if duration_seconds <= 600:
+            out.add(_LABEL_QUICK)
+        elif duration_seconds >= 1800:
+            out.add(_LABEL_LONG)
+
+    # Mode — start with the most specific signal (audio-only domains)
+    # then fall back to keyword scans.
+    is_audio_domain = bool(_DRIVABLE_DOMAINS.search(url or ""))
+    visual_hit = bool(_VISUAL_HINTS.search(haystack))
+    drivable_hit = bool(_DRIVABLE_HINTS.search(haystack))
+
+    if is_audio_domain and not visual_hit:
+        out.add(_LABEL_DRIVABLE)
+    elif (content_type or "").lower() == "podcast":
+        out.add(_LABEL_DRIVABLE)
+    elif visual_hit:
+        out.add(_LABEL_VISUAL)
+    elif drivable_hit:
+        out.add(_LABEL_DRIVABLE)
+    # Otherwise: leave mode unlabelled. The user can tag it.
+
+    return sorted(out)

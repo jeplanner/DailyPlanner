@@ -113,10 +113,49 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--ib-bg);color:var(
 .card-desc{font-size:13px;color:var(--ib-text2);line-height:1.5;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 
-.card-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}
+.card-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;align-items:center;}
 .tag{font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:0.3px;}
 .tag-type{background:#ede9fe;color:#6d28d9;}
 .tag-cat{background:#dcfce7;color:#166534;}
+
+/* Drive-mode label chips. Each label gets a hue so the eye locks
+   on the modes you care about (drivable green = "go listen now",
+   visual red = "needs the screen"). The "+ label" pill opens an
+   inline editor that lets the user toggle the fixed vocabulary. */
+.lbl{
+  display:inline-flex;align-items:center;gap:3px;
+  font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;
+  cursor:pointer;border:1px solid transparent;letter-spacing:0;text-transform:none;
+}
+.lbl-drivable{background:#dcfce7;color:#166534;}
+.lbl-visual  {background:#fee2e2;color:#b91c1c;}
+.lbl-quick   {background:#fef3c7;color:#92400e;}
+.lbl-long    {background:#dbeafe;color:#1e40af;}
+.lbl-priority{background:#fce7f3;color:#9d174d;}
+.lbl-other   {background:#f1f5f9;color:#475569;}
+html.dark .lbl-drivable{background:rgba(34,197,94,.18);color:#86efac;}
+html.dark .lbl-visual  {background:rgba(239,68,68,.18);color:#fca5a5;}
+html.dark .lbl-quick   {background:rgba(245,158,11,.18);color:#fcd34d;}
+html.dark .lbl-long    {background:rgba(59,130,246,.18);color:#93c5fd;}
+html.dark .lbl-priority{background:rgba(236,72,153,.18);color:#f9a8d4;}
+html.dark .lbl-other   {background:#1e293b;color:#cbd5e1;}
+
+.lbl-add{
+  background:transparent;color:var(--ib-text3);
+  border:1px dashed var(--ib-border);
+  font-weight:600;padding:1px 7px;
+}
+.lbl-add:hover{color:var(--ib-text);border-color:var(--ib-text3);}
+
+/* Inline label picker — small popover over the card-tags row. */
+.lbl-picker{
+  display:flex;flex-wrap:wrap;gap:4px;
+  background:var(--ib-surface);border:1px solid var(--ib-border);
+  border-radius:10px;padding:6px 8px;margin-top:4px;
+  box-shadow:0 6px 20px rgba(15,23,42,.12);
+}
+.lbl-picker .lbl{cursor:pointer;}
+.lbl-picker .lbl.is-off{opacity:.45;filter:grayscale(.4);}
 
 .card-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
 .card-status{
@@ -400,6 +439,9 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
   <div class="inbox-header">
     <h1>Inbox</h1>
     <span class="inbox-count" id="item-count"></span>
+    <a href="/drive-queue" class="filter-btn" style="margin-left:auto;text-decoration:none;display:inline-flex;align-items:center;gap:4px;" title="Build a drive playlist from drivable items">
+      🎧 Drive Queue
+    </a>
   </div>
 
   <!-- Quick Add / Search -->
@@ -433,6 +475,24 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
     <button class="filter-btn" onclick="setFilter('Saved',this)">Saved</button>
     <button class="filter-btn" onclick="setFilter('Done',this)">Done</button>
     <input type="text" class="search-input" id="search-input" placeholder="Search…" oninput="filterCards()">
+  </div>
+
+  <!-- Label sub-filter: only items carrying the selected label are
+       shown. Independent of the status filter so you can stack
+       e.g. "Unread + drivable". "All labels" clears it. -->
+  <div class="toolbar" style="margin-top:6px;">
+    <button class="filter-btn label-filter active" data-label="all" onclick="setLabelFilter('all',this)">All labels</button>
+    <button class="filter-btn label-filter" data-label="drivable" onclick="setLabelFilter('drivable',this)">🎧 Drivable</button>
+    <button class="filter-btn label-filter" data-label="visual" onclick="setLabelFilter('visual',this)">👀 Visual</button>
+    <button class="filter-btn label-filter" data-label="quick" onclick="setLabelFilter('quick',this)">⚡ Quick</button>
+    <button class="filter-btn label-filter" data-label="long" onclick="setLabelFilter('long',this)">🕐 Long</button>
+    <button class="filter-btn label-filter" data-label="priority" onclick="setLabelFilter('priority',this)">⭐ Priority</button>
+    <select class="search-input" id="sort-select" style="max-width:170px" onchange="renderCards()" title="Sort">
+      <option value="recent">Recently added</option>
+      <option value="published">Recently published</option>
+      <option value="duration_asc">Shortest first</option>
+      <option value="duration_desc">Longest first</option>
+    </select>
   </div>
 
   <!-- Cards -->
@@ -480,9 +540,22 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
 
 <script>
 let currentFilter = "all";
+let currentLabelFilter = "all";
 let allItems = [];
 let _searchTimeout = null;
 let _lastClipboard = "";
+
+// Single source of truth for the drive-mode label vocabulary. Edits
+// here flow through the chip renderer + picker without per-call site
+// maintenance. "priority" is user-only, never auto-set.
+const KNOWN_LABELS = [
+  { id: "drivable", label: "🎧 Drivable" },
+  { id: "visual",   label: "👀 Visual"   },
+  { id: "quick",    label: "⚡ Quick"    },
+  { id: "long",     label: "🕐 Long"     },
+  { id: "priority", label: "⭐ Priority" },
+];
+const KNOWN_LABEL_IDS = new Set(KNOWN_LABELS.map(l => l.id));
 
 /* ══════════════════════════════════════════════════════
    SMART INPUT — detect URL vs search query
@@ -940,9 +1013,88 @@ async function quickSaveClipboard(url) {
 
 function setFilter(filter, el) {
   currentFilter = filter;
-  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  // Status filters share the .filter-btn class with label filters; only
+  // clear "active" within the status row so the label row keeps its
+  // own selection (you can stack "Unread" + "🎧 Drivable").
+  el.parentElement.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
   el.classList.add("active");
   renderCards();
+}
+
+function setLabelFilter(label, el) {
+  currentLabelFilter = label;
+  document.querySelectorAll(".label-filter").forEach(b => b.classList.remove("active"));
+  el.classList.add("active");
+  renderCards();
+}
+
+// Map a label id to its display chip. Unknown labels (user-added
+// later) get the neutral "other" hue so they still show up rather
+// than disappearing — the design intentionally accepts free-form
+// strings even though the UI only suggests the fixed set.
+function _labelMeta(id) {
+  const known = KNOWN_LABELS.find(l => l.id === id);
+  if (known) return { cls: `lbl lbl-${id}`, text: known.label };
+  return { cls: "lbl lbl-other", text: id };
+}
+
+function renderLabelChips(item) {
+  const labels = Array.isArray(item.labels) ? item.labels : [];
+  return labels.map(id => {
+    const m = _labelMeta(id);
+    // Click-to-toggle-off — single click removes the chip, matching
+    // the picker's mental model. Stops propagation so it doesn't fire
+    // a card-level click handler if one's added later.
+    return `<span class="${m.cls}" onclick="event.stopPropagation();toggleLabel('${item.id}','${id}')" title="Remove">${m.text}</span>`;
+  }).join("");
+}
+
+function toggleLabelPicker(itemId) {
+  const slot = document.getElementById("picker-" + itemId);
+  if (!slot) return;
+  if (slot.firstChild) {
+    slot.innerHTML = "";
+    return;
+  }
+  const item = allItems.find(x => x.id === itemId);
+  if (!item) return;
+  const cur = new Set(item.labels || []);
+  slot.innerHTML = `
+    <div class="lbl-picker">
+      ${KNOWN_LABELS.map(l => {
+        const on = cur.has(l.id);
+        return `<span class="lbl lbl-${l.id}${on ? "" : " is-off"}"
+                       onclick="toggleLabel('${itemId}','${l.id}')">${l.label}</span>`;
+      }).join("")}
+    </div>`;
+}
+
+async function toggleLabel(itemId, label) {
+  const item = allItems.find(x => x.id === itemId);
+  if (!item) return;
+  const cur = new Set(item.labels || []);
+  if (cur.has(label)) cur.delete(label); else cur.add(label);
+  const next = Array.from(cur);
+  // Optimistic update — keep the UI snappy. If the server rejects
+  // we revert and toast.
+  const prev = item.labels;
+  item.labels = next;
+  renderCards();
+  // Re-open the picker so the user sees the toggle immediately
+  // without losing their place.
+  toggleLabelPicker(itemId);
+  try {
+    const r = await fetch(`/api/inbox/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ labels: next }),
+    });
+    if (!r.ok) throw new Error("save failed");
+  } catch (e) {
+    item.labels = prev;
+    renderCards();
+    if (window.showToast) showToast("Couldn't save labels", "error");
+  }
 }
 
 function filterCards() {
@@ -967,13 +1119,29 @@ function renderCards() {
   if (currentFilter !== "all") {
     items = items.filter(x => x.status === currentFilter);
   }
+  if (currentLabelFilter !== "all") {
+    items = items.filter(x => Array.isArray(x.labels) && x.labels.includes(currentLabelFilter));
+  }
   if (search) {
     items = items.filter(x =>
       (x.title || "").toLowerCase().includes(search) ||
       (x.description || "").toLowerCase().includes(search) ||
       (x.url || "").toLowerCase().includes(search) ||
-      (x.category || "").toLowerCase().includes(search)
+      (x.category || "").toLowerCase().includes(search) ||
+      (Array.isArray(x.labels) && x.labels.some(l => l.toLowerCase().includes(search)))
     );
+  }
+
+  // Sort. Recent-added is the existing default (DB returns rows in
+  // created_at.desc), so the "recent" branch is a no-op clone. The
+  // others sort a copy so the underlying allItems order is preserved.
+  const sortMode = document.getElementById("sort-select")?.value || "recent";
+  if (sortMode === "published") {
+    items = [...items].sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
+  } else if (sortMode === "duration_asc") {
+    items = [...items].sort((a, b) => (a.duration_seconds || Infinity) - (b.duration_seconds || Infinity));
+  } else if (sortMode === "duration_desc") {
+    items = [...items].sort((a, b) => (b.duration_seconds || 0) - (a.duration_seconds || 0));
   }
 
   document.getElementById("item-count").textContent = `${items.length} item${items.length !== 1 ? "s" : ""}`;
@@ -1009,10 +1177,13 @@ function renderCards() {
         <div class="card-title"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a></div>
         <div class="card-domain">${esc(domain)} · added ${ago}${pub ? ` · published ${pub}` : ""}</div>
         ${x.description ? `<div class="card-desc">${esc(x.description)}</div>` : ""}
-        <div class="card-tags">
+        <div class="card-tags" id="tags-${x.id}">
           ${x.content_type ? `<span class="tag tag-type">${esc(x.content_type)}</span>` : ""}
           ${x.category ? `<span class="tag tag-cat">${esc(x.category)}</span>` : ""}
+          ${renderLabelChips(x)}
+          <span class="lbl lbl-add" onclick="toggleLabelPicker('${x.id}')" title="Edit labels">+ label</span>
         </div>
+        <div class="lbl-picker-slot" id="picker-${x.id}"></div>
       </div>
       <div class="card-right">
         <select class="card-status s-${x.status || 'Unread'}" onchange="updateStatus('${x.id}',this)">

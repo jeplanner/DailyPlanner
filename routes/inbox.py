@@ -9,13 +9,46 @@ import requests as http_requests
 from flask import Blueprint, request, jsonify, session, render_template
 from supabase_client import get, post, update, delete
 from services.login_service import login_required
-from services.inbox_service import detect_type, fetch_meta, auto_categorize
+from services.inbox_service import (
+    detect_type, fetch_meta, auto_categorize, auto_label, KNOWN_LABELS,
+)
 
 logger = logging.getLogger("daily_plan")
 
 inbox_bp = Blueprint("inbox_bp", __name__)
 
 VALID_STATUSES = {"Unread", "Reading", "Done", "Saved"}
+
+# Cap labels-per-item so a malicious or fat-fingered client can't shove
+# 10k tags into one row. Five fixed-vocabulary labels exist today;
+# allow some headroom for user-defined ones later.
+_MAX_LABELS_PER_ITEM = 16
+_MAX_LABEL_LEN = 32
+
+
+def _sanitize_labels(raw) -> list[str]:
+    """Normalise a labels patch from the client. Accepts a list of
+    strings; trims, lowercases, drops empties and over-length entries,
+    de-duplicates while preserving order, and caps the total. Returns
+    an empty list (which clears the column) for null/non-list input —
+    this is the user's intent when they unselect every chip."""
+    if not isinstance(raw, list):
+        return []
+    seen = set()
+    out: list[str] = []
+    for v in raw:
+        if not isinstance(v, str):
+            continue
+        s = v.strip().lower()
+        if not s or len(s) > _MAX_LABEL_LEN:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= _MAX_LABELS_PER_ITEM:
+            break
+    return out
 
 
 @inbox_bp.route("/inbox")
@@ -72,6 +105,9 @@ def create_inbox():
         except Exception:
             pass  # Fall back to raw meta description
 
+    duration_seconds = int(meta.get("duration_seconds") or 0)
+    labels = auto_label(url, title, description, content_type, duration_seconds)
+
     row = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -81,11 +117,14 @@ def create_inbox():
         "content_type": content_type,
         "category": category,
         "status": "Unread",
+        "labels": labels,
     }
     # Source publish date — only YouTube fills this in today (via the
     # Data API), so non-YouTube saves leave the column NULL.
     if meta.get("published_at"):
         row["published_at"] = meta["published_at"]
+    if duration_seconds:
+        row["duration_seconds"] = duration_seconds
     post("inbox_links", row)
 
     return jsonify({
@@ -107,7 +146,11 @@ def get_inbox():
     params = {
         "user_id": f"eq.{user_id}",
         "order": "created_at.desc",
-        "select": "id,url,title,description,content_type,is_favorite,category,status,created_at,published_at,transcript_note_id",
+        "select": (
+            "id,url,title,description,content_type,is_favorite,category,"
+            "status,created_at,published_at,duration_seconds,labels,"
+            "transcript_note_id"
+        ),
     }
     if status_filter:
         params["status"] = f"eq.{status_filter}"
@@ -135,6 +178,8 @@ def update_inbox(item_id):
         allowed["title"] = data["title"]
     if "description" in data:
         allowed["description"] = data["description"]
+    if "labels" in data:
+        allowed["labels"] = _sanitize_labels(data.get("labels"))
 
     if not allowed:
         return jsonify({"error": "nothing to update"}), 400
@@ -1362,3 +1407,138 @@ def search_articles():
     except Exception as e:
         logger.exception("CSE search exception: q=%r err=%s", query[:80], e)
         return jsonify({"error": f"Articles: {e}"}), 500
+
+
+# ── Drive Queue ─────────────────────────────────────────────────────────────
+# A "what fits my commute" view that pulls drivable-labelled items from
+# both inbox_links and travel_reads, packs them greedy-by-priority +
+# longest-first to fill a target minute count, and renders a sequenced
+# playlist. Items show estimated length and open in their native player
+# (YouTube embed, Spotify open, etc.).
+#
+# Why both tables: the user's listening backlog lives in two places.
+# TravelReads is the explicit "consume later" queue; Inbox is the
+# raw-capture firehose. A drive view that ignored either would feel
+# half-empty.
+
+@inbox_bp.route("/drive-queue", methods=["GET"])
+@login_required
+def drive_queue_page():
+    return render_template("drive_queue.html")
+
+
+def _yt_id_for_drive(url: str) -> str:
+    """Best-effort YouTube id extraction. Reused from the inbox helper
+    so the drive-queue picks up the same URL formats."""
+    return _yt_extract_id(url) or ""
+
+
+@inbox_bp.route("/api/drive-queue", methods=["GET"])
+@login_required
+def drive_queue_api():
+    """Build a drive playlist that fills `minutes` ±10%.
+
+    Pulls every drivable item from inbox_links (status != Done) and
+    travel_reads (status != done|archived), normalises to a common
+    shape (title, url, source, est_minutes, est_known), then packs:
+        1. Sort: priority-tag first, then longest-first within a
+           bucket (longest-first matches the "fill the slot" intent;
+           bin-packing micro-optimal isn't worth the code).
+        2. Greedy fill until total reaches the target window. If a
+           candidate would overflow by >10% of target, skip it; the
+           next shorter one might fit cleanly.
+
+    Items without a known duration get a generous default (15 min)
+    so they're still pickable, but with `est_known: false` so the UI
+    can show "~15m" instead of "15m"."""
+    user_id = session["user_id"]
+    try:
+        target_min = max(5, min(240, int(request.args.get("minutes", 60))))
+    except (TypeError, ValueError):
+        target_min = 60
+    target_secs = target_min * 60
+
+    # ── Pull from inbox_links ─────────────────────────────────────
+    inbox_rows = get("inbox_links", params={
+        "user_id": f"eq.{user_id}",
+        "status": "neq.Done",
+        "labels": "cs.{drivable}",   # PostgREST: array contains 'drivable'
+        "select": "id,url,title,description,duration_seconds,labels",
+        "limit": "200",
+    }) or []
+
+    # ── Pull from travel_reads ────────────────────────────────────
+    # Done + archived items shouldn't surface — re-listening to
+    # finished items pollutes the queue.
+    tr_rows = get("travel_reads", params={
+        "user_id": f"eq.{user_id}",
+        "status": "not.in.(archived,done)",
+        "labels": "cs.{drivable}",
+        "select": (
+            "id,url,title,description,duration_minutes,labels,source,kind"
+        ),
+        "limit": "200",
+    }) or []
+
+    DEFAULT_SECS = 15 * 60   # used when an item's duration is unknown
+
+    candidates = []
+    for r in inbox_rows:
+        secs = int(r.get("duration_seconds") or 0)
+        candidates.append({
+            "source_table": "inbox",
+            "id": r.get("id"),
+            "url": r.get("url") or "",
+            "title": r.get("title") or r.get("url") or "Untitled",
+            "description": (r.get("description") or "")[:200],
+            "labels": list(r.get("labels") or []),
+            "est_seconds": secs or DEFAULT_SECS,
+            "est_known": secs > 0,
+            "youtube_id": _yt_id_for_drive(r.get("url") or ""),
+        })
+    for r in tr_rows:
+        mins = int(r.get("duration_minutes") or 0)
+        secs = mins * 60
+        candidates.append({
+            "source_table": "travel_reads",
+            "id": r.get("id"),
+            "url": r.get("url") or "",
+            "title": r.get("title") or r.get("url") or "Untitled",
+            "description": (r.get("description") or "")[:200],
+            "labels": list(r.get("labels") or []),
+            "est_seconds": secs or DEFAULT_SECS,
+            "est_known": secs > 0,
+            "youtube_id": _yt_id_for_drive(r.get("url") or ""),
+        })
+
+    # Stable sort: priority-flagged items first, then longest first
+    # within each tier. Longest-first means the queue front-loads big
+    # commitments — drivers like to lock into a 45-min talk early
+    # and let short clips fill the gap at the end.
+    def _prio_key(c):
+        has_priority = "priority" in c["labels"]
+        return (0 if has_priority else 1, -c["est_seconds"])
+    candidates.sort(key=_prio_key)
+
+    # ── Greedy pack ───────────────────────────────────────────────
+    overshoot_tolerance = int(target_secs * 0.10)
+    picked = []
+    used_secs = 0
+    for c in candidates:
+        if used_secs >= target_secs:
+            break
+        remaining = target_secs - used_secs
+        # Skip candidates that would overshoot the target by more than
+        # the tolerance — we'd rather fall short by a few minutes than
+        # commit to a 45-min lecture when only 20 min of drive is left.
+        if c["est_seconds"] > remaining + overshoot_tolerance:
+            continue
+        picked.append(c)
+        used_secs += c["est_seconds"]
+
+    return jsonify({
+        "target_minutes": target_min,
+        "filled_minutes": round(used_secs / 60),
+        "items": picked,
+        "candidate_count": len(candidates),
+    })

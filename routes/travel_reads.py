@@ -30,7 +30,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
 from supabase_client import get, post, update
-from services.inbox_service import fetch_meta, detect_type
+from services.inbox_service import fetch_meta, detect_type, auto_label
 
 logger = logging.getLogger("daily_plan")
 travel_reads_bp = Blueprint("travel_reads", __name__)
@@ -43,6 +43,32 @@ VALID_STATUSES = {"queued", "in_progress", "done", "archived"}
 _MAX_TITLE = 240
 _MAX_DESC = 600
 _MAX_NOTES = 10000   # ~2000 words — generous room for video summaries
+_MAX_LABELS_PER_ITEM = 16
+_MAX_LABEL_LEN = 32
+
+
+def _sanitize_labels(raw) -> list[str]:
+    """Normalise a labels patch from the client. Mirrors the helper in
+    routes/inbox.py — kept duplicated rather than shared because the
+    two routes already evolve independently and a one-liner doesn't
+    earn its own module."""
+    if not isinstance(raw, list):
+        return []
+    seen = set()
+    out: list[str] = []
+    for v in raw:
+        if not isinstance(v, str):
+            continue
+        s = v.strip().lower()
+        if not s or len(s) > _MAX_LABEL_LEN:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+        if len(out) >= _MAX_LABELS_PER_ITEM:
+            break
+    return out
 
 
 # ─── Helpers ─────────────────────────────────────────────────────
@@ -120,7 +146,7 @@ def list_travel_reads():
             "select": (
                 "id,url,title,description,thumbnail_url,source,kind,"
                 "duration_minutes,priority,status,notes,transcript_note_id,"
-                "added_at,started_at,finished_at,updated_at"
+                "labels,added_at,started_at,finished_at,updated_at"
             ),
             "order": "status.asc,added_at.desc",
             "limit": "500",
@@ -190,6 +216,13 @@ def add_travel_read():
         except (TypeError, ValueError):
             duration = None
 
+    # Auto-suggested mode/length labels — the user can override these
+    # via chip toggles after the fact. Duration is sourced from the
+    # user-supplied minutes since travel_reads doesn't fetch the
+    # YouTube Data API on save.
+    duration_seconds = (duration or 0) * 60
+    labels = auto_label(url, title, description, kind, duration_seconds)
+
     payload = {
         "user_id": user_id,
         "url": url,
@@ -201,6 +234,7 @@ def add_travel_read():
         "duration_minutes": duration,
         "priority": priority,
         "status": "queued",
+        "labels": labels,
         "notes": (data.get("notes") or "").strip()[:_MAX_NOTES] or None,
     }
 
@@ -247,6 +281,8 @@ def update_travel_read(read_id):
                 patch["duration_minutes"] = None
     if "notes" in data:
         patch["notes"] = (data.get("notes") or "").strip()[:_MAX_NOTES] or None
+    if "labels" in data:
+        patch["labels"] = _sanitize_labels(data.get("labels"))
 
     if not patch:
         return jsonify({"ok": True, "noop": True})

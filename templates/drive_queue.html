@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Drive Queue — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .dq-app { max-width: 880px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  .dq-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .dq-hero h1 { font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+  .dq-hero h1 .dq-emoji { margin-right: 6px; }
+  .dq-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; max-width: 56ch; }
+
+  .dq-builder {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 16px;
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+    margin-bottom: 22px;
+  }
+  .dq-builder label { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .dq-lbl { font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-secondary); }
+  .dq-builder input[type=number],
+  .dq-builder select {
+    padding: 9px 12px; font: inherit; font-size: 14px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+    width: 110px;
+  }
+  .dq-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dq-preset {
+    padding: 7px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text); cursor: pointer;
+  }
+  .dq-preset.is-active { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); }
+  .dq-build-btn {
+    padding: 10px 18px; border-radius: 10px; font-size: 14px; font-weight: 700;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: 1px solid var(--color-primary); cursor: pointer;
+  }
+  .dq-build-btn:hover { filter: brightness(1.05); }
+
+  .dq-summary {
+    display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+    margin: 0 4px 14px;
+    font-size: 13px; color: var(--color-text-secondary);
+  }
+  .dq-summary strong { color: var(--color-text); font-weight: 800; font-variant-numeric: tabular-nums; }
+
+  .dq-bar { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--color-primary) 14%, transparent); overflow: hidden; margin: 6px 4px 18px; }
+  .dq-bar-fill { height: 100%; background: var(--color-primary); transition: width .25s ease; }
+
+  .dq-card {
+    display: grid; grid-template-columns: 36px 1fr auto;
+    gap: 12px; align-items: center;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 12px; padding: 10px 14px;
+    margin-bottom: 8px;
+  }
+  .dq-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    color: var(--color-primary); font-weight: 800; font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dq-card-body { min-width: 0; }
+  .dq-card-title { font-size: 14.5px; font-weight: 700; color: var(--color-text); line-height: 1.3; word-break: break-word; }
+  .dq-card-title a { color: inherit; text-decoration: none; }
+  .dq-card-title a:hover { color: var(--color-primary); }
+  .dq-card-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 3px; font-size: 11.5px; color: var(--color-text-secondary); }
+  .dq-pill { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; font-weight: 700; font-size: 10.5px; letter-spacing: .02em; text-transform: uppercase; background: var(--color-bg-subtle, #f1f5f9); color: var(--color-text-secondary); }
+  .dq-pill.src-inbox { background: color-mix(in srgb, #2563eb 12%, transparent); color: #1d4ed8; }
+  .dq-pill.src-travel { background: color-mix(in srgb, #16a34a 12%, transparent); color: #166534; }
+  .dq-est { font-variant-numeric: tabular-nums; }
+  .dq-est.is-est { font-style: italic; opacity: .8; }
+
+  .dq-card-actions { display: flex; gap: 6px; }
+  .dq-icon-btn {
+    width: 34px; height: 34px; border-radius: 8px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .dq-icon-btn:hover { background: var(--color-surface-secondary); }
+  .dq-icon-btn svg { width: 16px; height: 16px; }
+
+  .dq-empty {
+    background: var(--color-surface); border: 1px dashed var(--color-border);
+    border-radius: 14px; padding: 28px; text-align: center;
+    color: var(--color-text-secondary); font-size: 14px;
+  }
+  .dq-empty strong { display: block; color: var(--color-text); font-size: 16px; margin-bottom: 6px; }
+  .dq-empty a { color: var(--color-primary); text-decoration: none; font-weight: 600; }
+
+  .dq-player {
+    margin: 8px 0 16px;
+    border-radius: 14px; overflow: hidden; background: #000;
+    aspect-ratio: 16/9;
+  }
+  .dq-player iframe { width: 100%; height: 100%; border: 0; }
+
+  .dq-now-playing { display: flex; align-items: center; gap: 10px; margin: 10px 4px 6px; font-size: 12.5px; color: var(--color-text-secondary); }
+  .dq-now-playing strong { color: var(--color-text); font-weight: 800; }
+</style>
+</head>
+<body>
+<div class="dq-app">
+
+  <header class="dq-hero">
+    <div>
+      <h1><span class="dq-emoji">🎧</span>Drive Queue</h1>
+      <p class="dq-sub">Pick a target window. We pull <b>drivable</b>-tagged items from
+        Inbox + TravelReads and pack them to fit, longest-first. Hit play; YouTube
+        items open in an inline player so the page can keep going while you drive.</p>
+    </div>
+    <a class="dq-icon-btn" href="/inbox" title="Back to Inbox"><i data-feather="arrow-left"></i></a>
+  </header>
+
+  <section class="dq-builder">
+    <div class="dq-presets" role="tablist" aria-label="Quick targets">
+      <button class="dq-preset" data-mins="30">30 min</button>
+      <button class="dq-preset is-active" data-mins="60">1 hr</button>
+      <button class="dq-preset" data-mins="90">1.5 hr</button>
+      <button class="dq-preset" data-mins="120">2 hr (commute)</button>
+    </div>
+    <label>
+      <span class="dq-lbl">Custom</span>
+      <input id="dq-mins" type="number" min="5" max="240" step="5" value="60">
+    </label>
+    <button class="dq-build-btn" onclick="dqBuild()">Build queue</button>
+  </section>
+
+  <div class="dq-summary" id="dq-summary"></div>
+  <div class="dq-bar"><div class="dq-bar-fill" id="dq-bar-fill" style="width:0%"></div></div>
+
+  <div id="dq-now-playing"></div>
+  <div id="dq-player-slot"></div>
+
+  <div id="dq-list">
+    <div class="dq-empty">
+      <strong>Nothing built yet.</strong>
+      Pick a window above and tap Build.
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+let _queue = [];
+let _target = 60;
+
+document.querySelectorAll('.dq-preset').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.dq-preset').forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    document.getElementById('dq-mins').value = btn.dataset.mins;
+  });
+});
+
+function escAttr(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escHtml(s) { return escAttr(s); }
+
+function fmtMin(secs) {
+  const m = Math.round(secs / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60), rem = m % 60;
+  return rem ? `${h}h ${rem}m` : `${h}h`;
+}
+
+async function dqBuild() {
+  const mins = Math.max(5, Math.min(240, parseInt(document.getElementById('dq-mins').value || '60', 10)));
+  _target = mins;
+  const list = document.getElementById('dq-list');
+  list.innerHTML = '<div class="dq-empty">Building queue…</div>';
+
+  try {
+    const r = await fetch(`/api/drive-queue?minutes=${mins}`, { credentials: 'same-origin' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed');
+
+    _queue = data.items || [];
+    const filled = data.filled_minutes || 0;
+    document.getElementById('dq-summary').innerHTML = `
+      <span><strong>${_queue.length}</strong> item${_queue.length === 1 ? '' : 's'}</span>
+      <span>·</span>
+      <span>fills <strong>${filled}m</strong> of <strong>${mins}m</strong> target</span>
+      <span>·</span>
+      <span><strong>${data.candidate_count}</strong> drivable item${data.candidate_count === 1 ? '' : 's'} in your library</span>
+    `;
+    document.getElementById('dq-bar-fill').style.width = Math.min(100, Math.round(filled * 100 / mins)) + '%';
+
+    if (!_queue.length) {
+      list.innerHTML = `
+        <div class="dq-empty">
+          <strong>No drivable items found.</strong>
+          Open <a href="/inbox">Inbox</a> or <a href="/travel-reads">TravelReads</a> and tap the
+          🎧 chip on items that are safe to listen to while driving (talks, podcasts, lectures).
+        </div>`;
+      document.getElementById('dq-now-playing').innerHTML = '';
+      document.getElementById('dq-player-slot').innerHTML = '';
+      if (window.feather) feather.replace();
+      return;
+    }
+
+    list.innerHTML = _queue.map((it, i) => {
+      const sourcePill = it.source_table === 'travel_reads'
+        ? '<span class="dq-pill src-travel">TravelReads</span>'
+        : '<span class="dq-pill src-inbox">Inbox</span>';
+      const estClass = it.est_known ? 'dq-est' : 'dq-est is-est';
+      const estLabel = it.est_known ? fmtMin(it.est_seconds) : `~${fmtMin(it.est_seconds)}`;
+      const playBtn = it.youtube_id
+        ? `<button class="dq-icon-btn" title="Play inline" onclick="dqPlay(${i})"><i data-feather="play"></i></button>`
+        : `<a class="dq-icon-btn" href="${escAttr(it.url)}" target="_blank" rel="noopener" title="Open"><i data-feather="external-link"></i></a>`;
+      return `
+        <div class="dq-card">
+          <span class="dq-num">${i + 1}</span>
+          <div class="dq-card-body">
+            <div class="dq-card-title"><a href="${escAttr(it.url)}" target="_blank" rel="noopener">${escHtml(it.title)}</a></div>
+            <div class="dq-card-meta">
+              ${sourcePill}
+              <span class="${estClass}">${estLabel}</span>
+              ${(it.labels || []).filter(l => l !== 'drivable').map(l => `<span class="dq-pill">${escHtml(l)}</span>`).join('')}
+            </div>
+          </div>
+          <div class="dq-card-actions">
+            ${playBtn}
+            <a class="dq-icon-btn" href="${escAttr(it.url)}" target="_blank" rel="noopener" title="Open in YouTube"><i data-feather="external-link"></i></a>
+          </div>
+        </div>`;
+    }).join('');
+    if (window.feather) feather.replace();
+  } catch (e) {
+    list.innerHTML = `<div class="dq-empty"><strong>Couldn't build queue.</strong>${escHtml(e.message || '')}</div>`;
+  }
+}
+
+function dqPlay(idx) {
+  const it = _queue[idx];
+  if (!it || !it.youtube_id) return;
+  document.getElementById('dq-player-slot').innerHTML = `
+    <div class="dq-player">
+      <iframe src="https://www.youtube.com/embed/${encodeURIComponent(it.youtube_id)}?autoplay=1&rel=0"
+              title="${escAttr(it.title)}"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowfullscreen
+              referrerpolicy="strict-origin-when-cross-origin"></iframe>
+    </div>`;
+  document.getElementById('dq-now-playing').innerHTML = `
+    <i data-feather="play-circle" style="width:16px;height:16px"></i>
+    <span>Now playing <strong>#${idx + 1}</strong> · ${escHtml(it.title)}</span>`;
+  if (window.feather) feather.replace();
+  // Smoothly scroll the player into view so the user sees the change.
+  document.getElementById('dq-player-slot').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+if (window.feather) feather.replace();
+</script>
+</body>
+</html>
