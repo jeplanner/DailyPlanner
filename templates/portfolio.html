@@ -1609,6 +1609,11 @@ function mapLedgerRow(headers,cols){
     charges: otherFees ? String(otherFees) : '',
     txn_date:  get(['transaction date','date','trade date']),
     exchange:  get(['exchange','segment']),
+    // Broker's per-execution unique ID. ICICI calls it "Order Ref."
+    // — used as the strongest dedupe key on the server. When present,
+    // identical-looking trades (same date/qty/price/fees) are still
+    // recognised as distinct because order refs differ.
+    order_ref: get(['order ref.','order ref','order id','order_ref','reference','trade ref']),
   };
 }
 

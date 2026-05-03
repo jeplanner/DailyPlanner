@@ -445,28 +445,40 @@ def import_transactions():
         holding_id = holding["id"]
 
         # ── Pre-fetch existing transactions for dedupe ────────────
-        # Dedupe key includes `amount` (which folds in brokerage +
-        # statutory charges) so two same-day trades at the same qty
-        # and price but different brokerage are treated as distinct.
-        # Same-day-same-everything-including-fees is the genuine
-        # duplicate case we want to skip on re-import.
+        # Two-tier dedupe:
+        #   1. Strong: broker's order_ref (unique per execution) —
+        #      handles cases where 4 same-day same-qty same-price
+        #      trades are genuinely 4 distinct executions, which the
+        #      old (action,date,qty,price,amount) tuple collapsed
+        #      into one.
+        #   2. Legacy: (action, date, qty, price, amount) — for
+        #      transactions imported before order_ref tracking
+        #      existed, AND for CSVs that don't carry an order_ref
+        #      column.
+        # On import, a new row is skipped if EITHER its order_ref
+        # matches an existing one OR its legacy tuple matches one
+        # without an order_ref.
         existing_txns = get("portfolio_transactions", params={
             "holding_id": f"eq.{holding_id}",
             "user_id": f"eq.{user_id}",
             "is_deleted": "is.false",
-            "select": "txn_type,txn_date,quantity,price,amount",
+            "select": "txn_type,txn_date,quantity,price,amount,order_ref",
             "limit": "5000",
         }) or []
-        seen = {
-            (
-                (t.get("txn_type") or "").lower(),
-                t.get("txn_date") or "",
-                round(float(t.get("quantity") or 0), 4),
-                round(float(t.get("price") or 0), 4),
-                round(float(t.get("amount") or 0), 2),
-            )
-            for t in existing_txns
-        }
+        seen_refs: set[str] = set()
+        seen_legacy: set[tuple] = set()
+        for t in existing_txns:
+            ref = (t.get("order_ref") or "").strip()
+            if ref:
+                seen_refs.add(ref)
+            else:
+                seen_legacy.add((
+                    (t.get("txn_type") or "").lower(),
+                    t.get("txn_date") or "",
+                    round(float(t.get("quantity") or 0), 4),
+                    round(float(t.get("price") or 0), 4),
+                    round(float(t.get("amount") or 0), 2),
+                ))
 
         # ── Insert each ledger row ────────────────────────────────
         for r in group:
@@ -497,11 +509,25 @@ def import_transactions():
             base = qty * price
             amount = round(base + fees, 2) if action == "buy" else round(base - fees, 2)
 
-            key = (action, date_iso, round(qty, 4), round(price, 4), amount)
-            if key in seen:
+            order_ref = (r.get("order_ref") or "").strip() or None
+            legacy_key = (action, date_iso, round(qty, 4), round(price, 4), amount)
+            # Strong-match first: broker's unique trade ID. If we
+            # already have a transaction with this order_ref, it's
+            # an exact duplicate.
+            if order_ref and order_ref in seen_refs:
                 txn_skipped += 1
                 continue
-            seen.add(key)
+            # Legacy-match: only against existing rows that don't
+            # have an order_ref (pre-tracking imports). Don't reject
+            # against newly-inserted rows in this batch, since with
+            # order_refs present they're definitionally distinct.
+            if not order_ref and legacy_key in seen_legacy:
+                txn_skipped += 1
+                continue
+            if order_ref:
+                seen_refs.add(order_ref)
+            else:
+                seen_legacy.add(legacy_key)
 
             txn = {
                 "id": str(uuid.uuid4()),
@@ -513,6 +539,7 @@ def import_transactions():
                 "price": price,
                 "amount": amount,
                 "notes": (r.get("notes") or "").strip() or None,
+                "order_ref": order_ref,
             }
             try:
                 post("portfolio_transactions", txn)
@@ -1824,7 +1851,7 @@ def portfolio_summary():
     txns = get("portfolio_transactions", params={
         "user_id": f"eq.{user_id}",
         "is_deleted": "is.false",
-        "select": "txn_type,holding_id,quantity",
+        "select": "txn_type,holding_id,quantity,price,amount",
         "limit": "100000",
     }) or []
 
