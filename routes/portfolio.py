@@ -134,11 +134,21 @@ def update_holding(hid):
 @login_required
 def delete_holding(hid):
     # Soft-delete: years of investment history must remain recoverable.
-    # Reads filter on `is_deleted is false` so the holding disappears from the UI.
+    # Cascade the soft-delete to the holding's transactions too —
+    # otherwise summary/XIRR/coverage queries that scan transactions
+    # by user_id keep counting them, leaving deleted holdings visible
+    # in the KPIs even after they vanish from the table.
+    user_id = session["user_id"]
+    now_iso = user_now().isoformat()
     update(
         "portfolio_holdings",
-        params={"id": f"eq.{hid}", "user_id": f"eq.{session['user_id']}"},
-        json={"is_deleted": True, "deleted_at": user_now().isoformat()},
+        params={"id": f"eq.{hid}", "user_id": f"eq.{user_id}"},
+        json={"is_deleted": True, "deleted_at": now_iso},
+    )
+    update(
+        "portfolio_transactions",
+        params={"holding_id": f"eq.{hid}", "user_id": f"eq.{user_id}"},
+        json={"is_deleted": True, "deleted_at": now_iso},
     )
     return jsonify({"success": True})
 
@@ -146,10 +156,16 @@ def delete_holding(hid):
 @portfolio_bp.route("/api/portfolio/holdings/<hid>/restore", methods=["POST"])
 @login_required
 def restore_holding(hid):
-    """Undo a soft-deleted holding."""
+    """Undo a soft-deleted holding (and its transactions)."""
+    user_id = session["user_id"]
     update(
         "portfolio_holdings",
-        params={"id": f"eq.{hid}", "user_id": f"eq.{session['user_id']}"},
+        params={"id": f"eq.{hid}", "user_id": f"eq.{user_id}"},
+        json={"is_deleted": False, "deleted_at": None},
+    )
+    update(
+        "portfolio_transactions",
+        params={"holding_id": f"eq.{hid}", "user_id": f"eq.{user_id}"},
         json={"is_deleted": False, "deleted_at": None},
     )
     return jsonify({"success": True})
@@ -355,11 +371,18 @@ def import_transactions():
         if holding and holding.get("is_deleted"):
             # User had soft-deleted this earlier. Re-importing the same
             # ticker is them re-asserting interest — undelete instead of
-            # creating a parallel row.
+            # creating a parallel row. Also undelete the transactions
+            # (delete_holding cascades soft-delete to them, so restore
+            # has to mirror that).
             try:
                 update(
                     "portfolio_holdings",
                     params={"id": f"eq.{holding['id']}", "user_id": f"eq.{user_id}"},
+                    json={"is_deleted": False, "deleted_at": None},
+                )
+                update(
+                    "portfolio_transactions",
+                    params={"holding_id": f"eq.{holding['id']}", "user_id": f"eq.{user_id}"},
                     json={"is_deleted": False, "deleted_at": None},
                 )
                 holding["is_deleted"] = False
@@ -668,6 +691,7 @@ def refresh_all_prices():
     user_id = session["user_id"]
     holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
     }) or []
 
     decrypt_rows(holdings, ENCRYPTED_FIELDS)
@@ -729,6 +753,50 @@ def refresh_all_prices():
 # (no data backs them) so it's safe to hard-delete. This is
 # distinct from "closed positions" (qty=0 but transactions exist)
 # which represent real history and stay.
+
+@portfolio_bp.route("/api/portfolio/sync-deleted-txns", methods=["POST"])
+@login_required
+def sync_deleted_transactions():
+    """One-shot reconciliation: for every soft-deleted holding, mark
+    its transactions soft-deleted too. Older versions of delete_holding
+    only flipped is_deleted on the holdings row, leaving orphan
+    transactions that kept inflating summary/XIRR even after the
+    holdings vanished from the table. The cleanup-empty button calls
+    this implicitly so the user has a single 'fix everything' path."""
+    user_id = session["user_id"]
+
+    deleted_holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.true",
+        "select": "id",
+        "limit": "5000",
+    }) or []
+    if not deleted_holdings:
+        return jsonify({"ok": True, "fixed": 0, "deleted_holdings": 0})
+
+    fixed = 0
+    now_iso = user_now().isoformat()
+    for h in deleted_holdings:
+        try:
+            update(
+                "portfolio_transactions",
+                params={
+                    "holding_id": f"eq.{h['id']}",
+                    "user_id": f"eq.{user_id}",
+                    "is_deleted": "is.false",
+                },
+                json={"is_deleted": True, "deleted_at": now_iso},
+            )
+            fixed += 1
+        except Exception as e:
+            logger.warning("sync_deleted_txns %s failed: %s", h["id"], e)
+
+    return jsonify({
+        "ok": True,
+        "deleted_holdings": len(deleted_holdings),
+        "fixed": fixed,
+    })
+
 
 @portfolio_bp.route("/api/portfolio/cleanup-empty", methods=["POST"])
 @login_required
@@ -1076,12 +1144,14 @@ def holding_xirr(holding_id):
     txns = get("portfolio_transactions", params={
         "holding_id": f"eq.{holding_id}",
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
         "order": "txn_date.asc",
     }) or []
 
     holding = get("portfolio_holdings", params={
         "id": f"eq.{holding_id}",
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
     })
     if not holding:
         return jsonify({"error": "Not found"}), 404
@@ -1124,10 +1194,12 @@ def xirr_breakdown():
 
     holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
     }) or []
 
     txns = get("portfolio_transactions", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
         "order": "txn_date.asc",
     }) or []
 
@@ -1199,11 +1271,13 @@ def portfolio_xirr():
 
     txns = get("portfolio_transactions", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
         "order": "txn_date.asc",
     }) or []
 
     holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
     }) or []
 
     cashflows = []
@@ -1267,10 +1341,12 @@ def take_snapshot():
 
     holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
     }) or []
 
     txns = get("portfolio_transactions", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
         "order": "txn_date.asc",
     }) or []
 
@@ -1484,11 +1560,18 @@ def cron_snapshot():
             continue
 
         # Simulate a snapshot for this user by calling the logic directly
-        holdings = get("portfolio_holdings", params={"user_id": f"eq.{uid}"}) or []
+        holdings = get("portfolio_holdings", params={
+            "user_id": f"eq.{uid}",
+            "is_deleted": "is.false",
+        }) or []
         if not holdings:
             continue
 
-        txns = get("portfolio_transactions", params={"user_id": f"eq.{uid}", "order": "txn_date.asc"}) or []
+        txns = get("portfolio_transactions", params={
+            "user_id": f"eq.{uid}",
+            "is_deleted": "is.false",
+            "order": "txn_date.asc",
+        }) or []
         txn_by_holding = {}
         for t in txns:
             txn_by_holding.setdefault(t["holding_id"], []).append(t)
@@ -1596,6 +1679,7 @@ def portfolio_summary():
 
     holdings = get("portfolio_holdings", params={
         "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
     }) or []
 
     total_invested = 0

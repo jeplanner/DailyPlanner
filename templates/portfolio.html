@@ -1032,17 +1032,26 @@ function toggleShowClosed(checked){
 // These are leftovers from earlier failed imports — never user data.
 // Closed positions with real trade history aren't touched.
 async function cleanupEmpty(){
-  if(!confirm("Hard-delete holdings that have ZERO quantity AND ZERO transactions?\n\nClosed positions with real trade history (sold to zero from earlier buys) are NOT affected — only orphan placeholders from failed imports.")) return;
+  if(!confirm("Run cleanup?\n\nThis (1) syncs the soft-deleted state of any orphan transactions left behind by the older delete logic — fixes the 'KPIs still show values after I deleted everything' bug — and (2) hard-deletes holdings with ZERO quantity AND ZERO transactions.\n\nClosed positions with real trade history are NOT affected.")) return;
   const btn=document.getElementById("cleanup-btn");
   btn.disabled=true;btn.innerHTML='<span>Cleaning…</span>';
   try{
+    // Step 1: re-sync the soft-deleted state of transactions belonging
+    // to soft-deleted holdings. Older delete_holding versions skipped
+    // this, so summary/XIRR kept counting them.
+    const sync = await fetch("/api/portfolio/sync-deleted-txns",{method:"POST"});
+    const syncData = await sync.json();
+    // Step 2: purge orphan placeholder rows.
     const r=await fetch("/api/portfolio/cleanup-empty",{method:"POST"});
     const d=await r.json();
     if(!r.ok) throw new Error(d.error||'Failed');
-    showToast(`Removed ${d.purged} orphan holding${d.purged===1?'':'s'}` +
-              (d.kept_with_history ? ` · kept ${d.kept_with_history} closed position${d.kept_with_history===1?'':'s'} (had transactions)` : ''),
-              "success", 6000);
+    const parts=[];
+    if(syncData.fixed) parts.push(`Synced ${syncData.fixed} deleted holding${syncData.fixed===1?'':'s'} so their transactions are hidden too`);
+    parts.push(`Removed ${d.purged} orphan placeholder${d.purged===1?'':'s'}`);
+    if(d.kept_with_history) parts.push(`Kept ${d.kept_with_history} closed position${d.kept_with_history===1?'':'s'} with history`);
+    showToast(parts.join(' · '), "success", 8000);
     await loadHoldings();loadSummary();
+    if(typeof loadPortfolioXirr==="function") loadPortfolioXirr();
   }catch(e){showToast(e.message||"Cleanup failed","error");}
   btn.disabled=false;btn.innerHTML='<i data-feather="trash-2" style="width:14px;height:14px"></i> Cleanup';
   feather.replace();
