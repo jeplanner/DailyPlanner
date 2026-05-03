@@ -1126,6 +1126,11 @@ function closeImport(){document.getElementById("import-modal").classList.add("hi
 function handleDrop(e){e.preventDefault();document.getElementById("imp-drop").classList.remove("dragover");if(e.dataTransfer.files[0])parseFile(e.dataTransfer.files[0]);}
 function handleFile(e){if(e.target.files[0])parseFile(e.target.files[0]);}
 
+// Track which CSV format we detected so doImport() routes to the
+// right endpoint. "snapshot" = current holdings (qty + avg).
+// "ledger" = transaction history (action + date + price).
+let importMode="snapshot";
+
 function parseFile(file){
   const reader=new FileReader();
   reader.onload=function(e){
@@ -1136,16 +1141,46 @@ function parseFile(file){
     const broker=document.getElementById("imp-broker").value;
     const assetType=document.getElementById("imp-type").value;
 
+    // Ledger detection: ICICI's PortFolioEqtAll-style export has both
+    // an Action column and a Transaction Date — that's the signal we
+    // should run replay-based import instead of snapshot import.
+    const isLedger = headers.includes("action") &&
+      (headers.includes("transaction date") || headers.includes("date"));
+    importMode = isLedger ? "ledger" : "snapshot";
+
     importRows=[];
     for(let i=1;i<lines.length;i++){
       const cols=parseCSVLine(lines[i]);
-      const row=mapCSVRow(headers,cols,broker,assetType);
-      if(row&&row.name)importRows.push(row);
+      const row = isLedger
+        ? mapLedgerRow(headers,cols)
+        : mapCSVRow(headers,cols,broker,assetType);
+      if(row && (row.symbol || row.name))importRows.push(row);
     }
 
     showImportPreview();
   };
   reader.readAsText(file);
+}
+
+function mapLedgerRow(headers,cols){
+  const get=(keys)=>{for(const k of keys){const i=headers.indexOf(k);if(i>=0&&cols[i])return cols[i].trim();}return '';};
+  const action = get(['action','transaction type','txn type','type']).toLowerCase();
+  // Tolerate ICICI's bracketed labels like "Buy" / "Sell"; everything
+  // else gets dropped at the server-side filter.
+  const norm = action.startsWith('b') ? 'buy'
+             : action.startsWith('s') ? 'sell' : '';
+  return {
+    action: norm,
+    symbol: get(['stock symbol','symbol','scrip code','code','ticker']).toUpperCase(),
+    name:   get(['company name','scheme name','name','stock name','scrip name','security']),
+    isin:   get(['isin code','isin']),
+    quantity: get(['quantity','qty','units']),
+    price:    get(['transaction price','price','rate','trade price']),
+    brokerage: get(['brokerage','broker charges']),
+    charges:   get(['transaction charges','exchange charges','total charges']),
+    txn_date:  get(['transaction date','date','trade date']),
+    exchange:  get(['exchange','segment']),
+  };
 }
 
 function parseCSVLine(line){
@@ -1179,23 +1214,51 @@ function mapCSVRow(headers,cols,broker,assetType){
 }
 
 function showImportPreview(){
-  document.getElementById("imp-stats").textContent=`${importRows.length} holdings detected`;
-  let html='<table style="width:100%;border-collapse:collapse;"><thead><tr style="background:var(--pf-bg);"><th style="padding:4px 8px;text-align:left;">Name</th><th style="padding:4px 8px;">Qty</th><th style="padding:4px 8px;">Avg</th><th style="padding:4px 8px;">CMP</th></tr></thead><tbody>';
-  importRows.forEach(r=>{
-    html+=`<tr style="border-bottom:1px solid var(--pf-border);"><td style="padding:4px 8px;">${esc(r.name)}</td><td style="padding:4px 8px;text-align:right;">${r.quantity||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.avg_price||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.current_price||'—'}</td></tr>`;
-  });
-  html+='</tbody></table>';
-  document.getElementById("imp-table").innerHTML=html;
+  if(importMode==="ledger"){
+    // Ledger preview: count buys/sells + uniq symbols so the user
+    // sees what they're about to commit at a glance.
+    const buys=importRows.filter(r=>r.action==="buy").length;
+    const sells=importRows.filter(r=>r.action==="sell").length;
+    const symbols=[...new Set(importRows.map(r=>r.symbol).filter(Boolean))];
+    document.getElementById("imp-stats").textContent =
+      `${importRows.length} transactions detected · ${buys} buy / ${sells} sell · ${symbols.length} unique symbol${symbols.length===1?'':'s'} · holdings will be rebuilt from the ledger`;
+    let html='<table style="width:100%;border-collapse:collapse;"><thead><tr style="background:var(--pf-bg);"><th style="padding:4px 8px;text-align:left;">Date</th><th style="padding:4px 8px;text-align:left;">Symbol</th><th style="padding:4px 8px;">Action</th><th style="padding:4px 8px;text-align:right;">Qty</th><th style="padding:4px 8px;text-align:right;">Price</th></tr></thead><tbody>';
+    importRows.slice(0,200).forEach(r=>{
+      const colour=r.action==="buy"?"#dc2626":"#059669";
+      html+=`<tr style="border-bottom:1px solid var(--pf-border);"><td style="padding:4px 8px;">${esc(r.txn_date||'')}</td><td style="padding:4px 8px;font-weight:600;">${esc(r.symbol||'')}</td><td style="padding:4px 8px;text-align:center;color:${colour};text-transform:uppercase;font-weight:600;font-size:11px;">${esc(r.action||'?')}</td><td style="padding:4px 8px;text-align:right;">${r.quantity||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.price||'—'}</td></tr>`;
+    });
+    if(importRows.length>200) html+=`<tr><td colspan="5" style="padding:6px;text-align:center;color:var(--pf-text3);font-size:11px;">… +${importRows.length-200} more rows</td></tr>`;
+    html+='</tbody></table>';
+    document.getElementById("imp-table").innerHTML=html;
+  } else {
+    document.getElementById("imp-stats").textContent=`${importRows.length} holdings detected`;
+    let html='<table style="width:100%;border-collapse:collapse;"><thead><tr style="background:var(--pf-bg);"><th style="padding:4px 8px;text-align:left;">Name</th><th style="padding:4px 8px;">Qty</th><th style="padding:4px 8px;">Avg</th><th style="padding:4px 8px;">CMP</th></tr></thead><tbody>';
+    importRows.forEach(r=>{
+      html+=`<tr style="border-bottom:1px solid var(--pf-border);"><td style="padding:4px 8px;">${esc(r.name)}</td><td style="padding:4px 8px;text-align:right;">${r.quantity||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.avg_price||'—'}</td><td style="padding:4px 8px;text-align:right;">${r.current_price||'—'}</td></tr>`;
+    });
+    html+='</tbody></table>';
+    document.getElementById("imp-table").innerHTML=html;
+  }
   document.getElementById("imp-preview").style.display="block";
 }
 
 async function doImport(){
   if(!importRows.length)return;
   const broker=document.getElementById("imp-broker").value;
-  const res=await fetch("/api/portfolio/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker})});
+  const endpoint = importMode==="ledger"
+    ? "/api/portfolio/import-transactions"
+    : "/api/portfolio/import";
+  const res=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker})});
   const d=await res.json();
   closeImport();await loadHoldings();loadSummary();
-  showToast(`Imported ${d.imported} holdings`,"success");
+  if(importMode==="ledger"){
+    showToast(
+      `${d.txn_inserted} transactions imported · ${d.holdings_created} new holdings · ${d.txn_skipped_dupe} duplicates skipped`,
+      "success", 6000
+    );
+  } else {
+    showToast(`Imported ${d.imported} holdings`,"success");
+  }
 }
 
 init();

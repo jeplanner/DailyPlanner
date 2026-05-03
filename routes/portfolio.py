@@ -203,6 +203,274 @@ def import_holdings():
 
 
 # ═══════════════════════════════════════════════════
+# TRANSACTION-LEDGER IMPORT (e.g. ICICI Direct PortFolioEqtAll)
+# ═══════════════════════════════════════════════════
+#
+# Different from /api/portfolio/import (which expects a holdings
+# *snapshot*). The ledger CSV is one row per buy/sell with a date,
+# so we have to replay transactions to derive the current quantity
+# and weighted-average cost. Doing this client-side would mean
+# trusting the browser to compute money math; doing it server-side
+# keeps the holdings table authoritative.
+#
+# Idempotent: re-uploading the same CSV inserts zero duplicates
+# because transactions are deduped on (holding_id, txn_type,
+# txn_date, quantity, price).
+
+def _parse_dmy_or_iso(s: str):
+    """ICICI uses DD-MM-YYYY ('15-08-2024'). Tolerate ISO too in case
+    the user pre-cleaned the file. Returns YYYY-MM-DD or None."""
+    if not s:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    # ISO already?
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    # Try DD-MM-YYYY or DD/MM/YYYY
+    sep = "-" if "-" in s else "/" if "/" in s else None
+    if not sep:
+        return None
+    parts = s.split(sep)
+    if len(parts) < 3:
+        return None
+    try:
+        d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+        if y < 100:
+            y += 2000
+        return f"{y:04d}-{m:02d}-{d:02d}"
+    except (ValueError, TypeError):
+        return None
+
+
+def _replay_to_position(transactions):
+    """Walk transactions in date order, applying weighted-average cost.
+
+    Returns (final_quantity, final_avg_price, first_buy_date). Sells
+    reduce quantity but leave avg unchanged — that's the convention
+    every brokerage shows on the open position. If quantity ever
+    goes through zero (fully exited then re-bought), avg resets to
+    the next buy's price.
+    """
+    qty = 0.0
+    avg = 0.0
+    first_buy = None
+    for t in sorted(transactions, key=lambda r: (r.get("txn_date") or "", r.get("created_at") or "")):
+        action = (t.get("txn_type") or "").lower()
+        q = float(t.get("quantity") or 0)
+        p = float(t.get("price") or 0)
+        if q <= 0:
+            continue
+        if action == "buy":
+            if not first_buy:
+                first_buy = t.get("txn_date")
+            if qty <= 0:
+                # Fully exited or never held — start fresh.
+                qty = q
+                avg = p
+            else:
+                avg = (qty * avg + q * p) / (qty + q)
+                qty += q
+        elif action == "sell":
+            qty -= q
+            if qty <= 1e-9:
+                qty = 0.0
+                avg = 0.0   # reset so a later re-buy starts clean
+    return qty, avg, first_buy
+
+
+@portfolio_bp.route("/api/portfolio/import-transactions", methods=["POST"])
+@login_required
+def import_transactions():
+    """Import a transaction ledger (e.g. ICICI Direct equity transaction
+    export) and rebuild the affected holdings.
+
+    Body: { rows: [{ action, symbol, name, quantity, price, txn_date,
+                     exchange, isin?, charges?, brokerage? }],
+            broker: "ICICI Direct" }
+
+    Each row's `txn_date` is normalised from DD-MM-YYYY → YYYY-MM-DD.
+    Brokerage + charges are folded into the `amount` so XIRR reflects
+    actual cash out/in (buys cost more, sells net less)."""
+    data = request.get_json() or {}
+    rows = data.get("rows", []) or []
+    broker = data.get("broker") or "ICICI Direct"
+    if not rows:
+        return jsonify({"error": "No rows to import"}), 400
+
+    user_id = session["user_id"]
+
+    # Group rows by symbol so each holding's transactions land together.
+    by_symbol: dict[str, list] = {}
+    for r in rows:
+        sym = (r.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        by_symbol.setdefault(sym, []).append(r)
+
+    # Pull existing holdings once, keyed by symbol — saves N round-trips.
+    existing_holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "id,symbol,name,exchange,asset_type",
+    }) or []
+    decrypt_rows(existing_holdings, ENCRYPTED_FIELDS)
+    holdings_by_sym = {
+        (h.get("symbol") or "").upper(): h for h in existing_holdings if h.get("symbol")
+    }
+
+    txn_inserted = 0
+    txn_skipped = 0
+    holdings_created = 0
+
+    for sym, group in by_symbol.items():
+        # ── Find or create the holding ────────────────────────────
+        holding = holdings_by_sym.get(sym)
+        if not holding:
+            sample = group[0]
+            new_h = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "name": (sample.get("name") or sym).strip(),
+                "symbol": sym,
+                "asset_type": "stock",
+                "exchange": (sample.get("exchange") or "NSE").strip().upper(),
+                "currency": "INR",
+                "broker": broker,
+                "quantity": 0,
+                "avg_price": 0,
+            }
+            encrypt_fields(new_h, ENCRYPTED_FIELDS)
+            try:
+                created_rows = post("portfolio_holdings", new_h)
+                # Decrypt the returned row so subsequent code reads
+                # plaintext name/symbol like everywhere else does.
+                if created_rows:
+                    decrypt_fields(created_rows[0], ENCRYPTED_FIELDS)
+                    holding = created_rows[0]
+                else:
+                    # Supabase returned no body — reconstruct minimally.
+                    holding = {**new_h, "symbol": sym, "name": new_h["name"]}
+                    decrypt_fields(holding, ENCRYPTED_FIELDS)
+                holdings_created += 1
+            except Exception as e:
+                logger.warning("import-txn create holding %s failed: %s", sym, e)
+                continue
+            holdings_by_sym[sym] = holding
+
+        holding_id = holding["id"]
+
+        # ── Pre-fetch existing transactions for dedupe ────────────
+        existing_txns = get("portfolio_transactions", params={
+            "holding_id": f"eq.{holding_id}",
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "is.false",
+            "select": "txn_type,txn_date,quantity,price",
+            "limit": "5000",
+        }) or []
+        # Round to handle float comparison reliably.
+        seen = {
+            (
+                (t.get("txn_type") or "").lower(),
+                t.get("txn_date") or "",
+                round(float(t.get("quantity") or 0), 4),
+                round(float(t.get("price") or 0), 4),
+            )
+            for t in existing_txns
+        }
+
+        # ── Insert each ledger row ────────────────────────────────
+        for r in group:
+            action = (r.get("action") or "").strip().lower()
+            if action not in ("buy", "sell"):
+                continue
+            try:
+                qty = float(r.get("quantity") or 0)
+                price = float(r.get("price") or 0)
+            except (TypeError, ValueError):
+                continue
+            if qty <= 0 or price <= 0:
+                continue
+
+            date_iso = _parse_dmy_or_iso(r.get("txn_date"))
+            if not date_iso:
+                continue
+
+            key = (action, date_iso, round(qty, 4), round(price, 4))
+            if key in seen:
+                txn_skipped += 1
+                continue
+            seen.add(key)
+
+            # Brokerage + statutory charges. Buys cost more; sells net
+            # less. Folding them into the cashflow makes XIRR honest.
+            try:
+                fees = (
+                    float(r.get("brokerage") or 0)
+                    + float(r.get("charges") or 0)
+                )
+            except (TypeError, ValueError):
+                fees = 0.0
+            base = qty * price
+            amount = round(base + fees, 2) if action == "buy" else round(base - fees, 2)
+
+            txn = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "holding_id": holding_id,
+                "txn_type": action,
+                "txn_date": date_iso,
+                "quantity": qty,
+                "price": price,
+                "amount": amount,
+                "notes": (r.get("notes") or "").strip() or None,
+            }
+            try:
+                post("portfolio_transactions", txn)
+                txn_inserted += 1
+            except Exception as e:
+                logger.warning(
+                    "import-txn insert (sym=%s, date=%s) failed: %s",
+                    sym, date_iso, e,
+                )
+
+        # ── Recompute holding's quantity + WAC from full ledger ───
+        all_txns = get("portfolio_transactions", params={
+            "holding_id": f"eq.{holding_id}",
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "is.false",
+            "select": "txn_type,txn_date,quantity,price,created_at",
+            "limit": "10000",
+        }) or []
+        new_qty, new_avg, first_buy = _replay_to_position(all_txns)
+
+        patch = {
+            "quantity": round(new_qty, 4),
+            "avg_price": round(new_avg, 4),
+        }
+        if first_buy and not holding.get("buy_date"):
+            patch["buy_date"] = first_buy
+
+        try:
+            update(
+                "portfolio_holdings",
+                params={"id": f"eq.{holding_id}", "user_id": f"eq.{user_id}"},
+                json=patch,
+            )
+        except Exception as e:
+            logger.warning("import-txn update holding %s failed: %s", sym, e)
+
+    return jsonify({
+        "status": "ok",
+        "txn_inserted": txn_inserted,
+        "txn_skipped_dupe": txn_skipped,
+        "holdings_created": holdings_created,
+        "holdings_touched": len(by_symbol),
+    })
+
+
+# ═══════════════════════════════════════════════════
 # SYMBOL SEARCH + LIVE PRICE APIs (no API key needed)
 # ═══════════════════════════════════════════════════
 
