@@ -836,10 +836,19 @@ function renderTable(){
       : '';
     const dash = '<span style="color:var(--pf-text3)">—</span>';
     const soldTag = '<small style="color:var(--pf-text3);font-style:italic;display:block;margin-top:1px;">sold</small>';
+    // Avg Sell sub-line under Avg Price for any row that has sells
+    // (not just sell-only). Mirrors the "realised: +₹X" pattern
+    // under the P&L column. For sell-only rows it's the only thing
+    // shown in this cell; for normal rows it sits below the buy avg.
+    const realisedInfo2 = realisedByHolding[h.id];
+    const sellAvgFromRealised = realisedInfo2 ? realisedInfo2.avg_sell_price : 0;
+    const sellAvgLine = (sellAvgFromRealised && !isSellOnly)
+      ? `<br><small style="color:var(--pf-text3);">sold avg: <span style="font-weight:600;">${INR(sellAvgFromRealised)}</span></small>`
+      : '';
     const qtyDisplay  = isSellOnly ? `${soldQty}${soldTag}` : qty;
     const avgDisplay  = isSellOnly
       ? (soldAvg ? `${INR(soldAvg)}${soldTag}` : dash)
-      : INR(avg);
+      : `${INR(avg)}${sellAvgLine}`;
     const cmpDisplay  = INR(cmp);   // always show market price
     const invDisplay  = isSellOnly ? dash : INR(invested);
     const curDisplay  = isSellOnly ? dash : INR(current);
