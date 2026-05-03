@@ -2046,6 +2046,205 @@ def realised_pnl():
 
 
 # ═══════════════════════════════════════════════════
+# TAX REPORT — FIFO lot matching, STCG vs LTCG split
+# ═══════════════════════════════════════════════════
+#
+# Indian tax law for listed equity uses FIFO: each sell is matched
+# against the oldest buy lot first. Holding period > 12 months
+# (>365 days) classifies as LTCG; otherwise STCG. The realised P&L
+# tile uses WAC for consistency with the avg_price column, but
+# WAC numbers don't match what a CA will file — this endpoint
+# produces filing-grade lot-level detail.
+#
+# Doesn't compute the actual tax owed (rates change every budget;
+# also depends on 80C / set-off / loss-carry-forward state we
+# don't have). Surfaces gross gain per lot + STCG/LTCG totals so
+# the user can drop the CSV into their CA's tax software.
+#
+# Conservative on incomplete history: if a sell exceeds the
+# available buy queue, that lot is marked "BUYS-MISSING" instead
+# of guessed-at — the user knows to import older FY tradeBooks.
+
+def _fy_label_from_iso(date_iso: str) -> str | None:
+    """ISO date → Indian FY label ('2025-26'). Apr-Dec maps to the
+    current calendar year; Jan-Mar maps to the previous one."""
+    if not date_iso or len(date_iso) < 7 or date_iso[4] != "-":
+        return None
+    try:
+        y, m = int(date_iso[:4]), int(date_iso[5:7])
+    except ValueError:
+        return None
+    fy_start = y if m >= 4 else y - 1
+    return f"{fy_start}-{(fy_start + 1) % 100:02d}"
+
+
+def _fifo_match(transactions):
+    """Walk transactions chronologically. Maintain a queue of buy
+    lots ({date, qty_remaining, price}). Each sell pops from the
+    front, matching FIFO. Returns a list of matched lots, each one
+    a dict with buy_date, sell_date, qty, buy_price, sell_price,
+    gain, holding_days, classification ('STCG' / 'LTCG' /
+    'BUYS-MISSING')."""
+    from datetime import date as _date
+    lots = []
+    queue: list[dict] = []   # buy lots, oldest first
+    for t in sorted(
+        transactions,
+        key=lambda r: (r.get("txn_date") or "", r.get("created_at") or "")
+    ):
+        action = (t.get("txn_type") or "").lower()
+        try:
+            q = float(t.get("quantity") or 0)
+            p = float(t.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if q <= 0 or not t.get("txn_date"):
+            continue
+
+        if action == "buy":
+            queue.append({
+                "date": t["txn_date"],
+                "qty_remaining": q,
+                "price": p,
+            })
+        elif action == "sell":
+            sell_date = t["txn_date"]
+            try:
+                sd = _date.fromisoformat(sell_date)
+            except ValueError:
+                continue
+            remaining = q
+            while remaining > 1e-9:
+                if not queue:
+                    # Buy history missing — record an unmatched lot
+                    # so the user sees which sells need older data.
+                    lots.append({
+                        "buy_date": None,
+                        "sell_date": sell_date,
+                        "qty": round(remaining, 4),
+                        "buy_price": None,
+                        "sell_price": p,
+                        "gain": None,
+                        "holding_days": None,
+                        "classification": "BUYS-MISSING",
+                    })
+                    remaining = 0
+                    break
+                lot = queue[0]
+                matched = min(remaining, lot["qty_remaining"])
+                try:
+                    bd = _date.fromisoformat(lot["date"])
+                    days = (sd - bd).days
+                except ValueError:
+                    days = 0
+                # Listed equity: > 12 months (strictly more than
+                # 365 days) is LTCG. Exactly 365 days is STCG.
+                cls = "LTCG" if days > 365 else "STCG"
+                lots.append({
+                    "buy_date": lot["date"],
+                    "sell_date": sell_date,
+                    "qty": round(matched, 4),
+                    "buy_price": round(lot["price"], 4),
+                    "sell_price": round(p, 4),
+                    "gain": round((p - lot["price"]) * matched, 2),
+                    "holding_days": days,
+                    "classification": cls,
+                })
+                lot["qty_remaining"] -= matched
+                remaining -= matched
+                if lot["qty_remaining"] <= 1e-9:
+                    queue.pop(0)
+    return lots
+
+
+@portfolio_bp.route("/portfolio/tax-report", methods=["GET"])
+@login_required
+def tax_report_page():
+    return render_template("portfolio_tax_report.html")
+
+
+@portfolio_bp.route("/api/portfolio/tax-report", methods=["GET"])
+@login_required
+def tax_report_api():
+    user_id = session["user_id"]
+    fy_filter = (request.args.get("fy") or "").strip()   # e.g., "2025-26" or empty for all
+
+    holdings = get("portfolio_holdings", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "id,symbol,name",
+        "limit": "5000",
+    }) or []
+    decrypt_rows(holdings, ENCRYPTED_FIELDS)
+    holdings_meta = {h["id"]: h for h in holdings}
+
+    txns = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "holding_id,txn_type,txn_date,quantity,price,created_at",
+        "limit": "100000",
+    }) or []
+
+    by_holding: dict[str, list] = {}
+    for t in txns:
+        hid = t.get("holding_id")
+        if hid:
+            by_holding.setdefault(hid, []).append(t)
+
+    rows = []
+    for hid, h in holdings_meta.items():
+        for lot in _fifo_match(by_holding.get(hid, [])):
+            sell_fy = _fy_label_from_iso(lot["sell_date"])
+            if fy_filter and sell_fy != fy_filter:
+                continue
+            rows.append({
+                **lot,
+                "symbol": h.get("symbol"),
+                "name": h.get("name") or h.get("symbol"),
+                "fy": sell_fy,
+            })
+
+    # Sort by sell date so the report reads chronologically.
+    rows.sort(key=lambda r: (r.get("sell_date") or "", r.get("symbol") or ""))
+
+    # Totals — exclude BUYS-MISSING lots from gain sums.
+    stcg_total = round(sum(
+        r["gain"] for r in rows
+        if r["classification"] == "STCG" and r["gain"] is not None
+    ), 2)
+    ltcg_total = round(sum(
+        r["gain"] for r in rows
+        if r["classification"] == "LTCG" and r["gain"] is not None
+    ), 2)
+    incomplete = sum(1 for r in rows if r["classification"] == "BUYS-MISSING")
+
+    # Indian listed-equity LTCG exemption threshold (effective
+    # FY 2024-25 onward; was ₹1L for FY 2018-19 to FY 2023-24).
+    LTCG_EXEMPTION = 125000
+    ltcg_exempt = min(LTCG_EXEMPTION, max(0, ltcg_total))
+    ltcg_taxable = max(0, ltcg_total - LTCG_EXEMPTION)
+
+    # FY list across all matched lots, for the dropdown.
+    fy_set = {r["fy"] for r in rows if r["fy"]}
+    fys = sorted(fy_set, reverse=True)
+
+    return jsonify({
+        "fy": fy_filter or None,
+        "available_fys": fys,
+        "lots": rows,
+        "summary": {
+            "stcg_total": stcg_total,
+            "ltcg_total": ltcg_total,
+            "ltcg_exempt": round(ltcg_exempt, 2),
+            "ltcg_taxable": round(ltcg_taxable, 2),
+            "ltcg_exemption_cap": LTCG_EXEMPTION,
+            "incomplete_lots": incomplete,
+            "lot_count": len(rows),
+        },
+    })
+
+
+# ═══════════════════════════════════════════════════
 # COVERAGE — what years of trade history have been imported
 # ═══════════════════════════════════════════════════
 #

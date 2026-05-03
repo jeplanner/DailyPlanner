@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Tax Report (FIFO) — Portfolio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .tx-app { max-width: 1100px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  .tx-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tx-hero h1 { font-size: 24px; font-weight: 800; margin: 0; letter-spacing: -.01em; }
+  .tx-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; max-width: 70ch; line-height: 1.5; }
+
+  .tx-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .tx-controls label { font-size: 12px; color: var(--color-text-secondary); display: flex; align-items: center; gap: 6px; }
+  .tx-controls select {
+    padding: 7px 10px; font: inherit; font-size: 13px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 10px; font: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text); text-decoration: none;
+  }
+  .btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .btn-primary { background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary); }
+  .btn-primary:hover { color: var(--color-on-primary); filter: brightness(1.05); }
+
+  .tx-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .tx-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 14px; }
+  .tx-card-label { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-secondary); }
+  .tx-card-val { font-size: 22px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tx-card-sub { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; }
+  .tx-card.ltcg { border-color: color-mix(in srgb, #16a34a 30%, var(--color-border)); }
+  .tx-card.stcg { border-color: color-mix(in srgb, #f59e0b 35%, var(--color-border)); }
+  .tx-card .up { color: #16a34a; }
+  .tx-card .down { color: #dc2626; }
+
+  .tx-table-wrap {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead { background: var(--color-bg-subtle, #f1f5f9); position: sticky; top: 0; }
+  th { text-align: left; padding: 9px 10px; font-weight: 700; font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--color-text-secondary); border-bottom: 1px solid var(--color-border); }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--color-border); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--color-bg-subtle, #f8fafc); }
+  .pill {
+    display: inline-flex; padding: 1px 7px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  }
+  .pill-ltcg { background: #dcfce7; color: #166534; }
+  .pill-stcg { background: #fef3c7; color: #92400e; }
+  .pill-miss { background: #fee2e2; color: #991b1b; }
+  .gain-pos { color: #16a34a; font-weight: 700; }
+  .gain-neg { color: #dc2626; font-weight: 700; }
+  .gain-na  { color: var(--color-text-muted); }
+
+  .tx-empty {
+    background: var(--color-surface); border: 1px dashed var(--color-border);
+    border-radius: 14px; padding: 32px; text-align: center;
+    color: var(--color-text-secondary); font-size: 14px;
+  }
+  .tx-empty strong { display: block; color: var(--color-text); font-size: 16px; margin-bottom: 6px; }
+  .tx-empty a { color: var(--color-primary); text-decoration: none; font-weight: 600; }
+
+  .tx-incomplete-banner {
+    background: #fef3c7; border: 1px solid #fde68a; color: #92400e;
+    padding: 10px 14px; border-radius: 10px; margin-bottom: 12px;
+    font-size: 12.5px; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+{% include "_top_nav.html" %}
+
+<div class="tx-app">
+  <header class="tx-hero">
+    <div>
+      <h1>Tax Report (FIFO)</h1>
+      <p class="tx-sub">FIFO lot matching for filing-grade STCG/LTCG split. Each sell is matched against the oldest buy lot first, holding period >12 months classifies as LTCG, otherwise STCG. Gross gain only — does not subtract brokerage or compute tax owed; rates change every budget so leave that to your CA.</p>
+    </div>
+    <a class="btn" href="/portfolio"><i data-feather="arrow-left" style="width:14px;height:14px"></i> Back</a>
+  </header>
+
+  <div class="tx-controls">
+    <label>FY
+      <select id="tx-fy" onchange="loadReport()">
+        <option value="">All FYs</option>
+      </select>
+    </label>
+    <button class="btn btn-primary" onclick="downloadCsv()">
+      <i data-feather="download" style="width:14px;height:14px"></i> Download CSV
+    </button>
+    <span id="tx-count" style="margin-left:auto;font-size:12px;color:var(--color-text-secondary);"></span>
+  </div>
+
+  <div id="tx-cards" class="tx-cards"></div>
+  <div id="tx-incomplete"></div>
+  <div id="tx-body">
+    <div class="tx-empty">Loading…</div>
+  </div>
+</div>
+
+<script>
+const INR = v => v == null ? '—' : '₹' + Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+const INR0 = v => v == null ? '—' : '₹' + Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+let currentLots = [];
+
+async function loadReport() {
+  const fy = document.getElementById('tx-fy').value;
+  const body = document.getElementById('tx-body');
+  body.innerHTML = '<div class="tx-empty">Loading…</div>';
+  let data;
+  try {
+    const r = await fetch('/api/portfolio/tax-report' + (fy ? `?fy=${encodeURIComponent(fy)}` : ''));
+    data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed');
+  } catch (e) {
+    body.innerHTML = `<div class="tx-empty"><strong>Couldn't load report</strong>${(e.message || '')}</div>`;
+    return;
+  }
+
+  // Populate FY dropdown the first time only — keep the current
+  // selection so re-loads don't reset it.
+  const fySel = document.getElementById('tx-fy');
+  if (fySel.options.length <= 1) {
+    for (const f of (data.available_fys || [])) {
+      const opt = document.createElement('option');
+      opt.value = f; opt.textContent = `FY ${f}`;
+      fySel.appendChild(opt);
+    }
+  }
+
+  const s = data.summary || {};
+  document.getElementById('tx-count').textContent =
+    `${s.lot_count || 0} matched lot${s.lot_count === 1 ? '' : 's'}`;
+
+  // Summary cards.
+  const cards = document.getElementById('tx-cards');
+  const stcgClass = (s.stcg_total || 0) >= 0 ? 'up' : 'down';
+  const ltcgClass = (s.ltcg_total || 0) >= 0 ? 'up' : 'down';
+  cards.innerHTML = `
+    <div class="tx-card stcg">
+      <div class="tx-card-label">STCG (≤ 12 months)</div>
+      <div class="tx-card-val ${stcgClass}">${(s.stcg_total||0)>=0?'+':''}${INR0(s.stcg_total)}</div>
+      <div class="tx-card-sub">Taxed at slab rate (or 20% post-Jul 2024 for listed equity)</div>
+    </div>
+    <div class="tx-card ltcg">
+      <div class="tx-card-label">LTCG (> 12 months)</div>
+      <div class="tx-card-val ${ltcgClass}">${(s.ltcg_total||0)>=0?'+':''}${INR0(s.ltcg_total)}</div>
+      <div class="tx-card-sub">First ₹${(s.ltcg_exemption_cap||0).toLocaleString('en-IN')} exempt per FY</div>
+    </div>
+    <div class="tx-card">
+      <div class="tx-card-label">LTCG Exempt</div>
+      <div class="tx-card-val">${INR0(s.ltcg_exempt)}</div>
+      <div class="tx-card-sub">Up to threshold</div>
+    </div>
+    <div class="tx-card">
+      <div class="tx-card-label">LTCG Taxable</div>
+      <div class="tx-card-val">${INR0(s.ltcg_taxable)}</div>
+      <div class="tx-card-sub">Above ₹${(s.ltcg_exemption_cap||0).toLocaleString('en-IN')} threshold</div>
+    </div>
+  `;
+
+  // Incomplete-history banner — flag any sells that couldn't be
+  // matched against a buy in the imported data.
+  const inc = document.getElementById('tx-incomplete');
+  if (s.incomplete_lots > 0) {
+    inc.innerHTML = `
+      <div class="tx-incomplete-banner">
+        <strong>⚠ ${s.incomplete_lots} sell${s.incomplete_lots===1?'':'s'} couldn't be matched to a buy</strong> —
+        the corresponding purchase lives in an earlier FY tradeBook you haven't imported yet.
+        Those rows show as <span class="pill pill-miss">BUYS MISSING</span> in the table; gains can't be
+        computed for them. Import older years first, then re-run this report.
+      </div>`;
+  } else {
+    inc.innerHTML = '';
+  }
+
+  currentLots = data.lots || [];
+  if (!currentLots.length) {
+    body.innerHTML = `
+      <div class="tx-empty">
+        <strong>No matched lots${fy?` for FY ${fy}`:''}.</strong>
+        Either you have no sells in this period, or no buys + sells have both been imported yet.
+      </div>`;
+    if (window.feather) feather.replace();
+    return;
+  }
+
+  const rows = currentLots.map(l => {
+    let pillClass = 'pill-stcg', pillText = 'STCG';
+    if (l.classification === 'LTCG') { pillClass = 'pill-ltcg'; pillText = 'LTCG'; }
+    else if (l.classification === 'BUYS-MISSING') { pillClass = 'pill-miss'; pillText = 'BUYS MISSING'; }
+    let gainCls = 'gain-na', gainText = '—';
+    if (l.gain != null) {
+      gainCls = l.gain >= 0 ? 'gain-pos' : 'gain-neg';
+      gainText = (l.gain >= 0 ? '+' : '') + INR(l.gain);
+    }
+    return `<tr>
+      <td><div style="font-weight:700">${l.symbol||'?'}</div><div style="font-size:11px;color:var(--color-text-muted)">${l.name||''}</div></td>
+      <td>${l.buy_date || '<span class="gain-na">—</span>'}</td>
+      <td>${l.sell_date || ''}</td>
+      <td class="num">${l.qty||''}</td>
+      <td class="num">${INR(l.buy_price)}</td>
+      <td class="num">${INR(l.sell_price)}</td>
+      <td class="num ${gainCls}">${gainText}</td>
+      <td class="num">${l.holding_days != null ? l.holding_days : '—'}</td>
+      <td><span class="pill ${pillClass}">${pillText}</span></td>
+    </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="tx-table-wrap">
+      <table>
+        <thead><tr>
+          <th>Symbol</th>
+          <th>Buy date</th>
+          <th>Sell date</th>
+          <th class="num">Qty</th>
+          <th class="num">Buy ₹</th>
+          <th class="num">Sell ₹</th>
+          <th class="num">Gain</th>
+          <th class="num">Days</th>
+          <th>Type</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  if (window.feather) feather.replace();
+}
+
+function downloadCsv() {
+  if (!currentLots.length) { showToast('Nothing to export', 'error'); return; }
+  const headers = ['Symbol','Name','Buy date','Sell date','Qty','Buy price','Sell price','Gain','Days held','Classification','FY'];
+  const rows = currentLots.map(l => [
+    l.symbol || '',
+    (l.name || '').replace(/"/g, '""'),
+    l.buy_date || '',
+    l.sell_date || '',
+    l.qty || '',
+    l.buy_price != null ? l.buy_price : '',
+    l.sell_price != null ? l.sell_price : '',
+    l.gain != null ? l.gain : '',
+    l.holding_days != null ? l.holding_days : '',
+    l.classification || '',
+    l.fy || '',
+  ]);
+  const csv = [headers, ...rows].map(r =>
+    r.map(c => /[",\n]/.test(String(c)) ? `"${String(c).replace(/"/g,'""')}"` : c).join(',')
+  ).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const fy = document.getElementById('tx-fy').value || 'all';
+  a.href = url;
+  a.download = `tax_report_${fy.replace('-','_')}_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+loadReport();
+if (window.feather) feather.replace();
+</script>
+</body>
+</html>
