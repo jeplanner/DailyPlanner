@@ -748,9 +748,14 @@ function renderTable(){
   if(curOwner!=='all')items=items.filter(h=>h.held_by===curOwner);
   // Closed-position filter — applied after asset/owner filters so the
   // "X hidden" count below reflects holdings the user could see if
-  // they toggled the switch.
+  // they toggled the switch. Sell-only positions (qty=0 because the
+  // matching buys are in earlier un-imported FYs) are NOT treated as
+  // closed — they're incomplete-history and need to stay visible so
+  // the "⚠ buys missing" badge can be seen.
   const beforeClosedFilter = items.length;
-  if(!showClosed) items = items.filter(h => parseFloat(h.quantity || 0) > 0);
+  if(!showClosed) items = items.filter(h =>
+    parseFloat(h.quantity || 0) > 0 || sellOnlyIds.has(h.id)
+  );
   const hidden = beforeClosedFilter - items.length;
   const hint = document.getElementById("closed-hint");
   if (hint) {
