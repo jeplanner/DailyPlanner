@@ -783,26 +783,25 @@ function renderTable(){
     const pnlPct=invested?((pnl/invested)*100).toFixed(2):0;
     const cls=pnl>=0?'pnl-up':'pnl-down';
     const typeCls={'stock':'type-stock','mf':'type-mf','etf':'type-etf'}[h.asset_type]||'type-stock';
-    // "Buy history missing" badge: this row has sells in our data
-    // but no matching buy. Surfaces both the quantity sold and the
-    // realised average price — the user's "what did I actually do?"
-    // moment without needing to open the transactions modal.
+    // For sell-only rows we don't know the user's true current
+    // position (the matching buys are in an un-imported FY). But
+    // we DO know what they sold and at what price — surface that
+    // in the Qty / Avg Price columns instead of bare "—" so the
+    // information lives where users naturally look for it. The
+    // small "sold" label disambiguates that the number describes
+    // a past trade, not the current holding.
     const isSellOnly = sellOnlyIds.has(h.id);
     const soldQty = sellOnlyQty[h.id] || 0;
     const soldAvg = sellOnlyAvg[h.id] || 0;
-    const soldAvgStr = soldAvg ? ` @ ${INR(soldAvg)}` : '';
     const sellOnlyBadge = isSellOnly
-      ? `<span class="badge-warn" title="You sold ${soldQty} of this stock at ₹${soldAvg} avg in the imported data. The original purchase happened in an earlier FY you haven't imported yet, so qty/avg/invested/P&L are unknown until you do. CMP shown is today's market price (still useful as reference).">⚠ sold ${soldQty}${soldAvgStr} · buys missing</span>`
+      ? `<span class="badge-warn" title="Imported data has only sells for this stock — the original buy lives in an earlier FY you haven't imported yet. Qty/Avg columns show the SOLD side; current position and P&L are unknown until you import older tradeBook data.">⚠ buys missing</span>`
       : '';
-    // For sell-only rows: the "current position" math gives 0 (you
-    // sold what we don't see you owning), so we suppress qty/avg/
-    // invested/current/P&L as unknown. CMP stays visible — market
-    // price is always knowable and useful as a reference even when
-    // the position is incomplete (lets the user see "if I rebought
-    // today it'd cost X").
     const dash = '<span style="color:var(--pf-text3)">—</span>';
-    const qtyDisplay  = isSellOnly ? dash : qty;
-    const avgDisplay  = isSellOnly ? dash : INR(avg);
+    const soldTag = '<small style="color:var(--pf-text3);font-style:italic;display:block;margin-top:1px;">sold</small>';
+    const qtyDisplay  = isSellOnly ? `${soldQty}${soldTag}` : qty;
+    const avgDisplay  = isSellOnly
+      ? (soldAvg ? `${INR(soldAvg)}${soldTag}` : dash)
+      : INR(avg);
     const cmpDisplay  = INR(cmp);   // always show market price
     const invDisplay  = isSellOnly ? dash : INR(invested);
     const curDisplay  = isSellOnly ? dash : INR(current);
