@@ -1822,12 +1822,14 @@ def portfolio_summary():
             slot["sells"] += 1
 
     sell_only_count = 0
+    sell_only_ids: list[str] = []
     closed_count = 0
     active_holding_ids = {h["id"] for h in holdings}
     for hid in active_holding_ids:
         slot = by_holding.get(hid, {"buys": 0, "sells": 0})
         if slot["sells"] > 0 and slot["buys"] == 0:
             sell_only_count += 1
+            sell_only_ids.append(hid)
 
     total_invested = 0
     total_current = 0
@@ -1867,6 +1869,7 @@ def portfolio_summary():
         "active_holdings_count": active_count,
         "closed_holdings_count": closed_count,
         "sell_only_count": sell_only_count,
+        "sell_only_ids": sell_only_ids,
         "transactions_count": len(txns),
         "by_type": by_type,
     })

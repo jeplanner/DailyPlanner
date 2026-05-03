@@ -36,6 +36,22 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(
   position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--pf-text3);font-size:12px;text-align:center;padding:0 12px;line-height:1.4;
 }
+
+/* Buys-missing flag — applied to holdings rows where the imported
+   data has only sells, no matching buy. Subtle yellow tint on the
+   row + an inline pill badge in the name cell. The user can tell
+   at a glance which positions need an older FY tradeBook import. */
+.row-sell-only{background:#fffbeb;}
+.row-sell-only:hover{background:#fef3c7;}
+html.dark .row-sell-only{background:rgba(245,158,11,0.07);}
+.badge-warn{
+  display:inline-flex;align-items:center;
+  font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;
+  background:#fef3c7;color:#92400e;
+  margin-left:6px;letter-spacing:.02em;cursor:help;
+  vertical-align:middle;
+}
+html.dark .badge-warn{background:rgba(245,158,11,0.15);color:#fcd34d;}
 .kpi{background:var(--pf-surface);border-radius:12px;padding:14px;box-shadow:var(--pf-shadow);}
 .kpi-label{font-size:10px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;letter-spacing:.3px;}
 .kpi-val{font-size:22px;font-weight:800;margin-top:2px;}
@@ -464,6 +480,12 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 
 <script>
 let holdings=[], editId=null, importRows=[], curType='all', curOwner='all';
+// Set of holding IDs where the imported data has only sells (no
+// matching buys). Populated by loadSummary() from the server. The
+// table render checks this to flag rows with a "buys missing" badge,
+// and the XIRR tile warns that the number is overstated until the
+// missing buy history is imported.
+let sellOnlyIds = new Set();
 // Hide qty=0 rows by default — they're either real closed positions
 // (sold out completely) or sell-only-from-an-incomplete-import (e.g.,
 // recent FY imported but earlier buy history isn't). Either way they
@@ -740,8 +762,16 @@ function renderTable(){
     const pnlPct=invested?((pnl/invested)*100).toFixed(2):0;
     const cls=pnl>=0?'pnl-up':'pnl-down';
     const typeCls={'stock':'type-stock','mf':'type-mf','etf':'type-etf'}[h.asset_type]||'type-stock';
-    return `<tr data-id="${h.id}">
-      <td><div class="name-cell">${esc(h.name)}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.payout_type&&h.payout_type!=='cumulative'?' · '+h.payout_type:''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
+    // "Buy history missing" badge: this row has sells in our data
+    // but no matching buy. Stays in the table (the data IS real),
+    // but flagged so users know the qty/avg are not the true
+    // current position until earlier FYs are imported.
+    const isSellOnly = sellOnlyIds.has(h.id);
+    const sellOnlyBadge = isSellOnly
+      ? `<span class="badge-warn" title="Imported data has only sells for this stock — the original buy lives in an earlier FY you haven't imported yet. Quantity, avg price, and XIRR are all unreliable until you import older tradeBook data.">⚠ buys missing</span>`
+      : '';
+    return `<tr data-id="${h.id}" class="${isSellOnly?'row-sell-only':''}">
+      <td><div class="name-cell">${esc(h.name)} ${sellOnlyBadge}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.payout_type&&h.payout_type!=='cumulative'?' · '+h.payout_type:''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
       <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
       <td class="num">${qty}</td>
       <td class="num">${INR(avg)}</td>
@@ -792,6 +822,30 @@ async function loadSummary(){
       sub.title = '';
     } else {
       sub.textContent = '';
+    }
+
+    // Flag the affected rows. Stash the IDs on a module-level Set so
+    // the table renderer (which doesn't get d directly) can read it.
+    const newSet = new Set(d.sell_only_ids || []);
+    sellOnlyIds = newSet;
+    // The table may already be rendered without the flag; re-render
+    // so the badge appears without waiting for the next holdings
+    // refresh. Cheap — just walks the in-memory holdings array.
+    if (typeof renderTable === 'function') renderTable();
+
+    // Warn on the XIRR tile when sell-only positions exist — the
+    // value is overstated because some sells have no matching buys
+    // (imports cover only a partial date range).
+    const xirrEl = document.getElementById("kpi-xirr");
+    const xirrSubEl = xirrEl ? xirrEl.parentElement.querySelector('.kpi-sub') : null;
+    if (xirrSubEl) {
+      if (sellOnly > 0) {
+        xirrSubEl.innerHTML = `<span style="color:#b91c1c;font-weight:600;">⚠ overstated</span> · ${sellOnly} position${sellOnly===1?'':'s'} have sells without buys`;
+        xirrSubEl.title = 'XIRR includes sell cashflows whose corresponding buy history hasn\'t been imported yet, so the annualised return is too high. Import earlier FY tradeBooks to fix.';
+      } else {
+        xirrSubEl.textContent = 'annualized return';
+        xirrSubEl.title = '';
+      }
     }
   }catch(e){console.warn(e);}
 }
