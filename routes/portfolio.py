@@ -1394,3 +1394,103 @@ def portfolio_summary():
         "holdings_count": len(holdings),
         "by_type": by_type,
     })
+
+
+# ═══════════════════════════════════════════════════
+# COVERAGE — what years of trade history have been imported
+# ═══════════════════════════════════════════════════
+#
+# We don't keep an explicit upload log (per-row CSV provenance would
+# bloat every transaction). Instead we derive coverage from the data
+# itself: group existing transactions by Indian financial year
+# (Apr 1 → Mar 31) and report counts. Lets the user spot which FYs
+# they've already imported and which still need pulling from the
+# broker portal.
+#
+# Missing-FY detection only looks at gaps *within* the existing
+# range. We don't know what to expect outside it (the user might
+# have legitimately not traded in FY 2014-15), so we don't warn
+# about years before the earliest or after the latest.
+
+@portfolio_bp.route("/api/portfolio/coverage", methods=["GET"])
+@login_required
+def trade_coverage():
+    user_id = session["user_id"]
+    rows = get("portfolio_transactions", params={
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "is.false",
+        "select": "txn_type,txn_date,amount,holding_id",
+        "order": "txn_date.asc",
+        "limit": "100000",
+    }) or []
+
+    by_fy: dict[str, dict] = {}
+    holdings_by_fy: dict[str, set] = {}
+
+    for r in rows:
+        d = (r.get("txn_date") or "")[:10]
+        if len(d) < 10 or d[4] != "-":
+            continue
+        try:
+            y, m = int(d[0:4]), int(d[5:7])
+        except ValueError:
+            continue
+        # Indian FY: Apr-Dec → current year; Jan-Mar → prev year.
+        fy_start = y if m >= 4 else y - 1
+        fy_label = f"FY {fy_start}-{(fy_start + 1) % 100:02d}"
+        b = by_fy.setdefault(fy_label, {
+            "buys": 0, "sells": 0,
+            "buy_value": 0.0, "sell_value": 0.0,
+            "earliest": d, "latest": d,
+            "fy_start": fy_start,
+        })
+        amt = float(r.get("amount") or 0)
+        if (r.get("txn_type") or "").lower() == "buy":
+            b["buys"] += 1
+            b["buy_value"] += amt
+        else:
+            b["sells"] += 1
+            b["sell_value"] += amt
+        if d < b["earliest"]:
+            b["earliest"] = d
+        if d > b["latest"]:
+            b["latest"] = d
+        holdings_by_fy.setdefault(fy_label, set()).add(r.get("holding_id"))
+
+    out = []
+    for fy_label, b in sorted(by_fy.items(), key=lambda kv: kv[1]["fy_start"]):
+        out.append({
+            "fy": fy_label,
+            "buys": b["buys"],
+            "sells": b["sells"],
+            "total": b["buys"] + b["sells"],
+            "buy_value": round(b["buy_value"], 2),
+            "sell_value": round(b["sell_value"], 2),
+            "earliest": b["earliest"],
+            "latest": b["latest"],
+            "symbols": len(holdings_by_fy[fy_label]),
+        })
+
+    # Internal-gap detection: if the user has FY 2018-19 and FY 2020-21
+    # but not FY 2019-20, that's almost certainly a missing import (you
+    # don't usually skip a whole year of trading).
+    missing = []
+    if out:
+        present = {int(r["fy"].split()[1].split("-")[0]) for r in out}
+        first_fy = min(present)
+        last_fy = max(present)
+        for fy in range(first_fy, last_fy + 1):
+            if fy not in present:
+                missing.append(f"FY {fy}-{(fy + 1) % 100:02d}")
+
+    return jsonify({
+        "total_transactions": len(rows),
+        "by_fy": out,
+        "missing_internal_fys": missing,
+    })
+
+
+@portfolio_bp.route("/portfolio/coverage", methods=["GET"])
+@login_required
+def coverage_page():
+    return render_template("portfolio_coverage.html")
