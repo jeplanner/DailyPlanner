@@ -26,6 +26,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--pf-bg);color:var(
 
 /* KPI Row */
 .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:20px;}
+
+/* Chart sizing — Chart.js with maintainAspectRatio:false needs a
+   parent with an explicit height, otherwise the canvas grows to
+   fill its container which keeps growing → infinite scroll. */
+.chart-box{position:relative;height:200px;width:100%;margin-top:6px;}
+.chart-box--tall{height:240px;}
+.chart-box .chart-empty{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:var(--pf-text3);font-size:12px;text-align:center;padding:0 12px;line-height:1.4;
+}
 .kpi{background:var(--pf-surface);border-radius:12px;padding:14px;box-shadow:var(--pf-shadow);}
 .kpi-label{font-size:10px;font-weight:600;color:var(--pf-text3);text-transform:uppercase;letter-spacing:.3px;}
 .kpi-val{font-size:22px;font-weight:800;margin-top:2px;}
@@ -205,18 +215,22 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
   </div>
 
   <!-- Charts Row 1: Point-in-time -->
+  <!-- Each chart canvas needs a parent with fixed height because
+       Chart.js options use maintainAspectRatio:false. Without the
+       wrapper, the canvas grows to fill its container, which grows
+       to fit the canvas, and the page scrolls forever. -->
   <div class="chart-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
     <div class="kpi" style="padding:14px;">
       <span class="kpi-label">XIRR by Asset Type</span>
-      <canvas id="chart-xirr-type" height="180"></canvas>
+      <div class="chart-box" id="chart-box-xirr-type"><canvas id="chart-xirr-type"></canvas></div>
     </div>
     <div class="kpi" style="padding:14px;">
       <span class="kpi-label">Allocation by Value</span>
-      <canvas id="chart-allocation" height="180"></canvas>
+      <div class="chart-box" id="chart-box-allocation"><canvas id="chart-allocation"></canvas></div>
     </div>
     <div class="kpi" style="padding:14px;">
       <span class="kpi-label">XIRR by Sector</span>
-      <canvas id="chart-xirr-sector" height="180"></canvas>
+      <div class="chart-box" id="chart-box-xirr-sector"><canvas id="chart-xirr-sector"></canvas></div>
     </div>
   </div>
 
@@ -236,11 +250,11 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
   <div class="chart-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;">
     <div class="kpi" style="padding:14px;">
       <span class="kpi-label">Portfolio Value Over Time</span>
-      <canvas id="chart-trend-value" height="200"></canvas>
+      <div class="chart-box chart-box--tall" id="chart-box-trend-value"><canvas id="chart-trend-value"></canvas></div>
     </div>
     <div class="kpi" style="padding:14px;">
       <span class="kpi-label">XIRR Over Time</span>
-      <canvas id="chart-trend-xirr" height="200"></canvas>
+      <div class="chart-box chart-box--tall" id="chart-box-trend-xirr"><canvas id="chart-trend-xirr"></canvas></div>
     </div>
   </div>
 </div>
@@ -575,49 +589,76 @@ async function loadTrendCharts(){
 
 let chartXirrType=null, chartAlloc=null, chartXirrSector=null;
 
+// Helper: replace a chart-box with an empty-state message and
+// destroy any existing chart in it. Keeps the layout stable when
+// there's nothing to plot.
+function _renderChartEmpty(boxId, canvasId, msg, existingChart){
+  if(existingChart) try{ existingChart.destroy(); }catch(e){}
+  const box = document.getElementById(boxId);
+  if(!box) return null;
+  box.innerHTML = `<canvas id="${canvasId}" style="display:none"></canvas><div class="chart-empty">${msg}</div>`;
+  return null;
+}
+
 async function loadCharts(){
   try{
     const r=await fetch("/api/portfolio/xirr-breakdown");
     const d=await r.json();
 
-    // 1. XIRR by Asset Type (bar chart)
-    const types=Object.keys(d.by_type||{});
-    const typeVals=types.map(t=>d.by_type[t]||0);
-    const typeColors=typeVals.map(v=>v>=0?'rgba(16,185,129,0.7)':'rgba(239,68,68,0.7)');
+    // 1. XIRR by Asset Type — filter out null values (positions
+    // without a meaningful XIRR don't deserve a 0 bar).
+    const typeEntries=Object.entries(d.by_type||{}).filter(([,v])=>v!==null && v!==undefined);
+    if(!typeEntries.length){
+      chartXirrType = _renderChartEmpty('chart-box-xirr-type','chart-xirr-type',
+        'No XIRR data yet. Import transactions then click Refresh Prices.', chartXirrType);
+    } else {
+      const types = typeEntries.map(([k])=>k);
+      const typeVals = typeEntries.map(([,v])=>v);
+      const typeColors = typeVals.map(v=>v>=0?'rgba(16,185,129,0.7)':'rgba(239,68,68,0.7)');
+      if(chartXirrType)chartXirrType.destroy();
+      const ctx1=document.getElementById("chart-xirr-type");
+      if(ctx1)chartXirrType=new Chart(ctx1,{
+        type:'bar',
+        data:{labels:types.map(t=>t.toUpperCase()),datasets:[{label:'XIRR %',data:typeVals,backgroundColor:typeColors,borderRadius:4}]},
+        options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
+      });
+    }
 
-    if(chartXirrType)chartXirrType.destroy();
-    const ctx1=document.getElementById("chart-xirr-type");
-    if(ctx1)chartXirrType=new Chart(ctx1,{
-      type:'bar',
-      data:{labels:types.map(t=>t.toUpperCase()),datasets:[{label:'XIRR %',data:typeVals,backgroundColor:typeColors,borderRadius:4}]},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
-    });
+    // 2. Allocation by Value — only plot positive current values.
+    const allocEntries=Object.entries(d.allocation||{}).filter(([,v])=>(v||0)>0);
+    if(!allocEntries.length){
+      chartAlloc = _renderChartEmpty('chart-box-allocation','chart-allocation',
+        'No active holdings. Add a position or import a tradeBook.', chartAlloc);
+    } else {
+      const allocTypes = allocEntries.map(([k])=>k);
+      const allocVals = allocEntries.map(([,v])=>v);
+      const allocColors=['#2563eb','#7c3aed','#059669','#d97706','#ec4899','#06b6d4','#84cc16','#f43f5e','#8b5cf6','#14b8a6'];
+      if(chartAlloc)chartAlloc.destroy();
+      const ctx2=document.getElementById("chart-allocation");
+      if(ctx2)chartAlloc=new Chart(ctx2,{
+        type:'doughnut',
+        data:{labels:allocTypes.map(t=>t.toUpperCase()),datasets:[{data:allocVals,backgroundColor:allocColors.slice(0,allocTypes.length),borderWidth:0}]},
+        options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:8,font:{size:9}}}}}
+      });
+    }
 
-    // 2. Allocation by Value (doughnut)
-    const allocTypes=Object.keys(d.allocation||{});
-    const allocVals=allocTypes.map(t=>d.allocation[t]||0);
-    const allocColors=['#2563eb','#7c3aed','#059669','#d97706','#ec4899','#06b6d4','#84cc16','#f43f5e','#8b5cf6','#14b8a6'];
-
-    if(chartAlloc)chartAlloc.destroy();
-    const ctx2=document.getElementById("chart-allocation");
-    if(ctx2)chartAlloc=new Chart(ctx2,{
-      type:'doughnut',
-      data:{labels:allocTypes.map(t=>t.toUpperCase()),datasets:[{data:allocVals,backgroundColor:allocColors.slice(0,allocTypes.length),borderWidth:0}]},
-      options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:8,font:{size:9}}}}}
-    });
-
-    // 3. XIRR by Sector (horizontal bar)
-    const sectors=Object.keys(d.by_sector||{}).filter(s=>d.by_sector[s]!==null);
-    const sectorVals=sectors.map(s=>d.by_sector[s]||0);
-    const sectorColors=sectorVals.map(v=>v>=0?'rgba(37,99,235,0.7)':'rgba(239,68,68,0.7)');
-
-    if(chartXirrSector)chartXirrSector.destroy();
-    const ctx3=document.getElementById("chart-xirr-sector");
-    if(ctx3)chartXirrSector=new Chart(ctx3,{
-      type:'bar',
-      data:{labels:sectors,datasets:[{label:'XIRR %',data:sectorVals,backgroundColor:sectorColors,borderRadius:4}]},
-      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},y:{ticks:{font:{size:9}},grid:{display:false}}}}
-    });
+    // 3. XIRR by Sector
+    const sectorEntries=Object.entries(d.by_sector||{}).filter(([,v])=>v!==null && v!==undefined);
+    if(!sectorEntries.length){
+      chartXirrSector = _renderChartEmpty('chart-box-xirr-sector','chart-xirr-sector',
+        'No sector data. Tag holdings with a sector to see this chart.', chartXirrSector);
+    } else {
+      const sectors = sectorEntries.map(([k])=>k);
+      const sectorVals = sectorEntries.map(([,v])=>v);
+      const sectorColors = sectorVals.map(v=>v>=0?'rgba(37,99,235,0.7)':'rgba(239,68,68,0.7)');
+      if(chartXirrSector)chartXirrSector.destroy();
+      const ctx3=document.getElementById("chart-xirr-sector");
+      if(ctx3)chartXirrSector=new Chart(ctx3,{
+        type:'bar',
+        data:{labels:sectors,datasets:[{label:'XIRR %',data:sectorVals,backgroundColor:sectorColors,borderRadius:4}]},
+        options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,0.05)'}},y:{ticks:{font:{size:9}},grid:{display:false}}}}
+      });
+    }
   }catch(e){console.warn("Charts failed",e);}
 }
 
