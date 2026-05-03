@@ -106,6 +106,17 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
 .drop-zone{border:2px dashed var(--pf-border);border-radius:12px;padding:32px 16px;text-align:center;transition:all .2s;background:var(--pf-bg);margin-bottom:12px;}
 .drop-zone.dragover{border-color:var(--pf-primary);background:var(--pf-primary-light);}
 
+/* Tiny inline spinner for the Import button while the server is
+   processing the ledger. Border-trick spinner — no extra assets,
+   pairs with the "Importing…" label. */
+.imp-spin{
+  display:inline-block;width:11px;height:11px;
+  border:2px solid currentColor;border-right-color:transparent;
+  border-radius:50%;vertical-align:-1px;margin-right:6px;
+  animation:imp-spin 0.7s linear infinite;
+}
+@keyframes imp-spin{to{transform:rotate(360deg);}}
+
 @media(max-width:768px){
   .kpi-row{grid-template-columns:1fr 1fr;}.fr{grid-template-columns:1fr;}
   .pf-table .hide-m{display:none;}
@@ -421,7 +432,11 @@ table.pf-table{width:100%;border-collapse:collapse;font-size:13px;}
     <div id="imp-preview" style="display:none;">
       <div id="imp-stats" style="font-size:12px;color:var(--pf-text2);margin-bottom:6px;"></div>
       <div id="imp-table" style="max-height:200px;overflow-y:auto;border:1px solid var(--pf-border);border-radius:8px;font-size:12px;"></div>
-      <div class="modal-foot"><button class="btn btn-primary" onclick="doImport()">Import</button><button class="btn btn-ghost" onclick="closeImport()">Cancel</button></div>
+      <div id="imp-progress" style="display:none;font-size:12px;color:var(--pf-text2);margin:6px 0;text-align:center;"></div>
+      <div class="modal-foot">
+        <button class="btn btn-primary" id="imp-do-btn" onclick="doImport()">Import</button>
+        <button class="btn btn-ghost" id="imp-cancel-btn" onclick="closeImport()">Cancel</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1358,16 +1373,44 @@ async function doImport(){
   const endpoint = importMode==="ledger"
     ? "/api/portfolio/import-transactions"
     : "/api/portfolio/import";
-  const res=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker})});
-  const d=await res.json();
-  closeImport();await loadHoldings();loadSummary();
-  if(importMode==="ledger"){
-    showToast(
-      `${d.txn_inserted} transactions imported · ${d.holdings_created} new holdings · ${d.txn_skipped_dupe} duplicates skipped`,
-      "success", 6000
-    );
-  } else {
-    showToast(`Imported ${d.imported} holdings`,"success");
+
+  // Visible progress so the user knows the click registered. Ledger
+  // imports of multiple FYs can take 10-30 seconds (one upsert per
+  // transaction + one replay per symbol), and silence here was the
+  // most common "did anything happen?" complaint.
+  const btn=document.getElementById("imp-do-btn");
+  const cancelBtn=document.getElementById("imp-cancel-btn");
+  const progress=document.getElementById("imp-progress");
+  const originalLabel=btn.textContent;
+  btn.disabled=true; cancelBtn.disabled=true;
+  btn.innerHTML='<span class="imp-spin"></span> Importing…';
+  progress.style.display='block';
+  progress.textContent = importMode==="ledger"
+    ? `Sending ${importRows.length} transactions to the server, then rebuilding holdings…`
+    : `Sending ${importRows.length} holdings…`;
+
+  try{
+    const res=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rows:importRows,broker})});
+    const d=await res.json();
+    if(!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+
+    progress.textContent='Refreshing holdings…';
+    await loadHoldings(); loadSummary();
+    closeImport();
+    if(importMode==="ledger"){
+      showToast(
+        `${d.txn_inserted} transactions imported · ${d.holdings_created} new holdings · ${d.txn_skipped_dupe} duplicates skipped`,
+        "success", 6000
+      );
+    } else {
+      showToast(`Imported ${d.imported} holdings`,"success");
+    }
+  } catch(e) {
+    showToast(`Import failed: ${e.message || e}`, "error", 8000);
+  } finally {
+    btn.disabled=false; cancelBtn.disabled=false;
+    btn.textContent=originalLabel;
+    progress.style.display='none';
   }
 }
 
