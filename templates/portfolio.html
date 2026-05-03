@@ -498,6 +498,10 @@ let sellOnlyIds = new Set();
 // instead of just "buys missing" — answers the user's question of
 // "why does qty say 0 when I sold N?"
 let sellOnlyQty = {};
+// Map of {holding_id: avg_sell_price} — the realised price per unit
+// the user sold at. Renders alongside the qty so the badge tells
+// the full story of what actually happened.
+let sellOnlyAvg = {};
 // Hide qty=0 rows by default — they're either real closed positions
 // (sold out completely) or sell-only-from-an-incomplete-import (e.g.,
 // recent FY imported but earlier buy history isn't). Either way they
@@ -780,28 +784,29 @@ function renderTable(){
     const cls=pnl>=0?'pnl-up':'pnl-down';
     const typeCls={'stock':'type-stock','mf':'type-mf','etf':'type-etf'}[h.asset_type]||'type-stock';
     // "Buy history missing" badge: this row has sells in our data
-    // but no matching buy. Stays in the table (the data IS real),
-    // but flagged so users know the qty/avg are not the true
-    // current position until earlier FYs are imported. Includes the
-    // total sold quantity so the row reads as "you sold N — current
-    // position unknown" instead of the misleading qty=0.
+    // but no matching buy. Surfaces both the quantity sold and the
+    // realised average price — the user's "what did I actually do?"
+    // moment without needing to open the transactions modal.
     const isSellOnly = sellOnlyIds.has(h.id);
     const soldQty = sellOnlyQty[h.id] || 0;
+    const soldAvg = sellOnlyAvg[h.id] || 0;
+    const soldAvgStr = soldAvg ? ` @ ${INR(soldAvg)}` : '';
     const sellOnlyBadge = isSellOnly
-      ? `<span class="badge-warn" title="You sold ${soldQty} of this stock in the imported data, but the original purchase happened in an earlier FY you haven't imported yet. Until you do, qty/avg/CMP/P&L are all unknown for this row.">⚠ sold ${soldQty} · buys missing</span>`
+      ? `<span class="badge-warn" title="You sold ${soldQty} of this stock at ₹${soldAvg} avg in the imported data. The original purchase happened in an earlier FY you haven't imported yet, so qty/avg/invested/P&L are unknown until you do. CMP shown is today's market price (still useful as reference).">⚠ sold ${soldQty}${soldAvgStr} · buys missing</span>`
       : '';
-    // For sell-only rows, the "current position" math gives 0 (you
-    // sold what we don't see you owning). That number is misleading
-    // — the true current position is unknown. Show "—" everywhere
-    // numeric for clarity; the badge already shows the sold qty.
-    const qtyDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : qty;
-    const avgDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(avg);
-    const cmpDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(cmp);
-    const invDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(invested);
-    const curDisplay  = isSellOnly ? '<span style="color:var(--pf-text3)">—</span>' : INR(current);
-    const pnlDisplay  = isSellOnly
-      ? '<span style="color:var(--pf-text3)">—</span>'
-      : `${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small>`;
+    // For sell-only rows: the "current position" math gives 0 (you
+    // sold what we don't see you owning), so we suppress qty/avg/
+    // invested/current/P&L as unknown. CMP stays visible — market
+    // price is always knowable and useful as a reference even when
+    // the position is incomplete (lets the user see "if I rebought
+    // today it'd cost X").
+    const dash = '<span style="color:var(--pf-text3)">—</span>';
+    const qtyDisplay  = isSellOnly ? dash : qty;
+    const avgDisplay  = isSellOnly ? dash : INR(avg);
+    const cmpDisplay  = INR(cmp);   // always show market price
+    const invDisplay  = isSellOnly ? dash : INR(invested);
+    const curDisplay  = isSellOnly ? dash : INR(current);
+    const pnlDisplay  = isSellOnly ? dash : `${pnl>=0?'+':''}${INR(pnl)}<br><small>(${pnlPct}%)</small>`;
     return `<tr data-id="${h.id}" class="${isSellOnly?'row-sell-only':''}">
       <td><div class="name-cell">${esc(h.name)} ${sellOnlyBadge}</div>${h.symbol?`<div class="symbol">${esc(h.symbol)} ${h.exchange?'· '+h.exchange:''}</div>`:''}${h.institution?`<div class="symbol">${esc(h.institution)}${h.interest_rate?' · '+h.interest_rate+'%':''}${h.payout_type&&h.payout_type!=='cumulative'?' · '+h.payout_type:''}${h.maturity_date?' · Mat: '+h.maturity_date:''}</div>`:''}${h.held_by?`<div class="symbol" style="color:var(--pf-primary);">${esc(h.held_by)}</div>`:''}</td>
       <td class="hide-m"><span class="type-badge ${typeCls}">${esc(h.asset_type)}</span></td>
@@ -862,6 +867,7 @@ async function loadSummary(){
     const newSet = new Set(d.sell_only_ids || []);
     sellOnlyIds = newSet;
     sellOnlyQty = d.sell_only_qty || {};
+    sellOnlyAvg = d.sell_only_avg || {};
     // The table may already be rendered without the flag; re-render
     // so the badge appears without waiting for the next holdings
     // refresh. Cheap — just walks the in-memory holdings array.
