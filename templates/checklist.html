@@ -132,11 +132,15 @@
           </div>
         </div>
 
-        <label class="cl-field">
-          <span>Reminder time (optional)</span>
-          <input type="time" id="cl-reminder-time">
-          <small class="cl-hint">If set, a push notification fires at this local time.</small>
-        </label>
+        <div class="cl-field">
+          <span>Reminder times (optional)</span>
+          <div class="cl-times-list" id="cl-times-list"></div>
+          <div class="cl-times-add">
+            <input type="time" id="cl-time-new">
+            <button type="button" class="cl-btn cl-btn-ghost" id="cl-time-add-btn">+ Add time</button>
+          </div>
+          <small class="cl-hint">A push notification fires at each time. Add as many as you want.</small>
+        </div>
 
         <label class="cl-field">
           <span>End recurrence on (optional)</span>

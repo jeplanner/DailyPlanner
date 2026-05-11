@@ -14,7 +14,13 @@
   ];
   const TIME_ORDER = { morning: 0, afternoon: 1, evening: 2, anytime: 3 };
 
-  const state = { items: [], knownGroups: [] };
+  const state = {
+    items: [],
+    knownGroups: [],
+    // Working list of HH:MM strings while the edit modal is open. Saved
+    // to the server as `reminder_times` on submit.
+    modalTimes: [],
+  };
 
   // ── Sorting ───────────────────────────────────────
   // Order rule (inside any bucket we render):
@@ -124,8 +130,15 @@
     row.className = "cl-item" + (it.ticked ? " is-ticked" : "");
     row.dataset.id = it.id;
 
+    const times = Array.isArray(it.reminder_times) ? it.reminder_times : [];
+    const hasMulti = times.length > 1;
+
     const meta = [];
-    if (it.reminder_time) meta.push(`<span class="cl-meta-badge">⏰ ${it.reminder_time}</span>`);
+    // Show the single-time badge only when there's exactly one reminder
+    // — multi-reminder items show their times as individual tick pills below.
+    if (!hasMulti && it.reminder_time) {
+      meta.push(`<span class="cl-meta-badge">⏰ ${it.reminder_time}</span>`);
+    }
     if (it.time_of_day && it.time_of_day !== "anytime") {
       const tod = it.time_of_day.charAt(0).toUpperCase() + it.time_of_day.slice(1);
       meta.push(`<span class="cl-meta-badge">${tod}</span>`);
@@ -137,11 +150,22 @@
       meta.push(`<span class="cl-meta-badge">until ${it.recurrence_end}</span>`);
     }
 
+    let timesHtml = "";
+    if (hasMulti) {
+      const pills = times.map((t) => {
+        const safe = (t.time || "").replace(/[^0-9:]/g, "");
+        const cls = "cl-time-tick" + (t.ticked ? " is-ticked" : "");
+        return `<button type="button" class="${cls}" data-time="${safe}">⏰ ${safe}${t.ticked ? " ✓" : ""}</button>`;
+      }).join("");
+      timesHtml = `<div class="cl-times">${pills}</div>`;
+    }
+
     row.innerHTML = `
       <button type="button" class="cl-check" aria-label="Toggle">✓</button>
       <div class="cl-main">
         <div class="cl-name"></div>
         ${meta.length ? `<div class="cl-meta">${meta.join("")}</div>` : ""}
+        ${timesHtml}
       </div>
       <button type="button" class="cl-pomo" title="Start Pomodoro 25 min" aria-label="Start Pomodoro">▶</button>
       <button type="button" class="cl-edit" title="Edit" aria-label="Edit">
@@ -160,6 +184,14 @@
     row.querySelector(".cl-pomo").addEventListener("click", (e) => {
       e.stopPropagation();
       startChecklistPomo(it);
+    });
+    // Per-fire pills toggle just that one reminder; the main checkbox
+    // toggles all of them at once.
+    row.querySelectorAll(".cl-time-tick").forEach((pill) => {
+      pill.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleTimeTick(it, pill.dataset.time);
+      });
     });
     // Row body opens the details panel in *view* mode — no accidental ticking,
     // and the user can read everything before deciding to Edit. The ✓ button
@@ -242,15 +274,52 @@
   }
 
   // ── Tick / untick ─────────────────────────────────
+  // Main checkbox: toggles every reminder for the item (or the single
+  // legacy tick if no reminder times exist).
   async function toggleTick(it) {
     const wasTicked = it.ticked;
-    it.ticked = !it.ticked;
+    const times = Array.isArray(it.reminder_times) ? it.reminder_times : [];
+    it.ticked = !wasTicked;
+    if (times.length) {
+      for (const t of times) t.ticked = !wasTicked;
+    }
     render();
+
+    const endpoint = wasTicked ? "untick" : "tick";
+    const body = times.length ? { all: true } : {};
     try {
-      const endpoint = wasTicked ? "untick" : "tick";
-      await api(`/api/checklist/items/${it.id}/${endpoint}`, { method: "POST" });
+      await api(`/api/checklist/items/${it.id}/${endpoint}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
     } catch (err) {
       it.ticked = wasTicked;
+      if (times.length) for (const t of times) t.ticked = wasTicked;
+      render();
+      alert("Couldn't update: " + err.message);
+    }
+  }
+
+  // Per-fire pill: toggles a single (item, reminder_time) tick. Updates
+  // the parent "all done" state to match the new child set.
+  async function toggleTimeTick(it, hhmm) {
+    const times = Array.isArray(it.reminder_times) ? it.reminder_times : [];
+    const t = times.find((x) => x.time === hhmm);
+    if (!t) return;
+    const wasTicked = t.ticked;
+    t.ticked = !wasTicked;
+    it.ticked = times.every((x) => x.ticked);
+    render();
+
+    const endpoint = wasTicked ? "untick" : "tick";
+    try {
+      await api(`/api/checklist/items/${it.id}/${endpoint}`, {
+        method: "POST",
+        body: JSON.stringify({ reminder_time: hhmm }),
+      });
+    } catch (err) {
+      t.ticked = wasTicked;
+      it.ticked = times.every((x) => x.ticked);
       render();
       alert("Couldn't update: " + err.message);
     }
@@ -269,7 +338,13 @@
     $("#cl-notes").value = item?.notes || "";
     $("#cl-time-of-day").value = item?.time_of_day || "anytime";
     $("#cl-schedule").value = item?.schedule || "daily";
-    $("#cl-reminder-time").value = item?.reminder_time || "";
+    // Seed the modal's working list from the item's reminder_times, or
+    // fall back to the legacy single value for very old items.
+    const seedTimes = (item?.reminder_times || []).map((t) => t.time).filter(Boolean);
+    if (!seedTimes.length && item?.reminder_time) seedTimes.push(item.reminder_time);
+    state.modalTimes = sortTimes(uniqueTimes(seedTimes));
+    renderModalTimes();
+    $("#cl-time-new").value = "";
     $("#cl-recurrence-end").value = item?.recurrence_end || "";
     // Refresh the group options (from items loaded so far). If the current
     // item has a group not yet in the list (rare — races), include it.
@@ -327,17 +402,59 @@
     $("#cl-weekdays").hidden = $("#cl-schedule").value !== "custom";
   }
 
+  // ── Reminder times editor (modal) ─────────────────
+  function uniqueTimes(arr) {
+    return [...new Set(arr.map((t) => (t || "").trim()).filter(Boolean))];
+  }
+  function sortTimes(arr) {
+    return [...arr].sort();
+  }
+  function renderModalTimes() {
+    const list = $("#cl-times-list");
+    if (!list) return;
+    list.innerHTML = state.modalTimes.map((t) => {
+      const safe = t.replace(/[^0-9:]/g, "");
+      return `<span class="cl-time-chip">⏰ ${safe}
+                <button type="button" aria-label="Remove ${safe}" data-time="${safe}">×</button>
+              </span>`;
+    }).join("");
+    list.querySelectorAll(".cl-time-chip button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.modalTimes = state.modalTimes.filter((t) => t !== btn.dataset.time);
+        renderModalTimes();
+      });
+    });
+  }
+  function addModalTime() {
+    const input = $("#cl-time-new");
+    const v = (input?.value || "").trim();
+    if (!v) return;
+    if (state.modalTimes.includes(v)) {
+      input.value = "";
+      return;
+    }
+    state.modalTimes = sortTimes(uniqueTimes([...state.modalTimes, v]));
+    renderModalTimes();
+    if (input) input.value = "";
+  }
+
   let saving = false;
   async function saveItem(e) {
     e.preventDefault();
     if (saving) return;               // guard against double-tap
     const id = $("#cl-item-id").value;
+    // If the user typed a time into the "Add time" input but didn't
+    // hit the + button, fold it into the save so they don't lose it.
+    const pendingTime = $("#cl-time-new").value;
+    if (pendingTime && !state.modalTimes.includes(pendingTime)) {
+      state.modalTimes = sortTimes(uniqueTimes([...state.modalTimes, pendingTime]));
+    }
     const payload = {
       name: $("#cl-name").value.trim(),
       notes: $("#cl-notes").value.trim(),
       time_of_day: $("#cl-time-of-day").value,
       schedule: $("#cl-schedule").value,
-      reminder_time: $("#cl-reminder-time").value || null,
+      reminder_times: state.modalTimes,
       recurrence_end: $("#cl-recurrence-end").value || null,
       group_name: (() => {
         const v = $("#cl-group").value.trim();
@@ -463,6 +580,13 @@
     });
     $("#cl-form").addEventListener("submit", saveItem);
     $("#cl-schedule").addEventListener("change", toggleWeekdayPicker);
+    $("#cl-time-add-btn")?.addEventListener("click", addModalTime);
+    $("#cl-time-new")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addModalTime();
+      }
+    });
     $("#cl-modal").addEventListener("click", (e) => {
       if (e.target.id === "cl-modal") closeModal();
     });

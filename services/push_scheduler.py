@@ -1,18 +1,21 @@
 """
 Background scheduler that sends Web Push reminders for checklist items
-whose `reminder_time` matches the user's local "now".
+whose reminder times match the user's local "now".
 
 Design:
   * Runs every minute (APScheduler BackgroundScheduler).
   * For each user that has at least one active push subscription, we
     resolve their IANA timezone (cached in-process) and compute the
     local HH:MM and weekday.
-  * For every checklist_items row whose reminder_time matches the local
-    HH:MM and whose schedule applies to today, we attempt to insert a
-    row into checklist_reminder_log with UNIQUE (item_id, sent_date).
+  * For every checklist_reminder_times row whose time matches the local
+    HH:MM and whose parent's schedule applies to today, we attempt to
+    insert a row into checklist_reminder_log keyed on (item_id,
+    sent_date, reminder_time) so each fire is independently deduped.
   * The unique constraint makes this safe across multiple gunicorn
     workers — only the first insert wins, and only that worker calls
     push_service.send_to_user().
+  * Items with no child reminder_times rows fall back to the legacy
+    checklist_items.reminder_time column for backwards compat.
 
 The scheduler starts once inside create_app(); a module-level flag
 prevents duplicate starts when the factory is invoked multiple times
@@ -87,46 +90,80 @@ def _user_tz_name(user_id):
     return "Asia/Kolkata"
 
 
-def _due_items_for_user(user_id, local_hhmm, local_weekday, today_iso):
+def _due_fires_for_user(user_id, local_hhmm, local_weekday, today_iso):
+    """Return a list of (item, reminder_time) tuples that should fire
+    right now for this user. reminder_time is the full HH:MM:SS string
+    (or None for the legacy items-only fallback path)."""
+    from datetime import date as _date
+
+    today = _date.fromisoformat(today_iso)
+
     items = get(
         "checklist_items",
         {
             "user_id": f"eq.{user_id}",
             "is_deleted": "eq.false",
-            "reminder_time": "not.is.null",
         },
     ) or []
-    from datetime import date as _date
-    today = _date.fromisoformat(today_iso)
-    due = []
-    for it in items:
-        rt = (it.get("reminder_time") or "")[:5]
-        if rt != local_hhmm:
-            continue
+    if not items:
+        return []
+    items_by_id = {it["id"]: it for it in items}
+
+    times = get(
+        "checklist_reminder_times",
+        {"user_id": f"eq.{user_id}"},
+    ) or []
+    items_with_children = {r["item_id"] for r in times}
+
+    def _ok(it):
         if not _schedule_applies_today(it.get("schedule"), it.get("schedule_days"), local_weekday):
-            continue
+            return False
         end_str = it.get("recurrence_end")
         if end_str:
             try:
                 if _date.fromisoformat(end_str) < today:
-                    continue
+                    return False
             except Exception:
                 pass
-        due.append(it)
+        return True
+
+    due = []
+
+    for r in times:
+        rt_full = r.get("reminder_time") or ""
+        if rt_full[:5] != local_hhmm:
+            continue
+        it = items_by_id.get(r["item_id"])
+        if not it or not _ok(it):
+            continue
+        due.append((it, rt_full))
+
+    # Legacy fallback: items that still rely on items.reminder_time and
+    # have no child rows yet (shouldn't happen after migration but covers
+    # any data we haven't normalized).
+    for it in items:
+        if it["id"] in items_with_children:
+            continue
+        rt = (it.get("reminder_time") or "")
+        if rt[:5] != local_hhmm:
+            continue
+        if not _ok(it):
+            continue
+        due.append((it, rt))
+
     return due
 
 
-def _claim_send_slot(item_id, user_id, sent_date):
+def _claim_send_slot(item_id, user_id, sent_date, reminder_time):
     """Insert a reminder_log row; returns True if *this* worker wins.
 
-    If another worker already inserted the same (item_id, sent_date),
-    Postgres returns 409 and we skip sending to avoid duplicates."""
+    If another worker already inserted the same (item_id, sent_date,
+    reminder_time), Postgres returns 409 and we skip sending."""
+    payload = {"item_id": item_id, "user_id": user_id, "sent_date": sent_date}
+    if reminder_time:
+        payload["reminder_time"] = reminder_time
     try:
-        post(
-            "checklist_reminder_log",
-            {"item_id": item_id, "user_id": user_id, "sent_date": sent_date},
-            prefer="return=minimal",
-        )
+        post("checklist_reminder_log", payload, prefer="return=minimal")
         return True
     except HTTPError as e:
         if e.response is not None and e.response.status_code == 409:
@@ -154,18 +191,21 @@ def tick():
             weekday = now_local.weekday()  # Mon=0..Sun=6
             today = now_local.date().isoformat()
 
-            items = _due_items_for_user(user_id, hhmm, weekday, today)
-            for it in items:
-                if not _claim_send_slot(it["id"], user_id, today):
+            fires = _due_fires_for_user(user_id, hhmm, weekday, today)
+            for it, rt in fires:
+                if not _claim_send_slot(it["id"], user_id, today, rt):
                     continue
                 title = "✓ Daily Checklist"
                 body = it["name"]
+                # Use the fire's HH:MM in the tag so the same item firing
+                # at different times produces distinct notifications.
+                tag_suffix = (rt or "")[:5].replace(":", "")
                 push_service.send_to_user(
                     user_id,
                     title=title,
                     body=body,
                     url="/checklist",
-                    tag=f"cl-{it['id']}",
+                    tag=f"cl-{it['id']}-{tag_suffix}" if tag_suffix else f"cl-{it['id']}",
                 )
         except Exception:
             logger.exception("Scheduler tick failed for user %s", user_id)

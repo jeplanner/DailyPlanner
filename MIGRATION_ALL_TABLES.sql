@@ -655,28 +655,54 @@ create index if not exists checklist_items_group_idx
   on checklist_items (user_id, group_name) where is_deleted = false;
 
 
-create table if not exists checklist_ticks (
-  id        uuid primary key default gen_random_uuid(),
-  user_id   text not null,
-  item_id   uuid not null references checklist_items(id) on delete cascade,
-  tick_date date not null,
-  ticked_at timestamptz default now(),
-  unique (item_id, tick_date)
+-- Child table: a checklist_item can have many reminder times in a day.
+-- Each row is one fire (e.g. "drink water at 09:00"). When unset, the
+-- item has no scheduled reminders. checklist_items.reminder_time is a
+-- legacy mirror of the first row's time.
+create table if not exists checklist_reminder_times (
+  id              uuid primary key default gen_random_uuid(),
+  item_id         uuid not null references checklist_items(id) on delete cascade,
+  user_id         text not null,
+  reminder_time   time not null,
+  google_event_id text,
+  position        int  not null default 0,
+  created_at      timestamptz default now(),
+  unique (item_id, reminder_time)
 );
+create index if not exists checklist_reminder_times_item_idx
+  on checklist_reminder_times (item_id);
+create index if not exists checklist_reminder_times_user_time_idx
+  on checklist_reminder_times (user_id, reminder_time);
+
+
+-- Per-fire ticks: one row per (item, day, reminder_time). reminder_time
+-- is NULL for items with no scheduled reminders (legacy single-tick).
+create table if not exists checklist_ticks (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       text not null,
+  item_id       uuid not null references checklist_items(id) on delete cascade,
+  tick_date     date not null,
+  reminder_time time,
+  ticked_at     timestamptz default now()
+);
+create unique index if not exists checklist_ticks_item_date_time_uidx
+  on checklist_ticks (item_id, tick_date, coalesce(reminder_time, '00:00:00'::time));
 create index if not exists checklist_ticks_user_date_idx on checklist_ticks (user_id, tick_date);
 
 
--- Dedup log for push reminders. The UNIQUE(item_id, sent_date) lets us
--- insert-or-fail atomically, so if multiple gunicorn workers wake up in
--- the same minute only one "wins" and sends the push.
+-- Dedup log for push reminders. UNIQUE(item_id, sent_date, reminder_time)
+-- lets us insert-or-fail atomically so multiple gunicorn workers waking
+-- in the same minute can only send each fire once.
 create table if not exists checklist_reminder_log (
-  id        uuid primary key default gen_random_uuid(),
-  item_id   uuid not null,
-  user_id   text not null,
-  sent_date date not null,
-  sent_at   timestamptz default now(),
-  unique (item_id, sent_date)
+  id            uuid primary key default gen_random_uuid(),
+  item_id       uuid not null,
+  user_id       text not null,
+  sent_date     date not null,
+  reminder_time time,
+  sent_at       timestamptz default now()
 );
+create unique index if not exists checklist_reminder_log_item_date_time_uidx
+  on checklist_reminder_log (item_id, sent_date, coalesce(reminder_time, '00:00:00'::time));
 create index if not exists checklist_reminder_log_user_date_idx
   on checklist_reminder_log (user_id, sent_date);
 

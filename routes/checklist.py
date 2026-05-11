@@ -1,11 +1,17 @@
 """
 Daily Checklist — recurring items the user wants to be reminded about
-each day (take meds, stretch, drink water, etc). Each item can have an
-optional reminder_time; if set, the push scheduler fires a Web Push
-notification at that local time on the matching schedule.
+each day (take meds, stretch, drink water, etc). Each item can have any
+number of reminder times stored in checklist_reminder_times; if any are
+set, the push scheduler fires a Web Push notification at each matching
+local time on the matching schedule.
 
 Distinct from `habits`: habits track quantity/streak; checklists just
-need to be ticked off for the day.
+need to be ticked off for the day. Each scheduled fire (a row in
+checklist_reminder_times) is ticked off independently — an item with
+3 reminders has 3 separate "settle" actions per day.
+
+`checklist_items.reminder_time` is kept as a legacy mirror of the first
+child row's time so older code/queries still see something sensible.
 """
 import logging
 import threading
@@ -44,8 +50,25 @@ def _parse_reminder_time(value):
     hh = int(parts[0])
     mm = int(parts[1])
     ss = int(parts[2]) if len(parts) == 3 else 0
-    # Construct dtime to validate ranges, then format.
     return dtime(hh, mm, ss).isoformat()
+
+
+def _parse_reminder_times(raw):
+    """Accept a list of HH:MM/HH:MM:SS strings (or a single string for
+    backwards compat). Returns a list of unique HH:MM:SS strings sorted
+    chronologically, or [] if nothing was supplied."""
+    if raw is None:
+        return None  # sentinel: client didn't send the key at all
+    if isinstance(raw, str):
+        raw = [raw] if raw.strip() else []
+    if not isinstance(raw, list):
+        raise ValueError("reminder_times must be a list")
+    out = set()
+    for v in raw:
+        parsed = _parse_reminder_time(v)
+        if parsed:
+            out.add(parsed)
+    return sorted(out)
 
 
 def _parse_end_date(value):
@@ -55,7 +78,6 @@ def _parse_end_date(value):
     value = str(value).strip()
     if not value:
         return None
-    # Validate by round-tripping through date.fromisoformat.
     return date.fromisoformat(value).isoformat()
 
 
@@ -64,13 +86,35 @@ def _normalize_group(value):
     'Health', 'HEALTH' all collapse to 'Health'. Empty → None."""
     if not value:
         return None
-    cleaned = " ".join(str(value).strip().split())  # collapse inner whitespace
+    cleaned = " ".join(str(value).strip().split())
     if not cleaned:
         return None
     return cleaned.title()
 
 
-def _serialize(item, tick_map):
+def _serialize(item, tick_map, times_map):
+    """tick_map: {(item_id, hhmmss_or_None): True}
+       times_map: {item_id: [time_row, ...]} ordered by position/time."""
+    rows = times_map.get(item["id"], [])
+    reminder_times = []
+    for r in rows:
+        t = (r.get("reminder_time") or "")[:5]  # HH:MM
+        full = (r.get("reminder_time") or "")
+        reminder_times.append({
+            "id": r["id"],
+            "time": t,
+            "ticked": tick_map.get((item["id"], full), False),
+        })
+
+    # Legacy single field: first time if any, else whatever is on parent.
+    legacy_time = reminder_times[0]["time"] if reminder_times else (item.get("reminder_time") or "")[:5]
+
+    if reminder_times:
+        all_ticked = all(rt["ticked"] for rt in reminder_times)
+    else:
+        # No child rows — fall back to the legacy NULL-keyed tick.
+        all_ticked = tick_map.get((item["id"], None), False)
+
     return {
         "id": item["id"],
         "name": item["name"],
@@ -78,45 +122,126 @@ def _serialize(item, tick_map):
         "schedule": item.get("schedule") or "daily",
         "schedule_days": item.get("schedule_days") or "",
         "time_of_day": item.get("time_of_day") or "anytime",
-        "reminder_time": (item.get("reminder_time") or "")[:5],  # HH:MM
+        "reminder_time": legacy_time,
+        "reminder_times": reminder_times,
         "recurrence_end": item.get("recurrence_end") or "",
         "group_name": item.get("group_name") or "",
         "position": item.get("position") or 9999,
-        "ticked": tick_map.get(item["id"], False),
+        "ticked": all_ticked,
     }
 
 
-def _sync_calendar_async(user_id, item_id, item_row, old_event_id=None, force_delete=False):
-    """Run Calendar sync in a background thread so the HTTP request
-    returns immediately. The checklist row is written to Supabase first
-    (source of truth); Calendar is a downstream mirror.
+def _reconcile_reminder_times(user_id, item_id, desired_times):
+    """Diff existing checklist_reminder_times rows for this item against
+    `desired_times` (a list of HH:MM:SS strings). Inserts missing rows,
+    deletes removed rows. Returns (added_rows, removed_rows) so the
+    caller can sync Calendar accordingly."""
+    existing = get(
+        "checklist_reminder_times",
+        {"item_id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+    ) or []
+    existing_by_time = {(r.get("reminder_time") or ""): r for r in existing}
+    desired_set = set(desired_times)
 
-    force_delete=True unconditionally removes old_event_id (used when
-    the reminder is cleared or the item is deleted)."""
-    def _work():
-        try:
-            if force_delete and old_event_id:
-                cal_sync.delete_from_calendar(user_id, old_event_id)
+    removed = [r for t, r in existing_by_time.items() if t not in desired_set]
+    for r in removed:
+        sb_delete(
+            "checklist_reminder_times",
+            {"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+        )
+
+    added = []
+    for pos, t in enumerate(desired_times):
+        if t in existing_by_time:
+            # Keep position in sync with new ordering.
+            current_pos = existing_by_time[t].get("position")
+            if current_pos != pos:
                 update(
-                    "checklist_items",
-                    params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-                    json={"google_event_id": None},
+                    "checklist_reminder_times",
+                    params={"id": f"eq.{existing_by_time[t]['id']}",
+                            "user_id": f"eq.{user_id}"},
+                    json={"position": pos},
                 )
-                return
-            if not item_row.get("reminder_time"):
-                return  # nothing to mirror
-            new_id = cal_sync.sync_to_calendar(user_id, item_row)
-            if new_id and new_id != old_event_id:
+            continue
+        try:
+            inserted = post(
+                "checklist_reminder_times",
+                {
+                    "item_id": item_id,
+                    "user_id": user_id,
+                    "reminder_time": t,
+                    "position": pos,
+                },
+                prefer="return=representation",
+            )
+        except HTTPError:
+            logger.exception("Failed to insert reminder_time %s for item %s", t, item_id)
+            continue
+        if inserted:
+            added.append(inserted[0])
+
+    return added, removed
+
+
+def _sync_children_calendar_async(user_id, item_row, added, removed):
+    """Background: delete Calendar events for removed rows, create events
+    for added rows. Supabase is the source of truth; Calendar is best-effort."""
+    def _work():
+        for r in removed:
+            ev = r.get("google_event_id")
+            if not ev:
+                continue
+            try:
+                cal_sync.delete_from_calendar(user_id, ev)
+            except Exception:
+                logger.exception("Calendar delete failed for event %s", ev)
+
+        for r in added:
+            payload = {**item_row,
+                       "reminder_time": r["reminder_time"],
+                       "google_event_id": None}
+            try:
+                new_id = cal_sync.sync_to_calendar(user_id, payload)
+            except Exception:
+                logger.exception("Calendar insert failed for child %s", r.get("id"))
+                continue
+            if new_id:
                 update(
-                    "checklist_items",
-                    params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                    "checklist_reminder_times",
+                    params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
                     json={"google_event_id": new_id},
                 )
-        except Exception:
-            logger.exception("Background calendar sync failed for %s", item_id)
 
-    t = threading.Thread(target=_work, name=f"cal-sync-{item_id}", daemon=True)
-    t.start()
+    threading.Thread(target=_work, name=f"cal-children-{item_row.get('id')}",
+                     daemon=True).start()
+
+
+def _resync_all_children_calendar_async(user_id, item_row):
+    """Background: re-push every existing child row to Calendar (name,
+    schedule, notes may have changed on the parent)."""
+    def _work():
+        rows = get(
+            "checklist_reminder_times",
+            {"item_id": f"eq.{item_row['id']}", "user_id": f"eq.{user_id}"},
+        ) or []
+        for r in rows:
+            payload = {**item_row,
+                       "reminder_time": r["reminder_time"],
+                       "google_event_id": r.get("google_event_id")}
+            try:
+                new_id = cal_sync.sync_to_calendar(user_id, payload)
+            except Exception:
+                logger.exception("Calendar resync failed for child %s", r.get("id"))
+                continue
+            if new_id and new_id != r.get("google_event_id"):
+                update(
+                    "checklist_reminder_times",
+                    params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
+                    json={"google_event_id": new_id},
+                )
+
+    threading.Thread(target=_work, name=f"cal-resync-{item_row.get('id')}",
+                     daemon=True).start()
 
 
 # ─────────────────────────────────────────────
@@ -146,6 +271,17 @@ def list_items():
         },
     ) or []
 
+    times = get(
+        "checklist_reminder_times",
+        {
+            "user_id": f"eq.{user_id}",
+            "order": "position.asc,reminder_time.asc",
+        },
+    ) or []
+    times_map = {}
+    for r in times:
+        times_map.setdefault(r["item_id"], []).append(r)
+
     ticks = get(
         "checklist_ticks",
         {
@@ -153,10 +289,10 @@ def list_items():
             "tick_date": f"eq.{today}",
         },
     ) or []
-    tick_map = {t["item_id"]: True for t in ticks}
+    tick_map = {(t["item_id"], t.get("reminder_time")): True for t in ticks}
 
     return jsonify({
-        "items": [_serialize(i, tick_map) for i in items],
+        "items": [_serialize(i, tick_map, times_map) for i in items],
         "date": today,
     })
 
@@ -182,10 +318,17 @@ def create_item():
     if time_of_day not in VALID_TIMES_OF_DAY:
         return jsonify({"error": f"Invalid time_of_day: {time_of_day}"}), 400
 
+    # New multi-time field takes precedence; fall back to legacy single
+    # field so older clients still work.
     try:
-        reminder_time = _parse_reminder_time(data.get("reminder_time"))
+        if "reminder_times" in data:
+            times = _parse_reminder_times(data.get("reminder_times")) or []
+        else:
+            single = _parse_reminder_time(data.get("reminder_time"))
+            times = [single] if single else []
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+
     try:
         recurrence_end = _parse_end_date(data.get("recurrence_end"))
     except ValueError:
@@ -193,6 +336,8 @@ def create_item():
 
     schedule_days = (data.get("schedule_days") or "").strip()
     group_name = _normalize_group(data.get("group_name"))
+
+    legacy_first = times[0] if times else None
 
     try:
         inserted = post(
@@ -204,7 +349,7 @@ def create_item():
                 "schedule": schedule,
                 "schedule_days": schedule_days or None,
                 "time_of_day": time_of_day,
-                "reminder_time": reminder_time,
+                "reminder_time": legacy_first,
                 "recurrence_end": recurrence_end,
                 "group_name": group_name,
                 "position": int(data.get("position") or 9999),
@@ -217,13 +362,17 @@ def create_item():
 
     row = inserted[0]
 
-    # Kick off calendar mirroring in a background thread so the
-    # browser gets its response in ~100ms instead of ~1s. Supabase is
-    # the source of truth; Calendar is best-effort.
-    if reminder_time:
-        _sync_calendar_async(user_id, row["id"], row)
+    added, removed = _reconcile_reminder_times(user_id, row["id"], times)
+    if added or removed:
+        _sync_children_calendar_async(user_id, row, added, removed)
 
-    return jsonify(_serialize(row, {}))
+    # Re-list this item's children so the response reflects truth.
+    times_rows = get(
+        "checklist_reminder_times",
+        {"item_id": f"eq.{row['id']}", "user_id": f"eq.{user_id}",
+         "order": "position.asc,reminder_time.asc"},
+    ) or []
+    return jsonify(_serialize(row, {}, {row["id"]: times_rows}))
 
 
 # ─────────────────────────────────────────────
@@ -260,11 +409,6 @@ def update_item(item_id):
         if data["time_of_day"] not in VALID_TIMES_OF_DAY:
             return jsonify({"error": "Invalid time_of_day"}), 400
         patch["time_of_day"] = data["time_of_day"]
-    if "reminder_time" in data:
-        try:
-            patch["reminder_time"] = _parse_reminder_time(data["reminder_time"])
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
     if "recurrence_end" in data:
         try:
             patch["recurrence_end"] = _parse_end_date(data["recurrence_end"])
@@ -275,28 +419,56 @@ def update_item(item_id):
     if "position" in data:
         patch["position"] = int(data["position"])
 
-    if not patch:
+    # Reminder times — parse either the new multi-field or fall back to
+    # the legacy single-value field. Either being present updates the
+    # child rows; neither present leaves them alone.
+    desired_times = None
+    if "reminder_times" in data:
+        try:
+            desired_times = _parse_reminder_times(data.get("reminder_times")) or []
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+    elif "reminder_time" in data:
+        try:
+            single = _parse_reminder_time(data.get("reminder_time"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        desired_times = [single] if single else []
+
+    if desired_times is not None:
+        patch["reminder_time"] = desired_times[0] if desired_times else None
+
+    if not patch and desired_times is None:
         return jsonify({"error": "Nothing to update"}), 400
 
-    update(
-        "checklist_items",
-        params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-        json=patch,
-    )
+    if patch:
+        update(
+            "checklist_items",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json=patch,
+        )
 
-    # Re-fetch so we hand the calendar helper the fully-merged item.
     fresh_rows = get(
         "checklist_items",
         {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
     ) or []
-    if fresh_rows:
-        fresh = fresh_rows[0]
-        old_event_id = existing[0].get("google_event_id")
-        if fresh.get("reminder_time"):
-            _sync_calendar_async(user_id, item_id, fresh, old_event_id=old_event_id)
-        elif old_event_id:
-            _sync_calendar_async(user_id, item_id, fresh,
-                                 old_event_id=old_event_id, force_delete=True)
+    fresh = fresh_rows[0] if fresh_rows else existing[0]
+
+    if desired_times is not None:
+        added, removed = _reconcile_reminder_times(user_id, item_id, desired_times)
+        if added or removed:
+            _sync_children_calendar_async(user_id, fresh, added, removed)
+        # If schedule / name / notes also changed, refresh the surviving
+        # children too so their Calendar event bodies match.
+        body_relevant = {"name", "notes", "schedule", "schedule_days", "recurrence_end"}
+        if any(k in patch for k in body_relevant):
+            _resync_all_children_calendar_async(user_id, fresh)
+    else:
+        # Children unchanged but the parent's body fields may have moved
+        # — re-push to Calendar so existing events stay in sync.
+        body_relevant = {"name", "notes", "schedule", "schedule_days", "recurrence_end"}
+        if any(k in patch for k in body_relevant):
+            _resync_all_children_calendar_async(user_id, fresh)
 
     return jsonify({"success": True})
 
@@ -313,21 +485,35 @@ def delete_item(item_id):
         "checklist_items",
         {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
     ) or []
-    old_event_id = existing[0].get("google_event_id") if existing else None
+    parent_event = existing[0].get("google_event_id") if existing else None
+
+    child_rows = get(
+        "checklist_reminder_times",
+        {"item_id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+    ) or []
 
     update(
         "checklist_items",
         params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
         json={"is_deleted": True, "google_event_id": None},
     )
+    # Hard-delete child reminder_time rows — they're config, not user
+    # data, and the parent's is_deleted flag is what hides the item.
+    sb_delete(
+        "checklist_reminder_times",
+        {"item_id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+    )
 
-    if old_event_id:
-        # Fire-and-forget: Calendar cleanup shouldn't block the UI.
+    event_ids = [r.get("google_event_id") for r in child_rows if r.get("google_event_id")]
+    if parent_event:
+        event_ids.append(parent_event)
+    if event_ids:
         def _cleanup():
-            try:
-                cal_sync.delete_from_calendar(user_id, old_event_id)
-            except Exception:
-                logger.exception("Background calendar delete failed")
+            for ev in event_ids:
+                try:
+                    cal_sync.delete_from_calendar(user_id, ev)
+                except Exception:
+                    logger.exception("Background calendar delete failed")
         threading.Thread(target=_cleanup, daemon=True).start()
 
     return jsonify({"success": True})
@@ -336,32 +522,55 @@ def delete_item(item_id):
 # ─────────────────────────────────────────────
 #  TICK / UNTICK
 # ─────────────────────────────────────────────
+def _ownership_ok(user_id, item_id):
+    owner = get(
+        "checklist_items",
+        {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}", "is_deleted": "eq.false"},
+    )
+    return bool(owner)
+
+
 @checklist_bp.route("/api/checklist/items/<item_id>/tick", methods=["POST"])
 @login_required
 def tick_item(item_id):
     user_id = session["user_id"]
     today = user_today().isoformat()
 
-    # Ownership check — cheap, and guards against ticking someone else's id.
-    owner = get(
-        "checklist_items",
-        {"id": f"eq.{item_id}", "user_id": f"eq.{user_id}", "is_deleted": "eq.false"},
-    )
-    if not owner:
+    if not _ownership_ok(user_id, item_id):
         return jsonify({"error": "Item not found"}), 404
 
+    body = request.get_json(silent=True) or {}
     try:
-        post(
-            "checklist_ticks",
-            {"user_id": user_id, "item_id": item_id, "tick_date": today},
-            prefer="return=minimal",
-        )
+        rt = _parse_reminder_time(body.get("reminder_time"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    # `all=true` is the "main checkbox" path — tick every child reminder
+    # for today. Useful for items with several daily reminders.
+    if body.get("all"):
+        children = get(
+            "checklist_reminder_times",
+            {"item_id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+        ) or []
+        if not children:
+            return _insert_tick(user_id, item_id, today, None)
+        for c in children:
+            _insert_tick(user_id, item_id, today, c["reminder_time"])
+        return jsonify({"success": True})
+
+    return _insert_tick(user_id, item_id, today, rt)
+
+
+def _insert_tick(user_id, item_id, today, reminder_time):
+    try:
+        payload = {"user_id": user_id, "item_id": item_id, "tick_date": today}
+        if reminder_time:
+            payload["reminder_time"] = reminder_time
+        post("checklist_ticks", payload, prefer="return=minimal")
     except HTTPError as e:
-        # Unique (item_id, tick_date) — already ticked today is fine.
         if e.response is not None and e.response.status_code == 409:
             return jsonify({"success": True, "already": True})
         raise
-
     return jsonify({"success": True})
 
 
@@ -371,19 +580,37 @@ def untick_item(item_id):
     user_id = session["user_id"]
     today = user_today().isoformat()
 
-    sb_delete(
-        "checklist_ticks",
-        {
-            "user_id": f"eq.{user_id}",
-            "item_id": f"eq.{item_id}",
-            "tick_date": f"eq.{today}",
-        },
-    )
+    if not _ownership_ok(user_id, item_id):
+        return jsonify({"error": "Item not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    try:
+        rt = _parse_reminder_time(body.get("reminder_time"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    params = {
+        "user_id": f"eq.{user_id}",
+        "item_id": f"eq.{item_id}",
+        "tick_date": f"eq.{today}",
+    }
+
+    if body.get("all"):
+        # Drop every tick for this item today, regardless of reminder_time.
+        sb_delete("checklist_ticks", params)
+        return jsonify({"success": True})
+
+    if rt:
+        params["reminder_time"] = f"eq.{rt}"
+    else:
+        params["reminder_time"] = "is.null"
+
+    sb_delete("checklist_ticks", params)
     return jsonify({"success": True})
 
 
 # ─────────────────────────────────────────────
-#  REORDER
+#  GROUPS  /  CALENDAR SYNC  /  REORDER
 # ─────────────────────────────────────────────
 @checklist_bp.route("/api/checklist/groups", methods=["GET"])
 @login_required
@@ -407,34 +634,49 @@ def list_groups():
 @checklist_bp.route("/api/checklist/sync-calendar", methods=["POST"])
 @login_required
 def sync_calendar():
-    """Backfill: create Google Calendar events for every existing
-    checklist item that has a reminder_time but no google_event_id yet.
-    Safe to run multiple times — already-synced items are skipped."""
+    """Backfill: create Google Calendar events for every checklist
+    reminder_time row that doesn't have a google_event_id yet. Safe to
+    run multiple times — already-synced rows are skipped."""
     user_id = session["user_id"]
 
-    items = get(
-        "checklist_items",
+    rows = get(
+        "checklist_reminder_times",
         {
             "user_id": f"eq.{user_id}",
-            "is_deleted": "eq.false",
-            "reminder_time": "not.is.null",
             "google_event_id": "is.null",
         },
     ) or []
+    if not rows:
+        return jsonify({"success": True, "synced": 0, "skipped": 0,
+                        "failed": 0, "total_candidates": 0})
 
-    synced = 0
-    skipped = 0
-    failed = 0
-    for it in items:
+    # Pull all referenced parent items in one shot.
+    item_ids = ",".join(sorted({r["item_id"] for r in rows}))
+    parents = get(
+        "checklist_items",
+        {"id": f"in.({item_ids})", "user_id": f"eq.{user_id}",
+         "is_deleted": "eq.false"},
+    ) or []
+    parent_by_id = {p["id"]: p for p in parents}
+
+    synced = skipped = failed = 0
+    for r in rows:
+        parent = parent_by_id.get(r["item_id"])
+        if not parent:
+            skipped += 1
+            continue
+        payload = {**parent,
+                   "reminder_time": r["reminder_time"],
+                   "google_event_id": None}
         try:
-            new_id = cal_sync.sync_to_calendar(user_id, it)
+            new_id = cal_sync.sync_to_calendar(user_id, payload)
         except Exception:
             failed += 1
             continue
         if new_id:
             update(
-                "checklist_items",
-                params={"id": f"eq.{it['id']}", "user_id": f"eq.{user_id}"},
+                "checklist_reminder_times",
+                params={"id": f"eq.{r['id']}", "user_id": f"eq.{user_id}"},
                 json={"google_event_id": new_id},
             )
             synced += 1
@@ -446,7 +688,7 @@ def sync_calendar():
         "synced": synced,
         "skipped": skipped,
         "failed": failed,
-        "total_candidates": len(items),
+        "total_candidates": len(rows),
     })
 
 
