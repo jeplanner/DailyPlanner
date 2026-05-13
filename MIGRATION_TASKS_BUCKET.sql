@@ -54,9 +54,11 @@ create table if not exists tasks_bucket (
 );
 
 -- Idempotent for installs that ran the earlier version of this file
--- without is_priority / effort_minutes.
+-- without is_priority / effort_minutes / top5 columns.
 alter table tasks_bucket add column if not exists is_priority    boolean default false;
 alter table tasks_bucket add column if not exists effort_minutes int;
+alter table tasks_bucket add column if not exists top5_date      date;
+alter table tasks_bucket add column if not exists top5_position  smallint;
 
 create index if not exists tasks_bucket_user_active_idx
   on tasks_bucket (user_id, position, created_at desc)
@@ -65,6 +67,10 @@ create index if not exists tasks_bucket_user_active_idx
 create index if not exists tasks_bucket_user_dest_idx
   on tasks_bucket (user_id, destination_table, destination_id)
   where destination_table is not null;
+
+create index if not exists tasks_bucket_user_top5_idx
+  on tasks_bucket (user_id, top5_date)
+  where top5_date is not null;
 
 create or replace function _tasks_bucket_touch_updated_at()
 returns trigger as $$

@@ -51,12 +51,107 @@
     mix-blend-mode: normal;
   }
 
+  /* Capture card + Top-5 panel sit side-by-side on wide screens.
+     On narrow screens they stack — the panel slides under the input. */
+  .tb-capture-wrap {
+    display: grid; gap: 14px; margin-bottom: 18px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  @media (min-width: 760px) {
+    .tb-capture-wrap {
+      grid-template-columns: minmax(0, 1.5fr) minmax(260px, 1fr);
+    }
+  }
+
   /* Capture card */
   .tb-capture {
     background: var(--color-surface); border: 1px solid var(--color-border);
-    border-radius: 14px; padding: 16px; margin-bottom: 18px;
+    border-radius: 14px; padding: 16px;
     box-shadow: 0 1px 3px rgba(15,23,42,.04);
   }
+
+  /* Top-5 panel */
+  .tb-top5 {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 14px 14px 12px;
+    box-shadow: 0 1px 3px rgba(15,23,42,.04);
+    display: flex; flex-direction: column; gap: 8px;
+    min-height: 100%;
+  }
+  .tb-top5-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  }
+  .tb-top5-head h2 {
+    font-size: 14px; font-weight: 800; margin: 0;
+    letter-spacing: -.01em;
+  }
+  .tb-top5-counter {
+    font-size: 12px; font-weight: 700;
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--color-surface-secondary, #f3f4f6);
+  }
+  .tb-top5-list {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: 6px;
+    min-height: 56px;
+    border: 1.5px dashed transparent; border-radius: 10px;
+    padding: 4px; margin: -4px;
+    transition: border-color .12s, background .12s;
+  }
+  .tb-top5-list.is-empty {
+    border-color: var(--color-border);
+    background: rgba(99,102,241,.03);
+  }
+  .tb-top5-list.is-drop-target {
+    border-color: #6366f1;
+    background: rgba(99,102,241,.08);
+  }
+  .tb-top5-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    font-size: 13px; line-height: 1.35;
+    cursor: grab;
+    transition: background .12s, border-color .12s, transform .08s;
+  }
+  .tb-top5-item:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  .tb-top5-item.is-dragging { opacity: .4; }
+  .tb-top5-item.is-drop-above { box-shadow: inset 0 2px 0 0 #6366f1; }
+  .tb-top5-item.is-drop-below { box-shadow: inset 0 -2px 0 0 #6366f1; }
+  .tb-top5-rank {
+    flex-shrink: 0; width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: #eef2ff; color: #4338ca;
+    font-size: 11px; font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .tb-top5-text {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tb-top5-item.is-closed {
+    cursor: default; opacity: .65;
+  }
+  .tb-top5-item.is-closed .tb-top5-text {
+    text-decoration: line-through;
+    color: var(--color-text-secondary);
+  }
+  .tb-top5-item.is-closed .tb-top5-rank {
+    background: #d1fae5; color: #047857;
+  }
+  .tb-top5-hint {
+    font-size: 11.5px; color: var(--color-text-secondary);
+    margin: 0; line-height: 1.4;
+  }
+  .tb-top5.is-full .tb-top5-hint::before {
+    content: "✓ "; color: #16a34a; font-weight: 800;
+  }
+  /* Hide rows in the main groups when they're pinned to today's panel —
+     they live in the panel only, to avoid duplication. */
+  .tb-row.is-pinned-top5 { display: none; }
   .tb-capture-head {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-bottom: 10px;
@@ -346,27 +441,41 @@
     </div>
   </div>
 
-  <section class="tb-capture">
-    <div class="tb-capture-head">
-      <h2>Quick capture</h2>
-      <span class="tb-countdown tb-countdown--idle" id="tb-countdown" aria-live="polite">
-        <span id="tb-countdown-label">Classifying in 60s</span>
-      </span>
-    </div>
-    <div class="tb-capture-row">
-      <textarea id="tb-input" rows="2"
-                placeholder="Type or dictate a thought… one item per line. Press Enter to add."></textarea>
-      <button id="tb-mic" class="tb-mic-btn" type="button" title="Toggle dictation">
-        <i data-feather="mic"></i>
-      </button>
-      <button id="tb-send" class="tb-send-btn" type="button" title="Add to bucket (Enter)">
-        <i data-feather="send"></i>
-      </button>
-    </div>
-    <div class="tb-capture-foot">
-      <span>Tip: Enter adds, Shift+Enter for newline. Auto-classifies after a 60s pause.</span>
-    </div>
-  </section>
+  <div class="tb-capture-wrap">
+    <section class="tb-capture">
+      <div class="tb-capture-head">
+        <h2>Quick capture</h2>
+        <span class="tb-countdown tb-countdown--idle" id="tb-countdown" aria-live="polite">
+          <span id="tb-countdown-label">Classifying in 60s</span>
+        </span>
+      </div>
+      <div class="tb-capture-row">
+        <textarea id="tb-input" rows="2"
+                  placeholder="Type or dictate a thought… one item per line. Press Enter to add."></textarea>
+        <button id="tb-mic" class="tb-mic-btn" type="button" title="Toggle dictation">
+          <i data-feather="mic"></i>
+        </button>
+        <button id="tb-send" class="tb-send-btn" type="button" title="Add to bucket (Enter)">
+          <i data-feather="send"></i>
+        </button>
+      </div>
+      <div class="tb-capture-foot">
+        <span>Tip: Enter adds, Shift+Enter for newline. Auto-classifies after a 60s pause.</span>
+      </div>
+    </section>
+
+    <!-- "Today's Top 5" — drag any task here to pin it for today.
+         Closed pinned items stay crossed-out for the rest of the day.
+         Yesterday's incomplete pins auto-roll into today. -->
+    <section class="tb-top5" aria-label="Today's Top 5">
+      <div class="tb-top5-head">
+        <h2>⭐ Today's Top 5</h2>
+        <span class="tb-top5-counter" id="tb-top5-counter">0 / 5</span>
+      </div>
+      <ol class="tb-top5-list" id="tb-top5-list"></ol>
+      <p class="tb-top5-hint" id="tb-top5-hint">Drag tasks here. Reorder by dragging within. Drop back into a category to remove.</p>
+    </section>
+  </div>
 
   <div id="tb-groups"></div>
 </main>
