@@ -13,12 +13,13 @@ Endpoints:
     POST /api/quick-bucket/<id>/update   edit text / set bucket directly
     POST /api/quick-bucket/<id>/done     mark complete
     POST /api/quick-bucket/<id>/archive  soft-delete
+    POST /api/quick-bucket/top5          set today's Top-5 panel order
 
 Soft-delete only — see project convention (memory: no-hard-delete).
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, render_template, request, session
 
@@ -47,6 +48,32 @@ _MIN_BUCKETS = {"5m": 5, "15m": 15, "30m": 30, "45m": 45}
 _HOUR_BUCKETS = {f"{n}h": n for n in range(1, 9)}
 
 _MAX_TEXT_LEN = 500
+
+# Cap for the "Today's Top 5" panel. Hard-enforced server-side so a
+# misbehaving client can't pin a sixth task.
+TOP5_LIMIT = 5
+
+
+def _auto_roll_top5(user_id):
+    """Bump any incomplete past-day top-5 rows to today.
+
+    Done rows keep their old top5_date so they fall out of today's panel
+    — they had their day. Archived (is_deleted) rows are excluded too.
+    Filter-based PATCH does the bump in a single round-trip."""
+    today = date.today().isoformat()
+    try:
+        update(
+            "quick_bucket",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "is_done": "eq.false",
+                "top5_date": f"lt.{today}",
+            },
+            json={"top5_date": today},
+        )
+    except Exception:
+        logger.exception("auto-roll top5 failed for %s", user_id)
 
 
 def _next_bucket(cur):
@@ -142,13 +169,24 @@ def list_items():
     section. Archived (is_deleted) rows still stay hidden — that's the
     soft-delete bucket for items the user removed entirely."""
     user_id = session["user_id"]
+
+    # Roll yesterday's incomplete top-5 items into today before we read
+    # — so the panel "carries over" automatically.
+    _auto_roll_top5(user_id)
+
+    today_iso = date.today().isoformat()
+    select = (
+        "id,text,time_bucket,due_at,is_done,done_at,position,"
+        "top5_date,top5_position,"
+        "created_at,updated_at"
+    )
     try:
         rows = get(
             "quick_bucket",
             params={
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false",
-                "select": "id,text,time_bucket,due_at,is_done,done_at,position,created_at,updated_at",
+                "select": select,
                 "order": "is_done.asc,position.asc,created_at.desc",
                 "limit": "500",
             },
@@ -156,7 +194,12 @@ def list_items():
     except Exception:
         logger.exception("quick_bucket list failed")
         return jsonify({"items": [], "buckets": BUCKETS, "error": "Could not load"}), 200
-    return jsonify({"items": rows, "buckets": BUCKETS})
+    return jsonify({
+        "items": rows,
+        "buckets": BUCKETS,
+        "today": today_iso,
+        "top5_limit": TOP5_LIMIT,
+    })
 
 
 # ─────────── create ──────────────────────────────────────────
@@ -312,6 +355,97 @@ def update_item(item_id):
 
 
 # ─────────── mark done ───────────────────────────────────────
+
+# ─────────── Today's Top 5 panel ─────────────────────────────
+
+@quick_bucket_bp.route("/api/quick-bucket/top5", methods=["POST"])
+@login_required
+def set_top5():
+    """Reconcile today's Top-5 panel against the client's ordered list.
+
+    Body: { "ids": ["id1", "id2", ...] } — every row that should be in
+    today's panel (active + done-pinned together), in display order.
+    Server stamps positions 1..N.
+
+    Active rows previously in today's panel but not in payload have
+    their top5_date/top5_position cleared (drag-out semantics). Done
+    rows in today's panel are preserved — the user can't drag them,
+    and they should stay crossed-out for the rest of the day.
+    """
+    user_id = session["user_id"]
+    data = request.get_json(force=True) or {}
+    raw_ids = data.get("ids") or []
+    if not isinstance(raw_ids, list):
+        return jsonify({"error": "ids must be a list"}), 400
+
+    seen = set()
+    ids = []
+    for x in raw_ids:
+        if not x or x in seen:
+            continue
+        seen.add(x)
+        ids.append(str(x))
+
+    today = date.today().isoformat()
+
+    # Defensive: append any done-pinned rows the client may have
+    # omitted, so they stay in the panel. Done rows aren't draggable.
+    try:
+        done_pinned = get(
+            "quick_bucket",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "is_done": "eq.true",
+                "top5_date": f"eq.{today}",
+                "select": "id",
+                "limit": "10",
+            },
+        ) or []
+    except Exception:
+        logger.exception("top5: done count failed")
+        done_pinned = []
+    for r in done_pinned:
+        if r["id"] not in seen:
+            ids.append(r["id"])
+            seen.add(r["id"])
+
+    if len(ids) > TOP5_LIMIT:
+        return jsonify({
+            "error": f"Top 5 is full — {len(ids)} items (limit {TOP5_LIMIT})."
+        }), 400
+
+    # Stamp each id with its visual position (1..N).
+    for idx, item_id in enumerate(ids):
+        try:
+            update(
+                "quick_bucket",
+                params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                json={"top5_date": today, "top5_position": idx + 1},
+            )
+        except Exception:
+            logger.exception("top5 stamp failed for %s", item_id)
+
+    # Clear top5 on any *active* rows that were in today's panel but
+    # didn't make this submission. Done rows are not cleared here.
+    keep_csv = ",".join(ids) if ids else "00000000-0000-0000-0000-000000000000"
+    try:
+        update(
+            "quick_bucket",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "is_done": "eq.false",
+                "top5_date": f"eq.{today}",
+                "id": f"not.in.({keep_csv})",
+            },
+            json={"top5_date": None, "top5_position": None},
+        )
+    except Exception:
+        logger.exception("top5 clear-stale failed")
+
+    return jsonify({"ok": True, "count": len(ids), "limit": TOP5_LIMIT})
+
 
 @quick_bucket_bp.route("/api/quick-bucket/reorder", methods=["POST"])
 @login_required

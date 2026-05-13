@@ -39,6 +39,10 @@
   // fires once when a deadline trips, not every 30s after.
   const alerted = new Set();
   let tickTimer = null;
+  // Server-stamped "today" — keeps client/server in sync across midnight
+  // and timezone edge cases. Defaults to local today until first load.
+  let todayIso = new Date().toISOString().slice(0, 10);
+  let top5Limit = 5;
 
   // Motivational quotes for the stats bar — one per day, deterministic
   // so a refresh doesn't shuffle. Date-of-year picks the index.
@@ -191,10 +195,63 @@
     try {
       const r = await apiFetch("/api/quick-bucket");
       items = r.items || [];
+      if (r.today) todayIso = r.today;
+      if (r.top5_limit) top5Limit = r.top5_limit;
       render();
     } catch (err) {
       toast(err.message || "Could not load", "error");
     }
+  };
+
+  // ─────────── Today's Top 5 helpers ─────────────────────────
+
+  const isInTop5 = (it) => it && it.top5_date && String(it.top5_date) === todayIso;
+
+  // Today's panel in display order — actives the user can drag, plus
+  // done-but-pinned items that stay in their slot crossed out.
+  const top5Items = () => items
+    .filter(isInTop5)
+    .slice()
+    .sort((a, b) => {
+      const pa = a.top5_position == null ? 99 : a.top5_position;
+      const pb = b.top5_position == null ? 99 : b.top5_position;
+      return pa - pb;
+    });
+
+  const top5IdsInOrder = () => top5Items().map(it => it.id);
+
+  const saveTop5 = async (ids) => {
+    try {
+      await apiFetch("/api/quick-bucket/top5", {
+        method: "POST", body: JSON.stringify({ ids }),
+      });
+      const today = todayIso;
+      const inSet = new Set(ids);
+      items.forEach(it => {
+        if (inSet.has(it.id)) {
+          it.top5_date = today;
+          it.top5_position = ids.indexOf(it.id) + 1;
+        } else if (it.top5_date === today && !it.is_done) {
+          it.top5_date = null;
+          it.top5_position = null;
+        }
+      });
+      render();
+    } catch (err) {
+      toast(err.message || "Couldn't update Top 5", "error");
+      loadItems();
+    }
+  };
+
+  // Given the panel <ol> and a clientY, return the index in the panel's
+  // full visual list (active + done) where a drop should insert.
+  const findPanelInsertIndex = (panel, clientY) => {
+    const rows = $$(".qb-top5-item", panel);
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i].getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return rows.length;
   };
 
   // ─────────── render ───────────────────────────────────────
@@ -202,6 +259,9 @@
   const groupItems = () => {
     const groups = { now: [], today: [], future: [], done: [] };
     items.forEach(it => {
+      // Pinned-for-today items live in the Top-5 panel only, so they
+      // don't double-render in the category groups below.
+      if (isInTop5(it)) return;
       if (it.is_done)              groups.done.push(it);
       else if (it.time_bucket === "now")    groups.now.push(it);
       else if (it.time_bucket === "future") groups.future.push(it);
@@ -252,8 +312,62 @@
       </div>`;
   };
 
+  const renderTop5 = () => {
+    const list = $("#qb-top5-list");
+    const counter = $("#qb-top5-counter");
+    const hint = $("#qb-top5-hint");
+    if (!list) return;
+
+    const rows = top5Items();
+    if (counter) counter.textContent = `${rows.length} / ${top5Limit}`;
+    list.classList.toggle("is-empty", rows.length === 0);
+    if (hint) {
+      hint.textContent = rows.length >= top5Limit
+        ? "Panel full. Drop one back into the list to free a slot."
+        : "Drag tasks here. Reorder by dragging within. Drop back into the list to remove.";
+    }
+
+    list.innerHTML = rows.map((it, idx) => {
+      const done = !!it.is_done;
+      const cls = "qb-top5-item" + (done ? " is-done" : "");
+      return `
+        <li class="${cls}" data-id="${it.id}"${done ? "" : ' draggable="true"'}>
+          <span class="qb-top5-rank">${idx + 1}</span>
+          <input type="checkbox" class="qb-top5-check" aria-label="Mark done"
+                 ${done ? "checked" : ""}>
+          <div class="qb-top5-text" title="${escapeHTML(it.text)}">${escapeHTML(it.text)}</div>
+        </li>`;
+    }).join("");
+
+    wireTop5Rows();
+    wireTop5Interactions();
+  };
+
+  // Tap on text → open edit modal (same as group rows). Tick the
+  // checkbox → mark done / reopen.
+  const wireTop5Interactions = () => {
+    $$("#qb-top5-list .qb-top5-item").forEach(row => {
+      const it = items.find(x => x.id === row.dataset.id);
+      if (!it) return;
+      const cb = $(".qb-top5-check", row);
+      if (cb) {
+        cb.addEventListener("click", (e) => e.stopPropagation());
+        cb.addEventListener("change", () => {
+          if (cb.checked) markDone(it);
+          else reopen(it);
+        });
+      }
+      const text = $(".qb-top5-text", row);
+      text?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (typeof openEditModal === "function") openEditModal(it);
+      });
+    });
+  };
+
   const render = () => {
     renderStatBar();
+    renderTop5();
     const wrap = $("#qb-groups");
     const empty = $("#qb-empty");
     if (!items.length) {
@@ -264,6 +378,7 @@
     }
     empty.setAttribute("hidden", "");
     const groups = groupItems();
+    const anyVisible = VISIBLE_GROUPS.some(g => groups[g].length > 0);
     wrap.innerHTML = VISIBLE_GROUPS.map(g => {
       const list = groups[g];
       if (!list.length) return "";
@@ -273,6 +388,9 @@
           <div class="qb-list">${list.map(renderRow).join("")}</div>
         </section>`;
     }).join("");
+    // If every task is pinned to the panel, surface the empty hint so
+    // the area under the panel doesn't look broken.
+    if (!anyVisible) empty.removeAttribute("hidden");
     refreshFeather();
     wireRows();
     wireDragDrop();
@@ -321,34 +439,101 @@
     });
   };
 
-  // ─────────── drag-and-drop reorder ────────────────────────
-  // HTML5 native — no library. Drag a row anywhere within its
-  // group; on drop, persist the new order via POST /reorder.
-  // Cross-group drags (e.g. Now → Future) are handled by the
-  // existing toggle pill, not by drag.
+  // ─────────── drag-and-drop ───────────────────────────────
+  // HTML5 native — no library. Three flows:
+  //   1. Group row → another group row : reorder within that group.
+  //   2. Group row → Top-5 panel        : pin to today's panel.
+  //   3. Top-5 panel row → anywhere out : unpin from panel.
+  //   4. Top-5 panel row → Top-5 panel  : reorder within panel.
+  // Cross-group time changes (e.g. Now → Future) still go through the
+  // toggle pill, not drag.
   let _dragId = null;
-  const wireDragDrop = () => {
-    $$("#qb-groups .qb-row").forEach(row => {
-      row.draggable = true;
+  let _dragSource = null;  // "group" | "top5"
+
+  const _clearDropHints = () => {
+    document.querySelectorAll("#qb-groups .qb-row.is-drop-target")
+      .forEach(r => r.classList.remove("is-drop-target"));
+    $("#qb-top5-list")?.classList.remove("is-drop-target");
+  };
+
+  const wireTop5Rows = () => {
+    const panel = $("#qb-top5-list");
+    if (!panel) return;
+
+    $$(".qb-top5-item", panel).forEach(row => {
+      if (row.classList.contains("is-done")) return;
       row.addEventListener("dragstart", (e) => {
         _dragId = row.dataset.id;
+        _dragSource = "top5";
         row.classList.add("is-dragging");
         e.dataTransfer.effectAllowed = "move";
         try { e.dataTransfer.setData("text/plain", _dragId); } catch (_) {}
       });
       row.addEventListener("dragend", () => {
         row.classList.remove("is-dragging");
-        _dragId = null;
-        document.querySelectorAll("#qb-groups .qb-row.is-drop-target")
-          .forEach(r => r.classList.remove("is-drop-target"));
+        _dragId = null; _dragSource = null;
+        _clearDropHints();
+      });
+    });
+
+    panel.addEventListener("dragover", (e) => {
+      if (!_dragId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      panel.classList.add("is-drop-target");
+    });
+    panel.addEventListener("dragleave", (e) => {
+      if (e.target === panel) panel.classList.remove("is-drop-target");
+    });
+    panel.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      panel.classList.remove("is-drop-target");
+      const id = _dragId || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
+      const source = _dragSource;
+      _dragId = null; _dragSource = null;
+      if (!id) return;
+      const it = items.find(x => x.id === id);
+      if (!it || it.is_done) return;
+
+      const current = top5IdsInOrder();
+      const without = current.filter(x => x !== id);
+      const insertIdx = findPanelInsertIndex(panel, e.clientY);
+      const next = [...without];
+      next.splice(insertIdx, 0, id);
+
+      if (next.length > top5Limit) {
+        toast("Top 5 is full. Drop one out first.", "error");
+        return;
+      }
+      await saveTop5(next);
+      if (source === "group") toast("Pinned to Top 5", "success");
+    });
+  };
+
+  const wireDragDrop = () => {
+    $$("#qb-groups .qb-row").forEach(row => {
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        _dragId = row.dataset.id;
+        _dragSource = "group";
+        row.classList.add("is-dragging");
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", _dragId); } catch (_) {}
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("is-dragging");
+        _dragId = null; _dragSource = null;
+        _clearDropHints();
       });
       row.addEventListener("dragover", (e) => {
         if (!_dragId || _dragId === row.dataset.id) return;
+        // Only allow group-internal reorder when dragging from a group;
+        // panel drags don't reorder group rows.
+        if (_dragSource !== "group") return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
         const draggingEl = document.querySelector(`#qb-groups .qb-row[data-id="${_dragId}"]`);
         if (!draggingEl) return;
-        // Only reorder within the same group container.
         if (draggingEl.parentElement !== row.parentElement) return;
         const rect = row.getBoundingClientRect();
         const before = (e.clientY - rect.top) < rect.height / 2;
@@ -357,10 +542,21 @@
       });
       row.addEventListener("drop", async (e) => {
         e.preventDefault();
+        if (_dragSource === "top5") {
+          // Drop a panel row onto a group row → unpin from Top 5. The
+          // group's own ordering doesn't change here.
+          const id = _dragId;
+          _dragId = null; _dragSource = null;
+          if (!id) return;
+          const remaining = top5IdsInOrder().filter(x => x !== id);
+          await saveTop5(remaining);
+          toast("Removed from Top 5", "info");
+          return;
+        }
+        // In-group reorder.
         const groupEl = row.parentElement;
         const newOrder = Array.from(groupEl.querySelectorAll(".qb-row"))
           .map(r => r.dataset.id);
-        // Reorder local state to match
         const orderMap = new Map(newOrder.map((id, i) => [id, i]));
         const inGroup = items.filter(x => orderMap.has(x.id));
         const others  = items.filter(x => !orderMap.has(x.id));
@@ -374,6 +570,29 @@
         } catch (err) {
           toast(err.message || "Couldn't save order", "error");
         }
+      });
+    });
+
+    // Also allow dropping a panel row onto a group section (not just a
+    // row) — same unpin behavior. Catches drops on empty space below
+    // the last row in a group.
+    $$("#qb-groups .qb-group").forEach(group => {
+      group.addEventListener("dragover", (e) => {
+        if (_dragSource !== "top5") return;
+        e.preventDefault();
+        group.classList.add("is-drop-target");
+      });
+      group.addEventListener("dragleave", () => group.classList.remove("is-drop-target"));
+      group.addEventListener("drop", async (e) => {
+        if (_dragSource !== "top5") return;
+        e.preventDefault();
+        group.classList.remove("is-drop-target");
+        const id = _dragId;
+        _dragId = null; _dragSource = null;
+        if (!id) return;
+        const remaining = top5IdsInOrder().filter(x => x !== id);
+        await saveTop5(remaining);
+        toast("Removed from Top 5", "info");
       });
     });
   };

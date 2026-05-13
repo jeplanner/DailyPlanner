@@ -35,14 +35,21 @@ create table if not exists quick_bucket (
 );
 
 -- Idempotent for installs that ran the earlier version of this file
--- without due_at / google_event_id.
+-- without due_at / google_event_id / top5 columns.
 alter table quick_bucket add column if not exists due_at         timestamptz;
 alter table quick_bucket add column if not exists google_event_id text;
+alter table quick_bucket add column if not exists top5_date      date;
+alter table quick_bucket add column if not exists top5_position  smallint;
 
 -- Hot path: list every active row for one user, ordered for the UI.
 create index if not exists quick_bucket_user_active_idx
   on quick_bucket (user_id, time_bucket, position, created_at desc)
   where is_deleted = false and is_done = false;
+
+-- Index for today's Top-5 panel lookup.
+create index if not exists quick_bucket_user_top5_idx
+  on quick_bucket (user_id, top5_date)
+  where top5_date is not null;
 
 create or replace function _quick_bucket_touch_updated_at()
 returns trigger as $$
