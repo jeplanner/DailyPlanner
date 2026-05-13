@@ -41,32 +41,6 @@ _MAX_TEXT_LEN = 500
 # and survives label changes later.
 VALID_EFFORTS = {5, 15, 30, 60, 120, 180, 240}
 
-# Cap for the "Today's Top 5" panel. Hard enforced server-side so a
-# misbehaving client can't pin a sixth task.
-TOP5_LIMIT = 5
-
-
-def _auto_roll_top5(user_id):
-    """Bump any incomplete past-day top-5 rows to today.
-
-    Closed rows keep their old top5_date so they fall out of today's
-    panel — they had their day. Filter-based PATCH does the bump in a
-    single round-trip."""
-    today = date.today().isoformat()
-    try:
-        update(
-            "tasks_bucket",
-            params={
-                "user_id": f"eq.{user_id}",
-                "is_deleted": "eq.false",
-                "status": "in.(pending,classified,unclassified)",
-                "top5_date": f"lt.{today}",
-            },
-            json={"top5_date": today},
-        )
-    except Exception:
-        logger.exception("auto-roll top5 failed for %s", user_id)
-
 
 # ─────────── stat helper ───────────────────────────────────────
 
@@ -297,19 +271,6 @@ def tasks_bucket_page():
 @login_required
 def list_items():
     user_id = session["user_id"]
-
-    # Roll yesterday's incomplete top-5 items into today before we read
-    # — so the panel "carries over" automatically.
-    _auto_roll_top5(user_id)
-
-    today = date.today().isoformat()
-    select = (
-        "id,raw_text,category,confidence,matched_keywords,"
-        "status,manual_override,destination_table,destination_id,"
-        "position,is_priority,effort_minutes,"
-        "top5_date,top5_position,"
-        "classified_at,closed_at,created_at,updated_at"
-    )
     try:
         rows = get(
             "tasks_bucket",
@@ -317,7 +278,12 @@ def list_items():
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false",
                 "status": "in.(pending,classified,unclassified)",
-                "select": select,
+                "select": (
+                    "id,raw_text,category,confidence,matched_keywords,"
+                    "status,manual_override,destination_table,destination_id,"
+                    "position,is_priority,effort_minutes,"
+                    "classified_at,created_at,updated_at"
+                ),
                 # Priority items always float to the top; within a
                 # priority bucket, manual position wins over recency.
                 "order": "is_priority.desc.nullslast,position.asc,created_at.desc",
@@ -327,33 +293,7 @@ def list_items():
     except Exception:
         logger.exception("tasks_bucket list failed")
         return jsonify({"items": [], "categories": CATEGORIES, "error": "Could not load list"}), 200
-
-    # Also pull today's closed-but-pinned items so the panel can render
-    # them crossed-out for the rest of the day. The main list query
-    # filters status=closed out, so we fetch those separately.
-    try:
-        closed_pinned = get(
-            "tasks_bucket",
-            params={
-                "user_id": f"eq.{user_id}",
-                "is_deleted": "eq.false",
-                "status": "eq.closed",
-                "top5_date": f"eq.{today}",
-                "select": select,
-                "order": "top5_position.asc",
-                "limit": str(TOP5_LIMIT * 2),
-            },
-        ) or []
-    except Exception:
-        logger.exception("tasks_bucket list (closed-pinned) failed")
-        closed_pinned = []
-
-    return jsonify({
-        "items": rows + closed_pinned,
-        "categories": CATEGORIES,
-        "today": today,
-        "top5_limit": TOP5_LIMIT,
-    })
+    return jsonify({"items": rows, "categories": CATEGORIES})
 
 
 # ─────────── create ───────────────────────────────────────────
@@ -695,110 +635,6 @@ def reorder():
         except Exception:
             logger.exception("reorder failed for %s", item_id)
     return jsonify({"ok": True, "reclassified": moved_categories})
-
-
-# ─────────── Today's Top 5 panel ──────────────────────────────
-
-@tasks_bucket_bp.route("/api/tasks-bucket/top5", methods=["POST"])
-@login_required
-def set_top5():
-    """Reconcile today's Top-5 panel against the client's ordered list.
-
-    Body: { "ids": ["id1", "id2", ...] } — the active items the user
-    wants in the panel, in display order. Server stamps positions 1..N.
-
-    Active rows currently in today's panel but not in payload have
-    their top5_date/top5_position cleared (drag-out semantics). Closed
-    rows in today's panel are preserved regardless — the user can't
-    drag them, and they should stay crossed-out for the rest of the day.
-    """
-    user_id = session["user_id"]
-    data = request.get_json(force=True) or {}
-    raw_ids = data.get("ids") or []
-    if not isinstance(raw_ids, list):
-        return jsonify({"error": "ids must be a list"}), 400
-
-    # De-dupe while preserving order; ignore blanks.
-    seen = set()
-    ids = []
-    for x in raw_ids:
-        if not x or x in seen:
-            continue
-        seen.add(x)
-        ids.append(str(x))
-
-    today = date.today().isoformat()
-
-    # How many slots are already claimed by closed-pinned items today?
-    # Those count against the cap so a panel doesn't exceed 5 total.
-    try:
-        closed = get(
-            "tasks_bucket",
-            params={
-                "user_id": f"eq.{user_id}",
-                "is_deleted": "eq.false",
-                "status": "eq.closed",
-                "top5_date": f"eq.{today}",
-                "select": "id",
-                "limit": "10",
-            },
-        ) or []
-    except Exception:
-        logger.exception("top5: closed count failed")
-        closed = []
-    closed_ids = {r["id"] for r in closed}
-
-    # Closed items in today's panel that the client didn't echo back
-    # (older clients, edge cases) — append them so they stay pinned.
-    # Closed rows are not draggable; the user can't intentionally drop
-    # them, and we don't want them to silently vanish from the panel.
-    for cid in closed_ids:
-        if cid not in seen:
-            ids.append(cid)
-            seen.add(cid)
-
-    if len(ids) > TOP5_LIMIT:
-        return jsonify({
-            "error": f"Top 5 is full — {len(ids)} items (limit {TOP5_LIMIT})."
-        }), 400
-
-    # Stamp each id with its visual position (1..N). Closed rows get
-    # restamped too — their slot can shift if actives reorder around
-    # them, but they stay in the panel.
-    for idx, item_id in enumerate(ids):
-        try:
-            update(
-                "tasks_bucket",
-                params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-                json={"top5_date": today, "top5_position": idx + 1},
-            )
-        except Exception:
-            logger.exception("top5 stamp failed for %s", item_id)
-
-    # Clear top5 on any *active* rows that were in today's panel but
-    # didn't make this submission. Closed rows are not cleared here
-    # (status filter excludes them).
-    keep_csv = ",".join(ids) if ids else "00000000-0000-0000-0000-000000000000"
-    try:
-        update(
-            "tasks_bucket",
-            params={
-                "user_id": f"eq.{user_id}",
-                "is_deleted": "eq.false",
-                "status": "in.(pending,classified,unclassified)",
-                "top5_date": f"eq.{today}",
-                "id": f"not.in.({keep_csv})",
-            },
-            json={"top5_date": None, "top5_position": None},
-        )
-    except Exception:
-        logger.exception("top5 clear-stale failed")
-
-    return jsonify({
-        "ok": True,
-        "count": len(ids),
-        "limit": TOP5_LIMIT,
-    })
 
 
 # ─────────── sweep: hide rows whose destination closed elsewhere ──

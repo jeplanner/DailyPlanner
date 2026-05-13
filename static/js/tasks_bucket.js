@@ -79,11 +79,6 @@
   let countdownTimer = null;
   let recognizing = false;
   let recognition = null;
-  // Server-stamped "today" — keeps client and server in sync across
-  // midnight / timezone edge cases. Defaults to local today until the
-  // first /api/tasks-bucket response.
-  let todayIso = new Date().toISOString().slice(0, 10);
-  let top5Limit = 5;
 
   // ─────────── helpers ───────────────────────────────────────
 
@@ -111,8 +106,6 @@
   const loadItems = async () => {
     const r = await apiFetch("/api/tasks-bucket");
     items = r.items || [];
-    if (r.today) todayIso = r.today;
-    if (r.top5_limit) top5Limit = r.top5_limit;
     pendingIds = new Set(items.filter(i => i.status === "pending").map(i => i.id));
     render();
     tickCountdown();
@@ -150,20 +143,6 @@
 
   // ─────────── render: groups ────────────────────────────────
 
-  // True when this item should appear in today's Top-5 panel.
-  const isInTop5 = (it) => it && it.top5_date && String(it.top5_date) === todayIso;
-
-  // The Top-5 panel pulls from items[]; the main groups skip those so
-  // each pinned task lives in exactly one place on screen.
-  const top5Items = () => items
-    .filter(isInTop5)
-    .slice()
-    .sort((a, b) => {
-      const pa = a.top5_position == null ? 99 : a.top5_position;
-      const pb = b.top5_position == null ? 99 : b.top5_position;
-      return pa - pb;
-    });
-
   const groupItems = () => {
     const groups = { Unclassified: [] };
     CATEGORIES.forEach(c => groups[c] = []);
@@ -178,12 +157,6 @@
       return (b.created_at || "").localeCompare(a.created_at || "");
     });
     sorted.forEach(it => {
-      // Skip rows pinned in today's panel — they render there only.
-      // Closed-pinned items are also handled by the panel.
-      if (isInTop5(it)) return;
-      // Defensive: closed items shouldn't reach groupItems anyway
-      // (server filter excludes them), but if a stray one does, skip.
-      if (it.status === "closed") return;
       const key = it.category && CATEGORIES.includes(it.category) ? it.category : "Unclassified";
       groups[key].push(it);
     });
@@ -254,41 +227,8 @@
     wireDnD();
   };
 
-  // ─────────── render: Today's Top 5 panel ───────────────────
-
-  const renderTop5 = () => {
-    const list = $("#tb-top5-list");
-    const counter = $("#tb-top5-counter");
-    const hint = $("#tb-top5-hint");
-    const panel = list?.parentElement;
-    if (!list) return;
-
-    const rows = top5Items();
-    if (counter) counter.textContent = `${rows.length} / ${top5Limit}`;
-    list.classList.toggle("is-empty", rows.length === 0);
-    if (panel) panel.classList.toggle("is-full", rows.length >= top5Limit);
-    if (hint) {
-      hint.textContent = rows.length >= top5Limit
-        ? "Panel full. Drop one back into a category to free a slot."
-        : "Drag tasks here. Reorder by dragging within. Drop back into a category to remove.";
-    }
-
-    list.innerHTML = rows.map((it, idx) => {
-      const closed = it.status === "closed";
-      const cls = "tb-top5-item" + (closed ? " is-closed" : "");
-      return `
-        <li class="${cls}" data-id="${it.id}"${closed ? "" : ' draggable="true"'}>
-          <span class="tb-top5-rank">${idx + 1}</span>
-          <div class="tb-top5-text" title="${escapeHTML(it.raw_text)}">${escapeHTML(it.raw_text)}</div>
-        </li>`;
-    }).join("");
-
-    wireTop5Rows();
-  };
-
   const render = () => {
     renderGroups();
-    renderTop5();
     renderStats();
   };
 
@@ -360,133 +300,22 @@
     }
   };
 
-  // ─────────── drag & drop ──────────────────────────────────
-  //  Three flows:
-  //   1. Group → Group  : reclassify the item into the dropped-on category.
-  //   2. Anywhere → Top5 panel : pin (or reorder within) today's panel.
-  //   3. Top5 panel → Group : unpin from panel; optionally reclassify.
-
-  // Module-scoped so panel rows wired in renderTop5 can read it.
-  let _draggingId = null;
-
-  // Today's panel in display order — actives the user can drag, plus
-  // closed-but-pinned items that stay in their slot crossed out.
-  const _panelIdsInOrder = () => top5Items().map(it => it.id);
-
-  const _saveTop5 = async (ids) => {
-    try {
-      await apiFetch("/api/tasks-bucket/top5", {
-        method: "POST", body: JSON.stringify({ ids }),
-      });
-      // Patch local state so the UI doesn't have to wait for a refetch.
-      const today = todayIso;
-      const inSet = new Set(ids);
-      items.forEach(it => {
-        if (inSet.has(it.id)) {
-          it.top5_date = today;
-          it.top5_position = ids.indexOf(it.id) + 1;
-        } else if (it.top5_date === today && it.status !== "closed") {
-          it.top5_date = null;
-          it.top5_position = null;
-        }
-      });
-      render();
-    } catch (err) {
-      toast(err.message || "Couldn't update Top 5", "error");
-      loadItems();  // resync on error
-    }
-  };
-
-  // Given the panel <ol> and a clientY, return the index in the panel's
-  // full visual list (active + closed) where a drop should insert.
-  const _findInsertIndex = (panel, clientY) => {
-    const rows = $$(".tb-top5-item", panel);
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i].getBoundingClientRect();
-      if (clientY < r.top + r.height / 2) return i;
-    }
-    return rows.length;
-  };
-
-  const wireTop5Rows = () => {
-    $$("#tb-top5-list .tb-top5-item").forEach(row => {
-      if (row.classList.contains("is-closed")) return;
-      row.addEventListener("dragstart", (e) => {
-        _draggingId = row.dataset.id;
-        row.classList.add("is-dragging");
-        e.dataTransfer.effectAllowed = "move";
-        try { e.dataTransfer.setData("text/plain", _draggingId); } catch (_) { /* IE */ }
-      });
-      row.addEventListener("dragend", () => {
-        _draggingId = null;
-        row.classList.remove("is-dragging");
-        $$("#tb-top5-list .tb-top5-item").forEach(r => {
-          r.classList.remove("is-drop-above", "is-drop-below");
-        });
-        $("#tb-top5-list")?.classList.remove("is-drop-target");
-        $$("#tb-groups .tb-group").forEach(g => g.classList.remove("is-drop-target"));
-      });
-
-      // Click on a panel row opens the detail modal — same UX as group rows.
-      row.addEventListener("click", () => {
-        const it = items.find(x => x.id === row.dataset.id);
-        if (it) openDetail(it);
-      });
-    });
-
-    const panel = $("#tb-top5-list");
-    if (!panel) return;
-
-    panel.addEventListener("dragover", (e) => {
-      if (!_draggingId) return;
-      e.preventDefault();
-      panel.classList.add("is-drop-target");
-    });
-    panel.addEventListener("dragleave", (e) => {
-      // Only clear when leaving the panel itself, not when crossing
-      // between child rows.
-      if (e.target === panel) panel.classList.remove("is-drop-target");
-    });
-    panel.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      panel.classList.remove("is-drop-target");
-      const id = _draggingId || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
-      _draggingId = null;
-      if (!id) return;
-      const it = items.find(x => x.id === id);
-      if (!it || it.status === "closed") return;
-
-      // Build the new full visual order: current panel ids minus the
-      // dragged one, then insert at the drop position.
-      const current = _panelIdsInOrder();
-      const without = current.filter(x => x !== id);
-      const insertIdx = _findInsertIndex(panel, e.clientY);
-      const next = [...without];
-      next.splice(insertIdx, 0, id);
-
-      if (next.length > top5Limit) {
-        toast("Top 5 is full. Drop one out first.", "error");
-        return;
-      }
-      await _saveTop5(next);
-    });
-  };
+  // ─────────── drag & drop between categories ────────────────
 
   const wireDnD = () => {
-    _draggingId = null;
+    let draggingId = null;
 
     $$("#tb-groups .tb-row").forEach(row => {
       row.addEventListener("dragstart", (e) => {
-        _draggingId = row.dataset.id;
+        draggingId = row.dataset.id;
         row.classList.add("is-dragging");
         e.dataTransfer.effectAllowed = "move";
-        try { e.dataTransfer.setData("text/plain", _draggingId); } catch (_) { /* IE */ }
+        try { e.dataTransfer.setData("text/plain", draggingId); } catch (_) { /* IE */ }
       });
       row.addEventListener("dragend", () => {
-        _draggingId = null;
+        draggingId = null;
         row.classList.remove("is-dragging");
         $$("#tb-groups .tb-group").forEach(g => g.classList.remove("is-drop-target"));
-        $("#tb-top5-list")?.classList.remove("is-drop-target");
       });
     });
 
@@ -496,28 +325,14 @@
       group.addEventListener("drop", async (e) => {
         e.preventDefault();
         group.classList.remove("is-drop-target");
-        const id = _draggingId || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
+        const id = draggingId || (e.dataTransfer && e.dataTransfer.getData("text/plain"));
         if (!id) return;
         const newCat = group.dataset.category;
         const it = items.find(x => x.id === id);
         if (!it) return;
-
-        // If the item was pinned to today's panel, unpin it as part of
-        // this drop — moving it back into a category list is the
-        // gesture for "remove from Top 5".
-        const wasPinned = isInTop5(it);
-        if (wasPinned) {
-          const remaining = _panelIdsInOrder().filter(x => x !== id);
-          await _saveTop5(remaining);
-        }
-
-        // Dropping into "Unclassified" or its current category is a no-op
-        // for reclassification (but the unpin above still applies).
-        if (newCat === "Unclassified" || it.category === newCat) {
-          if (!wasPinned) return;
-          toast("Removed from Top 5", "info");
-          return;
-        }
+        // Dropping into "Unclassified" is a no-op (no learning signal there).
+        if (newCat === "Unclassified") return;
+        if (it.category === newCat) return;
 
         try {
           const r = await apiFetch(`/api/tasks-bucket/${id}/reclassify`, {
@@ -705,16 +520,7 @@
         confettiBurst();
         toast(`🎉 ${nowClosed} closed today — keep going!`, "success");
       }
-      // If this row was pinned to today's Top-5, keep it in local state
-      // (now marked closed) so it stays crossed-out in the panel for
-      // the rest of the day. Otherwise drop it from the list.
-      const it = items.find(x => x.id === id);
-      if (it && isInTop5(it)) {
-        it.status = "closed";
-        it.closed_at = new Date().toISOString();
-      } else {
-        items = items.filter(x => x.id !== id);
-      }
+      items = items.filter(x => x.id !== id);
       render();
     } catch (err) {
       toast(err.message || "Couldn't close", "error");
