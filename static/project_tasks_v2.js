@@ -259,43 +259,254 @@
     } catch (e) { console.warn("[ptv2] tree fetch failed", e); }
   }
 
-  /* ───── SPRINTS bar ─────────────────────────────────────────── */
+  /* ───── SPRINTS bar (v2) ────────────────────────────────────── */
+
+  // Format the "when" label for a sprint based on dates + today.
+  function _sprintWhenLabel(s, today) {
+    if (s.is_active && s.ends_on) {
+      const days = _daysBetween(today, s.ends_on);
+      if (days < 0)  return "Ended";
+      if (days === 0) return "Ends today";
+      if (days === 1) return "1d left";
+      return `${days}d left`;
+    }
+    if (s.ends_on && s.ends_on < today) return "Past";
+    if (s.starts_on && s.starts_on > today) {
+      const days = _daysBetween(today, s.starts_on);
+      return days === 1 ? "Starts tomorrow" : `Starts in ${days}d`;
+    }
+    if (s.starts_on && s.ends_on) return `${_fmtShort(s.starts_on)} – ${_fmtShort(s.ends_on)}`;
+    if (s.starts_on) return `From ${_fmtShort(s.starts_on)}`;
+    if (s.ends_on)   return `Due ${_fmtShort(s.ends_on)}`;
+    return "No dates";
+  }
+  function _daysBetween(aIso, bIso) {
+    const a = new Date(aIso + "T00:00:00");
+    const b = new Date(bIso + "T00:00:00");
+    return Math.round((b - a) / 86400000);
+  }
+  function _fmtShort(iso) {
+    // "2026-05-23" → "May 23"
+    try {
+      const d = new Date(iso + "T00:00:00");
+      return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    } catch (_) { return iso; }
+  }
+
+  // Visual class: "is-running" / "is-past" / "is-upcoming" / ""
+  function _sprintLifecycleClass(s, today) {
+    if (s.is_active) return "is-running";
+    if (s.ends_on && s.ends_on < today) return "is-past";
+    if (s.starts_on && s.starts_on > today) return "is-upcoming";
+    return "";
+  }
 
   function renderSprintsBar() {
     const bar = document.getElementById("ptv2-sprints-bar");
     const list = document.getElementById("ptv2-sprints-list");
     if (!bar || !list) return;
-    // Always show the bar so the user can create the first sprint.
     bar.hidden = false;
     list.innerHTML = "";
-    if (!_sprints.length) {
-      const hint = document.createElement("span");
-      hint.style.cssText = "font-size:12px;color:var(--ptv2-text-soft);padding:0 4px";
-      hint.textContent = "No sprints yet. Create one →";
-      list.appendChild(hint);
-    }
-    // Count tasks per sprint from the current DOM (cheap, accurate).
-    const counts = new Map();
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Count tasks per sprint from the existing DOM. Track open + done
+    // separately so chips can show "3/8" (done / total).
+    const totals = new Map();
+    const dones  = new Map();
     document.querySelectorAll("#task-tbody tr.task-row").forEach((row) => {
       const sid = row.dataset.sprintId;
-      if (sid) counts.set(sid, (counts.get(sid) || 0) + 1);
+      if (!sid) return;
+      totals.set(sid, (totals.get(sid) || 0) + 1);
+      if (row.dataset.status === "done") dones.set(sid, (dones.get(sid) || 0) + 1);
     });
+
+    // Empty state: single CTA replaces the whole bar.
+    if (!_sprints.length) {
+      const cta = document.createElement("button");
+      cta.type = "button";
+      cta.className = "ptv2-sprints-empty-cta";
+      cta.innerHTML = `<span>＋</span> Start your first sprint`;
+      cta.addEventListener("click", openInlineCreate);
+      list.appendChild(cta);
+      return;
+    }
+
     for (const s of _sprints) {
       const chip = document.createElement("button");
       chip.type = "button";
-      chip.className = "ptv2-sprint-chip" + (_sprintSel.has(s.id) ? " is-active" : "") + (s.is_active ? " is-running" : "");
-      const n = counts.get(s.id) || 0;
-      chip.innerHTML = `<span class="dot"></span>${esc(s.name)}<span class="count">${n}</span>`;
-      chip.addEventListener("click", () => {
+      const lifecycle = _sprintLifecycleClass(s, today);
+      chip.className = "ptv2-sprint-chip "
+        + lifecycle
+        + (_sprintSel.has(s.id) ? " is-selected" : "");
+      chip.dataset.sprintId = s.id;
+      const total = totals.get(s.id) || 0;
+      const done  = dones.get(s.id) || 0;
+      const pct   = total ? Math.round((done / total) * 100) : 0;
+      chip.innerHTML = `
+        <div class="sc-top">
+          <span class="sc-dot" aria-hidden="true"></span>
+          <span class="sc-name" title="${esc(s.name)}">${esc(s.name)}</span>
+        </div>
+        <div class="sc-meta">
+          <span class="sc-when">${esc(_sprintWhenLabel(s, today))}</span>
+          <span class="sc-count">${done}/${total}</span>
+        </div>
+        <span class="sc-bar"><span class="sc-bar-fill" style="width:${pct}%"></span></span>
+        <button type="button" class="sc-menu" aria-label="Sprint options" title="Options">⋮</button>`;
+      // Tap chip body = toggle filter.
+      chip.addEventListener("click", (e) => {
+        if (e.target.closest(".sc-menu")) return;
         if (_sprintSel.has(s.id)) _sprintSel.delete(s.id);
         else _sprintSel.add(s.id);
         renderSprintsBar();
         applySprintFilter();
       });
+      chip.querySelector(".sc-menu").addEventListener("click", (e) => {
+        e.stopPropagation();
+        openSprintMenu(s, chip.querySelector(".sc-menu"));
+      });
       list.appendChild(chip);
     }
-    if (window.feather) window.feather.replace();
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ptv2-sprint-add";
+    add.innerHTML = `＋ Sprint`;
+    add.addEventListener("click", openInlineCreate);
+    list.appendChild(add);
   }
+
+  /* ───── inline create form ──────────────────────────────────── */
+
+  function openInlineCreate() {
+    const form = document.getElementById("ptv2-sprint-new");
+    if (!form) return;
+    form.hidden = false;
+    // Default dates: today + 2 weeks (matches typical sprint length).
+    const start = form.querySelector('[name="starts_on"]');
+    const end   = form.querySelector('[name="ends_on"]');
+    if (start && !start.value) start.value = new Date().toISOString().slice(0, 10);
+    if (end && !end.value) {
+      const e = new Date(); e.setDate(e.getDate() + 13);
+      end.value = e.toISOString().slice(0, 10);
+    }
+    form.querySelector('[name="name"]')?.focus();
+  }
+  function closeInlineCreate() {
+    const form = document.getElementById("ptv2-sprint-new");
+    if (form) { form.hidden = true; form.reset(); }
+  }
+  document.addEventListener("DOMContentLoaded", () => {
+    const form = document.getElementById("ptv2-sprint-new");
+    if (!form) return;
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      await createSprint({
+        name:      (fd.get("name") || "").toString().trim(),
+        starts_on: fd.get("starts_on") || null,
+        ends_on:   fd.get("ends_on") || null,
+      });
+      closeInlineCreate();
+    });
+    document.getElementById("ptv2-sn-cancel")?.addEventListener("click", closeInlineCreate);
+  });
+
+  /* ───── per-chip ⋮ menu ─────────────────────────────────────── */
+
+  function openSprintMenu(s, anchor) {
+    const menu = document.getElementById("ptv2-sprint-menu");
+    if (!menu) return;
+    menu.innerHTML = "";
+    menu.dataset.sprintId = s.id;
+
+    // Edit (toggles an inline editor row in the menu itself)
+    const editBtn = makeMenuBtn("Edit name & dates", "✎");
+    editBtn.addEventListener("click", () => renderMenuEditor(menu, s));
+    menu.appendChild(editBtn);
+
+    const activeBtn = makeMenuBtn(s.is_active ? "Mark as inactive" : "Mark as active",
+                                  s.is_active ? "●" : "○");
+    activeBtn.addEventListener("click", async () => {
+      await updateSprint(s.id, { is_active: !s.is_active });
+      closeSprintMenu();
+    });
+    menu.appendChild(activeBtn);
+
+    menu.appendChild(Object.assign(document.createElement("div"), { className: "sep" }));
+
+    const delBtn = makeMenuBtn(`Delete "${s.name}"`, "🗑");
+    delBtn.classList.add("danger");
+    delBtn.addEventListener("click", async () => {
+      if (!confirm(`Delete sprint "${s.name}"? Tasks keep their pointer; restore later from Supabase.`)) return;
+      await deleteSprint(s.id);
+      closeSprintMenu();
+    });
+    menu.appendChild(delBtn);
+
+    // Position under the anchor button.
+    const rect = anchor.getBoundingClientRect();
+    menu.hidden = false;
+    // Wait for layout to know menu size.
+    requestAnimationFrame(() => {
+      const mw = menu.offsetWidth;
+      const mh = menu.offsetHeight;
+      let left = rect.right - mw + window.scrollX;
+      if (left < 8) left = 8;
+      let top = rect.bottom + 6 + window.scrollY;
+      if (top + mh > window.scrollY + window.innerHeight - 8) {
+        top = rect.top - mh - 6 + window.scrollY;
+      }
+      menu.style.left = `${left}px`;
+      menu.style.top  = `${top}px`;
+    });
+  }
+  function closeSprintMenu() {
+    const menu = document.getElementById("ptv2-sprint-menu");
+    if (menu) menu.hidden = true;
+  }
+  function makeMenuBtn(label, icon) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = `<span style="opacity:0.6;width:16px;text-align:center">${icon}</span><span>${esc(label)}</span>`;
+    return b;
+  }
+  function renderMenuEditor(menu, s) {
+    // Replace the menu body with an inline editor for this sprint.
+    menu.innerHTML = "";
+    const row = document.createElement("div");
+    row.className = "sm-row editor";
+    row.innerHTML = `
+      <input type="text" name="name" value="${esc(s.name)}" maxlength="80" placeholder="Name">
+      <input type="date" name="starts_on" value="${esc(s.starts_on || '')}">
+      <input type="date" name="ends_on"   value="${esc(s.ends_on   || '')}">
+      <div class="sm-actions">
+        <button type="button" data-action="cancel" style="background:transparent;border:1px solid var(--ptv2-border);color:var(--ptv2-text-mute);border-radius:6px;cursor:pointer">Cancel</button>
+        <button type="button" data-action="save"   style="background:var(--ptv2-primary);color:#fff;border:0;border-radius:6px;cursor:pointer">Save</button>
+      </div>`;
+    menu.appendChild(row);
+    row.querySelector('[data-action="cancel"]').addEventListener("click", closeSprintMenu);
+    row.querySelector('[data-action="save"]').addEventListener("click", async () => {
+      const patch = {
+        name:      row.querySelector('[name="name"]').value.trim(),
+        starts_on: row.querySelector('[name="starts_on"]').value || null,
+        ends_on:   row.querySelector('[name="ends_on"]').value || null,
+      };
+      if (!patch.name) { alert("Name required"); return; }
+      await updateSprint(s.id, patch);
+      closeSprintMenu();
+    });
+  }
+
+  // Click anywhere outside the menu closes it.
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("ptv2-sprint-menu");
+    if (!menu || menu.hidden) return;
+    if (e.target.closest("#ptv2-sprint-menu")) return;
+    if (e.target.closest(".sc-menu")) return;       // own trigger handled separately
+    closeSprintMenu();
+  });
 
   // Hide / show task rows by sprint_id. Returns visible count.
   function applySprintFilter() {
@@ -521,59 +732,21 @@
     renderSprintsBar();
   }
 
-  /* ───── inline sprint manager ───────────────────────────────── */
+  /* ───── sprint CRUD ─────────────────────────────────────────── */
 
-  function openSprintManager() {
-    const sheet = document.getElementById("ptv2-spm");
-    if (!sheet) return;
-    sheet.hidden = false;
-    renderSprintManager();
-  }
-  function closeSprintManager() {
-    const sheet = document.getElementById("ptv2-spm");
-    if (sheet) sheet.hidden = true;
-  }
-  function renderSprintManager() {
-    const body = document.getElementById("ptv2-spm-body");
-    if (!body) return;
-    body.innerHTML = "";
-    for (const s of _sprints) {
-      const row = document.createElement("div");
-      row.className = "ptv2-spm-row";
-      row.dataset.sprintId = s.id;
-      row.innerHTML = `
-        <input type="text" value="${esc(s.name)}" data-field="name" maxlength="80">
-        <input type="date" value="${esc(s.starts_on || "")}" data-field="starts_on">
-        <input type="date" value="${esc(s.ends_on || "")}" data-field="ends_on">
-        <button type="button" class="spm-act is-active-toggle ${s.is_active ? "is-on" : ""}"
-                title="Active sprint (drives default picker order)">${s.is_active ? "●" : "○"}</button>
-        <button type="button" class="spm-act danger" title="Delete">×</button>`;
-      row.querySelectorAll("input").forEach((inp) => {
-        const commit = () => updateSprint(s.id, { [inp.dataset.field]: inp.value });
-        inp.addEventListener("change", commit);
-        inp.addEventListener("blur", commit);
-      });
-      row.querySelector(".is-active-toggle").addEventListener("click", () => updateSprint(s.id, { is_active: !s.is_active }));
-      row.querySelector(".danger").addEventListener("click", () => {
-        if (confirm(`Delete sprint "${s.name}"? Tasks keep their pointer.`)) deleteSprint(s.id);
-      });
-      body.appendChild(row);
-    }
-    const add = document.createElement("button");
-    add.type = "button";
-    add.className = "ptv2-spm-add";
-    add.textContent = "+ Add sprint";
-    add.addEventListener("click", () => createSprint());
-    body.appendChild(add);
-  }
-
-  async function createSprint(name) {
+  // Accepts either a plain string (legacy callers) or {name, starts_on,
+  // ends_on, is_active}. Empty name → server auto-numbers "Sprint N".
+  async function createSprint(arg) {
+    const body = (typeof arg === "string" || arg == null)
+      ? { project_id: PROJECT_ID, name: arg || "" }
+      : Object.assign({ project_id: PROJECT_ID }, arg);
     const r = await _fetch("/api/sprints", {
       method: "POST", headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ project_id: PROJECT_ID, name: name || "" }),
+      body: JSON.stringify(body),
     });
     if (r.ok) await refreshSprints();
+    else alert("Could not create sprint");
   }
   async function updateSprint(id, patch) {
     const r = await _fetch(`/api/sprints/${id}`, {
@@ -598,8 +771,8 @@
       const j = await r.json();
       _sprints = j.sprints || [];
       renderSprintsBar();
-      renderSprintManager();
       populateSprintPickers();
+      if (document.body.dataset.activeTab === "sprints") renderSprintsTab();
     } catch (_) {}
   }
   function renderTree() {
@@ -977,10 +1150,6 @@
     updateHeaderCounts();
     await fetchTree();        // hierarchy + sprints in one round trip
     setTab(activeTab(), { skipHash: true });
-
-    document.getElementById("ptv2-sprints-add")?.addEventListener("click", () => createSprint());
-    document.getElementById("ptv2-sprints-mgr")?.addEventListener("click", openSprintManager);
-    document.getElementById("ptv2-spm-close")?.addEventListener("click", closeSprintManager);
 
     if (window.feather) window.feather.replace();
   });

@@ -120,120 +120,193 @@
 .ptv2-menu-sep { height: 1px; background: var(--ptv2-border); margin: 4px 4px; }
 
 /* ════════════════════════════════════════════════════════════════
-   SPRINTS BAR — horizontal chip row above the tabs
+   SPRINTS BAR (v2) — rich chips, inline create, per-chip ⋮ menu
    ════════════════════════════════════════════════════════════════ */
 
 .ptv2-sprints-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 14px;
+  padding: 10px 14px;
   background: var(--ptv2-surface);
   border-bottom: 1px solid var(--ptv2-border);
   overflow-x: auto; scrollbar-width: none;
 }
-.ptv2-sprints-bar::-webkit-scrollbar { display: none; }
 .ptv2-sprints-bar[hidden] { display: none; }
-.ptv2-sprints-label {
-  font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--ptv2-text-mute);
-  white-space: nowrap;
-}
+.ptv2-sprints-bar::-webkit-scrollbar { display: none; }
+
 .ptv2-sprints-list {
-  display: flex; gap: 6px; flex: 1; overflow-x: auto; scrollbar-width: none;
+  display: flex; gap: 8px; align-items: stretch;
+  overflow-x: auto; scrollbar-width: none;
 }
 .ptv2-sprints-list::-webkit-scrollbar { display: none; }
+
+/* ── Rich chip — two lines on the chip ────────────────────────── */
 .ptv2-sprint-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 11px; border-radius: 999px;
+  position: relative;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 36px 8px 12px;
+  min-width: 168px; max-width: 220px;
+  border-radius: 12px;
   background: var(--ptv2-surface); border: 1px solid var(--ptv2-border);
-  color: var(--ptv2-text); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
-  white-space: nowrap; transition: background .12s, border-color .12s;
+  color: var(--ptv2-text);
+  cursor: pointer; font: inherit;
+  text-align: left;
+  transition: background .12s, border-color .12s, transform .08s;
 }
-.ptv2-sprint-chip:hover { border-color: var(--ptv2-primary); color: var(--ptv2-primary); }
-.ptv2-sprint-chip.is-active {
+.ptv2-sprint-chip:hover  { border-color: var(--ptv2-primary); }
+.ptv2-sprint-chip:active { transform: scale(0.985); }
+.ptv2-sprint-chip.is-selected {
   background: var(--ptv2-primary); border-color: var(--ptv2-primary); color: #fff;
 }
-.ptv2-sprint-chip .dot {
-  width: 6px; height: 6px; border-radius: 50%;
+.ptv2-sprint-chip.is-running { border-color: var(--ptv2-success); }
+.ptv2-sprint-chip.is-selected.is-running { border-color: var(--ptv2-success); background: var(--ptv2-success); }
+
+.ptv2-sprint-chip .sc-top {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700;
+  white-space: nowrap; overflow: hidden;
+}
+.ptv2-sprint-chip .sc-name {
+  flex: 1; overflow: hidden; text-overflow: ellipsis;
+}
+.ptv2-sprint-chip .sc-dot {
+  flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%;
   background: var(--ptv2-text-soft);
 }
-.ptv2-sprint-chip.is-running .dot { background: var(--ptv2-success); }
-.ptv2-sprint-chip.is-active .dot { background: #fff; }
-.ptv2-sprint-chip .count {
-  display: inline-block; min-width: 16px; padding: 0 5px;
-  background: var(--ptv2-border); color: var(--ptv2-text);
-  border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 14px;
-}
-.ptv2-sprint-chip.is-active .count { background: rgba(255,255,255,0.25); color: #fff; }
-.ptv2-sprints-add,
-.ptv2-sprints-mgr {
-  flex: 0 0 auto; padding: 5px 10px; border-radius: 999px;
-  background: var(--ptv2-primary-soft); color: var(--ptv2-primary);
-  border: 1px dashed var(--ptv2-primary); cursor: pointer;
-  font: inherit; font-size: 11px; font-weight: 700; white-space: nowrap;
-}
-.ptv2-sprints-mgr {
-  width: 30px; height: 30px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--ptv2-border); background: var(--ptv2-surface);
-  color: var(--ptv2-text-mute);
-}
-.ptv2-sprints-mgr:hover { color: var(--ptv2-primary); border-color: var(--ptv2-primary); }
-.ptv2-sprints-mgr i { width: 14px; height: 14px; }
+.ptv2-sprint-chip.is-running .sc-dot      { background: var(--ptv2-success); }
+.ptv2-sprint-chip.is-past    .sc-dot      { background: var(--ptv2-text-soft); }
+.ptv2-sprint-chip.is-upcoming .sc-dot     { background: var(--ptv2-primary); }
+.ptv2-sprint-chip.is-selected .sc-dot     { background: #fff; }
 
-/* Sprint manager popover — desktop centred modal, mobile bottom sheet. */
-.ptv2-spm {
-  position: fixed;
-  left: 0; right: 0; bottom: 0; top: auto;
-  background: var(--ptv2-surface);
-  border-top-left-radius: 18px; border-top-right-radius: 18px;
-  max-height: 80vh; overflow: auto;
-  z-index: 100; box-shadow: 0 -10px 30px rgba(0,0,0,0.2);
+.ptv2-sprint-chip .sc-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; opacity: 0.85;
+  font-variant-numeric: tabular-nums;
 }
-.ptv2-spm[hidden] { display: none; }
-@media (min-width: 900px) {
-  .ptv2-spm {
-    left: 50%; right: auto; top: 10vh; bottom: auto;
-    transform: translateX(-50%);
-    width: min(620px, 92vw); border-radius: 16px; max-height: 80vh;
-  }
+.ptv2-sprint-chip .sc-when {
+  white-space: nowrap;
 }
-.ptv2-spm header {
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 16px; border-bottom: 1px solid var(--ptv2-border);
+.ptv2-sprint-chip .sc-count {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  font-weight: 600;
 }
-.ptv2-spm header h3 { flex: 1; margin: 0; font-size: 16px; font-weight: 700; }
-.ptv2-spm header button {
-  width: 32px; height: 32px; border-radius: 8px; border: 0;
-  background: transparent; font-size: 24px; cursor: pointer; color: var(--ptv2-text-mute);
+.ptv2-sprint-chip .sc-bar {
+  position: absolute; left: 12px; right: 30px; bottom: 6px;
+  height: 3px; border-radius: 2px;
+  background: rgba(0,0,0,0.08);
 }
-.ptv2-spm-body { padding: 12px 16px; }
-.ptv2-spm-row {
-  display: grid;
-  grid-template-columns: 1fr 110px 110px 30px 30px;
-  gap: 8px; align-items: center;
-  padding: 8px 0; border-bottom: 1px solid var(--ptv2-border);
+.ptv2-sprint-chip.is-selected .sc-bar { background: rgba(255,255,255,0.25); }
+.ptv2-sprint-chip .sc-bar-fill {
+  display: block; height: 100%; border-radius: 2px;
+  background: var(--ptv2-primary);
 }
-.ptv2-spm-row:last-child { border-bottom: 0; }
-.ptv2-spm-row input[type="text"],
-.ptv2-spm-row input[type="date"] {
-  padding: 7px 10px; border-radius: 8px;
+.ptv2-sprint-chip.is-selected .sc-bar-fill { background: #fff; }
+
+/* The 3-dot menu trigger sitting on the chip's right edge. */
+.ptv2-sprint-chip .sc-menu {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 24px; height: 24px; border: 0; border-radius: 6px;
+  background: transparent; color: inherit; opacity: 0.55;
+  cursor: pointer; font-size: 16px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ptv2-sprint-chip .sc-menu:hover { opacity: 1; background: rgba(0,0,0,0.05); }
+.ptv2-sprint-chip.is-selected .sc-menu:hover { background: rgba(255,255,255,0.18); }
+
+/* ── + Sprint pill (always at the end of the list) ───────────── */
+.ptv2-sprint-add {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 999px;
+  background: var(--ptv2-primary-soft); color: var(--ptv2-primary);
+  border: 1px dashed var(--ptv2-primary);
+  cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
+  white-space: nowrap;
+  align-self: center;
+}
+.ptv2-sprint-add:hover { background: var(--ptv2-primary); color: #fff; border-style: solid; }
+
+/* Empty-state CTA (replaces the whole bar contents when zero sprints). */
+.ptv2-sprints-empty-cta {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 999px;
+  background: transparent; color: var(--ptv2-text-mute);
+  border: 1px dashed var(--ptv2-border);
+  cursor: pointer; font: inherit; font-size: 13px;
+}
+.ptv2-sprints-empty-cta:hover {
+  color: var(--ptv2-primary); border-color: var(--ptv2-primary);
+}
+
+/* ── Inline create form ──────────────────────────────────────── */
+.ptv2-sprint-new {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px 14px;
+  background: var(--ptv2-primary-soft);
+  border-bottom: 1px solid var(--ptv2-border);
+}
+.ptv2-sprint-new[hidden] { display: none; }
+.ptv2-sn-name {
+  flex: 1 1 200px; min-width: 0;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--ptv2-border); background: var(--ptv2-surface);
+  color: var(--ptv2-text); font: inherit; font-size: 14px;
+}
+.ptv2-sn-date {
+  padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--ptv2-border); background: var(--ptv2-surface);
   color: var(--ptv2-text); font: inherit; font-size: 13px;
-  min-width: 0;
 }
-.ptv2-spm-row .spm-act {
-  background: transparent; border: 0; cursor: pointer;
-  color: var(--ptv2-text-mute); font-size: 18px;
-  display: inline-flex; align-items: center; justify-content: center;
+.ptv2-sn-cancel,
+.ptv2-sn-create {
+  padding: 8px 14px; border-radius: 8px; font: inherit; font-size: 13px;
+  font-weight: 600; cursor: pointer; border: 1px solid transparent;
 }
-.ptv2-spm-row .spm-act.is-on { color: var(--ptv2-success); }
-.ptv2-spm-row .spm-act.danger:hover { color: var(--ptv2-danger); }
-.ptv2-spm-add {
-  margin-top: 12px; padding: 10px 12px; width: 100%;
-  background: var(--ptv2-primary-soft); color: var(--ptv2-primary);
-  border: 1px dashed var(--ptv2-primary); border-radius: 10px;
-  font-weight: 700; cursor: pointer;
+.ptv2-sn-cancel {
+  background: transparent; color: var(--ptv2-text-mute);
+  border-color: var(--ptv2-border);
 }
+.ptv2-sn-cancel:hover { color: var(--ptv2-text); }
+.ptv2-sn-create {
+  background: var(--ptv2-primary); color: #fff;
+}
+.ptv2-sn-create:hover { background: #4f46e5; }
+
+/* ── Per-chip ⋮ popover menu ─────────────────────────────────── */
+.ptv2-sprint-menu {
+  position: absolute; z-index: 90;
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+  min-width: 200px; padding: 6px;
+  font-size: 14px;
+}
+.ptv2-sprint-menu[hidden] { display: none; }
+.ptv2-sprint-menu button,
+.ptv2-sprint-menu .sm-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 8px 10px;
+  border: 0; background: transparent; color: var(--ptv2-text);
+  border-radius: 6px; cursor: pointer;
+  font: inherit; text-align: left;
+}
+.ptv2-sprint-menu button:hover { background: var(--ptv2-primary-soft); color: var(--ptv2-primary); }
+.ptv2-sprint-menu .sm-row.editor {
+  flex-direction: column; align-items: stretch;
+  background: var(--ptv2-primary-soft); margin: 4px 0;
+  padding: 8px; gap: 6px;
+}
+.ptv2-sprint-menu .sm-row.editor input {
+  padding: 7px 9px; border-radius: 6px; border: 1px solid var(--ptv2-border);
+  background: var(--ptv2-surface); color: var(--ptv2-text); font: inherit; font-size: 13px;
+}
+.ptv2-sprint-menu .sm-row.editor .sm-actions {
+  display: flex; gap: 6px; justify-content: flex-end;
+}
+.ptv2-sprint-menu .sm-row.editor .sm-actions button {
+  padding: 6px 10px; font-size: 12px;
+}
+.ptv2-sprint-menu .danger:hover { background: rgba(239,68,68,0.1); color: var(--ptv2-danger); }
+.ptv2-sprint-menu .sep { height: 1px; background: var(--ptv2-border); margin: 4px 6px; padding: 0; }
 
 /* ════════════════════════════════════════════════════════════════
    TAB BAR — sticky underneath header

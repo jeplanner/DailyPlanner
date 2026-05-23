@@ -55,29 +55,26 @@
     </div>
   </header>
 
-  <!-- ═══════════ SPRINTS BAR ═══════════
-       Project-wide sprint chips. Click to filter; long-press to
-       manage (rename / dates / archive). Hidden until at least one
-       sprint exists for the project. -->
+  <!-- ═══════════ SPRINTS BAR (v2) ═══════════
+       Rich chips with status / dates / progress, inline create form,
+       per-chip ⋮ menu for rename/active/delete. Empty state collapses
+       to a single subtle CTA. -->
   <div class="ptv2-sprints-bar" id="ptv2-sprints-bar" hidden>
-    <span class="ptv2-sprints-label">Sprints</span>
     <div class="ptv2-sprints-list" id="ptv2-sprints-list"></div>
-    <button type="button" class="ptv2-sprints-add" id="ptv2-sprints-add"
-            title="Create a new sprint">+ Sprint</button>
-    <button type="button" class="ptv2-sprints-mgr" id="ptv2-sprints-mgr"
-            title="Manage sprints" aria-label="Manage sprints">
-      <i data-feather="settings"></i>
-    </button>
   </div>
 
-  <!-- Inline sprint manager sheet — popovered, no full-screen modal. -->
-  <div class="ptv2-spm" id="ptv2-spm" hidden role="dialog" aria-label="Manage sprints">
-    <header>
-      <h3>Sprints</h3>
-      <button type="button" id="ptv2-spm-close" aria-label="Close">×</button>
-    </header>
-    <div class="ptv2-spm-body" id="ptv2-spm-body"></div>
-  </div>
+  <!-- Inline create form. Hidden until + Sprint is tapped. -->
+  <form class="ptv2-sprint-new" id="ptv2-sprint-new" hidden autocomplete="off">
+    <input type="text" name="name" placeholder="Sprint name (auto-numbered if blank)"
+           class="ptv2-sn-name" maxlength="80">
+    <input type="date" name="starts_on" class="ptv2-sn-date" title="Start date (optional)">
+    <input type="date" name="ends_on"   class="ptv2-sn-date" title="End date (optional)">
+    <button type="button" class="ptv2-sn-cancel" id="ptv2-sn-cancel">Cancel</button>
+    <button type="submit" class="ptv2-sn-create">Create</button>
+  </form>
+
+  <!-- Per-chip context menu. Anchored under the chip when ⋮ is tapped. -->
+  <div class="ptv2-sprint-menu" id="ptv2-sprint-menu" hidden role="menu"></div>
 
   <!-- ═══════════ TAB BAR (sticky) ═══════════ -->
   <nav class="ptv2-tabs" role="tablist" aria-label="Project views">
@@ -211,7 +208,7 @@
   <section class="ptv2-panel ptv2-panel--sprints" id="panel-sprints" role="tabpanel" data-tab="sprints" hidden>
     <div class="ptv2-sprints-empty" id="ptv2-sprints-empty" hidden>
       <i data-feather="flag" style="width:28px;height:28px;opacity:0.4"></i>
-      <p>No sprints yet. <button type="button" onclick="document.getElementById('ptv2-sprints-add')?.click()" style="color:var(--ptv2-primary);background:transparent;border:0;cursor:pointer;font-weight:600">Create your first sprint</button> to start grouping tasks.</p>
+      <p>No sprints yet. <button type="button" onclick="document.querySelector('.ptv2-sprints-empty-cta, .ptv2-sprint-add')?.click()" style="color:var(--ptv2-primary);background:transparent;border:0;cursor:pointer;font-weight:600">Create your first sprint</button> to start grouping tasks.</p>
     </div>
     <div class="ptv2-sprints-board" id="ptv2-sprints-board"></div>
   </section>
