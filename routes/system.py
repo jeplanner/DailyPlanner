@@ -110,14 +110,15 @@ def badge_count():
     total = 0
 
     try:
+        # inbox_links hard-deletes (no soft-delete column at all), so
+        # a plain status filter is enough.
         rows = get(
             "inbox_links",
             params={
-                "user_id":     f"eq.{user_id}",
-                "status":      "eq.Unread",
-                "is_archived": "eq.false",
-                "select":      "id",
-                "limit":       200,
+                "user_id": f"eq.{user_id}",
+                "status":  "eq.Unread",
+                "select":  "id",
+                "limit":   200,
             },
         ) or []
         total += len(rows)
