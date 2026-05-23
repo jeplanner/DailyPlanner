@@ -53,19 +53,33 @@ create unique index if not exists ux_epics_default_per_initiative
     where is_default = true and is_deleted = false;
 
 -- Backfill: ensure every active project has the trio.
+-- NOTE on the casts: in some installs `projects.user_id` is text while
+-- `objectives.user_id` (and siblings) are uuid. In raw SQL Postgres
+-- won't auto-cast text → uuid, so we cast explicitly. The cast is a
+-- no-op when the source is already uuid, so it's safe either way.
 do $$
 declare
-    p        record;
-    obj_id   uuid;
-    kr_id    uuid;
-    init_id  uuid;
-    epic_id  uuid;
+    p           record;
+    uid_uuid    uuid;
+    obj_id      uuid;
+    kr_id       uuid;
+    init_id     uuid;
+    epic_id     uuid;
 begin
     for p in
         select project_id, user_id
         from projects
         where coalesce(is_archived, false) = false
     loop
+        -- One conversion per project; reused for all four inserts.
+        begin
+            uid_uuid := p.user_id::uuid;
+        exception when invalid_text_representation then
+            -- user_id isn't a uuid string — skip this project rather
+            -- than blow up the whole backfill.
+            continue;
+        end;
+
         -- Skip if a default objective is already present for this project.
         select id into obj_id
           from objectives
@@ -76,7 +90,7 @@ begin
 
         if obj_id is null then
             insert into objectives (user_id, project_id, title, is_default, status, time_horizon)
-                values (p.user_id, p.project_id, 'Inbox', true, 'active', 'ongoing')
+                values (uid_uuid, p.project_id, 'Inbox', true, 'active', 'ongoing')
                 returning id into obj_id;
         end if;
 
@@ -89,7 +103,7 @@ begin
 
         if kr_id is null then
             insert into key_results (user_id, objective_id, title, target_value, unit, is_default)
-                values (p.user_id, obj_id, 'Catch-all', 100, '%', true)
+                values (uid_uuid, obj_id, 'Catch-all', 100, '%', true)
                 returning id into kr_id;
         end if;
 
@@ -102,7 +116,7 @@ begin
 
         if init_id is null then
             insert into initiatives (user_id, key_result_id, title, is_default, status)
-                values (p.user_id, kr_id, 'Inbox', true, 'active')
+                values (uid_uuid, kr_id, 'Inbox', true, 'active')
                 returning id into init_id;
         end if;
 
@@ -115,7 +129,7 @@ begin
 
         if epic_id is null then
             insert into epics (user_id, initiative_id, title, is_default, status)
-                values (p.user_id, init_id, 'Inbox', true, 'active');
+                values (uid_uuid, init_id, 'Inbox', true, 'active');
         end if;
     end loop;
 end $$;
