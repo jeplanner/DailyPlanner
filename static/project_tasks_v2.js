@@ -237,11 +237,12 @@
 
   /* ───── TREE tab ────────────────────────────────────────────── */
 
-  // Single active filter for the nested tree — click a row to set,
-  // click the same row again (or the Clear chip) to remove. The old
-  // multi-checkbox model was double-duty (filter + scope) and confusing
-  // because "no boxes checked" looked identical to "all checked".
-  let _treeFilter = null;   // { type: "okr"|"init"|"epic", id }
+  // Active filter for the nested tree. Default tap = replace the whole
+  // selection (covers the common case in one tap). Power gesture —
+  // Shift/Ctrl/⌘-click on desktop or long-press on mobile — toggles
+  // a row's membership so users can build up an "OKR A + OKR B"
+  // union. Empty array = no filter, show every task.
+  let _treeFilter = [];   // [{ type: "okr"|"init"|"epic", id }, ...]
   let _treeData = [];
   let _sprints = [];                 // [{id,name,starts_on,ends_on,is_active,...}]
   let _sprintSel = new Set();        // checked sprint ids (multi-select filter)
@@ -954,14 +955,22 @@
     addBtn.textContent = "+ New OKR";
     addBtn.addEventListener("click", () => promptCreateOkr());
     addRow.appendChild(addBtn);
-    if (_treeFilter) {
+    if (_treeFilter.length) {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "ptv2-tn-filter-chip";
       chip.innerHTML = `<span>Filtered: ${esc(filterChipLabel())}</span><span aria-hidden="true">×</span>`;
       chip.title = "Clear filter — show all tasks";
-      chip.addEventListener("click", () => { _treeFilter = null; renderTree(); });
+      chip.addEventListener("click", () => { _treeFilter = []; renderTree(); });
       addRow.appendChild(chip);
+      // Tiny gesture hint — only when nothing is selected yet would be
+      // ideal, but showing it next to the active chip is what surfaces
+      // the multi-select capability at the moment users are most
+      // likely to discover it.
+      const hint = document.createElement("span");
+      hint.className = "ptv2-tn-filter-hint";
+      hint.textContent = "Shift+click or long-press to add";
+      addRow.appendChild(hint);
     }
     host.appendChild(addRow);
 
@@ -1006,7 +1015,7 @@
         toggleSet(_treeExpand.okrs, o.id);
         renderTree();
       },
-      onRowSelect: () => setTreeFilter("okr", o.id),
+      onRowSelect: (opts) => setTreeFilter("okr", o.id, opts),
     });
     wrap.appendChild(row);
 
@@ -1039,7 +1048,7 @@
         toggleSet(_treeExpand.inits, it.id);
         renderTree();
       },
-      onRowSelect: () => setTreeFilter("init", it.id),
+      onRowSelect: (opts) => setTreeFilter("init", it.id, opts),
     });
     wrap.appendChild(row);
 
@@ -1074,7 +1083,7 @@
         toggleSet(_treeExpand.epics, ep.id);
         renderTree();
       },
-      onRowSelect: () => setTreeFilter("epic", ep.id),
+      onRowSelect: (opts) => setTreeFilter("epic", ep.id, opts),
       dropTarget: { type: "epic", epic: ep },
     });
     wrap.appendChild(row);
@@ -1178,14 +1187,20 @@
 
     // Row click semantics:
     //   - Task row → open detail panel.
-    //   - Branch row → set this node as the filter (toggle off if it's
-    //     already the active filter). Chevron click handled separately.
+    //   - Branch row, plain tap → replace the active filter with this row
+    //     (or clear it if it's already the only selected scope).
+    //   - Branch row, Shift/Ctrl/⌘-click OR long-press → toggle this
+    //     row's membership in the existing selection (multi-scope).
     row.addEventListener("click", (e) => {
       if (e.target.closest(".ptv2-tn-chev")) return;
       if (e.target.closest(".ptv2-tn-check")) return;
       if (isTask && onRowClick) { onRowClick(); return; }
-      if (onRowSelect) onRowSelect();
+      if (onRowSelect) {
+        const extend = !!(e.shiftKey || e.ctrlKey || e.metaKey);
+        onRowSelect({ extend });
+      }
     });
+    if (!isTask && onRowSelect) attachLongPressExtend(row, onRowSelect);
 
     if (dropTarget) attachTreeNodeDropTarget(row, dropTarget);
     return row;
@@ -1203,6 +1218,46 @@
   function toggleSet(set, id) {
     if (set.has(id)) set.delete(id); else set.add(id);
     saveTreeExpand();
+  }
+
+  // Long-press → multi-select on touch devices. Mirrors the
+  // Shift/Ctrl-click gesture available with a real keyboard. 450ms
+  // threshold matches the OS conventions for context-menu long-press,
+  // so it doesn't accidentally fire on a normal tap. Cancels on
+  // movement > ~10px so a scroll-start doesn't trigger it.
+  function attachLongPressExtend(row, onRowSelect) {
+    if (!("ontouchstart" in window) && !navigator.maxTouchPoints) return;
+    let timer = null, startX = 0, startY = 0, fired = false;
+    const cancel = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+    row.addEventListener("touchstart", (e) => {
+      if (!e.touches || e.touches.length !== 1) return;
+      fired = false;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      timer = setTimeout(() => {
+        fired = true;
+        if (navigator.vibrate) { try { navigator.vibrate(8); } catch (_) {} }
+        onRowSelect({ extend: true });
+      }, 450);
+    }, { passive: true });
+    row.addEventListener("touchmove", (e) => {
+      if (!timer || !e.touches || !e.touches.length) return;
+      const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
+      if (Math.hypot(dx, dy) > 10) cancel();
+    }, { passive: true });
+    row.addEventListener("touchend", () => {
+      // If the long-press fired, swallow the subsequent click so we
+      // don't also replace the selection.
+      if (fired) {
+        const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+        row.addEventListener("click", swallow, { capture: true, once: true });
+      }
+      cancel();
+    });
+    row.addEventListener("touchcancel", cancel);
   }
 
   function attachTreeNodeDropTarget(row, dropTarget) {
@@ -1381,49 +1436,70 @@
       list.appendChild(tile);
     });
     if (cnt) cnt.textContent = String(visible.length);
-    if (hint) hint.textContent = _treeFilter ? `Filtered to ${_treeFilter.type}` : "All tasks in project";
+    if (hint) hint.textContent = _treeFilter.length ? `Filtered to ${_treeFilter.length} scope${_treeFilter.length === 1 ? "" : "s"}` : "All tasks in project";
   }
 
-  // Single-node filter: a task is visible if it sits inside the
-  // selected node's subtree. No filter → everything passes.
+  // A task is visible if ANY selected scope matches it. No selection
+  // = everything passes. Per-scope hierarchy walk for OKR-level
+  // selections so deeply-linked tasks (epic/init under that OKR) also
+  // count, not just tasks tagged at the OKR level.
   function taskMatchesFilter(t) {
-    if (!_treeFilter) return true;
-    if (_treeFilter.type === "epic") return t.epicId === _treeFilter.id;
-    if (_treeFilter.type === "init") return t.initiativeId === _treeFilter.id;
-    if (_treeFilter.type === "okr") {
-      if (t.objectiveId === _treeFilter.id) return true;
-      // Walk the hierarchy for tasks linked at deeper levels but whose
-      // initiative/epic descends from this OKR.
+    if (!_treeFilter.length) return true;
+    return _treeFilter.some((sel) => _taskInScope(t, sel));
+  }
+  function _taskInScope(t, sel) {
+    if (sel.type === "epic") return t.epicId === sel.id;
+    if (sel.type === "init") return t.initiativeId === sel.id;
+    if (sel.type === "okr") {
+      if (t.objectiveId === sel.id) return true;
       const idx = _hierIndex;
       if (!idx) return false;
       const epIdx = t.epicId ? idx.epicsById.get(t.epicId) : null;
-      if (epIdx && epIdx._okr && epIdx._okr.id === _treeFilter.id) return true;
+      if (epIdx && epIdx._okr && epIdx._okr.id === sel.id) return true;
       const itIdx = t.initiativeId ? idx.initiativesById.get(t.initiativeId) : null;
-      if (itIdx && itIdx._okr && itIdx._okr.id === _treeFilter.id) return true;
+      if (itIdx && itIdx._okr && itIdx._okr.id === sel.id) return true;
       return false;
     }
     return true;
   }
-  function setTreeFilter(type, id) {
-    // Toggle off if the user re-taps the same node.
-    if (_treeFilter && _treeFilter.type === type && _treeFilter.id === id) {
-      _treeFilter = null;
+  function setTreeFilter(type, id, opts) {
+    const extend = !!(opts && opts.extend);
+    const idx = _treeFilter.findIndex((s) => s.type === type && s.id === id);
+    if (extend) {
+      // Power gesture: toggle this row in/out of the existing set.
+      if (idx >= 0) _treeFilter.splice(idx, 1);
+      else          _treeFilter.push({ type, id });
     } else {
-      _treeFilter = { type, id };
+      // Default tap: if it's already the only selection, clear it.
+      // Otherwise replace the entire selection with just this row.
+      if (idx >= 0 && _treeFilter.length === 1) _treeFilter = [];
+      else                                      _treeFilter = [{ type, id }];
     }
     renderTree();
   }
   function isTreeFilterTarget(type, id) {
-    return !!(_treeFilter && _treeFilter.type === type && _treeFilter.id === id);
+    return _treeFilter.some((s) => s.type === type && s.id === id);
   }
   function filterChipLabel() {
-    if (!_treeFilter) return "";
-    const idx = _hierIndex;
-    if (!idx) return _treeFilter.type;
-    if (_treeFilter.type === "okr")  return idx.objectivesById.get(_treeFilter.id)?.title || "OKR";
-    if (_treeFilter.type === "init") return idx.initiativesById.get(_treeFilter.id)?.title || "Initiative";
-    if (_treeFilter.type === "epic") return idx.epicsById.get(_treeFilter.id)?.title || "Epic";
-    return _treeFilter.type;
+    if (!_treeFilter.length) return "";
+    if (_treeFilter.length === 1) {
+      const sel = _treeFilter[0];
+      const idx = _hierIndex;
+      if (!idx) return sel.type;
+      if (sel.type === "okr")  return idx.objectivesById.get(sel.id)?.title  || "OKR";
+      if (sel.type === "init") return idx.initiativesById.get(sel.id)?.title || "Initiative";
+      if (sel.type === "epic") return idx.epicsById.get(sel.id)?.title       || "Epic";
+      return sel.type;
+    }
+    // Multi: summarise as counts per level — readable at a glance and
+    // doesn't blow out the chip width with long titles.
+    const counts = { okr: 0, init: 0, epic: 0 };
+    for (const s of _treeFilter) counts[s.type]++;
+    const parts = [];
+    if (counts.okr)  parts.push(`${counts.okr} OKR${counts.okr  === 1 ? "" : "s"}`);
+    if (counts.init) parts.push(`${counts.init} Init${counts.init === 1 ? "" : "s"}`);
+    if (counts.epic) parts.push(`${counts.epic} Epic${counts.epic === 1 ? "" : "s"}`);
+    return parts.join(" · ");
   }
 
   /* ───── drag-and-drop: tasks onto epics (Tree tab) ────────────

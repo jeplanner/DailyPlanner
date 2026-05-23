@@ -642,6 +642,16 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   font-size: 14px; line-height: 1;
   opacity: 0.85; margin-left: 2px;
 }
+.ptv2-tn-filter-hint {
+  font-size: 11px; color: var(--ptv2-text-soft);
+  align-self: center;
+}
+@media (max-width: 480px) {
+  /* Phones: keep the hint but shorter — touch users discover via long-press. */
+  .ptv2-tn-filter-hint::before { content: "Long-press to add"; }
+  .ptv2-tn-filter-hint { font-size: 0; }
+  .ptv2-tn-filter-hint::before { font-size: 11px; }
+}
 .ptv2-tn-add-btn {
   border: 1px dashed var(--ptv2-primary);
   background: var(--ptv2-primary-soft);
