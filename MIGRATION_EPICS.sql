@@ -41,6 +41,9 @@ create index if not exists ix_epics_user_initiative
 alter table if exists project_tasks
     add column if not exists epic_id uuid references epics(id) on delete set null;
 
+-- NOTE: project_tasks uses `is_eliminated` for soft-delete, not the
+-- `is_deleted` convention used elsewhere on the OKR tree. Match the
+-- actual column name in the partial-index predicate.
 create index if not exists ix_project_tasks_user_epic
     on project_tasks (user_id, epic_id)
-    where is_deleted = false and epic_id is not null;
+    where is_eliminated = false and epic_id is not null;
