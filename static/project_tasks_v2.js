@@ -405,21 +405,45 @@
     return "Sprint 1";
   }
 
+  // Compute default dates for a new sprint. If there's a previous
+  // sprint with both dates, continue its cadence: same duration,
+  // starts the day after the previous one ends. Otherwise default to
+  // a 2-week sprint starting today.
+  function nextSprintDates() {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const fmt = (d) => {
+      const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+      return z.toISOString().slice(0, 10);
+    };
+    for (const s of _sprints) {
+      if (!s.starts_on || !s.ends_on) continue;
+      const ps = new Date(s.starts_on + "T00:00:00");
+      const pe = new Date(s.ends_on   + "T00:00:00");
+      if (isNaN(ps) || isNaN(pe) || pe < ps) continue;
+      // ends_on is inclusive, so a 14-day sprint has (ends - starts) = 13.
+      const spanDays = Math.round((pe - ps) / 86400000);
+      const start = new Date(pe); start.setDate(start.getDate() + 1);
+      const end   = new Date(start); end.setDate(end.getDate() + spanDays);
+      return { start: fmt(start), end: fmt(end) };
+    }
+    const end = new Date(today); end.setDate(end.getDate() + 13);
+    return { start: fmt(today), end: fmt(end) };
+  }
+
   function openInlineCreate() {
     const form = document.getElementById("ptv2-sprint-new");
     if (!form) return;
     form.hidden = false;
     // Pre-fill name + dates so the typical "click + Create" path
-    // produces a sensibly-named 2-week sprint with zero typing.
+    // produces a sensibly-named sprint with zero typing. Cycle comes
+    // from the previous sprint so back-to-back sprints stay in lockstep.
     const nameEl = form.querySelector('[name="name"]');
     if (nameEl && !nameEl.value) nameEl.value = nextSprintName();
     const start = form.querySelector('[name="starts_on"]');
     const end   = form.querySelector('[name="ends_on"]');
-    if (start && !start.value) start.value = new Date().toISOString().slice(0, 10);
-    if (end && !end.value) {
-      const e = new Date(); e.setDate(e.getDate() + 13);
-      end.value = e.toISOString().slice(0, 10);
-    }
+    const dates = nextSprintDates();
+    if (start && !start.value) start.value = dates.start;
+    if (end && !end.value)     end.value   = dates.end;
     // Select the name so the user can immediately type to overwrite
     // (or hit Tab/Enter to accept the suggestion).
     nameEl?.select();
