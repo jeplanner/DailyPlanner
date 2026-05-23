@@ -820,3 +820,162 @@ def delete_initiative(initiative_id):
         logger.exception("delete_initiative failed")
         return jsonify({"error": f"Delete failed: {e}"}), 500
     return jsonify({"status": "ok"})
+
+
+# ═════════════════════════════════════════════════════════════════
+# EPICS — the layer between Initiative and Task (see MIGRATION_EPICS.sql)
+# ═════════════════════════════════════════════════════════════════
+
+@goals_bp.route("/api/epics", methods=["POST"])
+@login_required
+def create_epic():
+    data = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    initiative_id = data.get("initiative_id")
+    if not title or not initiative_id:
+        return jsonify({"error": "title and initiative_id required"}), 400
+    payload = {
+        "user_id": session["user_id"],
+        "initiative_id": initiative_id,
+        "title": title,
+        "description": (data.get("description") or "").strip() or None,
+        "status": "active",
+    }
+    rows = post("epics", payload)
+    return jsonify({"status": "ok", "epic": rows[0] if rows else None})
+
+
+@goals_bp.route("/api/epics/<epic_id>", methods=["PATCH"])
+@login_required
+def update_epic(epic_id):
+    data = request.get_json(force=True) or {}
+    allowed = {"title", "description", "status", "order_index", "is_deleted", "initiative_id"}
+    patch = {k: v for k, v in data.items() if k in allowed}
+    if not patch:
+        return jsonify({"error": "no valid fields"}), 400
+    if patch.get("is_deleted") is False:
+        patch["deleted_at"] = None
+    update(
+        "epics",
+        params={"id": f"eq.{epic_id}", "user_id": f"eq.{session['user_id']}"},
+        json=patch,
+    )
+    return jsonify({"status": "ok"})
+
+
+@goals_bp.route("/api/epics/<epic_id>", methods=["DELETE"])
+@login_required
+def delete_epic(epic_id):
+    """Soft delete an epic. Tasks keep their epic_id pointer so a
+    restore re-links them — matches delete_initiative behavior."""
+    try:
+        _soft_delete(
+            "epics",
+            params={"id": f"eq.{epic_id}", "user_id": f"eq.{session['user_id']}"},
+        )
+    except Exception as e:
+        logger.exception("delete_epic failed")
+        return jsonify({"error": f"Delete failed: {e}"}), 500
+    return jsonify({"status": "ok"})
+
+
+# ═════════════════════════════════════════════════════════════════
+# HIERARCHY — one round trip returns the whole OKR > KR > Init > Epic
+# tree for a single project. Used by the cascading filter on the
+# project tasks page. We don't include task data here because the
+# tasks endpoint already exists and the page paginates/filters it
+# separately.
+# ═════════════════════════════════════════════════════════════════
+
+@goals_bp.route("/api/projects/<project_id>/hierarchy")
+@login_required
+def project_hierarchy(project_id):
+    user_id = session["user_id"]
+    # Pull active (non-deleted) rows at each level for this user, then
+    # stitch in Python. Faster than 4 sequential round-trips and lets
+    # us keep parents that have no children (so "+ Add" UI works).
+    objectives = get(
+        "objectives",
+        params={
+            "user_id":    f"eq.{user_id}",
+            "project_id": f"eq.{project_id}",
+            "is_deleted": "eq.false",
+            "select":     "id,title,description,status,color,order_index",
+            "order":      "order_index.asc,created_at.asc",
+        },
+    ) or []
+    obj_ids = [o["id"] for o in objectives]
+
+    key_results = []
+    if obj_ids:
+        key_results = get(
+            "key_results",
+            params={
+                "user_id":      f"eq.{user_id}",
+                "objective_id": f"in.({','.join(obj_ids)})",
+                "is_deleted":   "eq.false",
+                "select":       "id,objective_id,title,target_value,current_value,unit,direction,order_index",
+                "order":        "order_index.asc,created_at.asc",
+            },
+        ) or []
+    kr_ids = [kr["id"] for kr in key_results]
+
+    initiatives = []
+    if kr_ids:
+        initiatives = get(
+            "initiatives",
+            params={
+                "user_id":       f"eq.{user_id}",
+                "key_result_id": f"in.({','.join(kr_ids)})",
+                "is_deleted":    "eq.false",
+                "select":        "id,key_result_id,title,description,status,order_index",
+                "order":         "order_index.asc,created_at.asc",
+            },
+        ) or []
+    init_ids = [i["id"] for i in initiatives]
+
+    epics = []
+    if init_ids:
+        epics = get(
+            "epics",
+            params={
+                "user_id":       f"eq.{user_id}",
+                "initiative_id": f"in.({','.join(init_ids)})",
+                "is_deleted":    "eq.false",
+                "select":        "id,initiative_id,title,description,status,order_index",
+                "order":         "order_index.asc,created_at.asc",
+            },
+        ) or []
+
+    # Index children by parent id for the client.
+    from collections import defaultdict
+    krs_by_obj  = defaultdict(list)
+    for kr in key_results:
+        krs_by_obj[kr["objective_id"]].append(kr)
+    inits_by_kr = defaultdict(list)
+    for it in initiatives:
+        inits_by_kr[it["key_result_id"]].append(it)
+    epics_by_init = defaultdict(list)
+    for ep in epics:
+        epics_by_init[ep["initiative_id"]].append(ep)
+
+    tree = []
+    for o in objectives:
+        krs = []
+        for kr in krs_by_obj.get(o["id"], []):
+            inits = []
+            for it in inits_by_kr.get(kr["id"], []):
+                inits.append(dict(it, epics=epics_by_init.get(it["id"], [])))
+            krs.append(dict(kr, initiatives=inits))
+        tree.append(dict(o, key_results=krs))
+
+    return jsonify({
+        "project_id": project_id,
+        "tree":       tree,
+        "counts": {
+            "objectives":  len(objectives),
+            "key_results": len(key_results),
+            "initiatives": len(initiatives),
+            "epics":       len(epics),
+        },
+    })

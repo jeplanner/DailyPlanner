@@ -122,7 +122,7 @@ def project_tasks(project_id):
                   "duration_days,delegated_to,is_pinned,planned_hours,actual_hours,"
                   "is_recurring,recurrence_type,recurrence_days,recurrence_interval,"
                   "recurrence_end,auto_advance,order_index,created_at,"
-                  "key_result_id,initiative_id",
+                  "key_result_id,initiative_id,epic_id",
         "order": order,
         "limit": 500,
     }
@@ -591,6 +591,7 @@ def update_task(task_id):
         "quadrant",
         "key_result_id",
         "initiative_id",
+        "epic_id",
     ]
 
     for field in allowed_fields:
@@ -613,6 +614,8 @@ def update_task(task_id):
         updates["key_result_id"] = None
     if "initiative_id" in updates and updates["initiative_id"] == "":
         updates["initiative_id"] = None
+    if "epic_id" in updates and updates["epic_id"] == "":
+        updates["epic_id"] = None
 
     update(
         "project_tasks",
@@ -1396,6 +1399,27 @@ def _stamp_okr_ids(tasks, user_id):
     (initiative → key_result → objective). Legacy tasks that still have a
     direct key_result_id (pre-Initiative layer) also get objective_id filled.
     """
+    # Epics: tasks may carry epic_id only (no initiative_id yet). Resolve
+    # epic → initiative so the rest of the walk picks them up.
+    epic_ids = {t.get("epic_id") for t in tasks if t.get("epic_id") and not t.get("initiative_id")}
+    epic_to_initiative = {}
+    if epic_ids:
+        epic_rows = get(
+            "epics",
+            params={
+                "user_id":    f"eq.{user_id}",
+                "id":         f"in.({','.join(str(i) for i in epic_ids)})",
+                "is_deleted": "eq.false",
+                "select":     "id,initiative_id",
+                "limit":      500,
+            },
+        ) or []
+        epic_to_initiative = {r["id"]: r.get("initiative_id") for r in epic_rows}
+        # Patch the in-memory tasks so downstream walks see the resolved id.
+        for t in tasks:
+            if t.get("epic_id") and not t.get("initiative_id"):
+                t["initiative_id"] = epic_to_initiative.get(t["epic_id"])
+
     initiative_ids = {t["initiative_id"] for t in tasks if t.get("initiative_id")}
     legacy_kr_ids = {
         t["key_result_id"] for t in tasks
@@ -1515,6 +1539,24 @@ def add_project_task_ajax(project_id):
     # Normalize the initiative id: empty string / "null" / None → NULL
     raw_init = data.get("initiative_id")
     initiative_id = raw_init if (raw_init and str(raw_init).strip() not in ("", "null")) else None
+    raw_epic = data.get("epic_id")
+    epic_id = raw_epic if (raw_epic and str(raw_epic).strip() not in ("", "null")) else None
+
+    # When an epic is picked but no initiative, back-fill from the epic's
+    # parent so legacy filters that key on initiative_id keep working.
+    if epic_id and not initiative_id:
+        ep_rows = get(
+            "epics",
+            params={
+                "id":         f"eq.{epic_id}",
+                "user_id":    f"eq.{session['user_id']}",
+                "is_deleted": "eq.false",
+                "select":     "initiative_id",
+                "limit":      1,
+            },
+        ) or []
+        if ep_rows:
+            initiative_id = ep_rows[0].get("initiative_id") or None
 
     max_order = get_max_order_index(project_id)
     payload = {
@@ -1529,6 +1571,8 @@ def add_project_task_ajax(project_id):
     }
     if initiative_id:
         payload["initiative_id"] = initiative_id
+    if epic_id:
+        payload["epic_id"] = epic_id
 
     result = post("project_tasks", payload)
 

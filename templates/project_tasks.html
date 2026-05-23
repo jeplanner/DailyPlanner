@@ -13,6 +13,7 @@
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pt-shared.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/okr_cascade.js') }}" defer></script>
 {% include "_pwa_head.html" %}
 </head>
 <body>
@@ -85,24 +86,17 @@
         <span>Select</span>
       </button>
 
-      <!-- OKR filter trigger — opens a bottom-sheet picker with multi-select -->
-      <button type="button" class="filter-pill pt-filter-btn" id="pt-filter-btn"
-              onclick="openPtFilterSheet()"
-              title="Filter by Objective / Key Result / Initiative"
-              style="border:1px solid var(--pt-border);cursor:pointer;font:inherit;">
-        <i data-feather="filter" style="width:13px;height:13px"></i>
-        <span>Filter</span>
-        <span class="pt-filter-badge" id="pt-filter-badge" style="display:none;">0</span>
-      </button>
-
-      <!-- OKR manage trigger — create Objectives / Key Results / Initiatives
-           for this project without leaving the task list. -->
+      <!-- OKR cascading filter + manager (one button drives both — phone
+           first; auto-expands to three columns on desktop). Replaces the
+           previous separate Filter / OKRs buttons. -->
       <button type="button" class="filter-pill pt-okr-btn" id="pt-okr-btn"
-              onclick="openPtOkrManager()"
-              title="Manage Objectives · Key Results · Initiatives for this project"
+              onclick="openOkrCascade()"
+              title="OKR → Initiative → Epic. Filter and create from one drawer."
               style="border:1px solid var(--pt-border);cursor:pointer;font:inherit;">
-        <i data-feather="target" style="width:13px;height:13px"></i>
+        <i data-feather="layers" style="width:13px;height:13px"></i>
         <span>OKRs</span>
+        <span class="pt-okr-summary" id="pt-okr-summary"
+              style="display:none;font-size:11px;opacity:0.7;margin-left:6px;">0/0/0</span>
       </button>
     </div>
 
@@ -150,6 +144,11 @@
             data-current=""
             title="Link this task to an Initiative (optional). Leave empty to tie it directly to the project.">
       <option value="">— Not linked —</option>
+    </select>
+    <select id="add-task-epic" class="add-task-initiative kr-picker"
+            data-current=""
+            title="Link to an Epic (optional). Filled automatically when an Epic is selected in the OKR drawer.">
+      <option value="">— No epic —</option>
     </select>
     <input type="date" id="add-task-date" class="add-task-date" value="{{ selected_date }}">
     <button class="add-task-btn" id="add-task-btn" title="Add task">

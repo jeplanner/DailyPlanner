@@ -78,11 +78,13 @@ async function addTask() {
   const input = _id("add-task-input");
   const dateInput = _id("add-task-date");
   const initSel = _id("add-task-initiative");
+  const epicSel = _id("add-task-epic");
   const text = (input?.value || "").trim();
   if (!text) return;
 
-  // Empty string → leave the task tied to the project only (no initiative).
+  // Empty string → leave the task tied to the project only (no initiative/epic).
   const initiativeId = (initSel?.value || "").trim() || null;
+  const epicId       = (epicSel?.value || "").trim() || null;
 
   try {
     const res = await _post(`/projects/${PROJECT_ID}/tasks/add-ajax`, {
@@ -90,14 +92,21 @@ async function addTask() {
       priority: _addPriority,
       start_date: dateInput?.value || "",
       initiative_id: initiativeId,
+      epic_id: epicId,
     });
 
     if (!res.ok) throw new Error("Add failed");
 
     input.value = "";
-    // Remember the initiative choice for the next task so rapid adds stay fast.
+    // Remember the initiative + epic picks so rapid adds inherit them.
     if (initSel) initSel.dataset.current = initiativeId || "";
-    showToast(initiativeId ? "Task added to initiative" : "Task added", "success");
+    if (epicSel) epicSel.dataset.current = epicId || "";
+    showToast(
+      epicId ? "Task added to epic"
+        : initiativeId ? "Task added to initiative"
+          : "Task added",
+      "success",
+    );
     location.reload();
   } catch (err) {
     console.error(err);

@@ -6,6 +6,10 @@
   data-status="{{ task.status }}"
   data-pinned="{{ 1 if task.is_pinned else 0 }}"
   data-auto-advance="{{ task.auto_advance }}"
+  data-objective-id="{{ task.objective_id or '' }}"
+  data-key-result-id="{{ task.key_result_id or '' }}"
+  data-initiative-id="{{ task.initiative_id or '' }}"
+  data-epic-id="{{ task.epic_id or '' }}"
   ondragover="dragOver(event)"
   ondrop="dropTask(event)"
 >
