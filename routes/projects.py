@@ -1797,6 +1797,12 @@ def add_project_task_ajax(project_id):
         payload["epic_id"] = epic_id
     if sprint_id:
         payload["sprint_id"] = sprint_id
+    # Optional due_date — the v2 tree-tab "+ Task" dialog passes one;
+    # the legacy sticky add-bar leaves it null and the user sets it
+    # later via the task detail panel.
+    due_date = (data.get("due_date") or "").strip() or None
+    if due_date:
+        payload["due_date"] = due_date
 
     result = post("project_tasks", payload)
 

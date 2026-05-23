@@ -1234,62 +1234,57 @@
       });
       return;
     }
-    const krOptions = krs.map((kr) => `<option value="${esc(kr.id)}">${esc(kr.title)}</option>`).join("");
-    const back = document.createElement("div");
-    back.className = "ptv2-dlg-back";
-    const card = document.createElement("div");
-    card.className = "ptv2-dlg-card";
-    card.innerHTML = `
-      <h2 class="ptv2-dlg-title">New Initiative</h2>
-      <div class="ptv2-dlg-body">Under OKR: <b>${esc(o.title)}</b></div>
-      <form class="ptv2-dlg-form" novalidate>
-        <label class="ptv2-dlg-label">Title</label>
-        <input class="ptv2-dlg-input" name="title" required placeholder="e.g. Activation funnel">
-        <label class="ptv2-dlg-label">Key Result</label>
-        <select class="ptv2-dlg-input" name="kr">${krOptions}</select>
-      </form>
-      <div class="ptv2-dlg-actions">
-        <button type="button" class="ptv2-dlg-btn" data-action="cancel">Cancel</button>
-        <button type="button" class="ptv2-dlg-btn is-primary" data-action="ok">Create</button>
-      </div>`;
-    back.appendChild(card);
-    document.body.appendChild(back);
-    const cleanup = () => { document.removeEventListener("keydown", onKey, true); back.remove(); };
-    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); cleanup(); } };
-    document.addEventListener("keydown", onKey, true);
-    back.addEventListener("click", (e) => { if (e.target === back) cleanup(); });
-    card.querySelector('[data-action="cancel"]').addEventListener("click", cleanup);
-    requestAnimationFrame(() => card.querySelector('input[name="title"]').focus());
-    card.querySelector('[data-action="ok"]').addEventListener("click", async () => {
-      const title = card.querySelector('input[name="title"]').value.trim();
-      const krId  = card.querySelector('select[name="kr"]').value;
-      if (!title) return;
-      cleanup();
-      const r = await _fetch("/api/initiatives", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, key_result_id: krId }),
-      });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        await ptv2Alert({ title: "Couldn't create initiative", body: body.error || `Server returned ${r.status}.` });
-        return;
-      }
-      // Auto-expand both the parent OKR and the brand-new initiative so
-      // the user immediately sees the "+ Epic" affordance without having
-      // to find and tap a chevron.
-      _treeExpand.okrs.add(o.id);
-      const j = await r.json().catch(() => ({}));
-      const newId = j && j.initiative && j.initiative.id;
-      if (newId) _treeExpand.inits.add(newId);
-      await fetchTree(); renderTree();
+    const result = await ptv2Dialog({
+      title: "New Initiative",
+      body: `Under OKR: ${o.title}`,
+      fields: [
+        { name: "title",       label: "Title", placeholder: "e.g. Activation funnel", required: true },
+        { name: "description", label: "Description (optional)", type: "textarea",
+          placeholder: "Scope, success criteria, anything worth remembering." },
+        { name: "key_result_id", label: "Key Result", type: "select", value: krs[0].id,
+          options: krs.map((kr) => ({ value: kr.id, label: kr.title })) },
+      ],
+      okLabel: "Create",
     });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    const r = await _fetch("/api/initiatives", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        key_result_id: result.key_result_id,
+        description:   (result.description || "").trim() || null,
+      }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      await ptv2Alert({ title: "Couldn't create initiative", body: body.error || `Server returned ${r.status}.` });
+      return;
+    }
+    // Auto-expand parent OKR + the brand-new initiative so the user
+    // immediately sees the "+ Epic" affordance.
+    _treeExpand.okrs.add(o.id);
+    const j = await r.json().catch(() => ({}));
+    const newId = j && j.initiative && j.initiative.id;
+    if (newId) _treeExpand.inits.add(newId);
+    await fetchTree(); renderTree();
   }
 
   async function promptCreateTaskForEpic(ep) {
     const result = await ptv2Dialog({
       title: "New Task",
       body: `Under Epic: ${ep.title}`,
-      fields: [{ name: "title", label: "Task", placeholder: "What needs to happen?", required: true }],
+      fields: [
+        { name: "title",    label: "Task", placeholder: "What needs to happen?", required: true },
+        { name: "priority", label: "Priority", type: "select", value: "medium",
+          options: [
+            { value: "high",   label: "High" },
+            { value: "medium", label: "Medium" },
+            { value: "low",    label: "Low" },
+          ] },
+        { name: "due_date", label: "Due date (optional)", type: "date" },
+      ],
       okLabel: "Add",
     });
     if (!result) return;
@@ -1302,8 +1297,9 @@
         credentials: "same-origin",
         body: JSON.stringify({
           task_text: title,
-          priority: "medium",
-          epic_id: ep.id,
+          priority:  result.priority || "medium",
+          due_date:  result.due_date || null,
+          epic_id:   ep.id,
         }),
       });
       if (!r.ok) {
@@ -1328,7 +1324,11 @@
     const result = await ptv2Dialog({
       title: "New Epic",
       body: `Under Initiative: ${it.title}`,
-      fields: [{ name: "title", label: "Title", placeholder: "e.g. Landing page rebuild", required: true }],
+      fields: [
+        { name: "title",       label: "Title", placeholder: "e.g. Landing page rebuild", required: true },
+        { name: "description", label: "Description (optional)", type: "textarea",
+          placeholder: "What's in scope? Any constraints or dependencies?" },
+      ],
       okLabel: "Create",
     });
     if (!result) return;
@@ -1336,7 +1336,10 @@
     if (!title) return;
     const r = await _fetch("/api/epics", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, initiative_id: it.id }),
+      body: JSON.stringify({
+        title, initiative_id: it.id,
+        description: (result.description || "").trim() || null,
+      }),
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
@@ -1466,11 +1469,28 @@
     }
   }
   async function promptCreateOkr() {
+    // Default target date = end of current quarter, so the most common
+    // case (a quarterly OKR) needs zero typing in that field. Users
+    // who pick a different horizon can edit before saving.
+    const today = new Date();
+    const qEnd = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0);
+    const isoDate = (d) => d.toISOString().slice(0, 10);
     const result = await ptv2Dialog({
       title: "New OKR",
       fields: [
-        { name: "title",   label: "OKR title",   placeholder: "e.g. Grow weekly active users", required: true },
-        { name: "krTitle", label: "First Key Result (optional)", placeholder: "Leave blank to skip" },
+        { name: "title",       label: "OKR title", placeholder: "e.g. Grow weekly active users", required: true },
+        { name: "description", label: "Description (optional)", type: "textarea",
+          placeholder: "What's the why? Who benefits? What does success look like?" },
+        { name: "time_horizon", label: "Time horizon", type: "select", value: "quarterly",
+          options: [
+            { value: "quarterly", label: "Quarterly" },
+            { value: "monthly",   label: "Monthly" },
+            { value: "annual",    label: "Annual" },
+            { value: "ongoing",   label: "Ongoing" },
+          ] },
+        { name: "target_date", label: "Target date (optional)", type: "date", value: isoDate(qEnd) },
+        { name: "krTitle",     label: "First Key Result (optional)",
+          placeholder: "e.g. WAU 12k → 18k by Mar 31" },
       ],
       okLabel: "Create",
     });
@@ -1483,7 +1503,9 @@
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title, project_id: PROJECT_ID, status: "active",
-          time_horizon: "quarterly",
+          description:  (result.description  || "").trim() || null,
+          time_horizon: result.time_horizon || "quarterly",
+          target_date:  result.target_date  || null,
         }),
       });
       const data = await r.json();
@@ -1596,6 +1618,12 @@
         const req  = f.required ? "required" : "";
         if (type === "textarea") {
           return `${label}<textarea id="ptv2-dlg-f-${i}" name="${esc(f.name)}" placeholder="${ph}" ${req} rows="3" class="ptv2-dlg-input">${val}</textarea>`;
+        }
+        if (type === "select") {
+          const opts = (f.options || []).map((o) =>
+            `<option value="${esc(o.value)}"${String(o.value) === String(f.value || "") ? " selected" : ""}>${esc(o.label)}</option>`
+          ).join("");
+          return `${label}<select id="ptv2-dlg-f-${i}" name="${esc(f.name)}" class="ptv2-dlg-input">${opts}</select>`;
         }
         return `${label}<input id="ptv2-dlg-f-${i}" type="${esc(type)}" name="${esc(f.name)}" value="${val}" placeholder="${ph}" ${req} class="ptv2-dlg-input">`;
       }).join("");
