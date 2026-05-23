@@ -1025,6 +1025,7 @@
         renderTree();
       },
       onRowSelect: (opts) => setTreeFilter("okr", o.id, opts),
+      onDelete: o.is_default ? null : () => deleteOkr(o),
     });
     wrap.appendChild(row);
 
@@ -1043,13 +1044,15 @@
     const wrap = document.createElement("div");
     wrap.className = "ptv2-tn-node";
     const epics = it.epics || [];
-    // "Loose" tasks: tagged to this initiative but no epic_id. These
-    // are usually older tasks created via the legacy add-bar before
-    // we removed its standalone initiative picker. Surfacing them here
-    // means they're visible AND draggable into a proper epic above.
-    const looseTasks = readTasks().filter((t) =>
-      !t.isDone && t.initiativeId === it.id && !t.epicId
-    );
+    // "Loose" tasks: tagged to this initiative but either no epic_id
+    // OR an epic_id that no longer exists in the tree (e.g. its epic
+    // was soft-deleted). Either way they'd be invisible without this
+    // bucket. Drag onto any visible epic above to reattach.
+    const looseTasks = readTasks().filter((t) => {
+      if (t.isDone || t.initiativeId !== it.id) return false;
+      if (!t.epicId) return true;
+      return !(_hierIndex && _hierIndex.epicsById && _hierIndex.epicsById.has(t.epicId));
+    });
     const expanded = _treeExpand.inits.has(it.id);
     const canExpand = !it.is_default;
     const metaParts = [`${epics.length} epic`];
@@ -1067,6 +1070,7 @@
         renderTree();
       },
       onRowSelect: (opts) => setTreeFilter("init", it.id, opts),
+      onDelete: it.is_default ? null : () => deleteInitiative(it),
     });
     wrap.appendChild(row);
 
@@ -1111,6 +1115,7 @@
         renderTree();
       },
       onRowSelect: (opts) => setTreeFilter("epic", ep.id, opts),
+      onDelete: ep.is_default ? null : () => deleteEpic(ep, it),
       dropTarget: { type: "epic", epic: ep },
     });
     wrap.appendChild(row);
@@ -1166,6 +1171,7 @@
       hasChildren, expanded, selected,
       onToggleExpand, onRowSelect, onRowClick,
       onTaskCheck, taskDone,
+      onDelete,
       dropTarget, isTask,
     } = opts;
     const row = document.createElement("div");
@@ -1216,6 +1222,17 @@
       row.appendChild(m);
     }
 
+    if (onDelete) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "ptv2-tn-del";
+      del.title = "Delete";
+      del.setAttribute("aria-label", "Delete");
+      del.innerHTML = "×";
+      del.addEventListener("click", (e) => { e.stopPropagation(); onDelete(); });
+      row.appendChild(del);
+    }
+
     // Row click semantics:
     //   - Task row → open detail panel.
     //   - Branch row, plain tap → replace the active filter with this row
@@ -1225,6 +1242,7 @@
     row.addEventListener("click", (e) => {
       if (e.target.closest(".ptv2-tn-chev")) return;
       if (e.target.closest(".ptv2-tn-check")) return;
+      if (e.target.closest(".ptv2-tn-del")) return;
       if (isTask && onRowClick) { onRowClick(); return; }
       if (onRowSelect) {
         const extend = !!(e.shiftKey || e.ctrlKey || e.metaKey);
@@ -1360,6 +1378,74 @@
     const j = await r.json().catch(() => ({}));
     const newId = j && j.initiative && j.initiative.id;
     if (newId) _treeExpand.inits.add(newId);
+    await fetchTree(); renderTree();
+  }
+
+  /* ───── delete OKR / Initiative / Epic ─────────────────────────
+     Soft-deletes via the existing /api/{goals,initiatives,epics}
+     DELETE endpoints. OKRs cascade to their KRs and initiatives in
+     the server handler. Tasks keep their *_id pointers so a future
+     restore relinks them automatically. */
+  async function deleteOkr(o) {
+    const childCount = (o.key_results || []).reduce(
+      (n, kr) => n + (kr.initiatives || []).reduce((m, it) => m + 1 + (it.epics || []).length, 0), 0);
+    const ok = await ptv2Confirm({
+      title: `Delete OKR "${o.title}"?`,
+      body: childCount
+        ? `This will also remove ${childCount} initiative${childCount === 1 ? "" : "s"} + epic${childCount === 1 ? "" : "s"} underneath. Tasks keep their pointers so a restore (via Supabase) re-links them.`
+        : "No children — restorable from Supabase if you change your mind.",
+      okLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await _fetch(`/api/goals/${o.id}`, { method: "DELETE", credentials: "same-origin" });
+    if (!r.ok) {
+      await ptv2Alert({ title: "Couldn't delete OKR", body: `Server returned ${r.status}.` });
+      return;
+    }
+    // Drop any stale filter / expansion state pointing at the deleted node.
+    _treeFilter = _treeFilter.filter((s) => s.type !== "okr" || s.id !== o.id);
+    _treeExpand.okrs.delete(o.id);
+    saveTreeExpand();
+    await fetchTree(); renderTree();
+  }
+  async function deleteInitiative(it) {
+    const epCount = (it.epics || []).length;
+    const ok = await ptv2Confirm({
+      title: `Delete initiative "${it.title}"?`,
+      body: epCount
+        ? `Its ${epCount} epic${epCount === 1 ? "" : "s"} stay in the DB but become orphaned (restorable from Supabase). Tasks keep their pointers.`
+        : "Restorable from Supabase if you change your mind.",
+      okLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await _fetch(`/api/initiatives/${it.id}`, { method: "DELETE", credentials: "same-origin" });
+    if (!r.ok) {
+      await ptv2Alert({ title: "Couldn't delete initiative", body: `Server returned ${r.status}.` });
+      return;
+    }
+    _treeFilter = _treeFilter.filter((s) => s.type !== "init" || s.id !== it.id);
+    _treeExpand.inits.delete(it.id);
+    saveTreeExpand();
+    await fetchTree(); renderTree();
+  }
+  async function deleteEpic(ep, it) {
+    const ok = await ptv2Confirm({
+      title: `Delete epic "${ep.title}"?`,
+      body: `Tasks under this epic keep their epic_id pointer so a restore (via Supabase) re-links them. They'll show up as "loose" under ${it.title} in the meantime.`,
+      okLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    const r = await _fetch(`/api/epics/${ep.id}`, { method: "DELETE", credentials: "same-origin" });
+    if (!r.ok) {
+      await ptv2Alert({ title: "Couldn't delete epic", body: `Server returned ${r.status}.` });
+      return;
+    }
+    _treeFilter = _treeFilter.filter((s) => s.type !== "epic" || s.id !== ep.id);
+    _treeExpand.epics.delete(ep.id);
+    saveTreeExpand();
     await fetchTree(); renderTree();
   }
 

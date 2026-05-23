@@ -740,6 +740,30 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
 }
+/* Per-row × — quiet by default, reddens on hover. Stays out of the
+   way until the user reaches for it; not strong enough visually to
+   compete with the chevron or label. */
+.ptv2-tn-del {
+  flex: 0 0 22px;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent;
+  color: var(--ptv2-text-soft);
+  font-size: 18px; line-height: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.ptv2-tn-row:hover .ptv2-tn-del { opacity: 1; }
+.ptv2-tn-del:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--ptv2-danger);
+}
+/* Always-visible on phones — no hover state to surface it otherwise. */
+@media (max-width: 768px) {
+  .ptv2-tn-del { opacity: 0.7; }
+}
 .ptv2-tn-default-badge {
   display: inline-block;
   background: var(--ptv2-primary-soft); color: var(--ptv2-primary);
