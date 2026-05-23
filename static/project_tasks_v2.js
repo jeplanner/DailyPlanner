@@ -1234,6 +1234,8 @@
       });
       return;
     }
+    // Default dates to the parent OKR's window so initiatives slot into
+    // their OKR's timeline by default. User can edit either field.
     const result = await ptv2Dialog({
       title: "New Initiative",
       body: `Under OKR: ${o.title}`,
@@ -1243,6 +1245,8 @@
           placeholder: "Scope, success criteria, anything worth remembering." },
         { name: "key_result_id", label: "Key Result", type: "select", value: krs[0].id,
           options: krs.map((kr) => ({ value: kr.id, label: kr.title })) },
+        { name: "start_date",  label: "Start date (optional)",  type: "date", value: o.start_date  || "" },
+        { name: "target_date", label: "Target date (optional)", type: "date", value: o.target_date || "" },
       ],
       okLabel: "Create",
     });
@@ -1255,6 +1259,8 @@
         title,
         key_result_id: result.key_result_id,
         description:   (result.description || "").trim() || null,
+        start_date:    result.start_date  || null,
+        target_date:   result.target_date || null,
       }),
     });
     if (!r.ok) {
@@ -1328,6 +1334,8 @@
         { name: "title",       label: "Title", placeholder: "e.g. Landing page rebuild", required: true },
         { name: "description", label: "Description (optional)", type: "textarea",
           placeholder: "What's in scope? Any constraints or dependencies?" },
+        { name: "start_date",  label: "Start date (optional)",  type: "date", value: it.start_date  || "" },
+        { name: "target_date", label: "Target date (optional)", type: "date", value: it.target_date || "" },
       ],
       okLabel: "Create",
     });
@@ -1339,6 +1347,8 @@
       body: JSON.stringify({
         title, initiative_id: it.id,
         description: (result.description || "").trim() || null,
+        start_date:  result.start_date  || null,
+        target_date: result.target_date || null,
       }),
     });
     if (!r.ok) {
@@ -1469,9 +1479,9 @@
     }
   }
   async function promptCreateOkr() {
-    // Default target date = end of current quarter, so the most common
-    // case (a quarterly OKR) needs zero typing in that field. Users
-    // who pick a different horizon can edit before saving.
+    // Default dates = current quarter (start = today, target = end of
+    // quarter) so a one-tap save still produces a bounded quarterly OKR.
+    // Users can edit either field before saving.
     const today = new Date();
     const qEnd = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3 + 3, 0);
     const isoDate = (d) => d.toISOString().slice(0, 10);
@@ -1488,7 +1498,8 @@
             { value: "annual",    label: "Annual" },
             { value: "ongoing",   label: "Ongoing" },
           ] },
-        { name: "target_date", label: "Target date (optional)", type: "date", value: isoDate(qEnd) },
+        { name: "start_date",  label: "Start date",  type: "date", value: isoDate(today) },
+        { name: "target_date", label: "Target date", type: "date", value: isoDate(qEnd) },
         { name: "krTitle",     label: "First Key Result (optional)",
           placeholder: "e.g. WAU 12k → 18k by Mar 31" },
       ],
@@ -1505,6 +1516,7 @@
           title, project_id: PROJECT_ID, status: "active",
           description:  (result.description  || "").trim() || null,
           time_horizon: result.time_horizon || "quarterly",
+          start_date:   result.start_date   || null,
           target_date:  result.target_date  || null,
         }),
       });

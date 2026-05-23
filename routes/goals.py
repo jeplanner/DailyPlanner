@@ -800,6 +800,8 @@ def create_initiative():
         "key_result_id": key_result_id,
         "title": title,
         "description": (data.get("description") or "").strip() or None,
+        "start_date":  data.get("start_date")  or None,
+        "target_date": data.get("target_date") or None,
         "status": "active",
     }
     rows = post("initiatives", payload)
@@ -810,7 +812,8 @@ def create_initiative():
 @login_required
 def update_initiative(initiative_id):
     data = request.get_json(force=True) or {}
-    allowed = {"title", "description", "status", "order_index", "is_deleted"}
+    allowed = {"title", "description", "status", "order_index", "is_deleted",
+               "start_date", "target_date"}
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
         return jsonify({"error": "no valid fields"}), 400
@@ -883,6 +886,8 @@ def create_epic():
         "initiative_id": initiative_id,
         "title": title,
         "description": (data.get("description") or "").strip() or None,
+        "start_date":  data.get("start_date")  or None,
+        "target_date": data.get("target_date") or None,
         "status": "active",
     }
     rows = post("epics", payload)
@@ -893,7 +898,8 @@ def create_epic():
 @login_required
 def update_epic(epic_id):
     data = request.get_json(force=True) or {}
-    allowed = {"title", "description", "status", "order_index", "is_deleted", "initiative_id"}
+    allowed = {"title", "description", "status", "order_index", "is_deleted", "initiative_id",
+               "start_date", "target_date"}
     patch = {k: v for k, v in data.items() if k in allowed}
     if not patch:
         return jsonify({"error": "no valid fields"}), 400
@@ -1205,10 +1211,13 @@ def project_hierarchy(project_id):
             "user_id":    f"eq.{user_id}",
             "project_id": f"eq.{project_id}",
             "is_deleted": "eq.false",
-            "select":     "id,title,description,status,color,order_index,is_default",
+            "select":     "id,title,description,status,color,order_index,is_default,start_date,target_date,time_horizon",
             "order":      "is_default.asc,order_index.asc,created_at.asc",
         },
     ) or []
+    # NOTE: objectives.start_date / target_date have shipped for a while
+    # (MIGRATION_FRESH_INSTALL.sql ensures via add column if not exists).
+    # The init/epic equivalents are newer — see hierarchy reads below.
     obj_ids = [o["id"] for o in objectives]
 
     key_results = []
@@ -1233,7 +1242,11 @@ def project_hierarchy(project_id):
                 "user_id":       f"eq.{user_id}",
                 "key_result_id": f"in.({','.join(kr_ids)})",
                 "is_deleted":    "eq.false",
-                "select":        "id,key_result_id,title,description,status,order_index,is_default",
+                # start_date/target_date columns ship in MIGRATION_INIT_EPIC_DATES.sql.
+                # PostgREST 400s on unknown columns — keep this select aligned with
+                # the migration state when you deploy. Roll back here if you ever
+                # deploy backend code ahead of the migration.
+                "select":        "id,key_result_id,title,description,status,order_index,is_default,start_date,target_date",
                 "order":         "is_default.asc,order_index.asc,created_at.asc",
             },
         ) or []
@@ -1247,7 +1260,7 @@ def project_hierarchy(project_id):
                 "user_id":       f"eq.{user_id}",
                 "initiative_id": f"in.({','.join(init_ids)})",
                 "is_deleted":    "eq.false",
-                "select":        "id,initiative_id,title,description,status,order_index,is_default",
+                "select":        "id,initiative_id,title,description,status,order_index,is_default,start_date,target_date",
                 "order":         "is_default.asc,order_index.asc,created_at.asc",
             },
         ) or []
