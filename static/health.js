@@ -4,7 +4,15 @@
 
 // Route writes through dpFetch (sync-queue.js) so offline saves
 // queue + replay automatically. GETs pass through unchanged.
-const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
+//
+// NOTE: this MUST not be named `fetch`. Top-level `const` in a classic
+// script lands in the global lexical environment, which shadows
+// `window.fetch` for every other script that does an unqualified
+// `fetch(...)` call. sync-queue.js's dpFetch internally calls
+// `fetch(url, opts)` — bind it to our wrapper and you get an infinite
+// recursion (RangeError: Maximum call stack size exceeded). Use the
+// `_fetch` convention the rest of the codebase uses.
+const _fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
 
 // --------------- State ---------------
 let currentDate = "";
@@ -165,7 +173,7 @@ function markDateStripDots(heatmapData) {
 // ============================================================
 async function loadHealth(date) {
   try {
-    const res = await fetch(`/api/v2/daily-health?date=${date}`);
+    const res = await _fetch(`/api/v2/daily-health?date=${date}`);
     if (!res.ok) {
       // Surface the actual failure mode in the toast so the next bug
       // report tells us whether it's auth (401/302), a 500, etc.
@@ -271,7 +279,7 @@ function updateHealthScore(data) {
 // ============================================================
 async function loadWeeklyStats() {
   try {
-    const res = await fetch("/api/v2/weekly-health");
+    const res = await _fetch("/api/v2/weekly-health");
     if (!res.ok) return;
     const data = await res.json();
 
@@ -295,7 +303,7 @@ async function loadHeatmap() {
     start.setDate(start.getDate() - (STRIP_DAYS - 1));
     const startStr = start.toLocaleDateString("en-CA");
 
-    const res = await fetch(`/api/v2/heatmap?start=${startStr}&end=${endStr}`);
+    const res = await _fetch(`/api/v2/heatmap?start=${startStr}&end=${endStr}`);
     if (!res.ok) return;
     const data = await res.json();
     renderHeatmap(data, startStr, endStr);
@@ -566,7 +574,7 @@ function debouncedSaveHabit(habitId, value) {
 
   habitSaveTimers[habitId] = setTimeout(async () => {
     try {
-      const res = await fetch("/api/save-habit-value", {
+      const res = await _fetch("/api/save-habit-value", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -580,7 +588,7 @@ function debouncedSaveHabit(habitId, value) {
       if (typeof showToast === "function") showToast("Habit saved", "success");
 
       // Refresh completion ring
-      const healthRes = await fetch(`/api/v2/daily-health?date=${currentDate}`);
+      const healthRes = await _fetch(`/api/v2/daily-health?date=${currentDate}`);
       if (healthRes.ok) {
         const healthData = await healthRes.json();
         updateRing(healthData.habit_percent || 0);
@@ -598,7 +606,7 @@ function debouncedSaveHabit(habitId, value) {
 // ============================================================
 async function loadWeeklyDots(habitId) {
   try {
-    const res = await fetch(`/api/v2/habit-weekly/${habitId}`);
+    const res = await _fetch(`/api/v2/habit-weekly/${habitId}`);
     if (!res.ok) return;
     const values = await res.json();
 
@@ -652,7 +660,7 @@ async function saveHealth() {
   };
 
   try {
-    const res = await fetch("/api/v2/daily-health", {
+    const res = await _fetch("/api/v2/daily-health", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -664,7 +672,7 @@ async function saveHealth() {
     calculateBMI();
 
     // Refresh score
-    const healthRes = await fetch(`/api/v2/daily-health?date=${currentDate}`);
+    const healthRes = await _fetch(`/api/v2/daily-health?date=${currentDate}`);
     if (healthRes.ok) {
       const data = await healthRes.json();
       updateHealthScore(data);
@@ -801,14 +809,14 @@ async function submitHabitSheet() {
     let res;
     if (editId) {
       // Edit existing habit
-      res = await fetch(`/api/habits/${editId}`, {
+      res = await _fetch(`/api/habits/${editId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, unit, goal })
       });
     } else {
       // Add new habit
-      res = await fetch("/api/habits/add", {
+      res = await _fetch("/api/habits/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -834,7 +842,7 @@ async function submitHabitSheet() {
 
 async function editHabit(id) {
   try {
-    const res = await fetch(`/api/habits/${id}`);
+    const res = await _fetch(`/api/habits/${id}`);
     if (!res.ok) throw new Error("Failed to fetch habit");
     const habit = await res.json();
 
@@ -892,7 +900,7 @@ function deleteHabit(id) {
       setTimeout(() => undoToast.remove(), 300);
 
       try {
-        await fetch("/api/habits/restore", {
+        await _fetch("/api/habits/restore", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ habit_id: id })
@@ -913,7 +921,7 @@ function deleteHabit(id) {
     if (undone) return;
 
     try {
-      await fetch("/api/habits/delete", {
+      await _fetch("/api/habits/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ habit_id: id })
