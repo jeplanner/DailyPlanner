@@ -678,6 +678,7 @@
   };
 
   const setBucket = async (it, newBucket) => {
+    buzz(HAPTIC.tap);
     try {
       const r = await apiFetch(`/api/quick-bucket/${it.id}/update`, {
         method: "POST", body: JSON.stringify({ time_bucket: newBucket }),
@@ -727,7 +728,13 @@
   ];
   const cheer = () => CHEERS[Math.floor(Math.random() * CHEERS.length)];
 
+  // Tiny haptic helper — silent no-op on browsers without support
+  // (every desktop, iOS Safari). Three patterns so we can vary feel.
+  const HAPTIC = { tap: [10], pop: [12, 30, 18], swoosh: [22] };
+  const buzz = (pat) => { try { navigator.vibrate?.(pat); } catch (_) {} };
+
   const markDone = async (it) => {
+    buzz(HAPTIC.pop);
     try {
       await apiFetch(`/api/quick-bucket/${it.id}/done`, { method: "POST", body: "{}" });
       it.is_done = true;
@@ -1052,9 +1059,49 @@
     });
   };
 
-  const addItem = async (text) => {
+  // Natural-language time parser. Recognises phrases like:
+  //   "...in 30 mins"        → bucket="30m"
+  //   "...in 2 hours"        → bucket="2h"
+  //   "...now"               → bucket="now"
+  //   "...tomorrow"          → bucket="future"
+  //   "...later" / "...soon" → bucket="now" (no change)
+  // Returns { text, bucket } — text has the matched phrase stripped.
+  // Anchored to end-of-string so we don't eat content out of the title.
+  const _NL_PATTERNS = [
+    { re: /\s+(?:in\s+)?(\d+)\s*(?:m|min|mins|minute|minutes)\s*$/i,
+      pick: (m) => {
+        const n = parseInt(m[1], 10);
+        if (n <= 7)  return "5m";
+        if (n <= 22) return "15m";
+        if (n <= 37) return "30m";
+        if (n <= 50) return "45m";
+        return Math.min(8, Math.max(1, Math.round(n / 60))) + "h";
+      } },
+    { re: /\s+(?:in\s+)?(\d+)\s*(?:h|hr|hrs|hour|hours)\s*$/i,
+      pick: (m) => `${Math.min(8, Math.max(1, parseInt(m[1], 10)))}h` },
+    { re: /\s+(?:right\s+)?now\s*$/i,           pick: () => "now" },
+    { re: /\s+(?:later|tomorrow|next\s+week)\s*$/i, pick: () => "future" },
+  ];
+  const parseNlBucket = (raw) => {
+    const t = (raw || "").trim();
+    for (const { re, pick } of _NL_PATTERNS) {
+      const m = t.match(re);
+      if (m) return { text: t.slice(0, m.index).trim(), bucket: pick(m) };
+    }
+    return { text: t, bucket: null };
+  };
+
+  const addItem = async (text, opts = {}) => {
     text = (text || "").trim();
     if (!text) return;
+    // Parse "...in 30m" etc out of the title and choose a bucket.
+    // Caller can pre-pick a bucket (e.g. Top-5 add) — that wins.
+    let bucket = opts.bucket || null;
+    if (!bucket) {
+      const parsed = parseNlBucket(text);
+      if (parsed.bucket) { text = parsed.text; bucket = parsed.bucket; }
+    }
+    if (!bucket) bucket = "now";
     // Generate the client id up front so we can tie the optimistic row
     // to the eventual server response when the queue replays.
     const clientId = (crypto.randomUUID && crypto.randomUUID()) ||
@@ -1063,7 +1110,7 @@
       const r = await apiFetch("/api/quick-bucket", {
         method: "POST",
         headers: { "X-Client-Id": clientId },
-        body: JSON.stringify({ text, time_bucket: "now", client_id: clientId }),
+        body: JSON.stringify({ text, time_bucket: bucket, client_id: clientId }),
       });
       if (r.item) {
         items.unshift(r.item);
@@ -1076,7 +1123,7 @@
           _pending: true,
           client_id: clientId,
           text,
-          time_bucket: "now",
+          time_bucket: bucket,
           due_at: null,
           done_at: null,
           archived_at: null,
