@@ -91,41 +91,64 @@ def badge_count():
     """Aggregate "needs your attention" count for the App Badging API.
 
     Combines:
-      - Inbox unread items (status=Unread, not deleted)
-      - Today's incomplete checklist items
-    The browser/OS clamps to 99+ so we don't bother capping ourselves.
-    Cheap two-query call — fine to poll on every visibilitychange.
+      - Inbox unread items   (status = Unread, not archived)
+      - Today's checklist items not yet ticked
+
+    Schema notes:
+      - inbox_links soft-delete uses `is_archived`, not `is_deleted`
+      - checklist_items has no `is_done` column; completion is tracked
+        in checklist_ticks(item_id, tick_date, reminder_time). An
+        item is "done today" iff at least one tick row for that item
+        exists with tick_date = today. Items with multiple reminder
+        fires count as done when ANY fire is ticked — keeps the
+        badge simple (rule the badge represents: "do I have anything
+        outstanding today").
     """
+    from datetime import date as _date
     user_id = session["user_id"]
+    today = _date.today().isoformat()
     total = 0
+
     try:
         rows = get(
             "inbox_links",
             params={
-                "user_id": f"eq.{user_id}",
-                "status": "eq.Unread",
-                "is_deleted": "eq.false",
-                "select": "id",
-                "limit": 200,
+                "user_id":     f"eq.{user_id}",
+                "status":      "eq.Unread",
+                "is_archived": "eq.false",
+                "select":      "id",
+                "limit":       200,
             },
         ) or []
         total += len(rows)
     except Exception:
         pass
+
     try:
-        rows = get(
+        items = get(
             "checklist_items",
             params={
-                "user_id": f"eq.{user_id}",
-                "is_done": "eq.false",
+                "user_id":    f"eq.{user_id}",
                 "is_deleted": "eq.false",
-                "select": "id",
-                "limit": 200,
+                "select":     "id",
+                "limit":      500,
             },
         ) or []
-        total += len(rows)
+        if items:
+            ticks = get(
+                "checklist_ticks",
+                params={
+                    "user_id":   f"eq.{user_id}",
+                    "tick_date": f"eq.{today}",
+                    "select":    "item_id",
+                    "limit":     500,
+                },
+            ) or []
+            ticked_ids = {t["item_id"] for t in ticks}
+            total += sum(1 for i in items if i["id"] not in ticked_ids)
     except Exception:
         pass
+
     return jsonify({"count": total})
 
 
