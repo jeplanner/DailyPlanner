@@ -1161,10 +1161,13 @@
       },
     });
     if (t.isDone) row.classList.add("is-done");
-    // Make tree-nested task rows drag sources too — same target set
-    // (epic rows). Lets users move a loose task into an epic without
-    // leaving the tree, or shuffle between epics.
-    makeTaskDraggable(row, t);
+    // Intentionally NOT calling makeTaskDraggable here. draggable=true
+    // on a row interferes with normal tap behaviour on touch devices
+    // (drag preview flickers, click events get swallowed by dragstart)
+    // and clicking the row to open the detail panel started feeling
+    // weird as a result. The bottom "Tasks in scope" list still
+    // renders every visible task as a drag source, so loose-task
+    // reassignment continues to work via that list.
     return row;
   }
 
