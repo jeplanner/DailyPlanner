@@ -237,6 +237,8 @@
 
   let _treeSel = { okrs: new Set(), inits: new Set(), epics: new Set() };
   let _treeData = [];
+  let _sprints = [];                 // [{id,name,starts_on,ends_on,is_active,...}]
+  let _sprintSel = new Set();        // checked sprint ids (multi-select filter)
 
   async function renderTreeIfNeeded() {
     if (_treeData.length === 0) await fetchTree();
@@ -248,8 +250,158 @@
       const r = await fetch(`/api/projects/${PROJECT_ID}/hierarchy`, { credentials: "same-origin" });
       const j = await r.json();
       _treeData = j.tree || [];
+      _sprints  = j.sprints || [];
       indexHierarchy(_treeData);
+      renderSprintsBar();
+      populateSprintPickers();
     } catch (e) { console.warn("[ptv2] tree fetch failed", e); }
+  }
+
+  /* ───── SPRINTS bar ─────────────────────────────────────────── */
+
+  function renderSprintsBar() {
+    const bar = document.getElementById("ptv2-sprints-bar");
+    const list = document.getElementById("ptv2-sprints-list");
+    if (!bar || !list) return;
+    // Always show the bar so the user can create the first sprint.
+    bar.hidden = false;
+    list.innerHTML = "";
+    if (!_sprints.length) {
+      const hint = document.createElement("span");
+      hint.style.cssText = "font-size:12px;color:var(--ptv2-text-soft);padding:0 4px";
+      hint.textContent = "No sprints yet. Create one →";
+      list.appendChild(hint);
+    }
+    // Count tasks per sprint from the current DOM (cheap, accurate).
+    const counts = new Map();
+    document.querySelectorAll("#task-tbody tr.task-row").forEach((row) => {
+      const sid = row.dataset.sprintId;
+      if (sid) counts.set(sid, (counts.get(sid) || 0) + 1);
+    });
+    for (const s of _sprints) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "ptv2-sprint-chip" + (_sprintSel.has(s.id) ? " is-active" : "") + (s.is_active ? " is-running" : "");
+      const n = counts.get(s.id) || 0;
+      chip.innerHTML = `<span class="dot"></span>${esc(s.name)}<span class="count">${n}</span>`;
+      chip.addEventListener("click", () => {
+        if (_sprintSel.has(s.id)) _sprintSel.delete(s.id);
+        else _sprintSel.add(s.id);
+        renderSprintsBar();
+        applySprintFilter();
+      });
+      list.appendChild(chip);
+    }
+    if (window.feather) window.feather.replace();
+  }
+
+  // Hide / show task rows by sprint_id. Returns visible count.
+  function applySprintFilter() {
+    const rows = document.querySelectorAll("#task-tbody tr.task-row");
+    rows.forEach((row) => {
+      if (!_sprintSel.size) { row.style.removeProperty("display"); return; }
+      row.style.display = _sprintSel.has(row.dataset.sprintId) ? "" : "none";
+    });
+    // Re-render focus/done/tree-tasks since they read from the table.
+    if (document.body.dataset.activeTab === "focus") renderFocus();
+    if (document.body.dataset.activeTab === "done")  renderDone();
+    if (document.body.dataset.activeTab === "tree")  renderTreeTasks();
+    updateHeaderCounts();
+  }
+
+  function populateSprintPickers() {
+    // The add-task picker AND the detail-panel picker.
+    const opts = ['<option value="">No sprint</option>']
+      .concat(_sprints.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}${s.is_active ? " (active)" : ""}</option>`));
+    for (const id of ["add-task-sprint", "sheet-sprint"]) {
+      const sel = document.getElementById(id);
+      if (!sel) continue;
+      const cur = sel.value;
+      sel.innerHTML = opts.join("");
+      if (cur && sel.querySelector(`option[value="${cur}"]`)) sel.value = cur;
+    }
+  }
+
+  /* ───── inline sprint manager ───────────────────────────────── */
+
+  function openSprintManager() {
+    const sheet = document.getElementById("ptv2-spm");
+    if (!sheet) return;
+    sheet.hidden = false;
+    renderSprintManager();
+  }
+  function closeSprintManager() {
+    const sheet = document.getElementById("ptv2-spm");
+    if (sheet) sheet.hidden = true;
+  }
+  function renderSprintManager() {
+    const body = document.getElementById("ptv2-spm-body");
+    if (!body) return;
+    body.innerHTML = "";
+    for (const s of _sprints) {
+      const row = document.createElement("div");
+      row.className = "ptv2-spm-row";
+      row.dataset.sprintId = s.id;
+      row.innerHTML = `
+        <input type="text" value="${esc(s.name)}" data-field="name" maxlength="80">
+        <input type="date" value="${esc(s.starts_on || "")}" data-field="starts_on">
+        <input type="date" value="${esc(s.ends_on || "")}" data-field="ends_on">
+        <button type="button" class="spm-act is-active-toggle ${s.is_active ? "is-on" : ""}"
+                title="Active sprint (drives default picker order)">${s.is_active ? "●" : "○"}</button>
+        <button type="button" class="spm-act danger" title="Delete">×</button>`;
+      row.querySelectorAll("input").forEach((inp) => {
+        const commit = () => updateSprint(s.id, { [inp.dataset.field]: inp.value });
+        inp.addEventListener("change", commit);
+        inp.addEventListener("blur", commit);
+      });
+      row.querySelector(".is-active-toggle").addEventListener("click", () => updateSprint(s.id, { is_active: !s.is_active }));
+      row.querySelector(".danger").addEventListener("click", () => {
+        if (confirm(`Delete sprint "${s.name}"? Tasks keep their pointer.`)) deleteSprint(s.id);
+      });
+      body.appendChild(row);
+    }
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "ptv2-spm-add";
+    add.textContent = "+ Add sprint";
+    add.addEventListener("click", () => createSprint());
+    body.appendChild(add);
+  }
+
+  async function createSprint(name) {
+    const r = await _fetch("/api/sprints", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ project_id: PROJECT_ID, name: name || "" }),
+    });
+    if (r.ok) await refreshSprints();
+  }
+  async function updateSprint(id, patch) {
+    const r = await _fetch(`/api/sprints/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(patch),
+    });
+    if (r.ok) await refreshSprints();
+  }
+  async function deleteSprint(id) {
+    const r = await _fetch(`/api/sprints/${id}`, {
+      method: "DELETE", credentials: "same-origin",
+    });
+    if (r.ok) {
+      _sprintSel.delete(id);
+      await refreshSprints();
+    }
+  }
+  async function refreshSprints() {
+    try {
+      const r = await fetch(`/api/projects/${PROJECT_ID}/sprints`, { credentials: "same-origin" });
+      const j = await r.json();
+      _sprints = j.sprints || [];
+      renderSprintsBar();
+      renderSprintManager();
+      populateSprintPickers();
+    } catch (_) {}
   }
   function renderTree() {
     const colOkr  = document.querySelector('.ptv2-tree-col[data-col="okr"]');
@@ -624,8 +776,13 @@
   document.addEventListener("DOMContentLoaded", async () => {
     applyDensity(getDensity());
     updateHeaderCounts();
-    await fetchTree();        // hierarchy needed for breadcrumbs in Focus/Done
+    await fetchTree();        // hierarchy + sprints in one round trip
     setTab(activeTab(), { skipHash: true });
+
+    document.getElementById("ptv2-sprints-add")?.addEventListener("click", () => createSprint());
+    document.getElementById("ptv2-sprints-mgr")?.addEventListener("click", openSprintManager);
+    document.getElementById("ptv2-spm-close")?.addEventListener("click", closeSprintManager);
+
     if (window.feather) window.feather.replace();
   });
 

@@ -48,6 +48,13 @@
             title="Link to an Initiative">
       <option value="">🎯 No initiative</option>
     </select>
+    <select id="sheet-sprint" class="quick-select kr-picker"
+            onchange="autoSaveField('sprint_id', this.value)"
+            aria-label="Link to sprint"
+            data-source-show="project"
+            title="Tag this task to a sprint">
+      <option value="">🏁 No sprint</option>
+    </select>
     <button class="quick-action-btn" data-source-show="project"
             onclick="addSheetTaskToGCal()" title="Add to Calendar" aria-label="Add to Calendar">
       <i data-feather="calendar"></i>

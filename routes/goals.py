@@ -931,6 +931,108 @@ def delete_epic(epic_id):
 # separately.
 # ═════════════════════════════════════════════════════════════════
 
+# ═════════════════════════════════════════════════════════════════
+# SPRINTS — per-project time-boxes that any task can opt into. See
+# MIGRATION_SPRINTS.sql. Independent of the OKR tree: a task in
+# epic X can belong to sprint Y, both nullable.
+# ═════════════════════════════════════════════════════════════════
+
+@goals_bp.route("/api/projects/<project_id>/sprints", methods=["GET"])
+@login_required
+def list_sprints(project_id):
+    user_id = session["user_id"]
+    rows = get(
+        "sprints",
+        params={
+            "user_id":    f"eq.{user_id}",
+            "project_id": f"eq.{project_id}",
+            "is_deleted": "eq.false",
+            "select":     "id,name,starts_on,ends_on,is_active,order_index,created_at",
+            # Active first, then by date (most recent), then by manual order.
+            "order":      "is_active.desc,starts_on.desc.nullslast,order_index.asc,created_at.desc",
+        },
+    ) or []
+    return jsonify({"sprints": rows})
+
+
+@goals_bp.route("/api/sprints", methods=["POST"])
+@login_required
+def create_sprint():
+    data = request.get_json(force=True) or {}
+    project_id = data.get("project_id")
+    name = (data.get("name") or "").strip()
+    if not project_id:
+        return jsonify({"error": "project_id required"}), 400
+
+    # Default name = "Sprint N" where N is one more than the highest
+    # existing index. Cheap count query — soft-deleted rows count so the
+    # number monotonically grows (avoids "Sprint 3" twice after a delete).
+    if not name:
+        existing = get(
+            "sprints",
+            params={
+                "user_id":    f"eq.{session['user_id']}",
+                "project_id": f"eq.{project_id}",
+                "select":     "id",
+            },
+        ) or []
+        name = f"Sprint {len(existing) + 1}"
+
+    payload = {
+        "user_id":    session["user_id"],
+        "project_id": project_id,
+        "name":       name[:80],
+        "starts_on":  data.get("starts_on") or None,
+        "ends_on":    data.get("ends_on") or None,
+        "is_active":  bool(data.get("is_active", False)),
+        "order_index": int(data.get("order_index") or 0),
+    }
+    rows = post("sprints", payload)
+    return jsonify({"status": "ok", "sprint": rows[0] if rows else None})
+
+
+@goals_bp.route("/api/sprints/<sprint_id>", methods=["PATCH"])
+@login_required
+def update_sprint(sprint_id):
+    data = request.get_json(force=True) or {}
+    allowed = {"name", "starts_on", "ends_on", "is_active", "order_index", "is_deleted"}
+    patch = {k: v for k, v in data.items() if k in allowed}
+    if not patch:
+        return jsonify({"error": "no valid fields"}), 400
+    if "name" in patch:
+        patch["name"] = (patch["name"] or "").strip()[:80]
+        if not patch["name"]:
+            return jsonify({"error": "name cannot be blank"}), 400
+    # Empty string → NULL for the date fields so the column drops cleanly.
+    for d in ("starts_on", "ends_on"):
+        if d in patch and patch[d] == "":
+            patch[d] = None
+    if patch.get("is_deleted") is False:
+        patch["deleted_at"] = None
+    update(
+        "sprints",
+        params={"id": f"eq.{sprint_id}", "user_id": f"eq.{session['user_id']}"},
+        json=patch,
+    )
+    return jsonify({"status": "ok"})
+
+
+@goals_bp.route("/api/sprints/<sprint_id>", methods=["DELETE"])
+@login_required
+def delete_sprint(sprint_id):
+    """Soft delete. Tasks keep their sprint_id pointer so a restore
+    re-links them (mirrors delete_initiative / delete_epic)."""
+    try:
+        _soft_delete(
+            "sprints",
+            params={"id": f"eq.{sprint_id}", "user_id": f"eq.{session['user_id']}"},
+        )
+    except Exception as e:
+        logger.exception("delete_sprint failed")
+        return jsonify({"error": f"Delete failed: {e}"}), 500
+    return jsonify({"status": "ok"})
+
+
 @goals_bp.route("/api/projects/<project_id>/hierarchy")
 @login_required
 def project_hierarchy(project_id):
@@ -1017,13 +1119,28 @@ def project_hierarchy(project_id):
             krs.append(dict(kr, initiatives=inits))
         tree.append(dict(o, key_results=krs))
 
+    # Sprints — orthogonal to the OKR tree but the UI fetches both
+    # together to populate pickers + filter chips in one round trip.
+    sprints = get(
+        "sprints",
+        params={
+            "user_id":    f"eq.{user_id}",
+            "project_id": f"eq.{project_id}",
+            "is_deleted": "eq.false",
+            "select":     "id,name,starts_on,ends_on,is_active,order_index",
+            "order":      "is_active.desc,starts_on.desc.nullslast,order_index.asc,created_at.desc",
+        },
+    ) or []
+
     return jsonify({
         "project_id": project_id,
         "tree":       tree,
+        "sprints":    sprints,
         "counts": {
             "objectives":  len(objectives),
             "key_results": len(key_results),
             "initiatives": len(initiatives),
             "epics":       len(epics),
+            "sprints":     len(sprints),
         },
     })

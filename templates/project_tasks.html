@@ -55,6 +55,30 @@
     </div>
   </header>
 
+  <!-- ═══════════ SPRINTS BAR ═══════════
+       Project-wide sprint chips. Click to filter; long-press to
+       manage (rename / dates / archive). Hidden until at least one
+       sprint exists for the project. -->
+  <div class="ptv2-sprints-bar" id="ptv2-sprints-bar" hidden>
+    <span class="ptv2-sprints-label">Sprints</span>
+    <div class="ptv2-sprints-list" id="ptv2-sprints-list"></div>
+    <button type="button" class="ptv2-sprints-add" id="ptv2-sprints-add"
+            title="Create a new sprint">+ Sprint</button>
+    <button type="button" class="ptv2-sprints-mgr" id="ptv2-sprints-mgr"
+            title="Manage sprints" aria-label="Manage sprints">
+      <i data-feather="settings"></i>
+    </button>
+  </div>
+
+  <!-- Inline sprint manager sheet — popovered, no full-screen modal. -->
+  <div class="ptv2-spm" id="ptv2-spm" hidden role="dialog" aria-label="Manage sprints">
+    <header>
+      <h3>Sprints</h3>
+      <button type="button" id="ptv2-spm-close" aria-label="Close">×</button>
+    </header>
+    <div class="ptv2-spm-body" id="ptv2-spm-body"></div>
+  </div>
+
   <!-- ═══════════ TAB BAR (sticky) ═══════════ -->
   <nav class="ptv2-tabs" role="tablist" aria-label="Project views">
     <button type="button" role="tab" data-tab="focus" class="ptv2-tab active"
@@ -222,6 +246,10 @@
       </select>
       <select id="add-task-epic" class="ptv2-add-link kr-picker" data-current="">
         <option value="">No epic</option>
+      </select>
+      <select id="add-task-sprint" class="ptv2-add-link kr-picker" data-current=""
+              title="Tag this task to a sprint (optional).">
+        <option value="">No sprint</option>
       </select>
     </div>
   </div>
@@ -419,7 +447,9 @@
               data-group="{{ group_name }}"
               data-objective-id="{{ t.objective_id or '' }}"
               data-kr-id="{{ t.key_result_id or '' }}"
-              data-initiative-id="{{ t.initiative_id or '' }}">
+              data-initiative-id="{{ t.initiative_id or '' }}"
+              data-epic-id="{{ t.epic_id or '' }}"
+              data-sprint-id="{{ t.sprint_id or '' }}">
 
             <!-- Checkbox -->
             <td class="col-check">

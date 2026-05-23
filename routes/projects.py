@@ -250,7 +250,7 @@ def project_tasks(project_id):
                   "duration_days,delegated_to,is_pinned,planned_hours,actual_hours,"
                   "is_recurring,recurrence_type,recurrence_days,recurrence_interval,"
                   "recurrence_end,auto_advance,order_index,created_at,"
-                  "key_result_id,initiative_id,epic_id",
+                  "key_result_id,initiative_id,epic_id,sprint_id",
         "order": order,
         "limit": 500,
     }
@@ -725,6 +725,7 @@ def update_task(task_id):
         "key_result_id",
         "initiative_id",
         "epic_id",
+        "sprint_id",
     ]
 
     for field in allowed_fields:
@@ -749,6 +750,8 @@ def update_task(task_id):
         updates["initiative_id"] = None
     if "epic_id" in updates and updates["epic_id"] == "":
         updates["epic_id"] = None
+    if "sprint_id" in updates and updates["sprint_id"] == "":
+        updates["sprint_id"] = None
 
     update(
         "project_tasks",
@@ -1680,6 +1683,8 @@ def add_project_task_ajax(project_id):
     initiative_id = raw_init if (raw_init and str(raw_init).strip() not in ("", "null")) else None
     raw_epic = data.get("epic_id")
     epic_id = raw_epic if (raw_epic and str(raw_epic).strip() not in ("", "null")) else None
+    raw_sprint = data.get("sprint_id")
+    sprint_id = raw_sprint if (raw_sprint and str(raw_sprint).strip() not in ("", "null")) else None
 
     # No epic supplied → drop into the project's default epic so every
     # task lives somewhere in the OKR tree. _default_epic_id lazily
@@ -1718,6 +1723,8 @@ def add_project_task_ajax(project_id):
         payload["initiative_id"] = initiative_id
     if epic_id:
         payload["epic_id"] = epic_id
+    if sprint_id:
+        payload["sprint_id"] = sprint_id
 
     result = post("project_tasks", payload)
 
