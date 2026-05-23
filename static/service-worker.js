@@ -16,10 +16,19 @@
    route at /service-worker.js is served with no-cache (app.py), so a
    new version is picked up on the next page load. */
 
-const CACHE_VERSION = "v3-2026-05-23-bgsync";
+const CACHE_VERSION = "v4-2026-05-23-lru";
 const STATIC_CACHE = `dp-static-${CACHE_VERSION}`;
 const PAGES_CACHE  = `dp-pages-${CACHE_VERSION}`;
 const OFFLINE_URL  = "/offline";
+
+// LRU caps per cache so the SW doesn't grow unbounded for users who
+// hop around 50+ pages. We trim oldest entries (insertion order) when
+// the cache exceeds the cap. Static assets get more headroom because
+// they're small and cache hits are valuable.
+const CACHE_LIMITS = {
+  [STATIC_CACHE]: 120,
+  [PAGES_CACHE]:  50,
+};
 
 // Files we want available immediately on first install so the very
 // first offline open works. Keep this list short — anything missed
@@ -73,6 +82,27 @@ self.addEventListener("message", (event) => {
 self.addEventListener("sync", (event) => {
   if (event.tag === "dp-replay") event.waitUntil(replayQueue());
 });
+
+// Periodic Background Sync — Chrome/Edge only, requires the site to
+// be installed AND the user to have granted the 'periodic-background-
+// sync' permission. We register from pwa.js with a 12h interval; the
+// browser fires this no more often than its own heuristics allow,
+// which is usually closer to once per day. Best-effort prefetch of
+// today's checklist + inbox so opening the app feels instant.
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "dp-prefetch") event.waitUntil(prefetchToday());
+});
+
+async function prefetchToday() {
+  const cache = await caches.open(PAGES_CACHE);
+  const urls = ["/checklist", "/inbox", "/quick-bucket"];
+  await Promise.all(urls.map(async (url) => {
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (res && res.ok && res.type === "basic") await cache.put(url, res.clone());
+    } catch (_) { /* offline at sync time — skip */ }
+  }));
+}
 
 /* ───── offline write queue (replay side) ─────────────────────────
    The page (sync-queue.js) writes records into IndexedDB when a
@@ -193,6 +223,11 @@ function replayQueue() {
           clientId: rec.clientId,
           ok:       res.ok,
           status:   res.status,
+          // 409 from a queued write is a real conflict: the same row
+          // was changed on another device while this one was offline.
+          // The page can distinguish via .conflict and show a chooser
+          // instead of treating it as a generic failure.
+          conflict: res.status === 409,
           url:      rec.url,
           method:   rec.method,
           body:     bodyJson != null ? bodyJson : bodyText,
@@ -248,8 +283,11 @@ async function staleWhileRevalidate(req, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(req);
   const network = fetch(req)
-    .then((res) => {
-      if (res && res.ok) cache.put(req, res.clone()).catch(() => {});
+    .then(async (res) => {
+      if (res && res.ok) {
+        await cache.put(req, res.clone()).catch(() => {});
+        trimCache(cacheName);
+      }
       return res;
     })
     .catch(() => null);
@@ -262,6 +300,7 @@ async function networkFirst(req, cacheName) {
     const res = await fetch(req);
     if (res && res.ok && res.type === "basic") {
       cache.put(req, res.clone()).catch(() => {});
+      trimCache(cacheName);
     }
     return res;
   } catch (_) {
@@ -271,6 +310,21 @@ async function networkFirst(req, cacheName) {
     if (offline) return offline;
     return new Response("Offline", { status: 503, statusText: "Offline" });
   }
+}
+
+// Cache.keys() returns entries in insertion order, which we treat as
+// LRU since each successful fetch re-puts the request (deleting the
+// old entry and appending). Fire-and-forget — no await needed in the
+// response path.
+function trimCache(cacheName) {
+  const max = CACHE_LIMITS[cacheName];
+  if (!max) return;
+  caches.open(cacheName).then(async (cache) => {
+    const keys = await cache.keys();
+    if (keys.length <= max) return;
+    const excess = keys.length - max;
+    for (let i = 0; i < excess; i++) await cache.delete(keys[i]);
+  }).catch(() => {});
 }
 
 /* ───── push notifications (unchanged behavior) ───────────────── */

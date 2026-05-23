@@ -47,8 +47,12 @@
   }
 
   // ── API helpers ───────────────────────────────────
+  // Route through dpFetch so mutating requests queue offline and the
+  // SW replays them on reconnect. Falls back to plain fetch when
+  // sync-queue.js hasn't loaded yet (early page hydration).
+  const _fetch = (window.dpFetch) || ((u, o) => fetch(u, o));
   async function api(path, opts = {}) {
-    const res = await fetch(path, {
+    const res = await _fetch(path, {
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       ...opts,
@@ -57,7 +61,10 @@
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `HTTP ${res.status}`);
     }
-    return res.json();
+    // Surface queued status so callers can show "saved offline" UX.
+    const body = await res.json().catch(() => ({}));
+    if (res._queued) body.queued = true;
+    return body;
   }
 
   // ── Render ────────────────────────────────────────

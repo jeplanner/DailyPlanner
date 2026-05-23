@@ -76,6 +76,26 @@
     });
   }
 
+  async function idbAll() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      const req = tx.objectStore(STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror   = () => reject(req.error);
+    });
+  }
+
+  async function idbDelete(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const req = tx.objectStore(STORE).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror   = () => reject(req.error);
+    });
+  }
+
   /* ───── helpers ─────────────────────────────────────────────── */
 
   // RFC 4122 v4-ish — good enough for an idempotency key.
@@ -239,6 +259,8 @@
   window.dpFetch = dpFetch;
   window.dpSync = {
     pendingCount: () => idbCount().catch(() => 0),
+    list:         () => idbAll().catch(() => []),
+    drop:         (id) => idbDelete(id),
     replay: () => requestReplay(),
     onResult: (cb) => {
       resultListeners.add(cb);

@@ -80,6 +80,23 @@
   navigator.serviceWorker.ready.then((reg) => {
     if (!reg) return;
 
+    // Periodic Background Sync — Chrome installed-PWA only. We can't
+    // prompt for the permission directly (Chrome only grants it to
+    // sites the user has "installed AND engaged with"), but we can
+    // probe whether it's already granted and register if so.
+    if ("periodicSync" in reg) {
+      navigator.permissions
+        .query({ name: "periodic-background-sync" })
+        .then((status) => {
+          if (status.state === "granted") {
+            reg.periodicSync.register("dp-prefetch", {
+              minInterval: 12 * 60 * 60 * 1000,  // 12h; browser may delay
+            }).catch(() => { /* may fail on first install — silent */ });
+          }
+        })
+        .catch(() => {});
+    }
+
     // A waiting worker was present before this page loaded — prompt now.
     if (reg.waiting && navigator.serviceWorker.controller) {
       promptReload(reg.waiting);
@@ -115,6 +132,69 @@
       onClick: () => sw.postMessage({ type: "SKIP_WAITING" }),
     });
   }
+
+  /* ───── iOS install banner ──────────────────────────────────── */
+
+  // iOS Safari can't fire beforeinstallprompt, so the Install FAB above
+  // never appears on iPhone/iPad. Without a hint, users have no idea
+  // they can install. Show a one-time banner with the Share→Add steps.
+  // Stored in localStorage so we don't nag — user can also dismiss
+  // explicitly to suppress forever.
+  const IOS_HINT_KEY = "dp-ios-install-hint-v1";
+  function isIOS() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }
+  function isInStandalone() {
+    return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  }
+  function showIOSInstallHint() {
+    if (!isIOS() || isInStandalone()) return;
+    try {
+      const stored = localStorage.getItem(IOS_HINT_KEY);
+      if (stored === "dismissed") return;
+      const lastShown = parseInt(stored || "0", 10);
+      // Don't re-show inside 30 days even if not explicitly dismissed.
+      if (Date.now() - lastShown < 30 * 24 * 3600 * 1000) return;
+    } catch (_) {}
+
+    const bar = document.createElement("div");
+    bar.id = "dp-ios-install-hint";
+    Object.assign(bar.style, {
+      position: "fixed",
+      left: "12px",
+      right: "12px",
+      bottom: "calc(12px + env(safe-area-inset-bottom))",
+      zIndex: "9001",
+      background: "#1f2330",
+      color: "#fff",
+      padding: "14px 16px",
+      borderRadius: "14px",
+      fontFamily: "'Inter', system-ui, sans-serif",
+      fontSize: "14px",
+      lineHeight: "1.4",
+      display: "flex",
+      gap: "12px",
+      alignItems: "center",
+      boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+    });
+    bar.innerHTML = `
+      <img src="/static/icons/icon-192.png" alt="" style="width:36px;height:36px;border-radius:8px;flex:0 0 36px">
+      <div style="flex:1">
+        <div style="font-weight:600;margin-bottom:2px">Install DailyPlanner</div>
+        <div style="opacity:0.85">Tap <b>Share</b> ⬆︎, then <b>Add to Home Screen</b>.</div>
+      </div>
+      <button type="button" id="dp-ios-hint-dismiss"
+        style="background:transparent;border:0;color:#9ca3af;font-size:22px;cursor:pointer;padding:4px 8px;line-height:1">×</button>
+    `;
+    document.body.appendChild(bar);
+    document.getElementById("dp-ios-hint-dismiss").addEventListener("click", () => {
+      try { localStorage.setItem(IOS_HINT_KEY, "dismissed"); } catch (_) {}
+      bar.remove();
+    });
+    try { localStorage.setItem(IOS_HINT_KEY, String(Date.now())); } catch (_) {}
+  }
+  // Delay slightly so it doesn't compete with first paint.
+  setTimeout(showIOSInstallHint, 2500);
 
   /* ───── offline-queue status pill ───────────────────────────── */
 
@@ -178,15 +258,47 @@
     window.dpSync.onQueued(refreshPill);
     window.dpSync.onResult((r) => {
       refreshPill();
+      refreshBadge();
       if (!window.showToast) return;
-      if (r.ok) showToast("Synced", "success", 1800);
-      else      showToast(`Sync failed (${r.status})`, "error", 3500);
+      if (r.ok) {
+        showToast("Synced", "success", 1800);
+      } else if (r.conflict) {
+        // Server says the row was touched elsewhere. Keep it simple:
+        // surface a toast with a link to /pending where the user can
+        // see what was queued and decide. A full inline chooser would
+        // need to know which UI surface owns the row.
+        showToast("Sync conflict — open Pending to resolve", "warning", 6000, {
+          label: "Open", onClick: () => { location.href = "/pending"; },
+        });
+      } else {
+        showToast(`Sync failed (${r.status})`, "error", 3500);
+      }
     });
   }
   window.addEventListener("online",  refreshPill);
   window.addEventListener("offline", refreshPill);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refreshPill();
+    if (!document.hidden) { refreshPill(); refreshBadge(); }
   });
   refreshPill();
+
+  /* ───── App Badging — unread count on dock/launcher icon ─────
+     Chrome 81+/Edge desktop, Safari 16.4+ macOS. No-ops elsewhere
+     (we still poll the endpoint, just don't set anything). */
+  async function refreshBadge() {
+    if (!("setAppBadge" in navigator) && !("clearAppBadge" in navigator)) return;
+    try {
+      const r = await fetch("/api/badge", { credentials: "same-origin" });
+      if (!r.ok) return;
+      const { count } = await r.json();
+      if (count > 0 && navigator.setAppBadge) {
+        navigator.setAppBadge(count).catch(() => {});
+      } else if (navigator.clearAppBadge) {
+        navigator.clearAppBadge().catch(() => {});
+      }
+    } catch (_) { /* ignore — best effort */ }
+  }
+  // Refresh every 5 min while page is in foreground; also on focus.
+  setInterval(() => { if (!document.hidden) refreshBadge(); }, 5 * 60 * 1000);
+  refreshBadge();
 })();

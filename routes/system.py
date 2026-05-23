@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 from supabase_client import get
 from services.login_service import login_required
 
@@ -15,6 +15,67 @@ def favicon():
     return "", 204
 
 
+@system_bp.route("/pending")
+def pending_page():
+    """Page that reads the offline-write queue out of the user's
+    IndexedDB and lets them inspect or delete entries before they
+    sync. Entirely client-rendered — the server holds nothing here."""
+    return render_template("pending.html")
+
+
+@system_bp.route("/open", methods=["GET", "POST"])
+@login_required
+def file_handler():
+    """File Handler API + protocol handler entry point.
+
+    Manifest's file_handlers route .ics / .md / .csv → /open. The
+    browser POSTs a multipart form with one file field; we sniff the
+    extension and redirect to the right surface. The protocol handler
+    (web+dailyplanner://) hits the GET path with ?u=<encoded URL>.
+
+    No file processing here yet — we just route. Each destination page
+    can pull the file from sessionStorage on the client if it needs
+    the contents."""
+    # Protocol handler — incoming web+dailyplanner://something
+    if request.method == "GET":
+        url = (request.args.get("u") or "").strip()
+        # Currently the only thing we route on is the path component.
+        # Future: parse `add-task?text=...` style intents.
+        if url.startswith("inbox"):
+            return redirect(url_for("inbox_bp.inbox_page"))
+        if url.startswith("check"):
+            return redirect("/checklist")
+        return redirect(url_for("inbox_bp.inbox_page"))
+
+    # File handler — POST with multipart/form-data, one or more files.
+    f = request.files.get("file") or next(iter(request.files.values()), None)
+    if not f or not f.filename:
+        return redirect(url_for("inbox_bp.inbox_page"))
+    ext = (f.filename.rsplit(".", 1)[-1] or "").lower()
+    # Stash the raw bytes briefly in the user's session so the
+    # destination page can offer to import. Cap at 256 KB to stay
+    # well under typical session-cookie size limits.
+    try:
+        blob = f.read(256 * 1024)
+        session["pending_file"] = {
+            "name": f.filename,
+            "ext":  ext,
+            # session can serialize bytes via flask's signed-cookie
+            # only as a string — base64 keeps it round-trippable.
+            "b64":  __import__("base64").b64encode(blob).decode("ascii"),
+        }
+    except Exception:
+        pass
+
+    if ext == "ics":
+        return redirect("/planner")          # calendar import lives here
+    if ext in ("md", "markdown"):
+        return redirect("/scribble")         # notes
+    if ext == "csv":
+        return redirect("/portfolio")        # transactions / holdings import
+    return redirect(url_for("inbox_bp.inbox_page"))
+
+
 @system_bp.route("/offline")
 def offline():
     # Self-contained page the service worker serves when a navigation
@@ -22,6 +83,50 @@ def offline():
     # base.html — base.html pulls runtime dependencies we may not have
     # cached. Login-free by design so it works in any auth state.
     return render_template("offline.html")
+
+
+@system_bp.route("/api/badge")
+@login_required
+def badge_count():
+    """Aggregate "needs your attention" count for the App Badging API.
+
+    Combines:
+      - Inbox unread items (status=Unread, not deleted)
+      - Today's incomplete checklist items
+    The browser/OS clamps to 99+ so we don't bother capping ourselves.
+    Cheap two-query call — fine to poll on every visibilitychange.
+    """
+    user_id = session["user_id"]
+    total = 0
+    try:
+        rows = get(
+            "inbox_links",
+            params={
+                "user_id": f"eq.{user_id}",
+                "status": "eq.Unread",
+                "is_deleted": "eq.false",
+                "select": "id",
+                "limit": 200,
+            },
+        ) or []
+        total += len(rows)
+    except Exception:
+        pass
+    try:
+        rows = get(
+            "checklist_items",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_done": "eq.false",
+                "is_deleted": "eq.false",
+                "select": "id",
+                "limit": 200,
+            },
+        ) or []
+        total += len(rows)
+    except Exception:
+        pass
+    return jsonify({"count": total})
 
 
 @system_bp.route("/api/search")

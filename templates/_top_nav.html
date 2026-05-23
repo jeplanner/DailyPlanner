@@ -44,6 +44,15 @@
 <link rel="apple-touch-startup-image" href="/static/icons/splash/splash-1536x2048.png" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2)">
 <link rel="apple-touch-startup-image" href="/static/icons/splash/splash-1668x2388.png" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2)">
 <link rel="apple-touch-startup-image" href="/static/icons/splash/splash-2048x2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2)">
+{# Landscape orientation variants — iOS only picks the matching link
+   for the launch orientation, so portrait users never download these. #}
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)">
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-1536x2048.png" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-1668x2388.png" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
+<link rel="apple-touch-startup-image" href="/static/icons/splash/splash-land-2048x2732.png" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="/static/js/global.js"></script>
 <script src="/static/js/toast.js"></script>
@@ -68,6 +77,26 @@
   position:sticky;
   top:0;
   z-index:900;
+  /* Window Controls Overlay: when the user installs as a desktop PWA
+     and we've declared display_override: window-controls-overlay, the
+     OS title bar disappears and our top bar takes the full window
+     width — except for the window controls (close/min/max) area
+     reserved on the right. env(titlebar-area-*) returns 0 when WCO
+     is inactive, so the rule below is a no-op in the browser tab.
+     The -webkit-app-region: drag turns the whole bar into a
+     draggable region so the user can still move the window. */
+  padding-left: env(titlebar-area-x, 14px);
+  padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 14px);
+  height: env(titlebar-area-height, auto);
+  -webkit-app-region: drag;
+}
+/* Anything interactive inside the bar must opt out of the drag region
+   or clicks get swallowed by window-move. */
+.top-context a,
+.top-context button,
+.top-context input,
+.top-context [role="button"]{
+  -webkit-app-region: no-drag;
 }
 /* On mobile, suppress the noisy bits in the top bar — live clock,
    pomodoro shortcut, help button. The hamburger, search, and user

@@ -2,14 +2,18 @@
   "id": "/",
   "name": "DailyPlanner",
   "short_name": "Planner",
-  "description": "Personal daily planner with checklists, habits, and reminders.",
+  "description": "Personal daily planner with checklists, habits, reminders, and offline-first capture.",
   "start_url": "/quick-bucket",
   "scope": "/",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["productivity", "lifestyle", "utilities"],
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#f7f8fa",
   "theme_color": "#6366f1",
+  "prefer_related_applications": false,
   "launch_handler": {
     "client_mode": ["navigate-existing", "auto"]
   },
@@ -45,6 +49,22 @@
       "purpose": "any"
     }
   ],
+  "screenshots": [
+    {
+      "src": "/static/screenshots/phone-1080x1920.png",
+      "sizes": "1080x1920",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Today's checklist on a phone"
+    },
+    {
+      "src": "/static/screenshots/desktop-1920x1080.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Inbox + checklist side-by-side on desktop"
+    }
+  ],
   "share_target": {
     "action": "/inbox/share",
     "method": "POST",
@@ -56,8 +76,36 @@
     }
   },
   "shortcuts": [
-    { "name": "Quick Bucket", "url": "/quick-bucket" },
-    { "name": "Checklist",    "url": "/checklist" },
-    { "name": "Inbox",        "url": "/inbox" }
+    {
+      "name": "Quick Bucket",
+      "short_name": "Quick",
+      "url": "/quick-bucket",
+      "icons": [{ "src": "/static/icons/shortcuts/quick.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Checklist",
+      "short_name": "Check",
+      "url": "/checklist",
+      "icons": [{ "src": "/static/icons/shortcuts/checklist.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Inbox",
+      "short_name": "Inbox",
+      "url": "/inbox",
+      "icons": [{ "src": "/static/icons/shortcuts/inbox.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "/open",
+      "accept": {
+        "text/calendar": [".ics"],
+        "text/markdown": [".md", ".markdown"],
+        "text/csv": [".csv"]
+      }
+    }
+  ],
+  "protocol_handlers": [
+    { "protocol": "web+dailyplanner", "url": "/open?u=%s" }
   ]
 }

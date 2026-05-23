@@ -66,14 +66,37 @@ _URL_RE = re.compile(r"https?://\S+")
 
 
 @inbox_bp.route("/inbox/share", methods=["POST", "GET"])
-@login_required
 def share_target():
-    # Chrome sends form fields; some Android intents put the URL into
-    # `text` instead of `url`. Fall back through title for completeness.
-    f = request.form if request.method == "POST" else request.args
-    raw_url   = (f.get("url")   or "").strip()
-    raw_text  = (f.get("text")  or "").strip()
-    raw_title = (f.get("title") or "").strip()
+    # NOTE: intentionally NOT decorated with @login_required so we can
+    # stash unauthenticated shares in the session and finish them once
+    # the user logs in. The share intent comes from another app — by
+    # the time we redirect to /login the original POST body is gone, so
+    # we save it ourselves before sending the user through auth.
+    from flask_login import current_user
+    if not current_user.is_authenticated:
+        f = request.form if request.method == "POST" else request.args
+        session["pending_share"] = {
+            "url":   (f.get("url")   or "").strip(),
+            "text":  (f.get("text")  or "").strip(),
+            "title": (f.get("title") or "").strip(),
+        }
+        return redirect(url_for("auth.login", next="/inbox/share?resume=1"))
+
+    # Resume path: after login, /inbox/share?resume=1 replays from session.
+    if request.args.get("resume") == "1":
+        stashed = session.pop("pending_share", None) or {}
+        raw_url, raw_text, raw_title = (
+            stashed.get("url", ""),
+            stashed.get("text", ""),
+            stashed.get("title", ""),
+        )
+    else:
+        # Chrome sends form fields; some Android intents put the URL into
+        # `text` instead of `url`. Fall back through title for completeness.
+        f = request.form if request.method == "POST" else request.args
+        raw_url   = (f.get("url")   or "").strip()
+        raw_text  = (f.get("text")  or "").strip()
+        raw_title = (f.get("title") or "").strip()
 
     candidate = raw_url
     if not candidate:
@@ -119,7 +142,19 @@ def share_target():
             row["published_at"] = meta["published_at"]
         if duration_seconds:
             row["duration_seconds"] = duration_seconds
-        post("inbox_links", row)
+        # Share-target POSTs from Android may be replayed by the Web
+        # Share Target flow; dedupe via X-Client-Id if the manifest
+        # sender (typically Chrome) provided one.
+        share_client_id = request.headers.get("X-Client-Id") or None
+        if share_client_id:
+            row["client_id"] = share_client_id
+            post(
+                "inbox_links?on_conflict=user_id,client_id",
+                row,
+                prefer="resolution=merge-duplicates",
+            )
+        else:
+            post("inbox_links", row)
     except Exception:
         # Don't 500 the share intent — the user is mid-flow in another
         # app and a stack trace helps nobody. Log and land them in the
@@ -199,7 +234,21 @@ def create_inbox():
         row["published_at"] = meta["published_at"]
     if duration_seconds:
         row["duration_seconds"] = duration_seconds
-    post("inbox_links", row)
+    # Idempotency for offline replays: see MIGRATION_OFFLINE_IDEMPOTENCY.
+    client_id = (
+        request.headers.get("X-Client-Id")
+        or (data.get("client_id") or "").strip()
+        or None
+    )
+    if client_id:
+        row["client_id"] = client_id
+        post(
+            "inbox_links?on_conflict=user_id,client_id",
+            row,
+            prefer="resolution=merge-duplicates",
+        )
+    else:
+        post("inbox_links", row)
 
     return jsonify({
         "success": True,
@@ -257,6 +306,28 @@ def update_inbox(item_id):
 
     if not allowed:
         return jsonify({"error": "nothing to update"}), 400
+
+    # Conflict detection for offline edits: clients that queued a write
+    # while offline include If-Unmodified-Since with the row's
+    # updated_at as of the queue time. When the SW replays, if the row
+    # has been touched on another device in the meantime, we return
+    # 409 with both versions so the page can ask the user what to keep.
+    if_unmod = request.headers.get("If-Unmodified-Since")
+    if if_unmod:
+        rows = get(
+            "inbox_links",
+            params={
+                "id":      f"eq.{item_id}",
+                "user_id": f"eq.{user_id}",
+                "select":  "id,updated_at,status,category,title,description,labels",
+            },
+        ) or []
+        if rows and (rows[0].get("updated_at") or "") > if_unmod:
+            return jsonify({
+                "error":  "conflict",
+                "server": rows[0],
+                "client": allowed,
+            }), 409
 
     update("inbox_links", params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"}, json=allowed)
     return jsonify({"success": True})

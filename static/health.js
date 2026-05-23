@@ -2,6 +2,10 @@
    Health Dashboard — Modern SaaS Habit Tracker
    ============================================================ */
 
+// Route writes through dpFetch (sync-queue.js) so offline saves
+// queue + replay automatically. GETs pass through unchanged.
+const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
+
 // --------------- State ---------------
 let currentDate = "";
 let saveHealthTimer = null;

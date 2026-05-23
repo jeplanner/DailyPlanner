@@ -220,6 +220,14 @@ def add_item():
         bucket = "now"
 
     is_done = bool(data.get("is_done", False))
+    # Pick up X-Client-Id (set by sync-queue.js on every mutating
+    # request) or the in-body client_id, whichever was sent. Used by
+    # the (user_id, client_id) unique index to dedupe SW replays.
+    client_id = (
+        request.headers.get("X-Client-Id")
+        or (data.get("client_id") or "").strip()
+        or None
+    )
     payload = {
         "user_id": user_id,
         "text": text,
@@ -231,8 +239,21 @@ def add_item():
     }
     if is_done:
         payload["done_at"] = datetime.utcnow().isoformat()
+    if client_id:
+        payload["client_id"] = client_id
     try:
-        rows = post("quick_bucket", payload)
+        # Upsert on the (user_id, client_id) partial unique index so a
+        # replayed offline write returns the original row instead of
+        # creating a duplicate. Falls back to a normal insert when no
+        # client_id was sent (legacy callers / online path).
+        if client_id:
+            rows = post(
+                "quick_bucket?on_conflict=user_id,client_id",
+                payload,
+                prefer="resolution=merge-duplicates",
+            )
+        else:
+            rows = post("quick_bucket", payload)
     except Exception as e:
         logger.error("quick_bucket insert failed: %s", e)
         return jsonify({"error": "Couldn't add — please try again."}), 502

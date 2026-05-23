@@ -2153,6 +2153,11 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
   }
 </style>
 <script>
+  // Route mutating writes through dpFetch when sync-queue.js loaded
+  // (the global is set by /static/js/sync-queue.js). GETs/cross-origin
+  // are pass-through, so this is safe to shadow the global inside the
+  // block. Lets offline writes here queue + replay automatically.
+  const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
   // Revise a parked task forward by N days from today (0 = today).
   async function reviseParkedTask(taskId, shiftDays) {
     const today = new Date();
@@ -2290,6 +2295,7 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
 </style>
 
 <script>
+const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
 function openTravelRestoreModal() {
   const m = document.getElementById("em-travel-restore-modal");
   if (!m) return;
@@ -2341,6 +2347,7 @@ document.addEventListener("keydown", (e) => {
 {% include '_task_detail_panel.html' %}
 
 <script>
+const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
 const PLAN_DATE = "{{ plan_date.isoformat() }}";
 
 function navDate(delta) {

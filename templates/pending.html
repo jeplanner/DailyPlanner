@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#6366f1">
+  <title>Pending writes · DailyPlanner</title>
+  <link rel="icon" href="/static/icons/icon-192.png">
+  <link rel="manifest" href="/manifest.json">
+  <script src="/static/js/sync-queue.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+      background: #f7f8fa; color: #1f2330;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0f1115; color: #e8eaf0; }
+      .row, header { background: #181b22; border-color: #232733; }
+      .meta { color: #9ca3af; }
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 16px; }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: #fff; border: 1px solid #e4e6ee; border-radius: 14px; }
+    header h1 { margin: 0; font-size: 18px; font-weight: 600; flex: 1; }
+    .btn { appearance: none; border: 0; cursor: pointer; padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 14px; }
+    .btn.primary { background: #6366f1; color: #fff; }
+    .btn.ghost   { background: transparent; color: inherit; border: 1px solid currentColor; opacity: 0.7; }
+    .btn.danger  { background: transparent; color: #ef4444; border: 1px solid #ef4444; }
+    .empty { margin-top: 32px; text-align: center; opacity: 0.7; }
+    .list  { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+    .row   { background: #fff; border: 1px solid #e4e6ee; border-radius: 12px; padding: 12px 14px; }
+    .top   { display: flex; align-items: baseline; gap: 10px; }
+    .verb  { font-weight: 700; font-size: 12px; padding: 2px 8px; border-radius: 6px; color: #fff; }
+    .verb.POST { background: #22c55e; }
+    .verb.PUT, .verb.PATCH { background: #f59e0b; }
+    .verb.DELETE { background: #ef4444; }
+    .url   { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; word-break: break-all; }
+    .meta  { font-size: 12px; color: #6b7280; margin-top: 6px; }
+    pre    { background: rgba(0,0,0,0.04); border-radius: 8px; padding: 8px 10px; font-size: 12px; overflow: auto; max-height: 200px; margin: 8px 0 0; }
+    .actions { display: flex; gap: 8px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pending offline writes</h1>
+    <button id="retry-all" class="btn primary">Retry all</button>
+    <a href="/" class="btn ghost">Back</a>
+  </header>
+  <div id="list" class="list"></div>
+  <p id="empty" class="empty" hidden>Nothing queued — you're up to date.</p>
+</main>
+<script>
+(async () => {
+  const listEl  = document.getElementById("list");
+  const emptyEl = document.getElementById("empty");
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function ageStr(ts) {
+    const sec = Math.round((Date.now() - ts) / 1000);
+    if (sec < 60)    return sec + "s ago";
+    if (sec < 3600)  return Math.round(sec / 60) + "m ago";
+    if (sec < 86400) return Math.round(sec / 3600) + "h ago";
+    return Math.round(sec / 86400) + "d ago";
+  }
+
+  function bodyPreview(b) {
+    if (!b || b.kind === "none") return "(no body)";
+    if (b.kind === "text" || b.kind === "urlencoded") {
+      const v = b.value || "";
+      return v.length > 800 ? v.slice(0, 800) + "…" : v;
+    }
+    return `[${b.kind} payload, ${b.value && b.value.byteLength || 0} bytes]`;
+  }
+
+  async function render() {
+    if (!window.dpSync) {
+      listEl.innerHTML = '<div class="row">Sync queue not loaded.</div>';
+      return;
+    }
+    const rows = await window.dpSync.list();
+    rows.sort((a, b) => a.queuedAt - b.queuedAt);
+    listEl.innerHTML = "";
+    if (!rows.length) {
+      emptyEl.hidden = false;
+      return;
+    }
+    emptyEl.hidden = true;
+    for (const r of rows) {
+      const div = document.createElement("div");
+      div.className = "row";
+      const path = (() => { try { return new URL(r.url).pathname + new URL(r.url).search; } catch { return r.url; }})();
+      div.innerHTML = `
+        <div class="top">
+          <span class="verb ${esc(r.method)}">${esc(r.method)}</span>
+          <span class="url">${esc(path)}</span>
+        </div>
+        <div class="meta">
+          queued ${ageStr(r.queuedAt)} · attempts ${r.attempts || 0}
+          ${r.lastError ? ' · last error: ' + esc(r.lastError) : ''}
+        </div>
+        <pre>${esc(bodyPreview(r.body))}</pre>
+        <div class="actions">
+          <button class="btn danger" data-drop="${r.id}">Discard</button>
+        </div>
+      `;
+      listEl.appendChild(div);
+    }
+    listEl.querySelectorAll("[data-drop]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = parseInt(btn.dataset.drop, 10);
+        if (!confirm("Discard this queued write? The change will be lost.")) return;
+        await window.dpSync.drop(id);
+        render();
+      });
+    });
+  }
+
+  document.getElementById("retry-all").addEventListener("click", async () => {
+    if (window.dpSync) await window.dpSync.replay();
+    setTimeout(render, 600);
+  });
+
+  if (window.dpSync && window.dpSync.onResult) {
+    window.dpSync.onResult(() => render());
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

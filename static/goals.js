@@ -22,14 +22,17 @@ function csrfHeader() {
   return { "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "" };
 }
 
+// Route mutating requests through dpFetch so they queue offline.
+const _fetch = (window.dpFetch) || ((u, o) => fetch(u, o));
 async function api(method, path, body) {
-  const res = await fetch(path, {
+  const res = await _fetch(path, {
     method,
     headers: { "Content-Type": "application/json", ...csrfHeader() },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || "Request failed");
+  if (res._queued) data.queued = true;
   return data;
 }
 
