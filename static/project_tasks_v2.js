@@ -950,11 +950,15 @@
       for (const it of kr.initiatives || []) inits.push({ it, kr });
     const epCt = inits.reduce((n, { it }) => n + (it.epics || []).length, 0);
     const expanded = _treeExpand.okrs.has(o.id);
+    // Branch nodes (OKR/Init/Epic) always show the chevron — even with
+    // zero children — so users can expand to see the inline "+ Add"
+    // button. Defaults are read-only catch-alls, so no chevron.
+    const canExpand = !o.is_default;
     const row = buildTreeRow({
       level: 0, kind: "okr", icon: "O",
       label: o.title, isDefault: !!o.is_default,
       meta: `${inits.length} init · ${epCt} epic`,
-      hasChildren: inits.length > 0,
+      hasChildren: canExpand,
       expanded,
       checked: _treeSel.okrs.has(o.id),
       onToggleExpand: () => {
@@ -990,12 +994,13 @@
     wrap.className = "ptv2-tn-node";
     const epics = it.epics || [];
     const expanded = _treeExpand.inits.has(it.id);
+    const canExpand = !it.is_default;
     const row = buildTreeRow({
       level: 1, kind: "init", icon: "I",
       label: it.title, isDefault: !!it.is_default,
       meta: `${epics.length} epic`,
       sub: `KR: ${kr.title}`,
-      hasChildren: epics.length > 0,
+      hasChildren: canExpand,
       expanded,
       checked: _treeSel.inits.has(it.id),
       onToggleExpand: () => {
@@ -1027,12 +1032,14 @@
     wrap.className = "ptv2-tn-node";
     const tasks = readTasks().filter((t) => t.epicId === ep.id && !t.isDone);
     const expanded = _treeExpand.epics.has(ep.id);
+    // Epics can always be expanded (to drop tasks in, or to see them);
+    // chevron stays visible even before the first task is added.
     const row = buildTreeRow({
       level: 2, kind: "epic", icon: "E",
       label: ep.title, isDefault: !!ep.is_default,
       meta: tasks.length ? `${tasks.length} task${tasks.length === 1 ? "" : "s"}` : "",
       sub: ep.description ? ep.description.slice(0, 80) : null,
-      hasChildren: tasks.length > 0,
+      hasChildren: true,
       expanded,
       checked: _treeSel.epics.has(ep.id),
       onToggleExpand: () => {
@@ -1228,7 +1235,13 @@
         await ptv2Alert({ title: "Couldn't create initiative", body: body.error || `Server returned ${r.status}.` });
         return;
       }
+      // Auto-expand both the parent OKR and the brand-new initiative so
+      // the user immediately sees the "+ Epic" affordance without having
+      // to find and tap a chevron.
       _treeExpand.okrs.add(o.id);
+      const j = await r.json().catch(() => ({}));
+      const newId = j && j.initiative && j.initiative.id;
+      if (newId) _treeExpand.inits.add(newId);
       await fetchTree(); renderTree();
     });
   }
@@ -1253,6 +1266,12 @@
       return;
     }
     _treeExpand.inits.add(it.id);
+    // Auto-expand the new epic so the user sees the empty drop slot
+    // (and can immediately drag a task into it, or see tasks they add
+    // via the bottom add-bar appear inline).
+    const j = await r.json().catch(() => ({}));
+    const newId = j && j.epic && j.epic.id;
+    if (newId) _treeExpand.epics.add(newId);
     await fetchTree(); renderTree();
   }
   function renderTreeTasks() {
