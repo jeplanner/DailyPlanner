@@ -57,7 +57,7 @@ def _ensure_default_okr_trio(user_id, project_id):
             row = post("objectives", {
                 "user_id":     user_id,
                 "project_id":  project_id,
-                "title":       "Inbox",
+                "title":       "Uncategorized",
                 "is_default":  True,
                 "status":      "active",
                 "time_horizon": "ongoing",
@@ -83,7 +83,7 @@ def _ensure_default_okr_trio(user_id, project_id):
             row = post("key_results", {
                 "user_id":      user_id,
                 "objective_id": obj_id,
-                "title":        "Catch-all",
+                "title":        "—",
                 "target_value": 100,
                 "unit":         "%",
                 "is_default":   True,
@@ -109,7 +109,7 @@ def _ensure_default_okr_trio(user_id, project_id):
             row = post("initiatives", {
                 "user_id":       user_id,
                 "key_result_id": kr_id,
-                "title":         "Inbox",
+                "title":         "General",
                 "is_default":    True,
                 "status":        "active",
             })
@@ -133,7 +133,7 @@ def _ensure_default_okr_trio(user_id, project_id):
         row = post("epics", {
             "user_id":       user_id,
             "initiative_id": init_id,
-            "title":         "Inbox",
+            "title":         "Misc",
             "is_default":    True,
             "status":        "active",
         })
