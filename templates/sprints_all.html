@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Sprints — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+{% include "_pwa_head.html" %}
+<style>
+  :root {
+    --sp-bg:       #f7f8fa;
+    --sp-surface:  #ffffff;
+    --sp-border:   #e4e6ee;
+    --sp-text:     #1f2330;
+    --sp-mute:     #6b7280;
+    --sp-soft:     #9ca3af;
+    --sp-primary:  #6366f1;
+    --sp-success:  #22c55e;
+    --sp-warn:     #f59e0b;
+    --sp-danger:   #ef4444;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --sp-bg:#0f1115; --sp-surface:#181b22; --sp-border:#232733;
+            --sp-text:#e8eaf0; --sp-mute:#9ca3af; --sp-soft:#6b7280; }
+  }
+  body { margin: 0; background: var(--sp-bg); color: var(--sp-text);
+         font: 15px/1.5 'Inter', system-ui, -apple-system, sans-serif;
+         padding-bottom: env(safe-area-inset-bottom); }
+  .sp-wrap { max-width: 980px; margin: 0 auto; padding: 18px 14px 80px; }
+  .sp-hdr  { display: flex; align-items: center; gap: 10px; padding: 6px 0 18px; }
+  .sp-hdr a.back { display: inline-flex; width: 36px; height: 36px; border-radius: 8px;
+                   color: var(--sp-text); text-decoration: none;
+                   align-items: center; justify-content: center; }
+  .sp-hdr a.back:hover { background: var(--sp-border); }
+  .sp-hdr h1 { margin: 0; font-size: 20px; font-weight: 700; flex: 1; }
+  .sp-hdr .today { font-size: 12px; color: var(--sp-mute); }
+
+  .sp-bucket { margin-bottom: 28px; }
+  .sp-bucket-h {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--sp-mute); font-weight: 700; margin: 0 0 10px;
+  }
+  .sp-bucket-h .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sp-soft); }
+  .sp-bucket-h.is-active .dot   { background: var(--sp-success); }
+  .sp-bucket-h.is-upcoming .dot { background: var(--sp-primary); }
+  .sp-bucket-h.is-recent .dot   { background: var(--sp-soft); }
+  .sp-bucket-h .count { background: var(--sp-border); color: var(--sp-text);
+                        padding: 1px 8px; border-radius: 999px; font-size: 11px;
+                        font-weight: 700; margin-left: 4px; }
+
+  .sp-grid { display: grid; gap: 10px;
+             grid-template-columns: 1fr; }
+  @media (min-width: 780px) { .sp-grid { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 1100px){ .sp-grid { grid-template-columns: 1fr 1fr 1fr; } }
+
+  .sp-card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--sp-surface); border: 1px solid var(--sp-border);
+    border-radius: 14px; padding: 14px 16px;
+    transition: border-color .12s, transform .12s;
+  }
+  .sp-card:hover { border-color: var(--sp-primary); transform: translateY(-1px); }
+  .sp-card .proj { font-size: 12px; color: var(--sp-mute); font-weight: 600; }
+  .sp-card h3 { margin: 4px 0 8px; font-size: 16px; font-weight: 700; color: var(--sp-text); }
+  .sp-card .dates { font-size: 12px; color: var(--sp-mute);
+                    display: flex; align-items: center; gap: 8px; }
+  .sp-card .dates .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--sp-border); color: var(--sp-text); font-weight: 600;
+  }
+  .sp-card.is-running { border-color: var(--sp-success); }
+  .sp-card.is-running .dates .pill { background: var(--sp-success); color: #fff; }
+
+  .sp-empty { text-align: center; padding: 28px 12px; color: var(--sp-soft); font-size: 13px;
+              border: 1px dashed var(--sp-border); border-radius: 12px; }
+</style>
+</head>
+<body>
+{% include "_top_nav.html" %}
+<main class="sp-wrap">
+  <header class="sp-hdr">
+    <a href="/projects" class="back" aria-label="Back to projects"><i data-feather="arrow-left"></i></a>
+    <h1>Sprints</h1>
+    <span class="today">{{ today }}</span>
+  </header>
+
+  {% macro render_bucket(rows, klass, label) %}
+    <section class="sp-bucket">
+      <h2 class="sp-bucket-h is-{{ klass }}">
+        <span class="dot"></span>{{ label }}
+        <span class="count">{{ rows|length }}</span>
+      </h2>
+      {% if rows %}
+        <div class="sp-grid">
+          {% for s in rows %}
+            <a class="sp-card {% if s.is_active %}is-running{% endif %}"
+               href="/projects/{{ s.project_id }}/tasks#tree">
+              <div class="proj">{{ s.project_name }}</div>
+              <h3>{{ s.name }}</h3>
+              <div class="dates">
+                {% if s.starts_on or s.ends_on %}
+                  <span class="pill">
+                    {{ s.starts_on or '—' }} → {{ s.ends_on or '—' }}
+                  </span>
+                {% else %}
+                  <span>No dates</span>
+                {% endif %}
+              </div>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="sp-empty">Nothing here.</div>
+      {% endif %}
+    </section>
+  {% endmacro %}
+
+  {{ render_bucket(active,   'active',   'Active') }}
+  {{ render_bucket(upcoming, 'upcoming', 'Upcoming') }}
+  {{ render_bucket(no_dates, 'recent',   'Undated') }}
+  {{ render_bucket(recent,   'recent',   'Recently ended') }}
+</main>
+<script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
+</body>
+</html>

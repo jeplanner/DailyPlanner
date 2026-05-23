@@ -95,6 +95,11 @@
             aria-controls="panel-tree">
       <i data-feather="layers"></i><span>Tree</span>
     </button>
+    <button type="button" role="tab" data-tab="sprints" class="ptv2-tab"
+            aria-controls="panel-sprints">
+      <i data-feather="flag"></i><span>Sprints</span>
+      <span class="ptv2-tab-badge" id="badge-sprints">0</span>
+    </button>
     <button type="button" role="tab" data-tab="done" class="ptv2-tab"
             aria-controls="panel-done">
       <i data-feather="check"></i><span>Done</span>
@@ -197,6 +202,18 @@
       </h2>
       <div class="ptv2-section-list" id="list-tree-tasks"></div>
     </div>
+  </section>
+
+  <!-- ═══════════ TAB: SPRINTS ═══════════
+       Per-sprint view: sections grouped by sprint with progress bar,
+       burndown sparkline, rollover button, and the tasks under that
+       sprint. Tasks can be dragged between sections to reassign. -->
+  <section class="ptv2-panel ptv2-panel--sprints" id="panel-sprints" role="tabpanel" data-tab="sprints" hidden>
+    <div class="ptv2-sprints-empty" id="ptv2-sprints-empty" hidden>
+      <i data-feather="flag" style="width:28px;height:28px;opacity:0.4"></i>
+      <p>No sprints yet. <button type="button" onclick="document.getElementById('ptv2-sprints-add')?.click()" style="color:var(--ptv2-primary);background:transparent;border:0;cursor:pointer;font-weight:600">Create your first sprint</button> to start grouping tasks.</p>
+    </div>
+    <div class="ptv2-sprints-board" id="ptv2-sprints-board"></div>
   </section>
 
   <!-- ═══════════ TAB: DONE ═══════════ -->

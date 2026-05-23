@@ -526,6 +526,81 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   font: inherit; font-size: 13px;
 }
 
+/* ════════════════════════════════════════════════════════════════
+   SPRINT TAB — per-sprint task sections (drag tasks between sprints)
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-sprints-board {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.ptv2-sprint-card {
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.ptv2-sprint-card.is-active { border-color: var(--ptv2-success); }
+.ptv2-sprint-card.is-drop-target { background: var(--ptv2-primary-soft); border-color: var(--ptv2-primary); }
+.ptv2-sprint-card header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--ptv2-bg);
+  border-bottom: 1px solid var(--ptv2-border);
+}
+.ptv2-sprint-card header h3 {
+  margin: 0; flex: 1; font-size: 15px; font-weight: 700;
+  color: var(--ptv2-text);
+  display: flex; align-items: center; gap: 8px;
+}
+.ptv2-sprint-card header .badge {
+  font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+  background: var(--ptv2-success); color: #fff;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.ptv2-sprint-card header .dates {
+  font-size: 12px; color: var(--ptv2-text-mute);
+  font-variant-numeric: tabular-nums;
+}
+.ptv2-sprint-card header .rollover {
+  padding: 6px 12px; border-radius: 8px;
+  background: transparent; border: 1px solid var(--ptv2-border);
+  color: var(--ptv2-text); cursor: pointer; font: inherit; font-size: 12px;
+}
+.ptv2-sprint-card header .rollover:hover { border-color: var(--ptv2-primary); color: var(--ptv2-primary); }
+
+.ptv2-sprint-progress {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--ptv2-border);
+}
+.ptv2-sprint-progress .bar {
+  flex: 1; height: 4px; background: var(--ptv2-border);
+  border-radius: 999px; overflow: hidden;
+}
+.ptv2-sprint-progress .fill {
+  display: block; height: 100%; background: var(--ptv2-primary);
+}
+.ptv2-sprint-progress .nums {
+  font-size: 11px; color: var(--ptv2-text-mute);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ptv2-sprint-progress svg.spark { display: block; }
+.ptv2-sprint-tasks {
+  padding: 10px 14px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 60px;
+}
+.ptv2-sprint-tasks:empty::before {
+  content: "Drop tasks here, or use the picker on a task to assign.";
+  display: block; padding: 18px 6px; text-align: center;
+  color: var(--ptv2-text-soft); font-size: 12px;
+  border: 1px dashed var(--ptv2-border); border-radius: 8px;
+}
+.ptv2-sprints-empty {
+  text-align: center; padding: 40px 16px;
+  color: var(--ptv2-text-soft); font-size: 14px;
+}
+.ptv2-sprints-empty p { margin: 8px 0 0; }
+
 /* Belt-and-braces: when the legacy elements still exist with the
    old class names, hide them so they don't double-render. */
 body[data-ptv2="1"] .proj-header,

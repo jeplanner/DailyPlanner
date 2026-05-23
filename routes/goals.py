@@ -1017,6 +1017,148 @@ def update_sprint(sprint_id):
     return jsonify({"status": "ok"})
 
 
+@goals_bp.route("/api/sprints/<sprint_id>/stats", methods=["GET"])
+@login_required
+def sprint_stats(sprint_id):
+    """Aggregate stats for a single sprint:
+
+      {
+        total: <int>,                 # not eliminated
+        done:  <int>,                 # status = done
+        open:  <int>,                 # total - done
+        pct:   <float>,               # done / total
+        by_day: [{date, done}, …]     # last 14 days, completion counts
+      }
+
+    Used by the sprint manager to render a tiny progress bar and a
+    14-day burndown sparkline. Cheap — 1 query for the row set,
+    bucketing done in Python.
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    user_id = session["user_id"]
+    rows = get(
+        "project_tasks",
+        params={
+            "user_id":       f"eq.{user_id}",
+            "sprint_id":     f"eq.{sprint_id}",
+            "is_eliminated": "eq.false",
+            "select":        "task_id,status,updated_at,created_at",
+            "limit":         1000,
+        },
+    ) or []
+    total = len(rows)
+    done = sum(1 for r in rows if r.get("status") == "done")
+    pct = (done / total) if total else 0.0
+
+    # Bucket done tasks by date (last 14d). updated_at is a reasonable
+    # proxy for "completed at" for tasks that are currently done.
+    today = _dt.now(_tz.utc).date()
+    days = [(today - _td(days=i)).isoformat() for i in range(13, -1, -1)]
+    bucket = {d: 0 for d in days}
+    for r in rows:
+        if r.get("status") != "done":
+            continue
+        ts = r.get("updated_at") or r.get("created_at") or ""
+        if not ts:
+            continue
+        try:
+            d = ts[:10]  # YYYY-MM-DD prefix
+        except Exception:
+            continue
+        if d in bucket:
+            bucket[d] += 1
+
+    return jsonify({
+        "total": total,
+        "done":  done,
+        "open":  total - done,
+        "pct":   round(pct, 3),
+        "by_day": [{"date": d, "done": bucket[d]} for d in days],
+    })
+
+
+@goals_bp.route("/api/sprints/<sprint_id>/rollover", methods=["POST"])
+@login_required
+def rollover_sprint(sprint_id):
+    """Move every unfinished task in this sprint into a target sprint.
+
+    Body: {"target_sprint_id": "<uuid>"}   target may be null/missing to
+    unassign (clears sprint_id on those tasks). Tasks already done
+    (status=done) stay put — the source sprint keeps the historical
+    record of what shipped in it.
+
+    Returns: { moved: <n>, target_sprint_id }
+    """
+    data = request.get_json(force=True) or {}
+    target = data.get("target_sprint_id")
+    target = target if (target and str(target).strip() not in ("", "null")) else None
+    user_id = session["user_id"]
+
+    # Optional: validate target exists and belongs to the same project.
+    # Read source first to learn the project_id; lets us validate the
+    # target without trusting the client.
+    src = get(
+        "sprints",
+        params={
+            "id":         f"eq.{sprint_id}",
+            "user_id":    f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "select":     "id,project_id",
+            "limit":      1,
+        },
+    ) or []
+    if not src:
+        return jsonify({"error": "source sprint not found"}), 404
+    project_id = src[0]["project_id"]
+
+    if target:
+        tgt_rows = get(
+            "sprints",
+            params={
+                "id":         f"eq.{target}",
+                "user_id":    f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "select":     "id,project_id",
+                "limit":      1,
+            },
+        ) or []
+        if not tgt_rows:
+            return jsonify({"error": "target sprint not found"}), 404
+        if tgt_rows[0]["project_id"] != project_id:
+            return jsonify({"error": "target sprint belongs to a different project"}), 400
+
+    # Find unfinished tasks in the source sprint. We then PATCH each
+    # one — PostgREST allows a single bulk PATCH with a filter, so do
+    # the whole sweep in one round trip.
+    try:
+        update(
+            "project_tasks",
+            params={
+                "user_id":       f"eq.{user_id}",
+                "sprint_id":     f"eq.{sprint_id}",
+                "is_eliminated": "eq.false",
+                "status":        "neq.done",
+            },
+            json={"sprint_id": target},
+        )
+    except Exception:
+        logger.exception("rollover sprint %s → %s failed", sprint_id, target)
+        return jsonify({"error": "Rollover failed"}), 500
+
+    # Recount to report what moved (filter-based PATCH doesn't tell us).
+    moved_rows = get(
+        "project_tasks",
+        params={
+            "user_id":       f"eq.{user_id}",
+            "sprint_id":     f"eq.{target}" if target else "is.null",
+            "is_eliminated": "eq.false",
+            "select":        "task_id",
+            "limit":         1000,
+        },
+    ) or []
+    return jsonify({"status": "ok", "target_sprint_id": target, "approx_in_target": len(moved_rows)})
+
+
 @goals_bp.route("/api/sprints/<sprint_id>", methods=["DELETE"])
 @login_required
 def delete_sprint(sprint_id):
@@ -1118,6 +1260,26 @@ def project_hierarchy(project_id):
                 inits.append(dict(it, epics=epics_by_init.get(it["id"], [])))
             krs.append(dict(kr, initiatives=inits))
         tree.append(dict(o, key_results=krs))
+
+    # Lazy auto-archive: any sprint whose ends_on has passed AND is
+    # still marked active gets quietly flipped to inactive. Cheap
+    # filter-based PATCH; no-ops when there's nothing to update.
+    from datetime import date as _date
+    _today_iso = _date.today().isoformat()
+    try:
+        update(
+            "sprints",
+            params={
+                "user_id":    f"eq.{user_id}",
+                "project_id": f"eq.{project_id}",
+                "is_active":  "eq.true",
+                "is_deleted": "eq.false",
+                "ends_on":    f"lt.{_today_iso}",
+            },
+            json={"is_active": False},
+        )
+    except Exception:
+        logger.exception("auto-archive past sprints failed for project %s", project_id)
 
     # Sprints — orthogonal to the OKR tree but the UI fetches both
     # together to populate pickers + filter chips in one round trip.

@@ -56,9 +56,10 @@
       history.replaceState(null, "", `#${tab}`);
     }
     // Render tab-specific content on entry.
-    if (tab === "focus") renderFocus();
-    if (tab === "tree")  renderTreeIfNeeded();
-    if (tab === "done")  renderDone();
+    if (tab === "focus")   renderFocus();
+    if (tab === "tree")    renderTreeIfNeeded();
+    if (tab === "done")    renderDone();
+    if (tab === "sprints") renderSprintsTab();
   }
   function jumpTab(tab) { setTab(tab); }
 
@@ -84,6 +85,7 @@
       keyResultId:  row.dataset.krId || row.dataset.keyResultId,
       initiativeId: row.dataset.initiativeId,
       epicId:       row.dataset.epicId,
+      sprintId:     row.dataset.sprintId,
       group:        row.dataset.group,
       isDone:       row.dataset.status === "done" || row.classList.contains("done"),
       title:        (row.querySelector(".task-text")?.textContent || "").trim(),
@@ -320,6 +322,203 @@
       sel.innerHTML = opts.join("");
       if (cur && sel.querySelector(`option[value="${cur}"]`)) sel.value = cur;
     }
+  }
+
+  /* ───── SPRINT TAB ──────────────────────────────────────────── */
+
+  async function renderSprintsTab() {
+    const board = document.getElementById("ptv2-sprints-board");
+    const empty = document.getElementById("ptv2-sprints-empty");
+    if (!board) return;
+    if (!_sprints.length) {
+      empty.hidden = false;
+      board.innerHTML = "";
+      setBadge("sprints", 0);
+      return;
+    }
+    empty.hidden = true;
+    board.innerHTML = "";
+    // Group tasks by sprint_id from the existing DOM.
+    const tasksBySprint = new Map();
+    for (const s of _sprints) tasksBySprint.set(s.id, []);
+    const unassigned = [];
+    for (const t of readTasks()) {
+      if (t.isDone) continue;
+      if (t.sprintId && tasksBySprint.has(t.sprintId)) {
+        tasksBySprint.get(t.sprintId).push(t);
+      } else {
+        unassigned.push(t);
+      }
+    }
+    setBadge("sprints", _sprints.length);
+
+    for (const s of _sprints) {
+      board.appendChild(sprintCard(s, tasksBySprint.get(s.id) || []));
+    }
+    // Drop-zone for "unassigned" so users can drag tasks out of all sprints.
+    board.appendChild(sprintCard({ id: null, name: "Unassigned", _virtual: true },
+      unassigned, { virtual: true }));
+    if (window.feather) window.feather.replace();
+    // Stats are async — kick off per-sprint fetches.
+    _sprints.forEach((s) => fetchAndRenderSprintStats(s.id));
+  }
+
+  function sprintCard(s, tasks, opts = {}) {
+    const card = document.createElement("article");
+    card.className = "ptv2-sprint-card" + (s.is_active ? " is-active" : "");
+    card.dataset.sprintId = s.id || "";
+    const dates = s._virtual ? "" : sprintDateLabel(s);
+    const activeBadge = s.is_active ? `<span class="badge">Active</span>` : "";
+    card.innerHTML = `
+      <header>
+        <h3>${esc(s.name)}${activeBadge}</h3>
+        <span class="dates">${esc(dates)}</span>
+        ${s._virtual ? "" : `<button type="button" class="rollover" data-action="rollover">Roll over →</button>`}
+      </header>
+      ${s._virtual ? "" : `
+        <div class="ptv2-sprint-progress">
+          <span class="nums" data-stats>0 / 0 · 0%</span>
+          <div class="bar"><span class="fill" style="width:0%"></span></div>
+          <svg class="spark" width="100" height="20" viewBox="0 0 100 20" aria-hidden="true"
+               style="opacity:0.6"></svg>
+        </div>`}
+      <div class="ptv2-sprint-tasks" data-tasks></div>`;
+
+    // Render tasks
+    const taskWrap = card.querySelector("[data-tasks]");
+    tasks.forEach((t) => {
+      const tile = rowCard(t, { crumb: crumbFor(t) });
+      tile.draggable = true;
+      tile.addEventListener("dragstart", (e) => {
+        try { e.dataTransfer.setData("text/plain", t.id); } catch (_) {}
+        e.dataTransfer.effectAllowed = "move";
+        card.classList.add("is-source");
+      });
+      tile.addEventListener("dragend", () => card.classList.remove("is-source"));
+      taskWrap.appendChild(tile);
+    });
+
+    // Make whole card a drop target.
+    card.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer.types.includes("text/plain")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      card.classList.add("is-drop-target");
+    });
+    card.addEventListener("dragleave", (e) => {
+      // Only clear when leaving the card itself, not children.
+      if (e.target === card) card.classList.remove("is-drop-target");
+    });
+    card.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      card.classList.remove("is-drop-target");
+      const taskId = (e.dataTransfer.getData("text/plain") || "").trim();
+      if (!taskId) return;
+      const targetSprint = s.id || null;
+      try {
+        const r = await _fetch(`/projects/tasks/${taskId}/update`, {
+          method: "POST", headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+          credentials: "same-origin",
+          body: JSON.stringify({ sprint_id: targetSprint || "" }),
+        });
+        if (!r.ok) throw new Error("update failed");
+        // Patch the DOM data-attr so re-render picks up the change.
+        const row = document.querySelector(`#task-tbody tr.task-row[data-id="${taskId}"]`);
+        if (row) row.dataset.sprintId = targetSprint || "";
+        renderSprintsTab();
+        renderSprintsBar();
+      } catch (err) { console.error("[ptv2] sprint move failed", err); }
+    });
+
+    // Rollover handler
+    card.querySelector('[data-action="rollover"]')?.addEventListener("click", () => promptRollover(s));
+
+    return card;
+  }
+
+  function sprintDateLabel(s) {
+    if (s.starts_on && s.ends_on) return `${s.starts_on} → ${s.ends_on}`;
+    if (s.starts_on) return `from ${s.starts_on}`;
+    if (s.ends_on)   return `due ${s.ends_on}`;
+    return "no dates";
+  }
+
+  function csrf() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || "";
+  }
+
+  async function fetchAndRenderSprintStats(sprintId) {
+    try {
+      const r = await fetch(`/api/sprints/${sprintId}/stats`, { credentials: "same-origin" });
+      if (!r.ok) return;
+      const j = await r.json();
+      const card = document.querySelector(`.ptv2-sprint-card[data-sprint-id="${sprintId}"]`);
+      if (!card) return;
+      const nums = card.querySelector("[data-stats]");
+      const fill = card.querySelector(".ptv2-sprint-progress .fill");
+      const spark = card.querySelector("svg.spark");
+      const pct = Math.round((j.pct || 0) * 100);
+      if (nums) nums.textContent = `${j.done} / ${j.total} · ${pct}%`;
+      if (fill) fill.style.width = `${pct}%`;
+      if (spark && j.by_day) renderSparkline(spark, j.by_day);
+    } catch (_) {}
+  }
+
+  function renderSparkline(svg, points) {
+    // 100x20 viewBox, 14 buckets -> bar width ~6, gap 1
+    svg.innerHTML = "";
+    const max = Math.max(1, ...points.map((p) => p.done));
+    const barW = 100 / points.length - 1;
+    points.forEach((p, i) => {
+      const h = (p.done / max) * 18;
+      const x = i * (barW + 1);
+      const y = 20 - h;
+      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      r.setAttribute("x", x.toFixed(2));
+      r.setAttribute("y", y.toFixed(2));
+      r.setAttribute("width", barW.toFixed(2));
+      r.setAttribute("height", Math.max(1, h).toFixed(2));
+      r.setAttribute("fill", "var(--ptv2-primary)");
+      r.setAttribute("rx", "1");
+      r.append(document.createElementNS("http://www.w3.org/2000/svg", "title"));
+      r.lastChild.textContent = `${p.date}: ${p.done} done`;
+      svg.appendChild(r);
+    });
+  }
+
+  async function promptRollover(s) {
+    const others = _sprints.filter((x) => x.id !== s.id);
+    if (!others.length) {
+      if (confirm(`No other sprint to move to. Unassign all unfinished tasks from "${s.name}"?`)) {
+        await rolloverSprint(s.id, null);
+      }
+      return;
+    }
+    // Build a quick picker via prompt — keeps the implementation small.
+    const labels = others.map((x, i) => `${i + 1}. ${x.name}${x.is_active ? " (active)" : ""}`).join("\n");
+    const choice = prompt(`Roll over unfinished tasks from "${s.name}" to:\n\n${labels}\n0. Unassign\n\nEnter the number:`);
+    if (choice == null) return;
+    const idx = parseInt(choice, 10);
+    if (isNaN(idx) || idx < 0 || idx > others.length) return;
+    const targetId = idx === 0 ? null : others[idx - 1].id;
+    await rolloverSprint(s.id, targetId);
+  }
+  async function rolloverSprint(srcId, targetId) {
+    const r = await _fetch(`/api/sprints/${srcId}/rollover`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ target_sprint_id: targetId }),
+    });
+    if (!r.ok) {
+      alert("Rollover failed");
+      return;
+    }
+    // Update all matching rows' data-sprint-id so the UI reflects without a reload.
+    document.querySelectorAll(`#task-tbody tr.task-row[data-sprint-id="${srcId}"]`).forEach((row) => {
+      if (row.dataset.status !== "done") row.dataset.sprintId = targetId || "";
+    });
+    renderSprintsTab();
+    renderSprintsBar();
   }
 
   /* ───── inline sprint manager ───────────────────────────────── */

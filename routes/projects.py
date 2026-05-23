@@ -986,6 +986,78 @@ def restore_project(project_id):
     return jsonify({"status": "ok"})
 
 
+@projects_bp.route("/sprints")
+@login_required
+def all_sprints():
+    """Cross-project sprint dashboard.
+
+    Lists every active + upcoming sprint across all the user's
+    non-archived projects, plus recently-ended ones for context.
+    Useful when you're juggling several projects and want a single
+    "what's happening this week" view.
+    """
+    user_id = session["user_id"]
+
+    # Pull projects so we can name each sprint's parent.
+    projects = get(
+        "projects",
+        params={
+            "user_id":     f"eq.{user_id}",
+            "is_archived": "eq.false",
+            "select":      "project_id,name",
+            "limit":       500,
+        },
+    ) or []
+    name_by_pid = {p["project_id"]: p.get("name") for p in projects}
+    if not name_by_pid:
+        return render_template("sprints_all.html", buckets=[], today=user_today().isoformat())
+
+    sprints = get(
+        "sprints",
+        params={
+            "user_id":    f"eq.{user_id}",
+            "project_id": f"in.({','.join(name_by_pid.keys())})",
+            "is_deleted": "eq.false",
+            "select":     "id,name,starts_on,ends_on,is_active,project_id",
+            "order":      "is_active.desc,starts_on.asc.nullslast,created_at.desc",
+            "limit":      500,
+        },
+    ) or []
+
+    today = user_today()
+    today_iso = today.isoformat()
+    buckets = {"active": [], "upcoming": [], "no_dates": [], "recent": []}
+    for s in sprints:
+        s["project_name"] = name_by_pid.get(s["project_id"]) or "(unnamed)"
+        starts, ends = s.get("starts_on"), s.get("ends_on")
+        if s.get("is_active"):
+            buckets["active"].append(s)
+        elif starts and starts > today_iso:
+            buckets["upcoming"].append(s)
+        elif ends and ends < today_iso:
+            buckets["recent"].append(s)
+        elif not starts and not ends:
+            buckets["no_dates"].append(s)
+        else:
+            # Has dates but currently within range AND not marked active —
+            # treat as active for visibility.
+            buckets["active"].append(s)
+
+    # Cap "recent" to last 30 days and trim to 10 — context, not noise.
+    from datetime import timedelta as _td
+    cutoff = (today - _td(days=30)).isoformat()
+    buckets["recent"] = [s for s in buckets["recent"] if (s.get("ends_on") or "") >= cutoff][:10]
+
+    return render_template(
+        "sprints_all.html",
+        active=buckets["active"],
+        upcoming=buckets["upcoming"],
+        no_dates=buckets["no_dates"],
+        recent=buckets["recent"],
+        today=today_iso,
+    )
+
+
 @projects_bp.route("/projects/new", methods=["GET", "POST"])
 @login_required
 def create_project():
