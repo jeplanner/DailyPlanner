@@ -164,13 +164,22 @@
     }
     _hierIndex = { objectivesById, krsById, initiativesById, epicsById };
   }
+  // Most-specific-wins crumb. Epic is the most specific bucket a task
+  // can live in, so when it has one we show "Initiative ▸ Epic" — the
+  // old version stopped at Initiative and the user couldn't tell which
+  // epic a task belonged to from the Focus/Done/Tree-tasks lists.
   function crumbFor(t) {
     if (!_hierIndex) return "";
+    const ep = t.epicId && _hierIndex.epicsById.get(t.epicId);
+    if (ep) {
+      // Skip the redundant initiative prefix for default catch-alls so
+      // every task in an Inbox-style epic doesn't shout "Inbox ▸ Inbox".
+      if (ep._init && !ep._init.is_default) return `${ep._init.title} ▸ ${ep.title}`;
+      return ep.title;
+    }
     const init = t.initiativeId && _hierIndex.initiativesById.get(t.initiativeId);
-    if (init) return `${init._okr.title} ▸ ${init.title}`;
-    const ep   = t.epicId && _hierIndex.epicsById.get(t.epicId);
-    if (ep) return `${ep._okr.title} ▸ ${ep._init.title}`;
-    const obj  = t.objectiveId && _hierIndex.objectivesById.get(t.objectiveId);
+    if (init) return init.title;
+    const obj = t.objectiveId && _hierIndex.objectivesById.get(t.objectiveId);
     if (obj) return obj.title;
     return "";
   }
