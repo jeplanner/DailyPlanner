@@ -166,7 +166,18 @@ function markDateStripDots(heatmapData) {
 async function loadHealth(date) {
   try {
     const res = await fetch(`/api/v2/daily-health?date=${date}`);
-    if (!res.ok) throw new Error("Failed to load health data");
+    if (!res.ok) {
+      // Surface the actual failure mode in the toast so the next bug
+      // report tells us whether it's auth (401/302), a 500, etc.
+      const snippet = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} — ${snippet.slice(0, 120) || res.statusText}`);
+    }
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      // Logged-out users get an HTML redirect to /login here. Saying so
+      // is far more useful than the generic "failed to load" toast.
+      throw new Error("Got HTML, not JSON — likely logged out. Reload and sign in.");
+    }
     const data = await res.json();
 
     // --- Health metric fields ---
@@ -200,7 +211,8 @@ async function loadHealth(date) {
     if (typeof feather !== "undefined") feather.replace();
   } catch (err) {
     console.error("loadHealth error:", err);
-    if (typeof showToast === "function") showToast("Failed to load health data", "error");
+    const msg = (err && err.message) ? err.message : String(err);
+    if (typeof showToast === "function") showToast("Health: " + msg, "error");
   }
 }
 
