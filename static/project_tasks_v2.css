@@ -1,0 +1,419 @@
+/* DailyPlanner — project tasks page v2.
+   Mobile-first redesign that wraps the existing task table/board/detail
+   panel in a tabbed shell: Focus / All / Tree / Done. Original
+   project_tasks.css still loads — this file overrides the busy
+   toolbar, replaces the header, and styles the four new tabs. */
+
+:root {
+  --ptv2-bg:        #f7f8fa;
+  --ptv2-surface:   #ffffff;
+  --ptv2-border:    #e4e6ee;
+  --ptv2-text:      #1f2330;
+  --ptv2-text-mute: #6b7280;
+  --ptv2-text-soft: #9ca3af;
+  --ptv2-primary:   #6366f1;
+  --ptv2-primary-soft: #eef2ff;
+  --ptv2-danger:    #ef4444;
+  --ptv2-success:   #22c55e;
+  --ptv2-warn:      #f59e0b;
+  --ptv2-shadow:    0 4px 16px rgba(15, 17, 21, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ptv2-bg:        #0f1115;
+    --ptv2-surface:   #181b22;
+    --ptv2-border:    #232733;
+    --ptv2-text:      #e8eaf0;
+    --ptv2-text-mute: #9ca3af;
+    --ptv2-text-soft: #6b7280;
+    --ptv2-primary-soft: #1e2030;
+  }
+}
+
+/* Container: drop the old .proj-app padding so the new sticky elements
+   reach the viewport edges on mobile. */
+.proj-app {
+  padding: 0 !important;
+  background: var(--ptv2-bg);
+  min-height: 100vh;
+  /* Room at the bottom for the sticky add bar so the last task row
+     isn't covered. Add bar is ~64-130px (closed/expanded). */
+  padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important;
+}
+@media (min-width: 900px) {
+  .proj-app {
+    max-width: 1100px; margin: 0 auto;
+    padding-bottom: 24px !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   HEADER — minimal: back · name · meta · ⋯
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-hdr {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: var(--ptv2-surface);
+  border-bottom: 1px solid var(--ptv2-border);
+  position: sticky; top: 0; z-index: 60;
+}
+.ptv2-back {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 8px;
+  color: var(--ptv2-text); text-decoration: none;
+}
+.ptv2-back:hover { background: var(--ptv2-primary-soft); }
+.ptv2-back i { width: 18px; height: 18px; }
+
+.ptv2-title { flex: 1; min-width: 0; }
+.ptv2-name {
+  font-size: 16px; font-weight: 700; margin: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--ptv2-text);
+}
+.ptv2-meta {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 4px;
+  font-size: 12px; color: var(--ptv2-text-mute);
+}
+.ptv2-progress-bar {
+  flex: 1; max-width: 160px;
+  height: 4px; border-radius: 999px;
+  background: var(--ptv2-border); overflow: hidden;
+}
+.ptv2-progress-fill {
+  display: block; height: 100%; width: 0%;
+  background: var(--ptv2-primary);
+  transition: width 0.25s ease;
+}
+.ptv2-counts { font-variant-numeric: tabular-nums; }
+.ptv2-counts-overdue { color: var(--ptv2-danger); margin-left: 6px; }
+.ptv2-counts-overdue:empty,
+.ptv2-counts-overdue:has(#stat-overdue:empty) { display: none; }
+
+.ptv2-menu {
+  width: 36px; height: 36px; border-radius: 8px;
+  background: transparent; border: 0; color: var(--ptv2-text);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.ptv2-menu:hover { background: var(--ptv2-primary-soft); }
+.ptv2-menu-pop {
+  position: absolute; right: 14px; top: 54px; z-index: 70;
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+  min-width: 200px; padding: 6px;
+}
+.ptv2-menu-pop[hidden] { display: none; }
+.ptv2-menu-pop > a,
+.ptv2-menu-pop > button {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 12px;
+  background: transparent; border: 0; color: var(--ptv2-text);
+  font: inherit; font-size: 14px; text-align: left; text-decoration: none;
+  border-radius: 8px; cursor: pointer;
+}
+.ptv2-menu-pop > a:hover,
+.ptv2-menu-pop > button:hover { background: var(--ptv2-primary-soft); }
+.ptv2-menu-pop i { width: 16px; height: 16px; flex-shrink: 0; }
+.ptv2-menu-sep { height: 1px; background: var(--ptv2-border); margin: 4px 4px; }
+
+/* ════════════════════════════════════════════════════════════════
+   TAB BAR — sticky underneath header
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-tabs {
+  display: flex;
+  background: var(--ptv2-surface);
+  border-bottom: 1px solid var(--ptv2-border);
+  position: sticky; top: 56px; z-index: 55;
+  padding: 0 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.ptv2-tabs::-webkit-scrollbar { display: none; }
+.ptv2-tab {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 12px 10px;
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--ptv2-text-mute);
+  font: inherit; font-size: 13px; font-weight: 600;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.ptv2-tab i { width: 15px; height: 15px; }
+.ptv2-tab.active { color: var(--ptv2-primary); border-bottom-color: var(--ptv2-primary); }
+.ptv2-tab-badge {
+  display: inline-block; min-width: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--ptv2-border);
+  font-size: 10px; font-weight: 700; color: var(--ptv2-text);
+  text-align: center; line-height: 16px;
+}
+.ptv2-tab.active .ptv2-tab-badge { background: var(--ptv2-primary); color: #fff; }
+.ptv2-tab-badge:empty { display: none; }
+
+/* ════════════════════════════════════════════════════════════════
+   PANEL CONTAINER
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-panel {
+  padding: 14px 14px 6px;
+}
+@media (min-width: 900px) {
+  .ptv2-panel { padding: 18px 22px 6px; }
+}
+
+/* Hide the old standalone table/board when we're not on the All tab.
+   project_tasks_v2.js toggles these together. */
+body[data-active-tab="focus"] #table-view,
+body[data-active-tab="focus"] #board-view,
+body[data-active-tab="tree"]  #table-view,
+body[data-active-tab="tree"]  #board-view,
+body[data-active-tab="done"]  #table-view,
+body[data-active-tab="done"]  #board-view {
+  display: none !important;
+}
+
+/* When on All, restore the table-view padding so it visually sits
+   inside the panel. */
+body[data-active-tab="all"] #table-view { padding: 0 14px; }
+@media (min-width: 900px) {
+  body[data-active-tab="all"] #table-view { padding: 0 22px; }
+}
+
+.ptv2-section { margin: 18px 0 6px; }
+.ptv2-section-h {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700;
+  color: var(--ptv2-text); text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 4px 8px;
+}
+.ptv2-section-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ptv2-text-mute);
+}
+.ptv2-dot--danger  { background: var(--ptv2-danger); }
+.ptv2-dot--primary { background: var(--ptv2-primary); }
+.ptv2-dot--muted   { background: var(--ptv2-text-soft); }
+.ptv2-dot--success { background: var(--ptv2-success); }
+.ptv2-section-count {
+  font-size: 11px; font-weight: 700;
+  color: var(--ptv2-text-mute);
+  background: var(--ptv2-border);
+  border-radius: 999px; padding: 1px 8px;
+  margin-left: 2px;
+}
+.ptv2-section-list { display: flex; flex-direction: column; gap: 6px; }
+.ptv2-section-list:empty + .ptv2-section-empty { display: block; }
+.ptv2-section-list:empty {
+  /* Empty placeholder line — only shown via :empty selector. */
+  padding: 14px 8px;
+  font-size: 13px; color: var(--ptv2-text-soft);
+  text-align: center;
+  border: 1px dashed var(--ptv2-border); border-radius: 12px;
+}
+.ptv2-section-list:empty::before { content: "Nothing here yet"; }
+
+/* ───── individual task row in Focus / Done / Tree-tasks ─────── */
+
+.ptv2-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 12px;
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border);
+  border-radius: 12px;
+  cursor: pointer; transition: border-color .12s, box-shadow .12s;
+}
+.ptv2-row:hover { border-color: var(--ptv2-primary); box-shadow: var(--ptv2-shadow); }
+.ptv2-row.is-done { opacity: 0.55; }
+.ptv2-row.is-done .ptv2-row-title { text-decoration: line-through; }
+.ptv2-row-check {
+  width: 22px; height: 22px; flex-shrink: 0;
+  border-radius: 6px; border: 2px solid var(--ptv2-text-soft);
+  background: transparent; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-top: 2px;
+}
+.ptv2-row-check.is-checked { border-color: var(--ptv2-success); background: var(--ptv2-success); color: #fff; }
+.ptv2-row-check svg { width: 14px; height: 14px; display: none; }
+.ptv2-row-check.is-checked svg { display: block; }
+.ptv2-row-main { flex: 1; min-width: 0; }
+.ptv2-row-title {
+  font-size: 15px; font-weight: 500; color: var(--ptv2-text);
+  display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ptv2-row-meta {
+  margin-top: 4px;
+  display: flex; flex-wrap: wrap; gap: 8px;
+  font-size: 12px; color: var(--ptv2-text-mute);
+}
+.ptv2-row-due { color: var(--ptv2-text-mute); }
+.ptv2-row-due.is-overdue { color: var(--ptv2-danger); font-weight: 600; }
+.ptv2-row-crumb {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--ptv2-primary-soft); color: var(--ptv2-primary);
+  padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+}
+.ptv2-row-prio {
+  width: 6px; align-self: stretch; border-radius: 999px; flex-shrink: 0;
+  background: transparent;
+}
+.ptv2-row.prio-high .ptv2-row-prio  { background: var(--ptv2-danger); }
+.ptv2-row.prio-medium .ptv2-row-prio { background: var(--ptv2-warn); }
+.ptv2-row.prio-low .ptv2-row-prio    { background: var(--ptv2-success); }
+
+.ptv2-empty {
+  text-align: center; padding: 40px 16px;
+  color: var(--ptv2-text-soft); font-size: 14px;
+}
+.ptv2-empty p { margin: 8px 0 0; }
+.ptv2-empty a { color: var(--ptv2-primary); }
+
+/* ════════════════════════════════════════════════════════════════
+   ALL TAB — compact filter bar
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-allbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 14px;
+}
+.ptv2-allbar-spacer { flex: 1; }
+.ptv2-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 999px;
+  background: var(--ptv2-surface); border: 1px solid var(--ptv2-border);
+  color: var(--ptv2-text); cursor: pointer; font: inherit; font-size: 13px;
+  white-space: nowrap;
+}
+.ptv2-chip:hover { border-color: var(--ptv2-primary); color: var(--ptv2-primary); }
+.ptv2-chip i { width: 13px; height: 13px; }
+.ptv2-chip--check { padding-left: 8px; }
+.ptv2-chip--check input { accent-color: var(--ptv2-primary); width: 14px; height: 14px; }
+.ptv2-chip-badge {
+  font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+  background: var(--ptv2-primary); color: #fff; margin-left: 2px;
+}
+.ptv2-chip-badge[hidden] { display: none; }
+.ptv2-viewtog { background: var(--ptv2-surface); border: 1px solid var(--ptv2-border); border-radius: 999px; padding: 2px; }
+.ptv2-viewtog .vt-btn { width: 30px; height: 30px; border-radius: 999px; }
+.ptv2-sort {
+  padding: 6px 30px 6px 12px; border-radius: 999px;
+  background: var(--ptv2-surface); border: 1px solid var(--ptv2-border);
+  color: var(--ptv2-text); font: inherit; font-size: 13px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TREE TAB — desktop 3-column, mobile vertical
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-panel--tree { padding-bottom: 0; }
+.ptv2-tree-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+@media (min-width: 900px) {
+  .ptv2-tree-grid { grid-template-columns: 1fr 1fr 1fr; }
+}
+.ptv2-tree-col {
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border);
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  min-height: 120px;
+}
+.ptv2-tree-col h3 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ptv2-text-mute); margin: 0 0 10px;
+}
+.ptv2-tree-tasks { margin-top: 8px; }
+.ptv2-section-hint { font-size: 11px; color: var(--ptv2-text-mute); }
+
+/* ════════════════════════════════════════════════════════════════
+   STICKY ADD BAR
+   ════════════════════════════════════════════════════════════════ */
+
+.ptv2-add-wrap {
+  position: fixed;
+  left: 0; right: 0; bottom: 0; z-index: 50;
+  background: linear-gradient(to top, var(--ptv2-surface) 70%, transparent);
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+}
+@media (min-width: 900px) {
+  .ptv2-add-wrap {
+    position: sticky; bottom: 14px;
+    max-width: 1100px; margin: 14px auto 0;
+    background: transparent;
+    padding: 0;
+  }
+}
+.ptv2-add {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border);
+  border-radius: 999px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(15, 17, 21, 0.08);
+}
+.ptv2-add:focus-within { border-color: var(--ptv2-primary); }
+.ptv2-add-input {
+  flex: 1; min-width: 0;
+  border: 0; outline: none; background: transparent;
+  padding: 10px 12px;
+  font: inherit; font-size: 15px; color: var(--ptv2-text);
+}
+.ptv2-add-tool {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--ptv2-text-mute); display: inline-flex; align-items: center; justify-content: center;
+}
+.ptv2-add-tool:hover { background: var(--ptv2-primary-soft); color: var(--ptv2-primary); }
+.ptv2-add-tool[aria-expanded="true"] { color: var(--ptv2-primary); background: var(--ptv2-primary-soft); }
+.ptv2-add-tool i { width: 18px; height: 18px; }
+.ptv2-add-submit {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--ptv2-primary); color: #fff; border: 0; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ptv2-add-submit:hover { background: #4f46e5; }
+.ptv2-add-submit i { width: 18px; height: 18px; }
+.ptv2-add-more {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 8px; padding: 12px;
+  background: var(--ptv2-surface);
+  border: 1px solid var(--ptv2-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(15, 17, 21, 0.08);
+}
+.ptv2-add-more[hidden] { display: none; }
+.ptv2-add-more .prio-picker { gap: 4px; }
+.ptv2-add-more .pp-btn {
+  padding: 6px 10px; border-radius: 999px;
+  border: 1px solid var(--ptv2-border); background: var(--ptv2-surface);
+  font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ptv2-add-more .pp-btn.active { background: var(--ptv2-primary); color: #fff; border-color: var(--ptv2-primary); }
+.ptv2-add-more .pp-dot { width: 8px; height: 8px; border-radius: 50%; }
+.ptv2-add-more .pp-high { background: var(--ptv2-danger); }
+.ptv2-add-more .pp-med  { background: var(--ptv2-warn); }
+.ptv2-add-more .pp-low  { background: var(--ptv2-success); }
+.ptv2-add-date,
+.ptv2-add-link {
+  padding: 8px 10px; border: 1px solid var(--ptv2-border); border-radius: 10px;
+  background: var(--ptv2-surface); color: var(--ptv2-text);
+  font: inherit; font-size: 13px;
+}
+
+/* Belt-and-braces: when the legacy elements still exist with the
+   old class names, hide them so they don't double-render. */
+body[data-ptv2="1"] .proj-header,
+body[data-ptv2="1"] .proj-progress-row,
+body[data-ptv2="1"] .proj-toolbar,
+body[data-ptv2="1"] .add-task-row,
+body[data-ptv2="1"] #pt-filter-chips { display: none !important; }

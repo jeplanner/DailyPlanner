@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='project_tasks.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='project_tasks_v2.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
@@ -22,141 +23,207 @@
 
 <div class="proj-app">
 
-  <!-- ═══════════ HEADER ═══════════ -->
-  <header class="proj-header">
-    <div class="proj-header-left">
-      <a href="/projects" class="back-btn"><i data-feather="arrow-left"></i></a>
-      <div>
-        <h1 class="proj-name">{{ project.name }}</h1>
-        {% if project.description %}
-          <p class="proj-desc">{{ project.description }}</p>
-        {% endif %}
+  <!-- ═══════════ HEADER v2 ═══════════
+       Minimal: back · name · progress dot · overflow menu.
+       Gantt/Timeline/Trash/Export/Import all live in the ⋯ menu now. -->
+  <header class="ptv2-hdr">
+    <a href="/projects" class="ptv2-back" aria-label="Back to projects">
+      <i data-feather="arrow-left"></i>
+    </a>
+    <div class="ptv2-title">
+      <h1 class="ptv2-name" title="{{ project.name }}">{{ project.name }}</h1>
+      <div class="ptv2-meta">
+        <span class="ptv2-progress-bar"><span class="ptv2-progress-fill" id="proj-progress-fill"></span></span>
+        <span class="ptv2-counts">
+          <span id="stat-done">0</span> / <span id="stat-total">0</span>
+          <span class="ptv2-counts-overdue"><span id="stat-overdue">0</span> overdue</span>
+        </span>
       </div>
     </div>
-    <div class="proj-header-right">
-      <a href="/projects/{{ project.project_id }}/gantt" class="header-action" title="Gantt chart">
-        <i data-feather="bar-chart-2"></i><span>Gantt</span>
-      </a>
-      <a href="/projects/timeline?project={{ project.project_id }}" class="header-action" title="Timeline">
-        <i data-feather="git-branch"></i><span>Timeline</span>
-      </a>
+    <button type="button" class="ptv2-menu" id="ptv2-menu" aria-label="More" aria-haspopup="true">
+      <i data-feather="more-horizontal"></i>
+    </button>
+    <div class="ptv2-menu-pop" id="ptv2-menu-pop" hidden>
+      <a href="/projects/{{ project.project_id }}/gantt"><i data-feather="bar-chart-2"></i>Gantt</a>
+      <a href="/projects/timeline?project={{ project.project_id }}"><i data-feather="git-branch"></i>Timeline</a>
+      <button type="button" onclick="exportCSV()"><i data-feather="download"></i>Export CSV</button>
+      <button type="button" onclick="openImportModal()"><i data-feather="upload"></i>Import CSV</button>
+      <a href="{{ url_for('projects.project_tasks', project_id=project.project_id) }}/trash"><i data-feather="trash-2"></i>Trash</a>
+      <div class="ptv2-menu-sep"></div>
+      <button type="button" onclick="ptEnterSelectMode(); ptv2CloseMenu();"><i data-feather="check-square"></i>Bulk select</button>
+      <button type="button" onclick="ptv2CycleDensity()"><i data-feather="sliders"></i>Density: <span id="ptv2-density-label">cozy</span></button>
     </div>
   </header>
 
-  <!-- ═══════════ PROGRESS BAR ═══════════ -->
-  <div class="proj-progress-row">
-    <div class="proj-progress-bar">
-      <div class="proj-progress-fill" id="proj-progress-fill"></div>
-    </div>
-    <div class="proj-stats">
-      <span id="stat-total">0 tasks</span>
-      <span class="stat-sep">·</span>
-      <span id="stat-done" class="stat-done">0 done</span>
-      <span class="stat-sep">·</span>
-      <span id="stat-overdue" class="stat-overdue">0 overdue</span>
-    </div>
-  </div>
+  <!-- ═══════════ TAB BAR (sticky) ═══════════ -->
+  <nav class="ptv2-tabs" role="tablist" aria-label="Project views">
+    <button type="button" role="tab" data-tab="focus" class="ptv2-tab active"
+            aria-controls="panel-focus">
+      <i data-feather="zap"></i><span>Focus</span>
+      <span class="ptv2-tab-badge" id="badge-focus">0</span>
+    </button>
+    <button type="button" role="tab" data-tab="all" class="ptv2-tab"
+            aria-controls="panel-all">
+      <i data-feather="list"></i><span>All</span>
+      <span class="ptv2-tab-badge" id="badge-all">0</span>
+    </button>
+    <button type="button" role="tab" data-tab="tree" class="ptv2-tab"
+            aria-controls="panel-tree">
+      <i data-feather="layers"></i><span>Tree</span>
+    </button>
+    <button type="button" role="tab" data-tab="done" class="ptv2-tab"
+            aria-controls="panel-done">
+      <i data-feather="check"></i><span>Done</span>
+      <span class="ptv2-tab-badge" id="badge-done">0</span>
+    </button>
+  </nav>
 
-  <!-- ═══════════ TOOLBAR ═══════════ -->
-  <div class="proj-toolbar">
-    <div class="toolbar-left">
-      <div class="view-toggle">
-        <button class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="List view">
-          <i data-feather="list"></i>
-        </button>
-        <button class="vt-btn" data-view="board" onclick="setTaskView('board')" title="Board view">
-          <i data-feather="columns"></i>
-        </button>
-      </div>
+  <!-- ═══════════ TAB: FOCUS ═══════════
+       Default landing. Three sections rendered client-side from the
+       same task DOM the All tab uses, grouped by Overdue / Today /
+       Upcoming (next 7d). Each row stays a real .task-row so all
+       existing handlers (open detail, toggle done, …) keep working. -->
+  <section class="ptv2-panel ptv2-panel--focus" id="panel-focus" role="tabpanel" data-tab="focus">
+    <div class="ptv2-section" id="ptv2-overdue">
+      <h2 class="ptv2-section-h">
+        <span class="ptv2-section-dot ptv2-dot--danger"></span>
+        Overdue <span class="ptv2-section-count" id="ct-overdue">0</span>
+      </h2>
+      <div class="ptv2-section-list" id="list-overdue"></div>
+    </div>
+    <div class="ptv2-section" id="ptv2-today">
+      <h2 class="ptv2-section-h">
+        <span class="ptv2-section-dot ptv2-dot--primary"></span>
+        Today <span class="ptv2-section-count" id="ct-today">0</span>
+      </h2>
+      <div class="ptv2-section-list" id="list-today"></div>
+    </div>
+    <div class="ptv2-section" id="ptv2-upcoming">
+      <h2 class="ptv2-section-h">
+        <span class="ptv2-section-dot ptv2-dot--muted"></span>
+        Upcoming · 7d <span class="ptv2-section-count" id="ct-upcoming">0</span>
+      </h2>
+      <div class="ptv2-section-list" id="list-upcoming"></div>
+    </div>
+    <div class="ptv2-empty" id="ptv2-focus-empty" hidden>
+      <i data-feather="coffee" style="width:28px;height:28px;opacity:0.4"></i>
+      <p>No tasks need attention. Add one below or switch to <a href="#all" data-jump-tab="all">All</a>.</p>
+    </div>
+  </section>
 
-      <label class="filter-pill">
+  <!-- ═══════════ TAB: ALL ═══════════ -->
+  <section class="ptv2-panel" id="panel-all" role="tabpanel" data-tab="all" hidden>
+    <div class="ptv2-allbar">
+      <button type="button" class="ptv2-chip" onclick="openPtFilterSheet()" title="Filter">
+        <i data-feather="filter"></i><span>Filter</span>
+        <span class="ptv2-chip-badge" id="ptv2-filter-badge" hidden>0</span>
+      </button>
+      <button type="button" class="ptv2-chip" id="pt-okr-btn"
+              onclick="ptv2GoTab('tree')" title="OKR tree (Tree tab)">
+        <i data-feather="layers"></i><span>OKRs</span>
+        <span class="ptv2-chip-badge pt-okr-summary" id="pt-okr-summary" hidden>0/0/0</span>
+      </button>
+      <label class="ptv2-chip ptv2-chip--check" title="Hide completed">
         <input type="checkbox" id="filter-hide-done" {{ 'checked' if hide_completed }}>
         <span>Hide done</span>
       </label>
-      <label class="filter-pill">
+      <label class="ptv2-chip ptv2-chip--check" title="Hide skipped/deleted">
         <input type="checkbox" id="filter-hide-closed" checked>
-        <span>Hide skipped/deleted</span>
+        <span>Hide closed</span>
       </label>
-      <label class="filter-pill">
+      <label class="ptv2-chip ptv2-chip--check" title="Only overdue items">
         <input type="checkbox" id="filter-overdue" {{ 'checked' if overdue_only }}>
-        <span>Overdue only</span>
+        <span>Overdue</span>
       </label>
-      <button type="button" class="filter-pill" onclick="ptEnterSelectMode()" title="Select multiple tasks to bulk-edit" style="border:none;cursor:pointer;font:inherit;">
-        <i data-feather="check-square" style="width:13px;height:13px"></i>
-        <span>Select</span>
-      </button>
-
-      <!-- OKR cascading filter + manager (one button drives both — phone
-           first; auto-expands to three columns on desktop). Replaces the
-           previous separate Filter / OKRs buttons. -->
-      <button type="button" class="filter-pill pt-okr-btn" id="pt-okr-btn"
-              onclick="openOkrCascade()"
-              title="OKR → Initiative → Epic. Filter and create from one drawer."
-              style="border:1px solid var(--pt-border);cursor:pointer;font:inherit;">
-        <i data-feather="layers" style="width:13px;height:13px"></i>
-        <span>OKRs</span>
-        <span class="pt-okr-summary" id="pt-okr-summary"
-              style="display:none;font-size:11px;opacity:0.7;margin-left:6px;">0/0/0</span>
-      </button>
-    </div>
-
-    <div class="toolbar-right">
-      <div class="pt-density-picker" role="radiogroup" aria-label="Row density" title="Row density">
-        <button type="button" data-density="comfortable" aria-label="Comfortable density">C</button>
-        <button type="button" data-density="cozy" aria-label="Cozy density">·</button>
-        <button type="button" data-density="compact" aria-label="Compact density">≡</button>
+      <div class="ptv2-allbar-spacer"></div>
+      <div class="view-toggle ptv2-viewtog">
+        <button type="button" class="vt-btn active" data-view="table" onclick="setTaskView('table')" title="List view">
+          <i data-feather="list"></i>
+        </button>
+        <button type="button" class="vt-btn" data-view="board" onclick="setTaskView('board')" title="Board view">
+          <i data-feather="columns"></i>
+        </button>
       </div>
-      <button class="import-btn" onclick="exportCSV()" title="Export CSV">
-        <i data-feather="download" style="width:14px;height:14px"></i> Export
-      </button>
-      <button class="import-btn" onclick="openImportModal()" title="Import CSV">
-        <i data-feather="upload" style="width:14px;height:14px"></i> Import
-      </button>
-      <button class="import-btn" onclick="window.location.href = window.location.pathname + '/trash'" title="Recycle bin — restore deleted tasks">
-        <i data-feather="trash-2" style="width:14px;height:14px"></i> Trash
-      </button>
-      <select class="sort-select" id="sort-select" title="Sort order">
+      <select class="ptv2-sort sort-select" id="sort-select" title="Sort order">
         <option value="smart" {{ 'selected' if sort=='smart' }}>Smart</option>
         <option value="due" {{ 'selected' if sort=='due' }}>Due date</option>
         <option value="priority" {{ 'selected' if sort=='priority' }}>Priority</option>
         <option value="created" {{ 'selected' if sort=='created' }}>Created</option>
       </select>
     </div>
-  </div>
+  </section>
+  {# Table + Board live OUTSIDE panel-all in the source tree; the tab
+     switcher in project_tasks_v2.js toggles their visibility along
+     with the panel so they appear only when the All tab is active. #}
 
-  <!-- ═══════════ ADD TASK ═══════════ -->
-  <div class="add-task-row">
-    <div class="prio-picker" id="prio-picker">
-      <button class="pp-btn" data-p="high" title="High">
-        <span class="pp-dot pp-high"></span>
-      </button>
-      <button class="pp-btn active" data-p="medium" title="Medium">
-        <span class="pp-dot pp-med"></span>
-      </button>
-      <button class="pp-btn" data-p="low" title="Low">
-        <span class="pp-dot pp-low"></span>
-      </button>
+  <!-- ═══════════ TAB: TREE ═══════════
+       Inline OKR > Initiative > Epic explorer. The okr_cascade.js
+       module renders into these containers when this tab is active. -->
+  <section class="ptv2-panel ptv2-panel--tree" id="panel-tree" role="tabpanel" data-tab="tree" hidden>
+    <div class="ptv2-tree-grid">
+      <div class="ptv2-tree-col" data-col="okr"></div>
+      <div class="ptv2-tree-col" data-col="init"></div>
+      <div class="ptv2-tree-col" data-col="epic"></div>
     </div>
-    <input type="text" id="add-task-input" class="add-task-input"
-           data-project-id="{{ project.project_id }}"
-           placeholder="Type a task and press Enter…" autocomplete="off">
-    <select id="add-task-initiative" class="add-task-initiative kr-picker"
-            data-current=""
-            title="Link this task to an Initiative (optional). Leave empty to tie it directly to the project.">
-      <option value="">— Not linked —</option>
-    </select>
-    <select id="add-task-epic" class="add-task-initiative kr-picker"
-            data-current=""
-            title="Link to an Epic (optional). Filled automatically when an Epic is selected in the OKR drawer.">
-      <option value="">— No epic —</option>
-    </select>
-    <input type="date" id="add-task-date" class="add-task-date" value="{{ selected_date }}">
-    <button class="add-task-btn" id="add-task-btn" title="Add task">
-      <i data-feather="plus"></i>
-    </button>
-    <button class="add-task-btn" style="background:var(--pt-text2);" onclick="toggleBulkPanel()" title="Bulk add / Voice">
-      <i data-feather="mic"></i>
-    </button>
+    <div class="ptv2-tree-tasks">
+      <h2 class="ptv2-section-h">
+        <span class="ptv2-section-dot ptv2-dot--primary"></span>
+        Tasks <span class="ptv2-section-count" id="ct-tree-tasks">0</span>
+        <span class="ptv2-section-hint" id="tree-tasks-hint" style="margin-left:8px;opacity:0.6;font-weight:400;"></span>
+      </h2>
+      <div class="ptv2-section-list" id="list-tree-tasks"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════ TAB: DONE ═══════════ -->
+  <section class="ptv2-panel" id="panel-done" role="tabpanel" data-tab="done" hidden>
+    <div class="ptv2-section">
+      <h2 class="ptv2-section-h">
+        <span class="ptv2-section-dot ptv2-dot--success"></span>
+        Recently completed <span class="ptv2-section-count" id="ct-done">0</span>
+      </h2>
+      <div class="ptv2-section-list" id="list-done"></div>
+    </div>
+    <div class="ptv2-empty" id="ptv2-done-empty" hidden>
+      <i data-feather="check-circle" style="width:28px;height:28px;opacity:0.4"></i>
+      <p>No completed tasks yet. They'll show up here as you tick them off.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════ STICKY ADD BAR ═══════════
+       Always visible. Tap chevron to expand inline for priority / date
+       / initiative / epic. Reuses every existing add-task ID/handler. -->
+  <div class="ptv2-add-wrap">
+    <form class="ptv2-add" id="ptv2-add-form" autocomplete="off"
+          onsubmit="event.preventDefault(); if (typeof addTask==='function') addTask();">
+      <input type="text" id="add-task-input" class="ptv2-add-input"
+             data-project-id="{{ project.project_id }}"
+             placeholder="Add a task — press Enter to save" autocomplete="off">
+      <button type="button" class="ptv2-add-tool" id="ptv2-add-toggle"
+              aria-expanded="false" aria-controls="ptv2-add-more" title="Details">
+        <i data-feather="sliders"></i>
+      </button>
+      <button type="button" class="ptv2-add-tool" onclick="toggleBulkPanel()" title="Bulk / voice">
+        <i data-feather="mic"></i>
+      </button>
+      <button type="submit" class="ptv2-add-submit" id="add-task-btn" title="Add">
+        <i data-feather="plus"></i>
+      </button>
+    </form>
+    <div class="ptv2-add-more" id="ptv2-add-more" hidden>
+      <div class="prio-picker ptv2-prio" id="prio-picker">
+        <button type="button" class="pp-btn" data-p="high"><span class="pp-dot pp-high"></span>High</button>
+        <button type="button" class="pp-btn active" data-p="medium"><span class="pp-dot pp-med"></span>Medium</button>
+        <button type="button" class="pp-btn" data-p="low"><span class="pp-dot pp-low"></span>Low</button>
+      </div>
+      <input type="date" id="add-task-date" class="ptv2-add-date" value="{{ selected_date }}">
+      <select id="add-task-initiative" class="ptv2-add-link kr-picker" data-current="">
+        <option value="">No initiative</option>
+      </select>
+      <select id="add-task-epic" class="ptv2-add-link kr-picker" data-current="">
+        <option value="">No epic</option>
+      </select>
+    </div>
   </div>
 
   <!-- Bulk Add + Voice Panel -->
@@ -701,6 +768,7 @@
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
 <script src="{{ url_for('static', filename='project_tasks.js') }}"></script>
+<script src="{{ url_for('static', filename='project_tasks_v2.js') }}" defer></script>
 <script>document.addEventListener("DOMContentLoaded",()=>{if(window.feather)feather.replace()});</script>
 </body>
 </html>
