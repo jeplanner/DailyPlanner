@@ -1847,15 +1847,19 @@
           ] },
         { name: "start_date",  label: "Start date",  type: "date", value: isoDate(today) },
         { name: "target_date", label: "Target date", type: "date", value: isoDate(qEnd) },
-        { name: "krTitle",     label: "First Key Result (optional)",
+        { name: "krTitle",     label: "First Key Result", required: true,
           placeholder: "e.g. WAU 12k → 18k by Mar 31" },
       ],
       okLabel: "Create",
     });
     if (!result) return;
-    const title = (result.title || "").trim();
-    if (!title) return;
+    const title   = (result.title   || "").trim();
     const krTitle = (result.krTitle || "").trim();
+    // Dialog enforces required via HTML5 validation, but guard server-
+    // side too: an OKR with no KR is unmeasurable, which is the whole
+    // point of the K in OKR. Belt + suspenders so a future refactor
+    // can't silently slip a KR-less objective in.
+    if (!title || !krTitle) return;
     try {
       const r = await _fetch("/api/goals", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1869,7 +1873,7 @@
       });
       const data = await r.json();
       const obj = data.objective || data;
-      if (krTitle && obj && obj.id) {
+      if (obj && obj.id) {
         await _fetch("/api/key-results", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
