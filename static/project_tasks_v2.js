@@ -307,6 +307,9 @@
     if (!bar || !list) return;
     bar.hidden = false;
     list.innerHTML = "";
+    // Keep the Sprints tab badge in sync on every render so the count
+    // reflects current state even if the user never opens the tab.
+    setBadge("sprints", _sprints.length);
 
     const today = new Date().toISOString().slice(0, 10);
 
@@ -343,6 +346,9 @@
       const total = totals.get(s.id) || 0;
       const done  = dones.get(s.id) || 0;
       const pct   = total ? Math.round((done / total) * 100) : 0;
+      const countTip = total
+        ? `${done} of ${total} tasks done`
+        : "No tasks in this sprint yet";
       chip.innerHTML = `
         <div class="sc-top">
           <span class="sc-dot" aria-hidden="true"></span>
@@ -350,7 +356,7 @@
         </div>
         <div class="sc-meta">
           <span class="sc-when">${esc(_sprintWhenLabel(s, today))}</span>
-          <span class="sc-count">${done}/${total}</span>
+          <span class="sc-count" title="${esc(countTip)}">${done}/${total} done</span>
         </div>
         <span class="sc-bar"><span class="sc-bar-fill" style="width:${pct}%"></span></span>
         <button type="button" class="sc-menu" aria-label="Sprint options" title="Options">⋮</button>`;
@@ -470,15 +476,24 @@
 
   /* ───── per-chip ⋮ menu ─────────────────────────────────────── */
 
+  // Last anchor for the open sprint menu — kept so we can reposition
+  // when the menu's content changes height (e.g. switching to the
+  // inline editor); otherwise the editor could render off-screen.
+  let _sprintMenuAnchor = null;
+
   function openSprintMenu(s, anchor) {
     const menu = document.getElementById("ptv2-sprint-menu");
     if (!menu) return;
     menu.innerHTML = "";
     menu.dataset.sprintId = s.id;
+    _sprintMenuAnchor = anchor;
 
     // Edit (toggles an inline editor row in the menu itself)
     const editBtn = makeMenuBtn("Edit name & dates", "✎");
-    editBtn.addEventListener("click", () => renderMenuEditor(menu, s));
+    editBtn.addEventListener("click", () => {
+      renderMenuEditor(menu, s);
+      positionSprintMenu(menu, anchor);
+    });
     menu.appendChild(editBtn);
 
     const activeBtn = makeMenuBtn(s.is_active ? "Mark as inactive" : "Mark as active",
@@ -500,18 +515,25 @@
     });
     menu.appendChild(delBtn);
 
-    // Position under the anchor button.
-    const rect = anchor.getBoundingClientRect();
     menu.hidden = false;
-    // Wait for layout to know menu size.
+    positionSprintMenu(menu, anchor);
+  }
+  function positionSprintMenu(menu, anchor) {
+    // Run after layout settles so offsetWidth/Height reflect new contents.
     requestAnimationFrame(() => {
+      const rect = anchor.getBoundingClientRect();
       const mw = menu.offsetWidth;
       const mh = menu.offsetHeight;
       let left = rect.right - mw + window.scrollX;
       if (left < 8) left = 8;
-      let top = rect.bottom + 6 + window.scrollY;
-      if (top + mh > window.scrollY + window.innerHeight - 8) {
-        top = rect.top - mh - 6 + window.scrollY;
+      // Prefer below; flip above only if there's more room there.
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      let top;
+      if (mh <= spaceBelow || spaceBelow >= spaceAbove) {
+        top = rect.bottom + 6 + window.scrollY;
+      } else {
+        top = Math.max(8 + window.scrollY, rect.top - mh - 6 + window.scrollY);
       }
       menu.style.left = `${left}px`;
       menu.style.top  = `${top}px`;
@@ -542,15 +564,18 @@
       </div>`;
     menu.appendChild(row);
     row.querySelector('[data-action="cancel"]').addEventListener("click", closeSprintMenu);
-    row.querySelector('[data-action="save"]').addEventListener("click", async () => {
+    const saveBtn = row.querySelector('[data-action="save"]');
+    saveBtn.addEventListener("click", async () => {
       const patch = {
         name:      row.querySelector('[name="name"]').value.trim(),
         starts_on: row.querySelector('[name="starts_on"]').value || null,
         ends_on:   row.querySelector('[name="ends_on"]').value || null,
       };
       if (!patch.name) { alert("Name required"); return; }
-      await updateSprint(s.id, patch);
-      closeSprintMenu();
+      saveBtn.disabled = true;
+      const ok = await updateSprint(s.id, patch);
+      saveBtn.disabled = false;
+      if (ok) closeSprintMenu();
     });
   }
 
@@ -804,12 +829,27 @@
     else alert("Could not create sprint");
   }
   async function updateSprint(id, patch) {
-    const r = await _fetch(`/api/sprints/${id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify(patch),
-    });
-    if (r.ok) await refreshSprints();
+    try {
+      const r = await _fetch(`/api/sprints/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) {
+        let msg = `Sprint update failed (${r.status}).`;
+        try {
+          const j = await r.json();
+          if (j && j.error) msg += " " + j.error;
+        } catch (_) {}
+        alert(msg);
+        return false;
+      }
+      await refreshSprints();
+      return true;
+    } catch (e) {
+      alert("Sprint update failed: " + (e && e.message ? e.message : e));
+      return false;
+    }
   }
   async function deleteSprint(id) {
     const r = await _fetch(`/api/sprints/${id}`, {

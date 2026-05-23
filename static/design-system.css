@@ -277,6 +277,10 @@ html.dark {
 
 html { color-scheme: light dark; }
 html.dark { color-scheme: dark; }
+/* Force explicit light when the user picks Light on a system-dark device,
+   otherwise native form widgets (checkboxes, date pickers) keep
+   rendering with dark internals because color-scheme allows both. */
+html.light { color-scheme: light; }
 
 /* Universal focus-visible — visible to keyboard, hidden to mouse. */
 *:focus { outline: none; }
