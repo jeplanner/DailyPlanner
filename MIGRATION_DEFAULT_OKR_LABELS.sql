@@ -13,7 +13,19 @@
 --  WHERE clauses match only rows still using the original auto-
 --  created titles, so any project where the user has manually
 --  renamed a default row keeps that custom name. Safe to re-run.
+--
+--  PREREQ: MIGRATION_DEFAULT_OKR_TRIO.sql adds the is_default
+--  column and backfills the rows being renamed below. The
+--  add-column statements here are belt-and-braces so this file
+--  can run in any order without erroring — they're no-ops once
+--  the trio migration has run. The UPDATEs do real work only
+--  after the trio migration has actually inserted matching rows.
 -- ============================================================
+
+alter table if exists objectives  add column if not exists is_default boolean default false;
+alter table if exists key_results add column if not exists is_default boolean default false;
+alter table if exists initiatives add column if not exists is_default boolean default false;
+alter table if exists epics       add column if not exists is_default boolean default false;
 
 update objectives
    set title = 'Uncategorized'
