@@ -232,8 +232,13 @@
        Always visible. Tap chevron to expand inline for priority / date
        / initiative / epic. Reuses every existing add-task ID/handler. -->
   <div class="ptv2-add-wrap">
+    <!-- onsubmit only suppresses the default page navigation. The
+         actual add-task call lives in initAddTask() (project_tasks.js)
+         which already binds both the button click and the Enter keydown
+         — calling addTask() here too made every button click create the
+         task twice. -->
     <form class="ptv2-add" id="ptv2-add-form" autocomplete="off"
-          onsubmit="event.preventDefault(); if (typeof addTask==='function') addTask();">
+          onsubmit="event.preventDefault();">
       <input type="text" id="add-task-input" class="ptv2-add-input"
              data-project-id="{{ project.project_id }}"
              placeholder="Add a task — press Enter to save" autocomplete="off">
