@@ -936,8 +936,12 @@ async function saveLink(urlOverride) {
   btn.disabled = true;
   statusEl.innerHTML = '<span style="color:var(--ib-primary)">Saving…</span>';
 
+  // Route through dpFetch so the request is queued offline and replayed
+  // by the service worker on reconnect. Falls back to plain fetch if
+  // sync-queue.js isn't loaded.
+  const _fetch = (window.dpFetch) || ((u, o) => fetch(u, o));
   try {
-    const res = await fetch("/api/inbox", {
+    const res = await _fetch("/api/inbox", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -945,6 +949,18 @@ async function saveLink(urlOverride) {
         description: document.getElementById("inp-desc").value.trim(),
       }),
     });
+
+    // The synthetic "queued" response from sync-queue is .ok=true /
+    // status=202; treat it as a soft success with a different message.
+    if (res._queued) {
+      statusEl.innerHTML = `<span style="color:var(--ib-primary)">Queued — will save when online</span>`;
+      document.getElementById("inp-url").value = "";
+      document.getElementById("inp-desc").value = "";
+      document.getElementById("inp-desc").classList.remove("show");
+      btn.disabled = true;
+      setTimeout(() => { statusEl.textContent = ""; }, 3500);
+      return;
+    }
 
     const data = await res.json();
     if (data.success) {
@@ -964,6 +980,17 @@ async function saveLink(urlOverride) {
     statusEl.innerHTML = '<span style="color:var(--ib-danger)">Network error</span>';
   }
   btn.disabled = !document.getElementById("inp-url").value.trim();
+}
+
+// Reload the inbox list when a queued save eventually lands on the
+// server so the user sees the real row (with server-side title/category
+// enrichment) replace the "queued" status they saw earlier.
+if (window.dpSync && window.dpSync.onResult) {
+  window.dpSync.onResult((r) => {
+    if (r && r.ok && r.url && r.url.includes("/api/inbox")) {
+      try { load(); } catch (_) {}
+    }
+  });
 }
 
 /* ══════════════════════════════════════════════════════

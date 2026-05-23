@@ -139,15 +139,22 @@
 
   // ─────────── helpers ───────────────────────────────────────
 
+  // Routes writes through dpFetch when available so they queue
+  // offline and replay via the service worker on reconnect. GETs and
+  // environments without dpFetch fall back to plain fetch.
+  const _fetch = (window.dpFetch) || ((u, o) => fetch(u, o));
   const apiFetch = async (path, opts = {}) => {
     const headers = Object.assign(
       { "Content-Type": "application/json", "X-CSRFToken": csrf() },
       opts.headers || {}
     );
-    const res = await fetch(path, Object.assign({ credentials: "same-origin" }, opts, { headers }));
+    const res = await _fetch(path, Object.assign({ credentials: "same-origin" }, opts, { headers }));
     let body = {};
     try { body = await res.json(); } catch (_) { body = {}; }
     if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+    // Surface queued status (synthetic 202 from sync-queue) so callers
+    // that need to know — e.g. addItem for optimistic insert — can.
+    if (res._queued) body.queued = true;
     return body;
   };
 
@@ -1042,16 +1049,58 @@
   const addItem = async (text) => {
     text = (text || "").trim();
     if (!text) return;
+    // Generate the client id up front so we can tie the optimistic row
+    // to the eventual server response when the queue replays.
+    const clientId = (crypto.randomUUID && crypto.randomUUID()) ||
+                     String(Date.now()) + "-" + Math.random().toString(16).slice(2);
     try {
       const r = await apiFetch("/api/quick-bucket", {
-        method: "POST", body: JSON.stringify({ text, time_bucket: "now" }),
+        method: "POST",
+        headers: { "X-Client-Id": clientId },
+        body: JSON.stringify({ text, time_bucket: "now", client_id: clientId }),
       });
-      if (r.item) items.unshift(r.item);
-      render();
+      if (r.item) {
+        items.unshift(r.item);
+        render();
+      } else if (r.queued) {
+        // Optimistic insert: temporary row that looks real but is
+        // tagged so the SW reconciler can swap it for the server row.
+        items.unshift({
+          id: `pending:${clientId}`,
+          _pending: true,
+          client_id: clientId,
+          text,
+          time_bucket: "now",
+          due_at: null,
+          done_at: null,
+          archived_at: null,
+        });
+        render();
+        if (window.showToast) showToast("Saved offline — will sync", "info", 2200);
+      }
     } catch (err) {
       toast(err.message || "Couldn't add", "error");
     }
   };
+
+  // SW reports back when a queued write actually lands on the server.
+  // Replace the optimistic placeholder with the real row, if we have
+  // the canonical record; otherwise just reload from the server.
+  if (window.dpSync && window.dpSync.onResult) {
+    window.dpSync.onResult((r) => {
+      if (!r || !r.ok) return;
+      const idx = items.findIndex((it) => it && it.client_id === r.clientId);
+      if (idx >= 0) {
+        const serverItem = r.body && r.body.item;
+        if (serverItem) items[idx] = serverItem;
+        else items.splice(idx, 1);
+        render();
+      } else {
+        // Couldn't find a placeholder — safest is a fresh fetch.
+        loadItems();
+      }
+    });
+  }
 
   // ─────────── Pomodoro timer ───────────────────────────────
   //

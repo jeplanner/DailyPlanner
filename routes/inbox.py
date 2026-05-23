@@ -6,7 +6,7 @@ from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
 import requests as http_requests
-from flask import Blueprint, request, jsonify, session, render_template
+from flask import Blueprint, request, jsonify, session, render_template, redirect, url_for, flash
 from supabase_client import get, post, update, delete
 from services.login_service import login_required
 from services.inbox_service import (
@@ -55,6 +55,80 @@ def _sanitize_labels(raw) -> list[str]:
 @login_required
 def inbox_page():
     return render_template("inbox.html")
+
+
+# Web Share Target (manifest.json → share_target.action). Android Chrome
+# POSTs here as multipart/form-data when the user picks "DailyPlanner"
+# from another app's share sheet, with the three params we declared
+# (title, text, url). iOS doesn't support share_target — that's a
+# Safari limitation, not something we can work around server-side.
+_URL_RE = re.compile(r"https?://\S+")
+
+
+@inbox_bp.route("/inbox/share", methods=["POST", "GET"])
+@login_required
+def share_target():
+    # Chrome sends form fields; some Android intents put the URL into
+    # `text` instead of `url`. Fall back through title for completeness.
+    f = request.form if request.method == "POST" else request.args
+    raw_url   = (f.get("url")   or "").strip()
+    raw_text  = (f.get("text")  or "").strip()
+    raw_title = (f.get("title") or "").strip()
+
+    candidate = raw_url
+    if not candidate:
+        # Pull the first http(s) URL out of the shared text/title blob.
+        for src in (raw_text, raw_title):
+            m = _URL_RE.search(src)
+            if m:
+                candidate = m.group(0).rstrip(").,;\"'")
+                break
+
+    if not candidate:
+        # No URL anywhere — bounce to inbox with a hint. Better UX than a
+        # silent failure; the user will at least know the share landed.
+        try: flash("Share didn't include a link to save.", "warning")
+        except Exception: pass
+        return redirect(url_for("inbox_bp.inbox_page"))
+
+    # Description: prefer text, then title; trim hard so AI/meta paths
+    # don't see noise.
+    desc = (raw_text if raw_text and raw_text != candidate else raw_title)[:500]
+
+    try:
+        meta = fetch_meta(candidate)
+        title = meta.get("title") or raw_title or candidate
+        description = desc or meta.get("description") or ""
+        content_type = detect_type(candidate)
+        category = auto_categorize(candidate, title, description)
+        duration_seconds = int(meta.get("duration_seconds") or 0)
+        labels = auto_label(candidate, title, description, content_type, duration_seconds)
+
+        row = {
+            "id": str(uuid.uuid4()),
+            "user_id": session["user_id"],
+            "url": candidate,
+            "title": title,
+            "description": description,
+            "content_type": content_type,
+            "category": category,
+            "status": "Unread",
+            "labels": labels,
+        }
+        if meta.get("published_at"):
+            row["published_at"] = meta["published_at"]
+        if duration_seconds:
+            row["duration_seconds"] = duration_seconds
+        post("inbox_links", row)
+    except Exception:
+        # Don't 500 the share intent — the user is mid-flow in another
+        # app and a stack trace helps nobody. Log and land them in the
+        # inbox so they can retry manually if needed.
+        logger.exception("share_target failed for url=%s", candidate)
+        try: flash("Couldn't save that link — try again from the inbox.", "error")
+        except Exception: pass
+
+    return redirect(url_for("inbox_bp.inbox_page"))
 
 
 @inbox_bp.route("/api/inbox", methods=["POST"])

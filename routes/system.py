@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, render_template, request, session
 from supabase_client import get
 from services.login_service import login_required
 
@@ -13,6 +13,15 @@ def ping():
 @system_bp.route("/favicon.ico")
 def favicon():
     return "", 204
+
+
+@system_bp.route("/offline")
+def offline():
+    # Self-contained page the service worker serves when a navigation
+    # request fails (no network and no cached copy). Must NOT extend
+    # base.html — base.html pulls runtime dependencies we may not have
+    # cached. Login-free by design so it works in any auth state.
+    return render_template("offline.html")
 
 
 @system_bp.route("/api/search")
