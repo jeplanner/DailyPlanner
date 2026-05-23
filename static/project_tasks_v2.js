@@ -379,11 +379,29 @@
 
   /* ───── inline create form ──────────────────────────────────── */
 
+  // Next "Sprint N" suggestion based on the highest number already in
+  // use among non-deleted sprints. Keeps numbers monotonic even if
+  // some have been renamed (e.g. existing: ["Sprint 1", "MVP launch",
+  // "Sprint 3"] → next is "Sprint 4"). User can overwrite the name.
+  function nextSprintName() {
+    let max = 0;
+    for (const s of _sprints) {
+      const m = (s.name || "").match(/^\s*Sprint\s+(\d+)\s*$/i);
+      if (!m) continue;
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+    return `Sprint ${max + 1}`;
+  }
+
   function openInlineCreate() {
     const form = document.getElementById("ptv2-sprint-new");
     if (!form) return;
     form.hidden = false;
-    // Default dates: today + 2 weeks (matches typical sprint length).
+    // Pre-fill name + dates so the typical "click + Create" path
+    // produces a sensibly-named 2-week sprint with zero typing.
+    const nameEl = form.querySelector('[name="name"]');
+    if (nameEl && !nameEl.value) nameEl.value = nextSprintName();
     const start = form.querySelector('[name="starts_on"]');
     const end   = form.querySelector('[name="ends_on"]');
     if (start && !start.value) start.value = new Date().toISOString().slice(0, 10);
@@ -391,7 +409,9 @@
       const e = new Date(); e.setDate(e.getDate() + 13);
       end.value = e.toISOString().slice(0, 10);
     }
-    form.querySelector('[name="name"]')?.focus();
+    // Select the name so the user can immediately type to overwrite
+    // (or hit Tab/Enter to accept the suggestion).
+    nameEl?.select();
   }
   function closeInlineCreate() {
     const form = document.getElementById("ptv2-sprint-new");

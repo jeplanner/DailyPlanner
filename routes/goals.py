@@ -965,18 +965,31 @@ def create_sprint():
         return jsonify({"error": "project_id required"}), 400
 
     # Default name = "Sprint N" where N is one more than the highest
-    # existing index. Cheap count query — soft-deleted rows count so the
-    # number monotonically grows (avoids "Sprint 3" twice after a delete).
+    # number already used in a non-deleted sprint name matching
+    # "Sprint <digits>". Skipping deleted rows + parsing the name
+    # (instead of just counting) keeps the client's preview and the
+    # server's fallback in sync, and naturally handles users who
+    # have renamed some sprints to custom names.
     if not name:
+        import re as _re
         existing = get(
             "sprints",
             params={
                 "user_id":    f"eq.{session['user_id']}",
                 "project_id": f"eq.{project_id}",
-                "select":     "id",
+                "is_deleted": "eq.false",
+                "select":     "name",
+                "limit":      500,
             },
         ) or []
-        name = f"Sprint {len(existing) + 1}"
+        max_n = 0
+        for row in existing:
+            m = _re.match(r"^\s*Sprint\s+(\d+)\s*$", row.get("name") or "", _re.I)
+            if m:
+                n = int(m.group(1))
+                if n > max_n:
+                    max_n = n
+        name = f"Sprint {max_n + 1}"
 
     payload = {
         "user_id":    session["user_id"],
