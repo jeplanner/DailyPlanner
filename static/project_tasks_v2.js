@@ -509,7 +509,13 @@
     const delBtn = makeMenuBtn(`Delete "${s.name}"`, "🗑");
     delBtn.classList.add("danger");
     delBtn.addEventListener("click", async () => {
-      if (!confirm(`Delete sprint "${s.name}"? Tasks keep their pointer; restore later from Supabase.`)) return;
+      const ok = await ptv2Confirm({
+        title: `Delete sprint "${s.name}"?`,
+        body: "Tasks keep their pointer — you can restore the sprint later from Supabase.",
+        okLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
       await deleteSprint(s.id);
       closeSprintMenu();
     });
@@ -571,7 +577,7 @@
         starts_on: row.querySelector('[name="starts_on"]').value || null,
         ends_on:   row.querySelector('[name="ends_on"]').value || null,
       };
-      if (!patch.name) { alert("Name required"); return; }
+      if (!patch.name) { await ptv2Alert({ title: "Name required", body: "Give the sprint a short name before saving." }); return; }
       saveBtn.disabled = true;
       const ok = await updateSprint(s.id, patch);
       saveBtn.disabled = false;
@@ -780,19 +786,45 @@
   async function promptRollover(s) {
     const others = _sprints.filter((x) => x.id !== s.id);
     if (!others.length) {
-      if (confirm(`No other sprint to move to. Unassign all unfinished tasks from "${s.name}"?`)) {
-        await rolloverSprint(s.id, null);
-      }
+      const ok = await ptv2Confirm({
+        title: `Roll over "${s.name}"?`,
+        body: "No other sprint to move to. Unfinished tasks will be unassigned.",
+        okLabel: "Unassign tasks",
+        danger: true,
+      });
+      if (ok) await rolloverSprint(s.id, null);
       return;
     }
-    // Build a quick picker via prompt — keeps the implementation small.
-    const labels = others.map((x, i) => `${i + 1}. ${x.name}${x.is_active ? " (active)" : ""}`).join("\n");
-    const choice = prompt(`Roll over unfinished tasks from "${s.name}" to:\n\n${labels}\n0. Unassign\n\nEnter the number:`);
-    if (choice == null) return;
-    const idx = parseInt(choice, 10);
-    if (isNaN(idx) || idx < 0 || idx > others.length) return;
-    const targetId = idx === 0 ? null : others[idx - 1].id;
-    await rolloverSprint(s.id, targetId);
+    const back = document.createElement("div");
+    back.className = "ptv2-dlg-back";
+    const card = document.createElement("div");
+    card.className = "ptv2-dlg-card";
+    card.innerHTML = `
+      <h2 class="ptv2-dlg-title">Roll over "${esc(s.name)}"</h2>
+      <div class="ptv2-dlg-body">Move unfinished tasks to:</div>
+      <select class="ptv2-dlg-input" id="ptv2-rollover-target">
+        <option value="">Unassign (leave as backlog)</option>
+        ${others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}${x.is_active ? " · active" : ""}</option>`).join("")}
+      </select>
+      <div class="ptv2-dlg-actions">
+        <button type="button" class="ptv2-dlg-btn" data-action="cancel">Cancel</button>
+        <button type="button" class="ptv2-dlg-btn is-primary" data-action="ok">Roll over</button>
+      </div>`;
+    back.appendChild(card);
+    document.body.appendChild(back);
+    const sel = card.querySelector("#ptv2-rollover-target");
+    sel.value = (others.find((x) => x.is_active) || others[0]).id;
+    requestAnimationFrame(() => sel.focus());
+    const cleanup = () => { document.removeEventListener("keydown", onKey, true); back.remove(); };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); cleanup(); } };
+    document.addEventListener("keydown", onKey, true);
+    back.addEventListener("click", (e) => { if (e.target === back) cleanup(); });
+    card.querySelector('[data-action="cancel"]').addEventListener("click", cleanup);
+    card.querySelector('[data-action="ok"]').addEventListener("click", async () => {
+      const targetId = sel.value || null;
+      cleanup();
+      await rolloverSprint(s.id, targetId);
+    });
   }
   async function rolloverSprint(srcId, targetId) {
     const r = await _fetch(`/api/sprints/${srcId}/rollover`, {
@@ -801,7 +833,7 @@
       body: JSON.stringify({ target_sprint_id: targetId }),
     });
     if (!r.ok) {
-      alert("Rollover failed");
+      await ptv2Alert({ title: "Rollover failed", body: `Server returned ${r.status}. Please try again.` });
       return;
     }
     // Update all matching rows' data-sprint-id so the UI reflects without a reload.
@@ -826,7 +858,7 @@
       body: JSON.stringify(body),
     });
     if (r.ok) await refreshSprints();
-    else alert("Could not create sprint");
+    else await ptv2Alert({ title: "Couldn't create sprint", body: `Server returned ${r.status}.` });
   }
   async function updateSprint(id, patch) {
     try {
@@ -836,18 +868,18 @@
         body: JSON.stringify(patch),
       });
       if (!r.ok) {
-        let msg = `Sprint update failed (${r.status}).`;
+        let body = `Server returned ${r.status}.`;
         try {
           const j = await r.json();
-          if (j && j.error) msg += " " + j.error;
+          if (j && j.error) body = j.error;
         } catch (_) {}
-        alert(msg);
+        await ptv2Alert({ title: "Sprint update failed", body });
         return false;
       }
       await refreshSprints();
       return true;
     } catch (e) {
-      alert("Sprint update failed: " + (e && e.message ? e.message : e));
+      await ptv2Alert({ title: "Sprint update failed", body: (e && e.message) ? e.message : String(e) });
       return false;
     }
   }
@@ -1081,7 +1113,7 @@
         });
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
-          alert(body.error || "Couldn't create initiative");
+          await ptv2Alert({ title: "Couldn't create initiative", body: body.error || `Server returned ${r.status}.` });
           return;
         }
         await fetchTree(); renderTree();
@@ -1108,7 +1140,7 @@
         });
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
-          alert(body.error || "Couldn't create epic");
+          await ptv2Alert({ title: "Couldn't create epic", body: body.error || `Server returned ${r.status}.` });
           return;
         }
         await fetchTree(); renderTree();
@@ -1146,30 +1178,41 @@
     return wrap;
   }
   async function promptCreateOkr() {
-    const title = prompt("New OKR title:");
-    if (!title || !title.trim()) return;
-    const krTitle = prompt("First Key Result (leave blank to skip):");
+    const result = await ptv2Dialog({
+      title: "New OKR",
+      fields: [
+        { name: "title",   label: "OKR title",   placeholder: "e.g. Grow weekly active users", required: true },
+        { name: "krTitle", label: "First Key Result (optional)", placeholder: "Leave blank to skip" },
+      ],
+      okLabel: "Create",
+    });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    const krTitle = (result.krTitle || "").trim();
     try {
       const r = await _fetch("/api/goals", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: title.trim(), project_id: PROJECT_ID, status: "active",
+          title, project_id: PROJECT_ID, status: "active",
           time_horizon: "quarterly",
         }),
       });
       const data = await r.json();
       const obj = data.objective || data;
-      if (krTitle && krTitle.trim() && obj && obj.id) {
+      if (krTitle && obj && obj.id) {
         await _fetch("/api/key-results", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title: krTitle.trim(), objective_id: obj.id,
+            title: krTitle, objective_id: obj.id,
             target_value: 100, unit: "%",
           }),
         });
       }
       await fetchTree(); renderTree();
-    } catch (e) { alert("Couldn't create OKR — check connection."); }
+    } catch (e) {
+      await ptv2Alert({ title: "Couldn't create OKR", body: "Check your connection and try again." });
+    }
   }
 
   /* ───── ⋯ menu, density, add-bar expand, header counts ──────── */
@@ -1228,6 +1271,111 @@
     const fill = document.getElementById("proj-progress-fill");
     if (fill) fill.style.width = total ? `${Math.round((done / total) * 100)}%` : "0%";
     setBadge("all", total - done);
+  }
+
+  /* ───── in-app dialog (replaces native alert/confirm/prompt) ──
+     Returns a Promise:
+       - alert/confirm with no fields → resolves true (OK) or false (Cancel)
+       - with fields → resolves to a {name: value, ...} object or null
+     Escape cancels, Enter submits, the first input gets focus.
+     Built ad-hoc here so the project_tasks page stays self-contained;
+     the styling matches the rest of ptv2 via the existing CSS vars. */
+  function ptv2Dialog(opts) {
+    return new Promise((resolve) => {
+      const {
+        title = "",
+        body = "",
+        fields = [],
+        okLabel = fields.length ? "Save" : "OK",
+        cancelLabel = "Cancel",
+        showCancel = true,
+        danger = false,
+      } = opts || {};
+
+      const back = document.createElement("div");
+      back.className = "ptv2-dlg-back";
+
+      const card = document.createElement("div");
+      card.className = "ptv2-dlg-card";
+      card.setAttribute("role", "dialog");
+      card.setAttribute("aria-modal", "true");
+
+      const fieldsHtml = fields.map((f, i) => {
+        const label = f.label ? `<label class="ptv2-dlg-label" for="ptv2-dlg-f-${i}">${esc(f.label)}</label>` : "";
+        const type = f.type || "text";
+        const val  = esc(f.value || "");
+        const ph   = esc(f.placeholder || "");
+        const req  = f.required ? "required" : "";
+        if (type === "textarea") {
+          return `${label}<textarea id="ptv2-dlg-f-${i}" name="${esc(f.name)}" placeholder="${ph}" ${req} rows="3" class="ptv2-dlg-input">${val}</textarea>`;
+        }
+        return `${label}<input id="ptv2-dlg-f-${i}" type="${esc(type)}" name="${esc(f.name)}" value="${val}" placeholder="${ph}" ${req} class="ptv2-dlg-input">`;
+      }).join("");
+
+      card.innerHTML = `
+        ${title ? `<h2 class="ptv2-dlg-title">${esc(title)}</h2>` : ""}
+        ${body  ? `<div class="ptv2-dlg-body">${esc(body)}</div>` : ""}
+        ${fields.length ? `<form class="ptv2-dlg-form" novalidate>${fieldsHtml}</form>` : ""}
+        <div class="ptv2-dlg-actions">
+          ${showCancel ? `<button type="button" class="ptv2-dlg-btn" data-action="cancel">${esc(cancelLabel)}</button>` : ""}
+          <button type="button" class="ptv2-dlg-btn ${danger ? "is-danger" : "is-primary"}" data-action="ok">${esc(okLabel)}</button>
+        </div>`;
+
+      back.appendChild(card);
+      document.body.appendChild(back);
+
+      const form = card.querySelector(".ptv2-dlg-form");
+      const inputs = card.querySelectorAll(".ptv2-dlg-input");
+      const okBtn  = card.querySelector('[data-action="ok"]');
+      const cnBtn  = card.querySelector('[data-action="cancel"]');
+
+      function close(result) {
+        document.removeEventListener("keydown", onKey, true);
+        back.remove();
+        resolve(result);
+      }
+      function readFields() {
+        const out = {};
+        for (const inp of inputs) out[inp.name] = inp.value;
+        return out;
+      }
+      function submit() {
+        if (!fields.length) return close(true);
+        // Native required-check so the browser shows the standard hint
+        // on the first missing field instead of us reinventing it.
+        if (form && !form.checkValidity()) { form.reportValidity(); return; }
+        close(readFields());
+      }
+      function cancel() { close(fields.length ? null : false); }
+
+      okBtn.addEventListener("click", submit);
+      if (cnBtn) cnBtn.addEventListener("click", cancel);
+      back.addEventListener("click", (e) => { if (e.target === back) cancel(); });
+      if (form) form.addEventListener("submit", (e) => { e.preventDefault(); submit(); });
+
+      function onKey(e) {
+        if (e.key === "Escape") { e.preventDefault(); cancel(); }
+        // Enter inside single-line inputs submits; let textareas keep newlines.
+        if (e.key === "Enter" && !e.shiftKey) {
+          const t = e.target;
+          if (!t || t.tagName !== "TEXTAREA") { e.preventDefault(); submit(); }
+        }
+      }
+      document.addEventListener("keydown", onKey, true);
+
+      // Focus first input or the primary button.
+      requestAnimationFrame(() => {
+        const first = card.querySelector(".ptv2-dlg-input");
+        (first || okBtn).focus();
+        if (first && first.select) first.select();
+      });
+    });
+  }
+  function ptv2Confirm({ title, body, okLabel = "Confirm", cancelLabel = "Cancel", danger = false }) {
+    return ptv2Dialog({ title, body, okLabel, cancelLabel, danger });
+  }
+  function ptv2Alert({ title = "", body = "" }) {
+    return ptv2Dialog({ title, body, okLabel: "OK", showCancel: false });
   }
 
   /* ───── helpers ─────────────────────────────────────────────── */
