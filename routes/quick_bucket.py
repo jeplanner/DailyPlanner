@@ -55,22 +55,39 @@ TOP5_LIMIT = 5
 
 
 def _auto_roll_top5(user_id):
-    """Bump any incomplete past-day top-5 rows to today.
+    """Bump any incomplete past-day top-5 rows to today AND scrub the
+    panel pointers off any already-done row.
 
-    Done rows keep their old top5_date so they fall out of today's panel
-    — they had their day. Archived (is_deleted) rows are excluded too.
-    Filter-based PATCH does the bump in a single round-trip."""
+    Two passes, one filter-based PATCH each (single round-trip apiece):
+      1. Past-day, not done, not deleted   → top5_date := today
+      2. Already done (any top5_date set)  → top5_date / top5_position := NULL
+
+    The second pass is a one-shot cleanup for done rows that were pinned
+    before the /done endpoint started clearing the pointers itself. It
+    no-ops on future loads because the predicate matches zero rows once
+    everything's been scrubbed."""
     today = date.today().isoformat()
     try:
+        # 1) Roll yesterday's actives forward.
         update(
             "quick_bucket",
             params={
-                "user_id": f"eq.{user_id}",
+                "user_id":    f"eq.{user_id}",
                 "is_deleted": "eq.false",
-                "is_done": "eq.false",
-                "top5_date": f"lt.{today}",
+                "is_done":    "eq.false",
+                "top5_date":  f"lt.{today}",
             },
             json={"top5_date": today},
+        )
+        # 2) Sweep done rows out of the panel.
+        update(
+            "quick_bucket",
+            params={
+                "user_id":    f"eq.{user_id}",
+                "is_done":    "eq.true",
+                "top5_date":  "not.is.null",
+            },
+            json={"top5_date": None, "top5_position": None},
         )
     except Exception:
         logger.exception("auto-roll top5 failed for %s", user_id)
