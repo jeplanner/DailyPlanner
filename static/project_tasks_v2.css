@@ -322,6 +322,18 @@ html.dark {
 .ptv2-sprint-menu .danger:hover { background: rgba(239,68,68,0.1); color: var(--ptv2-danger); }
 .ptv2-sprint-menu .sep { height: 1px; background: var(--ptv2-border); margin: 4px 6px; padding: 0; }
 
+/* Drag-and-drop affordances for the Tree tab: while a task is being
+   dragged, every epic row in the right column highlights as a target. */
+.ptv2-row.is-dragging { opacity: 0.55; }
+body.ptv2-dragging-task .okrc-row.ptv2-droppable {
+  outline: 1px dashed var(--ptv2-primary);
+  outline-offset: -1px;
+}
+.okrc-row.ptv2-droppable.is-drop-target {
+  background: var(--ptv2-primary-soft);
+  outline: 2px solid var(--ptv2-primary);
+}
+
 /* ════════════════════════════════════════════════════════════════
    IN-APP DIALOG — replaces native alert/confirm/prompt
    ════════════════════════════════════════════════════════════════ */

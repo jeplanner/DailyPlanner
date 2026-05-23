@@ -995,6 +995,7 @@
               v ? _treeSel.epics.add(ep.id) : _treeSel.epics.delete(ep.id);
               renderTreeTasks();
             },
+            dropTarget: { type: "epic", epic: ep },
           }));
         }
       }
@@ -1041,7 +1042,11 @@
       });
     }
     list.innerHTML = "";
-    visible.forEach((t) => list.appendChild(rowCard(t, { crumb: crumbFor(t) })));
+    visible.forEach((t) => {
+      const tile = rowCard(t, { crumb: crumbFor(t) });
+      makeTaskDraggable(tile, t);
+      list.appendChild(tile);
+    });
     if (cnt) cnt.textContent = String(visible.length);
     if (hint) {
       const bits = [];
@@ -1052,7 +1057,7 @@
     }
   }
 
-  function treeRow({ label, sub, checked, onToggle, isDefault }) {
+  function treeRow({ label, sub, checked, onToggle, isDefault, dropTarget }) {
     const d = document.createElement("div");
     d.className = "okrc-row" + (isDefault ? " is-default" : "");
     d.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 6px;border-radius:8px";
@@ -1068,7 +1073,80 @@
         ${sub ? `<span style="font-size:11px;color:var(--ptv2-text-mute)">${esc(sub)}</span>` : ""}</span>
       </label>`;
     d.querySelector("input").addEventListener("change", (e) => onToggle(e.target.checked));
+    if (dropTarget) attachTreeRowDropTarget(d, dropTarget);
     return d;
+  }
+
+  /* ───── drag-and-drop: tasks onto epics (Tree tab) ────────────
+     A task tile becomes a drag source; epic rows in the right column
+     become drop targets. On drop we PATCH the task's epic_id and
+     also set initiative_id / key_result_id from the epic's parents
+     so the hierarchy stays consistent (instead of an epic-only edit
+     that leaves the task pointing at a stale initiative). */
+  function makeTaskDraggable(tile, t) {
+    tile.draggable = true;
+    tile.addEventListener("dragstart", (e) => {
+      try { e.dataTransfer.setData("text/plain", t.id); } catch (_) {}
+      e.dataTransfer.effectAllowed = "move";
+      tile.classList.add("is-dragging");
+      document.body.classList.add("ptv2-dragging-task");
+    });
+    tile.addEventListener("dragend", () => {
+      tile.classList.remove("is-dragging");
+      document.body.classList.remove("ptv2-dragging-task");
+    });
+  }
+  function attachTreeRowDropTarget(row, dropTarget) {
+    row.classList.add("ptv2-droppable");
+    row.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.types.includes("text/plain")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      row.classList.add("is-drop-target");
+    });
+    row.addEventListener("dragleave", (e) => {
+      if (e.target === row) row.classList.remove("is-drop-target");
+    });
+    row.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      row.classList.remove("is-drop-target");
+      const taskId = (e.dataTransfer.getData("text/plain") || "").trim();
+      if (!taskId) return;
+      await moveTaskToEpic(taskId, dropTarget.epic);
+    });
+  }
+  async function moveTaskToEpic(taskId, epic) {
+    if (!epic || !epic.id) return;
+    // Pull parent IDs from the indexed hierarchy so the row's tree
+    // position is fully consistent after the move.
+    const idx = _hierIndex && _hierIndex.epicsById.get(epic.id);
+    const initiativeId = (idx && idx._init && idx._init.id) || epic.initiative_id || "";
+    const keyResultId  = (idx && idx._kr  && idx._kr.id)  || "";
+    try {
+      const r = await _fetch(`/projects/tasks/${taskId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          epic_id: epic.id,
+          initiative_id: initiativeId,
+          key_result_id: keyResultId,
+        }),
+      });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      // Patch the source task row so subsequent renders (crumb, filter,
+      // counts) reflect the new placement without a full page reload.
+      const row = document.querySelector(`#task-tbody tr.task-row[data-id="${taskId}"]`);
+      if (row) {
+        row.dataset.epicId = epic.id;
+        if (initiativeId) row.dataset.initiativeId = initiativeId;
+        if (keyResultId)  row.dataset.krId         = keyResultId;
+      }
+      renderTreeTasks();
+    } catch (err) {
+      console.error("[ptv2] task → epic move failed", err);
+      await ptv2Alert({ title: "Move failed", body: "Couldn't reassign this task. Please try again." });
+    }
   }
   function empty(msg) {
     const d = document.createElement("div");
