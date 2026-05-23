@@ -772,6 +772,29 @@ def create_initiative():
     if not title or not key_result_id:
         return jsonify({"error": "title and key_result_id required"}), 400
 
+    # Forbid attaching a new Initiative under the default OKR's KR.
+    # The default tree is reserved as a catch-all for unclassified work;
+    # real organisation goes under user-created OKRs. Walk KR → Objective
+    # in one extra query.
+    kr_rows = get(
+        "key_results",
+        params={
+            "id":         f"eq.{key_result_id}",
+            "user_id":    f"eq.{session['user_id']}",
+            "is_deleted": "eq.false",
+            "select":     "id,objective_id,objectives(is_default)",
+            "limit":      1,
+        },
+    ) or []
+    if not kr_rows:
+        return jsonify({"error": "key result not found"}), 404
+    parent_obj = (kr_rows[0].get("objectives") or {})
+    if parent_obj.get("is_default"):
+        return jsonify({
+            "error": "Initiatives can't live under the default OKR. "
+                     "Create a new OKR first, then add the Initiative under it."
+        }), 422
+
     payload = {
         "user_id": session["user_id"],
         "key_result_id": key_result_id,
@@ -834,6 +857,27 @@ def create_epic():
     initiative_id = data.get("initiative_id")
     if not title or not initiative_id:
         return jsonify({"error": "title and initiative_id required"}), 400
+
+    # Forbid attaching a new Epic under the default Initiative — the
+    # default chain is the catch-all and shouldn't grow children.
+    init_rows = get(
+        "initiatives",
+        params={
+            "id":         f"eq.{initiative_id}",
+            "user_id":    f"eq.{session['user_id']}",
+            "is_deleted": "eq.false",
+            "select":     "id,is_default",
+            "limit":      1,
+        },
+    ) or []
+    if not init_rows:
+        return jsonify({"error": "initiative not found"}), 404
+    if init_rows[0].get("is_default"):
+        return jsonify({
+            "error": "Epics can't live under the default Initiative. "
+                     "Create a new Initiative first, then add the Epic under it."
+        }), 422
+
     payload = {
         "user_id": session["user_id"],
         "initiative_id": initiative_id,
@@ -894,14 +938,18 @@ def project_hierarchy(project_id):
     # Pull active (non-deleted) rows at each level for this user, then
     # stitch in Python. Faster than 4 sequential round-trips and lets
     # us keep parents that have no children (so "+ Add" UI works).
+    # NOTE: is_default is selected on every level so the client can
+    # render badges + suppress "+ child" creators under default nodes
+    # (Initiatives can't live under the default OKR's KR; Epics can't
+    # live under the default Initiative — enforced server-side too).
     objectives = get(
         "objectives",
         params={
             "user_id":    f"eq.{user_id}",
             "project_id": f"eq.{project_id}",
             "is_deleted": "eq.false",
-            "select":     "id,title,description,status,color,order_index",
-            "order":      "order_index.asc,created_at.asc",
+            "select":     "id,title,description,status,color,order_index,is_default",
+            "order":      "is_default.asc,order_index.asc,created_at.asc",
         },
     ) or []
     obj_ids = [o["id"] for o in objectives]
@@ -914,8 +962,8 @@ def project_hierarchy(project_id):
                 "user_id":      f"eq.{user_id}",
                 "objective_id": f"in.({','.join(obj_ids)})",
                 "is_deleted":   "eq.false",
-                "select":       "id,objective_id,title,target_value,current_value,unit,direction,order_index",
-                "order":        "order_index.asc,created_at.asc",
+                "select":       "id,objective_id,title,target_value,current_value,unit,direction,order_index,is_default",
+                "order":        "is_default.asc,order_index.asc,created_at.asc",
             },
         ) or []
     kr_ids = [kr["id"] for kr in key_results]
@@ -928,8 +976,8 @@ def project_hierarchy(project_id):
                 "user_id":       f"eq.{user_id}",
                 "key_result_id": f"in.({','.join(kr_ids)})",
                 "is_deleted":    "eq.false",
-                "select":        "id,key_result_id,title,description,status,order_index",
-                "order":         "order_index.asc,created_at.asc",
+                "select":        "id,key_result_id,title,description,status,order_index,is_default",
+                "order":         "is_default.asc,order_index.asc,created_at.asc",
             },
         ) or []
     init_ids = [i["id"] for i in initiatives]
@@ -942,8 +990,8 @@ def project_hierarchy(project_id):
                 "user_id":       f"eq.{user_id}",
                 "initiative_id": f"in.({','.join(init_ids)})",
                 "is_deleted":    "eq.false",
-                "select":        "id,initiative_id,title,description,status,order_index",
-                "order":         "order_index.asc,created_at.asc",
+                "select":        "id,initiative_id,title,description,status,order_index,is_default",
+                "order":         "is_default.asc,order_index.asc,created_at.asc",
             },
         ) or []
 

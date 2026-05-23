@@ -456,12 +456,23 @@
 
   function addInitiativeCreator(col) {
     // Build a KR picker so the user can pick where to add the initiative.
+    // Exclude defaults — Initiatives can't live under the default OKR.
     const krs = [];
     for (const o of tree) {
+      if (o.is_default) continue;
       if (sel.okrs.size && !sel.okrs.has(o.id)) continue;
-      for (const kr of o.key_results || []) krs.push({ kr, o });
+      for (const kr of o.key_results || []) {
+        if (kr.is_default) continue;
+        krs.push({ kr, o });
+      }
     }
-    if (!krs.length) return;
+    if (!krs.length) {
+      const hint = document.createElement("div");
+      hint.className = "okrc-empty";
+      hint.textContent = "Create a new OKR first — Initiatives can't go under the default.";
+      col.appendChild(hint);
+      return;
+    }
     const wrap = document.createElement("div");
     wrap.className = "okrc-create";
     wrap.innerHTML = `
@@ -478,12 +489,17 @@
       if (!title) return;
       button.disabled = true;
       try {
-        await _fetch("/api/initiatives", {
+        const r = await _fetch("/api/initiatives", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
           body: JSON.stringify({ title, key_result_id: select.value }),
         });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error || "Couldn't create initiative");
+          return;
+        }
         input.value = "";
         await refreshHierarchy();
         renderCascade();
@@ -523,13 +539,21 @@
       }
     }
     if (!any) col.appendChild(emptyState("No epics under the selected initiatives yet."));
-    // Inline create under any visible initiative.
+    // Inline create — exclude default initiatives, can't have children.
+    const userInits = activeInits.filter((it) => !it.is_default);
+    if (!userInits.length) {
+      const hint = document.createElement("div");
+      hint.className = "okrc-empty";
+      hint.textContent = "Create a new Initiative first — Epics can't go under the default.";
+      col.appendChild(hint);
+      return;
+    }
     const wrap = document.createElement("div");
     wrap.className = "okrc-create";
     wrap.innerHTML = `
       <input type="text" placeholder="New epic…" class="okrc-input">
       <select class="okrc-select">
-        ${activeInits.map((it) => `<option value="${esc(it.id)}">${esc(it.title)}</option>`).join("")}
+        ${userInits.map((it) => `<option value="${esc(it.id)}">${esc(it.title)}</option>`).join("")}
       </select>
       <button class="okrc-add">+</button>`;
     const input  = wrap.querySelector("input");
@@ -540,12 +564,17 @@
       if (!title) return;
       button.disabled = true;
       try {
-        await _fetch("/api/epics", {
+        const r = await _fetch("/api/epics", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "same-origin",
           body: JSON.stringify({ title, initiative_id: select.value }),
         });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error || "Couldn't create epic");
+          return;
+        }
         input.value = "";
         await refreshHierarchy();
         renderCascade();

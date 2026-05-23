@@ -21,6 +21,134 @@ from supabase_client import get, post, update
 
 projects_bp = Blueprint("projects", __name__)
 
+
+# ─────────────────────────────────────────────────────────────────
+# Default OKR > KR > Initiative > Epic trio per project.
+#
+# Tasks without an explicit epic always fall through to this default
+# epic. The trio is created lazily on project insert and also auto-
+# heals on first task add (so an in-flight migration or a manually
+# inserted project still gets defaults).
+#
+# The migration MIGRATION_DEFAULT_OKR_TRIO.sql backfills every existing
+# project. Below mirrors that logic for the post-deploy path.
+# ─────────────────────────────────────────────────────────────────
+
+def _ensure_default_okr_trio(user_id, project_id):
+    """Return the default epic_id for this project, creating the
+    Inbox > Catch-all > Inbox > Inbox chain if any link is missing.
+    Idempotent — runs at most one extra SELECT when the trio already
+    exists, no inserts."""
+    try:
+        objs = get(
+            "objectives",
+            params={
+                "user_id":    f"eq.{user_id}",
+                "project_id": f"eq.{project_id}",
+                "is_default": "eq.true",
+                "is_deleted": "eq.false",
+                "select":     "id",
+                "limit":      1,
+            },
+        ) or []
+        if objs:
+            obj_id = objs[0]["id"]
+        else:
+            row = post("objectives", {
+                "user_id":     user_id,
+                "project_id":  project_id,
+                "title":       "Inbox",
+                "is_default":  True,
+                "status":      "active",
+                "time_horizon": "ongoing",
+            })
+            obj_id = (row or [{}])[0].get("id") if row else None
+            if not obj_id:
+                return None
+
+        krs = get(
+            "key_results",
+            params={
+                "user_id":      f"eq.{user_id}",
+                "objective_id": f"eq.{obj_id}",
+                "is_default":   "eq.true",
+                "is_deleted":   "eq.false",
+                "select":       "id",
+                "limit":        1,
+            },
+        ) or []
+        if krs:
+            kr_id = krs[0]["id"]
+        else:
+            row = post("key_results", {
+                "user_id":      user_id,
+                "objective_id": obj_id,
+                "title":        "Catch-all",
+                "target_value": 100,
+                "unit":         "%",
+                "is_default":   True,
+            })
+            kr_id = (row or [{}])[0].get("id") if row else None
+            if not kr_id:
+                return None
+
+        inits = get(
+            "initiatives",
+            params={
+                "user_id":       f"eq.{user_id}",
+                "key_result_id": f"eq.{kr_id}",
+                "is_default":    "eq.true",
+                "is_deleted":    "eq.false",
+                "select":        "id",
+                "limit":         1,
+            },
+        ) or []
+        if inits:
+            init_id = inits[0]["id"]
+        else:
+            row = post("initiatives", {
+                "user_id":       user_id,
+                "key_result_id": kr_id,
+                "title":         "Inbox",
+                "is_default":    True,
+                "status":        "active",
+            })
+            init_id = (row or [{}])[0].get("id") if row else None
+            if not init_id:
+                return None
+
+        eps = get(
+            "epics",
+            params={
+                "user_id":       f"eq.{user_id}",
+                "initiative_id": f"eq.{init_id}",
+                "is_default":    "eq.true",
+                "is_deleted":    "eq.false",
+                "select":        "id",
+                "limit":         1,
+            },
+        ) or []
+        if eps:
+            return eps[0]["id"]
+        row = post("epics", {
+            "user_id":       user_id,
+            "initiative_id": init_id,
+            "title":         "Inbox",
+            "is_default":    True,
+            "status":        "active",
+        })
+        return (row or [{}])[0].get("id") if row else None
+    except Exception:
+        logger.exception("ensure default trio failed for project %s", project_id)
+        return None
+
+
+def _default_epic_id(user_id, project_id):
+    """Resolve the default epic for this project. Always safe to call —
+    creates any missing link in the chain (ensure helper is idempotent
+    when the trio is already present)."""
+    return _ensure_default_okr_trio(user_id, project_id)
+
 @projects_bp.route("/projects")
 @login_required
 def projects():
@@ -243,17 +371,22 @@ def add_project_task(project_id):
     max_order = get_max_order_index(project_id)
     order_index = (max_order or 0) + 1
 
-    post(
-        "project_tasks",
-        {
-            "project_id": project_id,
-            "user_id": session["user_id"],
-            "task_text": text,
-            "status": "backlog",
-            "start_date": start_date,
-            "order_index": order_index,
-        },
-    )
+    # Drop the task into the project's default epic so it lives somewhere
+    # in the OKR tree (mirrors the AJAX path).
+    default_epic = _default_epic_id(session["user_id"], project_id)
+
+    payload = {
+        "project_id": project_id,
+        "user_id": session["user_id"],
+        "task_text": text,
+        "status": "backlog",
+        "start_date": start_date,
+        "order_index": order_index,
+    }
+    if default_epic:
+        payload["epic_id"] = default_epic
+
+    post("project_tasks", payload)
 
     return redirect(url_for("projects.project_tasks", project_id=project_id))
 
@@ -860,14 +993,20 @@ def create_project():
         if not name:
             return "Project name is required", 400
 
-        post(
+        user_id = session.get("user_id")
+        rows = post(
             "projects",
             {
                 "name": name,
                 "description": description or None,
-                "user_id": session.get("user_id")
-            }
+                "user_id": user_id,
+            },
         )
+        # Provision the default Inbox > Catch-all > Inbox > Inbox trio
+        # so tasks added without an explicit epic have somewhere to go.
+        new_project_id = (rows or [{}])[0].get("project_id") if rows else None
+        if new_project_id:
+            _ensure_default_okr_trio(user_id, new_project_id)
 
         return redirect("/projects")
 
@@ -1541,6 +1680,12 @@ def add_project_task_ajax(project_id):
     initiative_id = raw_init if (raw_init and str(raw_init).strip() not in ("", "null")) else None
     raw_epic = data.get("epic_id")
     epic_id = raw_epic if (raw_epic and str(raw_epic).strip() not in ("", "null")) else None
+
+    # No epic supplied → drop into the project's default epic so every
+    # task lives somewhere in the OKR tree. _default_epic_id lazily
+    # provisions the trio if the migration hasn't run yet.
+    if not epic_id:
+        epic_id = _default_epic_id(session["user_id"], project_id)
 
     # When an epic is picked but no initiative, back-fill from the epic's
     # parent so legacy filters that key on initiative_id keep working.

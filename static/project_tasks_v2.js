@@ -268,6 +268,7 @@
         const itCt = (o.key_results || []).reduce((n, kr) => n + (kr.initiatives || []).length, 0);
         colOkr.appendChild(treeRow({
           label: o.title, sub: `${krCt} KR · ${itCt} init`,
+          isDefault: !!o.is_default,
           checked: _treeSel.okrs.has(o.id),
           onToggle: (v) => {
             v ? _treeSel.okrs.add(o.id) : _treeSel.okrs.delete(o.id);
@@ -303,6 +304,7 @@
           const epCt = (it.epics || []).length;
           colInit.appendChild(treeRow({
             label: it.title, sub: `KR: ${kr.title} · ${epCt} epic`,
+            isDefault: !!it.is_default,
             checked: _treeSel.inits.has(it.id),
             onToggle: (v) => {
               v ? _treeSel.inits.add(it.id) : _treeSel.inits.delete(it.id);
@@ -336,6 +338,7 @@
         for (const ep of it.epics) {
           colEpic.appendChild(treeRow({
             label: ep.title, sub: ep.description ? ep.description.slice(0, 80) : null,
+            isDefault: !!ep.is_default,
             checked: _treeSel.epics.has(ep.id),
             onToggle: (v) => {
               v ? _treeSel.epics.add(ep.id) : _treeSel.epics.delete(ep.id);
@@ -398,14 +401,19 @@
     }
   }
 
-  function treeRow({ label, sub, checked, onToggle }) {
+  function treeRow({ label, sub, checked, onToggle, isDefault }) {
     const d = document.createElement("div");
-    d.className = "okrc-row";
+    d.className = "okrc-row" + (isDefault ? " is-default" : "");
     d.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 6px;border-radius:8px";
+    const badge = isDefault
+      ? `<span title="Default catch-all — receives tasks created without an Epic"
+            style="display:inline-block;background:var(--ptv2-primary-soft);color:var(--ptv2-primary);
+                   font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;margin-left:6px;
+                   text-transform:uppercase;letter-spacing:0.04em">Default</span>` : "";
     d.innerHTML = `
       <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
         <input type="checkbox" ${checked ? "checked" : ""} style="width:16px;height:16px;accent-color:var(--ptv2-primary)">
-        <span><span style="font-size:14px;font-weight:600;color:var(--ptv2-text);display:block">${esc(label)}</span>
+        <span><span style="font-size:14px;font-weight:600;color:var(--ptv2-text);display:block">${esc(label)}${badge}</span>
         ${sub ? `<span style="font-size:11px;color:var(--ptv2-text-mute)">${esc(sub)}</span>` : ""}</span>
       </label>`;
     d.querySelector("input").addEventListener("change", (e) => onToggle(e.target.checked));
@@ -426,39 +434,75 @@
     return b;
   }
   function appendInitiativeCreator(col) {
+    // Exclude KRs that belong to the default OKR — server rejects
+    // those anyway. If nothing is left, surface a hint instead so the
+    // user knows they need to create an OKR first.
     const krs = [];
     for (const o of _treeData) {
+      if (o.is_default) continue;
       if (_treeSel.okrs.size && !_treeSel.okrs.has(o.id)) continue;
-      for (const kr of o.key_results || []) krs.push({ kr, o });
+      for (const kr of o.key_results || []) {
+        if (kr.is_default) continue;
+        krs.push({ kr, o });
+      }
     }
-    if (!krs.length) return;
+    if (!krs.length) {
+      col.appendChild(creatorHint(
+        "To add an Initiative, create a new OKR (above) first — defaults can't have children."
+      ));
+      return;
+    }
     const wrap = inlineCreator({
       placeholder: "New initiative…",
       options: krs.map(({ kr, o }) => ({ id: kr.id, label: `${o.title} ▸ ${kr.title}` })),
       submit: async (title, parentId) => {
-        await _fetch("/api/initiatives", {
+        const r = await _fetch("/api/initiatives", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, key_result_id: parentId }),
         });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error || "Couldn't create initiative");
+          return;
+        }
         await fetchTree(); renderTree();
       },
     });
     col.appendChild(wrap);
   }
   function appendEpicCreator(col, inits) {
-    if (!inits.length) return;
+    // Drop default initiatives from the picker (server-side enforced).
+    const userInits = inits.filter((it) => !it.is_default);
+    if (!userInits.length) {
+      col.appendChild(creatorHint(
+        "To add an Epic, create a new Initiative (above) first — defaults can't have children."
+      ));
+      return;
+    }
     const wrap = inlineCreator({
       placeholder: "New epic…",
-      options: inits.map((it) => ({ id: it.id, label: it.title })),
+      options: userInits.map((it) => ({ id: it.id, label: it.title })),
       submit: async (title, parentId) => {
-        await _fetch("/api/epics", {
+        const r = await _fetch("/api/epics", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, initiative_id: parentId }),
         });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          alert(body.error || "Couldn't create epic");
+          return;
+        }
         await fetchTree(); renderTree();
       },
     });
     col.appendChild(wrap);
+  }
+  function creatorHint(msg) {
+    const d = document.createElement("div");
+    d.textContent = msg;
+    d.style.cssText = "margin-top:12px;padding:10px 12px;background:var(--ptv2-primary-soft);"
+                    + "color:var(--ptv2-text-mute);font-size:12px;border-radius:10px;line-height:1.4";
+    return d;
   }
   function inlineCreator({ placeholder, options, submit }) {
     const wrap = document.createElement("div");
