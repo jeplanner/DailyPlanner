@@ -902,109 +902,358 @@
       if (document.body.dataset.activeTab === "sprints") renderSprintsTab();
     } catch (_) {}
   }
+  // Expansion state for the nested tree. We keep id Sets per level so
+  // a re-render (after a filter toggle, drag-drop, or create) preserves
+  // whatever the user already had open.
+  const _treeExpand = { okrs: new Set(), inits: new Set(), epics: new Set() };
+
   function renderTree() {
-    const colOkr  = document.querySelector('.ptv2-tree-col[data-col="okr"]');
-    const colInit = document.querySelector('.ptv2-tree-col[data-col="init"]');
-    const colEpic = document.querySelector('.ptv2-tree-col[data-col="epic"]');
-    if (!colOkr) return;
+    const host = document.getElementById("ptv2-tree-nested");
+    if (!host) return;
+    host.innerHTML = "";
 
-    // ── OKR column ──
-    colOkr.innerHTML = `<h3>OKR</h3>`;
-    colOkr.appendChild(createInline("+ New OKR", () => promptCreateOkr()));
+    // "+ New OKR" stays at the very top — keeps the create flow
+    // discoverable even when the tree is empty.
+    const addRow = document.createElement("div");
+    addRow.className = "ptv2-tn-add-top";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "ptv2-tn-add-btn";
+    addBtn.textContent = "+ New OKR";
+    addBtn.addEventListener("click", () => promptCreateOkr());
+    addRow.appendChild(addBtn);
+    host.appendChild(addRow);
+
     if (!_treeData.length) {
-      colOkr.appendChild(empty("No OKRs yet."));
-    } else {
-      for (const o of _treeData) {
-        const krCt = (o.key_results || []).length;
-        const itCt = (o.key_results || []).reduce((n, kr) => n + (kr.initiatives || []).length, 0);
-        colOkr.appendChild(treeRow({
-          label: o.title, sub: `${krCt} KR · ${itCt} init`,
-          isDefault: !!o.is_default,
-          checked: _treeSel.okrs.has(o.id),
-          onToggle: (v) => {
-            v ? _treeSel.okrs.add(o.id) : _treeSel.okrs.delete(o.id);
-            if (!v) {
-              for (const kr of o.key_results || [])
-                for (const it of kr.initiatives || []) {
-                  _treeSel.inits.delete(it.id);
-                  for (const ep of it.epics || []) _treeSel.epics.delete(ep.id);
-                }
-            }
-            renderTree(); renderTreeTasks();
-          },
-        }));
-      }
+      const e = document.createElement("div");
+      e.className = "ptv2-tn-empty";
+      e.textContent = "No OKRs yet. Click + New OKR to get started.";
+      host.appendChild(e);
+      renderTreeTasks();
+      return;
     }
 
-    // ── Initiative column ──
-    colInit.innerHTML = `<h3>Initiative</h3>`;
-    const initsByOkr = new Map();
-    for (const o of _treeData) {
-      if (_treeSel.okrs.size && !_treeSel.okrs.has(o.id)) continue;
-      const inits = [];
-      for (const kr of o.key_results || [])
-        for (const it of kr.initiatives || []) inits.push({ it, kr });
-      if (inits.length) initsByOkr.set(o, inits);
-    }
-    if (!initsByOkr.size) {
-      colInit.appendChild(empty(_treeSel.okrs.size ? "No initiatives under selected OKRs." : "Select an OKR to see initiatives."));
-    } else {
-      for (const [o, inits] of initsByOkr) {
-        colInit.insertAdjacentHTML("beforeend", `<div class="ptv2-section-h" style="margin-top:8px"><span class="ptv2-section-dot ptv2-dot--primary"></span>${esc(o.title)}</div>`);
-        for (const { it, kr } of inits) {
-          const epCt = (it.epics || []).length;
-          colInit.appendChild(treeRow({
-            label: it.title, sub: `KR: ${kr.title} · ${epCt} epic`,
-            isDefault: !!it.is_default,
-            checked: _treeSel.inits.has(it.id),
-            onToggle: (v) => {
-              v ? _treeSel.inits.add(it.id) : _treeSel.inits.delete(it.id);
-              if (!v) for (const ep of it.epics || []) _treeSel.epics.delete(ep.id);
-              renderTree(); renderTreeTasks();
-            },
-          }));
-        }
-      }
-    }
-    appendInitiativeCreator(colInit);
-
-    // ── Epic column ──
-    colEpic.innerHTML = `<h3>Epic</h3>`;
-    const activeInits = [];
-    for (const o of _treeData)
-      for (const kr of o.key_results || [])
-        for (const it of kr.initiatives || []) {
-          if (_treeSel.okrs.size && !_treeSel.okrs.has(o.id)) continue;
-          if (_treeSel.inits.size && !_treeSel.inits.has(it.id)) continue;
-          activeInits.push(it);
-        }
-    if (!activeInits.length) {
-      colEpic.appendChild(empty("Select an initiative to see epics."));
-    } else {
-      let any = false;
-      for (const it of activeInits) {
-        if (!(it.epics || []).length) continue;
-        any = true;
-        colEpic.insertAdjacentHTML("beforeend", `<div class="ptv2-section-h" style="margin-top:8px"><span class="ptv2-section-dot ptv2-dot--muted"></span>${esc(it.title)}</div>`);
-        for (const ep of it.epics) {
-          colEpic.appendChild(treeRow({
-            label: ep.title, sub: ep.description ? ep.description.slice(0, 80) : null,
-            isDefault: !!ep.is_default,
-            checked: _treeSel.epics.has(ep.id),
-            onToggle: (v) => {
-              v ? _treeSel.epics.add(ep.id) : _treeSel.epics.delete(ep.id);
-              renderTreeTasks();
-            },
-            dropTarget: { type: "epic", epic: ep },
-          }));
-        }
-      }
-      if (!any) colEpic.appendChild(empty("No epics yet under these initiatives."));
-    }
-    appendEpicCreator(colEpic, activeInits);
+    for (const o of _treeData) host.appendChild(buildOkrNode(o));
 
     renderTreeTasks();
     if (window.feather) window.feather.replace();
+  }
+
+  function buildOkrNode(o) {
+    const wrap = document.createElement("div");
+    wrap.className = "ptv2-tn-node";
+    // Initiatives live under KRs; flatten to a single list keyed by
+    // their parent KR so the user doesn't see an extra (often empty)
+    // level for KRs they don't manage manually.
+    const inits = [];
+    for (const kr of o.key_results || [])
+      for (const it of kr.initiatives || []) inits.push({ it, kr });
+    const epCt = inits.reduce((n, { it }) => n + (it.epics || []).length, 0);
+    const expanded = _treeExpand.okrs.has(o.id);
+    const row = buildTreeRow({
+      level: 0, kind: "okr", icon: "O",
+      label: o.title, isDefault: !!o.is_default,
+      meta: `${inits.length} init · ${epCt} epic`,
+      hasChildren: inits.length > 0,
+      expanded,
+      checked: _treeSel.okrs.has(o.id),
+      onToggleExpand: () => {
+        toggleSet(_treeExpand.okrs, o.id);
+        renderTree();
+      },
+      onToggleSelect: (v) => {
+        v ? _treeSel.okrs.add(o.id) : _treeSel.okrs.delete(o.id);
+        if (!v) {
+          for (const { it } of inits) {
+            _treeSel.inits.delete(it.id);
+            for (const ep of it.epics || []) _treeSel.epics.delete(ep.id);
+          }
+        }
+        renderTree();
+      },
+    });
+    wrap.appendChild(row);
+
+    if (expanded) {
+      for (const { it, kr } of inits) wrap.appendChild(buildInitNode(it, kr, o));
+      // Inline creator under this OKR — pre-scopes the KR picker.
+      wrap.appendChild(inlineAddBtn({
+        level: 1, label: "+ Initiative",
+        onClick: () => promptCreateInitiativeForOkr(o),
+      }));
+    }
+    return wrap;
+  }
+
+  function buildInitNode(it, kr, o) {
+    const wrap = document.createElement("div");
+    wrap.className = "ptv2-tn-node";
+    const epics = it.epics || [];
+    const expanded = _treeExpand.inits.has(it.id);
+    const row = buildTreeRow({
+      level: 1, kind: "init", icon: "I",
+      label: it.title, isDefault: !!it.is_default,
+      meta: `${epics.length} epic`,
+      sub: `KR: ${kr.title}`,
+      hasChildren: epics.length > 0,
+      expanded,
+      checked: _treeSel.inits.has(it.id),
+      onToggleExpand: () => {
+        toggleSet(_treeExpand.inits, it.id);
+        renderTree();
+      },
+      onToggleSelect: (v) => {
+        v ? _treeSel.inits.add(it.id) : _treeSel.inits.delete(it.id);
+        if (!v) for (const ep of epics) _treeSel.epics.delete(ep.id);
+        renderTree();
+      },
+    });
+    wrap.appendChild(row);
+
+    if (expanded) {
+      for (const ep of epics) wrap.appendChild(buildEpicNode(ep, it, kr, o));
+      if (!it.is_default) {
+        wrap.appendChild(inlineAddBtn({
+          level: 2, label: "+ Epic",
+          onClick: () => promptCreateEpicForInit(it),
+        }));
+      }
+    }
+    return wrap;
+  }
+
+  function buildEpicNode(ep, it, kr, o) {
+    const wrap = document.createElement("div");
+    wrap.className = "ptv2-tn-node";
+    const tasks = readTasks().filter((t) => t.epicId === ep.id && !t.isDone);
+    const expanded = _treeExpand.epics.has(ep.id);
+    const row = buildTreeRow({
+      level: 2, kind: "epic", icon: "E",
+      label: ep.title, isDefault: !!ep.is_default,
+      meta: tasks.length ? `${tasks.length} task${tasks.length === 1 ? "" : "s"}` : "",
+      sub: ep.description ? ep.description.slice(0, 80) : null,
+      hasChildren: tasks.length > 0,
+      expanded,
+      checked: _treeSel.epics.has(ep.id),
+      onToggleExpand: () => {
+        toggleSet(_treeExpand.epics, ep.id);
+        renderTree();
+      },
+      onToggleSelect: (v) => {
+        v ? _treeSel.epics.add(ep.id) : _treeSel.epics.delete(ep.id);
+        renderTree();
+      },
+      dropTarget: { type: "epic", epic: ep },
+    });
+    wrap.appendChild(row);
+
+    if (expanded) {
+      for (const t of tasks) wrap.appendChild(buildTaskNode(t));
+    }
+    return wrap;
+  }
+
+  function buildTaskNode(t) {
+    const row = buildTreeRow({
+      level: 3, kind: "task",
+      label: t.title || "(untitled)",
+      meta: t.dueLabel || "",
+      hasChildren: false,
+      expanded: false,
+      checked: t.isDone,
+      isTask: true,
+      onToggleExpand: () => {},
+      onToggleSelect: () => {
+        // Mirror the existing task-row checkbox change.
+        const cb = t.el.querySelector("input.task-check");
+        if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event("change", { bubbles: true })); }
+        // Optimistic re-render so the strike-through and counts update.
+        setTimeout(() => renderTree(), 60);
+      },
+      onRowClick: () => {
+        if (typeof openTaskDetail === "function") openTaskDetail(t.id);
+      },
+    });
+    if (t.isDone) row.classList.add("is-done");
+    return row;
+  }
+
+  function buildTreeRow(opts) {
+    const {
+      level, kind, icon, label, sub, meta, isDefault,
+      hasChildren, expanded, checked,
+      onToggleExpand, onToggleSelect, onRowClick,
+      dropTarget, isTask,
+    } = opts;
+    const row = document.createElement("div");
+    row.className = `ptv2-tn-row is-${kind}${isTask ? "" : ""}${_isRowSelected(opts) ? " is-selected" : ""}`;
+    row.style.setProperty("--ptv2-tn-indent", `${level * 18}px`);
+
+    const chev = document.createElement("button");
+    chev.type = "button";
+    chev.className = "ptv2-tn-chev" + (!hasChildren ? " is-leaf" : "") + (expanded ? " is-open" : "");
+    chev.innerHTML = "▸";
+    chev.setAttribute("aria-label", hasChildren ? (expanded ? "Collapse" : "Expand") : "");
+    if (hasChildren) {
+      chev.addEventListener("click", (e) => { e.stopPropagation(); onToggleExpand(); });
+    }
+    row.appendChild(chev);
+
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "ptv2-tn-check";
+    check.checked = !!checked;
+    check.addEventListener("click", (e) => e.stopPropagation());
+    check.addEventListener("change", (e) => onToggleSelect(e.target.checked));
+    row.appendChild(check);
+
+    if (icon) {
+      const ic = document.createElement("span");
+      ic.className = `ptv2-tn-icon is-${kind}` + (isTask && checked ? " is-done" : "");
+      ic.textContent = icon;
+      row.appendChild(ic);
+    } else if (isTask) {
+      // Task rows: no icon, the checkbox carries the visual weight.
+    }
+
+    const main = document.createElement("div");
+    main.className = "ptv2-tn-main";
+    const labelHtml = `<span class="ptv2-tn-label">${esc(label)}${
+      isDefault ? `<span class="ptv2-tn-default-badge" title="Default catch-all">Default</span>` : ""
+    }</span>${sub ? `<span class="ptv2-tn-sub">${esc(sub)}</span>` : ""}`;
+    main.innerHTML = labelHtml;
+    row.appendChild(main);
+
+    if (meta) {
+      const m = document.createElement("span");
+      m.className = "ptv2-tn-meta";
+      m.textContent = meta;
+      row.appendChild(m);
+    }
+
+    // Row click: expand on click for branch nodes, open detail for tasks.
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".ptv2-tn-chev")) return;
+      if (e.target.closest(".ptv2-tn-check")) return;
+      if (isTask && onRowClick) { onRowClick(); return; }
+      if (hasChildren) onToggleExpand();
+    });
+
+    if (dropTarget) attachTreeNodeDropTarget(row, dropTarget);
+    return row;
+  }
+
+  function _isRowSelected(opts) {
+    if (opts.isTask) return false;
+    return !!opts.checked;
+  }
+
+  function inlineAddBtn({ level, label, onClick }) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ptv2-tn-add-btn is-inline";
+    b.style.setProperty("--ptv2-tn-indent", `${level * 18 + 28}px`);
+    b.textContent = label;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  function toggleSet(set, id) { if (set.has(id)) set.delete(id); else set.add(id); }
+
+  function attachTreeNodeDropTarget(row, dropTarget) {
+    row.classList.add("is-droppable");
+    row.addEventListener("dragover", (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.types.includes("text/plain")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      row.classList.add("is-drop-target");
+    });
+    row.addEventListener("dragleave", (e) => {
+      if (e.target === row) row.classList.remove("is-drop-target");
+    });
+    row.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      row.classList.remove("is-drop-target");
+      const taskId = (e.dataTransfer.getData("text/plain") || "").trim();
+      if (!taskId) return;
+      if (dropTarget.type === "epic") await moveTaskToEpic(taskId, dropTarget.epic);
+    });
+  }
+
+  async function promptCreateInitiativeForOkr(o) {
+    const krs = (o.key_results || []).filter((kr) => !kr.is_default);
+    if (!krs.length) {
+      await ptv2Alert({
+        title: "No Key Results yet",
+        body: `Add a Key Result to "${o.title}" before creating Initiatives. (Defaults can't have children.)`,
+      });
+      return;
+    }
+    const krOptions = krs.map((kr) => `<option value="${esc(kr.id)}">${esc(kr.title)}</option>`).join("");
+    const back = document.createElement("div");
+    back.className = "ptv2-dlg-back";
+    const card = document.createElement("div");
+    card.className = "ptv2-dlg-card";
+    card.innerHTML = `
+      <h2 class="ptv2-dlg-title">New Initiative</h2>
+      <div class="ptv2-dlg-body">Under OKR: <b>${esc(o.title)}</b></div>
+      <form class="ptv2-dlg-form" novalidate>
+        <label class="ptv2-dlg-label">Title</label>
+        <input class="ptv2-dlg-input" name="title" required placeholder="e.g. Activation funnel">
+        <label class="ptv2-dlg-label">Key Result</label>
+        <select class="ptv2-dlg-input" name="kr">${krOptions}</select>
+      </form>
+      <div class="ptv2-dlg-actions">
+        <button type="button" class="ptv2-dlg-btn" data-action="cancel">Cancel</button>
+        <button type="button" class="ptv2-dlg-btn is-primary" data-action="ok">Create</button>
+      </div>`;
+    back.appendChild(card);
+    document.body.appendChild(back);
+    const cleanup = () => { document.removeEventListener("keydown", onKey, true); back.remove(); };
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); cleanup(); } };
+    document.addEventListener("keydown", onKey, true);
+    back.addEventListener("click", (e) => { if (e.target === back) cleanup(); });
+    card.querySelector('[data-action="cancel"]').addEventListener("click", cleanup);
+    requestAnimationFrame(() => card.querySelector('input[name="title"]').focus());
+    card.querySelector('[data-action="ok"]').addEventListener("click", async () => {
+      const title = card.querySelector('input[name="title"]').value.trim();
+      const krId  = card.querySelector('select[name="kr"]').value;
+      if (!title) return;
+      cleanup();
+      const r = await _fetch("/api/initiatives", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, key_result_id: krId }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        await ptv2Alert({ title: "Couldn't create initiative", body: body.error || `Server returned ${r.status}.` });
+        return;
+      }
+      _treeExpand.okrs.add(o.id);
+      await fetchTree(); renderTree();
+    });
+  }
+
+  async function promptCreateEpicForInit(it) {
+    const result = await ptv2Dialog({
+      title: "New Epic",
+      body: `Under Initiative: ${it.title}`,
+      fields: [{ name: "title", label: "Title", placeholder: "e.g. Landing page rebuild", required: true }],
+      okLabel: "Create",
+    });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    const r = await _fetch("/api/epics", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, initiative_id: it.id }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      await ptv2Alert({ title: "Couldn't create epic", body: body.error || `Server returned ${r.status}.` });
+      return;
+    }
+    _treeExpand.inits.add(it.id);
+    await fetchTree(); renderTree();
   }
   function renderTreeTasks() {
     const list = document.getElementById("list-tree-tasks");
@@ -1057,26 +1306,6 @@
     }
   }
 
-  function treeRow({ label, sub, checked, onToggle, isDefault, dropTarget }) {
-    const d = document.createElement("div");
-    d.className = "okrc-row" + (isDefault ? " is-default" : "");
-    d.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px 6px;border-radius:8px";
-    const badge = isDefault
-      ? `<span title="Default catch-all — receives tasks created without an Epic"
-            style="display:inline-block;background:var(--ptv2-primary-soft);color:var(--ptv2-primary);
-                   font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;margin-left:6px;
-                   text-transform:uppercase;letter-spacing:0.04em">Default</span>` : "";
-    d.innerHTML = `
-      <label style="display:flex;align-items:center;gap:10px;flex:1;cursor:pointer">
-        <input type="checkbox" ${checked ? "checked" : ""} style="width:16px;height:16px;accent-color:var(--ptv2-primary)">
-        <span><span style="font-size:14px;font-weight:600;color:var(--ptv2-text);display:block">${esc(label)}${badge}</span>
-        ${sub ? `<span style="font-size:11px;color:var(--ptv2-text-mute)">${esc(sub)}</span>` : ""}</span>
-      </label>`;
-    d.querySelector("input").addEventListener("change", (e) => onToggle(e.target.checked));
-    if (dropTarget) attachTreeRowDropTarget(d, dropTarget);
-    return d;
-  }
-
   /* ───── drag-and-drop: tasks onto epics (Tree tab) ────────────
      A task tile becomes a drag source; epic rows in the right column
      become drop targets. On drop we PATCH the task's epic_id and
@@ -1094,25 +1323,6 @@
     tile.addEventListener("dragend", () => {
       tile.classList.remove("is-dragging");
       document.body.classList.remove("ptv2-dragging-task");
-    });
-  }
-  function attachTreeRowDropTarget(row, dropTarget) {
-    row.classList.add("ptv2-droppable");
-    row.addEventListener("dragover", (e) => {
-      if (!e.dataTransfer || !e.dataTransfer.types.includes("text/plain")) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      row.classList.add("is-drop-target");
-    });
-    row.addEventListener("dragleave", (e) => {
-      if (e.target === row) row.classList.remove("is-drop-target");
-    });
-    row.addEventListener("drop", async (e) => {
-      e.preventDefault();
-      row.classList.remove("is-drop-target");
-      const taskId = (e.dataTransfer.getData("text/plain") || "").trim();
-      if (!taskId) return;
-      await moveTaskToEpic(taskId, dropTarget.epic);
     });
   }
   async function moveTaskToEpic(taskId, epic) {
@@ -1147,113 +1357,6 @@
       console.error("[ptv2] task → epic move failed", err);
       await ptv2Alert({ title: "Move failed", body: "Couldn't reassign this task. Please try again." });
     }
-  }
-  function empty(msg) {
-    const d = document.createElement("div");
-    d.textContent = msg;
-    d.style.cssText = "padding:18px 8px;text-align:center;color:var(--ptv2-text-soft);font-size:13px";
-    return d;
-  }
-  function createInline(label, onClick) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.textContent = label;
-    b.style.cssText = "width:100%;padding:9px 12px;background:var(--ptv2-primary-soft);color:var(--ptv2-primary);border:1px dashed var(--ptv2-primary);border-radius:10px;font-weight:600;cursor:pointer;margin-bottom:10px";
-    b.addEventListener("click", onClick);
-    return b;
-  }
-  function appendInitiativeCreator(col) {
-    // Exclude KRs that belong to the default OKR — server rejects
-    // those anyway. If nothing is left, surface a hint instead so the
-    // user knows they need to create an OKR first.
-    const krs = [];
-    for (const o of _treeData) {
-      if (o.is_default) continue;
-      if (_treeSel.okrs.size && !_treeSel.okrs.has(o.id)) continue;
-      for (const kr of o.key_results || []) {
-        if (kr.is_default) continue;
-        krs.push({ kr, o });
-      }
-    }
-    if (!krs.length) {
-      col.appendChild(creatorHint(
-        "To add an Initiative, create a new OKR (above) first — defaults can't have children."
-      ));
-      return;
-    }
-    const wrap = inlineCreator({
-      placeholder: "New initiative…",
-      options: krs.map(({ kr, o }) => ({ id: kr.id, label: `${o.title} ▸ ${kr.title}` })),
-      submit: async (title, parentId) => {
-        const r = await _fetch("/api/initiatives", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, key_result_id: parentId }),
-        });
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          await ptv2Alert({ title: "Couldn't create initiative", body: body.error || `Server returned ${r.status}.` });
-          return;
-        }
-        await fetchTree(); renderTree();
-      },
-    });
-    col.appendChild(wrap);
-  }
-  function appendEpicCreator(col, inits) {
-    // Drop default initiatives from the picker (server-side enforced).
-    const userInits = inits.filter((it) => !it.is_default);
-    if (!userInits.length) {
-      col.appendChild(creatorHint(
-        "To add an Epic, create a new Initiative (above) first — defaults can't have children."
-      ));
-      return;
-    }
-    const wrap = inlineCreator({
-      placeholder: "New epic…",
-      options: userInits.map((it) => ({ id: it.id, label: it.title })),
-      submit: async (title, parentId) => {
-        const r = await _fetch("/api/epics", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, initiative_id: parentId }),
-        });
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          await ptv2Alert({ title: "Couldn't create epic", body: body.error || `Server returned ${r.status}.` });
-          return;
-        }
-        await fetchTree(); renderTree();
-      },
-    });
-    col.appendChild(wrap);
-  }
-  function creatorHint(msg) {
-    const d = document.createElement("div");
-    d.textContent = msg;
-    d.style.cssText = "margin-top:12px;padding:10px 12px;background:var(--ptv2-primary-soft);"
-                    + "color:var(--ptv2-text-mute);font-size:12px;border-radius:10px;line-height:1.4";
-    return d;
-  }
-  function inlineCreator({ placeholder, options, submit }) {
-    const wrap = document.createElement("div");
-    wrap.style.cssText = "display:flex;gap:6px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--ptv2-border)";
-    wrap.innerHTML = `
-      <input type="text" placeholder="${esc(placeholder)}" style="flex:1;padding:7px 10px;border:1px solid var(--ptv2-border);border-radius:8px;font-size:13px;background:var(--ptv2-surface);color:var(--ptv2-text)">
-      <select style="padding:7px 8px;border:1px solid var(--ptv2-border);border-radius:8px;font-size:12px;max-width:46%;background:var(--ptv2-surface);color:var(--ptv2-text)">
-        ${options.map((o) => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join("")}
-      </select>
-      <button type="button" style="background:var(--ptv2-success);color:#fff;border:0;border-radius:8px;padding:0 12px;font-weight:700;font-size:16px;cursor:pointer">+</button>`;
-    const input = wrap.querySelector("input");
-    const select = wrap.querySelector("select");
-    const button = wrap.querySelector("button");
-    const fire = async () => {
-      const t = input.value.trim(); if (!t) return;
-      button.disabled = true;
-      try { await submit(t, select.value); input.value = ""; }
-      finally { button.disabled = false; }
-    };
-    button.addEventListener("click", fire);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") fire(); });
-    return wrap;
   }
   async function promptCreateOkr() {
     const result = await ptv2Dialog({

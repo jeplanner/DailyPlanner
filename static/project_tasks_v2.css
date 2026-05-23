@@ -600,28 +600,132 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
    ════════════════════════════════════════════════════════════════ */
 
 .ptv2-panel--tree { padding-bottom: 0; }
-.ptv2-tree-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-@media (min-width: 900px) {
-  .ptv2-tree-grid { grid-template-columns: 1fr 1fr 1fr; }
-}
-.ptv2-tree-col {
+.ptv2-tree-tasks { margin-top: 14px; }
+.ptv2-section-hint { font-size: 11px; color: var(--ptv2-text-mute); }
+
+/* ── Nested tree (OKR ▸ Init ▸ Epic ▸ Task) ───────────────────
+   Single column, click chevron to expand. Each level is just a
+   row + an absolutely-indented children container. Type-specific
+   icons + color let depth read at a glance without the user
+   counting indents. */
+.ptv2-tree-nested {
   background: var(--ptv2-surface);
   border: 1px solid var(--ptv2-border);
   border-radius: 14px;
-  padding: 14px 14px 12px;
-  min-height: 120px;
+  padding: 6px 6px;
+  margin-bottom: 12px;
 }
-.ptv2-tree-col h3 {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--ptv2-text-mute); margin: 0 0 10px;
+.ptv2-tn-empty {
+  padding: 18px 12px; text-align: center;
+  color: var(--ptv2-text-soft); font-size: 13px;
 }
-.ptv2-tree-tasks { margin-top: 8px; }
-.ptv2-section-hint { font-size: 11px; color: var(--ptv2-text-mute); }
+.ptv2-tn-add-top {
+  display: flex; align-items: center; gap: 6px;
+  margin: 4px 4px 8px;
+}
+.ptv2-tn-add-btn {
+  border: 1px dashed var(--ptv2-primary);
+  background: var(--ptv2-primary-soft);
+  color: var(--ptv2-primary);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+}
+.ptv2-tn-add-btn:hover { background: var(--ptv2-primary); color: #fff; }
+.ptv2-tn-add-btn.is-inline {
+  border-style: dashed;
+  background: transparent;
+  color: var(--ptv2-primary);
+  font-size: 12px; padding: 5px 10px;
+  margin: 4px 0 6px var(--ptv2-tn-indent, 28px);
+}
+.ptv2-tn-add-btn.is-inline:hover { background: var(--ptv2-primary-soft); }
+
+.ptv2-tn-node {
+  display: flex; flex-direction: column;
+}
+.ptv2-tn-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-left: calc(8px + var(--ptv2-tn-indent, 0px));
+}
+.ptv2-tn-row:hover { background: var(--ptv2-primary-soft); }
+.ptv2-tn-row.is-selected { background: var(--ptv2-primary-soft); }
+.ptv2-tn-row.is-selected .ptv2-tn-label { color: var(--ptv2-primary); }
+
+.ptv2-tn-chev {
+  width: 22px; height: 22px; flex: 0 0 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ptv2-text-mute);
+  border: 0; background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform .14s ease;
+  font-size: 13px; line-height: 1;
+}
+.ptv2-tn-chev:hover { background: rgba(99,102,241,0.12); color: var(--ptv2-primary); }
+.ptv2-tn-chev.is-leaf { visibility: hidden; }
+.ptv2-tn-chev.is-open { transform: rotate(90deg); }
+.ptv2-tn-check {
+  width: 16px; height: 16px; flex: 0 0 16px;
+  accent-color: var(--ptv2-primary);
+  cursor: pointer;
+}
+.ptv2-tn-icon {
+  width: 18px; height: 18px; flex: 0 0 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 4px;
+  font-size: 11px; font-weight: 700;
+  color: #fff;
+}
+.ptv2-tn-icon.is-okr  { background: #8b5cf6; }   /* violet */
+.ptv2-tn-icon.is-init { background: #06b6d4; }   /* cyan */
+.ptv2-tn-icon.is-epic { background: #f59e0b; }   /* amber */
+.ptv2-tn-icon.is-task { background: transparent; color: var(--ptv2-text-mute); border: 1px solid var(--ptv2-border); }
+.ptv2-tn-icon.is-task.is-done { background: var(--ptv2-success); color: #fff; border-color: var(--ptv2-success); }
+
+.ptv2-tn-main { flex: 1; min-width: 0; }
+.ptv2-tn-label {
+  display: block;
+  font-size: 14px; font-weight: 600; color: var(--ptv2-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ptv2-tn-sub {
+  display: block;
+  font-size: 11px; color: var(--ptv2-text-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 1px;
+}
+.ptv2-tn-meta {
+  font-size: 11px; color: var(--ptv2-text-mute);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.ptv2-tn-default-badge {
+  display: inline-block;
+  background: var(--ptv2-primary-soft); color: var(--ptv2-primary);
+  font-size: 10px; font-weight: 700;
+  padding: 1px 7px; border-radius: 999px; margin-left: 6px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+/* Drag-and-drop: epic rows highlight as targets. */
+body.ptv2-dragging-task .ptv2-tn-row.is-droppable {
+  outline: 1px dashed var(--ptv2-primary);
+  outline-offset: -2px;
+}
+.ptv2-tn-row.is-droppable.is-drop-target {
+  background: var(--ptv2-primary-soft);
+  outline: 2px solid var(--ptv2-primary);
+}
+.ptv2-tn-row.is-task .ptv2-tn-label { font-weight: 500; }
+.ptv2-tn-row.is-task.is-done .ptv2-tn-label {
+  text-decoration: line-through; color: var(--ptv2-text-mute);
+}
 
 /* ════════════════════════════════════════════════════════════════
    STICKY ADD BAR
