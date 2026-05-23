@@ -501,10 +501,18 @@ def mark_done(item_id):
     user_id = session["user_id"]
     old_event_id = _fetch_event_id(user_id, item_id)
     try:
+        # Clear the Top-5 pointers on completion so the row drops out of
+        # today's panel automatically. Without this, done items stayed
+        # pinned (crossed out) until the user dragged them out manually.
         update(
             "quick_bucket",
             params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
-            json={"is_done": True, "done_at": datetime.utcnow().isoformat()},
+            json={
+                "is_done":       True,
+                "done_at":       datetime.utcnow().isoformat(),
+                "top5_date":     None,
+                "top5_position": None,
+            },
         )
     except Exception as e:
         logger.error("quick_bucket done failed: %s", e)

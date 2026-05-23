@@ -732,6 +732,12 @@
       await apiFetch(`/api/quick-bucket/${it.id}/done`, { method: "POST", body: "{}" });
       it.is_done = true;
       it.done_at = new Date().toISOString();
+      // Server also clears top5_date/top5_position on done so the row
+      // falls out of today's panel automatically. Mirror that locally
+      // so the next render() drops it from the Top-5 list immediately
+      // (otherwise it'd sit crossed-out until the next page load).
+      it.top5_date = null;
+      it.top5_position = null;
       toast(cheer(), "success");
       // Closed items stay in `items` so the Done group can render them.
       render();
