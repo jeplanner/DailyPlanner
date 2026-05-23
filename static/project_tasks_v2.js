@@ -1025,6 +1025,7 @@
         renderTree();
       },
       onRowSelect: (opts) => setTreeFilter("okr", o.id, opts),
+      onEdit:   o.is_default ? null : () => editOkr(o),
       onDelete: o.is_default ? null : () => deleteOkr(o),
     });
     wrap.appendChild(row);
@@ -1070,6 +1071,7 @@
         renderTree();
       },
       onRowSelect: (opts) => setTreeFilter("init", it.id, opts),
+      onEdit:   it.is_default ? null : () => editInitiative(it, o),
       onDelete: it.is_default ? null : () => deleteInitiative(it),
     });
     wrap.appendChild(row);
@@ -1115,6 +1117,7 @@
         renderTree();
       },
       onRowSelect: (opts) => setTreeFilter("epic", ep.id, opts),
+      onEdit:   ep.is_default ? null : () => editEpic(ep, it),
       onDelete: ep.is_default ? null : () => deleteEpic(ep, it),
       dropTarget: { type: "epic", epic: ep },
     });
@@ -1171,7 +1174,7 @@
       hasChildren, expanded, selected,
       onToggleExpand, onRowSelect, onRowClick,
       onTaskCheck, taskDone,
-      onDelete,
+      onEdit, onDelete,
       dropTarget, isTask,
     } = opts;
     const row = document.createElement("div");
@@ -1222,6 +1225,16 @@
       row.appendChild(m);
     }
 
+    if (onEdit) {
+      const ed = document.createElement("button");
+      ed.type = "button";
+      ed.className = "ptv2-tn-edit";
+      ed.title = "Edit";
+      ed.setAttribute("aria-label", "Edit");
+      ed.innerHTML = "✎";
+      ed.addEventListener("click", (e) => { e.stopPropagation(); onEdit(); });
+      row.appendChild(ed);
+    }
     if (onDelete) {
       const del = document.createElement("button");
       del.type = "button";
@@ -1242,6 +1255,7 @@
     row.addEventListener("click", (e) => {
       if (e.target.closest(".ptv2-tn-chev")) return;
       if (e.target.closest(".ptv2-tn-check")) return;
+      if (e.target.closest(".ptv2-tn-edit")) return;
       if (e.target.closest(".ptv2-tn-del")) return;
       if (isTask && onRowClick) { onRowClick(); return; }
       if (onRowSelect) {
@@ -1378,6 +1392,143 @@
     const j = await r.json().catch(() => ({}));
     const newId = j && j.initiative && j.initiative.id;
     if (newId) _treeExpand.inits.add(newId);
+    await fetchTree(); renderTree();
+  }
+
+  /* ───── edit OKR / Initiative / Epic ───────────────────────────
+     Same dialog shape as the create flows, pre-filled with the
+     current values. PATCHes via the existing /api/{goals,initiatives,
+     epics}/<id> endpoints. Tasks have their own existing detail
+     panel — click a task row to open it. */
+  async function editOkr(o) {
+    const result = await ptv2Dialog({
+      title: "Edit OKR",
+      fields: [
+        { name: "title",       label: "Title", value: o.title || "", required: true },
+        { name: "description", label: "Description", type: "textarea", value: o.description || "" },
+        { name: "time_horizon", label: "Time horizon", type: "select",
+          value: o.time_horizon || "quarterly",
+          options: [
+            { value: "quarterly", label: "Quarterly" },
+            { value: "monthly",   label: "Monthly" },
+            { value: "annual",    label: "Annual" },
+            { value: "ongoing",   label: "Ongoing" },
+          ] },
+        { name: "status", label: "Status", type: "select", value: o.status || "active",
+          options: [
+            { value: "active",    label: "Active" },
+            { value: "achieved",  label: "Achieved" },
+            { value: "paused",    label: "Paused" },
+            { value: "abandoned", label: "Abandoned" },
+          ] },
+        { name: "start_date",  label: "Start date",  type: "date", value: o.start_date  || "" },
+        { name: "target_date", label: "Target date", type: "date", value: o.target_date || "" },
+      ],
+      okLabel: "Save",
+    });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    const r = await _fetch(`/api/goals/${o.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        title,
+        description:  (result.description || "").trim() || null,
+        time_horizon: result.time_horizon,
+        status:       result.status,
+        start_date:   result.start_date  || null,
+        target_date:  result.target_date || null,
+      }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      await ptv2Alert({ title: "Couldn't save OKR", body: body.error || `Server returned ${r.status}.` });
+      return;
+    }
+    await fetchTree(); renderTree();
+  }
+  async function editInitiative(it, o) {
+    // KR re-parent isn't supported in this dialog — rare and the
+    // server-side cascade rules around defaults make it surprising.
+    // To move an initiative to a different KR, edit in Supabase.
+    const result = await ptv2Dialog({
+      title: "Edit Initiative",
+      body: `Under OKR: ${o.title}`,
+      fields: [
+        { name: "title",       label: "Title", value: it.title || "", required: true },
+        { name: "description", label: "Description", type: "textarea", value: it.description || "" },
+        { name: "status", label: "Status", type: "select", value: it.status || "active",
+          options: [
+            { value: "active",    label: "Active" },
+            { value: "achieved",  label: "Achieved" },
+            { value: "paused",    label: "Paused" },
+            { value: "abandoned", label: "Abandoned" },
+          ] },
+        { name: "start_date",  label: "Start date",  type: "date", value: it.start_date  || "" },
+        { name: "target_date", label: "Target date", type: "date", value: it.target_date || "" },
+      ],
+      okLabel: "Save",
+    });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    const r = await _fetch(`/api/initiatives/${it.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        title,
+        description: (result.description || "").trim() || null,
+        status:      result.status,
+        start_date:  result.start_date  || null,
+        target_date: result.target_date || null,
+      }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      await ptv2Alert({ title: "Couldn't save initiative", body: body.error || `Server returned ${r.status}.` });
+      return;
+    }
+    await fetchTree(); renderTree();
+  }
+  async function editEpic(ep, it) {
+    const result = await ptv2Dialog({
+      title: "Edit Epic",
+      body: `Under Initiative: ${it.title}`,
+      fields: [
+        { name: "title",       label: "Title", value: ep.title || "", required: true },
+        { name: "description", label: "Description", type: "textarea", value: ep.description || "" },
+        { name: "status", label: "Status", type: "select", value: ep.status || "active",
+          options: [
+            { value: "active",    label: "Active" },
+            { value: "achieved",  label: "Achieved" },
+            { value: "paused",    label: "Paused" },
+            { value: "abandoned", label: "Abandoned" },
+          ] },
+        { name: "start_date",  label: "Start date",  type: "date", value: ep.start_date  || "" },
+        { name: "target_date", label: "Target date", type: "date", value: ep.target_date || "" },
+      ],
+      okLabel: "Save",
+    });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    const r = await _fetch(`/api/epics/${ep.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        title,
+        description: (result.description || "").trim() || null,
+        status:      result.status,
+        start_date:  result.start_date  || null,
+        target_date: result.target_date || null,
+      }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      await ptv2Alert({ title: "Couldn't save epic", body: body.error || `Server returned ${r.status}.` });
+      return;
+    }
     await fetchTree(); renderTree();
   }
 
