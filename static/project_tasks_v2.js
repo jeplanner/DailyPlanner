@@ -904,8 +904,34 @@
   }
   // Expansion state for the nested tree. We keep id Sets per level so
   // a re-render (after a filter toggle, drag-drop, or create) preserves
-  // whatever the user already had open.
-  const _treeExpand = { okrs: new Set(), inits: new Set(), epics: new Set() };
+  // whatever the user already had open. Persisted to sessionStorage so
+  // adding a task (which forces a full reload to refresh the task DOM)
+  // doesn't collapse the tree back to the top level.
+  const _TREE_EXPAND_KEY = "ptv2:treeExpand:" + (typeof PROJECT_ID !== "undefined" ? PROJECT_ID : "");
+  const _treeExpand = loadTreeExpand();
+  function loadTreeExpand() {
+    try {
+      const raw = sessionStorage.getItem(_TREE_EXPAND_KEY);
+      if (!raw) return { okrs: new Set(), inits: new Set(), epics: new Set() };
+      const parsed = JSON.parse(raw);
+      return {
+        okrs:  new Set(parsed.okrs  || []),
+        inits: new Set(parsed.inits || []),
+        epics: new Set(parsed.epics || []),
+      };
+    } catch (_) {
+      return { okrs: new Set(), inits: new Set(), epics: new Set() };
+    }
+  }
+  function saveTreeExpand() {
+    try {
+      sessionStorage.setItem(_TREE_EXPAND_KEY, JSON.stringify({
+        okrs:  Array.from(_treeExpand.okrs),
+        inits: Array.from(_treeExpand.inits),
+        epics: Array.from(_treeExpand.epics),
+      }));
+    } catch (_) { /* private mode or quota — silently skip */ }
+  }
 
   function renderTree() {
     const host = document.getElementById("ptv2-tree-nested");
@@ -1056,6 +1082,14 @@
 
     if (expanded) {
       for (const t of tasks) wrap.appendChild(buildTaskNode(t));
+      // Inline "+ Task" under every epic (including defaults — they're
+      // a valid catch-all bucket for quick adds). Drops the new task
+      // straight into this epic without making the user touch the
+      // bottom add-bar's epic picker.
+      wrap.appendChild(inlineAddBtn({
+        level: 3, label: "+ Task",
+        onClick: () => promptCreateTaskForEpic(ep),
+      }));
     }
     return wrap;
   }
@@ -1164,7 +1198,10 @@
     b.addEventListener("click", onClick);
     return b;
   }
-  function toggleSet(set, id) { if (set.has(id)) set.delete(id); else set.add(id); }
+  function toggleSet(set, id) {
+    if (set.has(id)) set.delete(id); else set.add(id);
+    saveTreeExpand();
+  }
 
   function attachTreeNodeDropTarget(row, dropTarget) {
     row.classList.add("is-droppable");
@@ -1244,6 +1281,45 @@
       if (newId) _treeExpand.inits.add(newId);
       await fetchTree(); renderTree();
     });
+  }
+
+  async function promptCreateTaskForEpic(ep) {
+    const result = await ptv2Dialog({
+      title: "New Task",
+      body: `Under Epic: ${ep.title}`,
+      fields: [{ name: "title", label: "Task", placeholder: "What needs to happen?", required: true }],
+      okLabel: "Add",
+    });
+    if (!result) return;
+    const title = (result.title || "").trim();
+    if (!title) return;
+    try {
+      const r = await _fetch(`/projects/${PROJECT_ID}/tasks/add-ajax`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          task_text: title,
+          priority: "medium",
+          epic_id: ep.id,
+        }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        await ptv2Alert({ title: "Couldn't add task", body: body.error || `Server returned ${r.status}.` });
+        return;
+      }
+      // Make sure this epic stays open after the reload so the user
+      // sees the task they just added at the bottom of its slot.
+      _treeExpand.epics.add(ep.id);
+      saveTreeExpand();
+      // The legacy add-task path reloads the page so every list (table,
+      // focus, done, sprint cards) picks up the new row in one shot.
+      // Match that behaviour here instead of trying to inject HTML.
+      location.reload();
+    } catch (err) {
+      await ptv2Alert({ title: "Couldn't add task", body: (err && err.message) || String(err) });
+    }
   }
 
   async function promptCreateEpicForInit(it) {
