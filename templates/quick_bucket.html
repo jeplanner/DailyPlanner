@@ -261,8 +261,17 @@
   .qb-btn-primary {
     background: var(--color-primary); color: var(--color-on-primary); border-color: var(--color-primary);
   }
-  .qb-btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+  /* Order matters: the generic .qb-btn:hover must come BEFORE the
+     primary hover, otherwise it wins on specificity-tie and the primary
+     button goes off-white. On touch devices the hover state can stick
+     after a tap, which is why the Add button looked white after a save. */
   .qb-btn:hover { background: var(--color-surface-secondary, #f3f4f6); }
+  .qb-btn-primary:hover { background: var(--color-primary-hover); color: var(--color-on-primary); border-color: var(--color-primary-hover); }
+  /* Belt-and-braces: clear any lingering hover paint after a touch tap
+     so the primary button doesn't sit on the "hover" colour forever. */
+  @media (hover: none) {
+    .qb-btn-primary:hover { background: var(--color-primary); border-color: var(--color-primary); }
+  }
   #qb-mic-btn.is-on {
     background: #ef4444; color: #fff; border-color: #ef4444;
     animation: qbMicPulse 1.2s ease-in-out infinite;
