@@ -760,6 +760,16 @@ body.ptv2-dragging-task .ptv2-tn-row.is-droppable {
 .ptv2-tn-row.is-task.is-done .ptv2-tn-label {
   text-decoration: line-through; color: var(--ptv2-text-mute);
 }
+/* "Loose tasks (drag into an epic above)" group divider under an
+   expanded initiative. Visually softer than a tree row — it's a
+   call-to-action, not selectable. */
+.ptv2-tn-loose-heading {
+  padding: 6px 8px 4px;
+  padding-left: calc(8px + var(--ptv2-tn-indent, 0px));
+  font-size: 11px; font-weight: 600;
+  color: var(--ptv2-warn);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
 
 /* ════════════════════════════════════════════════════════════════
    STICKY ADD BAR

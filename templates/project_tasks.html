@@ -256,7 +256,11 @@
         <button type="button" class="pp-btn" data-p="low"><span class="pp-dot pp-low"></span>Low</button>
       </div>
       <input type="date" id="add-task-date" class="ptv2-add-date" value="{{ selected_date }}">
-      <select id="add-task-initiative" class="ptv2-add-link kr-picker" data-current="">
+      <!-- Initiative picker hidden — epic is the canonical task parent.
+           The server back-fills initiative_id from the chosen epic
+           (see /projects/<id>/tasks/add-ajax). Element kept in the DOM
+           so legacy JS that does getElementById doesn't break. -->
+      <select id="add-task-initiative" class="ptv2-add-link kr-picker" data-current="" style="display:none">
         <option value="">No initiative</option>
       </select>
       <select id="add-task-epic" class="ptv2-add-link kr-picker" data-current="">

@@ -1043,12 +1043,21 @@
     const wrap = document.createElement("div");
     wrap.className = "ptv2-tn-node";
     const epics = it.epics || [];
+    // "Loose" tasks: tagged to this initiative but no epic_id. These
+    // are usually older tasks created via the legacy add-bar before
+    // we removed its standalone initiative picker. Surfacing them here
+    // means they're visible AND draggable into a proper epic above.
+    const looseTasks = readTasks().filter((t) =>
+      !t.isDone && t.initiativeId === it.id && !t.epicId
+    );
     const expanded = _treeExpand.inits.has(it.id);
     const canExpand = !it.is_default;
+    const metaParts = [`${epics.length} epic`];
+    if (looseTasks.length) metaParts.push(`${looseTasks.length} loose`);
     const row = buildTreeRow({
       level: 1, kind: "init", icon: "I",
       label: it.title, isDefault: !!it.is_default,
-      meta: `${epics.length} epic`,
+      meta: metaParts.join(" · "),
       sub: `KR: ${kr.title}`,
       hasChildren: canExpand,
       expanded,
@@ -1063,6 +1072,15 @@
 
     if (expanded) {
       for (const ep of epics) wrap.appendChild(buildEpicNode(ep, it, kr, o));
+      if (looseTasks.length) {
+        // Tiny separator label so users can tell these aren't in an epic.
+        const heading = document.createElement("div");
+        heading.className = "ptv2-tn-loose-heading";
+        heading.style.setProperty("--ptv2-tn-indent", `${2 * 18}px`);
+        heading.textContent = `Loose tasks (drag into an epic above)`;
+        wrap.appendChild(heading);
+        for (const t of looseTasks) wrap.appendChild(buildTaskNode(t));
+      }
       if (!it.is_default) {
         wrap.appendChild(inlineAddBtn({
           level: 2, label: "+ Epic",
@@ -1135,6 +1153,10 @@
       },
     });
     if (t.isDone) row.classList.add("is-done");
+    // Make tree-nested task rows drag sources too — same target set
+    // (epic rows). Lets users move a loose task into an epic without
+    // leaving the tree, or shuffle between epics.
+    makeTaskDraggable(row, t);
     return row;
   }
 
