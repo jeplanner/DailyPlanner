@@ -18,8 +18,13 @@
   --ptv2-warn:      #f59e0b;
   --ptv2-shadow:    0 4px 16px rgba(15, 17, 21, 0.06);
 }
+/* Dark tokens: respect the app's explicit light/dark toggle.
+   - html.dark  → user picked dark
+   - :root:not(.light) inside the OS pref query → no explicit choice + OS is dark
+   Without :not(.light), a user who forced light on an OS-dark device would
+   still get dark tokens here. Matches design-system.css. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --ptv2-bg:        #0f1115;
     --ptv2-surface:   #181b22;
     --ptv2-border:    #232733;
@@ -28,6 +33,15 @@
     --ptv2-text-soft: #6b7280;
     --ptv2-primary-soft: #1e2030;
   }
+}
+html.dark {
+  --ptv2-bg:        #0f1115;
+  --ptv2-surface:   #181b22;
+  --ptv2-border:    #232733;
+  --ptv2-text:      #e8eaf0;
+  --ptv2-text-mute: #9ca3af;
+  --ptv2-text-soft: #6b7280;
+  --ptv2-primary-soft: #1e2030;
 }
 
 /* Container: drop the old .proj-app padding so the new sticky elements

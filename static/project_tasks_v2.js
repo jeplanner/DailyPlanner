@@ -379,19 +379,30 @@
 
   /* ───── inline create form ──────────────────────────────────── */
 
-  // Next "Sprint N" suggestion based on the highest number already in
-  // use among non-deleted sprints. Keeps numbers monotonic even if
-  // some have been renamed (e.g. existing: ["Sprint 1", "MVP launch",
-  // "Sprint 3"] → next is "Sprint 4"). User can overwrite the name.
+  // Suggest the next sprint name by continuing whatever pattern the
+  // user is already using. We look at the most-recent sprint (server
+  // orders active first, then newest start_date) for a trailing
+  // integer — e.g. "op-sprint-1" → "op-sprint-2",
+  // "Q3 sprint 4" → "Q3 sprint 5". Among sprints sharing that same
+  // prefix we increment the highest number so renaming an older entry
+  // doesn't collapse the sequence. Falls back to "Sprint N" when no
+  // sprint name ends in a number. User can always overwrite.
   function nextSprintName() {
-    let max = 0;
-    for (const s of _sprints) {
-      const m = (s.name || "").match(/^\s*Sprint\s+(\d+)\s*$/i);
+    const trailingInt = /^(.*?)(\d+)\s*$/;
+    for (const recent of _sprints) {
+      const m = (recent.name || "").match(trailingInt);
       if (!m) continue;
-      const n = parseInt(m[1], 10);
-      if (n > max) max = n;
+      const prefix = m[1];
+      let max = 0;
+      for (const s of _sprints) {
+        const mm = (s.name || "").match(trailingInt);
+        if (!mm || mm[1] !== prefix) continue;
+        const n = parseInt(mm[2], 10);
+        if (n > max) max = n;
+      }
+      return `${prefix}${max + 1}`;
     }
-    return `Sprint ${max + 1}`;
+    return "Sprint 1";
   }
 
   function openInlineCreate() {
