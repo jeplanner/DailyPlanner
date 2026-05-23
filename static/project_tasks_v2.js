@@ -237,7 +237,11 @@
 
   /* ───── TREE tab ────────────────────────────────────────────── */
 
-  let _treeSel = { okrs: new Set(), inits: new Set(), epics: new Set() };
+  // Single active filter for the nested tree — click a row to set,
+  // click the same row again (or the Clear chip) to remove. The old
+  // multi-checkbox model was double-duty (filter + scope) and confusing
+  // because "no boxes checked" looked identical to "all checked".
+  let _treeFilter = null;   // { type: "okr"|"init"|"epic", id }
   let _treeData = [];
   let _sprints = [];                 // [{id,name,starts_on,ends_on,is_active,...}]
   let _sprintSel = new Set();        // checked sprint ids (multi-select filter)
@@ -938,8 +942,10 @@
     if (!host) return;
     host.innerHTML = "";
 
-    // "+ New OKR" stays at the very top — keeps the create flow
-    // discoverable even when the tree is empty.
+    // Top row: "+ New OKR" + active-filter chip (when present). The
+    // chip's the only visible indicator that the bottom list is
+    // narrowed — without it the empty-filter state would look
+    // identical to the "filtered to a node" state.
     const addRow = document.createElement("div");
     addRow.className = "ptv2-tn-add-top";
     const addBtn = document.createElement("button");
@@ -948,6 +954,15 @@
     addBtn.textContent = "+ New OKR";
     addBtn.addEventListener("click", () => promptCreateOkr());
     addRow.appendChild(addBtn);
+    if (_treeFilter) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "ptv2-tn-filter-chip";
+      chip.innerHTML = `<span>Filtered: ${esc(filterChipLabel())}</span><span aria-hidden="true">×</span>`;
+      chip.title = "Clear filter — show all tasks";
+      chip.addEventListener("click", () => { _treeFilter = null; renderTree(); });
+      addRow.appendChild(chip);
+    }
     host.appendChild(addRow);
 
     if (!_treeData.length) {
@@ -986,21 +1001,12 @@
       meta: `${inits.length} init · ${epCt} epic`,
       hasChildren: canExpand,
       expanded,
-      checked: _treeSel.okrs.has(o.id),
+      selected: isTreeFilterTarget("okr", o.id),
       onToggleExpand: () => {
         toggleSet(_treeExpand.okrs, o.id);
         renderTree();
       },
-      onToggleSelect: (v) => {
-        v ? _treeSel.okrs.add(o.id) : _treeSel.okrs.delete(o.id);
-        if (!v) {
-          for (const { it } of inits) {
-            _treeSel.inits.delete(it.id);
-            for (const ep of it.epics || []) _treeSel.epics.delete(ep.id);
-          }
-        }
-        renderTree();
-      },
+      onRowSelect: () => setTreeFilter("okr", o.id),
     });
     wrap.appendChild(row);
 
@@ -1028,16 +1034,12 @@
       sub: `KR: ${kr.title}`,
       hasChildren: canExpand,
       expanded,
-      checked: _treeSel.inits.has(it.id),
+      selected: isTreeFilterTarget("init", it.id),
       onToggleExpand: () => {
         toggleSet(_treeExpand.inits, it.id);
         renderTree();
       },
-      onToggleSelect: (v) => {
-        v ? _treeSel.inits.add(it.id) : _treeSel.inits.delete(it.id);
-        if (!v) for (const ep of epics) _treeSel.epics.delete(ep.id);
-        renderTree();
-      },
+      onRowSelect: () => setTreeFilter("init", it.id),
     });
     wrap.appendChild(row);
 
@@ -1067,15 +1069,12 @@
       sub: ep.description ? ep.description.slice(0, 80) : null,
       hasChildren: true,
       expanded,
-      checked: _treeSel.epics.has(ep.id),
+      selected: isTreeFilterTarget("epic", ep.id),
       onToggleExpand: () => {
         toggleSet(_treeExpand.epics, ep.id);
         renderTree();
       },
-      onToggleSelect: (v) => {
-        v ? _treeSel.epics.add(ep.id) : _treeSel.epics.delete(ep.id);
-        renderTree();
-      },
+      onRowSelect: () => setTreeFilter("epic", ep.id),
       dropTarget: { type: "epic", epic: ep },
     });
     wrap.appendChild(row);
@@ -1095,20 +1094,22 @@
   }
 
   function buildTaskNode(t) {
+    // Tasks are leaves: no chevron, no filter selection. The done
+    // checkbox stays (it's a state, not a filter) — clicking it
+    // mirrors the legacy task-row checkbox so server + recurrence +
+    // optimistic UI all behave the same.
     const row = buildTreeRow({
       level: 3, kind: "task",
       label: t.title || "(untitled)",
       meta: t.dueLabel || "",
       hasChildren: false,
       expanded: false,
-      checked: t.isDone,
       isTask: true,
+      taskDone: t.isDone,
       onToggleExpand: () => {},
-      onToggleSelect: () => {
-        // Mirror the existing task-row checkbox change.
+      onTaskCheck: () => {
         const cb = t.el.querySelector("input.task-check");
         if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event("change", { bubbles: true })); }
-        // Optimistic re-render so the strike-through and counts update.
         setTimeout(() => renderTree(), 60);
       },
       onRowClick: () => {
@@ -1122,12 +1123,13 @@
   function buildTreeRow(opts) {
     const {
       level, kind, icon, label, sub, meta, isDefault,
-      hasChildren, expanded, checked,
-      onToggleExpand, onToggleSelect, onRowClick,
+      hasChildren, expanded, selected,
+      onToggleExpand, onRowSelect, onRowClick,
+      onTaskCheck, taskDone,
       dropTarget, isTask,
     } = opts;
     const row = document.createElement("div");
-    row.className = `ptv2-tn-row is-${kind}${isTask ? "" : ""}${_isRowSelected(opts) ? " is-selected" : ""}`;
+    row.className = `ptv2-tn-row is-${kind}${selected ? " is-selected" : ""}`;
     row.style.setProperty("--ptv2-tn-indent", `${level * 18}px`);
 
     const chev = document.createElement("button");
@@ -1140,21 +1142,23 @@
     }
     row.appendChild(chev);
 
-    const check = document.createElement("input");
-    check.type = "checkbox";
-    check.className = "ptv2-tn-check";
-    check.checked = !!checked;
-    check.addEventListener("click", (e) => e.stopPropagation());
-    check.addEventListener("change", (e) => onToggleSelect(e.target.checked));
-    row.appendChild(check);
+    // Tasks keep a done-state checkbox (state, not filter). Branch
+    // nodes have no checkbox — clicking the row sets the filter.
+    if (isTask) {
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.className = "ptv2-tn-check";
+      check.checked = !!taskDone;
+      check.addEventListener("click", (e) => e.stopPropagation());
+      check.addEventListener("change", () => onTaskCheck && onTaskCheck());
+      row.appendChild(check);
+    }
 
     if (icon) {
       const ic = document.createElement("span");
-      ic.className = `ptv2-tn-icon is-${kind}` + (isTask && checked ? " is-done" : "");
+      ic.className = `ptv2-tn-icon is-${kind}` + (isTask && taskDone ? " is-done" : "");
       ic.textContent = icon;
       row.appendChild(ic);
-    } else if (isTask) {
-      // Task rows: no icon, the checkbox carries the visual weight.
     }
 
     const main = document.createElement("div");
@@ -1172,21 +1176,19 @@
       row.appendChild(m);
     }
 
-    // Row click: expand on click for branch nodes, open detail for tasks.
+    // Row click semantics:
+    //   - Task row → open detail panel.
+    //   - Branch row → set this node as the filter (toggle off if it's
+    //     already the active filter). Chevron click handled separately.
     row.addEventListener("click", (e) => {
       if (e.target.closest(".ptv2-tn-chev")) return;
       if (e.target.closest(".ptv2-tn-check")) return;
       if (isTask && onRowClick) { onRowClick(); return; }
-      if (hasChildren) onToggleExpand();
+      if (onRowSelect) onRowSelect();
     });
 
     if (dropTarget) attachTreeNodeDropTarget(row, dropTarget);
     return row;
-  }
-
-  function _isRowSelected(opts) {
-    if (opts.isTask) return false;
-    return !!opts.checked;
   }
 
   function inlineAddBtn({ level, label, onClick }) {
@@ -1357,34 +1359,8 @@
     if (!list) return;
 
     const tasks = readTasks().filter((t) => !t.isDone);
-    const anyFilter = _treeSel.okrs.size || _treeSel.inits.size || _treeSel.epics.size;
-    let visible = tasks;
-    if (anyFilter) {
-      // Resolve which init/epic ids are valid under selected OKRs.
-      const okrInits = new Set(), okrEpics = new Set();
-      if (_treeSel.okrs.size) {
-        for (const o of _treeData) {
-          if (!_treeSel.okrs.has(o.id)) continue;
-          for (const kr of o.key_results || [])
-            for (const it of kr.initiatives || []) {
-              okrInits.add(it.id);
-              for (const ep of it.epics || []) okrEpics.add(ep.id);
-            }
-        }
-      }
-      visible = tasks.filter((t) => {
-        if (_treeSel.epics.size && _treeSel.epics.has(t.epicId)) return true;
-        if (_treeSel.epics.size) return false;
-        if (_treeSel.inits.size && _treeSel.inits.has(t.initiativeId)) return true;
-        if (_treeSel.inits.size) return false;
-        if (_treeSel.okrs.size) {
-          return _treeSel.okrs.has(t.objectiveId)
-              || okrInits.has(t.initiativeId)
-              || okrEpics.has(t.epicId);
-        }
-        return true;
-      });
-    }
+    const visible = tasks.filter((t) => taskMatchesFilter(t));
+
     list.innerHTML = "";
     visible.forEach((t) => {
       const tile = rowCard(t, { crumb: crumbFor(t) });
@@ -1392,13 +1368,49 @@
       list.appendChild(tile);
     });
     if (cnt) cnt.textContent = String(visible.length);
-    if (hint) {
-      const bits = [];
-      if (_treeSel.okrs.size)  bits.push(`${_treeSel.okrs.size} OKR`);
-      if (_treeSel.inits.size) bits.push(`${_treeSel.inits.size} init`);
-      if (_treeSel.epics.size) bits.push(`${_treeSel.epics.size} epic`);
-      hint.textContent = bits.length ? `Filtered: ${bits.join(" · ")}` : "All tasks in project";
+    if (hint) hint.textContent = _treeFilter ? `Filtered to ${_treeFilter.type}` : "All tasks in project";
+  }
+
+  // Single-node filter: a task is visible if it sits inside the
+  // selected node's subtree. No filter → everything passes.
+  function taskMatchesFilter(t) {
+    if (!_treeFilter) return true;
+    if (_treeFilter.type === "epic") return t.epicId === _treeFilter.id;
+    if (_treeFilter.type === "init") return t.initiativeId === _treeFilter.id;
+    if (_treeFilter.type === "okr") {
+      if (t.objectiveId === _treeFilter.id) return true;
+      // Walk the hierarchy for tasks linked at deeper levels but whose
+      // initiative/epic descends from this OKR.
+      const idx = _hierIndex;
+      if (!idx) return false;
+      const epIdx = t.epicId ? idx.epicsById.get(t.epicId) : null;
+      if (epIdx && epIdx._okr && epIdx._okr.id === _treeFilter.id) return true;
+      const itIdx = t.initiativeId ? idx.initiativesById.get(t.initiativeId) : null;
+      if (itIdx && itIdx._okr && itIdx._okr.id === _treeFilter.id) return true;
+      return false;
     }
+    return true;
+  }
+  function setTreeFilter(type, id) {
+    // Toggle off if the user re-taps the same node.
+    if (_treeFilter && _treeFilter.type === type && _treeFilter.id === id) {
+      _treeFilter = null;
+    } else {
+      _treeFilter = { type, id };
+    }
+    renderTree();
+  }
+  function isTreeFilterTarget(type, id) {
+    return !!(_treeFilter && _treeFilter.type === type && _treeFilter.id === id);
+  }
+  function filterChipLabel() {
+    if (!_treeFilter) return "";
+    const idx = _hierIndex;
+    if (!idx) return _treeFilter.type;
+    if (_treeFilter.type === "okr")  return idx.objectivesById.get(_treeFilter.id)?.title || "OKR";
+    if (_treeFilter.type === "init") return idx.initiativesById.get(_treeFilter.id)?.title || "Initiative";
+    if (_treeFilter.type === "epic") return idx.epicsById.get(_treeFilter.id)?.title || "Epic";
+    return _treeFilter.type;
   }
 
   /* ───── drag-and-drop: tasks onto epics (Tree tab) ────────────

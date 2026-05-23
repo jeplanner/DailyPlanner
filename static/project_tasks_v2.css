@@ -620,8 +620,27 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   color: var(--ptv2-text-soft); font-size: 13px;
 }
 .ptv2-tn-add-top {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 4px 4px 8px;
+}
+.ptv2-tn-filter-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--ptv2-primary);
+  color: #fff; border: 0;
+  border-radius: 999px;
+  padding: 6px 10px 6px 12px;
+  font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  max-width: 70%;
+}
+.ptv2-tn-filter-chip > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 240px;
+}
+.ptv2-tn-filter-chip:hover { background: #4f46e5; }
+.ptv2-tn-filter-chip > span:last-child {
+  font-size: 14px; line-height: 1;
+  opacity: 0.85; margin-left: 2px;
 }
 .ptv2-tn-add-btn {
   border: 1px dashed var(--ptv2-primary);
@@ -655,7 +674,12 @@ body[data-active-tab="all"] #table-view { padding: 0 14px; }
   padding-left: calc(8px + var(--ptv2-tn-indent, 0px));
 }
 .ptv2-tn-row:hover { background: var(--ptv2-primary-soft); }
-.ptv2-tn-row.is-selected { background: var(--ptv2-primary-soft); }
+/* Selected = this row is the active filter. Left accent + tinted bg so
+   it's obvious at a glance which scope the bottom list is narrowed to. */
+.ptv2-tn-row.is-selected {
+  background: var(--ptv2-primary-soft);
+  box-shadow: inset 3px 0 0 var(--ptv2-primary);
+}
 .ptv2-tn-row.is-selected .ptv2-tn-label { color: var(--ptv2-primary); }
 
 .ptv2-tn-chev {
