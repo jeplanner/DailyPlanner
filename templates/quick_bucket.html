@@ -113,6 +113,13 @@
     }
   }
   .qb-hero h1 { font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -.02em; }
+  .qb-welcome {
+    margin: 6px 0 0; font-size: 14.5px; line-height: 1.45;
+    color: #4338ca; font-weight: 600;
+  }
+  .qb-welcome em {
+    font-style: italic; font-weight: 500; color: var(--color-text-secondary);
+  }
   .qb-sub { color: var(--color-text-secondary); font-size: 13px; margin: 4px 0 0; }
 
   /* Capture form + Top-5 panel sit side-by-side on wide screens; they
@@ -714,6 +721,9 @@
 
   <header class="qb-hero">
     <h1>Quick Bucket</h1>
+    <p class="qb-welcome">
+      Welcome {{ first_name or 'friend' }} — <em>time is gold. Destiny is in your hands.</em>
+    </p>
     <p class="qb-sub">Quick add. Toggle when. Done when done.</p>
   </header>
 

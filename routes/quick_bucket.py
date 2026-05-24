@@ -142,13 +142,24 @@ def quick_bucket_page():
     # reach the browser for weeks. New mtime = new URL = fresh fetch.
     import os
     from flask import current_app
+    from flask_login import current_user
     js_v = ""
     try:
         js_path = os.path.join(current_app.static_folder, "js", "quick_bucket.js")
         js_v = str(int(os.path.getmtime(js_path)))
     except Exception:
         pass
-    return render_template("quick_bucket.html", buckets=BUCKETS, js_v=js_v)
+    # Just the first name for the welcome banner — "Welcome Venghatesh"
+    # reads better than "Welcome Venghatesh Sankaranarayanan".
+    first_name = ""
+    try:
+        full = (current_user.display_name or "").strip()
+        first_name = full.split()[0] if full else ""
+    except Exception:
+        pass
+    return render_template(
+        "quick_bucket.html", buckets=BUCKETS, js_v=js_v, first_name=first_name,
+    )
 
 
 # ─────────── lookup: projects (used by the move dialog) ─────

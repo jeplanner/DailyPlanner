@@ -50,6 +50,10 @@
   // and timezone edge cases. Defaults to local today until first load.
   let todayIso = new Date().toISOString().slice(0, 10);
   let top5Limit = 5;
+  // Last time we toasted "Top 5 is full" — used to debounce so the
+  // warning fires at most once per 3 s even if the user drops several
+  // times in a row.
+  let _lastTop5FullWarnAt = 0;
 
   // Motivational quotes for the stats bar — one per day, deterministic
   // so a refresh doesn't shuffle. Date-of-year picks the index.
@@ -341,7 +345,7 @@
     const prioBadge = `
       <button class="qb-prio" data-action="prio" type="button"
               data-rank="${prio || ''}"
-              title="Priority badge — click to bump by 1 (conflicts allowed)">
+              title="Click +1 · Shift+click or long-press -1 (floor 1, conflicts allowed)">
         ${prio == null ? '·' : (prio > 99 ? '99+' : prio)}
       </button>`;
 
@@ -554,7 +558,14 @@
       next.splice(insertIdx, 0, id);
 
       if (next.length > top5Limit) {
-        toast("Top 5 is full. Drop one out first.", "error");
+        // Debounce — a single drag can fire the drop handler several
+        // times in some browsers, and a frustrated user re-dropping
+        // shouldn't get a stack of toasts. Once per 3 s is plenty.
+        const now = Date.now();
+        if (now - _lastTop5FullWarnAt > 3000) {
+          toast("Top 5 is full. Drop one out first.", "error");
+          _lastTop5FullWarnAt = now;
+        }
         return;
       }
       await saveTop5(next);
@@ -667,10 +678,46 @@
       });
       $("button.qb-icon-btn[data-action='archive']", row)?.addEventListener("click", () => archive(it));
       $("button.qb-row-icon-action[data-action='reopen']", row)?.addEventListener("click", () => reopen(it));
-      $("button.qb-prio", row)?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        bumpPriorityLabel(it);
-      });
+      const prioBtn = $("button.qb-prio", row);
+      if (prioBtn) {
+        // Plain click → +1. Shift+click → -1 (keyboard shortcut for
+        // anyone on a desktop).
+        prioBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          bumpPriorityLabel(it, e.shiftKey ? -1 : 1);
+        });
+        // Right-click → -1 (suppress the browser context menu).
+        prioBtn.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          bumpPriorityLabel(it, -1);
+        });
+        // Long-press → -1 (mobile / touch). 450 ms is long enough to
+        // distinguish from a tap but short enough not to feel sticky.
+        let pressTimer = null;
+        let didLong = false;
+        const cancelPress = () => {
+          if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+        };
+        prioBtn.addEventListener("touchstart", () => {
+          didLong = false;
+          pressTimer = setTimeout(() => {
+            didLong = true;
+            bumpPriorityLabel(it, -1);
+          }, 450);
+        }, { passive: true });
+        prioBtn.addEventListener("touchmove",   cancelPress, { passive: true });
+        prioBtn.addEventListener("touchcancel", cancelPress, { passive: true });
+        prioBtn.addEventListener("touchend", () => {
+          cancelPress();
+          // Swallow the synthetic click that follows a long-press so
+          // the row doesn't get +1'd right after the -1.
+          if (didLong) {
+            const swallow = (e) => { e.stopPropagation(); e.preventDefault(); };
+            prioBtn.addEventListener("click", swallow, { capture: true, once: true });
+          }
+        });
+      }
       // Tapping the task text opens the edit-and-move popup. Done rows
       // also get the popup so the user can fix typos in past entries.
       const textEl = $(".qb-text", row);
@@ -740,12 +787,15 @@
   };
   const nextPriorityLabelForNew = () => maxPriorityLabel() + 1;
 
-  // Click the round badge → bump by 1. Conflicts (two rows with the
-  // same number) are allowed by design — the user said so explicitly.
-  const bumpPriorityLabel = async (it) => {
+  // Click the round badge → bump by +1. Shift+click, right-click, or
+  // long-press → -1 (floors at 1). Conflicts (two rows with the same
+  // number) are allowed by design.
+  const bumpPriorityLabel = async (it, delta = 1) => {
     buzz(HAPTIC.tap);
     const cur = parseInt(it.priority_label, 10);
-    const next = (Number.isFinite(cur) && cur > 0) ? cur + 1 : 1;
+    const base = (Number.isFinite(cur) && cur > 0) ? cur : 1;
+    const next = Math.max(1, base + delta);
+    if (next === base && Number.isFinite(cur) && cur > 0) return;  // no-op at floor
     // Optimistic local update so the badge ticks immediately even when
     // the network is slow (or queued offline by sync-queue.js).
     const prev = it.priority_label;
