@@ -791,14 +791,14 @@ html.dark .section-title{color:#f1f5f9;}
     <div class="nav-group">
       <div class="nav-group-title">Knowledge</div>
 
-      <a href="/references" data-match="^/references" title="Knowledge Base — saved articles, links, and AI search across them">
+      <a href="/knowledge-base" data-match="^/knowledge-base" title="Knowledge Base — PDFs in your Google Drive knowledgebase2026 folder">
         <i data-feather="book-open"></i>
         Knowledge Base
       </a>
 
-      <a href="/knowledge-base" data-match="^/knowledge-base" title="PDF Library — PDFs in your Google Drive knowledgebase2026 folder">
-        <i data-feather="file-text"></i>
-        PDF Library
+      <a href="/references" data-match="^/references" title="References — saved articles and web links with AI search across the library">
+        <i data-feather="bookmark"></i>
+        References
       </a>
 
       <a href="/notes/scribble" data-match="^/notes" title="Notes — freeform writing with @-tag → task conversion">
@@ -2667,7 +2667,7 @@ const HELP_PAGES = [
   {
     match: /^\/travel-reads/,
     title: "TravelReads — your offline-friendly queue",
-    lead: "A focused list of articles, videos, and podcasts to consume while travelling. Different from the Knowledge Base — TravelReads is a working queue: add, work through, mark done, archive.",
+    lead: "A focused list of articles, videos, and podcasts to consume while travelling. Different from References — TravelReads is a working queue: add, work through, mark done, archive.",
     sections: [
       {
         title: "Adding things",
@@ -2704,7 +2704,7 @@ const HELP_PAGES = [
       {
         title: "Tips",
         items: [
-          "TravelReads vs. Knowledge Base: TravelReads is a <b>queue</b> (you'll process and archive). Knowledge Base is a <b>library</b> (permanent, searchable, AI-queryable).",
+          "TravelReads vs. References: TravelReads is a <b>queue</b> (you'll process and archive). References is a <b>library</b> (permanent, searchable, AI-queryable).",
           "Set Minutes when you can — the queue total tells you what fits the trip.",
           "Done items aren't auto-removed — they keep a record of what you've consumed. Use the <b>×</b> button to clear them out periodically.",
           "Thumbnails come automatically for YouTube. Other URLs show a type icon."
@@ -2714,7 +2714,7 @@ const HELP_PAGES = [
   },
   {
     match: /^\/references/,
-    title: "Knowledge Base — your second brain + AI search",
+    title: "References — your second brain + AI search",
     lead: "Save articles, links, and notes from the web. Ask AI (Gemini/Groq) questions against your library, or use the top-bar 🔍 button from anywhere to jump here fast.",
     sections: [
       {
@@ -2859,7 +2859,7 @@ function _currentHelpEntry(){
           "<b>Today</b> — the daily cockpit. Today's Plan (morning dashboard), Tasks Bucket, Priorities (Eisenhower), Calendar, Inbox, Checklist.",
           "<b>Work</b> — Projects, Roadmap, OKRs, Meetings (BLUF/SCQA prep), Programs (RAG reviews).",
           "<b>Review</b> — Reports (4 dashboards), Reviews (daily/weekly/monthly/yearly via tabs), Focus Log.",
-          "<b>Knowledge</b> — Knowledge Base (AI search), Notes (with @-tag → task), Study (Cornell/Feynman), TravelReads, Quotes.",
+          "<b>Knowledge</b> — Knowledge Base (PDF library in Google Drive), References (saved articles + AI search), Notes (with @-tag → task), Study (Cornell/Feynman), TravelReads, Quotes.",
           "<b>Life</b> — Health, Relationships, Grocery, Photos, Prayer, Mythology, Bedtime Stories.",
           "<b>Money</b> — Investments, Vault (password-locked: bank, cards, ESOPs, documents)."
         ]
@@ -2880,7 +2880,7 @@ function _currentHelpEntry(){
         items: [
           "<b>Voice dictation</b> with natural-language date parsing (\"tomorrow\", \"next monday\", \"weekly\") on Priorities and project tasks.",
           "<b>Notes → tasks</b>: write <code>- [ ] Buy milk @Tomorrow @Groceries</code> in any note, then one tap creates the task in the right project with the right due date.",
-          "<b>AI answers</b> against your Knowledge Base (needs a Gemini or Groq key in <code>.env</code>).",
+          "<b>AI answers</b> against your References library (needs a Gemini or Groq key in <code>.env</code>).",
           "<b>Vault</b> uses a separate password from login. Copy-to-clipboard auto-clears in 30s; auto-locks after inactivity.",
           "<b>Reports</b> — productivity, habits, and financial dashboards with week / month / quarter / year ranges."
         ]

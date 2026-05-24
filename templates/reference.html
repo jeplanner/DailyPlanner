@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
-  <title>Knowledge Base</title>
+  <title>References</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
@@ -27,7 +27,7 @@
   <!-- ═══════════════════════ HEADER ═══════════════════════ -->
   <header class="kb-header">
     <div>
-      <h1 class="kb-title">Knowledge Base</h1>
+      <h1 class="kb-title">References</h1>
       <p class="kb-sub" id="resultCount">Loading…</p>
     </div>
     <button class="kb-add-btn" onclick="openAddModal()" title="Add a new entry (N)">
@@ -36,14 +36,14 @@
     </button>
   </header>
 
-  <!-- ═══════════════════ ASK KNOWLEDGE BASE ═══════════════════
+  <!-- ═══════════════════ ASK REFERENCES ═══════════════════
        Compact hero input instead of the old thick bordered card.
        Results expand in place when a question is submitted. -->
   <div class="kb-ask">
     <div class="kb-ask-bar">
       <i data-feather="message-circle" class="kb-ask-icon"></i>
       <input type="text" id="ask-input"
-             placeholder="Ask your knowledge base — e.g. 'How does compound interest work?'">
+             placeholder="Ask your References library — e.g. 'How does compound interest work?'">
       <button id="ask-btn" class="kb-ask-btn">
         <span>Ask</span>
         <i data-feather="arrow-right"></i>
@@ -137,7 +137,7 @@
 
     <div class="modal-header">
       <div>
-        <div class="modal-eyebrow">Knowledge Base</div>
+        <div class="modal-eyebrow">References</div>
         <h3>Add Entry</h3>
       </div>
       <button class="modal-close" onclick="closeAddModal()" title="Close">
