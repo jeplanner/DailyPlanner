@@ -343,6 +343,10 @@
              data-original="${purposeEsc}"
              title="Click to ${purposeRaw ? 'edit' : 'add a'} purpose">${purposeText}</div>
         <div class="kb-row-actions">
+          <a class="kb-row-btn" title="Annotate (highlight, underline, notes…)"
+             href="/knowledge-base/${encodeURIComponent(f.id)}/annotate">
+            <i data-feather="edit-3"></i>
+          </a>
           <button type="button" class="kb-row-btn" title="Rename"
                   onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
             <i data-feather="edit-2"></i>

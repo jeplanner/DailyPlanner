@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Annotate — {{ file_name }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+
+<!-- PDF.js (renderer + text layer) and pdf-lib (writes annotations into
+     the bytes on save). UMD builds so we can use globals without ESM. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+<style>
+  body { margin: 0; background: #1f2937; color: #f3f4f6; font-family: var(--font-family, "Inter", system-ui); }
+
+  /* Sticky toolbar — single row on desktop, wraps on narrow screens. */
+  .ann-bar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    background: #111827; border-bottom: 1px solid #1f2937;
+    flex-wrap: wrap;
+  }
+  .ann-back, .ann-save {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 8px;
+    font-weight: 600; font-size: 13px;
+    border: 1px solid transparent; cursor: pointer;
+    text-decoration: none;
+  }
+  .ann-back {
+    background: transparent; color: #e5e7eb; border-color: #374151;
+  }
+  .ann-back:hover { background: #1f2937; }
+  .ann-save {
+    background: #2563eb; color: white; margin-left: auto;
+  }
+  .ann-save:hover { background: #1d4ed8; }
+  .ann-save:disabled { background: #4b5563; cursor: wait; }
+  .ann-back svg, .ann-save svg { width: 14px; height: 14px; }
+
+  .ann-title {
+    font-size: 13px; color: #9ca3af; font-weight: 500;
+    max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .ann-tools { display: inline-flex; gap: 4px; padding: 0 6px; border-left: 1px solid #1f2937; }
+  .ann-tool {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 34px; height: 34px;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 8px; color: #d1d5db; cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .ann-tool:hover { background: #1f2937; color: #fff; }
+  .ann-tool.is-active {
+    background: #2563eb; color: white; border-color: #2563eb;
+  }
+  .ann-tool svg { width: 16px; height: 16px; }
+
+  /* Color swatches inline with the toolbar — just five preset colors so
+     the user doesn't have to fish through a native color picker. */
+  .ann-swatches { display: inline-flex; gap: 4px; padding: 0 6px; border-left: 1px solid #1f2937; }
+  .ann-swatch {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer;
+    background-clip: padding-box;
+  }
+  .ann-swatch.is-active { border-color: #f9fafb; box-shadow: 0 0 0 2px #2563eb; }
+
+  /* Pages area — dark gutter, pages float as paper-white. */
+  .ann-pages {
+    padding: 24px 12px 80px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+  }
+  .ann-status {
+    color: #9ca3af; font-size: 13px;
+    padding: 28px 16px; text-align: center;
+  }
+
+  .ann-page {
+    position: relative;
+    background: white;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    /* Width/height set inline once viewport is known. */
+  }
+  .ann-page canvas {
+    display: block;
+    width: 100%; height: 100%;
+  }
+  /* Text layer — PDF.js positions <span>s with absolute coords. We
+     leave the text invisible (color: transparent) so it sits on top of
+     the canvas painted text, then selection works as expected. */
+  .ann-text-layer {
+    position: absolute; inset: 0;
+    overflow: hidden; opacity: 1; line-height: 1;
+    color: transparent;
+  }
+  .ann-text-layer ::selection { background: rgba(37, 99, 235, .35); }
+  .ann-text-layer > span, .ann-text-layer > br {
+    color: transparent; position: absolute; white-space: pre;
+    cursor: text; transform-origin: 0 0;
+  }
+  /* SVG overlay for visual preview of annotations and for pen capture. */
+  .ann-overlay {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+
+  /* Sticky-note marker rendered on the overlay. The popup text is shown
+     under the marker so the user can see what they wrote without
+     hovering — flat, paper-style. */
+  .ann-note-marker {
+    position: absolute;
+    width: 18px; height: 18px;
+    background: #facc15;
+    border: 1px solid #b45309;
+    border-radius: 3px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.3);
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .ann-note-popup {
+    position: absolute;
+    min-width: 160px; max-width: 240px;
+    background: #fef3c7; color: #1f2937;
+    border: 1px solid #b45309;
+    border-radius: 4px;
+    padding: 6px 8px; font-size: 12px; line-height: 1.4;
+    pointer-events: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,.25);
+    z-index: 10;
+  }
+  .ann-note-popup textarea {
+    width: 100%; min-height: 56px;
+    background: transparent; border: none; outline: none;
+    font: inherit; color: inherit; resize: vertical;
+  }
+  .ann-note-popup .row {
+    display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px;
+  }
+  .ann-note-popup button {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    border: 1px solid #b45309; background: #fde68a; color: #1f2937;
+    cursor: pointer;
+  }
+  .ann-note-popup button.danger { background: #fecaca; border-color: #b91c1c; }
+
+  /* Cursor hints per tool. */
+  body[data-tool="highlight"]  .ann-text-layer,
+  body[data-tool="underline"]  .ann-text-layer,
+  body[data-tool="strike"]     .ann-text-layer { cursor: text; }
+  body[data-tool="pen"]        .ann-overlay     { pointer-events: auto; cursor: crosshair; }
+  body[data-tool="note"]       .ann-overlay     { pointer-events: auto; cursor: copy; }
+  body[data-tool="pen"]        .ann-text-layer,
+  body[data-tool="note"]       .ann-text-layer { pointer-events: none; user-select: none; }
+</style>
+</head>
+<body data-tool="cursor">
+
+<header class="ann-bar">
+  <a class="ann-back" href="{{ back_url }}" title="Back to Knowledge Base">
+    <i data-feather="arrow-left"></i> Back
+  </a>
+  <span class="ann-title" title="{{ file_name }}">{{ file_name }}</span>
+
+  <div class="ann-tools" role="toolbar" aria-label="Annotation tools">
+    <button class="ann-tool is-active" data-tool="cursor" title="Select / scroll (V)"><i data-feather="mouse-pointer"></i></button>
+    <button class="ann-tool" data-tool="highlight" title="Highlight (H)"><i data-feather="edit-3"></i></button>
+    <button class="ann-tool" data-tool="underline" title="Underline (U)"><i data-feather="underline"></i></button>
+    <button class="ann-tool" data-tool="strike" title="Strikethrough (S)"><i data-feather="minus"></i></button>
+    <button class="ann-tool" data-tool="pen" title="Pen / draw (P)"><i data-feather="pen-tool"></i></button>
+    <button class="ann-tool" data-tool="note" title="Sticky note (N)"><i data-feather="message-square"></i></button>
+  </div>
+
+  <div class="ann-swatches" role="toolbar" aria-label="Colors">
+    <button class="ann-swatch is-active" data-color="#fde047" style="background:#fde047" title="Yellow"></button>
+    <button class="ann-swatch" data-color="#86efac" style="background:#86efac" title="Green"></button>
+    <button class="ann-swatch" data-color="#93c5fd" style="background:#93c5fd" title="Blue"></button>
+    <button class="ann-swatch" data-color="#fca5a5" style="background:#fca5a5" title="Red"></button>
+    <button class="ann-swatch" data-color="#1f2937" style="background:#1f2937" title="Black (pen)"></button>
+  </div>
+
+  <button class="ann-tool" id="ann-undo" title="Undo last annotation (Ctrl/Cmd+Z)" style="margin-left:6px;">
+    <i data-feather="rotate-ccw"></i>
+  </button>
+
+  <button class="ann-save" id="ann-save">
+    <i data-feather="save"></i> Save to Drive
+  </button>
+</header>
+
+<main class="ann-pages" id="ann-pages">
+  <div class="ann-status" id="ann-status">Loading PDF…</div>
+</main>
+
+<script>
+(() => {
+  const FILE_ID = {{ file_id|tojson }};
+  const BACK_URL = {{ back_url|tojson }};
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+  // Worker for PDF.js — points at the same CDN as the main lib so we
+  // don't have to host the worker ourselves.
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  // ── State ──────────────────────────────────────────────────────
+  const state = {
+    pdfDocBytes: null,        // raw bytes (cached for save bake)
+    pdfDoc: null,             // pdfjsLib document
+    pages: [],                // [{pageNum, viewport, pageEl, overlayEl, pdfHeight, pdfWidth}]
+    tool: "cursor",
+    color: "#fde047",
+    // Annotations indexed by 1-based pageNum:
+    //   highlight/underline/strike: {type, color, rects: [{x,y,w,h}]}
+    //   pen:        {type:"pen", color, thickness, points:[{x,y},...]}
+    //   note:       {type:"note", x, y, color, text}
+    annotations: {},
+    saving: false,
+  };
+
+  const toast = (msg, kind="info") => {
+    if (window.showToast) window.showToast(msg, kind, 2500);
+    else console.log("[ann]", msg);
+  };
+
+  // Hex color "#rrggbb" → {r,g,b} in 0–1 range (what pdf-lib wants).
+  const hexToRgb01 = (hex) => {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (!m) return { r: 1, g: 0.85, b: 0.2 };
+    return { r: parseInt(m[1],16)/255, g: parseInt(m[2],16)/255, b: parseInt(m[3],16)/255 };
+  };
+
+  // ── Toolbar wiring ─────────────────────────────────────────────
+  function setTool(name) {
+    state.tool = name;
+    document.body.dataset.tool = name;
+    document.querySelectorAll(".ann-tool[data-tool]").forEach(btn => {
+      btn.classList.toggle("is-active", btn.dataset.tool === name);
+    });
+    // Selection from another tool is now stale, drop it so users don't
+    // accidentally re-apply it.
+    window.getSelection()?.removeAllRanges();
+  }
+  function setColor(hex) {
+    state.color = hex;
+    document.querySelectorAll(".ann-swatch").forEach(s => {
+      s.classList.toggle("is-active", s.dataset.color === hex);
+    });
+  }
+  document.querySelectorAll(".ann-tool[data-tool]").forEach(btn => {
+    btn.addEventListener("click", () => setTool(btn.dataset.tool));
+  });
+  document.querySelectorAll(".ann-swatch").forEach(btn => {
+    btn.addEventListener("click", () => setColor(btn.dataset.color));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input,textarea,[contenteditable]")) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault(); undoLast(); return;
+    }
+    const map = { v:"cursor", h:"highlight", u:"underline", s:"strike", p:"pen", n:"note" };
+    const k = e.key.toLowerCase();
+    if (map[k]) { e.preventDefault(); setTool(map[k]); }
+  });
+  document.getElementById("ann-undo").addEventListener("click", undoLast);
+  document.getElementById("ann-save").addEventListener("click", saveToDrive);
+
+  // ── PDF load + render ──────────────────────────────────────────
+  async function loadPdf() {
+    try {
+      const resp = await fetch(`/api/knowledge-base/${encodeURIComponent(FILE_ID)}/file`, {
+        credentials: "same-origin",
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      state.pdfDocBytes = new Uint8Array(await resp.arrayBuffer());
+      // PDF.js mutates the buffer it's given (transferring it to the
+      // worker), so hand it a copy and keep the original for save.
+      const forJs = state.pdfDocBytes.slice();
+      state.pdfDoc = await pdfjsLib.getDocument({ data: forJs }).promise;
+      await renderAllPages();
+    } catch (e) {
+      console.error(e);
+      document.getElementById("ann-status").textContent =
+        "Couldn't load this PDF. It may be encrypted, corrupt, or unavailable.";
+      toast("Couldn't load PDF", "error");
+    }
+  }
+
+  async function renderAllPages() {
+    const wrap = document.getElementById("ann-pages");
+    wrap.innerHTML = "";
+    const dpr = window.devicePixelRatio || 1;
+    // Target CSS width — fit-to-container with a sensible ceiling.
+    const containerWidth = Math.min(960, wrap.clientWidth - 24);
+
+    for (let pageNum = 1; pageNum <= state.pdfDoc.numPages; pageNum++) {
+      const page = await state.pdfDoc.getPage(pageNum);
+      const unscaled = page.getViewport({ scale: 1 });
+      const scale = containerWidth / unscaled.width;
+      const viewport = page.getViewport({ scale });
+
+      const pageEl = document.createElement("div");
+      pageEl.className = "ann-page";
+      pageEl.style.width = viewport.width + "px";
+      pageEl.style.height = viewport.height + "px";
+      pageEl.dataset.pageNum = String(pageNum);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      pageEl.appendChild(canvas);
+
+      const textLayer = document.createElement("div");
+      textLayer.className = "ann-text-layer";
+      textLayer.style.width = viewport.width + "px";
+      textLayer.style.height = viewport.height + "px";
+      pageEl.appendChild(textLayer);
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "ann-overlay");
+      svg.setAttribute("viewBox", `0 0 ${viewport.width} ${viewport.height}`);
+      svg.setAttribute("width", viewport.width);
+      svg.setAttribute("height", viewport.height);
+      pageEl.appendChild(svg);
+
+      wrap.appendChild(pageEl);
+
+      const ctx = canvas.getContext("2d");
+      ctx.scale(dpr, dpr);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      const textContent = await page.getTextContent();
+      pdfjsLib.renderTextLayer({
+        textContentSource: textContent,
+        container: textLayer,
+        viewport,
+        textDivs: [],
+      });
+
+      const pageRec = {
+        pageNum,
+        viewport,
+        pageEl,
+        overlayEl: svg,
+        // PDF user-space units (origin bottom-left) — what pdf-lib uses
+        // when we bake annotations. Equal to unscaled width/height.
+        pdfWidth: unscaled.width,
+        pdfHeight: unscaled.height,
+        scale,
+      };
+      state.pages.push(pageRec);
+      wirePagePointerHandlers(pageRec);
+    }
+
+    document.getElementById("ann-status")?.remove();
+    if (window.feather) feather.replace();
+  }
+
+  // ── Annotation capture ─────────────────────────────────────────
+  function addAnnotation(pageNum, ann) {
+    if (!state.annotations[pageNum]) state.annotations[pageNum] = [];
+    state.annotations[pageNum].push(ann);
+    renderAnnotationsForPage(pageNum);
+  }
+  function undoLast() {
+    // Walk pages in reverse so undoing pops the most-recent click,
+    // regardless of which page it was on.
+    for (let i = state.pages.length - 1; i >= 0; i--) {
+      const p = state.pages[i];
+      const arr = state.annotations[p.pageNum];
+      if (arr && arr.length) { arr.pop(); renderAnnotationsForPage(p.pageNum); return; }
+    }
+  }
+
+  // Text-selection-based markups (highlight / underline / strike). The
+  // selectionchange listener fires constantly during a drag — we react
+  // only on mouseup so the captured rects match the final selection.
+  document.addEventListener("mouseup", (e) => {
+    const tool = state.tool;
+    if (tool !== "highlight" && tool !== "underline" && tool !== "strike") return;
+
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+
+    // Selection must be inside one of our text layers.
+    const anchorEl = sel.anchorNode?.parentElement?.closest(".ann-text-layer");
+    if (!anchorEl) return;
+    const pageEl = anchorEl.closest(".ann-page");
+    if (!pageEl) return;
+    const pageNum = Number(pageEl.dataset.pageNum);
+    const pageRec = state.pages.find(p => p.pageNum === pageNum);
+    if (!pageRec) return;
+
+    const pageRect = pageEl.getBoundingClientRect();
+    const rects = [];
+    for (let i = 0; i < sel.rangeCount; i++) {
+      const r = sel.getRangeAt(i);
+      for (const cr of r.getClientRects()) {
+        if (cr.width < 1 || cr.height < 1) continue;
+        // Viewport (CSS) → PDF user-space coords. PDF Y is bottom-up,
+        // so flip relative to page height.
+        const xCss = cr.left - pageRect.left;
+        const yCssTop = cr.top - pageRect.top;
+        const wCss = cr.width;
+        const hCss = cr.height;
+        const x = xCss / pageRec.scale;
+        const yTop = yCssTop / pageRec.scale;
+        const w = wCss / pageRec.scale;
+        const h = hCss / pageRec.scale;
+        rects.push({
+          x,
+          y: pageRec.pdfHeight - yTop - h,
+          w,
+          h,
+        });
+      }
+    }
+    if (!rects.length) return;
+
+    addAnnotation(pageNum, { type: tool, color: state.color, rects });
+    sel.removeAllRanges();
+  });
+
+  // Pen + note pointer handling, wired per page so we know which page
+  // the pointer is on without hit-testing the whole document.
+  function wirePagePointerHandlers(pageRec) {
+    const overlay = pageRec.overlayEl;
+
+    // ── Pen ─────
+    let drawing = null;
+    overlay.addEventListener("pointerdown", (e) => {
+      if (state.tool !== "pen") return;
+      e.preventDefault();
+      overlay.setPointerCapture(e.pointerId);
+      drawing = {
+        type: "pen",
+        color: state.color,
+        thickness: 1.6,
+        points: [eventToPdf(e, pageRec)],
+      };
+    });
+    overlay.addEventListener("pointermove", (e) => {
+      if (state.tool !== "pen" || !drawing) return;
+      drawing.points.push(eventToPdf(e, pageRec));
+      // Live-preview the in-progress stroke.
+      renderInProgressPen(pageRec, drawing);
+    });
+    const finishPen = (e) => {
+      if (!drawing) return;
+      try { overlay.releasePointerCapture(e.pointerId); } catch {}
+      if (drawing.points.length > 1) {
+        addAnnotation(pageRec.pageNum, drawing);
+      } else {
+        renderAnnotationsForPage(pageRec.pageNum); // wipe preview
+      }
+      drawing = null;
+    };
+    overlay.addEventListener("pointerup", finishPen);
+    overlay.addEventListener("pointercancel", finishPen);
+
+    // ── Note ─────
+    overlay.addEventListener("click", (e) => {
+      if (state.tool !== "note") return;
+      // Don't catch clicks that were the tail of a drag.
+      if (e.detail === 0) return;
+      const pt = eventToPdf(e, pageRec);
+      const ann = { type: "note", x: pt.x, y: pt.y, color: state.color, text: "" };
+      addAnnotation(pageRec.pageNum, ann);
+      openNotePopup(pageRec, ann);
+    });
+  }
+
+  // Pointer event → PDF user-space coords for this page.
+  function eventToPdf(e, pageRec) {
+    const rect = pageRec.pageEl.getBoundingClientRect();
+    const xCss = e.clientX - rect.left;
+    const yCssTop = e.clientY - rect.top;
+    return {
+      x: xCss / pageRec.scale,
+      y: pageRec.pdfHeight - (yCssTop / pageRec.scale),
+    };
+  }
+
+  // ── Overlay rendering (visual preview only — real bake happens
+  // on save via pdf-lib so the saved PDF stays valid in any reader). ──
+  function pdfToCss(pageRec, x, y) {
+    return {
+      x: x * pageRec.scale,
+      y: (pageRec.pdfHeight - y) * pageRec.scale,
+    };
+  }
+
+  function renderAnnotationsForPage(pageNum) {
+    const pageRec = state.pages.find(p => p.pageNum === pageNum);
+    if (!pageRec) return;
+    const svg = pageRec.overlayEl;
+    svg.innerHTML = "";
+    // Remove existing note markers (DOM siblings of the SVG, not inside it).
+    pageRec.pageEl.querySelectorAll(".ann-note-marker, .ann-note-popup").forEach(n => n.remove());
+
+    const anns = state.annotations[pageNum] || [];
+    for (const a of anns) {
+      if (a.type === "highlight" || a.type === "underline" || a.type === "strike") {
+        for (const r of a.rects) {
+          const tl = pdfToCss(pageRec, r.x, r.y + r.h);
+          const w = r.w * pageRec.scale;
+          const h = r.h * pageRec.scale;
+          if (a.type === "highlight") {
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute("x", tl.x); rect.setAttribute("y", tl.y);
+            rect.setAttribute("width", w); rect.setAttribute("height", h);
+            rect.setAttribute("fill", a.color);
+            rect.setAttribute("opacity", "0.4");
+            svg.appendChild(rect);
+          } else {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            const y = a.type === "underline" ? (tl.y + h - 1) : (tl.y + h / 2);
+            line.setAttribute("x1", tl.x); line.setAttribute("x2", tl.x + w);
+            line.setAttribute("y1", y);    line.setAttribute("y2", y);
+            line.setAttribute("stroke", a.color);
+            line.setAttribute("stroke-width", "1.5");
+            line.setAttribute("opacity", "0.9");
+            svg.appendChild(line);
+          }
+        }
+      } else if (a.type === "pen") {
+        const d = a.points.map((p, i) => {
+          const c = pdfToCss(pageRec, p.x, p.y);
+          return `${i === 0 ? "M" : "L"} ${c.x.toFixed(2)} ${c.y.toFixed(2)}`;
+        }).join(" ");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        path.setAttribute("stroke", a.color);
+        path.setAttribute("stroke-width", String(a.thickness * pageRec.scale));
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-linejoin", "round");
+        svg.appendChild(path);
+      } else if (a.type === "note") {
+        const c = pdfToCss(pageRec, a.x, a.y);
+        const marker = document.createElement("div");
+        marker.className = "ann-note-marker";
+        marker.style.left = (c.x - 9) + "px";
+        marker.style.top = (c.y - 9) + "px";
+        marker.style.background = a.color;
+        marker.title = a.text || "(empty note — click to edit)";
+        marker.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openNotePopup(pageRec, a);
+        });
+        pageRec.pageEl.appendChild(marker);
+      }
+    }
+  }
+
+  function renderInProgressPen(pageRec, drawing) {
+    // Repaint the page from scratch then add the in-progress stroke on
+    // top — keeps things simple at the cost of redrawing settled
+    // annotations on each pointermove. Tens of annotations per page
+    // is the realistic ceiling, so it's fine.
+    renderAnnotationsForPage(pageRec.pageNum);
+    const svg = pageRec.overlayEl;
+    const d = drawing.points.map((p, i) => {
+      const c = pdfToCss(pageRec, p.x, p.y);
+      return `${i === 0 ? "M" : "L"} ${c.x.toFixed(2)} ${c.y.toFixed(2)}`;
+    }).join(" ");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("stroke", drawing.color);
+    path.setAttribute("stroke-width", String(drawing.thickness * pageRec.scale));
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+  }
+
+  // Inline editor for a sticky note. Edits the annotation object in
+  // place; closes on Save / Escape / clicking outside.
+  function openNotePopup(pageRec, ann) {
+    pageRec.pageEl.querySelectorAll(".ann-note-popup").forEach(n => n.remove());
+
+    const c = pdfToCss(pageRec, ann.x, ann.y);
+    const popup = document.createElement("div");
+    popup.className = "ann-note-popup";
+    popup.style.left = (c.x + 14) + "px";
+    popup.style.top  = (c.y + 14) + "px";
+    popup.innerHTML = `
+      <textarea placeholder="Type a note…"></textarea>
+      <div class="row">
+        <button type="button" class="danger" data-act="del">Delete</button>
+        <button type="button" data-act="save">Save</button>
+      </div>`;
+    pageRec.pageEl.appendChild(popup);
+
+    const ta = popup.querySelector("textarea");
+    ta.value = ann.text || "";
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    const close = () => popup.remove();
+    popup.querySelector('[data-act="save"]').addEventListener("click", () => {
+      ann.text = ta.value.trim();
+      renderAnnotationsForPage(pageRec.pageNum);
+      close();
+    });
+    popup.querySelector('[data-act="del"]').addEventListener("click", () => {
+      const arr = state.annotations[pageRec.pageNum] || [];
+      const i = arr.indexOf(ann);
+      if (i >= 0) arr.splice(i, 1);
+      renderAnnotationsForPage(pageRec.pageNum);
+      close();
+    });
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        ann.text = ta.value.trim();
+        renderAnnotationsForPage(pageRec.pageNum);
+        close();
+      }
+    });
+    // One-shot outside-click closer. Schedule on next tick so the
+    // click that opened this popup doesn't immediately close it.
+    setTimeout(() => {
+      const onDoc = (e) => {
+        if (popup.contains(e.target)) return;
+        ann.text = ta.value.trim();
+        renderAnnotationsForPage(pageRec.pageNum);
+        close();
+        document.removeEventListener("mousedown", onDoc);
+      };
+      document.addEventListener("mousedown", onDoc);
+    }, 0);
+  }
+
+  // ── Save: bake into the original PDF bytes, upload to Drive ────
+  async function saveToDrive() {
+    if (state.saving) return;
+    if (!state.pdfDocBytes) { toast("PDF not loaded", "error"); return; }
+
+    const btn = document.getElementById("ann-save");
+    state.saving = true;
+    btn.disabled = true;
+    const origLabel = btn.innerHTML;
+    btn.innerHTML = `<i data-feather="loader"></i> Saving…`;
+    if (window.feather) feather.replace();
+
+    try {
+      const { PDFDocument, rgb, StandardFonts } = PDFLib;
+      const doc = await PDFDocument.load(state.pdfDocBytes);
+      const font = await doc.embedFont(StandardFonts.Helvetica);
+      const docPages = doc.getPages();
+
+      for (const pageRec of state.pages) {
+        const page = docPages[pageRec.pageNum - 1];
+        if (!page) continue;
+        const anns = state.annotations[pageRec.pageNum] || [];
+        for (const a of anns) {
+          const col = hexToRgb01(a.color);
+          if (a.type === "highlight") {
+            for (const r of a.rects) {
+              page.drawRectangle({
+                x: r.x, y: r.y, width: r.w, height: r.h,
+                color: rgb(col.r, col.g, col.b),
+                opacity: 0.4,
+              });
+            }
+          } else if (a.type === "underline") {
+            for (const r of a.rects) {
+              page.drawLine({
+                start: { x: r.x, y: r.y },
+                end:   { x: r.x + r.w, y: r.y },
+                color: rgb(col.r, col.g, col.b),
+                thickness: 1.2,
+              });
+            }
+          } else if (a.type === "strike") {
+            for (const r of a.rects) {
+              const midY = r.y + r.h / 2;
+              page.drawLine({
+                start: { x: r.x, y: midY },
+                end:   { x: r.x + r.w, y: midY },
+                color: rgb(col.r, col.g, col.b),
+                thickness: 1.2,
+              });
+            }
+          } else if (a.type === "pen") {
+            const pts = a.points;
+            for (let i = 1; i < pts.length; i++) {
+              page.drawLine({
+                start: pts[i - 1], end: pts[i],
+                color: rgb(col.r, col.g, col.b),
+                thickness: a.thickness || 1.5,
+              });
+            }
+          } else if (a.type === "note") {
+            // Yellow square marker plus the note text rendered just to
+            // the right. Flat-baked — anyone opening this PDF in any
+            // reader sees the note inline.
+            page.drawRectangle({
+              x: a.x - 4, y: a.y - 4, width: 8, height: 8,
+              color: rgb(col.r, col.g, col.b),
+              borderColor: rgb(0.5, 0.3, 0),
+              borderWidth: 0.5,
+            });
+            if (a.text) {
+              page.drawText(a.text, {
+                x: a.x + 8, y: a.y - 6,
+                size: 8, font,
+                color: rgb(0.1, 0.1, 0.1),
+                maxWidth: 180,
+                lineHeight: 10,
+              });
+            }
+          }
+        }
+      }
+
+      const outBytes = await doc.save();
+      const fd = new FormData();
+      fd.append("file", new Blob([outBytes], { type: "application/pdf" }), "annotated.pdf");
+      const resp = await fetch(`/api/knowledge-base/${encodeURIComponent(FILE_ID)}/save`, {
+        method: "POST",
+        headers: { "X-CSRFToken": CSRF },
+        body: fd,
+        credentials: "same-origin",
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || ("HTTP " + resp.status));
+
+      toast("Saved to Drive", "success");
+      // Clear in-memory annotations and refresh the cached source bytes
+      // so a second save round doesn't re-apply on top of the just-saved
+      // copy. Easiest way: reload the page so the new PDF re-renders
+      // fresh — annotations are now flat-baked into it.
+      setTimeout(() => { location.reload(); }, 600);
+    } catch (e) {
+      console.error(e);
+      toast("Couldn't save: " + (e.message || "unknown error"), "error");
+      btn.disabled = false;
+      btn.innerHTML = origLabel;
+      if (window.feather) feather.replace();
+      state.saving = false;
+    }
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────
+  if (window.feather) feather.replace();
+  loadPdf();
+})();
+</script>
+
+</body>
+</html>

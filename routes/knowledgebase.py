@@ -18,7 +18,8 @@ import logging
 import os
 
 from flask import (
-    Blueprint, jsonify, redirect, render_template, request, session, url_for,
+    Blueprint, Response, abort, jsonify, redirect, render_template, request,
+    session, url_for,
 )
 
 from google.auth.exceptions import RefreshError
@@ -26,7 +27,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth import login_required
 from supabase_client import get, update
@@ -371,6 +372,141 @@ def kb_rename(file_id):
         logger.warning("kb rename failed for %s: %s", file_id, e)
         return jsonify({"error": "Rename failed."}), 502
     return jsonify({"ok": True, "name": new_name})
+
+
+# ── Annotation editor (in-browser PDF.js + pdf-lib) ─────────────
+
+
+@knowledgebase_bp.route("/knowledge-base/<file_id>/annotate", methods=["GET"])
+@login_required
+def kb_annotate_page(file_id):
+    """Full-page editor. Loads the PDF via the /file endpoint and lets
+    the user mark it up with highlight/underline/strike/pen/notes, then
+    overwrites the original in Drive via /save."""
+    user_id = session["user_id"]
+    row = _load_token_row(user_id)
+    if not row or not row.get("refresh_token") or not _row_has_drive_scope(row):
+        # Send them back through the existing connect/re-consent flow.
+        return redirect(url_for("knowledgebase.knowledge_base_page"))
+
+    # Cheap metadata-only call so the header can show the real filename
+    # without the client doing a second round-trip.
+    file_name = "PDF"
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+        meta = _build_drive(creds).files().get(
+            fileId=file_id, fields="name"
+        ).execute()
+        file_name = meta.get("name") or file_name
+    except (RefreshError, HttpError) as e:
+        logger.info("kb annotate: name lookup failed for %s (%s)", file_id, e)
+
+    return render_template(
+        "knowledgebase_annotate.html",
+        file_id=file_id,
+        file_name=file_name,
+        back_url=url_for("knowledgebase.knowledge_base_page"),
+    )
+
+
+@knowledgebase_bp.route("/api/knowledge-base/<file_id>/file", methods=["GET"])
+@login_required
+def kb_download(file_id):
+    """Stream the raw PDF bytes from Drive to the browser. The browser
+    can't auth to Drive directly without leaking the OAuth token, so we
+    proxy. Small files (≤25 MB cap) so a buffered read is fine."""
+    user_id = session["user_id"]
+    row = _load_token_row(user_id)
+    err = _need_connect_response(row)
+    if err:
+        return err
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed"}), 401
+
+    service = _build_drive(creds)
+    try:
+        req = service.files().get_media(fileId=file_id)
+        buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _status, done = downloader.next_chunk()
+    except HttpError as e:
+        logger.warning("kb download failed for %s: %s", file_id, e)
+        status = getattr(e, "status_code", 502) or 502
+        return jsonify({"error": "Drive download failed."}), status
+
+    data = buf.getvalue()
+    resp = Response(data, mimetype="application/pdf")
+    # Inline so PDF.js fetches it as bytes, not as a browser download.
+    resp.headers["Content-Disposition"] = "inline"
+    resp.headers["Content-Length"] = str(len(data))
+    # Editor refetches on each open; no point caching across sessions
+    # because the file could have been annotated and rewritten.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@knowledgebase_bp.route("/api/knowledge-base/<file_id>/save", methods=["POST"])
+@login_required
+def kb_save_annotated(file_id):
+    """Overwrite the existing Drive file with new PDF bytes. Same
+    file_id, sharing, and Drive URL — Drive treats this as a new
+    revision on the same file."""
+    user_id = session["user_id"]
+
+    # Accept either multipart upload (field name "file") or a raw
+    # application/pdf body. Multipart is what the editor sends today.
+    blob = None
+    f = request.files.get("file")
+    if f and f.filename:
+        blob = f.stream.read()
+    elif request.data and request.mimetype == "application/pdf":
+        blob = request.data
+    if not blob:
+        return jsonify({"error": "No PDF body"}), 400
+    if len(blob) > MAX_UPLOAD_BYTES:
+        return jsonify({
+            "error": f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+        }), 400
+
+    row = _load_token_row(user_id)
+    err = _need_connect_response(row)
+    if err:
+        return err
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed"}), 401
+
+    service = _build_drive(creds)
+
+    # Refresh page count since the annotated copy might have changed
+    # length (rare, but the bake process can re-flow if anything weird).
+    page_count = _count_pdf_pages(blob)
+    body = {}
+    if page_count is not None:
+        body["appProperties"] = {"page_count": str(page_count)}
+
+    media = MediaIoBaseUpload(io.BytesIO(blob), mimetype="application/pdf", resumable=False)
+    try:
+        updated = service.files().update(
+            fileId=file_id,
+            body=body or None,
+            media_body=media,
+            fields=(
+                "id, name, size, createdTime, modifiedTime, "
+                "webViewLink, thumbnailLink, iconLink, description, "
+                "appProperties"
+            ),
+        ).execute()
+    except HttpError as e:
+        logger.exception("kb save failed for %s: %s", file_id, e)
+        return jsonify({"error": "Drive save failed."}), 502
+
+    return jsonify({"ok": True, "file": _format_file(updated)})
 
 
 @knowledgebase_bp.route("/api/knowledge-base/<file_id>/purpose", methods=["POST"])
