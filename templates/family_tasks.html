@@ -262,7 +262,12 @@
     tasks: [],
     editing: null,   // task being edited, or null for new
     loading: false,
+    pollTimer: null,
   };
+
+  // ~30s is enough for "live enough" without being a noticeable
+  // background drain. Family-team sized data means each poll is cheap.
+  const POLL_MS = 30_000;
 
   const $ = (sel) => document.querySelector(sel);
   const esc = (s) => String(s == null ? "" : s)
@@ -343,6 +348,49 @@
       state.loading = false;
     }
   }
+
+  // Silent refresh used by polling and tab refocus. No loading
+  // spinner, no error toast, no repaint while the user is mid-edit —
+  // we just swap the list in place when the new data arrives.
+  // Skipped while the create/edit modal is open so a poll mid-typing
+  // can't blow away the user's draft state.
+  async function refresh() {
+    if (state.loading) return;
+    if ($("#ft-modal").classList.contains("is-open")) return;
+    try {
+      const url = "/api/family-tasks?view=" + encodeURIComponent(state.view)
+        + "&show_done=" + (state.showDone ? "1" : "0");
+      const data = await apiGet(url);
+      const next = JSON.stringify(data.tasks || []);
+      const prev = JSON.stringify(state.tasks);
+      if (next === prev) return;   // no-op repaint avoidance
+      state.tasks = data.tasks || [];
+      renderList();
+    } catch (_) {
+      // Transient failure — keep the existing list visible.
+    }
+  }
+
+  function startPolling() {
+    if (state.pollTimer) return;
+    state.pollTimer = setInterval(refresh, POLL_MS);
+  }
+  function stopPolling() {
+    if (!state.pollTimer) return;
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+
+  // Pause when the tab is hidden, refetch + resume when it comes back —
+  // so the moment you switch to this tab you see the latest state.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      refresh();
+      startPolling();
+    }
+  });
 
   function renderList() {
     const wrap = $("#ft-list-wrap");
@@ -520,7 +568,7 @@
 
   // Boot
   if (window.feather) feather.replace();
-  loadMembers().then(loadTasks);
+  loadMembers().then(loadTasks).then(startPolling);
 })();
 </script>
 
