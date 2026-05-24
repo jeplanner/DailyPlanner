@@ -537,3 +537,169 @@ def kb_set_purpose(file_id):
         logger.warning("kb set_purpose failed for %s: %s", file_id, e)
         return jsonify({"error": "Save failed."}), 502
     return jsonify({"ok": True, "purpose": purpose})
+
+
+# ── Backlog (per-user "to add" list) ────────────────────────────
+
+
+BACKLOG_TITLE_MAX = 300
+BACKLOG_NOTES_MAX = 2000
+
+
+def _backlog_now_iso():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _backlog_shape(row):
+    return {
+        "id": row.get("id"),
+        "title": row.get("title") or "",
+        "notes": row.get("notes") or "",
+        "done_at": row.get("done_at"),
+        "is_done": bool(row.get("done_at")),
+        "created_at": row.get("created_at"),
+    }
+
+
+@knowledgebase_bp.route("/api/knowledge-base/backlog", methods=["GET"])
+@login_required
+def kb_backlog_list():
+    """List the viewer's backlog. `?show_done=1` includes completed
+    items (default hides them so the panel stays focused on what's
+    left to do)."""
+    user_id = session["user_id"]
+    show_done = (request.args.get("show_done") or "").strip() in ("1", "true", "yes")
+
+    params = {
+        "user_id": f"eq.{user_id}",
+        "deleted_at": "is.null",
+        "select": "id,title,notes,done_at,created_at",
+        # Open items first (done_at NULL), then most-recently-added.
+        "order": "done_at.asc.nullsfirst,created_at.desc",
+        "limit": "200",
+    }
+    if not show_done:
+        params["done_at"] = "is.null"
+
+    try:
+        rows = get("kb_backlog", params) or []
+    except Exception as e:
+        # Most likely cause: migration not applied yet. Don't 500 the
+        # page — return an empty list so the panel renders quietly.
+        logger.warning("kb backlog list failed (migration pending?): %s", e)
+        return jsonify({"items": [], "migration_pending": True})
+
+    return jsonify({"items": [_backlog_shape(r) for r in rows]})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/backlog", methods=["POST"])
+@login_required
+def kb_backlog_create():
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "Title required"}), 400
+    title = title[:BACKLOG_TITLE_MAX]
+    notes = (data.get("notes") or "").strip() or None
+    if notes:
+        notes = notes[:BACKLOG_NOTES_MAX]
+
+    payload = {
+        "user_id": user_id,
+        "title": title,
+        "notes": notes,
+    }
+    try:
+        rows = post("kb_backlog", payload)
+    except Exception as e:
+        logger.exception("kb backlog create failed: %s", e)
+        return jsonify({"error": "Create failed"}), 502
+
+    row = rows[0] if rows else payload
+    return jsonify({"item": _backlog_shape(row)})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/backlog/<item_id>/done", methods=["POST"])
+@login_required
+def kb_backlog_toggle_done(item_id):
+    """Tick/untick. Body: {done: bool}; omit to toggle whatever the
+    current state is."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    rows = get("kb_backlog", {
+        "id": f"eq.{item_id}",
+        "user_id": f"eq.{user_id}",
+        "deleted_at": "is.null",
+        "select": "id,done_at",
+        "limit": "1",
+    }) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    cur = rows[0]
+
+    if "done" in data:
+        want_done = bool(data["done"])
+    else:
+        want_done = not bool(cur.get("done_at"))
+
+    try:
+        update(
+            "kb_backlog",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json={"done_at": _backlog_now_iso() if want_done else None},
+        )
+    except Exception as e:
+        logger.exception("kb backlog done toggle failed: %s", e)
+        return jsonify({"error": "Save failed"}), 502
+    return jsonify({"ok": True, "done": want_done})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/backlog/<item_id>/update", methods=["POST"])
+@login_required
+def kb_backlog_update(item_id):
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    patch = {}
+    if "title" in data:
+        v = (data.get("title") or "").strip()
+        if not v:
+            return jsonify({"error": "Title required"}), 400
+        patch["title"] = v[:BACKLOG_TITLE_MAX]
+    if "notes" in data:
+        v = (data.get("notes") or "").strip()
+        patch["notes"] = v[:BACKLOG_NOTES_MAX] if v else None
+
+    if not patch:
+        return jsonify({"ok": True, "noop": True})
+
+    try:
+        update(
+            "kb_backlog",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json=patch,
+        )
+    except Exception as e:
+        logger.exception("kb backlog update failed: %s", e)
+        return jsonify({"error": "Save failed"}), 502
+    return jsonify({"ok": True, "patch": patch})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/backlog/<item_id>/delete", methods=["POST"])
+@login_required
+def kb_backlog_delete(item_id):
+    """Soft-delete; matches the project convention."""
+    user_id = session["user_id"]
+    try:
+        update(
+            "kb_backlog",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            json={"deleted_at": _backlog_now_iso()},
+        )
+    except Exception as e:
+        logger.exception("kb backlog delete failed: %s", e)
+        return jsonify({"error": "Delete failed"}), 502
+    return jsonify({"ok": True})

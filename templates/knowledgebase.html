@@ -190,6 +190,128 @@
     max-width: 54ch; margin: 0 auto 18px; font-size: 14px; line-height: 1.55;
   }
 
+  /* ── Backlog panel ───────────────────────────────────────
+     Lives between the hero and the file grid. Visual weight is
+     intentionally light so the file grid still feels like the
+     primary content of this page. */
+  .kb-backlog {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .kb-backlog-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid transparent;
+  }
+  .kb-backlog.is-open .kb-backlog-head { border-bottom-color: var(--color-border); }
+
+  .kb-backlog-toggle {
+    background: transparent; border: none; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; color: var(--color-text);
+    font-weight: 700; font-size: 14px;
+    padding: 0;
+  }
+  .kb-backlog-chevron { width: 16px; height: 16px; transition: transform .15s; }
+  .kb-backlog:not(.is-open) .kb-backlog-chevron { transform: rotate(-90deg); }
+  .kb-backlog-count {
+    background: var(--color-primary); color: white;
+    font-size: 11px; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+  .kb-backlog-showdone {
+    font-size: 12px; color: var(--color-text-secondary);
+    display: inline-flex; align-items: center; gap: 5px;
+    cursor: pointer; user-select: none;
+  }
+  .kb-backlog-showdone input { accent-color: var(--color-primary); }
+
+  .kb-backlog-body {
+    padding: 8px 14px 12px;
+  }
+  .kb-backlog:not(.is-open) .kb-backlog-body { display: none; }
+
+  .kb-backlog-add {
+    display: flex; gap: 6px; margin-bottom: 8px;
+  }
+  .kb-backlog-add input {
+    flex: 1;
+    padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--color-border);
+    font: inherit; background: var(--color-bg); color: var(--color-text);
+    outline: none;
+  }
+  .kb-backlog-add input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .kb-backlog-add-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px;
+    background: var(--color-primary); color: white;
+    border: none; border-radius: 8px;
+    cursor: pointer;
+  }
+  .kb-backlog-add-btn svg { width: 16px; height: 16px; }
+  .kb-backlog-add-btn:hover { background: var(--color-primary-hover, #1d4ed8); }
+
+  .kb-backlog-list { list-style: none; padding: 0; margin: 0; }
+  .kb-backlog-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    align-items: start; gap: 10px;
+    padding: 8px 4px;
+    border-bottom: 1px dashed var(--color-border);
+  }
+  .kb-backlog-row:last-child { border-bottom: none; }
+  .kb-backlog-row.is-done .kb-backlog-row-title {
+    text-decoration: line-through;
+    color: var(--color-text-muted, #94a3b8);
+  }
+  .kb-backlog-row input[type=checkbox] {
+    margin-top: 3px; width: 16px; height: 16px;
+    accent-color: var(--color-primary); cursor: pointer;
+  }
+  .kb-backlog-row-main { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .kb-backlog-row-title {
+    font-size: 13.5px; font-weight: 500; color: var(--color-text);
+    overflow-wrap: anywhere; line-height: 1.35;
+    cursor: text; padding: 1px 0;
+  }
+  /* Inline-edit state for the title — same pattern as KB purpose. */
+  .kb-backlog-row-title.is-editing {
+    background: var(--color-surface);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+    border-radius: 4px; padding: 1px 6px;
+  }
+  .kb-backlog-row-actions {
+    display: inline-flex; gap: 2px;
+    opacity: 0; transition: opacity .12s;
+  }
+  .kb-backlog-row:hover .kb-backlog-row-actions { opacity: 1; }
+  .kb-backlog-row-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 6px; color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .kb-backlog-row-btn:hover { background: var(--color-surface-secondary, #f3f4f6); border-color: var(--color-border); }
+  .kb-backlog-row-btn.danger:hover { color: #b91c1c; }
+  .kb-backlog-row-btn svg { width: 13px; height: 13px; }
+
+  .kb-backlog-empty {
+    padding: 14px 4px;
+    text-align: center;
+    color: var(--color-text-muted, #94a3b8);
+    font-size: 13px;
+  }
+
   /* Mobile floating action button */
   .kb-fab { display: none; }
   @media (max-width: 640px) {
@@ -269,6 +391,40 @@
       <a class="kb-cta" href="{{ connect_url }}"><i data-feather="refresh-cw"></i> Re-connect Google</a>
     </div>
   {% else %}
+
+    <!-- ─── Backlog panel ──────────────────────────────────────
+         "What I want to add" sits above "what I have" so processing
+         the backlog naturally flows into uploading. Per-user, soft-
+         delete, no notifications — purely a private todo list for
+         feeding the KB. -->
+    <section class="kb-backlog" id="kb-backlog">
+      <header class="kb-backlog-head">
+        <button type="button" class="kb-backlog-toggle" id="kb-backlog-toggle"
+                aria-expanded="true" title="Show / hide backlog">
+          <i data-feather="chevron-down" class="kb-backlog-chevron"></i>
+          <span class="kb-backlog-title">Backlog</span>
+          <span class="kb-backlog-count" id="kb-backlog-count" hidden>0</span>
+        </button>
+        <label class="kb-backlog-showdone">
+          <input type="checkbox" id="kb-backlog-showdone"> Show completed
+        </label>
+      </header>
+
+      <div class="kb-backlog-body" id="kb-backlog-body">
+        <form class="kb-backlog-add" id="kb-backlog-form" autocomplete="off">
+          <input type="text" id="kb-backlog-input" maxlength="300"
+                 placeholder="Add something to bring into KB (e.g. “Scan thermodynamics textbook”)…">
+          <button type="submit" class="kb-backlog-add-btn" title="Add">
+            <i data-feather="plus"></i>
+          </button>
+        </form>
+        <ul class="kb-backlog-list" id="kb-backlog-list"></ul>
+        <div class="kb-backlog-empty" id="kb-backlog-empty" hidden>
+          Nothing queued. Add what you want to bring into KB above.
+        </div>
+      </div>
+    </section>
+
     <div class="kb-dropzone" id="kb-dropzone">
       <div class="kb-dropzone-hint">
         <i data-feather="upload-cloud" style="width:22px;height:22px;margin-right:8px;"></i>
@@ -667,8 +823,209 @@
       });
     }
     _loadList();
+    _loadBacklog();
+    _wireBacklog();
     if (window.feather) feather.replace();
   });
+
+  // ── Backlog (per-user "to add to KB" list) ────────────────
+  let _backlogShowDone = false;
+  let _backlogOpen = true;
+
+  async function _loadBacklog() {
+    try {
+      const r = await fetch(
+        "/api/knowledge-base/backlog" + (_backlogShowDone ? "?show_done=1" : ""),
+        { credentials: "same-origin" }
+      );
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      _renderBacklog(data.items || []);
+    } catch (e) {
+      // Silent on failure — the panel just stays empty rather than
+      // showing a scary error on a page whose main job is the file grid.
+      console.warn("[kb-backlog] load failed:", e);
+      _renderBacklog([]);
+    }
+  }
+
+  function _renderBacklog(items) {
+    const list  = document.getElementById("kb-backlog-list");
+    const empty = document.getElementById("kb-backlog-empty");
+    const count = document.getElementById("kb-backlog-count");
+    if (!list) return;
+
+    // Count is the number of open items only — done ones don't deserve
+    // a badge prompt.
+    const openCount = items.filter(i => !i.is_done).length;
+    if (openCount > 0) {
+      count.textContent = String(openCount);
+      count.removeAttribute("hidden");
+    } else {
+      count.setAttribute("hidden", "");
+    }
+
+    if (!items.length) {
+      list.innerHTML = "";
+      empty.removeAttribute("hidden");
+      return;
+    }
+    empty.setAttribute("hidden", "");
+    list.innerHTML = items.map(_backlogRowHtml).join("");
+    if (window.feather) feather.replace();
+    _wireBacklogRows();
+  }
+
+  function _backlogRowHtml(item) {
+    const cls = "kb-backlog-row" + (item.is_done ? " is-done" : "");
+    return `
+      <li class="${cls}" data-id="${_esc(item.id)}">
+        <input type="checkbox" ${item.is_done ? "checked" : ""}
+               aria-label="Mark done">
+        <div class="kb-backlog-row-main">
+          <div class="kb-backlog-row-title" title="Click to edit">${_esc(item.title)}</div>
+        </div>
+        <div class="kb-backlog-row-actions">
+          <button type="button" class="kb-backlog-row-btn danger" data-act="delete" title="Delete">
+            <i data-feather="trash-2"></i>
+          </button>
+        </div>
+      </li>`;
+  }
+
+  function _wireBacklogRows() {
+    document.querySelectorAll("#kb-backlog-list .kb-backlog-row").forEach(row => {
+      const id = row.dataset.id;
+      row.querySelector('input[type=checkbox]')?.addEventListener("change", (e) =>
+        _toggleBacklogDone(id, e.target.checked, row));
+      row.querySelector('[data-act="delete"]')?.addEventListener("click", () =>
+        _deleteBacklog(id, row));
+      row.querySelector('.kb-backlog-row-title')?.addEventListener("click", (e) =>
+        _editBacklogTitle(e.currentTarget, id));
+    });
+  }
+
+  async function _toggleBacklogDone(id, want, row) {
+    try {
+      const r = await fetch(`/api/knowledge-base/backlog/${encodeURIComponent(id)}/done`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+        body: JSON.stringify({ done: want }),
+      });
+      if (!r.ok) throw new Error(r.status);
+      row.classList.toggle("is-done", want);
+      // If show-done is off and we just ticked, the row vanishes on
+      // next refresh — easier to just refetch than maintain local state.
+      if (want && !_backlogShowDone) _loadBacklog();
+      else {
+        // Decrement / increment the count badge in-place.
+        const count = document.getElementById("kb-backlog-count");
+        const cur = parseInt(count.textContent, 10) || 0;
+        const next = Math.max(0, cur + (want ? -1 : 1));
+        if (next > 0) { count.textContent = String(next); count.removeAttribute("hidden"); }
+        else count.setAttribute("hidden", "");
+      }
+    } catch (e) {
+      _toast("Couldn't save", "error");
+      row.querySelector('input[type=checkbox]').checked = !want;
+    }
+  }
+
+  async function _deleteBacklog(id, row) {
+    if (!confirm("Delete this item from the backlog?")) return;
+    try {
+      const r = await fetch(`/api/knowledge-base/backlog/${encodeURIComponent(id)}/delete`, {
+        method: "POST", headers: { "X-CSRFToken": _csrf },
+      });
+      if (!r.ok) throw new Error(r.status);
+      row.style.transition = "opacity .2s"; row.style.opacity = "0";
+      setTimeout(() => _loadBacklog(), 200);
+    } catch (e) {
+      _toast("Couldn't delete", "error");
+    }
+  }
+
+  // Inline title edit — same pattern as KB purpose. Click to edit,
+  // Enter commits, Escape cancels.
+  function _editBacklogTitle(cell, id) {
+    if (cell.classList.contains("is-editing")) return;
+    const original = (cell.textContent || "").trim();
+    cell.classList.add("is-editing");
+    cell.setAttribute("contenteditable", "plaintext-only");
+    cell.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(false);
+    sel.removeAllRanges(); sel.addRange(range);
+
+    const commit = async () => {
+      cell.removeAttribute("contenteditable");
+      cell.classList.remove("is-editing");
+      const next = (cell.textContent || "").trim().slice(0, 300);
+      if (!next || next === original) { cell.textContent = original; return; }
+      try {
+        const r = await fetch(`/api/knowledge-base/backlog/${encodeURIComponent(id)}/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+          body: JSON.stringify({ title: next }),
+        });
+        if (!r.ok) throw new Error(r.status);
+        cell.textContent = next;
+      } catch (e) {
+        cell.textContent = original;
+        _toast("Couldn't save", "error");
+      }
+    };
+    const cancel = () => {
+      cell.removeAttribute("contenteditable");
+      cell.classList.remove("is-editing");
+      cell.textContent = original;
+    };
+    cell.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    };
+    cell.onblur = commit;
+  }
+
+  function _wireBacklog() {
+    const panel = document.getElementById("kb-backlog");
+    panel?.classList.add("is-open");
+
+    document.getElementById("kb-backlog-toggle")?.addEventListener("click", () => {
+      _backlogOpen = !_backlogOpen;
+      panel.classList.toggle("is-open", _backlogOpen);
+      document.getElementById("kb-backlog-toggle")
+        .setAttribute("aria-expanded", String(_backlogOpen));
+    });
+
+    document.getElementById("kb-backlog-showdone")?.addEventListener("change", (e) => {
+      _backlogShowDone = e.target.checked;
+      _loadBacklog();
+    });
+
+    document.getElementById("kb-backlog-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("kb-backlog-input");
+      const title = (input.value || "").trim();
+      if (!title) return;
+      input.value = "";
+      try {
+        const r = await fetch("/api/knowledge-base/backlog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+          body: JSON.stringify({ title }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || r.status);
+        _loadBacklog();
+      } catch (err) {
+        input.value = title;
+        _toast("Couldn't add: " + (err.message || ""), "error");
+      }
+    });
+  }
 {% else %}
   document.addEventListener("DOMContentLoaded", () => {
     if (window.feather) feather.replace();
