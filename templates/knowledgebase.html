@@ -933,11 +933,26 @@
     // on shared rows can tick done but not rename/remove someone else's
     // intent.
     const titleAttrs = item.mine ? 'title="Click to edit"' : 'title="Added by ' + _esc(item.created_by_name || "someone else") + '"';
-    const actions = item.mine
+    // Scope toggle: lets the creator flip a row between Mine and
+    // Family without delete-and-re-add. Hidden when chat isn't
+    // enabled (no Family scope to flip into) or when the row isn't mine.
+    const scopeToggle = (item.mine && _CHAT_ENABLED)
+      ? (item.is_shared
+          ? `<button type="button" class="kb-backlog-row-btn" data-act="unshare"
+                     title="Make private (move to Mine)">
+               <i data-feather="lock"></i>
+             </button>`
+          : `<button type="button" class="kb-backlog-row-btn" data-act="share"
+                     title="Share with family (move to Family)">
+               <i data-feather="share-2"></i>
+             </button>`)
+      : "";
+    const deleteBtn = item.mine
       ? `<button type="button" class="kb-backlog-row-btn danger" data-act="delete" title="Delete">
            <i data-feather="trash-2"></i>
          </button>`
       : "";
+    const actions = scopeToggle + deleteBtn;
     return `
       <li class="${cls}" data-id="${_esc(item.id)}" data-mine="${item.mine ? '1' : '0'}">
         <input type="checkbox" ${item.is_done ? "checked" : ""}
@@ -963,6 +978,10 @@
           _deleteBacklog(id, row));
         row.querySelector('.kb-backlog-row-title')?.addEventListener("click", (e) =>
           _editBacklogTitle(e.currentTarget, id));
+        row.querySelector('[data-act="share"]')?.addEventListener("click", () =>
+          _flipBacklogScope(id, true, row));
+        row.querySelector('[data-act="unshare"]')?.addEventListener("click", () =>
+          _flipBacklogScope(id, false, row));
       }
     });
   }
@@ -990,6 +1009,30 @@
     } catch (e) {
       _toast("Couldn't save", "error");
       row.querySelector('input[type=checkbox]').checked = !want;
+    }
+  }
+
+  // Flip a row's is_shared. After save the row vanishes from the
+  // current tab (because the list filter no longer includes it) and
+  // shows up in the other tab — so we just refetch.
+  async function _flipBacklogScope(id, wantShared, row) {
+    try {
+      const r = await fetch(`/api/knowledge-base/backlog/${encodeURIComponent(id)}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+        body: JSON.stringify({ is_shared: wantShared }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || r.status);
+      }
+      row.style.transition = "opacity .15s"; row.style.opacity = "0";
+      setTimeout(() => {
+        _loadBacklog();
+        _toast(wantShared ? "Moved to Family" : "Moved to Mine", "success");
+      }, 150);
+    } catch (e) {
+      _toast("Couldn't change scope: " + (e.message || ""), "error");
     }
   }
 
