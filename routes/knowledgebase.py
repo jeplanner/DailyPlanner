@@ -30,7 +30,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth import login_required
-from supabase_client import get, update
+from supabase_client import get, post, update
 
 logger = logging.getLogger("daily_plan")
 
