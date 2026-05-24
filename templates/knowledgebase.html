@@ -407,6 +407,63 @@
   .kb-archived-body .kb-list { border: none; border-radius: 0; }
   .kb-archived-body .kb-link { color: var(--color-text-secondary); }
 
+  /* Upload-time purpose modal — only visible when the user picks
+     a file. Closes immediately on Skip / Upload / Esc / backdrop click. */
+  .kb-upload-modal {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(15,23,42,.55);
+    z-index: 250;
+  }
+  .kb-upload-modal.is-open { display: flex; }
+  .kb-upload-modal-body {
+    background: var(--color-surface);
+    border-radius: 14px;
+    padding: 20px 22px 16px;
+    width: min(460px, 92vw);
+    box-shadow: 0 24px 60px rgba(0,0,0,.3);
+  }
+  .kb-upload-modal-body h2 { margin: 0 0 4px; font-size: 18px; }
+  .kb-upload-modal-file {
+    margin: 0 0 4px;
+    font-size: 13px; color: var(--color-text);
+    font-weight: 600;
+    word-break: break-all;
+  }
+  .kb-upload-modal-help {
+    margin: 0 0 12px;
+    font-size: 12.5px; color: var(--color-text-secondary);
+    line-height: 1.4;
+  }
+  .kb-upload-modal textarea {
+    width: 100%; min-height: 70px; max-height: 200px;
+    padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--color-border);
+    font: inherit; background: var(--color-bg); color: var(--color-text);
+    outline: none; resize: vertical;
+    box-sizing: border-box;
+  }
+  .kb-upload-modal textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .kb-upload-modal-actions {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;
+  }
+  .kb-upload-btn-ghost {
+    padding: 7px 14px; border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: transparent; color: var(--color-text);
+    cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  .kb-upload-btn-primary {
+    padding: 7px 14px; border-radius: 8px;
+    border: none;
+    background: var(--color-primary); color: white;
+    cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  .kb-upload-btn-primary:hover { background: var(--color-primary-hover, #1d4ed8); }
+
   /* Mobile floating action button */
   .kb-fab { display: none; }
   @media (max-width: 640px) {
@@ -568,6 +625,23 @@
 
     <button type="button" class="kb-fab" aria-label="Upload PDF"
             onclick="document.getElementById('kb-file-input').click()">+</button>
+
+    <!-- Upload-time purpose prompt — fires once per selected file,
+         before the actual upload happens. Empty input = skip; the
+         file uploads with no description. -->
+    <div class="kb-upload-modal" id="kb-upload-modal" aria-hidden="true">
+      <div class="kb-upload-modal-body">
+        <h2 id="kb-upload-modal-title">Add purpose</h2>
+        <p class="kb-upload-modal-file" id="kb-upload-modal-file"></p>
+        <p class="kb-upload-modal-help">A short note about why this file is in your library. You can change it later from the row.</p>
+        <textarea id="kb-upload-modal-purpose" maxlength="500"
+                  placeholder="e.g. “Lecture notes on entropy — re-read before exam”"></textarea>
+        <div class="kb-upload-modal-actions">
+          <button type="button" class="kb-upload-btn-ghost" id="kb-upload-modal-skip">Skip</button>
+          <button type="button" class="kb-upload-btn-primary" id="kb-upload-modal-go">Upload</button>
+        </div>
+      </div>
+    </div>
   {% endif %}
 </div>
 
@@ -859,6 +933,48 @@
     } catch (_) { /* silent */ }
   }
 
+  // Promise-based modal: returns the typed purpose or "" if skipped.
+  // Single instance reused across uploads — if a previous prompt is
+  // somehow still open we close it first so we don't stack.
+  function _promptUploadPurpose(filename) {
+    return new Promise((resolve) => {
+      const modal   = document.getElementById("kb-upload-modal");
+      const fileEl  = document.getElementById("kb-upload-modal-file");
+      const textEl  = document.getElementById("kb-upload-modal-purpose");
+      const skipBtn = document.getElementById("kb-upload-modal-skip");
+      const goBtn   = document.getElementById("kb-upload-modal-go");
+
+      fileEl.textContent = filename;
+      textEl.value = "";
+      modal.classList.add("is-open");
+      modal.setAttribute("aria-hidden", "false");
+      setTimeout(() => textEl.focus(), 30);
+
+      const finish = (val) => {
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden", "true");
+        skipBtn.removeEventListener("click", onSkip);
+        goBtn.removeEventListener("click", onGo);
+        modal.removeEventListener("click", onBackdrop);
+        document.removeEventListener("keydown", onKey);
+        resolve(val);
+      };
+      const onSkip = () => finish("");
+      const onGo   = () => finish(textEl.value.trim().slice(0, 500));
+      const onBackdrop = (e) => { if (e.target === modal) finish(""); };
+      const onKey  = (e) => {
+        if (e.key === "Escape") { e.preventDefault(); finish(""); }
+        else if (e.key === "Enter" && !e.shiftKey && document.activeElement === textEl) {
+          e.preventDefault(); finish(textEl.value.trim().slice(0, 500));
+        }
+      };
+      skipBtn.addEventListener("click", onSkip);
+      goBtn.addEventListener("click", onGo);
+      modal.addEventListener("click", onBackdrop);
+      document.addEventListener("keydown", onKey);
+    });
+  }
+
   async function handleKbUpload(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
@@ -870,10 +986,15 @@
       if (f.size > {{ max_upload_mb }} * 1024 * 1024) {
         _toast(`Too big (>{{ max_upload_mb }} MB): ${f.name}`, "error"); continue;
       }
+      // Ask for purpose before the upload starts — gives the user a
+      // chance to set context while the file's fresh in their head.
+      // Skipping is fine; the file uploads with empty description.
+      const purpose = await _promptUploadPurpose(f.name);
       _toast(`Uploading ${f.name}…`);
       const fd = new FormData();
       fd.append("file", f);
       fd.append("name", f.name);
+      if (purpose) fd.append("purpose", purpose);
       try {
         const r = await fetch("/api/knowledge-base/upload", {
           method: "POST",

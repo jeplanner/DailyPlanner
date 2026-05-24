@@ -375,6 +375,11 @@ def kb_upload():
     if not name.lower().endswith(".pdf"):
         name = name + ".pdf"
 
+    # Optional purpose captured at upload time — stored in Drive's
+    # native `description` field, same place the inline purpose editor
+    # writes to. Trimmed and length-capped to match.
+    purpose = (request.form.get("purpose") or "").strip()[:500]
+
     # Count pages locally so we don't have to download the file later
     # to know how long it is. None on failure — UI handles gracefully.
     page_count = _count_pdf_pages(blob)
@@ -382,6 +387,8 @@ def kb_upload():
     if page_count is not None:
         # appProperties values must be strings; max 124 chars per key.
         body["appProperties"] = {"page_count": str(page_count)}
+    if purpose:
+        body["description"] = purpose
 
     media = MediaIoBaseUpload(io.BytesIO(blob), mimetype="application/pdf", resumable=False)
     try:
