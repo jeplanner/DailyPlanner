@@ -146,6 +146,10 @@ def _format_file(f: dict) -> dict:
         "web_view": f.get("webViewLink"),
         "thumbnail": f.get("thumbnailLink"),
         "icon": f.get("iconLink"),
+        # "purpose" is just Drive's native description field — visible
+        # in Drive's own details pane too, so anything you set here
+        # shows up in both places. Keeps us out of the local-DB business.
+        "purpose": f.get("description") or "",
     }
 
 
@@ -215,7 +219,7 @@ def kb_list():
             q=q,
             fields=(
                 "files(id, name, size, createdTime, modifiedTime, "
-                "webViewLink, thumbnailLink, iconLink)"
+                "webViewLink, thumbnailLink, iconLink, description)"
             ),
             orderBy="createdTime desc",
             pageSize=200,
@@ -274,7 +278,7 @@ def kb_upload():
             media_body=media,
             fields=(
                 "id, name, size, createdTime, modifiedTime, "
-                "webViewLink, thumbnailLink, iconLink"
+                "webViewLink, thumbnailLink, iconLink, description"
             ),
         ).execute()
     except HttpError as e:
@@ -335,3 +339,33 @@ def kb_rename(file_id):
         logger.warning("kb rename failed for %s: %s", file_id, e)
         return jsonify({"error": "Rename failed."}), 502
     return jsonify({"ok": True, "name": new_name})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/<file_id>/purpose", methods=["POST"])
+@login_required
+def kb_set_purpose(file_id):
+    """Set the 'purpose' note on a PDF — stored in Drive's native
+    description field so the value also shows up in Drive's own
+    details pane. Empty string clears it."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    purpose = (data.get("purpose") or "").strip()[:500]
+
+    row = _load_token_row(user_id)
+    err = _need_connect_response(row)
+    if err:
+        return err
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed"}), 401
+
+    service = _build_drive(creds)
+    try:
+        service.files().update(
+            fileId=file_id, body={"description": purpose}
+        ).execute()
+    except HttpError as e:
+        logger.warning("kb set_purpose failed for %s: %s", file_id, e)
+        return jsonify({"error": "Save failed."}), 502
+    return jsonify({"ok": True, "purpose": purpose})

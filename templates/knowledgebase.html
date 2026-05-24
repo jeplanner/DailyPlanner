@@ -80,76 +80,80 @@
   }
   .kb-dropzone.is-dragging .kb-dropzone-hint { display: flex; }
 
-  .kb-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 14px;
-  }
-  .kb-card {
-    position: relative;
-    border-radius: 14px; overflow: hidden;
+  /* Linear list view — link + purpose, nothing else. PDFs are reference
+     material; the visual card grid added overhead without adding signal. */
+  .kb-list {
+    list-style: none; padding: 0; margin: 0;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
-    transition: border-color .12s, box-shadow .14s;
-    display: flex; flex-direction: column;
-  }
-  .kb-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
-  .kb-frame {
-    position: relative;
-    aspect-ratio: 3 / 4;
-    background:
-      linear-gradient(135deg, #fafafa 0%, #f1f5f9 100%);
+    border-radius: 12px;
     overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
   }
-  .kb-frame img {
-    width: 100%; height: 100%; object-fit: cover; display: block;
+  .kb-item {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1.2fr) minmax(0, 2fr) auto;
+    align-items: start; gap: 14px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--color-border);
+    transition: background .12s;
   }
-  .kb-frame .kb-fallback {
-    display: flex; flex-direction: column; align-items: center; gap: 8px;
-    color: #94a3b8; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+  .kb-item:last-child { border-bottom: none; }
+  .kb-item:hover { background: var(--color-surface-secondary, #f8fafc); }
+  .kb-item-icon {
+    color: #ef4444;
+    margin-top: 1px;
   }
-  .kb-frame .kb-fallback svg { width: 42px; height: 42px; color: #cbd5e1; }
-  .kb-open-link {
-    position: absolute; inset: 0;
-    display: block;
-    text-indent: -9999px;
+  .kb-item-icon svg { width: 20px; height: 20px; display: block; }
+  .kb-link-col { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .kb-link {
+    color: var(--color-primary); text-decoration: none;
+    font-weight: 600; font-size: 14px; line-height: 1.4;
+    overflow-wrap: anywhere;
   }
-
-  .kb-overlay {
-    position: absolute; inset: 0;
-    display: flex; align-items: flex-start; justify-content: flex-end;
-    padding: 8px;
-    pointer-events: none;
-  }
-  .kb-overlay-actions { display: flex; gap: 6px; pointer-events: auto; }
-  .kb-action {
-    width: 30px; height: 30px; border: none; border-radius: 50%;
-    background: rgba(15,23,42,.55); color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; opacity: 0;
-    transition: opacity .12s, background .12s, transform .08s;
-    backdrop-filter: blur(2px);
-  }
-  .kb-action svg { width: 14px; height: 14px; }
-  .kb-card:hover .kb-action, .kb-action:focus-visible { opacity: 1; }
-  .kb-action.danger:hover { background: #b91c1c; }
-  .kb-action:not(.danger):hover { background: #1d4ed8; }
-  .kb-action:active { transform: scale(.92); }
-  @media (hover: none) { .kb-action { opacity: 1; } }
-
-  .kb-meta {
-    padding: 10px 12px;
-    border-top: 1px solid var(--color-border);
-    display: flex; flex-direction: column; gap: 3px;
-  }
-  .kb-name {
-    font-size: 13.5px; color: var(--color-text); font-weight: 600;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
+  .kb-link:hover { text-decoration: underline; }
   .kb-info {
     font-size: 11.5px; color: var(--color-text-muted, #94a3b8);
     font-variant-numeric: tabular-nums;
+  }
+  .kb-purpose-col {
+    min-width: 0;
+    font-size: 13.5px; line-height: 1.45;
+    color: var(--color-text-secondary);
+    cursor: text;
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px dashed transparent;
+    overflow-wrap: anywhere;
+  }
+  .kb-purpose-col:hover {
+    border-color: var(--color-border);
+    background: var(--color-surface);
+  }
+  .kb-purpose-col.is-empty { color: var(--color-text-muted, #94a3b8); font-style: italic; }
+  .kb-row-actions { display: flex; gap: 4px; align-items: center; }
+  .kb-row-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 8px; color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .kb-row-btn svg { width: 15px; height: 15px; }
+  .kb-row-btn:hover { background: var(--color-surface-secondary, #f3f4f6); border-color: var(--color-border); }
+  .kb-row-btn.danger:hover { color: #b91c1c; }
+  @media (max-width: 640px) {
+    .kb-item {
+      grid-template-columns: 22px minmax(0, 1fr) auto;
+      grid-template-areas:
+        "icon link actions"
+        ".    purpose purpose";
+      column-gap: 10px; row-gap: 6px;
+    }
+    .kb-item-icon { grid-area: icon; }
+    .kb-link-col   { grid-area: link; }
+    .kb-purpose-col{ grid-area: purpose; }
+    .kb-row-actions{ grid-area: actions; }
   }
 
   .kb-empty, .kb-connect, .kb-loading {
@@ -174,7 +178,6 @@
   @media (max-width: 640px) {
     .kb-app { padding: 18px 14px 96px; }
     .kb-hero h1 { font-size: 24px; }
-    .kb-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
     .kb-fab {
       display: inline-flex; align-items: center; justify-content: center;
       position: fixed; right: 16px;
@@ -301,45 +304,54 @@
     if (window.feather) feather.replace();
   }
 
-  function _cardHtml(f) {
+  function _itemHtml(f) {
     const name = _esc(f.name || "Untitled.pdf");
     const info = [_fmtSize(f.size_bytes), _fmtDate(f.created_at)].filter(Boolean).join(" · ");
-    const thumb = f.thumbnail
-      ? `<img src="${_esc(f.thumbnail)}" alt="${name}" loading="lazy" decoding="async">`
-      : `<div class="kb-fallback"><i data-feather="file-text"></i>PDF</div>`;
-    const open = f.web_view
-      ? `<a class="kb-open-link" href="${_esc(f.web_view)}" target="_blank" rel="noopener">Open</a>`
-      : "";
+    const href = f.web_view ? _esc(f.web_view) : "#";
+    const purposeRaw = f.purpose || "";
+    const purposeEsc = _esc(purposeRaw);
+    const purposeCls = "kb-purpose-col" + (purposeRaw ? "" : " is-empty");
+    const purposeText = purposeRaw ? purposeEsc : "+ Add purpose";
     return `
-      <div class="kb-card" data-file-id="${_esc(f.id)}">
-        <div class="kb-frame">
-          ${thumb}
-          ${open}
-          <div class="kb-overlay">
-            <div class="kb-overlay-actions">
-              <button type="button" class="kb-action" title="Rename"
-                      onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
-                <i data-feather="edit-2"></i>
-              </button>
-              <button type="button" class="kb-action danger" title="Move to Trash"
-                      onclick="kbDelete('${_esc(f.id)}', this); event.preventDefault();">
-                <i data-feather="trash-2"></i>
-              </button>
-            </div>
-          </div>
+      <li class="kb-item" data-file-id="${_esc(f.id)}">
+        <span class="kb-item-icon" aria-hidden="true"><i data-feather="file-text"></i></span>
+        <div class="kb-link-col">
+          <a class="kb-link" href="${href}" target="_blank" rel="noopener" title="${name}">${name}</a>
+          <span class="kb-info">${_esc(info)}</span>
         </div>
-        <div class="kb-meta">
-          <div class="kb-name" title="${name}">${name}</div>
-          <div class="kb-info">${_esc(info)}</div>
+        <div class="${purposeCls}" data-action="purpose"
+             title="Click to ${purposeRaw ? 'edit' : 'add a'} purpose">${purposeText}</div>
+        <div class="kb-row-actions">
+          <button type="button" class="kb-row-btn" title="Rename"
+                  onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
+            <i data-feather="edit-2"></i>
+          </button>
+          <button type="button" class="kb-row-btn danger" title="Move to Trash"
+                  onclick="kbDelete('${_esc(f.id)}', this); event.preventDefault();">
+            <i data-feather="trash-2"></i>
+          </button>
         </div>
-      </div>`;
+      </li>`;
+  }
+
+  function _wirePurposeCells() {
+    document.querySelectorAll("#kb-list .kb-purpose-col").forEach(cell => {
+      if (cell._wired) return;
+      cell._wired = true;
+      cell.addEventListener("click", () => {
+        const item = cell.closest(".kb-item");
+        const id = item?.dataset.fileId;
+        if (id) kbSetPurpose(id, cell);
+      });
+    });
   }
 
   function _renderGrid(files) {
     const wrap = document.getElementById("kb-grid-wrap");
     if (!files || files.length === 0) { _renderEmpty(); return; }
-    wrap.innerHTML = `<div class="kb-grid" id="kb-grid">${files.map(_cardHtml).join("")}</div>`;
+    wrap.innerHTML = `<ul class="kb-list" id="kb-list">${files.map(_itemHtml).join("")}</ul>`;
     if (window.feather) feather.replace();
+    _wirePurposeCells();
   }
 
   function _updateDriveLink(folderId) {
@@ -407,16 +419,17 @@
   }
 
   function _prependCard(file) {
-    let grid = document.getElementById("kb-grid");
-    if (!grid) {
+    let list = document.getElementById("kb-list");
+    if (!list) {
       const wrap = document.getElementById("kb-grid-wrap");
-      wrap.innerHTML = `<div class="kb-grid" id="kb-grid"></div>`;
-      grid = document.getElementById("kb-grid");
+      wrap.innerHTML = `<ul class="kb-list" id="kb-list"></ul>`;
+      list = document.getElementById("kb-list");
     }
     const tmp = document.createElement("div");
-    tmp.innerHTML = _cardHtml(file);
-    grid.insertBefore(tmp.firstElementChild, grid.firstChild);
+    tmp.innerHTML = _itemHtml(file);
+    list.insertBefore(tmp.firstElementChild, list.firstChild);
     if (window.feather) feather.replace();
+    _wirePurposeCells();
   }
 
   async function kbDelete(id, btn) {
@@ -427,15 +440,15 @@
         headers: { "X-CSRFToken": _csrf },
       });
       if (!r.ok) throw new Error(r.status);
-      const card = btn.closest(".kb-card");
-      if (card) {
-        card.style.transition = "opacity .25s, transform .25s";
-        card.style.opacity = "0"; card.style.transform = "scale(.92)";
+      const item = btn.closest(".kb-item");
+      if (item) {
+        item.style.transition = "opacity .2s";
+        item.style.opacity = "0";
         setTimeout(() => {
-          card.remove();
-          const grid = document.getElementById("kb-grid");
-          if (grid && !grid.children.length) _renderEmpty();
-        }, 280);
+          item.remove();
+          const list = document.getElementById("kb-list");
+          if (list && !list.children.length) _renderEmpty();
+        }, 220);
       }
       _toast("Moved to Drive Trash", "success");
     } catch (_) {
@@ -444,9 +457,9 @@
   }
 
   async function kbRename(id, btn) {
-    const card = btn.closest(".kb-card");
-    const nameEl = card?.querySelector(".kb-name");
-    const current = nameEl ? nameEl.textContent.trim() : "";
+    const item = btn.closest(".kb-item");
+    const linkEl = item?.querySelector(".kb-link");
+    const current = linkEl ? linkEl.textContent.trim() : "";
     const next = prompt("Rename PDF (without .pdf):", current.replace(/\.pdf$/i, ""));
     if (next === null) return;
     const trimmed = next.trim();
@@ -459,10 +472,42 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || r.status);
-      if (nameEl) nameEl.textContent = data.name || (trimmed + ".pdf");
+      if (linkEl) linkEl.textContent = data.name || (trimmed + ".pdf");
       _toast("Renamed", "success");
     } catch (e) {
       _toast("Couldn't rename", "error");
+    }
+  }
+
+  // Click the purpose cell → prompt → POST → repaint that cell only.
+  // Empty input clears the purpose. Stored in Drive's native
+  // description field so it also shows up in Drive's details pane.
+  async function kbSetPurpose(id, cell) {
+    const cur = cell.classList.contains("is-empty") ? "" : (cell.textContent || "").trim();
+    const next = prompt("Purpose / one-line note for this PDF:", cur);
+    if (next === null) return;
+    const trimmed = next.trim().slice(0, 500);
+    try {
+      const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/purpose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+        body: JSON.stringify({ purpose: trimmed }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      const saved = (data.purpose || "").trim();
+      if (saved) {
+        cell.classList.remove("is-empty");
+        cell.textContent = saved;
+        cell.title = "Click to edit purpose";
+      } else {
+        cell.classList.add("is-empty");
+        cell.textContent = "+ Add purpose";
+        cell.title = "Click to add a purpose";
+      }
+      _toast(saved ? "Purpose saved" : "Purpose cleared", "success");
+    } catch (e) {
+      _toast("Couldn't save purpose", "error");
     }
   }
 
