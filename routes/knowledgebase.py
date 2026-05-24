@@ -135,12 +135,34 @@ def _ensure_folder(service, user_id: str, row: dict) -> str:
     return folder_id
 
 
+def _count_pdf_pages(blob: bytes):
+    """Best-effort page count via pypdf. Returns int or None on failure
+    (corrupt PDF, encrypted with unsupported cipher, etc.). Cheap —
+    pypdf parses the xref table only; doesn't extract text."""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(blob))
+        return len(reader.pages)
+    except Exception as e:
+        logger.warning("kb page-count failed: %s", e)
+        return None
+
+
 def _format_file(f: dict) -> dict:
     size = f.get("size")
+    # Page count lives in Drive's per-file appProperties so it sticks
+    # to the file itself (no local DB row). Set on upload.
+    props = f.get("appProperties") or {}
+    pc_raw = props.get("page_count")
+    try:
+        page_count = int(pc_raw) if pc_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        page_count = None
     return {
         "id": f.get("id"),
         "name": f.get("name") or "Untitled.pdf",
         "size_bytes": int(size) if size else None,
+        "page_count": page_count,
         "created_at": f.get("createdTime"),
         "modified_at": f.get("modifiedTime"),
         "web_view": f.get("webViewLink"),
@@ -219,7 +241,8 @@ def kb_list():
             q=q,
             fields=(
                 "files(id, name, size, createdTime, modifiedTime, "
-                "webViewLink, thumbnailLink, iconLink, description)"
+                "webViewLink, thumbnailLink, iconLink, description, "
+                "appProperties)"
             ),
             orderBy="createdTime desc",
             pageSize=200,
@@ -271,14 +294,23 @@ def kb_upload():
     if not name.lower().endswith(".pdf"):
         name = name + ".pdf"
 
+    # Count pages locally so we don't have to download the file later
+    # to know how long it is. None on failure — UI handles gracefully.
+    page_count = _count_pdf_pages(blob)
+    body = {"name": name, "parents": [folder_id]}
+    if page_count is not None:
+        # appProperties values must be strings; max 124 chars per key.
+        body["appProperties"] = {"page_count": str(page_count)}
+
     media = MediaIoBaseUpload(io.BytesIO(blob), mimetype="application/pdf", resumable=False)
     try:
         created = service.files().create(
-            body={"name": name, "parents": [folder_id]},
+            body=body,
             media_body=media,
             fields=(
                 "id, name, size, createdTime, modifiedTime, "
-                "webViewLink, thumbnailLink, iconLink, description"
+                "webViewLink, thumbnailLink, iconLink, description, "
+                "appProperties"
             ),
         ).execute()
     except HttpError as e:

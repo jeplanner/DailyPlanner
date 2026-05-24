@@ -120,16 +120,33 @@
     font-size: 13.5px; line-height: 1.45;
     color: var(--color-text-secondary);
     cursor: text;
-    padding: 2px 6px;
+    padding: 4px 8px;
     border-radius: 6px;
     border: 1px dashed transparent;
     overflow-wrap: anywhere;
+    transition: border-color .12s, background .12s;
   }
   .kb-purpose-col:hover {
     border-color: var(--color-border);
     background: var(--color-surface);
   }
   .kb-purpose-col.is-empty { color: var(--color-text-muted, #94a3b8); font-style: italic; }
+  /* Inline editor state: solid border + focus ring, no placeholder. */
+  .kb-purpose-col.is-editing {
+    border-style: solid;
+    border-color: var(--color-primary);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-style: normal;
+    outline: none;
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+    cursor: text;
+    white-space: pre-wrap;
+  }
+  .kb-purpose-col.is-saving {
+    border-color: var(--color-border);
+    opacity: .6;
+  }
   .kb-row-actions { display: flex; gap: 4px; align-items: center; }
   .kb-row-btn {
     display: inline-flex; align-items: center; justify-content: center;
@@ -306,7 +323,10 @@
 
   function _itemHtml(f) {
     const name = _esc(f.name || "Untitled.pdf");
-    const info = [_fmtSize(f.size_bytes), _fmtDate(f.created_at)].filter(Boolean).join(" · ");
+    const pages = (f.page_count && f.page_count > 0)
+      ? `${f.page_count} page${f.page_count === 1 ? "" : "s"}` : "";
+    const info = [pages, _fmtSize(f.size_bytes), _fmtDate(f.created_at)]
+      .filter(Boolean).join(" · ");
     const href = f.web_view ? _esc(f.web_view) : "#";
     const purposeRaw = f.purpose || "";
     const purposeEsc = _esc(purposeRaw);
@@ -320,6 +340,7 @@
           <span class="kb-info">${_esc(info)}</span>
         </div>
         <div class="${purposeCls}" data-action="purpose"
+             data-original="${purposeEsc}"
              title="Click to ${purposeRaw ? 'edit' : 'add a'} purpose">${purposeText}</div>
         <div class="kb-row-actions">
           <button type="button" class="kb-row-btn" title="Rename"
@@ -334,16 +355,104 @@
       </li>`;
   }
 
+  // Wire each purpose cell as a contentEditable inline editor. Click
+  // enters edit mode (clearing the "+ Add purpose" placeholder),
+  // Enter or blur commits, Escape cancels. No browser prompt() in
+  // sight — the old popup looked awful and broke on mobile.
   function _wirePurposeCells() {
     document.querySelectorAll("#kb-list .kb-purpose-col").forEach(cell => {
       if (cell._wired) return;
       cell._wired = true;
-      cell.addEventListener("click", () => {
+
+      const enterEditMode = () => {
+        if (cell.classList.contains("is-editing")) return;
+        // Capture the current truth so Escape can restore and blur can
+        // detect "unchanged" (no network call needed).
+        cell.dataset.original = cell.classList.contains("is-empty")
+          ? "" : (cell.textContent || "").trim();
+        cell.classList.add("is-editing");
+        cell.classList.remove("is-empty");
+        if (!cell.dataset.original) cell.textContent = "";
+        cell.setAttribute("contenteditable", "plaintext-only");
+        cell.focus();
+        // Place caret at end so existing text is appendable without
+        // a manual click.
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        range.collapse(false);
+        sel.removeAllRanges(); sel.addRange(range);
+      };
+
+      cell.addEventListener("click", enterEditMode);
+
+      cell.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          cell.blur();  // triggers commit below
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          cell.dataset.cancelled = "1";
+          cell.blur();
+        }
+      });
+
+      cell.addEventListener("blur", async () => {
+        if (!cell.classList.contains("is-editing")) return;
+        const original = cell.dataset.original || "";
+        const cancelled = cell.dataset.cancelled === "1";
+        delete cell.dataset.cancelled;
+        cell.removeAttribute("contenteditable");
+        cell.classList.remove("is-editing");
+
+        if (cancelled) {
+          _paintPurpose(cell, original);
+          return;
+        }
+        const next = (cell.textContent || "").trim().slice(0, 500);
+        if (next === original) {
+          _paintPurpose(cell, original);   // normalise placeholder
+          return;
+        }
         const item = cell.closest(".kb-item");
         const id = item?.dataset.fileId;
-        if (id) kbSetPurpose(id, cell);
+        if (!id) { _paintPurpose(cell, original); return; }
+
+        cell.classList.add("is-saving");
+        try {
+          const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/purpose`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+            body: JSON.stringify({ purpose: next }),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.error || r.status);
+          const saved = (data.purpose || "").trim();
+          _paintPurpose(cell, saved);
+          cell.dataset.original = saved;
+          _toast(saved ? "Purpose saved" : "Purpose cleared", "success");
+        } catch (e) {
+          _paintPurpose(cell, original);
+          _toast("Couldn't save purpose", "error");
+        } finally {
+          cell.classList.remove("is-saving");
+        }
       });
     });
+  }
+
+  // Repaint a purpose cell to either its filled state or the empty
+  // "+ Add purpose" placeholder, depending on the value.
+  function _paintPurpose(cell, value) {
+    if (value) {
+      cell.classList.remove("is-empty");
+      cell.textContent = value;
+      cell.title = "Click to edit purpose";
+    } else {
+      cell.classList.add("is-empty");
+      cell.textContent = "+ Add purpose";
+      cell.title = "Click to add a purpose";
+    }
   }
 
   function _renderGrid(files) {
@@ -479,37 +588,8 @@
     }
   }
 
-  // Click the purpose cell → prompt → POST → repaint that cell only.
-  // Empty input clears the purpose. Stored in Drive's native
-  // description field so it also shows up in Drive's details pane.
-  async function kbSetPurpose(id, cell) {
-    const cur = cell.classList.contains("is-empty") ? "" : (cell.textContent || "").trim();
-    const next = prompt("Purpose / one-line note for this PDF:", cur);
-    if (next === null) return;
-    const trimmed = next.trim().slice(0, 500);
-    try {
-      const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/purpose`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
-        body: JSON.stringify({ purpose: trimmed }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || r.status);
-      const saved = (data.purpose || "").trim();
-      if (saved) {
-        cell.classList.remove("is-empty");
-        cell.textContent = saved;
-        cell.title = "Click to edit purpose";
-      } else {
-        cell.classList.add("is-empty");
-        cell.textContent = "+ Add purpose";
-        cell.title = "Click to add a purpose";
-      }
-      _toast(saved ? "Purpose saved" : "Purpose cleared", "success");
-    } catch (e) {
-      _toast("Couldn't save purpose", "error");
-    }
-  }
+  // (Purpose editing handled inline by _wirePurposeCells above —
+  // no popup, no separate function needed.)
 
   // Drag-drop: highlight zone while a file is hovering, swallow drop.
   document.addEventListener("DOMContentLoaded", () => {

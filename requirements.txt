@@ -24,3 +24,8 @@ APScheduler>=3.10.0
 # meaningful fraction of fetches will fail — when they do, the UI
 # falls back to the manual paste modal. Free, no API key needed.
 youtube-transcript-api>=0.6.2
+
+# PDF page-count parser for the Knowledge Base upload flow. Pure
+# Python, ~300 KB, no native deps. We only count len(reader.pages)
+# on upload — heavy text extraction is never used.
+pypdf>=4.0
