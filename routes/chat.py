@@ -214,6 +214,139 @@ def send_message():
     return jsonify({"message": _shape(row, viewer_id)})
 
 
+# ── Share-to-chat (used by Inbox and Knowledge Base) ───────────
+
+
+@chat_bp.route("/api/chat/share", methods=["POST"])
+@login_required
+def share_to_chat():
+    """Post a chat message that originated from another page (Inbox
+    row, KB row, future others). Body:
+
+      { kind: "inbox" | "kb",
+        url:  "<absolute http(s) URL>",
+        title: "<short display label>",
+        file_id: "<drive id, only when kind=kb>" }
+
+    For kind=kb, we also grant Drive read permission to every other
+    family member's email in a background thread, so the link the
+    recipient is about to receive actually opens for them.
+    """
+    _gate()
+    viewer_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    kind = (data.get("kind") or "").strip().lower()
+    if kind not in ("inbox", "kb"):
+        return jsonify({"error": "Unknown share kind"}), 400
+
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "URL required"}), 400
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return jsonify({"error": "URL must be http(s)://..."}), 400
+
+    title = (data.get("title") or "").strip()[:160] or url[:160]
+    sender_name = _author_name()
+
+    if kind == "kb":
+        file_id = (data.get("file_id") or "").strip()
+        if not file_id:
+            return jsonify({"error": "file_id required for KB shares"}), 400
+        # Best-effort permission grant — don't block the chat send on it,
+        # and don't fail the request if Drive complains. The recipient
+        # might briefly see "request access" if they tap the link before
+        # Drive finishes propagating, but they'll be fine on retry.
+        threading.Thread(
+            target=_grant_drive_read_to_family,
+            args=(viewer_id, file_id),
+            daemon=True,
+        ).start()
+        prefix = "📚 PDF shared"
+    else:
+        prefix = "📥 Saved link"
+
+    body = f"{prefix}: {title}\n{url}"
+    if len(body) > MAX_BODY:
+        body = body[:MAX_BODY]
+
+    payload = {
+        "user_id": viewer_id,
+        "author_name": sender_name,
+        "body": body,
+    }
+    try:
+        rows = post("messages", payload)
+    except Exception as e:
+        logger.exception("chat share failed: %s", e)
+        return jsonify({"error": "Share failed"}), 502
+
+    row = rows[0] if rows else payload
+    threading.Thread(
+        target=_fanout_push,
+        args=(viewer_id, sender_name, body),
+        daemon=True,
+    ).start()
+    return jsonify({"message": _shape(row, viewer_id)})
+
+
+def _grant_drive_read_to_family(sender_id, file_id):
+    """Best-effort: give every other family member read access to a
+    Drive file the sender owns. Idempotent at Drive's end — granting
+    the same permission twice is a no-op. Failures (token expired,
+    file moved, permission already exists in a way Drive doesn't like)
+    are logged and swallowed; the chat message has already gone out
+    by the time this runs."""
+    try:
+        from google.auth.exceptions import RefreshError
+        from googleapiclient.errors import HttpError
+        # Import lazily so this module doesn't drag the Drive client in
+        # for users who never share a KB file.
+        from routes.knowledgebase import (
+            _build_drive,
+            _credentials_from_row,
+            _load_token_row,
+            _refresh_if_needed,
+        )
+
+        row = _load_token_row(sender_id)
+        if not row or not row.get("refresh_token"):
+            logger.info("share: sender %s has no Drive token; skipping perm grant", sender_id)
+            return
+        try:
+            creds = _refresh_if_needed(_credentials_from_row(row), sender_id)
+        except RefreshError as e:
+            logger.warning("share: drive token refresh failed for %s (%s)", sender_id, e)
+            return
+        service = _build_drive(creds)
+
+        # Sender's own email — we don't want to grant them a permission
+        # they already implicitly have as owner. Look it up via users.
+        urows = get("users", {"id": f"eq.{sender_id}", "select": "email", "limit": "1"}) or []
+        sender_email = (urows[0].get("email", "") if urows else "").strip().lower()
+
+        for email in _allowlist():
+            if email == sender_email:
+                continue
+            try:
+                service.permissions().create(
+                    fileId=file_id,
+                    body={"type": "user", "role": "reader", "emailAddress": email},
+                    sendNotificationEmail=False,
+                    fields="id",
+                ).execute()
+            except HttpError as e:
+                # 400 "Sharing permission already exists" is the common
+                # case — Drive doesn't dedupe these so we just log and
+                # move on. Anything else is also worth a single log line
+                # but not a retry.
+                logger.info("share: drive grant to %s on %s skipped (%s)", email, file_id, e)
+            except Exception:
+                logger.exception("share: drive grant to %s on %s raised", email, file_id)
+    except Exception:
+        logger.exception("share: drive perm fanout crashed")
+
+
 def _fanout_push(sender_id, sender_name, body):
     """Best-effort notify everyone else in the room. Swallows all
     exceptions — push delivery should never be able to crash a send."""

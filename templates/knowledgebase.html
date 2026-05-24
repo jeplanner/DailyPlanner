@@ -347,6 +347,12 @@
              href="/knowledge-base/${encodeURIComponent(f.id)}/annotate">
             <i data-feather="edit-3"></i>
           </a>
+          {% if chat_enabled %}
+          <button type="button" class="kb-row-btn" title="Share to family chat (grants Drive read access)"
+                  onclick="kbShareToFamily('${_esc(f.id)}', this); event.preventDefault();">
+            <i data-feather="send"></i>
+          </button>
+          {% endif %}
           <button type="button" class="kb-row-btn" title="Rename"
                   onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
             <i data-feather="edit-2"></i>
@@ -543,6 +549,47 @@
     list.insertBefore(tmp.firstElementChild, list.firstChild);
     if (window.feather) feather.replace();
     _wirePurposeCells();
+  }
+
+  // Post the PDF's Drive link + filename into the family chat. Server
+  // also kicks off a Drive permission grant to every family member so
+  // the link actually opens for them.
+  async function kbShareToFamily(id, btn) {
+    const item = btn.closest(".kb-item");
+    const linkEl = item?.querySelector(".kb-link");
+    const url   = linkEl?.getAttribute("href") || "";
+    const title = (linkEl?.textContent || "").trim();
+    if (!url || url === "#") {
+      _toast("No Drive link on this file", "error");
+      return;
+    }
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i data-feather="loader"></i>';
+    if (window.feather) feather.replace();
+    try {
+      const r = await fetch("/api/chat/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+        body: JSON.stringify({
+          kind: "kb",
+          url,
+          title,
+          file_id: id,
+        }),
+        credentials: "same-origin",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      _toast("Shared to family chat", "success");
+    } catch (e) {
+      console.error(e);
+      _toast("Couldn't share: " + (e.message || ""), "error");
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      if (window.feather) feather.replace();
+    }
   }
 
   async function kbDelete(id, btn) {

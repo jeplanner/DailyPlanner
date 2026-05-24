@@ -545,6 +545,12 @@ html.dark .sr-error{background:#3b1111;border-color:#7f1d1d;color:#fca5a5;}
 </div>
 
 <script>
+// Surfaces the "Share to family" button on each card. Driven by the
+// chat_enabled context-processor flag — keeps the affordance invisible
+// for non-allowlisted users instead of letting them click it and 404.
+const CHAT_ENABLED = {{ chat_enabled|tojson }};
+const _CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
 let currentFilter = "all";
 let currentLabelFilter = "all";
 let allItems = [];
@@ -1267,6 +1273,8 @@ function renderCards() {
             ) : ""}
           <button class="card-btn" onclick="moveToTravel('${x.id}', this)"
                   title="Send to TravelReads"><i data-feather="bookmark" style="width:14px;height:14px"></i></button>
+          ${CHAT_ENABLED ? `<button class="card-btn" onclick="shareInboxToFamily('${x.id}', this)"
+                  title="Share to family chat"><i data-feather="send" style="width:14px;height:14px"></i></button>` : ""}
           <button class="card-btn ${x.is_favorite?'fav-on':''}" onclick="toggleFav('${x.id}')" title="Favorite">
             ${x.is_favorite ? "★" : "☆"}
           </button>
@@ -1306,6 +1314,44 @@ async function toggleFav(id) {
   const item = allItems.find(x => x.id === id);
   if (item) item.is_favorite = !item.is_favorite;
   renderCards();
+}
+
+// Post the inbox item's URL + title into the family chat. The server
+// handles the "is the viewer in the family" check; we only show the
+// button when CHAT_ENABLED is true so non-allowlisted users never see
+// the affordance to begin with.
+async function shareInboxToFamily(id, btn) {
+  const item = allItems.find(x => x.id === id);
+  if (!item || !item.url) {
+    if (window.showToast) window.showToast("No URL on this item", "error", 2000);
+    return;
+  }
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i data-feather="loader" style="width:14px;height:14px"></i>';
+  if (window.feather) feather.replace();
+  try {
+    const r = await fetch("/api/chat/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": _CSRF },
+      body: JSON.stringify({
+        kind: "inbox",
+        url: item.url,
+        title: item.title || "",
+      }),
+      credentials: "same-origin",
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || r.status);
+    if (window.showToast) window.showToast("Shared to family chat", "success", 2000);
+  } catch (e) {
+    console.error(e);
+    if (window.showToast) window.showToast("Couldn't share: " + (e.message || ""), "error", 2500);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+    if (window.feather) feather.replace();
+  }
 }
 
 let _undoTimer = null;
