@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Family Tasks — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .ft-app { max-width: 880px; margin: 0 auto; padding: 24px 18px 96px; }
+
+  .ft-hero {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    gap: 16px; margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .ft-hero h1 { font-size: 26px; font-weight: 800; margin: 0 0 4px; letter-spacing: -.02em; }
+  .ft-sub { color: var(--color-text-secondary); font-size: 13.5px; max-width: 56ch; margin: 0; line-height: 1.5; }
+  .ft-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 10px;
+    background: var(--color-primary); color: white;
+    border: none; cursor: pointer; font-weight: 600; font-size: 14px;
+  }
+  .ft-cta:hover { background: var(--color-primary-hover, #1d4ed8); }
+  .ft-cta svg { width: 16px; height: 16px; }
+
+  .ft-tabs {
+    display: inline-flex; gap: 4px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 4px; margin-bottom: 14px;
+  }
+  .ft-tab {
+    border: none; background: transparent;
+    padding: 6px 12px; border-radius: 7px;
+    font-size: 13px; font-weight: 600; color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .ft-tab.is-active { background: var(--color-primary); color: white; }
+
+  .ft-toggle-done {
+    margin-left: 12px; font-size: 12.5px;
+    color: var(--color-text-secondary);
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer; user-select: none;
+  }
+  .ft-toggle-done input { accent-color: var(--color-primary); }
+
+  .ft-list {
+    list-style: none; padding: 0; margin: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .ft-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0,1fr) auto auto;
+    align-items: start; gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .ft-row:last-child { border-bottom: none; }
+  .ft-row:hover { background: var(--color-surface-secondary, #f8fafc); }
+  .ft-row.is-done .ft-title { text-decoration: line-through; color: var(--color-text-muted, #94a3b8); }
+
+  .ft-check {
+    margin-top: 2px;
+    width: 18px; height: 18px;
+    accent-color: var(--color-primary); cursor: pointer;
+  }
+
+  .ft-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .ft-title {
+    font-size: 14.5px; font-weight: 600; color: var(--color-text);
+    overflow-wrap: anywhere; line-height: 1.4;
+  }
+  .ft-notes {
+    font-size: 12.5px; color: var(--color-text-secondary);
+    white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45;
+  }
+  .ft-meta {
+    font-size: 11.5px; color: var(--color-text-muted, #94a3b8);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ft-assignee {
+    align-self: flex-start;
+    padding: 2px 8px; border-radius: 999px;
+    background: #eff6ff; color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+    font-size: 11.5px; font-weight: 600;
+    white-space: nowrap;
+  }
+  .ft-row.mine .ft-assignee { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+
+  .ft-due {
+    align-self: flex-start;
+    padding: 2px 8px; border-radius: 6px;
+    background: var(--color-surface-secondary, #f3f4f6);
+    color: var(--color-text-secondary);
+    font-size: 11.5px; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ft-due.is-overdue { background: #fee2e2; color: #b91c1c; }
+  .ft-due.is-today   { background: #fef3c7; color: #92400e; }
+
+  .ft-row-actions { display: inline-flex; gap: 4px; align-self: flex-start; }
+  .ft-row-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 7px; color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .ft-row-btn:hover { background: var(--color-surface-secondary, #f3f4f6); border-color: var(--color-border); }
+  .ft-row-btn.danger:hover { color: #b91c1c; }
+  .ft-row-btn svg { width: 14px; height: 14px; }
+
+  .ft-empty, .ft-loading {
+    padding: 48px 24px; text-align: center;
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: 14px;
+  }
+  .ft-empty svg, .ft-loading svg {
+    width: 36px; height: 36px; color: var(--color-text-muted); margin-bottom: 8px;
+  }
+  .ft-empty h2 { margin: 0 0 4px; font-size: 17px; color: var(--color-text); }
+
+  /* Modal — shared visual language with the rest of the app. */
+  .ft-modal {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(15,23,42,.55);
+    z-index: 200;
+  }
+  .ft-modal.is-open { display: flex; }
+  .ft-modal-body {
+    background: var(--color-surface);
+    border-radius: 14px;
+    padding: 18px 20px 16px;
+    width: min(460px, 92vw);
+    box-shadow: 0 24px 60px rgba(0,0,0,.3);
+  }
+  .ft-modal h2 { margin: 0 0 14px; font-size: 18px; }
+  .ft-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  .ft-field label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .ft-field input, .ft-field select, .ft-field textarea {
+    padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--color-border);
+    font: inherit; background: var(--color-bg); color: var(--color-text);
+    outline: none;
+  }
+  .ft-field textarea { resize: vertical; min-height: 56px; }
+  .ft-field input:focus, .ft-field select:focus, .ft-field textarea:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  }
+  .ft-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  .ft-btn-ghost {
+    padding: 7px 12px; border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: transparent; color: var(--color-text);
+    cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  .ft-btn-primary {
+    padding: 7px 14px; border-radius: 8px;
+    border: none;
+    background: var(--color-primary); color: white;
+    cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  .ft-btn-primary:disabled { background: var(--color-text-muted, #94a3b8); cursor: not-allowed; }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="ft-app">
+
+  <header class="ft-hero">
+    <div>
+      <h1>👨‍👩‍👧 Family Tasks</h1>
+      <p class="ft-sub">
+        Assign tasks to anyone in the family. When they log in, their tasks
+        show up in <b>For me</b>. Signed in as <b>{{ viewer_name }}</b>.
+      </p>
+    </div>
+    <button class="ft-cta" id="ft-new-btn">
+      <i data-feather="plus"></i> New task
+    </button>
+  </header>
+
+  <div>
+    <div class="ft-tabs" role="tablist">
+      <button class="ft-tab is-active" data-view="mine">For me</button>
+      <button class="ft-tab" data-view="by-me">By me</button>
+      <button class="ft-tab" data-view="all">All</button>
+    </div>
+    <label class="ft-toggle-done">
+      <input type="checkbox" id="ft-show-done"> Show completed
+    </label>
+  </div>
+
+  <div id="ft-list-wrap">
+    <div class="ft-loading">
+      <i data-feather="loader"></i>
+      <div>Loading tasks…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── New / edit task modal ────────────────────────────────── -->
+<div class="ft-modal" id="ft-modal" aria-hidden="true">
+  <div class="ft-modal-body">
+    <h2 id="ft-modal-title">New task</h2>
+    <form id="ft-form" autocomplete="off">
+      <div class="ft-field">
+        <label for="ft-title">Title</label>
+        <input type="text" id="ft-title" maxlength="300" required>
+      </div>
+      <div class="ft-field">
+        <label for="ft-assignee">Assign to</label>
+        <select id="ft-assignee" required></select>
+      </div>
+      <div class="ft-field">
+        <label for="ft-due">Due date (optional)</label>
+        <input type="date" id="ft-due">
+      </div>
+      <div class="ft-field">
+        <label for="ft-notes">Notes (optional)</label>
+        <textarea id="ft-notes" maxlength="2000" placeholder="Anything they need to know…"></textarea>
+      </div>
+      <div class="ft-modal-actions">
+        <button type="button" class="ft-btn-ghost" id="ft-cancel">Cancel</button>
+        <button type="submit" class="ft-btn-primary" id="ft-save">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(() => {
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+  const VIEWER_ID = {{ (current_user.id|string)|tojson }};
+
+  const state = {
+    view: "mine",
+    showDone: false,
+    members: [],
+    tasks: [],
+    editing: null,   // task being edited, or null for new
+    loading: false,
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const toast = (msg, kind="info") =>
+    window.showToast ? window.showToast(msg, kind, 2500) : console.log("[ft]", msg);
+
+  // YYYY-MM-DD → "Mon 3", "Today", "Yesterday", "Tomorrow". Relative
+  // labels make scanning the list easier than parsing a full date.
+  function dueLabel(iso) {
+    if (!iso) return "";
+    const d = new Date(iso + "T00:00:00");
+    const now = new Date(); now.setHours(0,0,0,0);
+    const diff = Math.round((d - now) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === -1) return "Yesterday";
+    if (diff === 1) return "Tomorrow";
+    if (diff > 1 && diff < 7) return d.toLocaleDateString(undefined, { weekday: "short" });
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function dueClass(iso) {
+    if (!iso) return "";
+    const d = new Date(iso + "T00:00:00");
+    const now = new Date(); now.setHours(0,0,0,0);
+    if (d < now) return "is-overdue";
+    if (+d === +now) return "is-today";
+    return "";
+  }
+
+  // ── Network ────────────────────────────────────────────────────
+  async function apiGet(path) {
+    const r = await fetch(path, { credentials: "same-origin" });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || r.status);
+    return data;
+  }
+  async function apiPost(path, body) {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+      body: JSON.stringify(body || {}),
+      credentials: "same-origin",
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || r.status);
+    return data;
+  }
+
+  async function loadMembers() {
+    try {
+      const data = await apiGet("/api/family-tasks/members");
+      state.members = data.members || [];
+      const sel = $("#ft-assignee");
+      sel.innerHTML = state.members
+        .map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`)
+        .join("");
+    } catch (e) {
+      toast("Couldn't load family members", "error");
+    }
+  }
+
+  async function loadTasks() {
+    state.loading = true;
+    const wrap = $("#ft-list-wrap");
+    wrap.innerHTML = `<div class="ft-loading"><i data-feather="loader"></i><div>Loading…</div></div>`;
+    if (window.feather) feather.replace();
+    try {
+      const url = "/api/family-tasks?view=" + encodeURIComponent(state.view)
+        + "&show_done=" + (state.showDone ? "1" : "0");
+      const data = await apiGet(url);
+      state.tasks = data.tasks || [];
+      renderList();
+    } catch (e) {
+      wrap.innerHTML = `<div class="ft-empty"><i data-feather="alert-circle"></i><h2>Couldn't load</h2><p>${esc(e.message || "")}</p></div>`;
+      if (window.feather) feather.replace();
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  function renderList() {
+    const wrap = $("#ft-list-wrap");
+    if (!state.tasks.length) {
+      const msg = state.view === "mine"
+        ? "Nothing on your plate. Nice."
+        : state.view === "by-me"
+          ? "You haven't assigned anyone anything."
+          : "No tasks yet. Hit “New task” to start.";
+      wrap.innerHTML = `
+        <div class="ft-empty">
+          <i data-feather="check-circle"></i>
+          <h2>All clear</h2>
+          <p>${esc(msg)}</p>
+        </div>`;
+      if (window.feather) feather.replace();
+      return;
+    }
+    wrap.innerHTML = `<ul class="ft-list">${state.tasks.map(rowHtml).join("")}</ul>`;
+    if (window.feather) feather.replace();
+    wireRowEvents();
+  }
+
+  function rowHtml(t) {
+    const cls = `ft-row${t.is_done ? " is-done" : ""}${t.mine ? " mine" : ""}`;
+    const due = t.due_date ? `<span class="ft-due ${dueClass(t.due_date)}">${esc(dueLabel(t.due_date))}</span>` : "";
+    const assignee = `<span class="ft-assignee" title="Assigned to ${esc(t.assigned_to_name)}">${esc(t.assigned_to_name)}</span>`;
+    const editable = t.by_me;
+    return `
+      <li class="${cls}" data-id="${esc(t.id)}">
+        <input type="checkbox" class="ft-check" ${t.is_done ? "checked" : ""}
+               aria-label="Mark done">
+        <div class="ft-main">
+          <div class="ft-title">${esc(t.title)}</div>
+          ${t.notes ? `<div class="ft-notes">${esc(t.notes)}</div>` : ""}
+          <div class="ft-meta">
+            ${due ? "" : ""}
+            ${t.by_me ? "By you" : "By " + esc(t.created_by_name)}
+          </div>
+        </div>
+        ${due || ""}
+        <div class="ft-row-actions">
+          ${assignee}
+          ${editable ? `<button class="ft-row-btn" data-act="edit" title="Edit"><i data-feather="edit-2"></i></button>` : ""}
+          <button class="ft-row-btn danger" data-act="delete" title="Delete"><i data-feather="trash-2"></i></button>
+        </div>
+      </li>`;
+  }
+
+  function wireRowEvents() {
+    document.querySelectorAll(".ft-row").forEach(row => {
+      const id = row.dataset.id;
+      row.querySelector(".ft-check")?.addEventListener("change", (e) => {
+        toggleDone(id, e.target.checked, row);
+      });
+      row.querySelector('[data-act="edit"]')?.addEventListener("click", () => openEdit(id));
+      row.querySelector('[data-act="delete"]')?.addEventListener("click", () => deleteTask(id, row));
+    });
+  }
+
+  async function toggleDone(id, want, row) {
+    try {
+      await apiPost(`/api/family-tasks/${encodeURIComponent(id)}/done`, { done: want });
+      // Local toggle so the user sees feedback without a re-fetch.
+      row.classList.toggle("is-done", want);
+      const task = state.tasks.find(t => t.id === id);
+      if (task) task.done_at = want ? new Date().toISOString() : null;
+      if (want && !state.showDone) {
+        // It just vanished from a hides-done view; remove the row.
+        row.style.transition = "opacity .2s"; row.style.opacity = "0";
+        setTimeout(() => { row.remove(); if (!document.querySelector(".ft-row")) renderList(); }, 200);
+      }
+    } catch (e) {
+      toast(e.message || "Couldn't save", "error");
+      row.querySelector(".ft-check").checked = !want;
+    }
+  }
+
+  async function deleteTask(id, row) {
+    if (!confirm("Delete this task?")) return;
+    try {
+      await apiPost(`/api/family-tasks/${encodeURIComponent(id)}/delete`, {});
+      row.style.transition = "opacity .2s"; row.style.opacity = "0";
+      setTimeout(() => {
+        row.remove();
+        state.tasks = state.tasks.filter(t => t.id !== id);
+        if (!state.tasks.length) renderList();
+      }, 200);
+    } catch (e) {
+      toast(e.message || "Couldn't delete", "error");
+    }
+  }
+
+  // ── Modal ──────────────────────────────────────────────────────
+  function openCreate() {
+    state.editing = null;
+    $("#ft-modal-title").textContent = "New task";
+    $("#ft-title").value = "";
+    $("#ft-notes").value = "";
+    $("#ft-due").value = "";
+    $("#ft-assignee").value = VIEWER_ID;   // default to "me" — nudges
+                                           // toward self-assignment for
+                                           // quick capture; user can change.
+    $("#ft-modal").classList.add("is-open");
+    setTimeout(() => $("#ft-title").focus(), 30);
+  }
+  function openEdit(id) {
+    const t = state.tasks.find(x => x.id === id);
+    if (!t) return;
+    state.editing = t;
+    $("#ft-modal-title").textContent = "Edit task";
+    $("#ft-title").value = t.title || "";
+    $("#ft-notes").value = t.notes || "";
+    $("#ft-due").value = t.due_date || "";
+    $("#ft-assignee").value = t.assigned_to || VIEWER_ID;
+    $("#ft-modal").classList.add("is-open");
+    setTimeout(() => $("#ft-title").focus(), 30);
+  }
+  function closeModal() {
+    $("#ft-modal").classList.remove("is-open");
+    state.editing = null;
+  }
+
+  $("#ft-new-btn").addEventListener("click", openCreate);
+  $("#ft-cancel").addEventListener("click", closeModal);
+  $("#ft-modal").addEventListener("click", (e) => {
+    if (e.target.id === "ft-modal") closeModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("#ft-modal").classList.contains("is-open")) closeModal();
+  });
+
+  $("#ft-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const title = $("#ft-title").value.trim();
+    if (!title) { toast("Title required", "error"); return; }
+    const payload = {
+      title,
+      assigned_to: $("#ft-assignee").value,
+      due_date: $("#ft-due").value || null,
+      notes: $("#ft-notes").value.trim() || null,
+    };
+    const save = $("#ft-save");
+    save.disabled = true;
+    try {
+      if (state.editing) {
+        await apiPost(`/api/family-tasks/${encodeURIComponent(state.editing.id)}/update`, payload);
+        toast("Saved", "success");
+      } else {
+        await apiPost("/api/family-tasks", payload);
+        toast("Task created", "success");
+      }
+      closeModal();
+      loadTasks();
+    } catch (err) {
+      toast(err.message || "Couldn't save", "error");
+    } finally {
+      save.disabled = false;
+    }
+  });
+
+  // Tabs + show-done
+  document.querySelectorAll(".ft-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".ft-tab").forEach(b => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      state.view = btn.dataset.view;
+      loadTasks();
+    });
+  });
+  $("#ft-show-done").addEventListener("change", (e) => {
+    state.showDone = e.target.checked;
+    loadTasks();
+  });
+
+  // Boot
+  if (window.feather) feather.replace();
+  loadMembers().then(loadTasks);
+})();
+</script>
+
+</body>
+</html>
