@@ -420,6 +420,12 @@
     background: linear-gradient(90deg, rgba(239,68,68,.08), transparent 60%);
     box-shadow: inset 3px 0 0 0 #ef4444;
   }
+  /* Amber rail for active rows with ≤30 minutes left — "close this
+     next" hint sitting just below the red overdue treatment. */
+  .qb-row.is-urgent {
+    background: linear-gradient(90deg, rgba(245,158,11,.10), transparent 60%);
+    box-shadow: inset 3px 0 0 0 #f59e0b;
+  }
 
   .qb-icon-btn {
     background: transparent; border: 1px solid transparent;
@@ -804,10 +810,10 @@
   <div class="qb-capture-wrap">
     <form id="qb-add-form" class="qb-add" autocomplete="off">
       <textarea id="qb-add-input"
-                placeholder="What needs doing? Enter adds, Shift+Enter newline."
+                placeholder="What needs doing? Use @5m / @1h / @1d to set when. Enter adds."
                 maxlength="500" rows="2"></textarea>
       <div class="qb-add-actions">
-        <span class="qb-add-hint">↵ to add · ⇧↵ for a new line</span>
+        <span class="qb-add-hint">↵ add · ⇧↵ newline · @5m @1h @1d for when</span>
         <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
           <i data-feather="mic"></i>
         </button>

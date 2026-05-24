@@ -39,6 +39,13 @@
   // fires once when a deadline trips, not every 30s after.
   const alerted = new Set();
   let tickTimer = null;
+  // Tracks which open-count band the bucket sits in so the lazy-boy
+  // warning / appreciation toast only fires when the band changes,
+  // not on every micro re-render (edit / pin / tick).
+  //   open >  10 → "over"
+  //   open <=  5 → "under" (and > 0)
+  //   else       → "between"
+  let _lastBucketBand = null;
   // Server-stamped "today" — keeps client/server in sync across midnight
   // and timezone edge cases. Defaults to local today until first load.
   let todayIso = new Date().toISOString().slice(0, 10);
@@ -92,6 +99,28 @@
         && d.getMonth() === now.getMonth()
         && d.getDate() === now.getDate();
   };
+  // Nudge the user when the open list goes over 10 (too much WIP) or
+  // drops to a healthy 1..5 (a quick "well done"). Fires only on band
+  // transitions so the toast doesn't spam on every render. The first
+  // call after page-load only warns about an "over 10" state — we
+  // don't congratulate someone who just opened the page.
+  const checkBucketLoad = () => {
+    const open = items.filter(it => !it.is_done).length;
+    let band;
+    if (open > 10)              band = "over";
+    else if (open > 0 && open <= 5) band = "under";
+    else                        band = "between";
+    const first = _lastBucketBand === null;
+    if (band !== _lastBucketBand) {
+      if (band === "over") {
+        toast(`Lazy boy, your bucket list has gone beyond 10 (${open} open) — close some tasks.`, "error");
+      } else if (band === "under" && !first) {
+        toast(`Nice work — only ${open} open. Keep it under 5!`, "success");
+      }
+    }
+    _lastBucketBand = band;
+  };
+
   const renderStatBar = () => {
     const open = items.filter(it => !it.is_done).length;
     const doneToday = items.filter(it => it.is_done && isSameLocalDay(it.done_at)).length;
@@ -292,6 +321,12 @@
     const cls = ["qb-row"];
     if (overdue) cls.push("is-overdue");
     if (it.is_done) cls.push("is-done");
+    // Amber tint for active rows with ≤30 minutes remaining, so the
+    // "close this next" tasks pop visually above the rest.
+    if (!it.is_done && !overdue && isCountedDown(it)) {
+      const mins = minutesUntil(it.due_at);
+      if (mins != null && mins > 0 && mins <= 30) cls.push("is-urgent");
+    }
     const togCls = overdue ? "qb-toggle qb-toggle--overdue" : `qb-toggle qb-toggle--${tb}`;
 
     // Done rows still get a Reopen icon. Active rows have no side
@@ -402,6 +437,7 @@
     wireRows();
     wireDragDrop();
     wireSwipeRight();
+    checkBucketLoad();
   };
 
   // ─────────── swipe-right on a row to mark done ────────────
@@ -1091,12 +1127,50 @@
     return { text: t, bucket: null };
   };
 
+  // "@" duration shorthand: type "@5m" / "@1h" / "@1d" anywhere in the
+  // title to set when. m/M = minutes (snaps to 5/15/30/45 m bucket),
+  // h/H = hours (clamped 1h..8h), d/D = day(s) → future. The token is
+  // stripped from the saved text. Examples:
+  //   "Call dad @5m"   → bucket="5m", text="Call dad"
+  //   "Pay bill @2H"   → bucket="2h", text="Pay bill"
+  //   "@1d Read book"  → bucket="future", text="Read book"
+  const _AT_RE = /(?:^|\s)@(\d+)\s*([mhd])(?![a-z])/i;
+  const parseAtBucket = (raw) => {
+    const t = (raw || "").trim();
+    const m = t.match(_AT_RE);
+    if (!m) return { text: t, bucket: null };
+    const n = parseInt(m[1], 10);
+    const unit = m[2].toLowerCase();
+    let bucket;
+    if (unit === "d") {
+      bucket = "future";
+    } else if (unit === "h") {
+      bucket = `${Math.min(8, Math.max(1, n))}h`;
+    } else {
+      if (n <= 7)        bucket = "5m";
+      else if (n <= 22)  bucket = "15m";
+      else if (n <= 37)  bucket = "30m";
+      else if (n <= 50)  bucket = "45m";
+      else               bucket = `${Math.min(8, Math.max(1, Math.round(n / 60)))}h`;
+    }
+    const matchStart = m.index + (m[0].startsWith(" ") ? 1 : 0);
+    const matchEnd   = m.index + m[0].length;
+    const cleaned = (t.slice(0, matchStart) + " " + t.slice(matchEnd))
+      .replace(/\s+/g, " ").trim();
+    return { text: cleaned, bucket };
+  };
+
   const addItem = async (text, opts = {}) => {
     text = (text || "").trim();
     if (!text) return;
-    // Parse "...in 30m" etc out of the title and choose a bucket.
-    // Caller can pre-pick a bucket (e.g. Top-5 add) — that wins.
+    // Parse "@5m" / "@1h" / "@1d" first so it wins over the looser NL
+    // parser ("in 30 mins" etc). Caller can still pre-pick a bucket
+    // (e.g. Top-5 add) — that wins over both.
     let bucket = opts.bucket || null;
+    if (!bucket) {
+      const at = parseAtBucket(text);
+      if (at.bucket) { text = at.text; bucket = at.bucket; }
+    }
     if (!bucket) {
       const parsed = parseNlBucket(text);
       if (parsed.bucket) { text = parsed.text; bucket = parsed.bucket; }
@@ -1658,13 +1732,21 @@
       }
     });
 
+    // Re-focus the input on desktop so the next capture is one keystroke
+    // away. On phones / tablets that would re-summon the soft keyboard
+    // after every add, which is annoying — blur instead so the keyboard
+    // collapses and the list stays visible.
+    const wantsKeyboardRefocus = !!(window.matchMedia &&
+      window.matchMedia("(hover: hover) and (pointer: fine)").matches);
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const v = input.value;
       input.value = "";
       autosizeInput();
+      if (wantsKeyboardRefocus) input.focus();
+      else input.blur();
       await addItem(v);
-      input.focus();
     });
 
     // ── Mic: dictate one task at a time (Web Speech API) ──
