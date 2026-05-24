@@ -117,6 +117,10 @@ def _shape(row, viewer_id):
         "body": row.get("body") or "",
         "created_at": row.get("created_at"),
         "is_mine": str(row.get("user_id")) == str(viewer_id),
+        # Default 'text' covers rows from before the kind column
+        # landed AND any rows that came back without the column (e.g.
+        # the schema-resilient retry stripping it).
+        "kind": row.get("kind") or "text",
     }
 
 
@@ -158,7 +162,7 @@ def list_messages():
 
     params = {
         "deleted_at": "is.null",
-        "select": "id,user_id,author_name,body,created_at",
+        "select": "id,user_id,author_name,body,created_at,kind",
     }
     if since:
         params["created_at"] = f"gt.{since}"
@@ -270,10 +274,14 @@ def share_to_chat():
     if len(body) > MAX_BODY:
         body = body[:MAX_BODY]
 
+    # The `kind` tag is what lets the chat UI filter shares away from
+    # regular conversation. Maps 1:1 with the request `kind` and is
+    # constrained at the DB level by messages_kind_chk.
     payload = {
         "user_id": viewer_id,
         "author_name": sender_name,
         "body": body,
+        "kind": "kb-share" if kind == "kb" else "inbox-share",
     }
     try:
         rows = post("messages", payload)

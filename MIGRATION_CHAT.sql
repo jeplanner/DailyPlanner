@@ -42,3 +42,19 @@ create index if not exists messages_created_at_idx
 -- on first ever load.
 alter table users
   add column if not exists chat_last_read_at timestamptz;
+
+-- Message "kind" tag — lets the chat UI filter shares away from
+-- regular conversation. Default 'text' covers every legacy row and
+-- every normal compose. The share endpoint sets 'kb-share' or
+-- 'inbox-share' depending on origin.
+alter table messages
+  add column if not exists kind text not null default 'text';
+
+-- Belt-and-braces: clamp the column to the values the app knows
+-- how to render. Drop-then-add so re-running the migration after
+-- adding a new kind value later is a no-op.
+do $$ begin
+  alter table messages drop constraint if exists messages_kind_chk;
+  alter table messages add constraint messages_kind_chk
+    check (kind in ('text', 'kb-share', 'inbox-share'));
+end $$;

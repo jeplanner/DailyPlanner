@@ -36,6 +36,46 @@
     margin: 2px 0 0; font-size: 12px; color: var(--color-text-secondary);
   }
 
+  /* Filter chip row. Sits between header and stream so the user
+     can flip between conversation view and shares-only view without
+     scrolling. */
+  .chat-filter {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    padding: 8px 14px 0;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .chat-filter-chip {
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit; font-size: 12px; font-weight: 600;
+    padding: 4px 11px; border-radius: 999px;
+    cursor: pointer;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .chat-filter-chip:hover {
+    background: var(--color-surface-secondary, #f3f4f6);
+    color: var(--color-text);
+  }
+  .chat-filter-chip.is-active {
+    background: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+  }
+
+  /* Filter-driven visibility — CSS instead of re-rendering, so the
+     scroll position is preserved as the user toggles modes.
+     `shares` keeps everything except plain text. */
+  .chat-stream[data-filter="shares"]      .msg[data-kind="text"],
+  .chat-stream[data-filter="kb-share"]    .msg:not([data-kind="kb-share"]),
+  .chat-stream[data-filter="inbox-share"] .msg:not([data-kind="inbox-share"]) {
+    display: none;
+  }
+  /* Day separators are noise under any filter that hides messages;
+     hide them too so we don't leave orphaned "Today" pills. */
+  .chat-stream:not([data-filter="all"]) .day-sep { display: none; }
+
   /* Scrollable bubble area. flex:1 swallows the leftover height between
      header and composer. */
   .chat-stream {
@@ -77,6 +117,17 @@
   }
   .msg.continuation { margin-top: 1px; }
   .msg.fresh        { margin-top: 10px; }
+
+  /* Visual cue on share bubbles regardless of filter — left accent
+     stripe so they're scannable in the All view too. */
+  .msg[data-kind="kb-share"],
+  .msg[data-kind="inbox-share"] {
+    border-left: 3px solid #f59e0b;
+  }
+  .msg.mine[data-kind="kb-share"],
+  .msg.mine[data-kind="inbox-share"] {
+    border-left-color: #fde047;
+  }
 
   .msg-author {
     font-size: 11.5px; font-weight: 600;
@@ -186,7 +237,14 @@
     <p class="sub">Everyone signed into this app sees this room. Posting as <b>{{ viewer_name }}</b>.</p>
   </header>
 
-  <div class="chat-stream" id="chat-stream">
+  <div class="chat-filter" role="tablist">
+    <button type="button" class="chat-filter-chip is-active" data-filter="all">All</button>
+    <button type="button" class="chat-filter-chip" data-filter="shares">Shares only</button>
+    <button type="button" class="chat-filter-chip" data-filter="kb-share">📚 KB</button>
+    <button type="button" class="chat-filter-chip" data-filter="inbox-share">📥 Inbox</button>
+  </div>
+
+  <div class="chat-stream" id="chat-stream" data-filter="all">
     <div class="chat-empty" id="chat-empty">
       <i data-feather="message-circle"></i>
       <div>Loading messages…</div>
@@ -308,6 +366,9 @@
     bubble.className = "msg " + (m.is_mine ? "mine" : "theirs") +
                        (continuation ? " continuation" : " fresh");
     bubble.dataset.id = m.id;
+    // Drives the filter CSS (data-filter on .chat-stream + this attr)
+    // and the share-bubble left-stripe styling.
+    bubble.dataset.kind = m.kind || "text";
     bubble.innerHTML = `
       ${continuation ? "" : `<div class="msg-author">${esc(m.author_name)}</div>`}
       <div class="msg-body">${renderBody(m.body)}</div>
@@ -488,6 +549,21 @@
     input.value = "";
     autoResize();
     sendMessage(body);
+  });
+
+  // Filter chips → drive .chat-stream[data-filter] which the CSS uses
+  // to show/hide bubbles by kind. Re-rendering would lose scroll
+  // position; CSS toggle keeps everything in place.
+  document.querySelectorAll(".chat-filter-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      const f = chip.dataset.filter;
+      stream.dataset.filter = f;
+      document.querySelectorAll(".chat-filter-chip").forEach(c =>
+        c.classList.toggle("is-active", c.dataset.filter === f));
+      // After a filter change, stick to the bottom if the user was
+      // already there — otherwise stay put.
+      if (state.stickToBottom) scrollToBottom(false);
+    });
   });
 
   // Boot
