@@ -155,11 +155,26 @@
     min-height: 100%;
   }
   .qb-top5-head {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    display: flex; align-items: center; gap: 8px;
+    /* Reset button defaults so the head still reads as a header. */
+    background: transparent; border: none; padding: 0; margin: 0;
+    width: 100%; cursor: pointer; font: inherit; text-align: left;
+    color: inherit;
   }
   .qb-top5-head h2 {
     font-size: 14px; font-weight: 800; margin: 0; letter-spacing: -.01em;
+    flex: 1;
   }
+  .qb-top5-chevron {
+    width: 14px; height: 14px;
+    color: var(--color-text-secondary);
+    transition: transform .15s;
+    flex-shrink: 0;
+  }
+  .qb-top5.is-collapsed .qb-top5-chevron { transform: rotate(-90deg); }
+  .qb-top5.is-collapsed .qb-top5-list,
+  .qb-top5.is-collapsed .qb-top5-hint { display: none; }
+  .qb-top5.is-collapsed { gap: 0; padding-top: 8px; padding-bottom: 8px; }
   .qb-top5-counter {
     font-size: 12px; font-weight: 700;
     color: var(--color-text-secondary);
@@ -869,12 +884,20 @@
 
     <!-- "Today's Top 5" — drag any task here to pin it for today.
          Yesterday's incomplete pins auto-roll into today; closed pinned
-         items stay crossed-out in their slot for the rest of the day. -->
-    <section class="qb-top5" aria-label="Today's Top 5">
-      <div class="qb-top5-head">
+         items stay crossed-out in their slot for the rest of the day.
+
+         Header doubles as a toggle: click anywhere on it to collapse
+         the list so the Now group below is reachable without a long
+         scroll. State persists across page loads. Defaults are picked
+         in JS based on viewport — collapsed on narrow screens (where
+         the stack pushes Now well below the fold), expanded wide. -->
+    <section class="qb-top5" id="qb-top5" aria-label="Today's Top 5">
+      <button type="button" class="qb-top5-head" id="qb-top5-toggle"
+              aria-expanded="true" aria-controls="qb-top5-list qb-top5-hint">
+        <i data-feather="chevron-down" class="qb-top5-chevron" aria-hidden="true"></i>
         <h2>⭐ Today's Top 5</h2>
         <span class="qb-top5-counter" id="qb-top5-counter">0 / 5</span>
-      </div>
+      </button>
       <ol class="qb-top5-list" id="qb-top5-list"></ol>
       <p class="qb-top5-hint" id="qb-top5-hint">Drag tasks here. Reorder by dragging within. Drop back into the list to remove.</p>
     </section>

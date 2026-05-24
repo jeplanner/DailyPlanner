@@ -1806,6 +1806,34 @@
 
   // ─────────── boot ─────────────────────────────────────────
 
+  // Top-5 collapse state — persisted across sessions in localStorage.
+  // Default: collapsed on narrow viewports (where the Top-5 panel
+  // pushes the Now group well below the fold), expanded on wider
+  // screens (where the panel sits side-by-side and doesn't cost
+  // scroll). Once the user toggles, their choice wins on every device.
+  const QB_TOP5_COLLAPSED_KEY = "qb.top5.collapsed";
+  const wireTop5Collapse = () => {
+    const panel = $("#qb-top5");
+    const btn   = $("#qb-top5-toggle");
+    if (!panel || !btn) return;
+    const apply = (collapsed) => {
+      panel.classList.toggle("is-collapsed", collapsed);
+      btn.setAttribute("aria-expanded", String(!collapsed));
+    };
+    let stored;
+    try { stored = localStorage.getItem(QB_TOP5_COLLAPSED_KEY); } catch (_) {}
+    let collapsed;
+    if (stored === "1") collapsed = true;
+    else if (stored === "0") collapsed = false;
+    else collapsed = window.matchMedia("(max-width: 759px)").matches;
+    apply(collapsed);
+    btn.addEventListener("click", () => {
+      collapsed = !collapsed;
+      apply(collapsed);
+      try { localStorage.setItem(QB_TOP5_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (_) {}
+    });
+  };
+
   document.addEventListener("DOMContentLoaded", async () => {
     refreshFeather();
 
@@ -1816,6 +1844,7 @@
     loadPomo();
     wirePomo();
     wireMoveModal();
+    wireTop5Collapse();
     if (pomo.state === "running") {
       if (pomo.endsAt && pomo.endsAt > Date.now()) {
         startPomoTicker();
