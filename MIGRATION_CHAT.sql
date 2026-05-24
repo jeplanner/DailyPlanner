@@ -33,3 +33,12 @@ create table if not exists messages (
 -- either direction.
 create index if not exists messages_created_at_idx
   on messages (created_at desc);
+
+-- Per-user "last read" cursor for the unread badge. Stored directly on
+-- the users row (rather than a chat_read_state side table) because
+-- there's exactly one chat room — no need for a per-room cursor.
+-- NULL means "never opened chat" — the unread query treats that as
+-- "every non-own message is unread" so the badge does the right thing
+-- on first ever load.
+alter table users
+  add column if not exists chat_last_read_at timestamptz;

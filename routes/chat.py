@@ -245,6 +245,85 @@ def _fanout_push(sender_id, sender_name, body):
         logger.exception("chat push fanout failed")
 
 
+# ── Unread badge (drives the top-nav icon on every page) ───────
+
+
+# Cap returned to the badge so we never have to count past this. The
+# UI just shows "99+" when capped — actual count matters less than
+# "something new is waiting".
+UNREAD_CAP = 99
+
+
+@chat_bp.route("/api/chat/unread-count", methods=["GET"])
+@login_required
+def unread_count():
+    """Cheap endpoint polled by the top-nav badge from every page.
+    Returns 0 for non-allowlisted users so the global script can run
+    blindly without a permissions check on the client."""
+    if not user_allowed():
+        return jsonify({"count": 0})
+
+    viewer_id = session["user_id"]
+
+    # Defensive: if the chat_last_read_at column doesn't exist yet
+    # (migration not run), fall through with last_read=None so the
+    # endpoint reports unread = total-other-messages, which is at least
+    # honest. A 500 here would break the badge on every page in the app.
+    last_read = None
+    try:
+        urows = get("users", {
+            "id": f"eq.{viewer_id}",
+            "select": "chat_last_read_at",
+            "limit": "1",
+        }) or []
+        if urows:
+            last_read = urows[0].get("chat_last_read_at")
+    except Exception as e:
+        logger.warning("chat unread: read-cursor lookup failed (%s)", e)
+
+    params = {
+        "deleted_at": "is.null",
+        "user_id": f"neq.{viewer_id}",
+        "select": "id",
+        # Cap+1 so we know whether the actual count exceeds the cap.
+        "limit": str(UNREAD_CAP + 1),
+    }
+    if last_read:
+        params["created_at"] = f"gt.{last_read}"
+
+    try:
+        rows = get("messages", params) or []
+    except Exception as e:
+        logger.warning("chat unread: message query failed (%s)", e)
+        return jsonify({"count": 0})
+
+    n = len(rows)
+    return jsonify({
+        "count": min(n, UNREAD_CAP),
+        "capped": n > UNREAD_CAP,
+    })
+
+
+@chat_bp.route("/api/chat/mark-read", methods=["POST"])
+@login_required
+def mark_read():
+    """Advance the viewer's read cursor to now. Called by the chat page
+    on open, on poll-while-at-bottom, and on tab refocus. Safe to spam —
+    the underlying UPDATE is idempotent."""
+    _gate()
+    viewer_id = session["user_id"]
+    try:
+        update(
+            "users",
+            params={"id": f"eq.{viewer_id}"},
+            json={"chat_last_read_at": _utcnow_iso()},
+        )
+    except Exception as e:
+        logger.exception("chat mark-read failed: %s", e)
+        return jsonify({"error": "Mark-read failed"}), 502
+    return jsonify({"ok": True})
+
+
 @chat_bp.route("/api/chat/messages/<msg_id>", methods=["DELETE"])
 @login_required
 def delete_message(msg_id):

@@ -107,6 +107,27 @@
 }
 .help-btn svg{width:20px;height:20px;}
 
+/* ── Chat nav button + unread badge ──
+   Inherits .help-btn for size and base look; just adds the
+   anchor-positioned badge in the top-right corner. */
+.chat-nav-btn{ position: relative; text-decoration: none; }
+.chat-nav-btn:hover{ color: #2563eb; }
+.chat-nav-badge{
+  position: absolute;
+  top: 2px; right: 2px;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  background: #ef4444; color: white;
+  border: 2px solid white;
+  border-radius: 999px;
+  font-size: 10px; font-weight: 700;
+  line-height: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+html.dark .chat-nav-badge{ border-color: #1e293b; }
+
 /* ── User identity: avatar in top-bar + sidebar header ── */
 .user-menu{position:relative;flex-shrink:0;}
 .user-avatar{
@@ -932,6 +953,19 @@ html.dark .section-title{color:#f1f5f9;}
   <button type="button" class="help-btn" onclick="openHelpModal()" title="Help & tips for this page (press ? anywhere)" aria-label="Help">
     <i data-feather="help-circle"></i>
   </button>
+
+  {% if chat_enabled %}
+    {# Persistent chat shortcut + unread badge. Visible from every page
+       so users don't have to fish through the sidebar for the room.
+       Badge JS lives at the bottom of this file (also gated on
+       chat_enabled) so the polling stops dead for non-allowlisted
+       sessions instead of hitting the API for nothing. #}
+    <a href="/chat" class="help-btn chat-nav-btn" id="chat-nav-btn"
+       title="Family chat" aria-label="Family chat">
+      <i data-feather="message-circle"></i>
+      <span class="chat-nav-badge" id="chat-nav-badge" hidden>0</span>
+    </a>
+  {% endif %}
 
   {# Date+time pill, sitting next to the user avatar so the
      identity + temporal context cluster at the right edge. #}
@@ -2950,3 +2984,66 @@ document.addEventListener("keydown", (e) => {
 feather.replace()
 
 </script>
+
+{% if chat_enabled %}
+<script>
+/* ─── Chat unread badge ────────────────────────────────────────────
+   Polls /api/chat/unread-count and reflects the result in the
+   top-bar chat icon. Polling pauses when the tab is hidden so we
+   don't burn DB reads on background tabs. */
+(() => {
+  const btn   = document.getElementById("chat-nav-btn");
+  const badge = document.getElementById("chat-nav-badge");
+  if (!btn || !badge) return;
+
+  // ~60s is comfortable for a family chat. Anything faster pings the
+  // DB every few seconds across every open tab on every device — not
+  // worth it for the latency win.
+  const POLL_MS = 60_000;
+  let timer = null;
+
+  function paint(n, capped) {
+    if (!n) {
+      badge.setAttribute("hidden", "");
+      badge.textContent = "0";
+      return;
+    }
+    badge.removeAttribute("hidden");
+    badge.textContent = capped || n > 99 ? "99+" : String(n);
+  }
+
+  async function tick() {
+    try {
+      const r = await fetch("/api/chat/unread-count", { credentials: "same-origin" });
+      if (!r.ok) return;
+      const data = await r.json();
+      paint(Number(data.count || 0), !!data.capped);
+    } catch (_) {
+      // Network blip — leave the previous badge value alone.
+    }
+  }
+
+  function start() {
+    if (timer) return;
+    tick();
+    timer = setInterval(tick, POLL_MS);
+  }
+  function stop() {
+    if (!timer) return;
+    clearInterval(timer); timer = null;
+  }
+
+  // Other pages (notably /chat itself) clear the badge by calling
+  // window.dpChatBadgeRefresh() after they POST /api/chat/mark-read.
+  window.dpChatBadgeRefresh = tick;
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stop(); else start();
+  });
+
+  // First fire after Feather has had a tick to render — keeps the
+  // badge from briefly flashing on top of an un-painted icon.
+  setTimeout(start, 200);
+})();
+</script>
+{% endif %}

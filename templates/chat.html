@@ -320,12 +320,31 @@
       state.since = data.now;
       scrollToBottom(false);
       renderEmptyState();
+      // Cold open = we've now seen whatever was waiting. Clear the
+      // badge from any page the user opens next.
+      markRead();
     } catch (e) {
       console.error(e);
       toast("Couldn't load chat", "error");
     } finally {
       startPolling();
     }
+  }
+
+  // POST the read cursor; harmless to spam. Triggers a badge refresh
+  // on the next paint so the nav-bar icon catches up without waiting
+  // for its own 60s poll cycle.
+  async function markRead() {
+    try {
+      await fetch("/api/chat/mark-read", {
+        method: "POST",
+        headers: { "X-CSRFToken": CSRF },
+        credentials: "same-origin",
+      });
+      if (typeof window.dpChatBadgeRefresh === "function") {
+        window.dpChatBadgeRefresh();
+      }
+    } catch (_) { /* non-fatal */ }
   }
 
   async function poll() {
@@ -344,6 +363,10 @@
       document.getElementById("chat-empty")?.remove();
       for (const m of data.messages) appendMessage(m);
       if (wasAtBottom) scrollToBottom(true);
+      // New messages while the chat page is in front = the user has
+      // already seen them. Bump the read cursor so the badge clears
+      // on the other pages they have open.
+      if (!document.hidden) markRead();
     } catch (e) {
       // Transient failures are common (network blip, app waking up) —
       // log but keep polling so the chat recovers without a reload.
@@ -357,7 +380,7 @@
     // burn DB reads while the user isn't looking. Resume on focus.
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) stopPolling();
-      else { poll(); startPolling(); }
+      else { poll(); startPolling(); markRead(); }
     });
     state.pollTimer = setInterval(poll, POLL_MS);
   }
