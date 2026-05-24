@@ -235,6 +235,35 @@
   }
   .kb-backlog:not(.is-open) .kb-backlog-body { display: none; }
 
+  /* Mine / Family tab strip — same visual language as Family Tasks
+     so users learn one pattern. */
+  .kb-backlog-tabs {
+    display: inline-flex; gap: 2px;
+    background: var(--color-surface-secondary, #f3f4f6);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 3px; margin-bottom: 8px;
+  }
+  .kb-backlog-tab {
+    border: none; background: transparent;
+    padding: 4px 12px; border-radius: 6px;
+    font-size: 12px; font-weight: 600;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+  .kb-backlog-tab.is-active {
+    background: var(--color-primary); color: white;
+  }
+
+  /* "Added by …" chip on family rows. Hidden on rows the viewer
+     created — name is implied. */
+  .kb-backlog-author {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 11px; font-weight: 500;
+    color: var(--color-text-muted, #94a3b8);
+  }
+
   .kb-backlog-add {
     display: flex; gap: 6px; margin-bottom: 8px;
   }
@@ -411,6 +440,13 @@
       </header>
 
       <div class="kb-backlog-body" id="kb-backlog-body">
+        {% if chat_enabled %}
+        <div class="kb-backlog-tabs" role="tablist" id="kb-backlog-tabs">
+          <button type="button" class="kb-backlog-tab is-active" data-scope="mine">Mine</button>
+          <button type="button" class="kb-backlog-tab" data-scope="family">Family</button>
+        </div>
+        {% endif %}
+
         <form class="kb-backlog-add" id="kb-backlog-form" autocomplete="off">
           <input type="text" id="kb-backlog-input" maxlength="300"
                  placeholder="Add something to bring into KB (e.g. “Scan thermodynamics textbook”)…">
@@ -828,14 +864,22 @@
     if (window.feather) feather.replace();
   });
 
-  // ── Backlog (per-user "to add to KB" list) ────────────────
+  // ── Backlog (hybrid: per-user "Mine" + shared "Family") ────
+  // Whether the Family tab is shown at all — driven by the
+  // chat_enabled context flag, so the same allowlist gates both
+  // chat and the backlog's shared scope.
+  const _CHAT_ENABLED = {{ chat_enabled|tojson }};
+
   let _backlogShowDone = false;
   let _backlogOpen = true;
+  let _backlogScope = "mine";
 
   async function _loadBacklog() {
     try {
+      const params = new URLSearchParams({ scope: _backlogScope });
+      if (_backlogShowDone) params.set("show_done", "1");
       const r = await fetch(
-        "/api/knowledge-base/backlog" + (_backlogShowDone ? "?show_done=1" : ""),
+        "/api/knowledge-base/backlog?" + params.toString(),
         { credentials: "same-origin" }
       );
       const data = await r.json().catch(() => ({}));
@@ -878,30 +922,48 @@
 
   function _backlogRowHtml(item) {
     const cls = "kb-backlog-row" + (item.is_done ? " is-done" : "");
+    // "Added by …" only on family rows that aren't mine — on my own
+    // rows the author label is implied; on personal-scope rows there
+    // can't be anyone else.
+    const showAuthor = item.is_shared && !item.mine && item.created_by_name;
+    const authorChip = showAuthor
+      ? `<span class="kb-backlog-author">· ${_esc(item.created_by_name)}</span>`
+      : "";
+    // Only the creator gets the edit/delete affordance — non-creators
+    // on shared rows can tick done but not rename/remove someone else's
+    // intent.
+    const titleAttrs = item.mine ? 'title="Click to edit"' : 'title="Added by ' + _esc(item.created_by_name || "someone else") + '"';
+    const actions = item.mine
+      ? `<button type="button" class="kb-backlog-row-btn danger" data-act="delete" title="Delete">
+           <i data-feather="trash-2"></i>
+         </button>`
+      : "";
     return `
-      <li class="${cls}" data-id="${_esc(item.id)}">
+      <li class="${cls}" data-id="${_esc(item.id)}" data-mine="${item.mine ? '1' : '0'}">
         <input type="checkbox" ${item.is_done ? "checked" : ""}
                aria-label="Mark done">
         <div class="kb-backlog-row-main">
-          <div class="kb-backlog-row-title" title="Click to edit">${_esc(item.title)}</div>
+          <div class="kb-backlog-row-title" ${titleAttrs}>${_esc(item.title)}${authorChip}</div>
         </div>
-        <div class="kb-backlog-row-actions">
-          <button type="button" class="kb-backlog-row-btn danger" data-act="delete" title="Delete">
-            <i data-feather="trash-2"></i>
-          </button>
-        </div>
+        <div class="kb-backlog-row-actions">${actions}</div>
       </li>`;
   }
 
   function _wireBacklogRows() {
     document.querySelectorAll("#kb-backlog-list .kb-backlog-row").forEach(row => {
       const id = row.dataset.id;
+      const mine = row.dataset.mine === "1";
       row.querySelector('input[type=checkbox]')?.addEventListener("change", (e) =>
         _toggleBacklogDone(id, e.target.checked, row));
-      row.querySelector('[data-act="delete"]')?.addEventListener("click", () =>
-        _deleteBacklog(id, row));
-      row.querySelector('.kb-backlog-row-title')?.addEventListener("click", (e) =>
-        _editBacklogTitle(e.currentTarget, id));
+      // Edit and delete are creator-only. Skip wiring them entirely on
+      // family rows authored by someone else — the backend would 403
+      // anyway, but no point letting the click look like it'll work.
+      if (mine) {
+        row.querySelector('[data-act="delete"]')?.addEventListener("click", () =>
+          _deleteBacklog(id, row));
+        row.querySelector('.kb-backlog-row-title')?.addEventListener("click", (e) =>
+          _editBacklogTitle(e.currentTarget, id));
+      }
     });
   }
 
@@ -1015,7 +1077,13 @@
         const r = await fetch("/api/knowledge-base/backlog", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
-          body: JSON.stringify({ title }),
+          body: JSON.stringify({
+            title,
+            // Items added from the Family tab are shared by default —
+            // that's the whole point of being on that tab. Keep adding
+            // from Mine private.
+            is_shared: _backlogScope === "family",
+          }),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || r.status);
@@ -1024,6 +1092,25 @@
         input.value = title;
         _toast("Couldn't add: " + (err.message || ""), "error");
       }
+    });
+
+    // Wire Mine/Family tabs (only present when chat is enabled).
+    document.querySelectorAll(".kb-backlog-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const scope = btn.dataset.scope;
+        if (scope === _backlogScope) return;
+        _backlogScope = scope;
+        document.querySelectorAll(".kb-backlog-tab").forEach(b =>
+          b.classList.toggle("is-active", b.dataset.scope === scope));
+        // Tab-aware placeholder so the affordance reads right.
+        const input = document.getElementById("kb-backlog-input");
+        if (input) {
+          input.placeholder = scope === "family"
+            ? "Add something the family should bring into KB…"
+            : "Add something to bring into KB (e.g. “Scan thermodynamics textbook”)…";
+        }
+        _loadBacklog();
+      });
     });
   }
 {% else %}

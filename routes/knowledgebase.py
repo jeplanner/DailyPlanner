@@ -551,7 +551,32 @@ def _backlog_now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-def _backlog_shape(row):
+def _backlog_author_name():
+    """Display name for the current user, with the same email-local-part
+    fallback the chat blueprint uses — keeps "created by" labels
+    consistent across surfaces."""
+    from flask_login import current_user
+    name = (getattr(current_user, "display_name", "") or "").strip()
+    if name:
+        return name[:80]
+    email = (getattr(current_user, "email", "") or "").strip()
+    if email:
+        return email.split("@", 1)[0][:80]
+    return "Someone"
+
+
+def _backlog_family_allowed():
+    """True if the viewer is on the CHAT_USER_EMAILS allowlist. Lets
+    `is_shared` items show up only to family members. Imports lazily
+    so this module doesn't depend on chat existing at import time."""
+    try:
+        from routes.chat import user_allowed as _chat_allowed
+        return _chat_allowed()
+    except Exception:
+        return False
+
+
+def _backlog_shape(row, viewer_id):
     return {
         "id": row.get("id"),
         "title": row.get("title") or "",
@@ -559,38 +584,60 @@ def _backlog_shape(row):
         "done_at": row.get("done_at"),
         "is_done": bool(row.get("done_at")),
         "created_at": row.get("created_at"),
+        "is_shared": bool(row.get("is_shared")),
+        "created_by": row.get("user_id"),
+        "created_by_name": row.get("created_by_name") or "",
+        "mine": str(row.get("user_id")) == str(viewer_id),
     }
 
 
 @knowledgebase_bp.route("/api/knowledge-base/backlog", methods=["GET"])
 @login_required
 def kb_backlog_list():
-    """List the viewer's backlog. `?show_done=1` includes completed
-    items (default hides them so the panel stays focused on what's
-    left to do)."""
+    """List backlog items. Modes:
+
+      ?scope=mine   (default) — items I created with is_shared=false
+      ?scope=family           — every shared item, by anyone in the
+                                family allowlist; 403 if I'm not on it
+
+    `?show_done=1` brings completed rows back into view (hidden by
+    default so the panel stays focused on what's left).
+    """
     user_id = session["user_id"]
+    scope = (request.args.get("scope") or "mine").strip().lower()
     show_done = (request.args.get("show_done") or "").strip() in ("1", "true", "yes")
 
     params = {
-        "user_id": f"eq.{user_id}",
         "deleted_at": "is.null",
-        "select": "id,title,notes,done_at,created_at",
+        "select": "id,user_id,title,notes,done_at,created_at,is_shared,created_by_name",
         # Open items first (done_at NULL), then most-recently-added.
         "order": "done_at.asc.nullsfirst,created_at.desc",
         "limit": "200",
     }
+    if scope == "family":
+        if not _backlog_family_allowed():
+            return jsonify({"error": "Not on the family allowlist"}), 403
+        params["is_shared"] = "eq.true"
+    else:
+        # Personal scope = I'm the creator AND it isn't a shared row.
+        # Shared rows (even if I created them) live on the Family tab so
+        # each item shows up in exactly one place.
+        params["user_id"] = f"eq.{user_id}"
+        params["is_shared"] = "eq.false"
+
     if not show_done:
         params["done_at"] = "is.null"
 
     try:
         rows = get("kb_backlog", params) or []
     except Exception as e:
-        # Most likely cause: migration not applied yet. Don't 500 the
-        # page — return an empty list so the panel renders quietly.
+        # Most likely cause: migration not applied yet (is_shared column
+        # missing). Don't 500 the page — return an empty list so the
+        # panel renders quietly and the user can apply the migration.
         logger.warning("kb backlog list failed (migration pending?): %s", e)
         return jsonify({"items": [], "migration_pending": True})
 
-    return jsonify({"items": [_backlog_shape(r) for r in rows]})
+    return jsonify({"items": [_backlog_shape(r, user_id) for r in rows]})
 
 
 @knowledgebase_bp.route("/api/knowledge-base/backlog", methods=["POST"])
@@ -606,10 +653,19 @@ def kb_backlog_create():
     if notes:
         notes = notes[:BACKLOG_NOTES_MAX]
 
+    is_shared = bool(data.get("is_shared"))
+    if is_shared and not _backlog_family_allowed():
+        return jsonify({"error": "Not on the family allowlist"}), 403
+
     payload = {
         "user_id": user_id,
         "title": title,
         "notes": notes,
+        "is_shared": is_shared,
+        # Always stamp the display name so family rows can render
+        # "added by …" without joining users — and so the label
+        # survives a later rename.
+        "created_by_name": _backlog_author_name(),
     }
     try:
         rows = post("kb_backlog", payload)
@@ -618,27 +674,39 @@ def kb_backlog_create():
         return jsonify({"error": "Create failed"}), 502
 
     row = rows[0] if rows else payload
-    return jsonify({"item": _backlog_shape(row)})
+    return jsonify({"item": _backlog_shape(row, user_id)})
 
 
 @knowledgebase_bp.route("/api/knowledge-base/backlog/<item_id>/done", methods=["POST"])
 @login_required
 def kb_backlog_toggle_done(item_id):
     """Tick/untick. Body: {done: bool}; omit to toggle whatever the
-    current state is."""
+    current state is. Permissions:
+
+      Personal row (is_shared=false) — only the owner.
+      Shared row  (is_shared=true)  — anyone on the family allowlist
+                                       (collaborative ticking, like a
+                                       shared todo list).
+    """
     user_id = session["user_id"]
     data = request.get_json(silent=True) or {}
 
     rows = get("kb_backlog", {
         "id": f"eq.{item_id}",
-        "user_id": f"eq.{user_id}",
         "deleted_at": "is.null",
-        "select": "id,done_at",
+        "select": "id,user_id,done_at,is_shared",
         "limit": "1",
     }) or []
     if not rows:
         return jsonify({"error": "Not found"}), 404
     cur = rows[0]
+
+    if cur.get("is_shared"):
+        if not _backlog_family_allowed():
+            return jsonify({"error": "Not on the family allowlist"}), 403
+    else:
+        if str(cur.get("user_id")) != str(user_id):
+            return jsonify({"error": "Not yours"}), 403
 
     if "done" in data:
         want_done = bool(data["done"])
@@ -648,7 +716,7 @@ def kb_backlog_toggle_done(item_id):
     try:
         update(
             "kb_backlog",
-            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            params={"id": f"eq.{item_id}"},
             json={"done_at": _backlog_now_iso() if want_done else None},
         )
     except Exception as e:
@@ -660,8 +728,24 @@ def kb_backlog_toggle_done(item_id):
 @knowledgebase_bp.route("/api/knowledge-base/backlog/<item_id>/update", methods=["POST"])
 @login_required
 def kb_backlog_update(item_id):
+    """Edit title / notes / scope. Only the creator can edit (same
+    rule for personal and shared rows — keeps the model simple, matches
+    family_tasks). Flipping `is_shared` requires the family allowlist.
+    """
     user_id = session["user_id"]
     data = request.get_json(silent=True) or {}
+
+    rows = get("kb_backlog", {
+        "id": f"eq.{item_id}",
+        "deleted_at": "is.null",
+        "select": "id,user_id,is_shared",
+        "limit": "1",
+    }) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    cur = rows[0]
+    if str(cur.get("user_id")) != str(user_id):
+        return jsonify({"error": "Only the creator can edit"}), 403
 
     patch = {}
     if "title" in data:
@@ -672,6 +756,11 @@ def kb_backlog_update(item_id):
     if "notes" in data:
         v = (data.get("notes") or "").strip()
         patch["notes"] = v[:BACKLOG_NOTES_MAX] if v else None
+    if "is_shared" in data:
+        want_shared = bool(data["is_shared"])
+        if want_shared and not _backlog_family_allowed():
+            return jsonify({"error": "Not on the family allowlist"}), 403
+        patch["is_shared"] = want_shared
 
     if not patch:
         return jsonify({"ok": True, "noop": True})
@@ -679,7 +768,7 @@ def kb_backlog_update(item_id):
     try:
         update(
             "kb_backlog",
-            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            params={"id": f"eq.{item_id}"},
             json=patch,
         )
     except Exception as e:
@@ -691,12 +780,25 @@ def kb_backlog_update(item_id):
 @knowledgebase_bp.route("/api/knowledge-base/backlog/<item_id>/delete", methods=["POST"])
 @login_required
 def kb_backlog_delete(item_id):
-    """Soft-delete; matches the project convention."""
+    """Soft-delete. Only the creator can remove — matches the edit
+    permission rule and avoids "X deleted my backlog item" surprises
+    on shared rows."""
     user_id = session["user_id"]
+    rows = get("kb_backlog", {
+        "id": f"eq.{item_id}",
+        "deleted_at": "is.null",
+        "select": "id,user_id",
+        "limit": "1",
+    }) or []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    if str(rows[0].get("user_id")) != str(user_id):
+        return jsonify({"error": "Only the creator can delete"}), 403
+
     try:
         update(
             "kb_backlog",
-            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+            params={"id": f"eq.{item_id}"},
             json={"deleted_at": _backlog_now_iso()},
         )
     except Exception as e:

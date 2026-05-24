@@ -32,3 +32,21 @@ create table if not exists kb_backlog (
 -- can read in either direction.
 create index if not exists kb_backlog_user_idx
   on kb_backlog (user_id, created_at desc);
+
+-- ── Family sharing (Option 2 hybrid) ───────────────────────────
+-- `is_shared = true` means the row is visible to every CHAT_USER_EMAILS
+-- allowlisted user, not just the creator. Default false keeps every
+-- existing row private (no surprise leaks). `created_by_name` is the
+-- denormalized display name so the family view can render "added by
+-- X" without joining users on every fetch — and so the label survives
+-- a rename later, same convention as messages.author_name.
+alter table kb_backlog
+  add column if not exists is_shared boolean not null default false;
+alter table kb_backlog
+  add column if not exists created_by_name text;
+
+-- Index for the family-list query path. Small table today, but
+-- worth having so the panel stays snappy as it grows.
+create index if not exists kb_backlog_shared_idx
+  on kb_backlog (is_shared, created_at desc)
+  where is_shared = true and deleted_at is null;
