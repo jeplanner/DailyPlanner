@@ -281,7 +281,10 @@ def kb_list():
     """
     user_id = session["user_id"]
     scope = (request.args.get("scope") or "mine").strip().lower()
-    if scope not in ("mine", "family", "archived"):
+    # "all" returns every non-archived file in the main folder with no
+    # is_shared filter — the frontend caches this and partitions
+    # client-side so toggling Mine/Family is instant.
+    if scope not in ("mine", "family", "archived", "all"):
         scope = "mine"
 
     row = _load_token_row(user_id)

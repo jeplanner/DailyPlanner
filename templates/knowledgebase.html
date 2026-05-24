@@ -836,6 +836,12 @@
           const saved = (data.purpose || "").trim();
           _paintPurpose(cell, saved);
           cell.dataset.original = saved;
+          // Keep the cache in sync so a tab toggle won't revert the
+          // purpose back to its pre-edit value.
+          if (_filesCache) {
+            const it = _filesCache.find(f => f.id === id);
+            if (it) it.purpose = saved;
+          }
           _toast(saved ? "Purpose saved" : "Purpose cleared", "success");
         } catch (e) {
           _paintPurpose(cell, original);
@@ -877,10 +883,27 @@
     link.classList.remove("is-disabled");
   }
 
-  async function _loadList(scope) {
-    scope = scope || _backlogScope || "mine";
+  // Client-side cache of every non-archived file. Tab switches just
+  // re-filter this and re-render — no Drive round-trip. Network only
+  // happens on initial load and after mutations (upload/share/archive/
+  // restore). null = never loaded; empty array = loaded but empty.
+  let _filesCache = null;
+
+  function _renderCurrentTab() {
+    const scope = _backlogScope || "mine";
+    if (!_filesCache) { _renderEmpty(scope); return; }
+    const filtered = scope === "family"
+      ? _filesCache.filter(f => f.is_shared)
+      : _filesCache.filter(f => !f.is_shared);
+    _renderGrid(filtered, scope);
+  }
+
+  // Fetch the full active library (no is_shared filter) and cache it.
+  // Drive call cost is the same regardless of scope, so we pay it once
+  // and let tab toggles ride the cache.
+  async function _fetchFilesCache() {
     try {
-      const r = await fetch("/api/knowledge-base?scope=" + encodeURIComponent(scope));
+      const r = await fetch("/api/knowledge-base?scope=all");
       if (r.status === 401 || r.status === 403) {
         const data = await r.json().catch(() => ({}));
         if (data.connect_url) { location.href = data.connect_url; return; }
@@ -892,18 +915,26 @@
         if (window.feather) feather.replace();
         return;
       }
-      // The list response carries the folder id (auto-created on first
-      // call). Refresh the "Open in Drive" link so it works even if the
-      // server-rendered page had no cached id yet.
       _updateDriveLink(data.folder_id);
-      _renderGrid(data.files || [], scope);
+      _filesCache = data.files || [];
     } catch (e) {
       console.error(e);
       _toast("Couldn't reach Drive", "error");
     }
-    // Always refresh archived count so the badge stays accurate even
-    // after archive / restore actions. Cheap — one Drive list call.
-    _loadArchivedList({ countOnly: !_archivedOpen });
+  }
+
+  // Public entry point. By default uses the cache; pass force=true to
+  // re-fetch (after upload/archive/restore etc).
+  async function _loadList(scope, force) {
+    if (force) _filesCache = null;
+    if (_filesCache === null) {
+      await _fetchFilesCache();
+      // Archived count refreshes only on actual network fetches —
+      // tab toggles don't change archived state, so no point spending
+      // a Drive call to re-confirm it.
+      _loadArchivedList({ countOnly: !_archivedOpen });
+    }
+    _renderCurrentTab();
   }
 
   // Separately fetches the archived folder's contents. Used for the
@@ -1013,6 +1044,10 @@
   }
 
   function _prependCard(file) {
+    // Keep the cache in sync so a later tab toggle still shows the
+    // freshly-uploaded file (or correctly hides it if it belongs to
+    // the other tab).
+    if (_filesCache !== null) _filesCache.unshift(file);
     let list = document.getElementById("kb-list");
     if (!list) {
       const wrap = document.getElementById("kb-grid-wrap");
@@ -1057,9 +1092,10 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || r.status);
       _toast("Shared to family", "success");
-      // File now has is_shared=true → vanishes from Mine, appears in
-      // Family. Refetch the current view so the row physically moves.
-      _loadList();
+      // Flip in cache + re-render the current tab. No network call —
+      // backend already knows; UI just needs to reflect the new state.
+      _cacheSetShared(id, true);
+      _renderCurrentTab();
     } catch (e) {
       console.error(e);
       _toast("Couldn't share: " + (e.message || ""), "error");
@@ -1085,7 +1121,8 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || r.status);
       _toast("Moved back to Mine", "success");
-      _loadList();
+      _cacheSetShared(id, false);
+      _renderCurrentTab();
     } catch (e) {
       _toast("Couldn't unshare: " + (e.message || ""), "error");
       btn.disabled = false;
@@ -1109,13 +1146,23 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || r.status);
       _toast("Restored", "success");
-      _loadList();        // refreshes main grid AND archived count
+      // Restored file may belong to either tab depending on its prior
+      // is_shared; safer to refetch the main cache than to guess.
+      _loadList(undefined, true);
     } catch (e) {
       _toast("Couldn't restore: " + (e.message || ""), "error");
       btn.disabled = false;
       btn.innerHTML = orig;
       if (window.feather) feather.replace();
     }
+  }
+
+  // Tiny cache helper used by share/unshare so we don't have to
+  // refetch the whole Drive list just to flip one flag.
+  function _cacheSetShared(id, shared) {
+    if (!_filesCache) return;
+    const it = _filesCache.find(f => f.id === id);
+    if (it) it.is_shared = !!shared;
   }
 
   async function kbDelete(id, btn) {
@@ -1126,6 +1173,12 @@
         headers: { "X-CSRFToken": _csrf },
       });
       if (!r.ok) throw new Error(r.status);
+      // Remove from the cache so a later tab toggle doesn't bring
+      // the just-archived file back into view from stale state.
+      if (_filesCache) {
+        const i = _filesCache.findIndex(f => f.id === id);
+        if (i >= 0) _filesCache.splice(i, 1);
+      }
       const item = btn.closest(".kb-item");
       if (item) {
         item.style.transition = "opacity .2s";
@@ -1161,7 +1214,13 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || r.status);
-      if (linkEl) linkEl.textContent = data.name || (trimmed + ".pdf");
+      const newName = data.name || (trimmed + ".pdf");
+      if (linkEl) linkEl.textContent = newName;
+      // Keep the cache name in sync so tab toggle won't revert it.
+      if (_filesCache) {
+        const it = _filesCache.find(f => f.id === id);
+        if (it) it.name = newName;
+      }
       _toast("Renamed", "success");
     } catch (e) {
       _toast("Couldn't rename", "error");
