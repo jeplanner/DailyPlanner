@@ -192,24 +192,37 @@ def list_items():
     _auto_roll_top5(user_id)
 
     today_iso = date.today().isoformat()
-    select = (
+    # Try the new schema (with priority_label) first; fall back to the
+    # legacy one for environments where MIGRATION_QUICK_BUCKET_PRIORITY_LABEL
+    # hasn't been applied yet. Without this fallback, a missing column
+    # on Supabase makes the whole list query 400 and the page renders
+    # empty — which is what just happened.
+    select_full = (
         "id,text,time_bucket,due_at,is_done,done_at,position,"
         "top5_date,top5_position,priority_label,"
         "created_at,updated_at"
     )
-    try:
-        rows = get(
-            "quick_bucket",
-            params={
-                "user_id": f"eq.{user_id}",
-                "is_deleted": "eq.false",
-                "select": select,
-                "order": "is_done.asc,position.asc,created_at.desc",
-                "limit": "500",
-            },
-        ) or []
-    except Exception:
-        logger.exception("quick_bucket list failed")
+    select_legacy = (
+        "id,text,time_bucket,due_at,is_done,done_at,position,"
+        "top5_date,top5_position,"
+        "created_at,updated_at"
+    )
+    base_params = {
+        "user_id": f"eq.{user_id}",
+        "is_deleted": "eq.false",
+        "order": "is_done.asc,position.asc,created_at.desc",
+        "limit": "500",
+    }
+    rows = None
+    for sel in (select_full, select_legacy):
+        try:
+            rows = get("quick_bucket", params={**base_params, "select": sel}) or []
+            break
+        except Exception as e:
+            logger.warning("quick_bucket list with select=%s failed: %s", sel.split(',')[-2:], e)
+            continue
+    if rows is None:
+        logger.exception("quick_bucket list failed for both selects")
         return jsonify({"items": [], "buckets": BUCKETS, "error": "Could not load"}), 200
     return jsonify({
         "items": rows,
@@ -268,22 +281,35 @@ def add_item():
         payload["done_at"] = datetime.utcnow().isoformat()
     if client_id:
         payload["client_id"] = client_id
+    def _do_insert(p):
+        if client_id:
+            return post(
+                "quick_bucket?on_conflict=user_id,client_id",
+                p,
+                prefer="resolution=merge-duplicates",
+            )
+        return post("quick_bucket", p)
     try:
         # Upsert on the (user_id, client_id) partial unique index so a
         # replayed offline write returns the original row instead of
         # creating a duplicate. Falls back to a normal insert when no
         # client_id was sent (legacy callers / online path).
-        if client_id:
-            rows = post(
-                "quick_bucket?on_conflict=user_id,client_id",
-                payload,
-                prefer="resolution=merge-duplicates",
-            )
-        else:
-            rows = post("quick_bucket", payload)
+        rows = _do_insert(payload)
     except Exception as e:
-        logger.error("quick_bucket insert failed: %s", e)
-        return jsonify({"error": "Couldn't add — please try again."}), 502
+        # If priority_label triggered the failure (column missing on
+        # un-migrated environments), retry the insert without it so the
+        # add still succeeds. Same fallback shape as the GET above.
+        if "priority_label" in payload:
+            logger.warning("quick_bucket insert retry without priority_label: %s", e)
+            retry = {k: v for k, v in payload.items() if k != "priority_label"}
+            try:
+                rows = _do_insert(retry)
+            except Exception as e2:
+                logger.error("quick_bucket insert failed (both attempts): %s", e2)
+                return jsonify({"error": "Couldn't add — please try again."}), 502
+        else:
+            logger.error("quick_bucket insert failed: %s", e)
+            return jsonify({"error": "Couldn't add — please try again."}), 502
 
     new_row = rows[0] if rows else None
     # Mirror to Google Calendar in the background — only if the user
@@ -397,8 +423,26 @@ def update_item(item_id):
             json=patch,
         )
     except Exception as e:
-        logger.error("quick_bucket update failed: %s", e)
-        return jsonify({"error": "Couldn't save — please try again."}), 502
+        # Same defensive fallback as the GET / create paths: if
+        # priority_label triggered the failure (column missing on
+        # un-migrated environments), retry without it so other patch
+        # fields (text / time_bucket / position) still save.
+        if "priority_label" in patch:
+            logger.warning("quick_bucket update retry without priority_label: %s", e)
+            retry = {k: v for k, v in patch.items() if k != "priority_label"}
+            if retry:
+                try:
+                    update(
+                        "quick_bucket",
+                        params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}"},
+                        json=retry,
+                    )
+                except Exception as e2:
+                    logger.error("quick_bucket update failed (both attempts): %s", e2)
+                    return jsonify({"error": "Couldn't save — please try again."}), 502
+        else:
+            logger.error("quick_bucket update failed: %s", e)
+            return jsonify({"error": "Couldn't save — please try again."}), 502
 
     # If the time_bucket changed, sync (or delete) the calendar mirror.
     if "time_bucket" in patch and cur:
