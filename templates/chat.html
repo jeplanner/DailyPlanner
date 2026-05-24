@@ -88,6 +88,15 @@
   .msg-body {
     white-space: pre-wrap;
   }
+  /* Anchors pick up the bubble's text colour so links don't look
+     wrong on blue (mine) or default link-blue on white (theirs). */
+  .msg-body a {
+    color: inherit; text-decoration: underline;
+    text-underline-offset: 2px;
+    word-break: break-all;
+  }
+  .msg.theirs .msg-body a { color: #2563eb; }
+  .msg-body a:hover { text-decoration: none; }
 
   .msg-meta {
     font-size: 10.5px; opacity: .65;
@@ -217,6 +226,26 @@
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+  // Render body as HTML-safe text with http(s):// URLs turned into
+  // anchors. The regex stops at whitespace, quotes, and angle brackets,
+  // and we strip trailing punctuation (.,;:!?) so "see https://x.com."
+  // doesn't capture the period into the link target.
+  const URL_RE = /https?:\/\/[^\s"'<>]+/g;
+  const TRAILING_PUNCT = /[.,;:!?)\]]+$/;
+  function renderBody(raw) {
+    const safe = esc(raw);
+    return safe.replace(URL_RE, (m) => {
+      let trimmed = m;
+      let tail = "";
+      const t = TRAILING_PUNCT.exec(trimmed);
+      if (t) { tail = t[0]; trimmed = trimmed.slice(0, -tail.length); }
+      // The URL has already been HTML-escaped above, so no further
+      // escaping is needed for either the href or the visible text.
+      const a = `<a href="${trimmed}" target="_blank" rel="noopener noreferrer nofollow">${trimmed}</a>`;
+      return a + tail;
+    });
+  }
+
   const toast = (msg, kind="info") =>
     window.showToast ? window.showToast(msg, kind, 2500) : console.log("[chat]", msg);
 
@@ -281,7 +310,7 @@
     bubble.dataset.id = m.id;
     bubble.innerHTML = `
       ${continuation ? "" : `<div class="msg-author">${esc(m.author_name)}</div>`}
-      <div class="msg-body">${esc(m.body)}</div>
+      <div class="msg-body">${renderBody(m.body)}</div>
       <div class="msg-meta">
         <span>${esc(fmtTime(m.created_at))}</span>
         ${m.is_mine ? `<button type="button" class="msg-del" data-act="del">delete</button>` : ""}
