@@ -266,6 +266,30 @@ def share_to_chat():
             args=(viewer_id, file_id),
             daemon=True,
         ).start()
+        # Synchronously flip is_shared=true on the file so it moves
+        # into the Family tab right away. Skipping background here:
+        # the user's next list refresh should see the file in Family,
+        # not stuck in Mine while a thread races to update appProperty.
+        try:
+            from routes.knowledgebase import (
+                _build_drive,
+                _credentials_from_row,
+                _load_token_row,
+                _refresh_if_needed,
+                _set_file_shared,
+            )
+            from google.auth.exceptions import RefreshError as _RefreshError
+            tok = _load_token_row(viewer_id)
+            if tok and tok.get("refresh_token"):
+                try:
+                    creds = _refresh_if_needed(_credentials_from_row(tok), viewer_id)
+                    _set_file_shared(_build_drive(creds), file_id, True)
+                except _RefreshError:
+                    pass
+        except Exception:
+            # Non-fatal — the chat message still posts, the file just
+            # stays in Mine until the user moves it explicitly.
+            logger.exception("chat share: set_file_shared failed")
         prefix = "📚 PDF shared"
     else:
         prefix = "📥 Saved link"

@@ -372,6 +372,41 @@
   .kb-backlog-done-list { margin-top: 4px; opacity: 0.7; }
   .kb-backlog-done-list .kb-backlog-row-title { color: var(--color-text-muted, #94a3b8); }
 
+  /* Archived collapsible — sits below the file grid. Visual weight
+     is intentionally light so archived files fade into the background. */
+  .kb-archived {
+    margin-top: 18px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .kb-archived-toggle {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%;
+    background: transparent; border: none; cursor: pointer;
+    padding: 10px 14px;
+    font: inherit;
+    color: var(--color-text-secondary);
+    font-size: 13px; font-weight: 600;
+  }
+  .kb-archived-toggle:hover { color: var(--color-text); background: var(--color-surface-secondary, #f8fafc); }
+  .kb-archived-chevron { width: 14px; height: 14px; transition: transform .15s; }
+  .kb-archived-toggle[aria-expanded="true"] .kb-archived-chevron { transform: rotate(90deg); }
+  .kb-archived-count {
+    background: var(--color-surface-secondary, #f3f4f6);
+    color: var(--color-text-secondary);
+    font-size: 11px; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+  .kb-archived-body {
+    padding: 0 14px 14px;
+    opacity: 0.85;
+  }
+  .kb-archived-body .kb-list { border: none; border-radius: 0; }
+  .kb-archived-body .kb-link { color: var(--color-text-secondary); }
+
   /* Mobile floating action button */
   .kb-fab { display: none; }
   @media (max-width: 640px) {
@@ -516,6 +551,21 @@
       </div>
     </div>
 
+    <!-- Archived files — soft-deleted from the main grid, still live in
+         Drive under knowledgebase2026/archived. Mirrors the Done
+         section in the backlog so the pattern stays consistent. -->
+    <section class="kb-archived" id="kb-archived" hidden>
+      <button type="button" class="kb-archived-toggle" id="kb-archived-toggle"
+              aria-expanded="false">
+        <i data-feather="chevron-right" class="kb-archived-chevron"></i>
+        <span>Archived</span>
+        <span class="kb-archived-count" id="kb-archived-count">0</span>
+      </button>
+      <div class="kb-archived-body" id="kb-archived-body" hidden>
+        <div id="kb-archived-grid-wrap"></div>
+      </div>
+    </section>
+
     <button type="button" class="kb-fab" aria-label="Upload PDF"
             onclick="document.getElementById('kb-file-input').click()">+</button>
   {% endif %}
@@ -524,6 +574,14 @@
 <script>
 {% if connected and has_scope %}
   const _csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  // Hoisted here so every row renderer + handler below can use it
+  // without re-resolving the Jinja flag each time. Drives whether the
+  // Share / Unshare button appears on KB rows and Family-tab logic.
+  const _CHAT_ENABLED = {{ chat_enabled|tojson }};
+  // Mine vs Family vs Archived — the active scope drives both the
+  // backlog list and the file grid. Hoisted so _loadList() can read
+  // it during the first boot call before tabs are wired.
+  let _backlogScope = "mine";
 
   const _esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -544,17 +602,31 @@
     else console.log("[kb]", msg);
   };
 
-  function _renderEmpty() {
+  function _renderEmpty(scope) {
+    const copy = scope === "family"
+      ? {
+          h: "No shared files",
+          p: "Nothing shared with the family yet. On the Mine tab, click the Share button on any PDF to move it here.",
+        }
+      : {
+          h: "No PDFs yet",
+          p: "Drop a PDF anywhere on this page, or click <b>Upload PDF</b>. Files go straight into your <b>{{ folder_name }}</b> Drive folder.",
+        };
     document.getElementById("kb-grid-wrap").innerHTML = `
       <div class="kb-empty">
         <i data-feather="file-text"></i>
-        <h2>No PDFs yet</h2>
-        <p>Drop a PDF anywhere on this page, or click <b>Upload PDF</b>. Files go straight into your <b>{{ folder_name }}</b> Drive folder.</p>
+        <h2>${copy.h}</h2>
+        <p>${copy.p}</p>
       </div>`;
     if (window.feather) feather.replace();
   }
 
-  function _itemHtml(f) {
+  function _itemHtml(f, opts) {
+    opts = opts || {};
+    // Archived rows get a different action set — only Restore. Mine/
+    // Family rows get the full edit row (Annotate, Share/Unshare,
+    // Rename, Archive).
+    const archived = !!opts.archived;
     const name = _esc(f.name || "Untitled.pdf");
     const pages = (f.page_count && f.page_count > 0)
       ? `${f.page_count} page${f.page_count === 1 ? "" : "s"}` : "";
@@ -565,6 +637,41 @@
     const purposeEsc = _esc(purposeRaw);
     const purposeCls = "kb-purpose-col" + (purposeRaw ? "" : " is-empty");
     const purposeText = purposeRaw ? purposeEsc : "+ Add purpose";
+
+    let actions;
+    if (archived) {
+      actions = `
+        <button type="button" class="kb-row-btn" title="Restore to main library"
+                onclick="kbRestore('${_esc(f.id)}', this); event.preventDefault();">
+          <i data-feather="rotate-ccw"></i>
+        </button>`;
+    } else {
+      // Share vs Unshare button — driven by f.is_shared so the file
+      // knows its own state regardless of which tab it's rendered in.
+      const shareBtn = !_CHAT_ENABLED ? "" : (f.is_shared
+        ? `<button type="button" class="kb-row-btn" title="Unshare (move back to Mine)"
+                   onclick="kbUnshareFromFamily('${_esc(f.id)}', this); event.preventDefault();">
+             <i data-feather="lock"></i>
+           </button>`
+        : `<button type="button" class="kb-row-btn" title="Share to family (posts to chat + grants Drive read)"
+                   onclick="kbShareToFamily('${_esc(f.id)}', this); event.preventDefault();">
+             <i data-feather="send"></i>
+           </button>`);
+      actions = `
+        <a class="kb-row-btn" title="Annotate (highlight, underline, notes…)"
+           href="/knowledge-base/${encodeURIComponent(f.id)}/annotate">
+          <i data-feather="edit-3"></i>
+        </a>
+        ${shareBtn}
+        <button type="button" class="kb-row-btn" title="Rename"
+                onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
+          <i data-feather="edit-2"></i>
+        </button>
+        <button type="button" class="kb-row-btn danger" title="Archive (move to archived folder; reversible)"
+                onclick="kbDelete('${_esc(f.id)}', this); event.preventDefault();">
+          <i data-feather="archive"></i>
+        </button>`;
+    }
     return `
       <li class="kb-item" data-file-id="${_esc(f.id)}">
         <span class="kb-item-icon" aria-hidden="true"><i data-feather="file-text"></i></span>
@@ -575,28 +682,10 @@
         <div class="${purposeCls}" data-action="purpose"
              data-original="${purposeEsc}"
              title="Click to ${purposeRaw ? 'edit' : 'add a'} purpose">${purposeText}</div>
-        <div class="kb-row-actions">
-          <a class="kb-row-btn" title="Annotate (highlight, underline, notes…)"
-             href="/knowledge-base/${encodeURIComponent(f.id)}/annotate">
-            <i data-feather="edit-3"></i>
-          </a>
-          {% if chat_enabled %}
-          <button type="button" class="kb-row-btn" title="Share to family chat (grants Drive read access)"
-                  onclick="kbShareToFamily('${_esc(f.id)}', this); event.preventDefault();">
-            <i data-feather="send"></i>
-          </button>
-          {% endif %}
-          <button type="button" class="kb-row-btn" title="Rename"
-                  onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
-            <i data-feather="edit-2"></i>
-          </button>
-          <button type="button" class="kb-row-btn danger" title="Move to Trash"
-                  onclick="kbDelete('${_esc(f.id)}', this); event.preventDefault();">
-            <i data-feather="trash-2"></i>
-          </button>
-        </div>
+        <div class="kb-row-actions">${actions}</div>
       </li>`;
   }
+
 
   // Wire each purpose cell as a contentEditable inline editor. Click
   // enters edit mode (clearing the "+ Add purpose" placeholder),
@@ -698,10 +787,11 @@
     }
   }
 
-  function _renderGrid(files) {
+  function _renderGrid(files, scope) {
     const wrap = document.getElementById("kb-grid-wrap");
-    if (!files || files.length === 0) { _renderEmpty(); return; }
-    wrap.innerHTML = `<ul class="kb-list" id="kb-list">${files.map(_itemHtml).join("")}</ul>`;
+    scope = scope || "mine";
+    if (!files || files.length === 0) { _renderEmpty(scope); return; }
+    wrap.innerHTML = `<ul class="kb-list" id="kb-list">${files.map(f => _itemHtml(f)).join("")}</ul>`;
     if (window.feather) feather.replace();
     _wirePurposeCells();
   }
@@ -713,9 +803,10 @@
     link.classList.remove("is-disabled");
   }
 
-  async function _loadList() {
+  async function _loadList(scope) {
+    scope = scope || _backlogScope || "mine";
     try {
-      const r = await fetch("/api/knowledge-base");
+      const r = await fetch("/api/knowledge-base?scope=" + encodeURIComponent(scope));
       if (r.status === 401 || r.status === 403) {
         const data = await r.json().catch(() => ({}));
         if (data.connect_url) { location.href = data.connect_url; return; }
@@ -731,11 +822,41 @@
       // call). Refresh the "Open in Drive" link so it works even if the
       // server-rendered page had no cached id yet.
       _updateDriveLink(data.folder_id);
-      _renderGrid(data.files || []);
+      _renderGrid(data.files || [], scope);
     } catch (e) {
       console.error(e);
       _toast("Couldn't reach Drive", "error");
     }
+    // Always refresh archived count so the badge stays accurate even
+    // after archive / restore actions. Cheap — one Drive list call.
+    _loadArchivedList({ countOnly: !_archivedOpen });
+  }
+
+  // Separately fetches the archived folder's contents. Used for the
+  // count badge (always) and for the body (when the section is open).
+  let _archivedOpen = false;
+  async function _loadArchivedList(opts) {
+    opts = opts || {};
+    try {
+      const r = await fetch("/api/knowledge-base?scope=archived");
+      if (!r.ok) return;
+      const data = await r.json();
+      const files = data.files || [];
+      const wrap   = document.getElementById("kb-archived");
+      const badge  = document.getElementById("kb-archived-count");
+      const grid   = document.getElementById("kb-archived-grid-wrap");
+      if (files.length === 0) {
+        wrap.setAttribute("hidden", "");
+        return;
+      }
+      wrap.removeAttribute("hidden");
+      badge.textContent = String(files.length);
+      if (!opts.countOnly) {
+        grid.innerHTML = `<ul class="kb-list">${files.map(f => _itemHtml(f, { archived: true })).join("")}</ul>`;
+        if (window.feather) feather.replace();
+        _wirePurposeCells();
+      }
+    } catch (_) { /* silent */ }
   }
 
   async function handleKbUpload(fileList) {
@@ -814,7 +935,10 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || r.status);
-      _toast("Shared to family chat", "success");
+      _toast("Shared to family", "success");
+      // File now has is_shared=true → vanishes from Mine, appears in
+      // Family. Refetch the current view so the row physically moves.
+      _loadList();
     } catch (e) {
       console.error(e);
       _toast("Couldn't share: " + (e.message || ""), "error");
@@ -825,8 +949,56 @@
     }
   }
 
+  // Pull a file back from the Family tab to Mine. Drive permissions
+  // granted earlier are NOT revoked — recipients can still open links
+  // they have. Use Drive's UI to revoke perms if needed.
+  async function kbUnshareFromFamily(id, btn) {
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i data-feather="loader"></i>';
+    if (window.feather) feather.replace();
+    try {
+      const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/unshare`, {
+        method: "POST", headers: { "X-CSRFToken": _csrf },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      _toast("Moved back to Mine", "success");
+      _loadList();
+    } catch (e) {
+      _toast("Couldn't unshare: " + (e.message || ""), "error");
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      if (window.feather) feather.replace();
+    }
+  }
+
+  // Pull a file out of the archived subfolder back into the active
+  // library. is_shared is preserved — a previously-shared file lands
+  // back on the Family tab, a private one on Mine.
+  async function kbRestore(id, btn) {
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i data-feather="loader"></i>';
+    if (window.feather) feather.replace();
+    try {
+      const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/restore`, {
+        method: "POST", headers: { "X-CSRFToken": _csrf },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      _toast("Restored", "success");
+      _loadList();        // refreshes main grid AND archived count
+    } catch (e) {
+      _toast("Couldn't restore: " + (e.message || ""), "error");
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      if (window.feather) feather.replace();
+    }
+  }
+
   async function kbDelete(id, btn) {
-    if (!confirm("Move this PDF to Drive Trash?")) return;
+    if (!confirm("Archive this PDF? (You can restore it from the Archived section.)")) return;
     try {
       const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/delete`, {
         method: "POST",
@@ -840,12 +1012,15 @@
         setTimeout(() => {
           item.remove();
           const list = document.getElementById("kb-list");
-          if (list && !list.children.length) _renderEmpty();
+          if (list && !list.children.length) _renderEmpty(_backlogScope);
         }, 220);
       }
-      _toast("Moved to Drive Trash", "success");
+      _toast("Archived", "success");
+      // Refresh the Archived section count + body (if open) so the
+      // restored row appears there without a manual reload.
+      _loadArchivedList({ countOnly: !_archivedOpen });
     } catch (_) {
-      _toast("Couldn't delete", "error");
+      _toast("Couldn't archive", "error");
     }
   }
 
@@ -906,13 +1081,12 @@
   });
 
   // ── Backlog (hybrid: per-user "Mine" + shared "Family") ────
-  // Whether the Family tab is shown at all — driven by the
-  // chat_enabled context flag, so the same allowlist gates both
-  // chat and the backlog's shared scope.
-  const _CHAT_ENABLED = {{ chat_enabled|tojson }};
+  // _CHAT_ENABLED is hoisted above with the other top-of-script
+  // constants and also drives the KB row Share/Unshare button.
 
   let _backlogOpen = true;
-  let _backlogScope = "mine";
+  // _backlogScope is hoisted above with _CHAT_ENABLED so _loadList()
+  // can read it before this section initialises.
   let _backlogDoneOpen = false;   // "Done" subsection collapsed by default
 
   async function _loadBacklog() {
@@ -1207,6 +1381,8 @@
     });
 
     // Wire Mine/Family tabs (only present when chat is enabled).
+    // Tab switch drives BOTH the backlog and the file grid below —
+    // they share the same scope so the page reads as one filter.
     document.querySelectorAll(".kb-backlog-tab").forEach(btn => {
       btn.addEventListener("click", () => {
         const scope = btn.dataset.scope;
@@ -1222,7 +1398,23 @@
             : "Add something to bring into KB (e.g. “Scan thermodynamics textbook”)…";
         }
         _loadBacklog();
+        _loadList(scope);
       });
+    });
+
+    // Wire the Archived collapsible — fetches the body on first
+    // expand (cheap to redo, no caching layer worth the complexity).
+    document.getElementById("kb-archived-toggle")?.addEventListener("click", () => {
+      _archivedOpen = !_archivedOpen;
+      const body = document.getElementById("kb-archived-body");
+      const btn  = document.getElementById("kb-archived-toggle");
+      if (_archivedOpen) {
+        body.removeAttribute("hidden");
+        _loadArchivedList({ countOnly: false });
+      } else {
+        body.setAttribute("hidden", "");
+      }
+      btn.setAttribute("aria-expanded", String(_archivedOpen));
     });
   }
 {% else %}

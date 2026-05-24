@@ -159,6 +159,9 @@ def _format_file(f: dict) -> dict:
         page_count = int(pc_raw) if pc_raw not in (None, "") else None
     except (TypeError, ValueError):
         page_count = None
+    # is_shared is also stored as a string in appProperties (Drive
+    # requires string values). Missing key = not shared.
+    is_shared = (props.get("is_shared") or "").strip().lower() == "true"
     return {
         "id": f.get("id"),
         "name": f.get("name") or "Untitled.pdf",
@@ -173,7 +176,54 @@ def _format_file(f: dict) -> dict:
         # in Drive's own details pane too, so anything you set here
         # shows up in both places. Keeps us out of the local-DB business.
         "purpose": f.get("description") or "",
+        "is_shared": is_shared,
     }
+
+
+def _ensure_archive_folder(service, kb_folder_id):
+    """Find (or create on first use) the `archived` subfolder inside
+    the user's knowledgebase2026 folder. We don't persist the id —
+    one Drive search is cheap, and a stateless lookup stays correct
+    if the user renames/recreates the folder via Drive's own UI."""
+    q = (
+        "mimeType = 'application/vnd.google-apps.folder' "
+        "and name = 'archived' "
+        f"and '{kb_folder_id}' in parents "
+        "and trashed = false"
+    )
+    found = service.files().list(
+        q=q, fields="files(id)", pageSize=1
+    ).execute()
+    files = found.get("files", [])
+    if files:
+        return files[0]["id"]
+    created = service.files().create(
+        body={
+            "name": "archived",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [kb_folder_id],
+        },
+        fields="id",
+    ).execute()
+    return created["id"]
+
+
+def _set_file_shared(service, file_id: str, is_shared: bool) -> bool:
+    """Flip is_shared on a file's appProperties. Returns True on
+    success, False if Drive complained (logged but never raised — the
+    caller is usually a side-effect of a primary action like posting
+    a share-to-chat message). Setting to None deletes the key,
+    keeping the rest of appProperties (e.g. page_count) intact."""
+    try:
+        service.files().update(
+            fileId=file_id,
+            body={"appProperties": {"is_shared": "true" if is_shared else None}},
+            fields="id",
+        ).execute()
+        return True
+    except HttpError as e:
+        logger.warning("kb set_file_shared(%s, %s) failed: %s", file_id, is_shared, e)
+        return False
 
 
 # ── Page ────────────────────────────────────────────────────────
@@ -219,7 +269,21 @@ def _need_connect_response(row):
 @knowledgebase_bp.route("/api/knowledge-base", methods=["GET"])
 @login_required
 def kb_list():
+    """List PDFs for the current view. `?scope=` picks which subset:
+
+      mine     (default) — files in knowledgebase2026 with is_shared=false
+      family             — files in knowledgebase2026 with is_shared=true
+      archived           — files in knowledgebase2026/archived
+
+    Drive's query language can't filter on appProperties cleanly, so we
+    fetch the parent folder's contents and partition in Python. That's
+    fine at family-sized libraries (a few hundred files at most).
+    """
     user_id = session["user_id"]
+    scope = (request.args.get("scope") or "mine").strip().lower()
+    if scope not in ("mine", "family", "archived"):
+        scope = "mine"
+
     row = _load_token_row(user_id)
     err = _need_connect_response(row)
     if err:
@@ -233,8 +297,13 @@ def kb_list():
     service = _build_drive(creds)
     folder_id = _ensure_folder(service, user_id, row)
 
+    if scope == "archived":
+        parent_id = _ensure_archive_folder(service, folder_id)
+    else:
+        parent_id = folder_id
+
     q = (
-        f"'{folder_id}' in parents and trashed = false "
+        f"'{parent_id}' in parents and trashed = false "
         "and mimeType = 'application/pdf'"
     )
     try:
@@ -253,7 +322,18 @@ def kb_list():
         return jsonify({"error": "Drive list failed."}), 502
 
     files = [_format_file(f) for f in listed.get("files", [])]
-    return jsonify({"folder_id": folder_id, "files": files})
+    # Mine/Family partition. Archived view is already the whole archive
+    # folder — no further filter needed.
+    if scope == "mine":
+        files = [f for f in files if not f.get("is_shared")]
+    elif scope == "family":
+        files = [f for f in files if f.get("is_shared")]
+
+    return jsonify({
+        "folder_id": folder_id,
+        "files": files,
+        "scope": scope,
+    })
 
 
 @knowledgebase_bp.route("/api/knowledge-base/upload", methods=["POST"])
@@ -324,6 +404,11 @@ def kb_upload():
 @knowledgebase_bp.route("/api/knowledge-base/<file_id>/delete", methods=["POST"])
 @login_required
 def kb_delete(file_id):
+    """Archive, not trash. Moves the file from knowledgebase2026 into
+    the `archived` subfolder. File ID, Drive URL, bytes, sharing, and
+    annotations all preserved — kb_restore is the exact inverse. The
+    endpoint name stays `/delete` so existing clients keep working;
+    the action it performs is the new safe one."""
     user_id = session["user_id"]
     row = _load_token_row(user_id)
     err = _need_connect_response(row)
@@ -335,13 +420,75 @@ def kb_delete(file_id):
         return jsonify({"error": "refresh_failed"}), 401
 
     service = _build_drive(creds)
+    folder_id = _ensure_folder(service, user_id, row)
+    archive_id = _ensure_archive_folder(service, folder_id)
     try:
-        # Send to trash rather than permanent-delete — matches the
-        # soft-delete convention used everywhere else in this app.
-        service.files().update(fileId=file_id, body={"trashed": True}).execute()
+        service.files().update(
+            fileId=file_id,
+            addParents=archive_id,
+            removeParents=folder_id,
+            fields="id, parents",
+        ).execute()
     except HttpError as e:
-        logger.warning("kb delete failed for %s: %s", file_id, e)
-        return jsonify({"error": "Delete failed."}), 502
+        logger.warning("kb archive failed for %s: %s", file_id, e)
+        return jsonify({"error": "Archive failed."}), 502
+    return jsonify({"ok": True})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/<file_id>/restore", methods=["POST"])
+@login_required
+def kb_restore(file_id):
+    """Move a file out of the `archived` subfolder back into the main
+    knowledgebase2026 folder. is_shared is unchanged — a previously-
+    shared file restores back to the Family tab, a private one back to
+    Mine."""
+    user_id = session["user_id"]
+    row = _load_token_row(user_id)
+    err = _need_connect_response(row)
+    if err:
+        return err
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed"}), 401
+
+    service = _build_drive(creds)
+    folder_id = _ensure_folder(service, user_id, row)
+    archive_id = _ensure_archive_folder(service, folder_id)
+    try:
+        service.files().update(
+            fileId=file_id,
+            addParents=folder_id,
+            removeParents=archive_id,
+            fields="id, parents",
+        ).execute()
+    except HttpError as e:
+        logger.warning("kb restore failed for %s: %s", file_id, e)
+        return jsonify({"error": "Restore failed."}), 502
+    return jsonify({"ok": True})
+
+
+@knowledgebase_bp.route("/api/knowledge-base/<file_id>/unshare", methods=["POST"])
+@login_required
+def kb_unshare(file_id):
+    """Clear is_shared on a file so it moves back to the Mine tab.
+    NB: Drive permissions granted by the Share button are NOT
+    revoked — recipients can still open any link they already have.
+    Revoke perms manually via Drive's UI if you need to."""
+    user_id = session["user_id"]
+    row = _load_token_row(user_id)
+    err = _need_connect_response(row)
+    if err:
+        return err
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed"}), 401
+
+    service = _build_drive(creds)
+    ok = _set_file_shared(service, file_id, False)
+    if not ok:
+        return jsonify({"error": "Unshare failed."}), 502
     return jsonify({"ok": True})
 
 
