@@ -162,11 +162,17 @@ def knowledge_base_page():
     row = _load_token_row(user_id)
     connected = bool(row and row.get("refresh_token"))
     has_scope = _row_has_drive_scope(row) if row else False
+    # Cached folder id (if the user has uploaded at least once) lets the
+    # "Open in Drive" button render with a real href on first paint.
+    # The client-side list response refreshes it after auto-create on
+    # first ever upload.
+    folder_id = (row or {}).get("kb_folder_id") or ""
     return render_template(
         "knowledgebase.html",
         connected=connected,
         has_scope=has_scope,
         folder_name=KB_FOLDER_NAME,
+        folder_id=folder_id,
         connect_url=url_for("events.google_login"),
         max_upload_mb=MAX_UPLOAD_BYTES // (1024 * 1024),
     )

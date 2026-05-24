@@ -35,6 +35,28 @@
   .kb-cta:hover { background: var(--color-primary-hover); }
   .kb-cta svg { width: 16px; height: 16px; }
 
+  /* "Open in Drive" link — secondary action sitting beside Upload.
+     Uses the official Drive logo (inlined SVG) so the affordance is
+     instantly recognisable. */
+  .kb-hero-actions { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .kb-drive-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 10px;
+    background: var(--color-surface); color: var(--color-text);
+    border: 1px solid var(--color-border);
+    cursor: pointer; font-weight: 600; font-size: 14px;
+    text-decoration: none;
+    transition: background .12s, border-color .12s;
+  }
+  .kb-drive-link:hover {
+    background: var(--color-surface-secondary, #f3f4f6);
+    border-color: var(--color-border-strong, #cbd5e1);
+  }
+  .kb-drive-link.is-disabled {
+    opacity: .55; pointer-events: none;
+  }
+  .kb-drive-logo { width: 18px; height: 16px; flex-shrink: 0; }
+
   /* Drop-zone wraps the whole grid so files can be dragged anywhere
      on the page, not just onto a tiny target. */
   .kb-dropzone {
@@ -185,9 +207,29 @@
       </p>
     </div>
     {% if connected and has_scope %}
-      <button type="button" class="kb-cta" onclick="document.getElementById('kb-file-input').click()">
-        <i data-feather="upload"></i> Upload PDF
-      </button>
+      <div class="kb-hero-actions">
+        <a id="kb-drive-link"
+           class="kb-drive-link{% if not folder_id %} is-disabled{% endif %}"
+           href="{% if folder_id %}https://drive.google.com/drive/folders/{{ folder_id }}{% else %}#{% endif %}"
+           target="_blank" rel="noopener"
+           title="Open the {{ folder_name }} folder in Google Drive">
+          <!-- Official Google Drive triangle logo, inlined so there's
+               no extra HTTP request and no risk of an external CDN
+               disappearing on us. -->
+          <svg class="kb-drive-logo" viewBox="0 0 87.3 78" aria-hidden="true">
+            <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+            <path d="M43.65 25l-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+            <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+            <path d="M43.65 25l13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+            <path d="M59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+            <path d="M73.4 26.5l-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+          </svg>
+          Open in Drive
+        </a>
+        <button type="button" class="kb-cta" onclick="document.getElementById('kb-file-input').click()">
+          <i data-feather="upload"></i> Upload PDF
+        </button>
+      </div>
       <input type="file" id="kb-file-input" accept="application/pdf,.pdf" hidden onchange="handleKbUpload(this.files)">
     {% endif %}
   </header>
@@ -300,6 +342,13 @@
     if (window.feather) feather.replace();
   }
 
+  function _updateDriveLink(folderId) {
+    const link = document.getElementById("kb-drive-link");
+    if (!link || !folderId) return;
+    link.href = `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}`;
+    link.classList.remove("is-disabled");
+  }
+
   async function _loadList() {
     try {
       const r = await fetch("/api/knowledge-base");
@@ -314,6 +363,10 @@
         if (window.feather) feather.replace();
         return;
       }
+      // The list response carries the folder id (auto-created on first
+      // call). Refresh the "Open in Drive" link so it works even if the
+      // server-rendered page had no cached id yet.
+      _updateDriveLink(data.folder_id);
       _renderGrid(data.files || []);
     } catch (e) {
       console.error(e);
