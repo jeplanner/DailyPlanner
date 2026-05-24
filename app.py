@@ -87,6 +87,7 @@ def create_app():
     from routes.meetings import meetings_bp
     from routes.programs import programs_bp
     from routes.knowledgebase import knowledgebase_bp
+    from routes.chat import chat_bp, user_allowed as _chat_allowed
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -123,6 +124,7 @@ def create_app():
     app.register_blueprint(meetings_bp)
     app.register_blueprint(programs_bp)
     app.register_blueprint(knowledgebase_bp)
+    app.register_blueprint(chat_bp)
 
     # Expose the bedtime-stories allowlist flag to every template so the
     # nav can hide the link from non-allowed users without each template
@@ -133,6 +135,16 @@ def create_app():
             return {"bedtime_stories_enabled": _bedtime_allowed()}
         except Exception:
             return {"bedtime_stories_enabled": False}
+
+    # Same pattern for chat — hides the nav link from non-allowlisted
+    # users so the feature is invisible to them. Env-var driven; see
+    # CHAT_USER_EMAILS in routes/chat.py.
+    @app.context_processor
+    def _inject_chat_flag():
+        try:
+            return {"chat_enabled": _chat_allowed()}
+        except Exception:
+            return {"chat_enabled": False}
 
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
@@ -168,6 +180,7 @@ def create_app():
     csrf.exempt(meetings_bp)
     csrf.exempt(programs_bp)
     csrf.exempt(knowledgebase_bp)
+    csrf.exempt(chat_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).

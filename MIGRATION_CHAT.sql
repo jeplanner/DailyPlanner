@@ -1,0 +1,35 @@
+-- ============================================================
+--  DailyPlanner — FAMILY CHAT (one shared room)
+--
+--  Single shared channel. Every signed-in user is implicitly a
+--  member — being logged in *is* membership. No rooms table, no
+--  members table, no DMs in v1.
+--
+--  `author_name` is denormalized so historical messages still
+--  render correctly even after a user's display_name changes or
+--  the user row is removed (cascade keeps history intact when
+--  the user is purged, but the name on the bubble stays the one
+--  in use at send time).
+--
+--  Soft-delete only (`deleted_at`) per the project convention —
+--  the column ships now even though the UI doesn't expose a
+--  delete action yet, so we don't need a follow-up migration.
+--
+--  Safe to re-run.
+-- ============================================================
+
+create table if not exists messages (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references users(id) on delete cascade,
+  author_name text not null,
+  body        text not null check (char_length(body) between 1 and 2000),
+  created_at  timestamptz not null default now(),
+  deleted_at  timestamptz
+);
+
+-- Polling fetches "messages with created_at > :since" ordered ASC, and
+-- initial page-load fetches "last 100 ordered DESC". Both want an index
+-- on created_at — one DESC index serves both since Postgres can scan it
+-- either direction.
+create index if not exists messages_created_at_idx
+  on messages (created_at desc);
