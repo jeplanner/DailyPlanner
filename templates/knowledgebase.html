@@ -341,6 +341,37 @@
     font-size: 13px;
   }
 
+  /* Done subsection — sits under the active list. Visual weight is
+     intentionally lighter than the active items so completed work
+     fades into the background. */
+  .kb-backlog-done {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border);
+  }
+  .kb-backlog-done-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: transparent; border: none; cursor: pointer;
+    padding: 4px 0;
+    font: inherit;
+    color: var(--color-text-secondary);
+    font-size: 12.5px; font-weight: 600;
+  }
+  .kb-backlog-done-toggle:hover { color: var(--color-text); }
+  .kb-backlog-done-chevron { width: 14px; height: 14px; transition: transform .15s; }
+  .kb-backlog-done-toggle[aria-expanded="true"] .kb-backlog-done-chevron {
+    transform: rotate(90deg);
+  }
+  .kb-backlog-done-count {
+    background: var(--color-surface-secondary, #f3f4f6);
+    color: var(--color-text-secondary);
+    font-size: 10.5px; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+  .kb-backlog-done-list { margin-top: 4px; opacity: 0.7; }
+  .kb-backlog-done-list .kb-backlog-row-title { color: var(--color-text-muted, #94a3b8); }
+
   /* Mobile floating action button */
   .kb-fab { display: none; }
   @media (max-width: 640px) {
@@ -434,9 +465,6 @@
           <span class="kb-backlog-title">Backlog</span>
           <span class="kb-backlog-count" id="kb-backlog-count" hidden>0</span>
         </button>
-        <label class="kb-backlog-showdone">
-          <input type="checkbox" id="kb-backlog-showdone"> Show completed
-        </label>
       </header>
 
       <div class="kb-backlog-body" id="kb-backlog-body">
@@ -457,6 +485,19 @@
         <ul class="kb-backlog-list" id="kb-backlog-list"></ul>
         <div class="kb-backlog-empty" id="kb-backlog-empty" hidden>
           Nothing queued. Add what you want to bring into KB above.
+        </div>
+
+        <!-- Done subsection — collapsed by default, count badge shows
+             how many items moved here. Lets users SEE items move
+             "down to done" instead of just disappearing. -->
+        <div class="kb-backlog-done" id="kb-backlog-done" hidden>
+          <button type="button" class="kb-backlog-done-toggle" id="kb-backlog-done-toggle"
+                  aria-expanded="false">
+            <i data-feather="chevron-right" class="kb-backlog-done-chevron"></i>
+            <span>Done</span>
+            <span class="kb-backlog-done-count" id="kb-backlog-done-count">0</span>
+          </button>
+          <ul class="kb-backlog-list kb-backlog-done-list" id="kb-backlog-done-list" hidden></ul>
         </div>
       </div>
     </section>
@@ -870,14 +911,16 @@
   // chat and the backlog's shared scope.
   const _CHAT_ENABLED = {{ chat_enabled|tojson }};
 
-  let _backlogShowDone = false;
   let _backlogOpen = true;
   let _backlogScope = "mine";
+  let _backlogDoneOpen = false;   // "Done" subsection collapsed by default
 
   async function _loadBacklog() {
     try {
-      const params = new URLSearchParams({ scope: _backlogScope });
-      if (_backlogShowDone) params.set("show_done", "1");
+      // Always fetch done too — we partition client-side into the
+      // active list and the "Done" subsection, so the user can see
+      // ticked items as a "moved here" pile rather than a vanishing act.
+      const params = new URLSearchParams({ scope: _backlogScope, show_done: "1" });
       const r = await fetch(
         "/api/knowledge-base/backlog?" + params.toString(),
         { credentials: "same-origin" }
@@ -894,28 +937,53 @@
   }
 
   function _renderBacklog(items) {
-    const list  = document.getElementById("kb-backlog-list");
-    const empty = document.getElementById("kb-backlog-empty");
-    const count = document.getElementById("kb-backlog-count");
+    const list      = document.getElementById("kb-backlog-list");
+    const empty     = document.getElementById("kb-backlog-empty");
+    const count     = document.getElementById("kb-backlog-count");
+    const doneWrap  = document.getElementById("kb-backlog-done");
+    const doneList  = document.getElementById("kb-backlog-done-list");
+    const doneCount = document.getElementById("kb-backlog-done-count");
     if (!list) return;
 
-    // Count is the number of open items only — done ones don't deserve
-    // a badge prompt.
-    const openCount = items.filter(i => !i.is_done).length;
-    if (openCount > 0) {
-      count.textContent = String(openCount);
+    // Partition: open items go in the active list, done items go in
+    // the Done subsection below. Done items are sorted most-recently-
+    // done first so the latest completion sits at the top.
+    const open = items.filter(i => !i.is_done);
+    const done = items.filter(i =>  i.is_done)
+                      .sort((a, b) => (b.done_at || "").localeCompare(a.done_at || ""));
+
+    // Header count = active items only.
+    if (open.length > 0) {
+      count.textContent = String(open.length);
       count.removeAttribute("hidden");
     } else {
       count.setAttribute("hidden", "");
     }
 
-    if (!items.length) {
+    if (open.length === 0) {
       list.innerHTML = "";
       empty.removeAttribute("hidden");
-      return;
+    } else {
+      empty.setAttribute("hidden", "");
+      list.innerHTML = open.map(_backlogRowHtml).join("");
     }
-    empty.setAttribute("hidden", "");
-    list.innerHTML = items.map(_backlogRowHtml).join("");
+
+    // Done subsection visibility + body.
+    if (done.length === 0) {
+      doneWrap.setAttribute("hidden", "");
+      doneList.innerHTML = "";
+    } else {
+      doneWrap.removeAttribute("hidden");
+      doneCount.textContent = String(done.length);
+      doneList.innerHTML = done.map(_backlogRowHtml).join("");
+      // Respect the user's current open/closed preference rather than
+      // re-collapsing on every refetch.
+      if (_backlogDoneOpen) doneList.removeAttribute("hidden");
+      else doneList.setAttribute("hidden", "");
+      document.getElementById("kb-backlog-done-toggle")
+        .setAttribute("aria-expanded", String(_backlogDoneOpen));
+    }
+
     if (window.feather) feather.replace();
     _wireBacklogRows();
   }
@@ -965,7 +1033,9 @@
   }
 
   function _wireBacklogRows() {
-    document.querySelectorAll("#kb-backlog-list .kb-backlog-row").forEach(row => {
+    // Both the active list and the Done subsection — same row markup,
+    // same handlers (you can untick a Done row to reopen it).
+    document.querySelectorAll("#kb-backlog-list .kb-backlog-row, #kb-backlog-done-list .kb-backlog-row").forEach(row => {
       const id = row.dataset.id;
       const mine = row.dataset.mine === "1";
       row.querySelector('input[type=checkbox]')?.addEventListener("change", (e) =>
@@ -995,17 +1065,10 @@
       });
       if (!r.ok) throw new Error(r.status);
       row.classList.toggle("is-done", want);
-      // If show-done is off and we just ticked, the row vanishes on
-      // next refresh — easier to just refetch than maintain local state.
-      if (want && !_backlogShowDone) _loadBacklog();
-      else {
-        // Decrement / increment the count badge in-place.
-        const count = document.getElementById("kb-backlog-count");
-        const cur = parseInt(count.textContent, 10) || 0;
-        const next = Math.max(0, cur + (want ? -1 : 1));
-        if (next > 0) { count.textContent = String(next); count.removeAttribute("hidden"); }
-        else count.setAttribute("hidden", "");
-      }
+      _toast(want ? "Moved to Done" : "Reopened", "success");
+      // Refetch so the row physically moves between the active list
+      // and the Done subsection (and counts in both spots update).
+      _loadBacklog();
     } catch (e) {
       _toast("Couldn't save", "error");
       row.querySelector('input[type=checkbox]').checked = !want;
@@ -1105,9 +1168,15 @@
         .setAttribute("aria-expanded", String(_backlogOpen));
     });
 
-    document.getElementById("kb-backlog-showdone")?.addEventListener("change", (e) => {
-      _backlogShowDone = e.target.checked;
-      _loadBacklog();
+    // Done subsection expand/collapse — state is purely client-side
+    // (it shouldn't survive page reloads; default-collapsed is calmer).
+    document.getElementById("kb-backlog-done-toggle")?.addEventListener("click", () => {
+      _backlogDoneOpen = !_backlogDoneOpen;
+      const list = document.getElementById("kb-backlog-done-list");
+      const btn  = document.getElementById("kb-backlog-done-toggle");
+      if (_backlogDoneOpen) list.removeAttribute("hidden");
+      else list.setAttribute("hidden", "");
+      btn.setAttribute("aria-expanded", String(_backlogDoneOpen));
     });
 
     document.getElementById("kb-backlog-form")?.addEventListener("submit", async (e) => {

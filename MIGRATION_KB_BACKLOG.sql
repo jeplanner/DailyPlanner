@@ -50,3 +50,13 @@ alter table kb_backlog
 create index if not exists kb_backlog_shared_idx
   on kb_backlog (is_shared, created_at desc)
   where is_shared = true and deleted_at is null;
+
+-- Safety backfill: if any row managed to slip in with NULL is_shared
+-- (e.g. inserted while the column was being added, or through a path
+-- that bypassed the default), normalise it to false. The Mine/Family
+-- filters in routes/knowledgebase.py match on eq.true / eq.false and
+-- would treat NULL as "neither tab", making the item invisible. This
+-- update is a no-op once the column is fully NOT NULL.
+update kb_backlog
+   set is_shared = false
+ where is_shared is null;
