@@ -1240,7 +1240,7 @@
   const POMO_TICK_MS = 500;
   const POMO_PRESETS = [15, 25, 50, 90];
   const POMO_DEFAULT_MIN = 25;
-  const PAGE_TITLE = "Tasks Bucket — DailyPlanner";
+  const PAGE_TITLE = "Quick Bucket — DailyPlanner";
 
   let pomo = {
     durationMins: POMO_DEFAULT_MIN,
@@ -1662,7 +1662,7 @@
     // Use the browser Notification API too if the user has granted
     // permission elsewhere — handy when the tab is in the background.
     if ("Notification" in window && Notification.permission === "granted") {
-      try { new Notification("Tasks Bucket — overdue", { body: it.text }); } catch (_) {}
+      try { new Notification("Quick Bucket — overdue", { body: it.text }); } catch (_) {}
     }
   };
 

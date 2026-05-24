@@ -698,9 +698,9 @@ html.dark .section-title{color:#f1f5f9;}
         Today's Plan
       </a>
 
-      <a href="/quick-bucket" data-match="^/quick-bucket" title="Tasks Bucket — quick capture by time bucket (now / 4h / 8h / future)">
+      <a href="/quick-bucket" data-match="^/quick-bucket" title="Quick Bucket — quick capture by time bucket (now / 5m–8h / future) with Top-5 panel">
         <i data-feather="zap"></i>
-        Tasks Bucket
+        Quick Bucket
       </a>
 
       <a href="/todo" data-match="^/todo" title="Priorities — Eisenhower matrix, what to do first">
@@ -796,22 +796,22 @@ html.dark .section-title{color:#f1f5f9;}
         Knowledge Base
       </a>
 
-      <a href="/references" data-match="^/references" title="References — saved articles and web links with AI search across the library">
+      <a href="/references" data-match="^/references" title="References — permanent library of saved articles + AI search across them. Use TravelReads for a working queue you'll process and archive.">
         <i data-feather="bookmark"></i>
         References
       </a>
 
-      <a href="/notes/scribble" data-match="^/notes" title="Notes — freeform writing with @-tag → task conversion">
+      <a href="/notes/scribble" data-match="^/notes" title="Notes — freeform writing for quick capture, with @-tag → task conversion. Use Study for structured Cornell/Feynman notes.">
         <i data-feather="edit-3"></i>
         Notes
       </a>
 
-      <a href="/study" data-match="^/study" title="Study — Cornell + Feynman notes with spaced review">
+      <a href="/study" data-match="^/study" title="Study — structured Cornell + Feynman notes with spaced review. Use Notes for freeform writing.">
         <i data-feather="book"></i>
         Study
       </a>
 
-      <a href="/travel-reads" data-match="^/travel-reads" title="TravelReads — queue of articles, videos, podcasts for the road">
+      <a href="/travel-reads" data-match="^/travel-reads" title="TravelReads — working queue of articles/videos/podcasts to consume on the road. Use References for a permanent searchable library.">
         <i data-feather="bookmark"></i>
         TravelReads
       </a>
@@ -2064,7 +2064,7 @@ setInterval(updateDateTime, 1000);
 const HELP_PAGES = [
   {
     match: /^\/quick-bucket/,
-    title: "Tasks Bucket — quick capture by time horizon",
+    title: "Quick Bucket — quick capture by time horizon",
     lead: "One screen, four buckets. Drop every loose thought into the bucket that matches when you need it done — <b>Now</b>, <b>4 hours</b>, <b>8 hours</b>, or <b>Future</b>.",
     sections: [
       {
@@ -2080,7 +2080,7 @@ const HELP_PAGES = [
         title: "Where it fits",
         items: [
           "<b>Inbox</b> is for raw, untriaged capture.",
-          "<b>Tasks Bucket</b> is for capture with a rough time hint.",
+          "<b>Quick Bucket</b> is for capture with a rough time hint.",
           "<b>Priorities (Eisenhower)</b> is the more deliberate quadrant view for today's plan."
         ]
       }
@@ -2856,7 +2856,7 @@ function _currentHelpEntry(){
       {
         title: "Six menu groups",
         items: [
-          "<b>Today</b> — the daily cockpit. Today's Plan (morning dashboard), Tasks Bucket, Priorities (Eisenhower), Calendar, Inbox, Checklist.",
+          "<b>Today</b> — the daily cockpit. Today's Plan (morning dashboard), Quick Bucket, Priorities (Eisenhower), Calendar, Inbox, Checklist.",
           "<b>Work</b> — Projects, Roadmap, OKRs, Meetings (BLUF/SCQA prep), Programs (RAG reviews).",
           "<b>Review</b> — Reports (4 dashboards), Reviews (daily/weekly/monthly/yearly via tabs), Focus Log.",
           "<b>Knowledge</b> — Knowledge Base (PDF library in Google Drive), References (saved articles + AI search), Notes (with @-tag → task), Study (Cornell/Feynman), TravelReads, Quotes.",
