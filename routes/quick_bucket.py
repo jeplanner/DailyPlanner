@@ -194,7 +194,7 @@ def list_items():
     today_iso = date.today().isoformat()
     select = (
         "id,text,time_bucket,due_at,is_done,done_at,position,"
-        "top5_date,top5_position,"
+        "top5_date,top5_position,priority_label,"
         "created_at,updated_at"
     )
     try:
@@ -254,6 +254,16 @@ def add_item():
         "is_done": is_done,
         "is_deleted": False,
     }
+    # Optional client-supplied priority badge (1..N). Falls back to
+    # NULL when missing; the front-end computes max+1 client-side so
+    # the round badge is set the moment the row appears.
+    if "priority_label" in data and data.get("priority_label") is not None:
+        try:
+            v = int(data["priority_label"])
+            if v >= 1:
+                payload["priority_label"] = v
+        except (TypeError, ValueError):
+            pass
     if is_done:
         payload["done_at"] = datetime.utcnow().isoformat()
     if client_id:
@@ -352,6 +362,17 @@ def update_item(item_id):
             patch["position"] = int(data["position"])
         except (TypeError, ValueError):
             pass
+    if "priority_label" in data:
+        # null/0/missing all clear the badge; positive ints persist.
+        raw = data.get("priority_label")
+        if raw is None:
+            patch["priority_label"] = None
+        else:
+            try:
+                v = int(raw)
+                patch["priority_label"] = v if v >= 1 else None
+            except (TypeError, ValueError):
+                pass
 
     if not patch:
         return jsonify({"ok": True, "noop": True})

@@ -337,10 +337,19 @@
          </button>`
       : `<span class="qb-row-spacer" aria-hidden="true"></span>`;
 
+    const prio = it.priority_label && it.priority_label > 0 ? it.priority_label : null;
+    const prioBadge = `
+      <button class="qb-prio" data-action="prio" type="button"
+              data-rank="${prio || ''}"
+              title="Priority badge — click to bump by 1 (conflicts allowed)">
+        ${prio == null ? '·' : (prio > 99 ? '99+' : prio)}
+      </button>`;
+
     return `
       <div class="${cls.join(' ')}" data-id="${it.id}">
         <input type="checkbox" class="qb-check" data-action="done"
                aria-label="Mark done" ${it.is_done ? 'checked' : ''}>
+        ${prioBadge}
         <div class="qb-text" data-action="edit" title="Click to edit"
              tabindex="0" role="button">${escapeHTML(it.text)}</div>
         <button class="${togCls}" data-action="pick" type="button"
@@ -658,6 +667,10 @@
       });
       $("button.qb-icon-btn[data-action='archive']", row)?.addEventListener("click", () => archive(it));
       $("button.qb-row-icon-action[data-action='reopen']", row)?.addEventListener("click", () => reopen(it));
+      $("button.qb-prio", row)?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        bumpPriorityLabel(it);
+      });
       // Tapping the task text opens the edit-and-move popup. Done rows
       // also get the popup so the user can fix typos in past entries.
       const textEl = $(".qb-text", row);
@@ -711,6 +724,43 @@
         setBucket(it, newBucket);
       });
     });
+  };
+
+  // Highest priority_label across currently-open (non-done, non-archived)
+  // rows. Used both to seed new items at max+1 and as the cap for the
+  // visual rank ramp (1=red, 2=amber, 3=yellow, 4+ = indigo).
+  const maxPriorityLabel = () => {
+    let m = 0;
+    for (const it of items) {
+      if (it.is_done || it.archived_at) continue;
+      const n = parseInt(it.priority_label, 10);
+      if (Number.isFinite(n) && n > m) m = n;
+    }
+    return m;
+  };
+  const nextPriorityLabelForNew = () => maxPriorityLabel() + 1;
+
+  // Click the round badge → bump by 1. Conflicts (two rows with the
+  // same number) are allowed by design — the user said so explicitly.
+  const bumpPriorityLabel = async (it) => {
+    buzz(HAPTIC.tap);
+    const cur = parseInt(it.priority_label, 10);
+    const next = (Number.isFinite(cur) && cur > 0) ? cur + 1 : 1;
+    // Optimistic local update so the badge ticks immediately even when
+    // the network is slow (or queued offline by sync-queue.js).
+    const prev = it.priority_label;
+    it.priority_label = next;
+    render();
+    try {
+      await apiFetch(`/api/quick-bucket/${it.id}/update`, {
+        method: "POST", body: JSON.stringify({ priority_label: next }),
+      });
+    } catch (err) {
+      // Roll back on hard failure so the UI stays truthful.
+      it.priority_label = prev;
+      render();
+      toast(err.message || "Couldn't update label", "error");
+    }
   };
 
   const setBucket = async (it, newBucket) => {
@@ -1176,6 +1226,9 @@
       if (parsed.bucket) { text = parsed.text; bucket = parsed.bucket; }
     }
     if (!bucket) bucket = "now";
+    // Default the round priority badge to max+1 across currently-open
+    // rows. Caller can override via opts.priority_label.
+    const priorityLabel = opts.priority_label || nextPriorityLabelForNew();
     // Generate the client id up front so we can tie the optimistic row
     // to the eventual server response when the queue replays.
     const clientId = (crypto.randomUUID && crypto.randomUUID()) ||
@@ -1184,7 +1237,10 @@
       const r = await apiFetch("/api/quick-bucket", {
         method: "POST",
         headers: { "X-Client-Id": clientId },
-        body: JSON.stringify({ text, time_bucket: bucket, client_id: clientId }),
+        body: JSON.stringify({
+          text, time_bucket: bucket, client_id: clientId,
+          priority_label: priorityLabel,
+        }),
       });
       if (r.item) {
         items.unshift(r.item);
@@ -1198,6 +1254,7 @@
           client_id: clientId,
           text,
           time_bucket: bucket,
+          priority_label: priorityLabel,
           due_at: null,
           done_at: null,
           archived_at: null,

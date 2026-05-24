@@ -332,7 +332,7 @@
   .qb-list:empty { display: none; }
 
   .qb-row {
-    display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto auto;
+    display: grid; grid-template-columns: 18px 32px minmax(0, 1fr) auto auto auto;
     align-items: center; gap: 10px;
     padding: 10px 12px;
     border-bottom: 1px solid var(--color-border-light, var(--color-border));
@@ -358,12 +358,42 @@
 
   .qb-text {
     font-size: 14px; color: var(--color-text);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    /* Wrap long titles instead of truncating with an ellipsis — the
+       capture box accepts up to 500 chars and most users prefer to
+       see the whole thing on the row over a hover-only tooltip. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.4;
     cursor: pointer;
-    padding: 4px 0;
+    padding: 4px 6px;
     border-radius: 4px;
+    min-width: 0;
   }
   .qb-text:hover { background: rgba(99,102,241,.06); }
+
+  /* Round priority-label badge in front of the task text. Click to
+     auto-increment by 1. Conflicts (two rows with the same value)
+     are allowed by design — this is a fluid hint, not a strict rank. */
+  .qb-prio {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px;
+    min-width: 28px; padding: 0 6px;
+    border-radius: 999px;
+    border: 1.5px solid #c7d2fe;
+    background: #eef2ff; color: #3730a3;
+    font: inherit; font-size: 12px; font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer; user-select: none;
+    transition: background .12s, transform .08s, border-color .12s;
+  }
+  .qb-prio:hover  { background: #c7d2fe; border-color: #a5b4fc; }
+  .qb-prio:active { transform: scale(.9); }
+  /* Top-3 get a warmer tint so the most urgent items pop on a long list. */
+  .qb-prio[data-rank="1"] { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+  .qb-prio[data-rank="2"] { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .qb-prio[data-rank="3"] { background: #fef9c3; color: #854d0e; border-color: #fde68a; }
+  /* Done rows fade the badge so it doesn't compete with the strikethrough. */
+  .qb-row.is-done .qb-prio { opacity: .45; }
 
   .qb-toggle {
     display: inline-flex; align-items: center; gap: 4px;
