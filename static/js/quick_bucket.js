@@ -1016,8 +1016,11 @@
     const save  = $("#qb-move-save");
 
     if (!moveCategory) {
+      // No category picked = text-only edit. submitEdit handles that
+      // path explicitly, so the Save button must stay enabled —
+      // disabling it here is what made "edit text and Save" do nothing.
       wrap.setAttribute("hidden", "");
-      save.disabled = true;
+      save.disabled = false;
       return;
     }
     const defs = MOVE_FIELDS[moveCategory];
@@ -1027,7 +1030,9 @@
       form.innerHTML = "";
       note.textContent = "This category isn't routable yet.";
       note.removeAttribute("hidden");
-      save.disabled = true;
+      // Same reasoning — submitEdit treats unroutable categories as
+      // text-only saves, so leave the button clickable.
+      save.disabled = false;
       return;
     }
     wrap.removeAttribute("hidden");
