@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Knowledge Base — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .kb-app { max-width: 1100px; margin: 0 auto; padding: 28px 20px 96px; }
+
+  .kb-hero {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    gap: 16px; margin-bottom: 22px; flex-wrap: wrap;
+  }
+  .kb-hero h1 { font-size: 28px; font-weight: 800; margin: 0 0 6px; letter-spacing: -.02em; }
+  .kb-sub { color: var(--color-text-secondary); font-size: 14px; max-width: 60ch; margin: 0; line-height: 1.5; }
+  .kb-sub code {
+    background: var(--color-surface-secondary, #f3f4f6);
+    padding: 1px 6px; border-radius: 4px; font-size: 12.5px;
+  }
+  .kb-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 16px; border-radius: 10px;
+    background: var(--color-primary); color: var(--color-on-primary);
+    border: none; cursor: pointer; font-weight: 600; font-size: 14px;
+    text-decoration: none;
+  }
+  .kb-cta:hover { background: var(--color-primary-hover); }
+  .kb-cta svg { width: 16px; height: 16px; }
+
+  /* Drop-zone wraps the whole grid so files can be dragged anywhere
+     on the page, not just onto a tiny target. */
+  .kb-dropzone {
+    position: relative;
+    border: 2px dashed transparent;
+    border-radius: 16px;
+    padding: 6px;
+    transition: border-color .14s, background .14s;
+  }
+  .kb-dropzone.is-dragging {
+    border-color: var(--color-primary);
+    background: rgba(37,99,235,.06);
+  }
+  .kb-dropzone-hint {
+    pointer-events: none;
+    position: absolute; inset: 0;
+    display: none; align-items: center; justify-content: center;
+    background: rgba(255,255,255,.7); backdrop-filter: blur(2px);
+    color: var(--color-primary); font-weight: 700; font-size: 16px;
+    border-radius: 14px;
+  }
+  .kb-dropzone.is-dragging .kb-dropzone-hint { display: flex; }
+
+  .kb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .kb-card {
+    position: relative;
+    border-radius: 14px; overflow: hidden;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    transition: border-color .12s, box-shadow .14s;
+    display: flex; flex-direction: column;
+  }
+  .kb-card:hover { border-color: var(--color-border-strong); box-shadow: 0 6px 18px rgba(15,23,42,.06); }
+  .kb-frame {
+    position: relative;
+    aspect-ratio: 3 / 4;
+    background:
+      linear-gradient(135deg, #fafafa 0%, #f1f5f9 100%);
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .kb-frame img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+  }
+  .kb-frame .kb-fallback {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    color: #94a3b8; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+  }
+  .kb-frame .kb-fallback svg { width: 42px; height: 42px; color: #cbd5e1; }
+  .kb-open-link {
+    position: absolute; inset: 0;
+    display: block;
+    text-indent: -9999px;
+  }
+
+  .kb-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: flex-start; justify-content: flex-end;
+    padding: 8px;
+    pointer-events: none;
+  }
+  .kb-overlay-actions { display: flex; gap: 6px; pointer-events: auto; }
+  .kb-action {
+    width: 30px; height: 30px; border: none; border-radius: 50%;
+    background: rgba(15,23,42,.55); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; opacity: 0;
+    transition: opacity .12s, background .12s, transform .08s;
+    backdrop-filter: blur(2px);
+  }
+  .kb-action svg { width: 14px; height: 14px; }
+  .kb-card:hover .kb-action, .kb-action:focus-visible { opacity: 1; }
+  .kb-action.danger:hover { background: #b91c1c; }
+  .kb-action:not(.danger):hover { background: #1d4ed8; }
+  .kb-action:active { transform: scale(.92); }
+  @media (hover: none) { .kb-action { opacity: 1; } }
+
+  .kb-meta {
+    padding: 10px 12px;
+    border-top: 1px solid var(--color-border);
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .kb-name {
+    font-size: 13.5px; color: var(--color-text); font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .kb-info {
+    font-size: 11.5px; color: var(--color-text-muted, #94a3b8);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .kb-empty, .kb-connect, .kb-loading {
+    padding: 56px 24px; text-align: center;
+    background: var(--color-surface);
+    border: 1px dashed var(--color-border);
+    border-radius: 16px;
+    color: var(--color-text-secondary);
+  }
+  .kb-empty svg, .kb-connect svg, .kb-loading svg {
+    width: 40px; height: 40px; color: var(--color-text-muted); margin-bottom: 12px;
+  }
+  .kb-empty h2, .kb-connect h2, .kb-loading h2 {
+    font-size: 18px; font-weight: 700; color: var(--color-text); margin: 0 0 8px;
+  }
+  .kb-empty p, .kb-connect p, .kb-loading p {
+    max-width: 54ch; margin: 0 auto 18px; font-size: 14px; line-height: 1.55;
+  }
+
+  /* Mobile floating action button */
+  .kb-fab { display: none; }
+  @media (max-width: 640px) {
+    .kb-app { padding: 18px 14px 96px; }
+    .kb-hero h1 { font-size: 24px; }
+    .kb-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .kb-fab {
+      display: inline-flex; align-items: center; justify-content: center;
+      position: fixed; right: 16px;
+      bottom: calc(16px + env(safe-area-inset-bottom, 0));
+      z-index: 200;
+      width: 56px; height: 56px;
+      border: none; border-radius: 50%;
+      background: var(--color-primary); color: var(--color-on-primary);
+      box-shadow: 0 12px 28px rgba(37,99,235,.35);
+      font-size: 26px; line-height: 1; cursor: pointer;
+    }
+    .kb-fab:active { transform: scale(.94); }
+  }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="kb-app">
+
+  <header class="kb-hero">
+    <div>
+      <h1>📚 Knowledge Base</h1>
+      <p class="kb-sub">
+        PDFs in your Google Drive folder <code>{{ folder_name }}</code>.
+        Files stay in Drive — this page just lists, uploads, and opens them.
+        Max {{ max_upload_mb }} MB per upload.
+      </p>
+    </div>
+    {% if connected and has_scope %}
+      <button type="button" class="kb-cta" onclick="document.getElementById('kb-file-input').click()">
+        <i data-feather="upload"></i> Upload PDF
+      </button>
+      <input type="file" id="kb-file-input" accept="application/pdf,.pdf" hidden onchange="handleKbUpload(this.files)">
+    {% endif %}
+  </header>
+
+  {% if not connected %}
+    <div class="kb-connect">
+      <i data-feather="link"></i>
+      <h2>Connect Google Drive</h2>
+      <p>Sign in once with Google so the app can list and upload PDFs into your <code>{{ folder_name }}</code> folder. Same flow you already use for Calendar.</p>
+      <a class="kb-cta" href="{{ connect_url }}"><i data-feather="log-in"></i> Connect Google</a>
+    </div>
+  {% elif not has_scope %}
+    <div class="kb-connect">
+      <i data-feather="alert-circle"></i>
+      <h2>Re-consent needed</h2>
+      <p>You're connected to Calendar but the Drive scope isn't on your token yet. Click below to grant Drive access — the existing Calendar permission stays intact.</p>
+      <a class="kb-cta" href="{{ connect_url }}"><i data-feather="refresh-cw"></i> Re-connect Google</a>
+    </div>
+  {% else %}
+    <div class="kb-dropzone" id="kb-dropzone">
+      <div class="kb-dropzone-hint">
+        <i data-feather="upload-cloud" style="width:22px;height:22px;margin-right:8px;"></i>
+        Drop PDFs to upload
+      </div>
+      <div id="kb-grid-wrap">
+        <div class="kb-loading" id="kb-loading">
+          <i data-feather="loader"></i>
+          <h2>Loading your library…</h2>
+          <p>Fetching the file list from Drive.</p>
+        </div>
+      </div>
+    </div>
+
+    <button type="button" class="kb-fab" aria-label="Upload PDF"
+            onclick="document.getElementById('kb-file-input').click()">+</button>
+  {% endif %}
+</div>
+
+<script>
+{% if connected and has_scope %}
+  const _csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+  const _esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  const _fmtSize = (n) => {
+    if (!n || n < 1024) return (n || 0) + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  };
+  const _fmtDate = (iso) => {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleDateString(undefined, {month:"short", day:"numeric", year:"numeric"}); }
+    catch { return ""; }
+  };
+  const _toast = (msg, kind) => {
+    if (window.showToast) window.showToast(msg, kind || "info", 2500);
+    else console.log("[kb]", msg);
+  };
+
+  function _renderEmpty() {
+    document.getElementById("kb-grid-wrap").innerHTML = `
+      <div class="kb-empty">
+        <i data-feather="file-text"></i>
+        <h2>No PDFs yet</h2>
+        <p>Drop a PDF anywhere on this page, or click <b>Upload PDF</b>. Files go straight into your <b>{{ folder_name }}</b> Drive folder.</p>
+      </div>`;
+    if (window.feather) feather.replace();
+  }
+
+  function _cardHtml(f) {
+    const name = _esc(f.name || "Untitled.pdf");
+    const info = [_fmtSize(f.size_bytes), _fmtDate(f.created_at)].filter(Boolean).join(" · ");
+    const thumb = f.thumbnail
+      ? `<img src="${_esc(f.thumbnail)}" alt="${name}" loading="lazy" decoding="async">`
+      : `<div class="kb-fallback"><i data-feather="file-text"></i>PDF</div>`;
+    const open = f.web_view
+      ? `<a class="kb-open-link" href="${_esc(f.web_view)}" target="_blank" rel="noopener">Open</a>`
+      : "";
+    return `
+      <div class="kb-card" data-file-id="${_esc(f.id)}">
+        <div class="kb-frame">
+          ${thumb}
+          ${open}
+          <div class="kb-overlay">
+            <div class="kb-overlay-actions">
+              <button type="button" class="kb-action" title="Rename"
+                      onclick="kbRename('${_esc(f.id)}', this); event.preventDefault();">
+                <i data-feather="edit-2"></i>
+              </button>
+              <button type="button" class="kb-action danger" title="Move to Trash"
+                      onclick="kbDelete('${_esc(f.id)}', this); event.preventDefault();">
+                <i data-feather="trash-2"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="kb-meta">
+          <div class="kb-name" title="${name}">${name}</div>
+          <div class="kb-info">${_esc(info)}</div>
+        </div>
+      </div>`;
+  }
+
+  function _renderGrid(files) {
+    const wrap = document.getElementById("kb-grid-wrap");
+    if (!files || files.length === 0) { _renderEmpty(); return; }
+    wrap.innerHTML = `<div class="kb-grid" id="kb-grid">${files.map(_cardHtml).join("")}</div>`;
+    if (window.feather) feather.replace();
+  }
+
+  async function _loadList() {
+    try {
+      const r = await fetch("/api/knowledge-base");
+      if (r.status === 401 || r.status === 403) {
+        const data = await r.json().catch(() => ({}));
+        if (data.connect_url) { location.href = data.connect_url; return; }
+      }
+      const data = await r.json();
+      if (!r.ok) {
+        document.getElementById("kb-grid-wrap").innerHTML =
+          `<div class="kb-empty"><i data-feather="alert-circle"></i><h2>Couldn't load</h2><p>${_esc(data.error || "Drive error.")}</p></div>`;
+        if (window.feather) feather.replace();
+        return;
+      }
+      _renderGrid(data.files || []);
+    } catch (e) {
+      console.error(e);
+      _toast("Couldn't reach Drive", "error");
+    }
+  }
+
+  async function handleKbUpload(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    document.getElementById("kb-file-input").value = "";
+    for (const f of files) {
+      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
+        _toast(`Skipped (not a PDF): ${f.name}`, "error"); continue;
+      }
+      if (f.size > {{ max_upload_mb }} * 1024 * 1024) {
+        _toast(`Too big (>{{ max_upload_mb }} MB): ${f.name}`, "error"); continue;
+      }
+      _toast(`Uploading ${f.name}…`);
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("name", f.name);
+      try {
+        const r = await fetch("/api/knowledge-base/upload", {
+          method: "POST",
+          headers: { "X-CSRFToken": _csrf },
+          body: fd,
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _toast(data.error || `Upload failed (${r.status})`, "error"); continue; }
+        _prependCard(data.file);
+        _toast(`Uploaded ${data.file.name}`, "success");
+      } catch (e) {
+        console.error(e);
+        _toast(`Upload failed: ${f.name}`, "error");
+      }
+    }
+  }
+
+  function _prependCard(file) {
+    let grid = document.getElementById("kb-grid");
+    if (!grid) {
+      const wrap = document.getElementById("kb-grid-wrap");
+      wrap.innerHTML = `<div class="kb-grid" id="kb-grid"></div>`;
+      grid = document.getElementById("kb-grid");
+    }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = _cardHtml(file);
+    grid.insertBefore(tmp.firstElementChild, grid.firstChild);
+    if (window.feather) feather.replace();
+  }
+
+  async function kbDelete(id, btn) {
+    if (!confirm("Move this PDF to Drive Trash?")) return;
+    try {
+      const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/delete`, {
+        method: "POST",
+        headers: { "X-CSRFToken": _csrf },
+      });
+      if (!r.ok) throw new Error(r.status);
+      const card = btn.closest(".kb-card");
+      if (card) {
+        card.style.transition = "opacity .25s, transform .25s";
+        card.style.opacity = "0"; card.style.transform = "scale(.92)";
+        setTimeout(() => {
+          card.remove();
+          const grid = document.getElementById("kb-grid");
+          if (grid && !grid.children.length) _renderEmpty();
+        }, 280);
+      }
+      _toast("Moved to Drive Trash", "success");
+    } catch (_) {
+      _toast("Couldn't delete", "error");
+    }
+  }
+
+  async function kbRename(id, btn) {
+    const card = btn.closest(".kb-card");
+    const nameEl = card?.querySelector(".kb-name");
+    const current = nameEl ? nameEl.textContent.trim() : "";
+    const next = prompt("Rename PDF (without .pdf):", current.replace(/\.pdf$/i, ""));
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed) return;
+    try {
+      const r = await fetch(`/api/knowledge-base/${encodeURIComponent(id)}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      if (nameEl) nameEl.textContent = data.name || (trimmed + ".pdf");
+      _toast("Renamed", "success");
+    } catch (e) {
+      _toast("Couldn't rename", "error");
+    }
+  }
+
+  // Drag-drop: highlight zone while a file is hovering, swallow drop.
+  document.addEventListener("DOMContentLoaded", () => {
+    const dz = document.getElementById("kb-dropzone");
+    if (dz) {
+      let hoverCount = 0;
+      dz.addEventListener("dragenter", (e) => {
+        if (!e.dataTransfer?.types?.includes("Files")) return;
+        e.preventDefault();
+        hoverCount++; dz.classList.add("is-dragging");
+      });
+      dz.addEventListener("dragover", (e) => {
+        if (!e.dataTransfer?.types?.includes("Files")) return;
+        e.preventDefault();
+      });
+      dz.addEventListener("dragleave", () => {
+        hoverCount = Math.max(0, hoverCount - 1);
+        if (hoverCount === 0) dz.classList.remove("is-dragging");
+      });
+      dz.addEventListener("drop", (e) => {
+        e.preventDefault();
+        hoverCount = 0; dz.classList.remove("is-dragging");
+        handleKbUpload(e.dataTransfer.files);
+      });
+    }
+    _loadList();
+    if (window.feather) feather.replace();
+  });
+{% else %}
+  document.addEventListener("DOMContentLoaded", () => {
+    if (window.feather) feather.replace();
+  });
+{% endif %}
+</script>
+
+</body>
+</html>

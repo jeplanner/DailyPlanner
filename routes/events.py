@@ -21,7 +21,14 @@ from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
 from utils.dates import safe_date_from_string
 from utils.planner_parser import parse_planner_input
-SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar.events',
+    # drive.file = files this app creates or that the user explicitly
+    # opens with it. Used by the Knowledge Base page to manage PDFs in
+    # the user's "knowledgebase2026" Drive folder. Non-sensitive scope,
+    # no verification needed.
+    'https://www.googleapis.com/auth/drive.file',
+]
 events_bp = Blueprint("events", __name__)
 @events_bp.route("/api/v2/events")
 @login_required

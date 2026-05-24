@@ -86,6 +86,7 @@ def create_app():
     from routes.study import study_bp
     from routes.meetings import meetings_bp
     from routes.programs import programs_bp
+    from routes.knowledgebase import knowledgebase_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -121,6 +122,7 @@ def create_app():
     app.register_blueprint(study_bp)
     app.register_blueprint(meetings_bp)
     app.register_blueprint(programs_bp)
+    app.register_blueprint(knowledgebase_bp)
 
     # Expose the bedtime-stories allowlist flag to every template so the
     # nav can hide the link from non-allowed users without each template
@@ -165,6 +167,7 @@ def create_app():
     csrf.exempt(study_bp)
     csrf.exempt(meetings_bp)
     csrf.exempt(programs_bp)
+    csrf.exempt(knowledgebase_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).
