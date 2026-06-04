@@ -4315,9 +4315,19 @@ async function _loadDailyQuote() {
   renderQuote(_emDailyQuoteIndex());
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+// Render the local fallback immediately so "Loading…" never lingers,
+// then upgrade with the server's pick when the API responds. Belt and
+// braces — if DOMContentLoaded has already fired by the time this
+// script runs (or fires later), the user still sees a quote.
+function _bootQuote() {
+  renderQuote(_emDailyQuoteIndex());
   _loadDailyQuote();
-});
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", _bootQuote);
+} else {
+  _bootQuote();
+}
 </script>
 <script src="{{ url_for('static', filename='voice.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pt-shared.js') }}" defer></script>

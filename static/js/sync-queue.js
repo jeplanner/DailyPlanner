@@ -35,6 +35,15 @@
 (function () {
   "use strict";
 
+  // Capture the live fetch via window.* so we always reach the global,
+  // even if a consumer script later declares `const fetch = ...` at its
+  // top level. Classic <script> blocks share one Script Lexical
+  // Environment, so a bare `fetch` reference inside this IIFE would
+  // otherwise resolve to that shadowing const — and if that const
+  // points back at dpFetch, you get infinite recursion (a stack
+  // overflow we hit on the Eisenhower page).
+  const _nativeFetch = (url, opts) => window.fetch(url, opts);
+
   const DB_NAME      = "dp-queue";
   const STORE        = "writes";
   const DB_VERSION   = 1;
@@ -177,7 +186,7 @@
 
     // GETs and cross-origin requests pass straight through.
     if (!isMutating(method) || !isSameOrigin(url)) {
-      return fetch(url, opts);
+      return _nativeFetch(url, opts);
     }
 
     // Stamp every mutating request with a client id so the server can
@@ -188,7 +197,7 @@
     headers["X-Client-Id"] = clientId;
 
     try {
-      const res = await fetch(url, Object.assign({}, opts, { headers }));
+      const res = await _nativeFetch(url, Object.assign({}, opts, { headers }));
       // We got *a* response — even 500. Don't queue, don't retry.
       // The page handles HTTP errors itself.
       return res;
