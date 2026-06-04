@@ -500,12 +500,13 @@
     } catch (e) {
       console.error(e);
       toast("Couldn't send: " + (e.message || ""), "error");
-      // Restore the unsent text so they can retry without retyping.
+      // Restore the unsent text so they can retry without retyping,
+      // and refocus so the keyboard is ready for the fix.
       input.value = body;
       autoResize();
+      input.focus();
     } finally {
       sendBtn.disabled = false;
-      input.focus();
     }
   }
 
@@ -569,7 +570,6 @@
   // Boot
   if (window.feather) feather.replace();
   loadInitial();
-  input.focus();
 })();
 </script>
 
