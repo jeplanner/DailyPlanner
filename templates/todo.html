@@ -2881,8 +2881,17 @@ function clearProjPicker() {
 
 function quickAdd() {
   const input = document.getElementById("quick-task");
-  const text = input.value.trim();
-  if (!text) return;
+  // iOS Safari sometimes hasn't flushed IME composition / autocorrect
+  // into .value by the time a button's click fires (mousedown moves
+  // focus away, but the commit can lag). Forcing blur first commits
+  // any pending text into .value before we read it. No-op on desktop.
+  try { input?.blur(); } catch (_) {}
+  const text = (input?.value || "").trim();
+  if (!text) {
+    if (window.showToast) showToast("Please type a task first", "warning", 1800);
+    input?.focus();
+    return;
+  }
 
   const quadrant = document.getElementById("quick-quad").value;
   // Multi-select: creates one task per selected project (or a single
