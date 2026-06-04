@@ -2997,10 +2997,16 @@ async function _markTaskDone(item) {
     const rawId = item.id.startsWith("pt-") ? item.id.slice(3) : item.id;
     url = "/projects/tasks/status";
     body = { task_id: rawId, status: "done" };
+  } else if (item.source === "bucket") {
+    // Quick Bucket items have their own done endpoint.
+    const rawId = item.id.startsWith("bucket-") ? item.id.slice("bucket-".length) : item.id;
+    url = `/api/quick-bucket/${encodeURIComponent(rawId)}/done`;
+    body = {};
   } else {
-    // Matrix tasks use the raw uuid id
+    // Matrix tasks — strip "matrix-" prefix if the agenda renderer added one.
+    const rawId = item.id.startsWith("matrix-") ? item.id.slice("matrix-".length) : item.id;
     url = "/todo/toggle-done";
-    body = { id: item.id, is_done: true, status: "done" };
+    body = { id: rawId, is_done: true, status: "done" };
   }
 
   try {
@@ -3050,18 +3056,27 @@ const _recapMoveTimers = new WeakMap();
 
 function _postToggle(source, id, makeDone) {
   // Returns a promise that resolves on HTTP 2xx, rejects otherwise.
-  let url, body;
+  let url, body, method = "POST";
   if (source === "project") {
     const rawId = id && id.startsWith("pt-") ? id.slice(3) : id;
     url = "/projects/tasks/status";
     body = { task_id: rawId, status: makeDone ? "done" : "open" };
+  } else if (source === "bucket") {
+    // Quick Bucket items live in a different table and have their own
+    // toggle endpoints — done/reopen rather than a status patch.
+    const rawId = id && id.startsWith("bucket-") ? id.slice("bucket-".length) : id;
+    url = `/api/quick-bucket/${encodeURIComponent(rawId)}/${makeDone ? "done" : "reopen"}`;
+    body = {};
   } else {
-    // matrix tasks (Eisenhower)
+    // matrix tasks (Eisenhower). Strip the "matrix-" prefix the agenda
+    // renderer adds — the route accepts both forms, but sending the bare
+    // uuid keeps server logs cleaner.
+    const rawId = id && id.startsWith("matrix-") ? id.slice("matrix-".length) : id;
     url = "/todo/toggle-done";
-    body = { id: id, is_done: makeDone, status: makeDone ? "done" : "open" };
+    body = { id: rawId, is_done: makeDone, status: makeDone ? "done" : "open" };
   }
   return fetch(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); });

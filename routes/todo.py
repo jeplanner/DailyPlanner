@@ -438,6 +438,25 @@ def toggle_todo_done():
     if not task_id:
         return jsonify({"error": "Missing task id"}), 400
 
+    # The agenda / today's plan view mixes rows from several tables in
+    # one list and prefixes each id with its source ("matrix-<uuid>",
+    # "bucket-<uuid>", "pt-<uuid>") so the client can route them back
+    # to the right endpoint. This endpoint only handles matrix rows;
+    # strip "matrix-" defensively and bounce the other prefixes with
+    # a clean 4xx instead of letting Postgres reject the malformed
+    # UUID with a 500.
+    if isinstance(task_id, str):
+        if task_id.startswith("matrix-"):
+            task_id = task_id[len("matrix-"):]
+        elif task_id.startswith("bucket-"):
+            return jsonify({
+                "error": "Bucket items must be toggled via /api/quick-bucket/<id>/done",
+            }), 400
+        elif task_id.startswith("pt-"):
+            return jsonify({
+                "error": "Project tasks must be toggled via /projects/tasks/status",
+            }), 400
+
     # Unified status: open | in_progress | done | skipped | deleted
     # "not_required" is accepted for backward compatibility and mapped to "deleted".
     req_status = _normalize_status(data.get("status"))
