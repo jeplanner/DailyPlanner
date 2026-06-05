@@ -80,8 +80,19 @@ async function addTask() {
   const initSel = _id("add-task-initiative");
   const epicSel = _id("add-task-epic");
   const sprintSel = _id("add-task-sprint");
+  // iOS Safari hasn't always committed pending autocorrect / IME text
+  // into .value by the time the user taps the + button — mousedown
+  // steals focus before the keystroke flushes. Blur to force the
+  // commit, then read .value. No-op on desktop.
+  try { input?.blur(); } catch (_) {}
   const text = (input?.value || "").trim();
-  if (!text) return;
+  if (!text) {
+    // Empty-text returns used to be silent, which read as "the button
+    // did nothing" on mobile. Give a visible nudge instead.
+    if (window.showToast) showToast("Type a task first", "warning", 1800);
+    input?.focus();
+    return;
+  }
 
   // Empty string → leave the task tied to the project only (no initiative/epic/sprint).
   const initiativeId = (initSel?.value || "").trim() || null;
