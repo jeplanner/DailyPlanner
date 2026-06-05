@@ -292,6 +292,10 @@
       if (n >= 1 && n <= 31) return `Monthly · day ${n}`;
       return "Monthly";
     }
+    if (it.schedule === "once") {
+      const d = (it.schedule_days || "").trim();
+      return d ? `On ${d}` : "One-time";
+    }
     return "Daily";
   }
 
@@ -399,6 +403,13 @@
     } else {
       $("#cl-monthly-day").value = "1";
     }
+    // One-time: schedule_days is a YYYY-MM-DD date string. Default to
+    // today on a new item so the picker isn't blank.
+    if (sched === "once") {
+      $("#cl-once-date").value = sdays.trim();
+    } else {
+      $("#cl-once-date").value = editing ? "" : new Date().toISOString().slice(0, 10);
+    }
     toggleSchedulePickers();
 
     setModalMode(mode, editing);
@@ -443,6 +454,7 @@
     $("#cl-weekdays").hidden     = v !== "custom";
     $("#cl-monthly-dow").hidden  = v !== "monthly_dow";
     $("#cl-monthly-dom").hidden  = v !== "monthly_dom";
+    $("#cl-once").hidden         = v !== "once";
   }
   // Back-compat alias: the listener below was registered against the
   // old name; keep both pointing at the new combined function.
@@ -506,6 +518,12 @@
       scheduleDays = `${$("#cl-monthly-week").value}:${$("#cl-monthly-weekday").value}`;
     } else if (schedule === "monthly_dom") {
       scheduleDays = $("#cl-monthly-day").value;
+    } else if (schedule === "once") {
+      scheduleDays = $("#cl-once-date").value;
+      if (!scheduleDays) {
+        alert("Pick a date for this one-time item.");
+        return;
+      }
     }
     const payload = {
       name: $("#cl-name").value.trim(),

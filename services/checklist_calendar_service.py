@@ -123,9 +123,21 @@ def _rrule(schedule, schedule_days, recurrence_end=None):
 def _event_body(item, tz_name):
     rt = (item.get("reminder_time") or "")[:5]  # "HH:MM"
     hh, mm = (int(x) for x in rt.split(":"))
-    start_dt = datetime.combine(date.today(), time(hh, mm))
+    # One-shot items anchor on their scheduled date, not today, so the
+    # event doesn't get filed in the wrong calendar slot. Recurring
+    # items still use today as the anchor — Google interprets the
+    # RRULE relative to the start, so all that matters for them is
+    # the time of day.
+    if item.get("schedule") == "once":
+        try:
+            base_date = date.fromisoformat((item.get("schedule_days") or "").strip())
+        except ValueError:
+            base_date = date.today()
+    else:
+        base_date = date.today()
+    start_dt = datetime.combine(base_date, time(hh, mm))
     end_dt = start_dt + timedelta(minutes=10)
-    return {
+    body = {
         "summary": SUMMARY_PREFIX + (item.get("name") or "Checklist reminder"),
         "description": item.get("notes") or "Daily checklist reminder",
         "start": {
@@ -136,16 +148,20 @@ def _event_body(item, tz_name):
             "dateTime": end_dt.strftime("%Y-%m-%dT%H:%M:%S"),
             "timeZone": tz_name,
         },
-        "recurrence": [_rrule(
-            item.get("schedule"),
-            item.get("schedule_days"),
-            item.get("recurrence_end"),
-        )],
         "reminders": {
             "useDefault": False,
             "overrides": [{"method": "popup", "minutes": 0}],
         },
     }
+    # One-shot items are non-recurring — omit the RRULE so Google
+    # treats the event as a single occurrence.
+    if item.get("schedule") != "once":
+        body["recurrence"] = [_rrule(
+            item.get("schedule"),
+            item.get("schedule_days"),
+            item.get("recurrence_end"),
+        )]
+    return body
 
 
 def _service(user_id):

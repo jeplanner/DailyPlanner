@@ -119,8 +119,15 @@
             <option value="custom">Custom days…</option>
             <option value="monthly_dow">Monthly — nth weekday (e.g. last Saturday)</option>
             <option value="monthly_dom">Monthly — fixed date (e.g. 15th)</option>
+            <option value="once">On a specific date (one-time)</option>
           </select>
         </label>
+
+        <div class="cl-field cl-once" id="cl-once" hidden>
+          <span>Date</span>
+          <input type="date" id="cl-once-date">
+          <small class="cl-hint">Shows up only on this day, then drops off the list.</small>
+        </div>
 
         <div class="cl-field cl-weekdays" id="cl-weekdays" hidden>
           <span>Days</span>

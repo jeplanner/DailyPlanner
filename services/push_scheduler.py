@@ -92,6 +92,11 @@ def _schedule_applies_today(schedule, schedule_days, weekday, today=None):
             next_same = today + _td(days=7)
             return next_same.month != today.month
         return occ == target_week
+    if schedule == "once":
+        # schedule_days holds an ISO date; fire only on that day.
+        if today is None:
+            return False
+        return (schedule_days or "").strip() == today.isoformat()
     if schedule == "monthly_dom":
         if today is None:
             return False

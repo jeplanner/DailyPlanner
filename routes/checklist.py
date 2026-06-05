@@ -41,6 +41,9 @@ VALID_SCHEDULES = {
     #   monthly_dom → "N" where N is 1..31, or "-1" for the last day
     #                 of the month.
     "monthly_dow", "monthly_dom",
+    # One-shot: fires only on the date in schedule_days ("YYYY-MM-DD").
+    # The list endpoint hides it on every other day.
+    "once",
 }
 VALID_TIMES_OF_DAY = {"morning", "afternoon", "evening", "anytime"}
 
@@ -279,6 +282,16 @@ def list_items():
             "order": "position.asc,created_at.asc",
         },
     ) or []
+
+    # One-shot items appear only on their scheduled day — before/after
+    # they'd just be clutter on the daily list. Soft-deleted rows are
+    # already excluded above; this filter is for never-deleted "once"
+    # items whose day has passed (or is yet to come).
+    items = [
+        it for it in items
+        if it.get("schedule") != "once"
+        or (it.get("schedule_days") or "").strip() == today
+    ]
 
     times = get(
         "checklist_reminder_times",
