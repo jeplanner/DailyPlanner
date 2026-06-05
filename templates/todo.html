@@ -2890,13 +2890,6 @@ function clearProjPicker() {
 }
 
 function quickAdd() {
-  // TEMP DIAGNOSTIC (2026-06-04): mobile add was silently failing
-  // even after the IME-blur fix. Surface every entry into quickAdd
-  // via alert + window.name so we can tell whether the click is
-  // landing here at all on the affected device. Remove once
-  // confirmed working.
-  try { window.name = "quickAdd@" + Date.now(); } catch (_) {}
-  try { console.log("[quickAdd] entered, isTouch=", _isTouchDevice); } catch (_) {}
   const input = document.getElementById("quick-task");
   // iOS Safari sometimes hasn't flushed IME composition / autocorrect
   // into .value by the time a button's click fires (mousedown moves
@@ -2906,7 +2899,6 @@ function quickAdd() {
   const text = (input?.value || "").trim();
   if (!text) {
     if (window.showToast) showToast("Please type a task first", "warning", 1800);
-    else alert("Add tapped — please type a task first.");
     input?.focus();
     return;
   }
