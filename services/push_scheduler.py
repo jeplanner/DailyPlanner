@@ -54,8 +54,12 @@ def _resolve_tz(name):
     return z
 
 
-def _schedule_applies_today(schedule, schedule_days, weekday):
-    """weekday is Python Mon=0..Sun=6. Convert to Sun=0..Sat=6 for storage."""
+def _schedule_applies_today(schedule, schedule_days, weekday, today=None):
+    """weekday is Python Mon=0..Sun=6. We convert to Sun=0..Sat=6 for
+    storage. `today` is a `date` and is only required for monthly
+    schedules — pass it in from callers that support them; older
+    callers can omit it and the monthly branches will simply return
+    False (no false positives)."""
     dow = (weekday + 1) % 7  # Sun=0, Mon=1, ..., Sat=6
     if schedule == "daily" or not schedule:
         return True
@@ -64,8 +68,45 @@ def _schedule_applies_today(schedule, schedule_days, weekday):
     if schedule == "weekends":
         return dow in (0, 6)
     if schedule == "custom":
-        allowed = {int(x) for x in (schedule_days or "").split(",") if x.strip().isdigit()}
+        allowed = {int(x) for x in (schedule_days or "").split(",") if x.strip().lstrip("-").isdigit()}
         return dow in allowed
+    if schedule == "monthly_dow":
+        # "WEEK:DAY" — fires when today is the Nth (or last) DAY of the
+        # current month. WEEK is 1..5 or -1 for "last occurrence".
+        if today is None:
+            return False
+        try:
+            week_s, day_s = (schedule_days or "").split(":", 1)
+            target_week = int(week_s)
+            target_day = int(day_s)
+        except (ValueError, AttributeError):
+            return False
+        if dow != target_day:
+            return False
+        # nth occurrence of this weekday so far this month (1-indexed).
+        occ = (today.day - 1) // 7 + 1
+        if target_week == -1:
+            # Last occurrence: there is no same-weekday day within the
+            # next 7 days that's still in this month.
+            from datetime import timedelta as _td
+            next_same = today + _td(days=7)
+            return next_same.month != today.month
+        return occ == target_week
+    if schedule == "monthly_dom":
+        if today is None:
+            return False
+        raw = (schedule_days or "").strip()
+        if not raw:
+            return False
+        try:
+            target = int(raw)
+        except ValueError:
+            return False
+        if target == -1:
+            # Last day of month: tomorrow is in a different month.
+            from datetime import timedelta as _td
+            return (today + _td(days=1)).month != today.month
+        return today.day == target
     return False
 
 
@@ -116,7 +157,7 @@ def _due_fires_for_user(user_id, local_hhmm, local_weekday, today_iso):
     items_with_children = {r["item_id"] for r in times}
 
     def _ok(it):
-        if not _schedule_applies_today(it.get("schedule"), it.get("schedule_days"), local_weekday):
+        if not _schedule_applies_today(it.get("schedule"), it.get("schedule_days"), local_weekday, today):
             return False
         end_str = it.get("recurrence_end")
         if end_str:

@@ -32,7 +32,16 @@ from utils.user_tz import user_today
 checklist_bp = Blueprint("checklist", __name__)
 
 
-VALID_SCHEDULES = {"daily", "weekdays", "weekends", "custom"}
+VALID_SCHEDULES = {
+    "daily", "weekdays", "weekends", "custom",
+    # Monthly variants. `schedule_days` encodes the parameters:
+    #   monthly_dow → "WEEK:DAY" e.g. "-1:6" = last Saturday (DAY uses
+    #                Sun=0..Sat=6; WEEK is 1..5 for nth-of-month or -1
+    #                for the last occurrence).
+    #   monthly_dom → "N" where N is 1..31, or "-1" for the last day
+    #                 of the month.
+    "monthly_dow", "monthly_dom",
+}
 VALID_TIMES_OF_DAY = {"morning", "afternoon", "evening", "anytime"}
 
 

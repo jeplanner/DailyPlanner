@@ -355,7 +355,18 @@ html.dark .cl-pomo-chip:hover { background: #1e3a8a; color: #bfdbfe; border-colo
   background: var(--cl-surface);
   border-radius: 18px 18px 0 0;
   padding: 18px 18px max(22px, env(safe-area-inset-bottom));
-  max-height: 92vh; overflow-y: auto;
+  /* `vh` is the *large* viewport — it doesn't shrink when the mobile
+     keyboard appears, so the modal extended below the keyboard and
+     the last fields (Repeats / monthly picker / End date) were
+     unreachable. `dvh` is the *dynamic* viewport and tracks the
+     keyboard, so the modal stays fully scrollable when typing. The
+     vh line is the fallback for browsers without dvh support. */
+  max-height: 92vh;
+  max-height: 92dvh;
+  overflow-y: auto;
+  /* When a focused input scrolls itself into view, leave a little
+     room below so the field doesn't sit jammed against the keyboard. */
+  scroll-padding-bottom: 24px;
   animation: cl-slide-up 0.2s ease-out;
 }
 @keyframes cl-slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
@@ -409,6 +420,14 @@ html.dark .cl-pomo-chip:hover { background: #1e3a8a; color: #bfdbfe; border-colo
   opacity: .85; cursor: default;
 }
 .cl-hint { color: var(--cl-text2); font-size: 11.5px; }
+
+/* Two-select pair for "Monthly — nth weekday". Stack on very narrow
+   widths so the labels don't truncate. */
+.cl-monthly-pair { display: flex; gap: 8px; }
+.cl-monthly-pair select { flex: 1 1 0; min-width: 0; }
+@media (max-width: 360px) {
+  .cl-monthly-pair { flex-direction: column; }
+}
 
 .cl-day-picker { display: flex; gap: 6px; }
 .cl-day-picker label {

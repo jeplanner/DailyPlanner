@@ -72,15 +72,39 @@ def _user_tz(user_id):
 
 
 def _rrule(schedule, schedule_days, recurrence_end=None):
+    day_codes = {"0": "SU", "1": "MO", "2": "TU", "3": "WE",
+                 "4": "TH", "5": "FR", "6": "SA"}
     if schedule == "weekdays":
         base = "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
     elif schedule == "weekends":
         base = "FREQ=WEEKLY;BYDAY=SA,SU"
     elif schedule == "custom":
-        day_codes = {"0": "SU", "1": "MO", "2": "TU", "3": "WE",
-                     "4": "TH", "5": "FR", "6": "SA"}
         days = [d.strip() for d in (schedule_days or "").split(",") if d.strip() in day_codes]
         base = "FREQ=WEEKLY;BYDAY=" + ",".join(day_codes[d] for d in days) if days else "FREQ=DAILY"
+    elif schedule == "monthly_dow":
+        # "WEEK:DAY" → e.g. "-1:6" becomes BYDAY=-1SA (last Saturday).
+        try:
+            week_s, day_s = (schedule_days or "").split(":", 1)
+            week = int(week_s)
+            code = day_codes.get(day_s.strip())
+        except (ValueError, AttributeError):
+            week, code = None, None
+        if code and week in (1, 2, 3, 4, 5, -1):
+            base = f"FREQ=MONTHLY;BYDAY={week}{code}"
+        else:
+            base = "FREQ=MONTHLY"
+    elif schedule == "monthly_dom":
+        raw = (schedule_days or "").strip()
+        try:
+            day = int(raw)
+        except ValueError:
+            day = None
+        if day == -1:
+            base = "FREQ=MONTHLY;BYMONTHDAY=-1"
+        elif day and 1 <= day <= 31:
+            base = f"FREQ=MONTHLY;BYMONTHDAY={day}"
+        else:
+            base = "FREQ=MONTHLY"
     else:
         base = "FREQ=DAILY"
 

@@ -277,6 +277,21 @@
       const days = (it.schedule_days || "").split(",").filter(Boolean).map(Number);
       return days.map((d) => names[d]).join(" ");
     }
+    if (it.schedule === "monthly_dow") {
+      const [wkS, dayS] = (it.schedule_days || "").split(":");
+      const wk = parseInt(wkS, 10);
+      const day = parseInt(dayS, 10);
+      const wkLabel = wk === -1 ? "Last" :
+                      ({1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th"})[wk] || "?";
+      const dayLabel = (["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])[day] || "?";
+      return `Monthly · ${wkLabel} ${dayLabel}`;
+    }
+    if (it.schedule === "monthly_dom") {
+      const n = parseInt((it.schedule_days || "").trim(), 10);
+      if (n === -1) return "Monthly · last day";
+      if (n >= 1 && n <= 31) return `Monthly · day ${n}`;
+      return "Monthly";
+    }
     return "Daily";
   }
 
@@ -362,11 +377,29 @@
     }
     refreshGroupList(currentGroup);
 
-    const customDays = (item?.schedule_days || "").split(",").filter(Boolean);
+    const sched = item?.schedule || "daily";
+    const sdays = item?.schedule_days || "";
+    // Custom weekday picker
+    const customDays = sched === "custom" ? sdays.split(",").filter(Boolean) : [];
     $$("#cl-weekdays input[type=checkbox]").forEach((cb) => {
       cb.checked = customDays.includes(cb.value);
     });
-    toggleWeekdayPicker();
+    // Monthly — nth weekday: "WEEK:DAY"
+    if (sched === "monthly_dow") {
+      const [wk, dy] = sdays.split(":");
+      $("#cl-monthly-week").value = wk || "1";
+      $("#cl-monthly-weekday").value = dy || "0";
+    } else {
+      $("#cl-monthly-week").value = "1";
+      $("#cl-monthly-weekday").value = "0";
+    }
+    // Monthly — day of month: "N" or "-1"
+    if (sched === "monthly_dom") {
+      $("#cl-monthly-day").value = sdays.trim() || "1";
+    } else {
+      $("#cl-monthly-day").value = "1";
+    }
+    toggleSchedulePickers();
 
     setModalMode(mode, editing);
     $("#cl-modal").hidden = false;
@@ -405,9 +438,15 @@
     }
   }
 
-  function toggleWeekdayPicker() {
-    $("#cl-weekdays").hidden = $("#cl-schedule").value !== "custom";
+  function toggleSchedulePickers() {
+    const v = $("#cl-schedule").value;
+    $("#cl-weekdays").hidden     = v !== "custom";
+    $("#cl-monthly-dow").hidden  = v !== "monthly_dow";
+    $("#cl-monthly-dom").hidden  = v !== "monthly_dom";
   }
+  // Back-compat alias: the listener below was registered against the
+  // old name; keep both pointing at the new combined function.
+  const toggleWeekdayPicker = toggleSchedulePickers;
 
   // ── Reminder times editor (modal) ─────────────────
   function uniqueTimes(arr) {
@@ -456,18 +495,30 @@
     if (pendingTime && !state.modalTimes.includes(pendingTime)) {
       state.modalTimes = sortTimes(uniqueTimes([...state.modalTimes, pendingTime]));
     }
+    const schedule = $("#cl-schedule").value;
+    // Each schedule kind encodes its parameters into schedule_days
+    // differently. The server is intentionally permissive (just a
+    // text column) — the encoding lives here and in scheduleLabel.
+    let scheduleDays = "";
+    if (schedule === "custom") {
+      scheduleDays = $$("#cl-weekdays input:checked").map((cb) => cb.value).join(",");
+    } else if (schedule === "monthly_dow") {
+      scheduleDays = `${$("#cl-monthly-week").value}:${$("#cl-monthly-weekday").value}`;
+    } else if (schedule === "monthly_dom") {
+      scheduleDays = $("#cl-monthly-day").value;
+    }
     const payload = {
       name: $("#cl-name").value.trim(),
       notes: $("#cl-notes").value.trim(),
       time_of_day: $("#cl-time-of-day").value,
-      schedule: $("#cl-schedule").value,
+      schedule: schedule,
       reminder_times: state.modalTimes,
       recurrence_end: $("#cl-recurrence-end").value || null,
       group_name: (() => {
         const v = $("#cl-group").value.trim();
         return (!v || v === "__new__") ? null : v;
       })(),
-      schedule_days: $$("#cl-weekdays input:checked").map((cb) => cb.value).join(","),
+      schedule_days: scheduleDays,
     };
     if (!payload.name) return;
 
