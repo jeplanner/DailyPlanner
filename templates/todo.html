@@ -2296,7 +2296,12 @@ html.dark .em-proj-menu { box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5); }
 </style>
 
 <script>
-const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
+// `fetch` is aliased once in the first inline <script> block above.
+// Classic scripts share one global lexical environment, so a second
+// top-level `const fetch = …` here throws "redeclaration of const"
+// at parse time — which kills the whole block on stricter engines
+// (mobile WebKit in particular) and stops every function below from
+// being defined. Just reuse the alias from the earlier block.
 function openTravelRestoreModal() {
   const m = document.getElementById("em-travel-restore-modal");
   if (!m) return;
@@ -2348,7 +2353,12 @@ document.addEventListener("keydown", (e) => {
 {% include '_task_detail_panel.html' %}
 
 <script>
-const fetch = (window.dpFetch && ((u, o) => window.dpFetch(u, o))) || window.fetch.bind(window);
+// `fetch` is already aliased in an earlier inline <script> block.
+// Redeclaring `const fetch` here would throw SyntaxError on engines
+// that strictly enforce shared-lex-env semantics for classic scripts
+// (notably mobile WebKit / installed PWAs on iOS), which silently
+// killed this entire script — including `quickAdd` — and made the
+// mobile Add button do nothing. We rely on the prior alias instead.
 const PLAN_DATE = "{{ plan_date.isoformat() }}";
 
 function navDate(delta) {
