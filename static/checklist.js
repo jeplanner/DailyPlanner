@@ -414,7 +414,27 @@
 
     setModalMode(mode, editing);
     $("#cl-modal").hidden = false;
-    if (mode === "edit") setTimeout(() => $("#cl-name").focus(), 50);
+    // Auto-focus the Name input is nice on desktop (start typing
+    // immediately), but on phones it pops the soft keyboard the
+    // instant the modal opens — which hides half the form and is
+    // jarring when the user just wanted to configure the schedule
+    // first. Only steal focus when we're confident it's not a touch
+    // device.
+    if (mode === "edit" && !_isTouchDevice()) {
+      setTimeout(() => $("#cl-name").focus(), 50);
+    }
+  }
+
+  // Heuristic — both checks are required because some hybrid laptops
+  // report `ontouchstart` but the user is on a keyboard, and some
+  // mobile browsers don't expose maxTouchPoints reliably. The narrow
+  // viewport breaker catches anything that slipped through.
+  function _isTouchDevice() {
+    return (
+      ("ontouchstart" in window) ||
+      (navigator.maxTouchPoints || 0) > 0 ||
+      (window.matchMedia && window.matchMedia("(max-width: 768px)").matches)
+    );
   }
   function closeModal() { $("#cl-modal").hidden = true; }
 

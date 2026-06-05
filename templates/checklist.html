@@ -113,13 +113,16 @@
         <label class="cl-field">
           <span>Repeats</span>
           <select id="cl-schedule">
+            <!-- Ordered most-frequent → least-frequent so the most
+                 common picks (Daily) are at the top and the rare /
+                 special ones (One-time) sit at the bottom. -->
             <option value="daily" selected>Every day</option>
             <option value="weekdays">Weekdays (Mon–Fri)</option>
             <option value="weekends">Weekends (Sat–Sun)</option>
-            <option value="custom">Custom days…</option>
-            <option value="monthly_dow">Monthly — nth weekday (e.g. last Saturday)</option>
+            <option value="custom">Custom days of the week…</option>
             <option value="monthly_dom">Monthly — fixed date (e.g. 15th)</option>
-            <option value="once">On a specific date (one-time)</option>
+            <option value="monthly_dow">Monthly — nth weekday (e.g. last Saturday)</option>
+            <option value="once">One-time — on a specific date</option>
           </select>
         </label>
 
