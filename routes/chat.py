@@ -1,6 +1,12 @@
 """
-Family chat — one shared room, every allow-listed signed-in user is
-implicitly a member. No DMs, no rooms, no membership table.
+Family chat — multiple private-membership rooms.
+
+The CHAT_USER_EMAILS allowlist gates who can use chat at all; within
+that, each room (chat_rooms) has its own member list (chat_room_members)
+and a message is visible only to members of its room. There's a
+permanent default "Family" room everyone auto-joins; users can create
+further rooms and pick members from the allowlist. See
+MIGRATION_CHAT_ROOMS.sql.
 
 Visibility is gated by an email allowlist in the CHAT_USER_EMAILS env
 var (comma-separated). Users not on the list see a 404 so the feature
@@ -139,6 +145,132 @@ def _utcnow_iso():
     # so the client's `since=...` value round-trips cleanly without any
     # timezone reformatting on either side.
     return datetime.now(timezone.utc).isoformat()
+
+
+# ── Rooms & membership ──────────────────────────────────────────
+
+
+def _family_users():
+    """Allowlisted users as [{user_id, email, display_name}] — drives the
+    room member picker. Empty when the allowlist is empty."""
+    emails = list(_allowlist())
+    if not emails:
+        return []
+    rows = get("users", {
+        "email": f"in.({','.join(emails)})",
+        "select": "id,email,display_name",
+    }) or []
+    out = []
+    for r in rows:
+        email = (r.get("email") or "").lower()
+        out.append({
+            "user_id": r["id"],
+            "email": email,
+            "display_name": (r.get("display_name") or "").strip() or email.split("@", 1)[0],
+        })
+    return out
+
+
+def _default_room_id():
+    rows = get("chat_rooms", {
+        "is_default": "eq.true", "deleted_at": "is.null",
+        "select": "id", "limit": "1",
+    }) or []
+    return rows[0]["id"] if rows else None
+
+
+def _ensure_default_membership(user_id):
+    """Auto-join the viewer to the permanent Family room. New allowlisted
+    users get added on first chat load; a user who somehow has a left
+    row gets re-joined (the default room is mandatory). Returns the
+    default room id, or None if the rooms migration hasn't run."""
+    try:
+        rid = _default_room_id()
+    except Exception as e:
+        logger.warning("chat rooms: default-room lookup failed "
+                       "(run MIGRATION_CHAT_ROOMS.sql?): %s", e)
+        return None
+    if not rid:
+        return None
+    rows = get("chat_room_members", {
+        "room_id": f"eq.{rid}", "user_id": f"eq.{user_id}",
+        "select": "id,deleted_at", "limit": "1",
+    }) or []
+    try:
+        if not rows:
+            post("chat_room_members", {"room_id": rid, "user_id": user_id})
+        elif rows[0].get("deleted_at"):
+            update("chat_room_members", params={"id": f"eq.{rows[0]['id']}"},
+                   json={"deleted_at": None})
+    except Exception:
+        logger.exception("chat rooms: auto-join default room failed for %s", user_id)
+    return rid
+
+
+def _get_room(room_id):
+    rows = get("chat_rooms", {
+        "id": f"eq.{room_id}", "deleted_at": "is.null",
+        "select": "id,name,created_by,is_default,created_at", "limit": "1",
+    }) or []
+    return rows[0] if rows else None
+
+
+def _membership(user_id, room_id):
+    """Active member row for (user_id, room_id), or None."""
+    rows = get("chat_room_members", {
+        "room_id": f"eq.{room_id}", "user_id": f"eq.{user_id}",
+        "deleted_at": "is.null",
+        "select": "id,room_id,user_id,last_read_at", "limit": "1",
+    }) or []
+    return rows[0] if rows else None
+
+
+def _require_membership(room_id):
+    """404 the request unless the viewer is an active member — 404 (not
+    403) so a non-member can't probe which room ids exist."""
+    m = _membership(session["user_id"], room_id)
+    if not m:
+        abort(404)
+    return m
+
+
+def _room_member_ids(room_id, exclude_user_id=None):
+    rows = get("chat_room_members", {
+        "room_id": f"eq.{room_id}", "deleted_at": "is.null",
+        "select": "user_id",
+    }) or []
+    ids = [r["user_id"] for r in rows if r.get("user_id")]
+    if exclude_user_id is not None:
+        ids = [i for i in ids if str(i) != str(exclude_user_id)]
+    return ids
+
+
+def _emails_for_user_ids(user_ids):
+    if not user_ids:
+        return []
+    rows = get("users", {
+        "id": f"in.({','.join(str(u) for u in user_ids)})",
+        "select": "email",
+    }) or []
+    return [(r.get("email") or "").lower() for r in rows if r.get("email")]
+
+
+def _users_by_ids(user_ids):
+    """{user_id: {email, display_name}} for member-name rendering."""
+    if not user_ids:
+        return {}
+    rows = get("users", {
+        "id": f"in.({','.join(str(u) for u in user_ids)})",
+        "select": "id,email,display_name",
+    }) or []
+    out = {}
+    for r in rows:
+        email = (r.get("email") or "").lower()
+        out[r["id"]] = {
+            "email": email,
+            "display_name": (r.get("display_name") or "").strip() or email.split("@", 1)[0] or "Member",
+        }
+    return out
 
 
 def _author_name():
@@ -331,6 +463,257 @@ def chat_page():
     )
 
 
+# ── Rooms API ────────────────────────────────────────────────────
+
+
+@chat_bp.route("/api/chat/family", methods=["GET"])
+@login_required
+def family_users():
+    """Allowlisted family users for the room member picker."""
+    _gate()
+    return jsonify({"users": _family_users()})
+
+
+@chat_bp.route("/api/chat/rooms", methods=["GET"])
+@login_required
+def list_rooms():
+    """Rooms the viewer belongs to, with per-room unread + last activity.
+    Default room first, then most-recently-active."""
+    _gate()
+    viewer_id = session["user_id"]
+    _ensure_default_membership(viewer_id)
+    try:
+        memberships = get("chat_room_members", {
+            "user_id": f"eq.{viewer_id}", "deleted_at": "is.null",
+            "select": "room_id,last_read_at",
+        }) or []
+    except Exception as e:
+        logger.warning("chat rooms list: membership lookup failed "
+                       "(run MIGRATION_CHAT_ROOMS.sql?): %s", e)
+        return jsonify({"rooms": [], "migration_pending": True})
+
+    room_ids = [m["room_id"] for m in memberships if m.get("room_id")]
+    if not room_ids:
+        return jsonify({"rooms": [], "default_room_id": None})
+    last_read = {m["room_id"]: m.get("last_read_at") for m in memberships}
+
+    rooms = get("chat_rooms", {
+        "id": f"in.({','.join(room_ids)})", "deleted_at": "is.null",
+        "select": "id,name,created_by,is_default,created_at",
+    }) or []
+
+    out = []
+    for r in rooms:
+        rid = r["id"]
+        lm = get("messages", {
+            "room_id": f"eq.{rid}", "deleted_at": "is.null",
+            "select": "created_at,body", "order": "created_at.desc", "limit": "1",
+        }) or []
+        out.append({
+            "id": rid,
+            "name": r.get("name") or "Room",
+            "is_default": bool(r.get("is_default")),
+            "is_owner": str(r.get("created_by")) == str(viewer_id),
+            "member_count": len(_room_member_ids(rid)),
+            "unread": min(_unread_for_room(viewer_id, rid, last_read.get(rid)), UNREAD_CAP),
+            "last_message_at": (lm[0].get("created_at") if lm else r.get("created_at")),
+            "last_preview": ((lm[0].get("body") if lm else "") or "")[:80],
+        })
+    # Most-recent-activity first, then pull the default room to the top
+    # (stable sort keeps the recency order within each group).
+    out.sort(key=lambda x: x["last_message_at"] or "", reverse=True)
+    out.sort(key=lambda x: 0 if x["is_default"] else 1)
+    return jsonify({"rooms": out, "default_room_id": _default_room_id()})
+
+
+@chat_bp.route("/api/chat/rooms", methods=["POST"])
+@login_required
+def create_room():
+    """Create a private room. Body: {name, member_ids: [...]}. The
+    creator is always a member and becomes the owner; other members are
+    restricted to allowlisted family users."""
+    _gate()
+    viewer_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()[:80]
+    if not name:
+        return jsonify({"error": "Room name required"}), 400
+
+    family_ids = {u["user_id"] for u in _family_users()}
+    member_ids = [m for m in (data.get("member_ids") or []) if m in family_ids]
+    member_ids = list({*member_ids, viewer_id})  # creator always included
+
+    try:
+        rows = post("chat_rooms", {
+            "name": name, "created_by": viewer_id, "is_default": False,
+        })
+    except Exception as e:
+        logger.exception("create room failed: %s", e)
+        return jsonify({"error": "Couldn't create room"}), 502
+    room = rows[0] if rows else None
+    if not room:
+        return jsonify({"error": "Couldn't create room"}), 502
+    rid = room["id"]
+
+    for uid in member_ids:
+        try:
+            post("chat_room_members", {"room_id": rid, "user_id": uid, "added_by": viewer_id})
+        except Exception:
+            logger.exception("add member %s to new room %s failed", uid, rid)
+
+    return jsonify({"room": {
+        "id": rid, "name": name, "is_default": False, "is_owner": True,
+        "member_count": len(member_ids), "unread": 0,
+        "last_message_at": room.get("created_at"), "last_preview": "",
+    }})
+
+
+@chat_bp.route("/api/chat/rooms/<room_id>/members", methods=["GET"])
+@login_required
+def get_room_members(room_id):
+    _gate()
+    _require_membership(room_id)
+    room = _get_room(room_id)
+    if not room:
+        abort(404)
+    rows = get("chat_room_members", {
+        "room_id": f"eq.{room_id}", "deleted_at": "is.null", "select": "user_id",
+    }) or []
+    ids = [r["user_id"] for r in rows if r.get("user_id")]
+    info = _users_by_ids(ids)
+    owner = str(room.get("created_by"))
+    members = [{
+        "user_id": uid,
+        "display_name": info.get(uid, {}).get("display_name", "Member"),
+        "email": info.get(uid, {}).get("email", ""),
+        "is_owner": str(uid) == owner,
+    } for uid in ids]
+    return jsonify({
+        "members": members,
+        "is_owner": owner == str(session["user_id"]),
+        "is_default": bool(room.get("is_default")),
+        "name": room.get("name"),
+    })
+
+
+@chat_bp.route("/api/chat/rooms/<room_id>/members", methods=["POST"])
+@login_required
+def add_room_member(room_id):
+    """Add an allowlisted family user to the room. Any member can add."""
+    _gate()
+    _require_membership(room_id)
+    uid = ((request.get_json(silent=True) or {}).get("user_id") or "").strip()
+    if not uid:
+        return jsonify({"error": "user_id required"}), 400
+    if uid not in {u["user_id"] for u in _family_users()}:
+        return jsonify({"error": "Not an allowed family member"}), 400
+
+    existing = get("chat_room_members", {
+        "room_id": f"eq.{room_id}", "user_id": f"eq.{uid}",
+        "select": "id,deleted_at", "limit": "1",
+    }) or []
+    try:
+        if existing:
+            update("chat_room_members", params={"id": f"eq.{existing[0]['id']}"},
+                   json={"deleted_at": None, "added_by": session["user_id"]})
+        else:
+            post("chat_room_members",
+                 {"room_id": room_id, "user_id": uid, "added_by": session["user_id"]})
+    except Exception as e:
+        logger.exception("add member failed: %s", e)
+        return jsonify({"error": "Couldn't add member"}), 502
+    return jsonify({"ok": True})
+
+
+@chat_bp.route("/api/chat/rooms/<room_id>/members/<member_id>", methods=["DELETE"])
+@login_required
+def remove_room_member(room_id, member_id):
+    """Remove a member, or leave (member_id == self). The owner can
+    remove anyone; a non-owner can only remove themselves. The default
+    Family room is mandatory — nobody can leave or be removed from it."""
+    _gate()
+    viewer_id = session["user_id"]
+    _require_membership(room_id)
+    room = _get_room(room_id)
+    if not room:
+        abort(404)
+    if room.get("is_default"):
+        return jsonify({"error": "You can't leave the Family room"}), 400
+
+    # "self"/"me" sentinels mean the current user (the client doesn't
+    # carry its own user_id) — resolve before the ownership checks.
+    if member_id in ("self", "me"):
+        member_id = str(viewer_id)
+
+    is_owner = str(room.get("created_by")) == str(viewer_id)
+    removing_self = str(member_id) == str(viewer_id)
+    if not removing_self and not is_owner:
+        return jsonify({"error": "Only the room owner can remove others"}), 403
+
+    target = get("chat_room_members", {
+        "room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}",
+        "deleted_at": "is.null", "select": "id", "limit": "1",
+    }) or []
+    if not target:
+        return jsonify({"error": "Not a member"}), 404
+    try:
+        update("chat_room_members", params={"id": f"eq.{target[0]['id']}"},
+               json={"deleted_at": _utcnow_iso()})
+    except Exception as e:
+        logger.exception("remove member failed: %s", e)
+        return jsonify({"error": "Couldn't remove member"}), 502
+    return jsonify({"ok": True, "left": removing_self})
+
+
+@chat_bp.route("/api/chat/rooms/<room_id>/rename", methods=["POST"])
+@login_required
+def rename_room(room_id):
+    _gate()
+    viewer_id = session["user_id"]
+    _require_membership(room_id)
+    room = _get_room(room_id)
+    if not room:
+        abort(404)
+    if room.get("is_default"):
+        return jsonify({"error": "The Family room can't be renamed"}), 400
+    if str(room.get("created_by")) != str(viewer_id):
+        return jsonify({"error": "Only the owner can rename"}), 403
+    name = ((request.get_json(silent=True) or {}).get("name") or "").strip()[:80]
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+    try:
+        update("chat_rooms", params={"id": f"eq.{room_id}"}, json={"name": name})
+    except Exception as e:
+        logger.exception("rename room failed: %s", e)
+        return jsonify({"error": "Couldn't rename"}), 502
+    return jsonify({"ok": True, "name": name})
+
+
+@chat_bp.route("/api/chat/rooms/<room_id>/delete", methods=["POST"])
+@login_required
+def delete_room(room_id):
+    """Soft-delete a room (owner only). The default Family room can't be
+    deleted. Messages stay in the DB (cascade not triggered by a soft
+    delete) but become inaccessible since the room no longer lists."""
+    _gate()
+    viewer_id = session["user_id"]
+    _require_membership(room_id)
+    room = _get_room(room_id)
+    if not room:
+        abort(404)
+    if room.get("is_default"):
+        return jsonify({"error": "The Family room can't be deleted"}), 400
+    if str(room.get("created_by")) != str(viewer_id):
+        return jsonify({"error": "Only the owner can delete"}), 403
+    try:
+        update("chat_rooms", params={"id": f"eq.{room_id}"},
+               json={"deleted_at": _utcnow_iso()})
+    except Exception as e:
+        logger.exception("delete room failed: %s", e)
+        return jsonify({"error": "Couldn't delete room"}), 502
+    return jsonify({"ok": True})
+
+
 # ── API ─────────────────────────────────────────────────────────
 
 
@@ -354,8 +737,14 @@ def list_messages():
     viewer_id = session["user_id"]
     since = (request.args.get("since") or "").strip()
 
+    room_id = (request.args.get("room_id") or "").strip()
+    if not room_id:
+        return jsonify({"error": "room_id required"}), 400
+    _require_membership(room_id)
+
     params = {
         "deleted_at": "is.null",
+        "room_id": f"eq.{room_id}",
         "select": f"{_BASE_COLS},{_EXTRA_COLS}",
     }
     if since:
@@ -387,12 +776,18 @@ def send_message():
     if len(body) > MAX_BODY:
         return jsonify({"error": f"Message too long (max {MAX_BODY} chars)"}), 400
 
+    room_id = (data.get("room_id") or "").strip()
+    if not room_id:
+        return jsonify({"error": "room_id required"}), 400
+    _require_membership(room_id)
+
     viewer_id = session["user_id"]
     sender_name = _author_name()
     payload = {
         "user_id": viewer_id,
         "author_name": sender_name,
         "body": body,
+        "room_id": room_id,
     }
     try:
         rows = post("messages", payload)
@@ -406,7 +801,7 @@ def send_message():
     # worst case. We don't want the sender's POST to block on that.
     threading.Thread(
         target=_fanout_push,
-        args=(viewer_id, sender_name, body),
+        args=(viewer_id, sender_name, body, room_id),
         daemon=True,
     ).start()
     return jsonify({"message": _shape(row, viewer_id)})
@@ -425,6 +820,11 @@ def upload_attachment():
     for everyone, exactly like a Knowledge-Base share."""
     _gate()
     viewer_id = session["user_id"]
+
+    room_id = (request.form.get("room_id") or "").strip()
+    if not room_id:
+        return jsonify({"error": "room_id required"}), 400
+    _require_membership(room_id)
 
     f = request.files.get("file")
     if not f or not f.filename:
@@ -476,6 +876,7 @@ def upload_attachment():
         # filename when there's no caption.
         "body": caption or fname,
         "kind": "file-share",
+        "room_id": room_id,
         "attachment_file_id": file_id,
         "attachment_name": fname,
         "attachment_mime": mime,
@@ -490,15 +891,17 @@ def upload_attachment():
         return jsonify({"error": "Send failed"}), 502
 
     msg_row = rows[0] if rows else payload
-    # Fan out Drive read perms + push, both off the request path.
+    # Fan out Drive read perms + push, both off the request path. Both
+    # are scoped to this room's members, not the whole family.
+    grant_emails = _emails_for_user_ids(_room_member_ids(room_id, exclude_user_id=viewer_id))
     threading.Thread(
-        target=_grant_drive_read_to_family,
-        args=(viewer_id, file_id),
+        target=_grant_drive_read,
+        args=(viewer_id, file_id, grant_emails),
         daemon=True,
     ).start()
     threading.Thread(
         target=_fanout_push,
-        args=(viewer_id, sender_name, f"📎 {fname}"),
+        args=(viewer_id, sender_name, f"📎 {fname}", room_id),
         daemon=True,
     ).start()
     return jsonify({"message": _shape(msg_row, viewer_id)})
@@ -516,12 +919,15 @@ def attachment_raw(msg_id):
     rows = get("messages", {
         "id": f"eq.{msg_id}",
         "deleted_at": "is.null",
-        "select": "id,user_id,attachment_file_id,attachment_mime,attachment_name",
+        "select": "id,user_id,room_id,attachment_file_id,attachment_mime,attachment_name",
         "limit": "1",
     }) or []
     if not rows or not rows[0].get("attachment_file_id"):
         abort(404)
     m = rows[0]
+    # Only members of the message's room may fetch its attachment bytes.
+    if m.get("room_id"):
+        _require_membership(m["room_id"])
 
     try:
         service, _row = _drive_service_for(m["user_id"])
@@ -651,6 +1057,18 @@ def share_to_chat():
     viewer_id = session["user_id"]
     data = request.get_json(silent=True) or {}
 
+    # Target room — callers (Inbox / KB buttons) may omit it, in which
+    # case the share lands in the default Family room. We auto-join the
+    # viewer to the default room first so the membership check passes.
+    # If the rooms migration hasn't run yet, room_id stays None and we
+    # fall back to legacy allowlist-wide behaviour so the Inbox/KB share
+    # buttons keep working in the deploy→migrate window.
+    room_id = (data.get("room_id") or "").strip()
+    if not room_id:
+        room_id = _ensure_default_membership(viewer_id)
+    if room_id:
+        _require_membership(room_id)
+
     kind = (data.get("kind") or "").strip().lower()
     if kind not in ("inbox", "kb"):
         return jsonify({"error": "Unknown share kind"}), 400
@@ -672,9 +1090,15 @@ def share_to_chat():
         # and don't fail the request if Drive complains. The recipient
         # might briefly see "request access" if they tap the link before
         # Drive finishes propagating, but they'll be fine on retry.
+        # Scoped to this room's members (or the whole allowlist in the
+        # pre-migration fallback where room_id is None).
+        grant_emails = (
+            _emails_for_user_ids(_room_member_ids(room_id, exclude_user_id=viewer_id))
+            if room_id else list(_allowlist())
+        )
         threading.Thread(
-            target=_grant_drive_read_to_family,
-            args=(viewer_id, file_id),
+            target=_grant_drive_read,
+            args=(viewer_id, file_id, grant_emails),
             daemon=True,
         ).start()
         # Synchronously flip is_shared=true on the file so it moves
@@ -718,6 +1142,8 @@ def share_to_chat():
         "body": body,
         "kind": "kb-share" if kind == "kb" else "inbox-share",
     }
+    if room_id:
+        payload["room_id"] = room_id
     try:
         rows = post("messages", payload)
     except Exception as e:
@@ -727,19 +1153,22 @@ def share_to_chat():
     row = rows[0] if rows else payload
     threading.Thread(
         target=_fanout_push,
-        args=(viewer_id, sender_name, body),
+        args=(viewer_id, sender_name, body, room_id),
         daemon=True,
     ).start()
-    return jsonify({"message": _shape(row, viewer_id)})
+    return jsonify({"message": _shape(row, viewer_id), "room_id": room_id})
 
 
-def _grant_drive_read_to_family(sender_id, file_id):
-    """Best-effort: give every other family member read access to a
-    Drive file the sender owns. Idempotent at Drive's end — granting
-    the same permission twice is a no-op. Failures (token expired,
-    file moved, permission already exists in a way Drive doesn't like)
-    are logged and swallowed; the chat message has already gone out
-    by the time this runs."""
+def _grant_drive_read(sender_id, file_id, emails):
+    """Best-effort: give each email in `emails` read access to a Drive
+    file the sender owns (used to share a chat attachment / KB link with
+    the recipient room's members). Idempotent at Drive's end — granting
+    the same permission twice is a no-op. Failures (token expired, file
+    moved, permission already exists in a way Drive doesn't like) are
+    logged and swallowed; the chat message has already gone out by the
+    time this runs."""
+    if not emails:
+        return
     try:
         from google.auth.exceptions import RefreshError
         from googleapiclient.errors import HttpError
@@ -768,8 +1197,8 @@ def _grant_drive_read_to_family(sender_id, file_id):
         urows = get("users", {"id": f"eq.{sender_id}", "select": "email", "limit": "1"}) or []
         sender_email = (urows[0].get("email", "") if urows else "").strip().lower()
 
-        for email in _allowlist():
-            if email == sender_email:
+        for email in {(e or "").lower() for e in emails if e}:
+            if not email or email == sender_email:
                 continue
             try:
                 service.permissions().create(
@@ -790,11 +1219,18 @@ def _grant_drive_read_to_family(sender_id, file_id):
         logger.exception("share: drive perm fanout crashed")
 
 
-def _fanout_push(sender_id, sender_name, body):
-    """Best-effort notify everyone else in the room. Swallows all
-    exceptions — push delivery should never be able to crash a send."""
+def _fanout_push(sender_id, sender_name, body, room_id):
+    """Best-effort notify the other members of `room_id`. When room_id is
+    None (pre-migration fallback) we fan out to the whole allowlist and
+    link to plain /chat. Swallows all exceptions — push delivery should
+    never be able to crash a send."""
     try:
-        recipients = _allowed_user_ids()
+        if room_id:
+            recipients = _room_member_ids(room_id, exclude_user_id=sender_id)
+            url = f"/chat?room={room_id}"
+        else:
+            recipients = [u for u in _allowed_user_ids() if str(u) != str(sender_id)]
+            url = "/chat"
         if not recipients:
             return
         # Keep the body short so it renders cleanly inside the OS-level
@@ -802,18 +1238,16 @@ def _fanout_push(sender_id, sender_name, body):
         # truncate, but the cutoff is ugly. 120 chars is comfortable.
         preview = body if len(body) <= 120 else body[:119] + "…"
         for uid in recipients:
-            if str(uid) == str(sender_id):
-                continue
             try:
                 push_service.send_to_user(
                     user_id=uid,
                     title=sender_name or "New message",
                     body=preview,
-                    url="/chat",
+                    url=url,
                     # `tag` makes subsequent messages collapse into one
-                    # notification per browser so a chatty conversation
+                    # notification per room so a chatty conversation
                     # doesn't spam the notification tray.
-                    tag="chat",
+                    tag=(f"chat-{room_id}" if room_id else "chat"),
                 )
             except Exception:
                 logger.exception("chat push to %s failed", uid)
@@ -830,69 +1264,73 @@ def _fanout_push(sender_id, sender_name, body):
 UNREAD_CAP = 99
 
 
+def _unread_for_room(viewer_id, room_id, last_read):
+    """Count (capped) unread messages in one room for the viewer."""
+    params = {
+        "deleted_at": "is.null",
+        "room_id": f"eq.{room_id}",
+        "user_id": f"neq.{viewer_id}",
+        "select": "id",
+        "limit": str(UNREAD_CAP + 1),
+    }
+    if last_read:
+        params["created_at"] = f"gt.{last_read}"
+    try:
+        return len(get("messages", params) or [])
+    except Exception as e:
+        logger.warning("chat unread: room %s query failed (%s)", room_id, e)
+        return 0
+
+
 @chat_bp.route("/api/chat/unread-count", methods=["GET"])
 @login_required
 def unread_count():
     """Cheap endpoint polled by the top-nav badge from every page.
+    Returns the total unread across every room the viewer belongs to.
     Returns 0 for non-allowlisted users so the global script can run
     blindly without a permissions check on the client."""
     if not user_allowed():
         return jsonify({"count": 0})
 
     viewer_id = session["user_id"]
-
-    # Defensive: if the chat_last_read_at column doesn't exist yet
-    # (migration not run), fall through with last_read=None so the
-    # endpoint reports unread = total-other-messages, which is at least
-    # honest. A 500 here would break the badge on every page in the app.
-    last_read = None
     try:
-        urows = get("users", {
-            "id": f"eq.{viewer_id}",
-            "select": "chat_last_read_at",
-            "limit": "1",
+        _ensure_default_membership(viewer_id)
+        memberships = get("chat_room_members", {
+            "user_id": f"eq.{viewer_id}", "deleted_at": "is.null",
+            "select": "room_id,last_read_at",
         }) or []
-        if urows:
-            last_read = urows[0].get("chat_last_read_at")
     except Exception as e:
-        logger.warning("chat unread: read-cursor lookup failed (%s)", e)
-
-    params = {
-        "deleted_at": "is.null",
-        "user_id": f"neq.{viewer_id}",
-        "select": "id",
-        # Cap+1 so we know whether the actual count exceeds the cap.
-        "limit": str(UNREAD_CAP + 1),
-    }
-    if last_read:
-        params["created_at"] = f"gt.{last_read}"
-
-    try:
-        rows = get("messages", params) or []
-    except Exception as e:
-        logger.warning("chat unread: message query failed (%s)", e)
+        # Rooms migration not applied yet → no badge rather than a 500
+        # on every page.
+        logger.warning("chat unread: membership lookup failed "
+                       "(run MIGRATION_CHAT_ROOMS.sql?): %s", e)
         return jsonify({"count": 0})
 
-    n = len(rows)
+    total = 0
+    for m in memberships:
+        total += _unread_for_room(viewer_id, m.get("room_id"), m.get("last_read_at"))
+        if total > UNREAD_CAP:
+            break
+
     return jsonify({
-        "count": min(n, UNREAD_CAP),
-        "capped": n > UNREAD_CAP,
+        "count": min(total, UNREAD_CAP),
+        "capped": total > UNREAD_CAP,
     })
 
 
-@chat_bp.route("/api/chat/mark-read", methods=["POST"])
+@chat_bp.route("/api/chat/rooms/<room_id>/mark-read", methods=["POST"])
 @login_required
-def mark_read():
-    """Advance the viewer's read cursor to now. Called by the chat page
-    on open, on poll-while-at-bottom, and on tab refocus. Safe to spam —
-    the underlying UPDATE is idempotent."""
+def mark_read(room_id):
+    """Advance the viewer's read cursor for one room to now. Called by
+    the chat page on open, on poll-while-at-bottom, and on tab refocus.
+    Safe to spam — the UPDATE is idempotent."""
     _gate()
-    viewer_id = session["user_id"]
+    m = _require_membership(room_id)
     try:
         update(
-            "users",
-            params={"id": f"eq.{viewer_id}"},
-            json={"chat_last_read_at": _utcnow_iso()},
+            "chat_room_members",
+            params={"id": f"eq.{m['id']}"},
+            json={"last_read_at": _utcnow_iso()},
         )
     except Exception as e:
         logger.exception("chat mark-read failed: %s", e)

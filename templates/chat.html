@@ -344,6 +344,98 @@
   .img-lightbox.open { display: flex; }
   .img-lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
 
+  .chat-header-actions { display: flex; gap: 6px; }
+
+  /* ── Room strip ── */
+  .room-strip {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .room-chips {
+    display: flex; gap: 6px; overflow-x: auto; flex: 1;
+    scrollbar-width: none;
+  }
+  .room-chips::-webkit-scrollbar { display: none; }
+  .room-chip {
+    flex: none; position: relative;
+    border: 1px solid var(--color-border); background: transparent;
+    color: var(--color-text-secondary);
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 5px 12px; border-radius: 999px; cursor: pointer;
+    white-space: nowrap;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .room-chip:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
+  .room-chip.is-active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+  .room-chip .room-unread {
+    display: inline-block; margin-left: 6px; min-width: 17px; height: 17px;
+    line-height: 17px; padding: 0 4px; border-radius: 999px;
+    background: #ef4444; color: #fff; font-size: 11px; font-weight: 700;
+    text-align: center; vertical-align: middle;
+  }
+  .room-chip.is-active .room-unread { background: rgba(255,255,255,.35); }
+  .room-new-btn {
+    flex: none; width: 32px; height: 32px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px dashed var(--color-border); background: transparent;
+    color: var(--color-text-secondary); cursor: pointer;
+  }
+  .room-new-btn:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
+  .room-new-btn svg { width: 16px; height: 16px; }
+
+  /* ── Modals (new room / manage) ── */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 1500;
+    background: rgba(15,23,42,.55);
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    width: 100%; max-width: 420px; max-height: 85vh; overflow-y: auto;
+    background: var(--color-surface); color: var(--color-text);
+    border: 1px solid var(--color-border); border-radius: 16px;
+    padding: 18px 18px 16px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.3);
+  }
+  .modal h3 { margin: 0 0 12px; font-size: 17px; font-weight: 700; }
+  .modal input[type="text"] {
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 14px;
+    padding: 9px 11px; border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-bg); color: var(--color-text); outline: none;
+  }
+  .modal input[type="text"]:focus { border-color: var(--color-primary); }
+  .modal-label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary);
+                 text-transform: uppercase; letter-spacing: .03em; margin: 14px 0 7px; }
+  .member-pick { display: flex; flex-direction: column; gap: 2px; }
+  .member-pick label, .member-list-row {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 9px; border-radius: 9px; cursor: pointer; font-size: 14px;
+  }
+  .member-pick label:hover, .member-list-row:hover { background: var(--color-surface-secondary, #f1f5f9); }
+  .member-pick input { width: 17px; height: 17px; }
+  .member-pick .mp-sub, .member-list-row .ml-sub { font-size: 12px; color: var(--color-text-secondary); }
+  .member-list-row { justify-content: space-between; cursor: default; }
+  .member-list-row .ml-name { font-weight: 600; }
+  .member-list-row .ml-owner { font-size: 11px; color: var(--color-text-secondary); font-weight: 600; }
+  .member-list-row .ml-remove {
+    background: none; border: none; color: #ef4444; cursor: pointer;
+    font: inherit; font-size: 12px; font-weight: 600;
+  }
+  .modal-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+  .qb-btn {
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 8px 15px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .qb-btn:hover { background: var(--color-surface-secondary, #f1f5f9); }
+  .qb-btn-primary { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+  .qb-btn-primary:hover { background: var(--color-primary-hover, #1d4ed8); }
+  .qb-btn-danger { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+  .qb-btn-danger:hover { background: #fee2e2; }
+
   @media (max-width: 640px) {
     .chat-shell { height: calc(100dvh - 48px); }
     .att-img { max-width: 200px; }
@@ -359,14 +451,28 @@
   <header class="chat-header">
     <div class="chat-header-row">
       <div>
-        <h1>💬 Family chat</h1>
-        <p class="sub">Everyone signed into this app sees this room. Posting as <b>{{ viewer_name }}</b>.</p>
+        <h1 id="room-title">💬 Family chat</h1>
+        <p class="sub" id="room-sub">Posting as <b>{{ viewer_name }}</b>.</p>
       </div>
-      <button type="button" class="chat-search-toggle" id="search-toggle" title="Search Drive files">
-        <i data-feather="search"></i>
-      </button>
+      <div class="chat-header-actions">
+        <button type="button" class="chat-search-toggle" id="manage-toggle" title="Room members">
+          <i data-feather="users"></i>
+        </button>
+        <button type="button" class="chat-search-toggle" id="search-toggle" title="Search Drive files">
+          <i data-feather="search"></i>
+        </button>
+      </div>
     </div>
   </header>
+
+  <!-- Room strip — one chip per room you belong to, with unread badge.
+       The "+" chip opens the new-room modal. -->
+  <div class="room-strip" id="room-strip">
+    <div class="room-chips" id="room-chips"></div>
+    <button type="button" class="room-new-btn" id="room-new-btn" title="New room">
+      <i data-feather="plus"></i>
+    </button>
+  </div>
 
   <!-- Drive search panel — searches files this app can see (chat
        uploads + Knowledge-Base PDFs), opens images/PDFs inline. -->
@@ -423,15 +529,51 @@
 
 <div class="img-lightbox" id="img-lightbox"><img alt="" id="img-lightbox-img"></div>
 
+<!-- New room modal -->
+<div class="modal-overlay" id="new-room-overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="New room">
+    <h3>New room</h3>
+    <input type="text" id="new-room-name" maxlength="80" placeholder="Room name (e.g. Trip planning)">
+    <div class="modal-label">Members</div>
+    <div class="member-pick" id="new-room-members"></div>
+    <div class="modal-actions">
+      <button type="button" class="qb-btn" id="new-room-cancel">Cancel</button>
+      <button type="button" class="qb-btn qb-btn-primary" id="new-room-create">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manage room modal -->
+<div class="modal-overlay" id="manage-overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Manage room">
+    <h3 id="manage-title">Members</h3>
+    <div class="member-list" id="manage-members"></div>
+    <div class="manage-add" id="manage-add-wrap">
+      <div class="modal-label">Add member</div>
+      <div class="member-pick" id="manage-add-pick"></div>
+    </div>
+    <div class="modal-actions" id="manage-actions">
+      <button type="button" class="qb-btn qb-btn-danger" id="manage-leave">Leave room</button>
+      <span style="flex:1"></span>
+      <button type="button" class="qb-btn" id="manage-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (() => {
   const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const POLL_MS = 3000;
 
+  const VIEWER_NAME = {{ viewer_name|tojson }};
+
   const stream  = document.getElementById("chat-stream");
   const form    = document.getElementById("chat-form");
   const input   = document.getElementById("chat-input");
   const sendBtn = document.getElementById("chat-send");
+  const roomTitle = document.getElementById("room-title");
+  const roomSub   = document.getElementById("room-sub");
+  const roomChips = document.getElementById("room-chips");
 
   const state = {
     since: null,           // ISO timestamp cursor for next poll
@@ -439,8 +581,13 @@
     lastDay: null,         // for day-separator insertion
     rendered: new Set(),   // de-dupe (optimistic + polled echo)
     pollTimer: null,
+    roomTimer: null,       // periodic room-list (unread badge) refresh
     stickToBottom: true,   // false once user scrolls up
+    roomId: null,          // current room
+    rooms: [],             // [{id,name,is_default,is_owner,member_count,unread,...}]
   };
+
+  const currentRoom = () => state.rooms.find(r => r.id === state.roomId) || null;
 
   const esc = (s) => String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -607,10 +754,81 @@
     }
   }
 
+  // ── Rooms ──────────────────────────────────────────────────────
+  function renderRoomChips() {
+    roomChips.innerHTML = "";
+    for (const room of state.rooms) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "room-chip" + (room.id === state.roomId ? " is-active" : "");
+      b.dataset.roomId = room.id;
+      const unread = (room.id === state.roomId) ? 0 : (room.unread || 0);
+      b.innerHTML = esc(room.name) +
+        (unread ? `<span class="room-unread">${unread > 99 ? "99+" : unread}</span>` : "");
+      b.addEventListener("click", () => switchRoom(room.id));
+      roomChips.appendChild(b);
+    }
+  }
+
+  function updateRoomHeader() {
+    const room = currentRoom();
+    if (!room) return;
+    roomTitle.textContent = (room.is_default ? "💬 " : "# ") + room.name;
+    const n = room.member_count || 0;
+    roomSub.innerHTML = `${n} member${n === 1 ? "" : "s"} · Posting as <b>${esc(VIEWER_NAME)}</b>`;
+  }
+
+  async function loadRooms() {
+    try {
+      const r = await fetch("/api/chat/rooms", { credentials: "same-origin" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      state.rooms = data.rooms || [];
+      if (data.migration_pending) {
+        toast("Run MIGRATION_CHAT_ROOMS.sql to enable rooms", "error");
+      }
+      renderRoomChips();
+      updateRoomHeader();
+      return data;
+    } catch (e) {
+      console.warn("[chat] loadRooms failed:", e);
+      return null;
+    }
+  }
+
+  // Wipe the stream + per-room cursors when switching rooms.
+  function resetStream() {
+    stopPolling();
+    stream.innerHTML = "";
+    state.since = null;
+    state.lastAuthorId = null;
+    state.lastDay = null;
+    state.rendered = new Set();
+    state.stickToBottom = true;
+  }
+
+  function switchRoom(roomId) {
+    if (!roomId || roomId === state.roomId) return;
+    state.roomId = roomId;
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set("room", roomId);
+      history.replaceState(null, "", u);
+    } catch (_) {}
+    renderRoomChips();
+    updateRoomHeader();
+    resetStream();
+    stream.innerHTML = `<div class="chat-empty" id="chat-empty"><div>Loading…</div></div>`;
+    loadInitial();
+  }
+
   // ── Network ────────────────────────────────────────────────────
   async function loadInitial() {
+    if (!state.roomId) return;
     try {
-      const r = await fetch("/api/chat/messages", { credentials: "same-origin" });
+      const r = await fetch("/api/chat/messages?room_id=" + encodeURIComponent(state.roomId), {
+        credentials: "same-origin",
+      });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || r.status);
       clearLoadingHint();
@@ -633,12 +851,16 @@
   // on the next paint so the nav-bar icon catches up without waiting
   // for its own 60s poll cycle.
   async function markRead() {
+    if (!state.roomId) return;
     try {
-      await fetch("/api/chat/mark-read", {
+      await fetch("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/mark-read", {
         method: "POST",
         headers: { "X-CSRFToken": CSRF },
         credentials: "same-origin",
       });
+      // Optimistically clear the current room's unread chip.
+      const room = currentRoom();
+      if (room) { room.unread = 0; renderRoomChips(); }
       if (typeof window.dpChatBadgeRefresh === "function") {
         window.dpChatBadgeRefresh();
       }
@@ -646,9 +868,10 @@
   }
 
   async function poll() {
-    if (!state.since) return;
+    if (!state.since || !state.roomId) return;
     try {
-      const r = await fetch("/api/chat/messages?since=" + encodeURIComponent(state.since), {
+      const r = await fetch("/api/chat/messages?room_id=" + encodeURIComponent(state.roomId) +
+                            "&since=" + encodeURIComponent(state.since), {
         credentials: "same-origin",
       });
       const data = await r.json();
@@ -695,7 +918,7 @@
       const r = await fetch("/api/chat/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, room_id: state.roomId }),
         credentials: "same-origin",
       });
       const data = await r.json();
@@ -875,6 +1098,7 @@
     toast("Uploading…");
     const fd = new FormData();
     fd.append("file", f);
+    fd.append("room_id", state.roomId);
     const caption = input.value.trim();
     if (caption) fd.append("body", caption);
     try {
@@ -989,9 +1213,255 @@
     return a;
   }
 
-  // Boot
+  // ── Room create / manage modals ────────────────────────────────
+  const newRoomOverlay = document.getElementById("new-room-overlay");
+  const newRoomName    = document.getElementById("new-room-name");
+  const newRoomMembers = document.getElementById("new-room-members");
+  const manageOverlay  = document.getElementById("manage-overlay");
+  const manageTitle    = document.getElementById("manage-title");
+  const manageMembers  = document.getElementById("manage-members");
+  const manageAddPick  = document.getElementById("manage-add-pick");
+  const manageActions  = document.getElementById("manage-actions");
+
+  let familyCache = null;
+  async function getFamily() {
+    if (familyCache) return familyCache;
+    try {
+      const r = await fetch("/api/chat/family", { credentials: "same-origin" });
+      const data = await r.json();
+      familyCache = data.users || [];
+    } catch (_) { familyCache = []; }
+    return familyCache;
+  }
+
+  const jsonPost = (url, body) => fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+    body: JSON.stringify(body || {}),
+    credentials: "same-origin",
+  });
+
+  function closeModals() {
+    newRoomOverlay.classList.remove("open");
+    manageOverlay.classList.remove("open");
+  }
+  [newRoomOverlay, manageOverlay].forEach(ov =>
+    ov.addEventListener("click", (e) => { if (e.target === ov) closeModals(); }));
+
+  // --- New room ---
+  document.getElementById("room-new-btn").addEventListener("click", async () => {
+    newRoomName.value = "";
+    newRoomMembers.innerHTML = `<div class="drive-search-hint">Loading family…</div>`;
+    newRoomOverlay.classList.add("open");
+    newRoomName.focus();
+    const fam = await getFamily();
+    newRoomMembers.innerHTML = "";
+    for (const u of fam) {
+      const label = document.createElement("label");
+      label.innerHTML = `<input type="checkbox" value="${esc(u.user_id)}">
+        <span><span class="mp-name">${esc(u.display_name)}</span>
+        <span class="mp-sub">${esc(u.email)}</span></span>`;
+      newRoomMembers.appendChild(label);
+    }
+    if (!fam.length) newRoomMembers.innerHTML = `<div class="drive-search-hint">No other family members on the allowlist.</div>`;
+  });
+  document.getElementById("new-room-cancel").addEventListener("click", closeModals);
+  document.getElementById("new-room-create").addEventListener("click", async () => {
+    const name = newRoomName.value.trim();
+    if (!name) { toast("Give the room a name", "error"); return; }
+    const member_ids = Array.from(newRoomMembers.querySelectorAll("input:checked")).map(c => c.value);
+    try {
+      const r = await jsonPost("/api/chat/rooms", { name, member_ids });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      closeModals();
+      await loadRooms();
+      switchRoom(data.room.id);
+      toast(`Created “${name}”`, "success");
+    } catch (e) {
+      toast("Couldn't create room: " + (e.message || ""), "error");
+    }
+  });
+
+  // --- Manage room (members / add / leave / delete) ---
+  document.getElementById("manage-toggle").addEventListener("click", openManage);
+  document.getElementById("manage-close").addEventListener("click", closeModals);
+
+  async function openManage() {
+    if (!state.roomId) return;
+    manageOverlay.classList.add("open");
+    manageMembers.innerHTML = `<div class="drive-search-hint">Loading…</div>`;
+    manageAddPick.innerHTML = "";
+    let info;
+    try {
+      const r = await fetch("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/members",
+                            { credentials: "same-origin" });
+      info = await r.json();
+      if (!r.ok) throw new Error(info.error || r.status);
+    } catch (e) {
+      manageMembers.innerHTML = `<div class="drive-search-hint">Couldn't load members.</div>`;
+      return;
+    }
+    manageTitle.textContent = info.name || "Members";
+    const memberIds = new Set(info.members.map(m => m.user_id));
+
+    // Member rows.
+    manageMembers.innerHTML = "";
+    for (const m of info.members) {
+      const row = document.createElement("div");
+      row.className = "member-list-row";
+      const canRemove = info.is_owner && !m.is_owner && !info.is_default;
+      row.innerHTML = `
+        <span><span class="ml-name">${esc(m.display_name)}</span>
+          ${m.is_owner ? `<span class="ml-owner"> · owner</span>` : ""}
+          <div class="ml-sub">${esc(m.email)}</div></span>
+        ${canRemove ? `<button type="button" class="ml-remove" data-uid="${esc(m.user_id)}">remove</button>` : ""}`;
+      manageMembers.appendChild(row);
+    }
+    manageMembers.querySelectorAll(".ml-remove").forEach(btn =>
+      btn.addEventListener("click", () => removeMember(btn.dataset.uid)));
+
+    // Add-member picker — family users not already in the room.
+    const fam = await getFamily();
+    const addable = fam.filter(u => !memberIds.has(u.user_id));
+    document.getElementById("manage-add-wrap").style.display =
+      (info.is_default ? "none" : (addable.length ? "" : "none"));
+    manageAddPick.innerHTML = "";
+    for (const u of addable) {
+      const row = document.createElement("div");
+      row.className = "member-list-row";
+      row.style.cursor = "pointer";
+      row.innerHTML = `<span><span class="ml-name">${esc(u.display_name)}</span>
+        <div class="ml-sub">${esc(u.email)}</div></span><span class="ml-owner">+ add</span>`;
+      row.addEventListener("click", () => addMember(u.user_id));
+      manageAddPick.appendChild(row);
+    }
+
+    // Footer actions: rename + delete for owner of a non-default room;
+    // leave for any non-default room.
+    manageActions.innerHTML = "";
+    if (!info.is_default && info.is_owner) {
+      const ren = document.createElement("button");
+      ren.type = "button"; ren.className = "qb-btn"; ren.textContent = "Rename";
+      ren.addEventListener("click", renameRoom);
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "qb-btn qb-btn-danger"; del.textContent = "Delete";
+      del.addEventListener("click", deleteRoom);
+      manageActions.appendChild(ren);
+      manageActions.appendChild(del);
+    }
+    if (!info.is_default) {
+      const leave = document.createElement("button");
+      leave.type = "button"; leave.className = "qb-btn qb-btn-danger"; leave.textContent = "Leave";
+      leave.addEventListener("click", () => removeMember("__self__"));
+      manageActions.appendChild(leave);
+    }
+    const spacer = document.createElement("span"); spacer.style.flex = "1";
+    const close = document.createElement("button");
+    close.type = "button"; close.className = "qb-btn"; close.textContent = "Close";
+    close.addEventListener("click", closeModals);
+    manageActions.appendChild(spacer);
+    manageActions.appendChild(close);
+  }
+
+  async function addMember(uid) {
+    try {
+      const r = await jsonPost("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/members",
+                               { user_id: uid });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      await loadRooms();
+      openManage();   // refresh the modal
+    } catch (e) { toast("Couldn't add: " + (e.message || ""), "error"); }
+  }
+
+  async function removeMember(uid) {
+    const self = uid === "__self__";
+    if (self && !confirm("Leave this room?")) return;
+    // "self" is a server-resolved sentinel for the current user (the
+    // client doesn't carry its own user_id).
+    const targetId = self ? "self" : uid;
+    try {
+      const r = await fetch("/api/chat/rooms/" + encodeURIComponent(state.roomId) +
+                            "/members/" + encodeURIComponent(targetId), {
+        method: "DELETE", headers: { "X-CSRFToken": CSRF }, credentials: "same-origin",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      if (data.left) {
+        // We left — drop to the default room.
+        closeModals();
+        state.roomId = null;
+        await loadRooms();
+        const def = state.rooms[0];
+        if (def) switchRoom(def.id);
+      } else {
+        await loadRooms();
+        openManage();
+      }
+    } catch (e) { toast("Couldn't remove: " + (e.message || ""), "error"); }
+  }
+
+  async function renameRoom() {
+    const room = currentRoom();
+    const name = prompt("Rename room", room ? room.name : "");
+    if (!name || !name.trim()) return;
+    try {
+      const r = await jsonPost("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/rename",
+                               { name: name.trim() });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      await loadRooms();
+      openManage();
+    } catch (e) { toast("Couldn't rename: " + (e.message || ""), "error"); }
+  }
+
+  async function deleteRoom() {
+    if (!confirm("Delete this room for everyone? Messages become inaccessible.")) return;
+    try {
+      const r = await jsonPost("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/delete", {});
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || r.status);
+      closeModals();
+      state.roomId = null;
+      await loadRooms();
+      const def = state.rooms[0];
+      if (def) switchRoom(def.id);
+    } catch (e) { toast("Couldn't delete: " + (e.message || ""), "error"); }
+  }
+
+  // Periodically refresh the room list so unread badges on *other*
+  // rooms update (the message poll only watches the current room).
+  function startRoomRefresh() {
+    if (state.roomTimer) return;
+    state.roomTimer = setInterval(() => { if (!document.hidden) loadRooms(); }, 30000);
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────
   if (window.feather) feather.replace();
-  loadInitial().then(() => { if (window.feather) feather.replace(); });
+  (async () => {
+    const data = await loadRooms();
+    const rooms = (data && data.rooms) || [];
+    if (!rooms.length) {
+      stream.innerHTML = `<div class="chat-empty"><i data-feather="message-circle"></i>
+        <div>No rooms yet.</div></div>`;
+      if (window.feather) feather.replace();
+      return;
+    }
+    // Honour ?room=<id> if it's one we belong to; else the default/first.
+    let initial = null;
+    try { initial = new URL(location.href).searchParams.get("room"); } catch (_) {}
+    if (!initial || !rooms.some(r => r.id === initial)) {
+      initial = (data && data.default_room_id && rooms.some(r => r.id === data.default_room_id))
+        ? data.default_room_id : rooms[0].id;
+    }
+    state.roomId = initial;
+    renderRoomChips();
+    updateRoomHeader();
+    await loadInitial();
+    if (window.feather) feather.replace();
+    startRoomRefresh();
+  })();
 })();
 </script>
 
