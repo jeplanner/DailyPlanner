@@ -164,6 +164,27 @@
   }
   .msg.mine:hover .msg-del { opacity: 0.85; }
   .msg-del:hover { opacity: 1; text-decoration: underline; }
+  .edited-tag { opacity: .7; font-style: italic; }
+
+  /* Inline editor — replaces the body while editing a message. */
+  .msg-edit { margin-top: 2px; }
+  .msg-edit-input {
+    width: 100%; min-width: 220px; box-sizing: border-box;
+    font: inherit; font-size: 14px; line-height: 1.4;
+    padding: 6px 8px; border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg); color: var(--color-text);
+    resize: vertical; outline: none;
+  }
+  .msg-edit-input:focus { border-color: var(--color-primary); }
+  .msg-edit-actions { display: flex; gap: 6px; margin-top: 4px; }
+  .msg-edit-actions button {
+    font: inherit; font-size: 11px; font-weight: 600;
+    padding: 3px 11px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .msg-edit-actions .me-save { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
 
   /* Day separator chip between messages on different calendar days. */
   .day-sep {
@@ -544,12 +565,20 @@
     // body — don't print it twice (chip already shows the name).
     const att = m.attachment;
     const showBody = m.body && !(att && m.body === att.name);
+    // Keep the raw (unrendered) body around so the inline editor starts
+    // from the actual text, not the linkified HTML.
+    bubble.dataset.raw = m.body || "";
+    // Editing makes sense for plain messages and file captions; link
+    // shares (kb/inbox) carry a URL in the body, so leave those alone.
+    const canEdit = m.is_mine && (m.kind === "text" || m.kind === "file-share");
     bubble.innerHTML = `
       ${continuation ? "" : `<div class="msg-author">${esc(m.author_name)}</div>`}
       ${showBody ? `<div class="msg-body">${renderBody(m.body)}</div>` : ""}
       ${renderAttachment(att)}
       <div class="msg-meta">
         <span>${esc(fmtTime(m.created_at))}</span>
+        ${m.edited ? `<span class="edited-tag">(edited)</span>` : ""}
+        ${canEdit ? `<button type="button" class="msg-del" data-act="edit">edit</button>` : ""}
         ${m.is_mine ? `<button type="button" class="msg-del" data-act="del">delete</button>` : ""}
       </div>`;
     stream.appendChild(bubble);
@@ -557,6 +586,7 @@
 
     if (m.is_mine) {
       bubble.querySelector('[data-act="del"]')?.addEventListener("click", () => deleteMessage(m.id));
+      bubble.querySelector('[data-act="edit"]')?.addEventListener("click", () => editMessage(m.id, bubble));
     }
     // Render the file-chip icon if this bubble has a non-image attachment.
     if (att && att.kind !== "image" && window.feather) feather.replace();
@@ -706,6 +736,75 @@
     } catch (e) {
       toast("Couldn't delete", "error");
     }
+  }
+
+  // Inline edit: swap the body for a textarea + Save/Cancel. On save we
+  // PATCH the server then re-render the body in place. Enter saves,
+  // Shift+Enter newlines, Escape cancels.
+  function editMessage(id, bubble) {
+    if (bubble.querySelector(".msg-edit")) return;   // already editing
+    const bodyEl = bubble.querySelector(".msg-body");
+    const meta = bubble.querySelector(".msg-meta");
+    const current = bubble.dataset.raw || "";
+
+    const editor = document.createElement("div");
+    editor.className = "msg-edit";
+    editor.innerHTML = `
+      <textarea class="msg-edit-input" maxlength="2000" rows="2"></textarea>
+      <div class="msg-edit-actions">
+        <button type="button" class="me-save">Save</button>
+        <button type="button" class="me-cancel">Cancel</button>
+      </div>`;
+    const ta = editor.querySelector(".msg-edit-input");
+    ta.value = current;
+    if (bodyEl) bodyEl.style.display = "none";
+    bubble.insertBefore(editor, meta);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    const cleanup = () => { editor.remove(); if (bodyEl) bodyEl.style.display = ""; };
+    editor.querySelector(".me-cancel").addEventListener("click", cleanup);
+
+    const save = async () => {
+      const next = ta.value.trim();
+      if (!next) { toast("Message can't be empty", "error"); return; }
+      if (next === current) { cleanup(); return; }
+      try {
+        const r = await fetch("/api/chat/messages/" + encodeURIComponent(id) + "/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+          body: JSON.stringify({ body: next }),
+          credentials: "same-origin",
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || r.status);
+        bubble.dataset.raw = next;
+        if (bodyEl) {
+          bodyEl.innerHTML = renderBody(next);
+          bodyEl.style.display = "";
+        } else {
+          // Message had no visible body (e.g. a file with only a
+          // filename) — create one now that there's caption text.
+          const nb = document.createElement("div");
+          nb.className = "msg-body";
+          nb.innerHTML = renderBody(next);
+          bubble.insertBefore(nb, editor);
+        }
+        // Add the "(edited)" marker if it isn't already there.
+        if (!bubble.querySelector(".edited-tag")) {
+          const stamp = meta.querySelector("span");
+          stamp?.insertAdjacentHTML("afterend", `<span class="edited-tag">(edited)</span>`);
+        }
+        editor.remove();
+      } catch (e) {
+        toast("Edit failed: " + (e.message || ""), "error");
+      }
+    };
+    editor.querySelector(".me-save").addEventListener("click", save);
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
+      else if (e.key === "Escape") { e.preventDefault(); cleanup(); }
+    });
   }
 
   // ── Composer ───────────────────────────────────────────────────

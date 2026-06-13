@@ -83,6 +83,10 @@ _ATTACH_COLS = (
     "attachment_kind,attachment_url,attachment_size"
 )
 _BASE_COLS = "id,user_id,author_name,body,created_at,kind"
+# Columns added by later migrations (attachments + edited_at). Selected
+# on top of the base set; the list endpoint falls back to _BASE_COLS if
+# any of these don't exist yet so chat never 500s on a cold schema.
+_EXTRA_COLS = f"{_ATTACH_COLS},edited_at"
 
 
 # ── Allowlist ───────────────────────────────────────────────────
@@ -162,6 +166,9 @@ def _shape(row, viewer_id):
         # landed AND any rows that came back without the column (e.g.
         # the schema-resilient retry stripping it).
         "kind": row.get("kind") or "text",
+        # True once the sender has edited the body. Drives the "(edited)"
+        # marker. Missing column (migration pending) reads as False.
+        "edited": bool(row.get("edited_at")),
     }
     # Attachment block only present when the row actually carries a
     # Drive file. `raw_url` streams the bytes back through the app
@@ -349,7 +356,7 @@ def list_messages():
 
     params = {
         "deleted_at": "is.null",
-        "select": f"{_BASE_COLS},{_ATTACH_COLS}",
+        "select": f"{_BASE_COLS},{_EXTRA_COLS}",
     }
     if since:
         params["created_at"] = f"gt.{since}"
@@ -891,6 +898,54 @@ def mark_read():
         logger.exception("chat mark-read failed: %s", e)
         return jsonify({"error": "Mark-read failed"}), 502
     return jsonify({"ok": True})
+
+
+@chat_bp.route("/api/chat/messages/<msg_id>/edit", methods=["POST"])
+@login_required
+def edit_message(msg_id):
+    """Edit the body of your own message. Senders can edit only their
+    own; nobody can edit anyone else's. We stamp edited_at so the UI can
+    show "(edited)". Like delete, the change is local to the editor in
+    real time — other clients pick it up on their next full page load,
+    since the 3s poll keys off created_at (unchanged by an edit)."""
+    _gate()
+    viewer_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    body = (data.get("body") or "").strip()
+    if not body:
+        return jsonify({"error": "Empty message"}), 400
+    if len(body) > MAX_BODY:
+        return jsonify({"error": f"Message too long (max {MAX_BODY} chars)"}), 400
+
+    rows = get("messages", {
+        "id": f"eq.{msg_id}",
+        "deleted_at": "is.null",
+        "select": "id,user_id",
+        "limit": "1",
+    })
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    if str(rows[0].get("user_id")) != str(viewer_id):
+        return jsonify({"error": "Not yours"}), 403
+
+    try:
+        update(
+            "messages",
+            params={"id": f"eq.{msg_id}"},
+            json={"body": body, "edited_at": _utcnow_iso()},
+        )
+    except Exception as e:
+        # edited_at column may not exist yet (MIGRATION_CHAT_EDIT.sql not
+        # applied). Retry the body-only update so editing still works;
+        # the "(edited)" marker just won't persist across reloads.
+        logger.warning("chat edit with edited_at failed, retrying body-only "
+                       "(run MIGRATION_CHAT_EDIT.sql?): %s", e)
+        try:
+            update("messages", params={"id": f"eq.{msg_id}"}, json={"body": body})
+        except Exception as e2:
+            logger.exception("chat edit failed: %s", e2)
+            return jsonify({"error": "Edit failed"}), 502
+    return jsonify({"ok": True, "body": body, "edited": True})
 
 
 @chat_bp.route("/api/chat/messages/<msg_id>", methods=["DELETE"])
