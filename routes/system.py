@@ -338,6 +338,62 @@ def global_search():
     except Exception:
         pass
 
+    # 7. Quick Bucket tasks
+    try:
+        rows = get("quick_bucket", params={
+            "user_id": f"eq.{user_id}",
+            "is_deleted": "eq.false",
+            "text": pattern,
+            "select": "id,text,time_bucket,is_done",
+            "limit": per_table,
+        }) or []
+        for r in rows:
+            out.append({
+                "type": "quick_bucket",
+                "id": r["id"],
+                "title": r.get("text") or "(task)",
+                "snippet": "Done" if r.get("is_done") else (r.get("time_bucket") or "Quick Bucket"),
+                "url": "/quick-bucket",
+                "badge": "Quick",
+            })
+    except Exception:
+        pass
+
+    # 8. Checklist items
+    try:
+        rows = get("checklist_items", params={
+            "user_id": f"eq.{user_id}",
+            "title": pattern,
+            "select": "id,title",
+            "limit": per_table,
+        }) or []
+        for r in rows:
+            out.append({
+                "type": "checklist", "id": r["id"],
+                "title": r.get("title") or "(item)", "snippet": None,
+                "url": "/checklist", "badge": "Checklist",
+            })
+    except Exception:
+        pass
+
+    # 9. Family tasks (shared across the family — filter by title only)
+    try:
+        rows = get("family_tasks", params={
+            "deleted_at": "is.null",
+            "title": pattern,
+            "select": "id,title,created_by_name",
+            "limit": per_table,
+        }) or []
+        for r in rows:
+            out.append({
+                "type": "family_task", "id": r["id"],
+                "title": r.get("title") or "(task)",
+                "snippet": (f"by {r['created_by_name']}" if r.get("created_by_name") else None),
+                "url": "/family-tasks", "badge": "Family",
+            })
+    except Exception:
+        pass
+
     # De-dup by (type, id) and cap to limit
     seen = set()
     deduped = []
