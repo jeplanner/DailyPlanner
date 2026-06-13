@@ -187,7 +187,6 @@ def global_search():
             "project_tasks",
             params={
                 "user_id": f"eq.{user_id}",
-                "is_deleted": "eq.false",
                 "is_eliminated": "eq.false",
                 "task_text": pattern,
                 "select": "task_id,task_text,project_id,status,due_date",
@@ -236,22 +235,22 @@ def global_search():
     except Exception:
         pass
 
-    # 3. Scribble notes (title OR body match — two passes)
+    # 3. Scribble notes (title OR content match — two passes). The text
+    # column is `content`, and notes use is_deleted for soft-delete.
     try:
-        for col in ("title", "body"):
+        for col in ("title", "content"):
             rows = get(
                 "scribble_notes",
                 params={
                     "user_id": f"eq.{user_id}",
                     "is_deleted": "eq.false",
                     col: pattern,
-                    "select": "id,title,body",
+                    "select": "id,title,content",
                     "limit": per_table,
                 },
             ) or []
             for r in rows:
-                # Snippet: 80 chars of body around the match (best-effort)
-                body = (r.get("body") or "").strip()
+                body = (r.get("content") or "").strip()
                 snippet = body[:90] + ("…" if len(body) > 90 else "")
                 out.append({
                     "type": "note",
@@ -264,14 +263,13 @@ def global_search():
     except Exception:
         pass
 
-    # 4. Reference links
+    # 4. Reference links (no is_deleted column; search title/url/desc)
     try:
-        for col in ("title", "url"):
+        for col in ("title", "url", "description"):
             rows = get(
                 "reference_links",
                 params={
                     "user_id": f"eq.{user_id}",
-                    "is_deleted": "eq.false",
                     col: pattern,
                     "select": "id,title,url,description",
                     "limit": per_table,
@@ -289,16 +287,15 @@ def global_search():
     except Exception:
         pass
 
-    # 5. Inbox links
+    # 5. Inbox links (no is_deleted column; text col is `description`)
     try:
-        for col in ("title", "url"):
+        for col in ("title", "url", "description"):
             rows = get(
                 "inbox_links",
                 params={
                     "user_id": f"eq.{user_id}",
-                    "is_deleted": "eq.false",
                     col: pattern,
-                    "select": "id,title,url,note",
+                    "select": "id,title,url,description",
                     "limit": per_table,
                 },
             ) or []
@@ -307,7 +304,7 @@ def global_search():
                     "type": "inbox",
                     "id": r["id"],
                     "title": r.get("title") or r.get("url") or "(link)",
-                    "snippet": (r.get("note") or r.get("url") or "")[:90],
+                    "snippet": (r.get("description") or r.get("url") or "")[:90],
                     "url": r.get("url") or "/inbox",
                     "badge": "Inbox",
                 })
@@ -359,19 +356,78 @@ def global_search():
     except Exception:
         pass
 
-    # 8. Checklist items
+    # 8. Checklist items (text column is `name`)
     try:
         rows = get("checklist_items", params={
             "user_id": f"eq.{user_id}",
-            "title": pattern,
-            "select": "id,title",
+            "is_deleted": "eq.false",
+            "name": pattern,
+            "select": "id,name,group_name",
             "limit": per_table,
         }) or []
         for r in rows:
             out.append({
                 "type": "checklist", "id": r["id"],
-                "title": r.get("title") or "(item)", "snippet": None,
+                "title": r.get("name") or "(item)",
+                "snippet": r.get("group_name") or None,
                 "url": "/checklist", "badge": "Checklist",
+            })
+    except Exception:
+        pass
+
+    # 10. Calendar events (title or description)
+    try:
+        for col in ("title", "description"):
+            rows = get("daily_events", params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                col: pattern,
+                "select": "id,title,description,plan_date",
+                "limit": per_table,
+            }) or []
+            for r in rows:
+                out.append({
+                    "type": "event", "id": r["id"],
+                    "title": r.get("title") or "(event)",
+                    "snippet": r.get("plan_date") or None,
+                    "url": "/calendar", "badge": "Event",
+                })
+    except Exception:
+        pass
+
+    # 11. Travel reads (title/description/url)
+    try:
+        for col in ("title", "description"):
+            rows = get("travel_reads", params={
+                "user_id": f"eq.{user_id}",
+                col: pattern,
+                "select": "id,title,url,description",
+                "limit": per_table,
+            }) or []
+            for r in rows:
+                out.append({
+                    "type": "travel_read", "id": r["id"],
+                    "title": r.get("title") or r.get("url") or "(read)",
+                    "snippet": (r.get("description") or "")[:90] or None,
+                    "url": r.get("url") or "/travel-reads", "badge": "Read",
+                })
+    except Exception:
+        pass
+
+    # 12. Grocery items (column is `item`)
+    try:
+        rows = get("groceries", params={
+            "user_id": f"eq.{user_id}",
+            "item": pattern,
+            "select": "id,item,category",
+            "limit": per_table,
+        }) or []
+        for r in rows:
+            out.append({
+                "type": "grocery", "id": r["id"],
+                "title": r.get("item") or "(item)",
+                "snippet": r.get("category") or None,
+                "url": "/grocery", "badge": "Grocery",
             })
     except Exception:
         pass
