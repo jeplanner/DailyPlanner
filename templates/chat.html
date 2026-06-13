@@ -475,6 +475,9 @@
   /* Inline SVG room icons (devotional set) scale with the emoji size. */
   .room-emoji svg { width: 1.15em; height: 1.15em; display: block; border-radius: 50%; }
   .emoji-opt svg  { width: 28px; height: 28px; display: block; }
+  /* Image room icons (acharyas / deities) — round, cropped to fill. */
+  .room-emoji img.ic-img { width: 1.5em; height: 1.5em; border-radius: 50%; object-fit: cover; display: block; }
+  .emoji-opt img.ic-img  { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; display: block; }
 
   /* ── Ease-of-use: larger text & bigger tap targets (elderly-friendly) ── */
   .chat-stream { font-size: 16px; }
@@ -905,6 +908,26 @@
     chakra: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="#f59e0b"/><g stroke="#fff7ed" stroke-width="1.5"><line x1="12" y1="2.5" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="21.5" y2="12"/><line x1="5.3" y1="5.3" x2="18.7" y2="18.7"/><line x1="18.7" y1="5.3" x2="5.3" y2="18.7"/></g><circle cx="12" cy="12" r="4" fill="#fff7ed"/><circle cx="12" cy="12" r="2" fill="#b45309"/></svg>`,
   };
   const DEVOTIONAL_KEYS = ["om","namam","chakra","diya","lotus","kalash","trishul"];
+
+  // Image-based icons (real artwork) — acharyas + deities. Keyed the
+  // same ":key:" way as SVG icons; roomFace renders them as <img>.
+  const IMG_ICONS = {
+    ramanuja:     "/static/icons/acharyas/ramanuja.jpg",
+    desikar:      "/static/icons/acharyas/vedantadesikar.jpg",
+    paramacharya: "/static/icons/acharyas/paramacharya.jpg",
+    ganesha:      "/static/icons/gods/ganesa.webp",
+    murugan:      "/static/icons/gods/murugan1.webp",
+    meenakshi:    "/static/icons/gods/meenakshi.webp",
+    krishna:      "/static/icons/gods/parthasarathy.jpg",
+    ranganathar:  "/static/icons/gods/renganathar.jpg",
+    venkateswara: "/static/icons/gods/tirupathi.webp",
+    amman:        "/static/icons/gods/kolavizhiamman.jpg",
+    upilliappan:  "/static/icons/gods/upilliappan.jpg",
+  };
+  const ACHARYA_KEYS = ["ramanuja", "desikar", "paramacharya"];
+  const GOD_KEYS = ["ganesha","murugan","meenakshi","krishna","ranganathar","venkateswara","amman","upilliappan"];
+  const imgIconHtml = (key) => `<img class="ic-img" src="${IMG_ICONS[key]}" alt="" loading="lazy">`;
+
   const SVG_TOKEN_RE = /^:([a-z0-9-]+):\s*/;
 
   // Random fallback pool — pleasant + neutral (flowers + fun).
@@ -917,9 +940,10 @@
   function roomFace(room) {
     const name = room.name || "";
     const sv = SVG_TOKEN_RE.exec(name);
-    if (sv && SVG_ICONS[sv[1]]) {
+    if (sv && (SVG_ICONS[sv[1]] || IMG_ICONS[sv[1]])) {
       const rest = name.slice(sv[0].length).trim();
-      return { iconHtml: SVG_ICONS[sv[1]], label: rest || name };
+      const iconHtml = SVG_ICONS[sv[1]] || imgIconHtml(sv[1]);
+      return { iconHtml, label: rest || name };
     }
     if (room.is_default) return { iconHtml: "🏡", label: name };
     const m = LEADING_EMOJI_RE.exec(name);
@@ -1533,14 +1557,14 @@
       container.appendChild(row);
     };
 
-    // Devotional SVG icons first.
-    addGroup("Devotional", (row) => {
-      for (const key of DEVOTIONAL_KEYS) {
+    // Token-based icon groups (SVG devotional + image acharyas/gods).
+    const tokenGroup = (label, keys, html) => addGroup(label, (row) => {
+      for (const key of keys) {
         const val = ":" + key + ":";
         const b = document.createElement("button");
         b.type = "button";
         b.className = "emoji-opt" + (val === current ? " sel" : "");
-        b.innerHTML = SVG_ICONS[key];
+        b.innerHTML = html(key);
         b.addEventListener("click", () => {
           container.querySelectorAll(".emoji-opt").forEach(x => x.classList.remove("sel"));
           b.classList.add("sel");
@@ -1549,6 +1573,9 @@
         row.appendChild(b);
       }
     });
+    tokenGroup("Devotional", DEVOTIONAL_KEYS, (k) => SVG_ICONS[k]);
+    tokenGroup("Acharyas", ACHARYA_KEYS, imgIconHtml);
+    tokenGroup("Gods", GOD_KEYS, imgIconHtml);
 
     // Emoji groups.
     for (const group of Object.keys(EMOJI_GROUPS)) {
