@@ -21,14 +21,22 @@ returns immediately even if a recipient's push endpoint is slow.
 Schema: see MIGRATION_CHAT.sql. `author_name` is denormalized at write
 time so renaming a user doesn't rewrite history.
 """
+import io
 import logging
 import os
 import threading
 from datetime import datetime, timezone
 
-from flask import Blueprint, abort, jsonify, render_template, request, session
+from flask import (
+    Blueprint, Response, abort, jsonify, render_template, request, session,
+    url_for,
+)
 
 from flask_login import current_user
+
+from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 from auth import login_required
 from services import push_service
@@ -42,6 +50,39 @@ MAX_BODY = 2000              # matches the CHECK in messages.body
 INITIAL_FETCH = 100          # last-N on cold load
 POLL_FETCH_LIMIT = 200       # cap per poll response — defends against
                              # very chatty intervals or a clock skew bug
+
+# ── File attachments (Google Drive) ─────────────────────────────
+CHAT_FOLDER_NAME = "DailyPlannerChat"
+MAX_ATTACH_BYTES = 25 * 1024 * 1024  # 25 MB — matches the KB cap
+
+# What people can attach. Images render inline, PDFs open in the
+# in-app viewer, everything else gets a download/open chip. Kept to a
+# known set so a stray .exe etc. can't land in someone's Drive.
+_IMAGE_MIMES = {
+    "image/png", "image/jpeg", "image/jpg", "image/gif",
+    "image/webp", "image/heic", "image/bmp",
+}
+_DOC_MIMES = {
+    "application/pdf",
+    "text/plain", "text/csv", "text/markdown",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/zip",
+}
+_ALLOWED_MIMES = _IMAGE_MIMES | _DOC_MIMES
+
+# Columns added by MIGRATION_CHAT_FILES.sql. Selected on top of the
+# base set, but the list endpoint falls back to the base set if the
+# migration hasn't run yet so chat never 500s on a cold schema.
+_ATTACH_COLS = (
+    "attachment_file_id,attachment_name,attachment_mime,"
+    "attachment_kind,attachment_url,attachment_size"
+)
+_BASE_COLS = "id,user_id,author_name,body,created_at,kind"
 
 
 # ── Allowlist ───────────────────────────────────────────────────
@@ -110,7 +151,7 @@ def _author_name():
 
 
 def _shape(row, viewer_id):
-    return {
+    out = {
         "id": row.get("id"),
         "user_id": row.get("user_id"),
         "author_name": row.get("author_name") or "Someone",
@@ -122,6 +163,142 @@ def _shape(row, viewer_id):
         # the schema-resilient retry stripping it).
         "kind": row.get("kind") or "text",
     }
+    # Attachment block only present when the row actually carries a
+    # Drive file. `raw_url` streams the bytes back through the app
+    # (using the *author's* token) so every family member sees the
+    # image/PDF inline without a Drive login. `url` is the Drive
+    # webViewLink for "open in Drive".
+    if row.get("attachment_file_id"):
+        out["attachment"] = {
+            "file_id": row.get("attachment_file_id"),
+            "name": row.get("attachment_name") or "file",
+            "mime": row.get("attachment_mime") or "",
+            "kind": row.get("attachment_kind") or "file",
+            "url": row.get("attachment_url") or "",
+            "size_bytes": row.get("attachment_size"),
+            "raw_url": url_for("chat.attachment_raw", msg_id=row.get("id")),
+        }
+    return out
+
+
+def _fetch_messages(params):
+    """get('messages', …) but tolerant of the attachment columns not
+    existing yet (migration not applied). PostgREST 400s on a select
+    that names an unknown column; the raised HTTPError doesn't carry the
+    response body, so rather than sniff the message we just retry once
+    with the base columns. If that also fails it's a real outage and the
+    error propagates. Attachments simply won't render until the
+    migration runs. Mirrors the migration-pending handling in
+    routes/knowledgebase.py's backlog list."""
+    try:
+        return get("messages", params)
+    except Exception as e:
+        logger.warning("chat: message fetch with attachment cols failed, "
+                        "retrying base columns (run MIGRATION_CHAT_FILES.sql?): %s", e)
+        fallback = dict(params)
+        fallback["select"] = _BASE_COLS
+        return get("messages", fallback)
+
+
+# ── Drive helpers (shared token row with Calendar + Knowledge Base) ──
+
+
+def _drive_service_for(user_id):
+    """Build a Drive client for `user_id`, refreshing the access token
+    if needed. Returns (service, token_row), or (None, token_row) when
+    the user hasn't connected Drive or hasn't granted the drive.file
+    scope. Raises RefreshError if the stored refresh token is dead.
+
+    Reuses the Knowledge-Base credential helpers so there's exactly one
+    place that knows how to turn a token row into a Drive client."""
+    from routes.knowledgebase import (
+        _build_drive, _credentials_from_row, _load_token_row,
+        _refresh_if_needed, _row_has_drive_scope,
+    )
+    row = _load_token_row(user_id)
+    if not row or not row.get("refresh_token") or not _row_has_drive_scope(row):
+        return None, row
+    creds = _refresh_if_needed(_credentials_from_row(row), user_id)
+    return _build_drive(creds), row
+
+
+def _ensure_chat_folder(service, user_id, row):
+    """Return the Drive id of the DailyPlannerChat folder, creating it
+    (and caching the id on user_google_tokens.chat_folder_id) on first
+    use. Verifies a cached id still resolves so a folder the user
+    trashed from Drive gets recreated. Mirrors KB's _ensure_folder."""
+    cached = (row or {}).get("chat_folder_id")
+    if cached:
+        try:
+            service.files().get(fileId=cached, fields="id, trashed").execute()
+            return cached
+        except HttpError as e:
+            logger.info("chat_folder_id %s stale (%s), re-resolving", cached, e)
+
+    q = (
+        "mimeType = 'application/vnd.google-apps.folder' "
+        f"and name = '{CHAT_FOLDER_NAME}' and trashed = false"
+    )
+    found = service.files().list(q=q, fields="files(id)", pageSize=1).execute()
+    files = found.get("files", [])
+    if files:
+        folder_id = files[0]["id"]
+    else:
+        created = service.files().create(
+            body={"name": CHAT_FOLDER_NAME,
+                  "mimeType": "application/vnd.google-apps.folder"},
+            fields="id",
+        ).execute()
+        folder_id = created["id"]
+        logger.info("Created chat Drive folder %s for user %s", folder_id, user_id)
+
+    update(
+        "user_google_tokens",
+        params={"user_id": f"eq.{user_id}"},
+        json={"chat_folder_id": folder_id},
+    )
+    return folder_id
+
+
+def _attachment_kind(mime: str) -> str:
+    if mime in _IMAGE_MIMES:
+        return "image"
+    if mime == "application/pdf":
+        return "pdf"
+    return "file"
+
+
+def _stream_drive_file(service, file_id, mime_hint=None, name_hint=None):
+    """Download a Drive file's bytes and return a Flask Response that
+    renders inline (image/PDF) or downloads (everything else). Shared by
+    the chat-attachment proxy and the Drive-search preview. Returns None
+    on a Drive error so the caller can 404/502."""
+    try:
+        meta = service.files().get(fileId=file_id, fields="name, mimeType").execute()
+        req = service.files().get_media(fileId=file_id)
+        buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _status, done = downloader.next_chunk()
+    except HttpError as e:
+        logger.warning("chat: drive file %s fetch failed: %s", file_id, e)
+        return None
+
+    data = buf.getvalue()
+    mime = meta.get("mimeType") or mime_hint or "application/octet-stream"
+    name = (meta.get("name") or name_hint or "file").replace('"', "")
+    resp = Response(data, mimetype=mime)
+    # Inline for images/PDFs (renders in the bubble / viewer); attachment
+    # disposition for the rest so a click downloads with the real name.
+    inline = mime.startswith("image/") or mime == "application/pdf"
+    disp = "inline" if inline else "attachment"
+    resp.headers["Content-Disposition"] = f'{disp}; filename="{name}"'
+    resp.headers["Content-Length"] = str(len(data))
+    # Per-user private cache — the bytes are immutable for a given file
+    # revision, so a short cache avoids re-downloading on every scroll.
+    resp.headers["Cache-Control"] = "private, max-age=3600"
+    return resp
 
 
 # ── Page ────────────────────────────────────────────────────────
@@ -131,9 +308,19 @@ def _shape(row, viewer_id):
 @login_required
 def chat_page():
     _gate()
+    # Attaching files needs the Drive scope. Surface whether the viewer
+    # has connected so the composer can show a "Connect Google Drive"
+    # nudge instead of silently failing the upload. Reuses the KB
+    # helpers — the same token row backs Calendar, KB and chat files.
+    from routes.knowledgebase import _load_token_row, _row_has_drive_scope
+    row = _load_token_row(session["user_id"])
+    drive_ready = bool(row and row.get("refresh_token") and _row_has_drive_scope(row))
     return render_template(
         "chat.html",
         viewer_name=_author_name(),
+        drive_ready=drive_ready,
+        connect_url=url_for("events.google_login"),
+        max_upload_mb=MAX_ATTACH_BYTES // (1024 * 1024),
     )
 
 
@@ -162,19 +349,19 @@ def list_messages():
 
     params = {
         "deleted_at": "is.null",
-        "select": "id,user_id,author_name,body,created_at,kind",
+        "select": f"{_BASE_COLS},{_ATTACH_COLS}",
     }
     if since:
         params["created_at"] = f"gt.{since}"
         params["order"] = "created_at.asc"
         params["limit"] = str(POLL_FETCH_LIMIT)
-        rows = get("messages", params)
+        rows = _fetch_messages(params)
     else:
         # Latest-N then reverse so the wire shape is consistent
         # (always oldest-first), saving the frontend a sort.
         params["order"] = "created_at.desc"
         params["limit"] = str(INITIAL_FETCH)
-        rows = list(reversed(get("messages", params)))
+        rows = list(reversed(_fetch_messages(params)))
 
     return jsonify({
         "messages": [_shape(r, viewer_id) for r in rows],
@@ -216,6 +403,223 @@ def send_message():
         daemon=True,
     ).start()
     return jsonify({"message": _shape(row, viewer_id)})
+
+
+# ── File attachments ────────────────────────────────────────────
+
+
+@chat_bp.route("/api/chat/upload", methods=["POST"])
+@login_required
+def upload_attachment():
+    """Upload a file (image / PDF / document) to the sender's Drive
+    "DailyPlannerChat" folder and post it as a chat message. Optional
+    `body` form field rides along as a caption. The file is shared with
+    the rest of the family allowlist in the background so the link opens
+    for everyone, exactly like a Knowledge-Base share."""
+    _gate()
+    viewer_id = session["user_id"]
+
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file"}), 400
+
+    mime = (f.mimetype or "application/octet-stream").lower()
+    if mime not in _ALLOWED_MIMES:
+        return jsonify({"error": "That file type isn't supported."}), 400
+
+    blob = f.stream.read()
+    if not blob:
+        return jsonify({"error": "Empty file"}), 400
+    if len(blob) > MAX_ATTACH_BYTES:
+        return jsonify({
+            "error": f"File too large (max {MAX_ATTACH_BYTES // (1024 * 1024)} MB).",
+        }), 400
+
+    try:
+        service, row = _drive_service_for(viewer_id)
+    except RefreshError as e:
+        logger.warning("chat upload refresh failed: %s", e)
+        return jsonify({"error": "refresh_failed", "connect_url": url_for("events.google_login")}), 401
+    if not service:
+        return jsonify({"error": "not_connected", "connect_url": url_for("events.google_login")}), 401
+
+    folder_id = _ensure_chat_folder(service, viewer_id, row)
+    name = (f.filename or "upload").strip()[:200]
+
+    media = MediaIoBaseUpload(io.BytesIO(blob), mimetype=mime, resumable=False)
+    try:
+        created = service.files().create(
+            body={"name": name, "parents": [folder_id]},
+            media_body=media,
+            fields="id, name, size, mimeType, webViewLink",
+        ).execute()
+    except HttpError as e:
+        logger.exception("chat upload failed: %s", e)
+        return jsonify({"error": "Drive upload failed."}), 502
+
+    file_id = created["id"]
+    fname = created.get("name") or name
+    caption = (request.form.get("body") or "").strip()[:MAX_BODY]
+    sender_name = _author_name()
+
+    payload = {
+        "user_id": viewer_id,
+        "author_name": sender_name,
+        # body has a NOT-NULL + char_length>=1 check, so fall back to the
+        # filename when there's no caption.
+        "body": caption or fname,
+        "kind": "file-share",
+        "attachment_file_id": file_id,
+        "attachment_name": fname,
+        "attachment_mime": mime,
+        "attachment_kind": _attachment_kind(mime),
+        "attachment_url": created.get("webViewLink"),
+        "attachment_size": int(created["size"]) if created.get("size") else None,
+    }
+    try:
+        rows = post("messages", payload)
+    except Exception as e:
+        logger.exception("chat attachment insert failed: %s", e)
+        return jsonify({"error": "Send failed"}), 502
+
+    msg_row = rows[0] if rows else payload
+    # Fan out Drive read perms + push, both off the request path.
+    threading.Thread(
+        target=_grant_drive_read_to_family,
+        args=(viewer_id, file_id),
+        daemon=True,
+    ).start()
+    threading.Thread(
+        target=_fanout_push,
+        args=(viewer_id, sender_name, f"📎 {fname}"),
+        daemon=True,
+    ).start()
+    return jsonify({"message": _shape(msg_row, viewer_id)})
+
+
+@chat_bp.route("/api/chat/attachment/<msg_id>", methods=["GET"])
+@login_required
+def attachment_raw(msg_id):
+    """Stream a message attachment's bytes for inline display. Served
+    using the *author's* Drive token (not the viewer's) so every family
+    member sees the image/PDF without each one having opened the file in
+    their own Drive — drive.file scope only exposes files the token's
+    own app created, and the author's token is the one that created it."""
+    _gate()
+    rows = get("messages", {
+        "id": f"eq.{msg_id}",
+        "deleted_at": "is.null",
+        "select": "id,user_id,attachment_file_id,attachment_mime,attachment_name",
+        "limit": "1",
+    }) or []
+    if not rows or not rows[0].get("attachment_file_id"):
+        abort(404)
+    m = rows[0]
+
+    try:
+        service, _row = _drive_service_for(m["user_id"])
+    except RefreshError:
+        abort(502)
+    if not service:
+        abort(404)
+
+    resp = _stream_drive_file(
+        service, m["attachment_file_id"],
+        mime_hint=m.get("attachment_mime"),
+        name_hint=m.get("attachment_name"),
+    )
+    if resp is None:
+        abort(502)
+    return resp
+
+
+# ── Drive search ────────────────────────────────────────────────
+
+
+@chat_bp.route("/api/chat/drive-search", methods=["GET"])
+@login_required
+def drive_search():
+    """Search the files this app can see in the viewer's Drive (their
+    chat uploads + Knowledge-Base PDFs). `?q=` matches on the filename;
+    an empty query returns the most recently modified files.
+
+    Scope note: the drive.file OAuth scope only exposes files this app
+    created or the user explicitly opened with it — by design, this can
+    NOT search the user's entire Drive. Broadening to drive.readonly
+    would trigger Google's app-verification review, which we avoid."""
+    _gate()
+    viewer_id = session["user_id"]
+    qstr = (request.args.get("q") or "").strip()
+
+    try:
+        service, _row = _drive_service_for(viewer_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed", "connect_url": url_for("events.google_login")}), 401
+    if not service:
+        return jsonify({"error": "not_connected", "connect_url": url_for("events.google_login")}), 401
+
+    q_parts = ["trashed = false",
+               "mimeType != 'application/vnd.google-apps.folder'"]
+    if qstr:
+        # Escape backslashes then single-quotes for Drive's query syntax.
+        safe = qstr.replace("\\", "\\\\").replace("'", "\\'")
+        q_parts.append(f"name contains '{safe}'")
+    q = " and ".join(q_parts)
+
+    try:
+        listed = service.files().list(
+            q=q,
+            fields=("files(id, name, mimeType, size, modifiedTime, "
+                    "webViewLink, iconLink)"),
+            orderBy="modifiedTime desc",
+            pageSize=50,
+        ).execute()
+    except HttpError as e:
+        logger.warning("chat drive-search failed: %s", e)
+        return jsonify({"error": "Search failed."}), 502
+
+    out = []
+    for fi in listed.get("files", []):
+        mime = fi.get("mimeType") or ""
+        is_image = mime.startswith("image/")
+        is_pdf = mime == "application/pdf"
+        # google-native docs (Docs/Sheets/Slides) can't get_media, so
+        # they only get an "open in Drive" link, no inline preview.
+        native = mime.startswith("application/vnd.google-apps")
+        out.append({
+            "id": fi.get("id"),
+            "name": fi.get("name"),
+            "mime": mime,
+            "is_image": is_image,
+            "is_pdf": is_pdf,
+            "size_bytes": int(fi["size"]) if fi.get("size") else None,
+            "modified_at": fi.get("modifiedTime"),
+            "web_view": fi.get("webViewLink"),
+            "icon": fi.get("iconLink"),
+            # Inline proxy (viewer's own token) for images/PDFs only.
+            "raw_url": (None if native else url_for("chat.drive_file_raw", file_id=fi.get("id"))),
+        })
+    return jsonify({"files": out, "query": qstr})
+
+
+@chat_bp.route("/api/chat/drive-file/<file_id>", methods=["GET"])
+@login_required
+def drive_file_raw(file_id):
+    """Stream a Drive file via the viewer's own token — backs inline
+    previews from the Drive-search panel. (The chat-stream proxy above
+    uses the author's token instead, because there the viewer may not
+    own the file.)"""
+    _gate()
+    try:
+        service, _row = _drive_service_for(session["user_id"])
+    except RefreshError:
+        abort(502)
+    if not service:
+        abort(404)
+    resp = _stream_drive_file(service, file_id)
+    if resp is None:
+        abort(502)
+    return resp
 
 
 # ── Share-to-chat (used by Inbox and Knowledge Base) ───────────

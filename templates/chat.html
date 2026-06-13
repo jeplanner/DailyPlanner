@@ -69,7 +69,8 @@
      `shares` keeps everything except plain text. */
   .chat-stream[data-filter="shares"]      .msg[data-kind="text"],
   .chat-stream[data-filter="kb-share"]    .msg:not([data-kind="kb-share"]),
-  .chat-stream[data-filter="inbox-share"] .msg:not([data-kind="inbox-share"]) {
+  .chat-stream[data-filter="inbox-share"] .msg:not([data-kind="inbox-share"]),
+  .chat-stream[data-filter="file-share"]  .msg:not([data-kind="file-share"]) {
     display: none;
   }
   /* Day separators are noise under any filter that hides messages;
@@ -221,8 +222,110 @@
     margin-bottom: 8px;
   }
 
+  /* File-share bubbles get a blue accent stripe to set them apart
+     from KB/inbox link shares (amber). */
+  .msg[data-kind="file-share"] { border-left: 3px solid #3b82f6; }
+  .msg.mine[data-kind="file-share"] { border-left-color: #bfdbfe; }
+
+  /* ── Attachment rendering inside a bubble ── */
+  .att { margin-top: 4px; }
+  .att-img {
+    display: block; max-width: 240px; max-height: 280px;
+    border-radius: 10px; cursor: zoom-in;
+    background: var(--color-surface-secondary, #f1f5f9);
+  }
+  .att-file {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 11px; border-radius: 10px;
+    background: rgba(0,0,0,.05);
+    color: inherit; text-decoration: none;
+    max-width: 260px;
+  }
+  .msg.mine .att-file { background: rgba(255,255,255,.18); }
+  .att-file:hover { background: rgba(0,0,0,.09); }
+  .msg.mine .att-file:hover { background: rgba(255,255,255,.28); }
+  .att-file svg { width: 20px; height: 20px; flex: none; opacity: .8; }
+  .att-file .att-meta { min-width: 0; display: flex; flex-direction: column; }
+  .att-file .att-name {
+    font-size: 13px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .att-file .att-sub { font-size: 11px; opacity: .7; }
+
+  /* Composer attach button — same footprint as send, ghost style. */
+  .chat-attach {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; flex: none;
+    background: transparent; color: var(--color-text-secondary);
+    border: 1px solid var(--color-border); border-radius: 10px;
+    cursor: pointer; transition: background .12s, color .12s;
+  }
+  .chat-attach:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
+  .chat-attach svg { width: 18px; height: 18px; }
+  .chat-attach:disabled { opacity: .5; cursor: not-allowed; }
+
+  .chat-connect-nudge {
+    margin: 8px 14px 0; padding: 9px 12px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-surface);
+    font-size: 12.5px; color: var(--color-text-secondary);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .chat-connect-nudge a { color: var(--color-primary); font-weight: 600; }
+
+  /* ── Drive search panel (slides down from header) ── */
+  .drive-search {
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+    padding: 10px 14px;
+    display: none;
+  }
+  .drive-search.open { display: block; }
+  .drive-search-row { display: flex; gap: 8px; }
+  .drive-search-row input {
+    flex: 1; padding: 8px 11px; font: inherit; font-size: 13px;
+    border: 1px solid var(--color-border); border-radius: 9px;
+    background: var(--color-bg); color: var(--color-text); outline: none;
+  }
+  .drive-search-row input:focus { border-color: var(--color-primary); }
+  .drive-search-hint { font-size: 11px; color: var(--color-text-muted, #94a3b8); margin: 6px 2px 0; }
+  .drive-results { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; max-height: 38vh; overflow-y: auto; }
+  .drive-result {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 9px; border-radius: 9px; cursor: pointer;
+    text-decoration: none; color: var(--color-text);
+  }
+  .drive-result:hover { background: var(--color-surface-secondary, #f1f5f9); }
+  .drive-result img.thumb { width: 34px; height: 34px; border-radius: 6px; object-fit: cover; flex: none; background: #e2e8f0; }
+  .drive-result .di { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; flex: none; color: var(--color-text-secondary); }
+  .drive-result .dmeta { min-width: 0; }
+  .drive-result .dname { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drive-result .dsub { font-size: 11px; color: var(--color-text-secondary); }
+
+  .chat-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .chat-search-toggle {
+    flex: none; width: 34px; height: 34px; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-border); background: transparent;
+    color: var(--color-text-secondary); cursor: pointer;
+  }
+  .chat-search-toggle:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
+  .chat-search-toggle.is-active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
+  .chat-search-toggle svg { width: 17px; height: 17px; }
+
+  /* Lightbox for tapping an image attachment. */
+  .img-lightbox {
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,.85);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .img-lightbox.open { display: flex; }
+  .img-lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+
   @media (max-width: 640px) {
     .chat-shell { height: calc(100dvh - 48px); }
+    .att-img { max-width: 200px; }
   }
 </style>
 {% include "_pwa_head.html" %}
@@ -233,16 +336,43 @@
 
 <div class="chat-shell">
   <header class="chat-header">
-    <h1>💬 Family chat</h1>
-    <p class="sub">Everyone signed into this app sees this room. Posting as <b>{{ viewer_name }}</b>.</p>
+    <div class="chat-header-row">
+      <div>
+        <h1>💬 Family chat</h1>
+        <p class="sub">Everyone signed into this app sees this room. Posting as <b>{{ viewer_name }}</b>.</p>
+      </div>
+      <button type="button" class="chat-search-toggle" id="search-toggle" title="Search Drive files">
+        <i data-feather="search"></i>
+      </button>
+    </div>
   </header>
+
+  <!-- Drive search panel — searches files this app can see (chat
+       uploads + Knowledge-Base PDFs), opens images/PDFs inline. -->
+  <div class="drive-search" id="drive-search">
+    <div class="drive-search-row">
+      <input type="search" id="drive-search-input"
+             placeholder="Search Drive files by name…" autocomplete="off">
+    </div>
+    <div class="drive-search-hint">Searches files shared with this app (chat uploads &amp; knowledge base PDFs).</div>
+    <div class="drive-results" id="drive-results"></div>
+  </div>
 
   <div class="chat-filter" role="tablist">
     <button type="button" class="chat-filter-chip is-active" data-filter="all">All</button>
     <button type="button" class="chat-filter-chip" data-filter="shares">Shares only</button>
+    <button type="button" class="chat-filter-chip" data-filter="file-share">📎 Files</button>
     <button type="button" class="chat-filter-chip" data-filter="kb-share">📚 KB</button>
     <button type="button" class="chat-filter-chip" data-filter="inbox-share">📥 Inbox</button>
   </div>
+
+  {% if not drive_ready %}
+  <div class="chat-connect-nudge" id="connect-nudge">
+    <i data-feather="hard-drive"></i>
+    <span>Connect Google Drive to attach &amp; search files.
+      <a href="{{ connect_url }}">Connect now →</a></span>
+  </div>
+  {% endif %}
 
   <div class="chat-stream" id="chat-stream" data-filter="all">
     <div class="chat-empty" id="chat-empty">
@@ -252,6 +382,15 @@
   </div>
 
   <form class="chat-composer" id="chat-form" autocomplete="off">
+    <input type="file" id="chat-file" hidden
+           accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.zip">
+    <button type="button" class="chat-attach" id="chat-attach"
+            title="Attach a file"
+            data-drive-ready="{{ 'yes' if drive_ready else 'no' }}"
+            data-connect-url="{{ connect_url }}"
+            data-max-mb="{{ max_upload_mb }}">
+      <i data-feather="paperclip"></i>
+    </button>
     <textarea id="chat-input"
               placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
               rows="1" maxlength="2000"></textarea>
@@ -260,6 +399,8 @@
     </button>
   </form>
 </div>
+
+<div class="img-lightbox" id="img-lightbox"><img alt="" id="img-lightbox-img"></div>
 
 <script>
 (() => {
@@ -306,6 +447,36 @@
 
   const toast = (msg, kind="info") =>
     window.showToast ? window.showToast(msg, kind, 2500) : console.log("[chat]", msg);
+
+  const fmtSize = (b) => {
+    if (b == null) return "";
+    if (b < 1024) return b + " B";
+    if (b < 1024 * 1024) return Math.round(b / 1024) + " KB";
+    return (b / 1024 / 1024).toFixed(1) + " MB";
+  };
+
+  // Attachment block for a message bubble. Images render inline (tap to
+  // zoom); PDFs/docs render as a chip that opens the file. raw_url is an
+  // app-proxied stream so every family member sees it without a Drive
+  // login. Returns "" for plain messages.
+  function renderAttachment(att) {
+    if (!att) return "";
+    if (att.kind === "image") {
+      return `<div class="att"><img class="att-img" loading="lazy"
+        src="${esc(att.raw_url)}" alt="${esc(att.name)}"
+        data-lightbox="${esc(att.raw_url)}"></div>`;
+    }
+    const icon = att.kind === "pdf" ? "file-text" : "file";
+    const href = att.raw_url || att.url || "#";
+    const sub = fmtSize(att.size_bytes);
+    return `<a class="att att-file" href="${esc(href)}" target="_blank" rel="noopener">
+        <i data-feather="${icon}"></i>
+        <span class="att-meta">
+          <span class="att-name">${esc(att.name)}</span>
+          ${sub ? `<span class="att-sub">${esc(sub)}</span>` : ""}
+        </span>
+      </a>`;
+  }
 
   // Format a timestamp to "h:mm AM/PM" within today, "Mon h:mm AM" within
   // the week, "MMM D, h:mm AM" otherwise. Cheap heuristic for chat UX.
@@ -369,9 +540,14 @@
     // Drives the filter CSS (data-filter on .chat-stream + this attr)
     // and the share-bubble left-stripe styling.
     bubble.dataset.kind = m.kind || "text";
+    // For a file with no caption the server stores the filename as the
+    // body — don't print it twice (chip already shows the name).
+    const att = m.attachment;
+    const showBody = m.body && !(att && m.body === att.name);
     bubble.innerHTML = `
       ${continuation ? "" : `<div class="msg-author">${esc(m.author_name)}</div>`}
-      <div class="msg-body">${renderBody(m.body)}</div>
+      ${showBody ? `<div class="msg-body">${renderBody(m.body)}</div>` : ""}
+      ${renderAttachment(att)}
       <div class="msg-meta">
         <span>${esc(fmtTime(m.created_at))}</span>
         ${m.is_mine ? `<button type="button" class="msg-del" data-act="del">delete</button>` : ""}
@@ -382,6 +558,8 @@
     if (m.is_mine) {
       bubble.querySelector('[data-act="del"]')?.addEventListener("click", () => deleteMessage(m.id));
     }
+    // Render the file-chip icon if this bubble has a non-image attachment.
+    if (att && att.kind !== "image" && window.feather) feather.replace();
   }
 
   function clearLoadingHint() {
@@ -567,9 +745,154 @@
     });
   });
 
+  // ── File attachments ───────────────────────────────────────────
+  const fileInput = document.getElementById("chat-file");
+  const attachBtn = document.getElementById("chat-attach");
+  const driveReady = attachBtn.dataset.driveReady === "yes";
+  const connectUrl = attachBtn.dataset.connectUrl;
+  const maxMb = parseInt(attachBtn.dataset.maxMb || "25", 10);
+
+  attachBtn.addEventListener("click", () => {
+    if (!driveReady) {
+      if (confirm("Connect Google Drive to attach files?")) location.href = connectUrl;
+      return;
+    }
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files && fileInput.files[0];
+    if (f) uploadFile(f);
+    fileInput.value = "";   // allow re-picking the same file
+  });
+
+  async function uploadFile(f) {
+    if (f.size > maxMb * 1024 * 1024) {
+      toast(`File too large (max ${maxMb} MB)`, "error");
+      return;
+    }
+    attachBtn.disabled = true;
+    sendBtn.disabled = true;
+    toast("Uploading…");
+    const fd = new FormData();
+    fd.append("file", f);
+    const caption = input.value.trim();
+    if (caption) fd.append("body", caption);
+    try {
+      const r = await fetch("/api/chat/upload", {
+        method: "POST",
+        headers: { "X-CSRFToken": CSRF },
+        body: fd,
+        credentials: "same-origin",
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        if (data.connect_url && confirm("Reconnect Google Drive to attach files?")) {
+          location.href = data.connect_url;
+        }
+        throw new Error(data.error || r.status);
+      }
+      input.value = "";
+      autoResize();
+      document.getElementById("chat-empty")?.remove();
+      appendMessage(data.message);
+      if (window.feather) feather.replace();
+      scrollToBottom(true);
+    } catch (e) {
+      console.error(e);
+      toast("Upload failed: " + (e.message || ""), "error");
+    } finally {
+      attachBtn.disabled = false;
+      sendBtn.disabled = false;
+    }
+  }
+
+  // ── Image lightbox (tap an inline image to zoom) ────────────────
+  const lightbox = document.getElementById("img-lightbox");
+  const lightboxImg = document.getElementById("img-lightbox-img");
+  stream.addEventListener("click", (e) => {
+    const img = e.target.closest("img[data-lightbox]");
+    if (!img) return;
+    lightboxImg.src = img.dataset.lightbox;
+    lightbox.classList.add("open");
+  });
+  lightbox.addEventListener("click", () => {
+    lightbox.classList.remove("open");
+    lightboxImg.src = "";
+  });
+
+  // ── Drive search ────────────────────────────────────────────────
+  const searchToggle = document.getElementById("search-toggle");
+  const searchPanel = document.getElementById("drive-search");
+  const searchInput = document.getElementById("drive-search-input");
+  const searchResults = document.getElementById("drive-results");
+  let searchTimer = null;
+  let searchLoadedOnce = false;
+
+  searchToggle.addEventListener("click", () => {
+    const open = searchPanel.classList.toggle("open");
+    searchToggle.classList.toggle("is-active", open);
+    if (open) {
+      searchInput.focus();
+      if (!searchLoadedOnce) { searchLoadedOnce = true; runSearch(""); }
+    }
+  });
+
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => runSearch(searchInput.value.trim()), 300);
+  });
+
+  async function runSearch(q) {
+    searchResults.innerHTML = `<div class="drive-search-hint">Searching…</div>`;
+    try {
+      const r = await fetch("/api/chat/drive-search?q=" + encodeURIComponent(q), {
+        credentials: "same-origin",
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        if (data.connect_url) {
+          searchResults.innerHTML =
+            `<div class="drive-search-hint">Connect Google Drive to search. <a href="${data.connect_url}">Connect →</a></div>`;
+          return;
+        }
+        throw new Error(data.error || r.status);
+      }
+      if (!data.files.length) {
+        searchResults.innerHTML = `<div class="drive-search-hint">No files found.</div>`;
+        return;
+      }
+      searchResults.innerHTML = "";
+      for (const fi of data.files) searchResults.appendChild(renderResult(fi));
+      if (window.feather) feather.replace();
+    } catch (e) {
+      console.warn("[chat] drive search failed:", e);
+      searchResults.innerHTML = `<div class="drive-search-hint">Search failed.</div>`;
+    }
+  }
+
+  function renderResult(fi) {
+    const a = document.createElement("a");
+    a.className = "drive-result";
+    // Images & PDFs open inline through the app proxy; everything else
+    // (and Google-native docs, which can't be proxied) opens in Drive.
+    a.href = ((fi.is_image || fi.is_pdf) && fi.raw_url) ? fi.raw_url : (fi.web_view || "#");
+    a.target = "_blank";
+    a.rel = "noopener";
+    const thumb = (fi.is_image && fi.raw_url)
+      ? `<img class="thumb" src="${esc(fi.raw_url)}" alt="" loading="lazy">`
+      : `<span class="di"><i data-feather="${fi.is_pdf ? "file-text" : "file"}"></i></span>`;
+    a.innerHTML = `${thumb}
+      <span class="dmeta">
+        <span class="dname">${esc(fi.name)}</span>
+        <span class="dsub">${esc(fmtSize(fi.size_bytes) || fi.mime || "")}</span>
+      </span>`;
+    return a;
+  }
+
   // Boot
   if (window.feather) feather.replace();
-  loadInitial();
+  loadInitial().then(() => { if (window.feather) feather.replace(); });
 })();
 </script>
 
