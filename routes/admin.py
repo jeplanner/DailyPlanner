@@ -385,3 +385,200 @@ def backup():
         "url": f"https://docs.google.com/spreadsheets/d/{sid}/edit",
         "tabs": [lbl for lbl, _ in payload],
     })
+
+
+# ── Full database backup / restore (JSON → Drive) ────────────────
+
+# Every app table (from the migrations). Each is fetched best-effort, so
+# a table that doesn't exist on a given install is simply skipped.
+ALL_TABLES = [
+    "adhoc_tasks", "bedtime_stories", "chat_room_members", "chat_rooms",
+    "checklist_items", "checklist_reminder_log", "checklist_reminder_times",
+    "checklist_ticks", "daily_events", "daily_health", "daily_meta",
+    "daily_slots", "epics", "event_exceptions", "expenses", "family_tasks",
+    "groceries", "habit_entries", "habit_goal_history", "habit_master",
+    "inbox_links", "initiatives", "kb_backlog", "key_results", "meeting_preps",
+    "messages", "mythology_stories", "objectives", "portfolio_holdings",
+    "portfolio_snapshots", "portfolio_transactions", "prayer_photos",
+    "program_reviews", "project_subtasks", "project_tasks", "projects",
+    "push_subscriptions", "quick_bucket", "quote_favorites", "quotes",
+    "recurring_tasks", "ref_activity_log", "ref_cards", "ref_contexts",
+    "reference_links", "relationships", "scribble_notes", "sprints",
+    "study_notes", "tags", "task_overrides", "task_time_logs", "tasks_bucket",
+    "tasks_bucket_examples", "tasks_bucket_stats", "todo_matrix",
+    "travel_reads", "travel_tasks", "user_google_tokens", "user_photos",
+    "users", "weekly_reviews",
+]
+# Tables excluded entirely (pure secrets / device state).
+_SKIP_TABLES = {"vault_settings"}
+# Secret columns blanked out so they never land in a Drive file. The
+# backup is for content recovery; credentials are re-established (login /
+# reconnect Google / re-subscribe push) after a restore.
+_REDACT_COLS = {
+    "users": {"password_hash"},
+    "user_google_tokens": {"access_token", "refresh_token", "client_secret"},
+    "push_subscriptions": {"p256dh", "auth", "keys"},
+}
+_REDACTED = "__REDACTED__"
+
+
+def _drive_for_admin(uid):
+    """(creds, drive) for the admin, or (None, None) if not connected."""
+    from routes.knowledgebase import (
+        _load_token_row, _credentials_from_row, _refresh_if_needed,
+        _build_drive, _row_has_drive_scope,
+    )
+    from google.auth.exceptions import RefreshError
+    row = _load_token_row(uid)
+    if not row or not row.get("refresh_token") or not _row_has_drive_scope(row):
+        return None, None
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(row), uid)
+    except RefreshError:
+        return None, None
+    return creds, _build_drive(creds)
+
+
+@admin_bp.route("/api/admin/backup-preview", methods=["GET"])
+@login_required
+def backup_preview():
+    """Row counts per table — so you can see exactly what a full backup
+    will contain before running it."""
+    _gate()
+    out = []
+    for t in ALL_TABLES:
+        if t in _SKIP_TABLES:
+            continue
+        n = _count(t, "*")
+        out.append({"table": t, "rows": n, "redacted": sorted(_REDACT_COLS.get(t, []))})
+    out = [x for x in out if x["rows"] is not None]
+    return jsonify({"tables": out, "total_rows": sum(x["rows"] for x in out)})
+
+
+@admin_bp.route("/api/admin/db-backup", methods=["POST"])
+@login_required
+def db_backup():
+    """Dump every app table (all rows, all columns; secrets redacted) to
+    a single JSON file in Drive under dailyplanner/backups. Restorable
+    via /api/admin/db-restore."""
+    _gate()
+    uid = session.get("user_id")
+    creds, drive = _drive_for_admin(uid)
+    if not drive:
+        return jsonify({"error": "not_connected", "connect_url": url_for("events.google_login")}), 401
+
+    from datetime import datetime, timezone
+    counts = {}
+    tables = {}
+    for t in ALL_TABLES:
+        if t in _SKIP_TABLES:
+            continue
+        try:
+            rows = get(t, {"select": "*", "limit": "100000"}) or []
+        except Exception:
+            continue
+        red = _REDACT_COLS.get(t)
+        if red:
+            for r in rows:
+                for c in red:
+                    if c in r and r[c] is not None:
+                        r[c] = _REDACTED
+        tables[t] = rows
+        counts[t] = len(rows)
+
+    dump = {
+        "_meta": {
+            "app": "DailyPlanner",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "format": "v1",
+            "note": "Secrets (passwords, OAuth tokens, push keys) are redacted.",
+            "tables": sorted(counts.keys()),
+        },
+        "tables": tables,
+    }
+    blob = json.dumps(dump, ensure_ascii=False).encode("utf-8")
+
+    try:
+        import io
+        from googleapiclient.http import MediaIoBaseUpload
+        parent = _ensure_drive_subfolder(drive, "dailyplanner")
+        backups = _ensure_drive_subfolder(drive, "backups", parent)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+        name = f"dailyplanner-db-{stamp}.json"
+        created = drive.files().create(
+            body={"name": name, "parents": [backups]},
+            media_body=MediaIoBaseUpload(io.BytesIO(blob), mimetype="application/json", resumable=False),
+            fields="id, name, webViewLink",
+        ).execute()
+    except Exception as e:
+        logger.exception("db backup upload failed: %s", e)
+        return jsonify({"error": "Couldn't write backup to Drive."}), 502
+
+    return jsonify({
+        "ok": True, "name": name, "file_id": created["id"],
+        "url": created.get("webViewLink"),
+        "counts": counts, "total_rows": sum(counts.values()),
+        "size_bytes": len(blob),
+    })
+
+
+@admin_bp.route("/api/admin/db-restore", methods=["POST"])
+@login_required
+def db_restore():
+    """Restore from a backup JSON in Drive (best-effort, idempotent
+    upsert by id). Body: {file_id, confirm:"RESTORE"}. Redacted secret
+    columns are not written (so existing credentials are preserved).
+    Tables are retried across a few passes to satisfy FK ordering."""
+    _gate()
+    data = request.get_json(silent=True) or {}
+    if (data.get("confirm") or "") != "RESTORE":
+        return jsonify({"error": "Set confirm:'RESTORE' to proceed."}), 400
+    file_id = (data.get("file_id") or "").strip()
+    if not file_id:
+        return jsonify({"error": "file_id required"}), 400
+
+    uid = session.get("user_id")
+    creds, drive = _drive_for_admin(uid)
+    if not drive:
+        return jsonify({"error": "not_connected", "connect_url": url_for("events.google_login")}), 401
+
+    try:
+        import io
+        from googleapiclient.http import MediaIoBaseDownload
+        req = drive.files().get_media(fileId=file_id)
+        buf = io.BytesIO()
+        dl = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _s, done = dl.next_chunk()
+        dump = json.loads(buf.getvalue().decode("utf-8"))
+    except Exception as e:
+        logger.exception("db restore read failed: %s", e)
+        return jsonify({"error": "Couldn't read that backup file."}), 502
+
+    from supabase_client import post as _post
+    tables = dump.get("tables", {})
+    pending = [(t, rows) for t, rows in tables.items() if rows]
+    results = {}
+    for _pass in range(4):
+        still = []
+        for t, rows in pending:
+            # Drop redacted columns so we don't overwrite real secrets.
+            clean = [{k: v for k, v in r.items() if v != _REDACTED} for r in rows]
+            try:
+                _post(f"{t}?on_conflict=id", clean, prefer="resolution=merge-duplicates")
+                results[t] = {"rows": len(clean), "ok": True}
+            except Exception as e:
+                results[t] = {"error": str(e)[:100]}
+                still.append((t, rows))
+        pending = still
+        if not pending:
+            break
+
+    unresolved = [t for t, _ in pending]
+    return jsonify({
+        "ok": not unresolved,
+        "restored": [t for t, r in results.items() if r.get("ok")],
+        "failed": unresolved,
+        "results": results,
+    })
