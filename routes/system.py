@@ -432,6 +432,29 @@ def global_search():
     except Exception:
         pass
 
+    # 13. Money — expenses / income / transfers (category or note)
+    try:
+        for col in ("category", "note"):
+            rows = get("expenses", params={
+                "user_id": f"eq.{user_id}",
+                "deleted_at": "is.null",
+                col: pattern,
+                "select": "id,kind,amount,category,note,spent_on",
+                "limit": per_table,
+            }) or []
+            for r in rows:
+                amt = r.get("amount")
+                sign = "+" if r.get("kind") == "income" else ("⇄" if r.get("kind") == "transfer" else "−")
+                bits = [f"{sign}₹{amt}" if amt is not None else None, r.get("spent_on")]
+                out.append({
+                    "type": "expense", "id": r["id"],
+                    "title": r.get("category") or r.get("note") or "(money)",
+                    "snippet": " · ".join([b for b in bits if b]) or None,
+                    "url": "/expenses", "badge": "Money",
+                })
+    except Exception:
+        pass
+
     # 9. Family tasks (shared across the family — filter by title only)
     try:
         rows = get("family_tasks", params={
