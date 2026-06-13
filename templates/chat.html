@@ -15,15 +15,18 @@
   /* The chat page wants the entire viewport, since the bubble area
      scrolls independently of the page. Override the default page
      padding so the layout fills edge-to-edge under the nav. */
-  /* Lock the page to the viewport and let the chat stream be the only
-     scroller — so the composer is always pinned at the bottom and never
-     scrolls off-screen, regardless of the sticky nav's height. */
-  html, body { height: 100%; }
+  /* Lock the page to the viewport and let the chat stream be the ONLY
+     scroller — so the composer + nav stay pinned and never move when you
+     scroll the messages (the whole page was scrolling before). The body
+     is fixed to the viewport; nothing outside the stream can scroll. */
+  html { height: 100%; overflow: hidden; }
   body {
     background: var(--color-bg); color: var(--color-text);
     font-family: var(--font-family); margin: 0;
+    position: fixed; top: 0; left: 0; right: 0;
     display: flex; flex-direction: column;
     height: 100dvh; overflow: hidden;
+    overscroll-behavior: none;
   }
   .nav-icons { flex: none; }
 
@@ -93,6 +96,10 @@
   .chat-stream {
     flex: 1; min-height: 0;
     overflow-y: auto;
+    /* Keep the scroll inside the stream — don't chain it to the page
+       (which was dragging the whole layout / composer up). */
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     padding: 16px 14px;
     display: flex; flex-direction: column; gap: 4px;
     background: var(--color-bg);
