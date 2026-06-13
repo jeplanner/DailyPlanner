@@ -15,13 +15,24 @@
   /* The chat page wants the entire viewport, since the bubble area
      scrolls independently of the page. Override the default page
      padding so the layout fills edge-to-edge under the nav. */
-  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  /* Lock the page to the viewport and let the chat stream be the only
+     scroller — so the composer is always pinned at the bottom and never
+     scrolls off-screen, regardless of the sticky nav's height. */
+  html, body { height: 100%; }
+  body {
+    background: var(--color-bg); color: var(--color-text);
+    font-family: var(--font-family); margin: 0;
+    display: flex; flex-direction: column;
+    height: 100dvh; overflow: hidden;
+  }
+  .nav-icons { flex: none; }
 
   .chat-shell {
+    flex: 1; min-height: 0;
     display: flex; flex-direction: column;
-    /* 100dvh adapts to the iOS keyboard. Minus the top nav height. */
-    height: calc(100dvh - 56px);
-    max-width: 820px; margin: 0 auto;
+    width: 100%; max-width: 820px; align-self: center;
+    /* Adjustable chat text size (Aa button). */
+    --chat-msg-size: 16px;
   }
 
   .chat-header {
@@ -245,7 +256,7 @@
   .chat-send svg { width: 23px; height: 23px; }
   /* Collapse-on-type: with text, the attach icon hides and the send
      button appears (WhatsApp behaviour) → more room to type. */
-  .chat-composer.has-text .chat-attach { display: none; }
+  .chat-composer.has-text .chat-collapsible { display: none; }
   .chat-composer.has-text .chat-send { display: inline-flex; }
 
   .chat-empty {
@@ -474,7 +485,6 @@
   .qb-btn-danger:hover { background: #fee2e2; }
 
   @media (max-width: 640px) {
-    .chat-shell { height: calc(100dvh - 48px); }
     .att-img { max-width: 200px; }
   }
 
@@ -487,7 +497,7 @@
 
   /* ── Ease-of-use: larger text & bigger tap targets (elderly-friendly) ── */
   .chat-stream { font-size: 16px; }
-  .msg { font-size: 16px; line-height: 1.5; padding: 9px 13px 7px; max-width: 84%; }
+  .msg { font-size: var(--chat-msg-size, 16px); line-height: 1.5; padding: 9px 13px 7px; max-width: 84%; }
   .msg-author { font-size: 13px; }
   .msg-body a { word-break: break-word; }
   .msg-meta { font-size: 12px; gap: 10px; }
@@ -555,6 +565,7 @@
         <p class="sub" id="room-sub">Posting as <b>{{ viewer_name }}</b>.</p>
       </div>
       <div class="chat-header-actions">
+        <button type="button" class="chat-search-toggle" id="font-toggle" title="Text size" style="font-weight:800;font-size:15px;letter-spacing:-.5px;">Aa</button>
         <button type="button" class="chat-search-toggle" id="manage-toggle" title="Room members">
           <i data-feather="users"></i>
         </button>
@@ -611,12 +622,11 @@
     </div>
   </div>
 
-  <!-- Emoji panel for composing (insert into the message). -->
-  <div class="msg-emoji-panel" id="msg-emoji-panel"></div>
-
   <form class="chat-composer" id="chat-form" autocomplete="off">
     <input type="file" id="chat-file" hidden
            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.zip">
+    <!-- capture="environment" opens the rear camera directly on phones. -->
+    <input type="file" id="chat-camera" hidden accept="image/*" capture="environment">
     <div class="composer-pill">
       <button type="button" class="pill-icon" id="chat-emoji" title="Emoji">
         <i data-feather="smile"></i>
@@ -624,18 +634,25 @@
       <textarea id="chat-input"
                 placeholder="Message"
                 rows="1" maxlength="2000"></textarea>
-      <button type="button" class="pill-icon chat-attach" id="chat-attach"
+      <button type="button" class="pill-icon chat-collapsible chat-attach" id="chat-attach"
               title="Attach a file"
               data-drive-ready="{{ 'yes' if drive_ready else 'no' }}"
               data-connect-url="{{ connect_url }}"
               data-max-mb="{{ max_upload_mb }}">
         <i data-feather="paperclip"></i>
       </button>
+      <button type="button" class="pill-icon chat-collapsible chat-camera" id="chat-camera-btn" title="Camera">
+        <i data-feather="camera"></i>
+      </button>
     </div>
     <button type="submit" class="chat-send" id="chat-send" title="Send">
       <i data-feather="send"></i>
     </button>
   </form>
+
+  <!-- Emoji panel — sits BELOW the composer (like WhatsApp) so the
+       last messages stay visible above the input when it opens. -->
+  <div class="msg-emoji-panel" id="msg-emoji-panel"></div>
 </div>
 
 <div class="img-lightbox" id="img-lightbox"><img alt="" id="img-lightbox-img"></div>
@@ -1277,7 +1294,7 @@
   // tap — that focus change is what dismissed the keyboard. preventing
   // the default pointerdown keeps focus on the input; the click still
   // fires so the button works.
-  ["chat-send", "chat-attach", "chat-emoji"].forEach((id) => {
+  ["chat-send", "chat-attach", "chat-emoji", "chat-camera-btn"].forEach((id) => {
     const b = document.getElementById(id);
     b?.addEventListener("pointerdown", (e) => {
       if (document.activeElement === input) e.preventDefault();
@@ -1326,9 +1343,10 @@
     emojiBtn.classList.toggle("is-active", open);
     if (open) {
       // WhatsApp behaviour: opening the emoji panel drops the keyboard so
-      // the panel has room; closing it brings the keyboard back.
+      // the panel has room; closing it brings the keyboard back. Scroll
+      // to the latest message so the panel never hides recent chat.
       input.blur();
-      if (state.stickToBottom) scrollToBottom(false);
+      requestAnimationFrame(() => scrollToBottom(false));
     } else {
       input.focus();
     }
@@ -1375,6 +1393,23 @@
     const f = fileInput.files && fileInput.files[0];
     if (f) uploadFile(f);
     fileInput.value = "";   // allow re-picking the same file
+  });
+
+  // Camera — capture a photo and send it. The hidden input has
+  // capture="environment", so on phones tapping this opens the camera
+  // directly; on desktop it's a normal image picker.
+  const cameraInput = document.getElementById("chat-camera");
+  document.getElementById("chat-camera-btn")?.addEventListener("click", () => {
+    if (!driveReady) {
+      if (confirm("Connect Google Drive to send photos?")) location.href = connectUrl;
+      return;
+    }
+    cameraInput.click();
+  });
+  cameraInput.addEventListener("change", () => {
+    const f = cameraInput.files && cameraInput.files[0];
+    if (f) uploadFile(f);
+    cameraInput.value = "";
   });
 
   async function uploadFile(f) {
@@ -1857,6 +1892,35 @@
     if (state.roomTimer) return;
     state.roomTimer = setInterval(() => { if (!document.hidden) loadRooms(); }, 30000);
   }
+
+  // ── Adjustable chat text size (Aa) ──────────────────────────────
+  // Cycles small → normal → large → x-large, persisted per device so
+  // each person picks what's comfortable. Applied via a CSS var on the
+  // chat shell that .msg reads.
+  const FONT_SIZES = [
+    { px: "14px", label: "Small" },
+    { px: "16px", label: "Normal" },
+    { px: "19px", label: "Large" },
+    { px: "22px", label: "Extra large" },
+  ];
+  const chatShell = document.querySelector(".chat-shell");
+  function applyFontSize(idx, announce) {
+    const f = FONT_SIZES[idx] || FONT_SIZES[1];
+    chatShell.style.setProperty("--chat-msg-size", f.px);
+    try { localStorage.setItem("dp-chat-font", String(idx)); } catch (_) {}
+    if (announce) toast("Text size: " + f.label);
+    if (state.stickToBottom) requestAnimationFrame(() => scrollToBottom(false));
+  }
+  let fontIdx = 1;
+  try {
+    const saved = parseInt(localStorage.getItem("dp-chat-font"), 10);
+    if (saved >= 0 && saved < FONT_SIZES.length) fontIdx = saved;
+  } catch (_) {}
+  applyFontSize(fontIdx, false);
+  document.getElementById("font-toggle")?.addEventListener("click", () => {
+    fontIdx = (fontIdx + 1) % FONT_SIZES.length;
+    applyFontSize(fontIdx, true);
+  });
 
   // ── Install prompt (Android Chrome) ─────────────────────────────
   // beforeinstallprompt fires only when the app is installable (not yet
