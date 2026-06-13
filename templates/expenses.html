@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>Expenses — DailyPlanner</title>
+<title>Money — DailyPlanner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
@@ -17,8 +17,14 @@
   h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 6px 0 2px; }
   .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 16px; }
 
-  .card { background: var(--color-surface); border: 1px solid var(--color-border);
-          border-radius: 14px; padding: 14px; }
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; padding: 14px; }
+
+  /* Expense / Income segmented toggle */
+  .seg { display: flex; gap: 0; border: 1px solid var(--color-border); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+  .seg button { flex: 1; font: inherit; font-size: 14px; font-weight: 700; padding: 10px; border: none; background: var(--color-bg); color: var(--color-text-secondary); cursor: pointer; }
+  .seg button.on[data-kind="expense"] { background: #fef2f2; color: #b91c1c; }
+  .seg button.on[data-kind="income"]  { background: #ecfdf5; color: #047857; }
+
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
@@ -28,41 +34,38 @@
     background: var(--color-bg); color: var(--color-text); outline: none;
   }
   .field input:focus { border-color: var(--color-primary); }
-  .f-date  { flex: 1 1 150px; }
-  .f-amount{ flex: 1 1 110px; }
-  .f-cat   { flex: 2 1 180px; }
-  .f-note  { flex: 1 1 100%; }
-  .add-btn {
-    margin-top: 12px; width: 100%; font: inherit; font-size: 15px; font-weight: 700;
-    padding: 12px; border: none; border-radius: 11px; cursor: pointer;
-    background: var(--color-primary); color: #fff;
-  }
-  .add-btn:active { transform: scale(.99); }
+  .f-date{flex:1 1 150px;} .f-amount{flex:1 1 110px;} .f-cat{flex:2 1 180px;} .f-note{flex:1 1 100%;}
+  .add-btn { margin-top: 12px; width: 100%; font: inherit; font-size: 15px; font-weight: 700; padding: 12px; border: none; border-radius: 11px; cursor: pointer; background: var(--color-primary); color: #fff; }
 
-  .total-bar {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin: 22px 2px 10px;
-  }
-  .total-bar .lbl { font-size: 13px; color: var(--color-text-secondary); font-weight: 600; }
-  .total-bar .amt { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+  .stats { display: flex; gap: 8px; margin: 18px 0 10px; }
+  .stat { flex: 1; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 10px 12px; text-align: center; }
+  .stat .v { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+  .stat .l { font-size: 11px; color: var(--color-text-secondary); margin-top: 2px; }
+  .stat.in .v { color: #047857; } .stat.out .v { color: #b91c1c; }
 
   .list { display: flex; flex-direction: column; gap: 8px; }
-  .exp {
-    display: flex; align-items: center; gap: 12px;
-    background: var(--color-surface); border: 1px solid var(--color-border);
-    border-radius: 12px; padding: 11px 13px;
-  }
+  .exp { display: flex; align-items: center; gap: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 11px 13px; }
+  .exp .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .exp.kind-expense .dot { background: #ef4444; } .exp.kind-income .dot { background: #10b981; }
   .exp .cat { font-weight: 700; font-size: 15px; }
   .exp .cat.empty { color: var(--color-text-muted, #94a3b8); font-weight: 600; }
   .exp .nt { font-size: 12.5px; color: var(--color-text-secondary); margin-top: 1px; }
   .exp .mid { flex: 1; min-width: 0; }
   .exp .amt { font-weight: 800; font-size: 16px; white-space: nowrap; }
-  .exp .del {
-    background: none; border: none; color: #ef4444; cursor: pointer;
-    padding: 4px; display: inline-flex;
-  }
+  .exp.kind-expense .amt { color: #b91c1c; } .exp.kind-income .amt { color: #047857; }
+  .exp .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 4px; display: inline-flex; }
   .exp .del svg { width: 18px; height: 18px; }
   .empty { text-align: center; color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; }
+
+  h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 28px 0 10px; }
+  .rep-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .rep-head input { font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg); color: var(--color-text); }
+  .cat-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--color-border); }
+  .cat-row:last-child { border-bottom: none; }
+  .cat-row .cn { flex: 1; font-weight: 600; font-size: 14px; }
+  .cat-row .bar { flex: 2; height: 8px; background: var(--color-border); border-radius: 999px; overflow: hidden; }
+  .cat-row .bar > i { display: block; height: 100%; background: #ef4444; border-radius: 999px; }
+  .cat-row .ca { font-weight: 700; font-size: 14px; min-width: 80px; text-align: right; }
 </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -71,10 +74,14 @@
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
 <div class="wrap">
-  <h1>💸 Expenses</h1>
-  <p class="sub">Log what you spent. The category box suggests ones you've used before.</p>
+  <h1>💸 Money</h1>
+  <p class="sub">Log money spent and received. The category box suggests ones you've used before.</p>
 
   <div class="card">
+    <div class="seg" id="kind-seg">
+      <button type="button" data-kind="expense" class="on">− Expense</button>
+      <button type="button" data-kind="income">+ Income</button>
+    </div>
     <form id="exp-form" autocomplete="off">
       <div class="row">
         <div class="field f-date">
@@ -87,8 +94,7 @@
         </div>
         <div class="field f-cat">
           <label for="exp-category">Category</label>
-          <input type="text" id="exp-category" list="cat-suggestions"
-                 placeholder="e.g. Groceries" maxlength="60">
+          <input type="text" id="exp-category" list="cat-suggestions" placeholder="e.g. Groceries / Salary" maxlength="60">
           <datalist id="cat-suggestions"></datalist>
         </div>
         <div class="field f-note">
@@ -96,132 +102,138 @@
           <input type="text" id="exp-note" placeholder="What was it for?" maxlength="300">
         </div>
       </div>
-      <button type="submit" class="add-btn" id="exp-add">Add expense</button>
+      <button type="submit" class="add-btn" id="exp-add">Add</button>
     </form>
   </div>
 
-  <div class="total-bar">
-    <span class="lbl" id="total-lbl">Total spent</span>
-    <span class="amt" id="total-amt">₹0</span>
+  <div class="stats">
+    <div class="stat in"><div class="v" id="s-in">₹0</div><div class="l">Received</div></div>
+    <div class="stat out"><div class="v" id="s-out">₹0</div><div class="l">Spent</div></div>
+    <div class="stat"><div class="v" id="s-net">₹0</div><div class="l">Net</div></div>
   </div>
 
   <div class="list" id="exp-list"></div>
+
+  <!-- Monthly report -->
+  <h2>Monthly report</h2>
+  <div class="rep-head">
+    <input type="month" id="rep-month">
+  </div>
+  <div class="stats">
+    <div class="stat in"><div class="v" id="r-in">₹0</div><div class="l">Income</div></div>
+    <div class="stat out"><div class="v" id="r-out">₹0</div><div class="l">Expense</div></div>
+    <div class="stat"><div class="v" id="r-net">₹0</div><div class="l">Net</div></div>
+  </div>
+  <div class="card" id="rep-cats"><div class="empty">No spending this month.</div></div>
 </div>
 
 <script>
 (() => {
   const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
-  const dateEl = document.getElementById("exp-date");
-  const amountEl = document.getElementById("exp-amount");
-  const catEl = document.getElementById("exp-category");
-  const noteEl = document.getElementById("exp-note");
-  const form = document.getElementById("exp-form");
-  const listEl = document.getElementById("exp-list");
-  const totalEl = document.getElementById("total-amt");
-  const totalLbl = document.getElementById("total-lbl");
-  const dataList = document.getElementById("cat-suggestions");
+  const $ = (id) => document.getElementById(id);
+  const dateEl=$("exp-date"), amountEl=$("exp-amount"), catEl=$("exp-category"), noteEl=$("exp-note");
+  const form=$("exp-form"), listEl=$("exp-list"), dataList=$("cat-suggestions");
+  const repMonth=$("rep-month"), repCats=$("rep-cats");
+  let kind = "expense";
 
-  const toast = (m, k="info") => window.showToast ? window.showToast(m, k, 2200) : console.log(m);
-  const esc = (s) => String(s == null ? "" : s)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
-  const money = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  const toast=(m,k="info")=>window.showToast?window.showToast(m,k,2200):console.log(m);
+  const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+  const money=(n)=>"₹"+Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
 
-  // ── Category suggestions (built from the user's own history) ──
-  async function loadCategories() {
-    try {
-      const r = await fetch("/api/expenses/categories", { credentials: "same-origin" });
-      const data = await r.json();
-      dataList.innerHTML = (data.categories || [])
-        .map(c => `<option value="${esc(c)}"></option>`).join("");
-    } catch (_) { /* non-fatal */ }
+  // Kind toggle
+  $("kind-seg").querySelectorAll("button").forEach(b=>{
+    b.addEventListener("click",()=>{
+      kind=b.dataset.kind;
+      $("kind-seg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.kind===kind));
+    });
+  });
+
+  async function loadCategories(){
+    try{
+      const r=await fetch("/api/expenses/categories",{credentials:"same-origin"});
+      const d=await r.json();
+      dataList.innerHTML=(d.categories||[]).map(c=>`<option value="${esc(c)}"></option>`).join("");
+    }catch(_){}
   }
 
-  // ── Day's expenses + total ──
-  function renderRow(it) {
-    const div = document.createElement("div");
-    div.className = "exp";
-    div.dataset.id = it.id;
-    div.innerHTML = `
+  function renderRow(it){
+    const div=document.createElement("div");
+    div.className="exp kind-"+it.kind;
+    div.innerHTML=`
+      <span class="dot"></span>
       <div class="mid">
-        <div class="cat ${it.category ? "" : "empty"}">${it.category ? esc(it.category) : "Uncategorised"}</div>
-        ${it.note ? `<div class="nt">${esc(it.note)}</div>` : ""}
+        <div class="cat ${it.category?"":"empty"}">${it.category?esc(it.category):"Uncategorised"}</div>
+        ${it.note?`<div class="nt">${esc(it.note)}</div>`:""}
       </div>
-      <div class="amt">${money(it.amount)}</div>
+      <div class="amt">${it.kind==="income"?"+":"−"}${money(it.amount)}</div>
       <button type="button" class="del" title="Delete"><i data-feather="trash-2"></i></button>`;
-    div.querySelector(".del").addEventListener("click", () => del(it.id, div));
+    div.querySelector(".del").addEventListener("click",()=>del(it.id,div));
     return div;
   }
 
-  async function load() {
-    const day = dateEl.value;
-    try {
-      const r = await fetch("/api/expenses?date=" + encodeURIComponent(day), { credentials: "same-origin" });
-      const data = await r.json();
-      listEl.innerHTML = "";
-      if (!data.items.length) {
-        listEl.innerHTML = `<div class="empty">No expenses logged for this day.</div>`;
-      } else {
-        for (const it of data.items) listEl.appendChild(renderRow(it));
-      }
-      totalEl.textContent = money(data.total);
-      totalLbl.textContent = "Total spent" + (day ? "" : "");
-      if (window.feather) feather.replace();
-    } catch (e) {
-      toast("Couldn't load expenses", "error");
-    }
+  async function load(){
+    try{
+      const r=await fetch("/api/expenses?date="+encodeURIComponent(dateEl.value),{credentials:"same-origin"});
+      const d=await r.json();
+      listEl.innerHTML="";
+      if(!d.items.length){ listEl.innerHTML=`<div class="empty">Nothing logged for this day.</div>`; }
+      else { for(const it of d.items) listEl.appendChild(renderRow(it)); }
+      $("s-in").textContent=money(d.received); $("s-out").textContent=money(d.spent);
+      $("s-net").textContent=(d.net<0?"−":"")+money(Math.abs(d.net));
+      if(window.feather) feather.replace();
+    }catch(e){ toast("Couldn't load","error"); }
   }
 
-  async function del(id, el) {
-    if (!confirm("Delete this expense?")) return;
-    try {
-      const r = await fetch("/api/expenses/" + encodeURIComponent(id) + "/delete", {
-        method: "POST", headers: { "X-CSRFToken": CSRF }, credentials: "same-origin",
-      });
-      if (!r.ok) throw new Error();
-      el.remove();
-      load();   // refresh total
-    } catch (_) { toast("Couldn't delete", "error"); }
+  async function del(id,el){
+    if(!confirm("Delete this entry?")) return;
+    try{
+      const r=await fetch("/api/expenses/"+encodeURIComponent(id)+"/delete",{method:"POST",headers:{"X-CSRFToken":CSRF},credentials:"same-origin"});
+      if(!r.ok) throw new Error();
+      el.remove(); load(); loadReport();
+    }catch(_){ toast("Couldn't delete","error"); }
   }
 
-  form.addEventListener("submit", async (e) => {
+  form.addEventListener("submit",async(e)=>{
     e.preventDefault();
-    const amount = parseFloat(amountEl.value);
-    if (!(amount >= 0) || amountEl.value === "") { toast("Enter an amount", "error"); amountEl.focus(); return; }
-    const body = {
-      spent_on: dateEl.value,
-      amount,
-      category: catEl.value.trim(),
-      note: noteEl.value.trim(),
-    };
-    document.getElementById("exp-add").disabled = true;
-    try {
-      const r = await fetch("/api/expenses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
-        body: JSON.stringify(body),
-        credentials: "same-origin",
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || "");
-      // Clear amount + note, keep date and category for fast repeat entry.
-      amountEl.value = ""; noteEl.value = "";
-      amountEl.focus();
-      await load();
-      loadCategories();   // a new category becomes a future suggestion
-    } catch (e) {
-      toast(e.message || "Couldn't save", "error");
-    } finally {
-      document.getElementById("exp-add").disabled = false;
-    }
+    if(amountEl.value===""||!(parseFloat(amountEl.value)>=0)){ toast("Enter an amount","error"); amountEl.focus(); return; }
+    const body={kind, spent_on:dateEl.value, amount:parseFloat(amountEl.value), category:catEl.value.trim(), note:noteEl.value.trim()};
+    $("exp-add").disabled=true;
+    try{
+      const r=await fetch("/api/expenses",{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":CSRF},body:JSON.stringify(body),credentials:"same-origin"});
+      const d=await r.json();
+      if(!r.ok) throw new Error(d.error||"");
+      amountEl.value=""; noteEl.value=""; amountEl.focus();
+      await load(); loadCategories(); loadReport();
+    }catch(e){ toast(e.message||"Couldn't save","error"); }
+    finally{ $("exp-add").disabled=false; }
   });
 
-  dateEl.addEventListener("change", load);
+  dateEl.addEventListener("change",load);
+
+  // ── Monthly report ──
+  async function loadReport(){
+    try{
+      const r=await fetch("/api/expenses/report?month="+encodeURIComponent(repMonth.value),{credentials:"same-origin"});
+      const d=await r.json();
+      $("r-in").textContent=money(d.income); $("r-out").textContent=money(d.expense);
+      $("r-net").textContent=(d.net<0?"−":"")+money(Math.abs(d.net));
+      const cats=d.by_category||[];
+      if(!cats.length){ repCats.innerHTML=`<div class="empty">No spending this month.</div>`; return; }
+      const max=Math.max(...cats.map(c=>c.amount),1);
+      repCats.innerHTML=cats.map(c=>`
+        <div class="cat-row">
+          <span class="cn">${esc(c.category)}</span>
+          <span class="bar"><i style="width:${Math.round(100*c.amount/max)}%"></i></span>
+          <span class="ca">${money(c.amount)}</span>
+        </div>`).join("");
+    }catch(e){ /* non-fatal */ }
+  }
+  repMonth.addEventListener("change",loadReport);
 
   // Boot
-  if (window.feather) feather.replace();
-  loadCategories();
-  load();
+  repMonth.value = "{{ today }}".slice(0,7);
+  if(window.feather) feather.replace();
+  loadCategories(); load(); loadReport();
 })();
 </script>
 </body>

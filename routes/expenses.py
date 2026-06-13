@@ -36,12 +36,29 @@ def _today_iso():
 def _shape(row):
     return {
         "id": row.get("id"),
+        "kind": row.get("kind") or "expense",
         "spent_on": row.get("spent_on"),
         "amount": float(row["amount"]) if row.get("amount") is not None else 0.0,
         "category": row.get("category") or "",
         "note": row.get("note") or "",
         "created_at": row.get("created_at"),
     }
+
+
+def _month_bounds(month):
+    """('YYYY-MM') → (first_day_iso, first_day_of_next_month_iso). Falls
+    back to the current month on bad input."""
+    try:
+        y, m = month.split("-")
+        y, m = int(y), int(m)
+        if not (1 <= m <= 12):
+            raise ValueError
+    except Exception:
+        t = date.today()
+        y, m = t.year, t.month
+    start = date(y, m, 1)
+    nxt = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+    return start.isoformat(), nxt.isoformat()
 
 
 @expenses_bp.route("/expenses", methods=["GET"])
@@ -63,18 +80,77 @@ def list_expenses():
             "user_id": f"eq.{user_id}",
             "spent_on": f"eq.{day}",
             "deleted_at": "is.null",
-            "select": "id,spent_on,amount,category,note,created_at",
+            "select": "id,kind,spent_on,amount,category,note,created_at",
             "order": "created_at.desc",
         }) or []
     except Exception as e:
         # Table not created yet (migration pending) — return empty rather
         # than 500 so the page renders cleanly.
         logger.warning("expenses list failed (run MIGRATION_EXPENSES.sql?): %s", e)
-        return jsonify({"date": day, "items": [], "total": 0, "migration_pending": True})
+        return jsonify({"date": day, "items": [], "spent": 0, "received": 0, "net": 0,
+                        "migration_pending": True})
 
     items = [_shape(r) for r in rows]
-    total = round(sum(i["amount"] for i in items), 2)
-    return jsonify({"date": day, "items": items, "total": total})
+    spent = round(sum(i["amount"] for i in items if i["kind"] == "expense"), 2)
+    received = round(sum(i["amount"] for i in items if i["kind"] == "income"), 2)
+    return jsonify({
+        "date": day, "items": items,
+        "spent": spent, "received": received, "net": round(received - spent, 2),
+    })
+
+
+@expenses_bp.route("/api/expenses/report", methods=["GET"])
+@login_required
+def report():
+    """Monthly report: income / expense totals, net, and per-category
+    breakdown. `?month=YYYY-MM` (defaults to the current month)."""
+    user_id = session["user_id"]
+    month = (request.args.get("month") or "").strip()
+    start, end = _month_bounds(month)
+    # Month range as a single PostgREST and= filter (a dict can't carry
+    # two spent_on keys).
+    try:
+        rows = get("expenses", {
+            "user_id": f"eq.{user_id}",
+            "and": f"(spent_on.gte.{start},spent_on.lt.{end})",
+            "deleted_at": "is.null",
+            "select": "kind,amount,category",
+            "limit": "100000",
+        }) or []
+    except Exception as e:
+        logger.warning("expenses report failed (run MIGRATION_EXPENSES.sql?): %s", e)
+        return jsonify({"month": start[:7], "income": 0, "expense": 0, "net": 0,
+                        "by_category": [], "migration_pending": True})
+
+    income = expense = 0.0
+    by_cat = {}   # category -> expense total
+    inc_by_cat = {}
+    for r in rows:
+        amt = float(r["amount"]) if r.get("amount") is not None else 0.0
+        cat = (r.get("category") or "Uncategorised").strip() or "Uncategorised"
+        if (r.get("kind") or "expense") == "income":
+            income += amt
+            inc_by_cat[cat] = round(inc_by_cat.get(cat, 0.0) + amt, 2)
+        else:
+            expense += amt
+            by_cat[cat] = round(by_cat.get(cat, 0.0) + amt, 2)
+
+    by_category = sorted(
+        ({"category": c, "amount": a} for c, a in by_cat.items()),
+        key=lambda x: -x["amount"],
+    )
+    income_by_category = sorted(
+        ({"category": c, "amount": a} for c, a in inc_by_cat.items()),
+        key=lambda x: -x["amount"],
+    )
+    return jsonify({
+        "month": start[:7],
+        "income": round(income, 2),
+        "expense": round(expense, 2),
+        "net": round(income - expense, 2),
+        "by_category": by_category,
+        "income_by_category": income_by_category,
+    })
 
 
 @expenses_bp.route("/api/expenses/categories", methods=["GET"])
@@ -119,12 +195,16 @@ def add_expense():
     if amount < 0:
         return jsonify({"error": "Amount can't be negative"}), 400
 
+    kind = (data.get("kind") or "expense").strip().lower()
+    if kind not in ("expense", "income"):
+        kind = "expense"
     day = (data.get("spent_on") or "").strip() or _today_iso()
     category = (data.get("category") or "").strip()[:_MAX_CATEGORY] or None
     note = (data.get("note") or "").strip()[:_MAX_NOTE] or None
 
     payload = {
         "user_id": user_id,
+        "kind": kind,
         "spent_on": day,
         "amount": amount,
         "category": category,
