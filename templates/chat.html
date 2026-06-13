@@ -471,6 +471,46 @@
     .chat-shell { height: calc(100dvh - 48px); }
     .att-img { max-width: 200px; }
   }
+
+  /* Inline SVG room icons (devotional set) scale with the emoji size. */
+  .room-emoji svg { width: 1.15em; height: 1.15em; display: block; border-radius: 50%; }
+  .emoji-opt svg  { width: 28px; height: 28px; display: block; }
+
+  /* ── Ease-of-use: larger text & bigger tap targets (elderly-friendly) ── */
+  .chat-stream { font-size: 16px; }
+  .msg { font-size: 16px; line-height: 1.5; padding: 9px 13px 7px; max-width: 84%; }
+  .msg-author { font-size: 13px; }
+  .msg-body a { word-break: break-word; }
+  .msg-meta { font-size: 12px; gap: 10px; }
+  .msg-del { font-size: 13px; }
+  .chat-composer { padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0)); gap: 10px; }
+  .chat-composer textarea { font-size: 16px; min-height: 46px; padding: 12px 14px; }
+  .chat-send, .chat-attach { width: 48px; height: 48px; }
+  .chat-send svg, .chat-attach svg { width: 22px; height: 22px; }
+  .room-chip { font-size: 14px; padding: 7px 14px; }
+  .chat-filter-chip { font-size: 13px; padding: 6px 13px; }
+  .att-file .att-name { font-size: 15px; }
+  .drive-search-row input { font-size: 16px; }
+  .chat-search-toggle { width: 40px; height: 40px; }
+  .chat-search-toggle svg { width: 20px; height: 20px; }
+  .room-new-btn { width: 38px; height: 38px; }
+
+  /* Install tip banner (Android: adds the app to home screen + share sheet). */
+  .install-tip {
+    display: none; align-items: center; gap: 10px;
+    margin: 8px 12px 0; padding: 11px 13px;
+    background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 12px;
+    font-size: 14px; color: #3730a3;
+  }
+  html.dark .install-tip { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+  .install-tip.show { display: flex; }
+  .install-tip .it-text { flex: 1; }
+  .install-tip button {
+    flex: none; font: inherit; font-size: 13px; font-weight: 700;
+    padding: 8px 14px; border-radius: 9px; cursor: pointer; border: none;
+    background: var(--color-primary); color: #fff;
+  }
+  .install-tip .it-dismiss { background: transparent; color: inherit; font-weight: 600; padding: 8px; }
 </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -479,6 +519,15 @@
 <div class="nav-icons">{% include "_top_nav.html" %}</div>
 
 <div class="chat-shell">
+  <!-- Shown only on Android Chrome when the app can be installed; tapping
+       Install adds it to the home screen AND registers it in the share
+       sheet so you can share photos/links into DailyPlanner. -->
+  <div class="install-tip" id="install-tip">
+    <span class="it-text">📲 Add DailyPlanner to your phone — then it shows up when you share photos &amp; links.</span>
+    <button type="button" id="install-btn">Install</button>
+    <button type="button" class="it-dismiss" id="install-dismiss" aria-label="Dismiss">✕</button>
+  </div>
+
   <header class="chat-header">
     <div class="chat-header-row">
       <div>
@@ -812,25 +861,52 @@
   // picking in the UI prepends the emoji to the room name, so the icon
   // persists with no schema change (roomFace reads it back off the name).
   const EMOJI_GROUPS = {
-    "Spiritual": ["🕉️","🛕","🪔","🪷","🙏","📿","🧘","🔱","☸️","🛐","🪬","🧎"],
+    "Spiritual": ["🕉️","🛕","🪔","🪷","🙏","📿","🧘","🔱","🐚","☸️","🛐","🪬"],
     "Flowers":   ["🌸","🌺","🌻","🌹","🌷","💐","🏵️","🌼","💮","🪻","🌿","🍀"],
     "Family":    ["👨‍👩‍👧‍👦","👪","👵","👴","🧕","👳","🧑‍🍼","👶","🧑‍🤝‍🧑","👨‍👧","👩‍👦","💑"],
     "Fun":       ["🦄","🐙","🦖","🐸","🦊","🐼","🐰","🦋","🐳","🦜","🐝","🐢",
                   "🍍","🌮","🚀","🎸","⭐","🔥","🎉","🏏","🎨","🦚"],
   };
+
+  // Hand-built devotional SVG icons (crisp at any size). Chosen via a
+  // ":key:" token stored as the room name's prefix — same no-schema
+  // trick as emoji, read back by roomFace.
+  const SVG_ICONS = {
+    om: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="12" fill="#fff7ed"/><text x="12" y="18" text-anchor="middle" font-size="17" fill="#c2410c" font-family="'Noto Serif Devanagari','Noto Sans Devanagari','Tiro Devanagari Hindi',serif">ॐ</text></svg>`,
+    diya: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2.4c1.9 2.3 1.9 4.4 0 5.9-1.9-1.5-1.9-3.6 0-5.9z" fill="#fb923c"/><path d="M12 4.3c.9 1.2.9 2.3 0 3.1-.9-.8-.9-1.9 0-3.1z" fill="#fde68a"/><path d="M2.3 13.2h19.4c-.7 3.4-4.8 5.3-9.7 5.3s-9-1.9-9.7-5.3z" fill="#b45309"/><ellipse cx="12" cy="13.2" rx="9.7" ry="2.5" fill="#f59e0b"/></svg>`,
+    lotus: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 3.5c1.8 2.2 2.6 5 0 8.8-2.6-3.8-1.8-6.6 0-8.8z" fill="#f472b6"/><path d="M12 12.3C8.7 9 5 9.2 3.4 10.4c.4 3.3 3.7 5.4 8.6 5.4z" fill="#ec4899"/><path d="M12 12.3c3.3-3.3 7-3.1 8.6-1.9-.4 3.3-3.7 5.4-8.6 5.4z" fill="#ec4899"/><path d="M2.8 12c2.6 4.3 6.4 5.9 9.2 5.9s6.6-1.6 9.2-5.9c-1 4.3-4.7 7-9.2 7s-8.2-2.7-9.2-7z" fill="#db2777"/></svg>`,
+    kalash: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 9.5h7c.6 0 1.8 2.2 1.8 5.5 0 3.6-2.4 5.5-5.3 5.5s-5.3-1.9-5.3-5.5c0-3.3 1.2-5.5 1.1-5.5z" fill="#f59e0b"/><rect x="7.2" y="7.6" width="9.6" height="2.3" rx="1.1" fill="#b45309"/><path d="M12 7.6c-1-2.1-3.2-2.6-3.2-2.6s1.6 1.1 1.7 2.6zM12 7.6c1-2.1 3.2-2.6 3.2-2.6s-1.6 1.1-1.7 2.6z" fill="#22c55e"/><circle cx="12" cy="4.4" r="1.7" fill="#92400e"/></svg>`,
+    trishul: `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="11.1" y="10.5" width="1.8" height="11" rx="0.9" fill="#b45309"/><path d="M5.5 4.5v6M18.5 4.5v6M12 3v7.5" fill="none" stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"/><path d="M12 3l-1.6 2.6M12 3l1.6 2.6M5.5 4.5l-1.4 2.2M5.5 4.5l1.4 2.2M18.5 4.5l-1.4 2.2M18.5 4.5l1.4 2.2" fill="none" stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"/><path d="M5 10.5h14" stroke="#b45309" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  };
+  const DEVOTIONAL_KEYS = ["om","diya","lotus","kalash","trishul"];
+  const SVG_TOKEN_RE = /^:([a-z0-9-]+):\s*/;
+
   // Random fallback pool — pleasant + neutral (flowers + fun).
   const FUN_EMOJI = [...EMOJI_GROUPS.Flowers, ...EMOJI_GROUPS.Fun];
   const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*)\s*/u;
   const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; };
+
+  // Returns { iconHtml, label } — iconHtml is either an emoji character
+  // or trusted inline SVG (from SVG_ICONS), ready to drop into a span.
   function roomFace(room) {
-    if (room.is_default) return { emoji: "🏡", label: room.name };
-    const m = LEADING_EMOJI_RE.exec(room.name || "");
-    if (m) {
-      const rest = (room.name.slice(m[0].length)).trim();
-      return { emoji: m[1], label: rest || room.name };
+    const name = room.name || "";
+    const sv = SVG_TOKEN_RE.exec(name);
+    if (sv && SVG_ICONS[sv[1]]) {
+      const rest = name.slice(sv[0].length).trim();
+      return { iconHtml: SVG_ICONS[sv[1]], label: rest || name };
     }
-    return { emoji: FUN_EMOJI[hashStr(room.id || room.name || "") % FUN_EMOJI.length], label: room.name };
+    if (room.is_default) return { iconHtml: "🏡", label: name };
+    const m = LEADING_EMOJI_RE.exec(name);
+    if (m) {
+      const rest = name.slice(m[0].length).trim();
+      return { iconHtml: m[1], label: rest || name };
+    }
+    return { iconHtml: FUN_EMOJI[hashStr(room.id || name) % FUN_EMOJI.length], label: name };
   }
+  // Strip any leading icon token (svg :key: or emoji) to get the plain
+  // label — used when re-iconing a room so we don't stack prefixes.
+  const stripIcon = (name) =>
+    (name || "").replace(SVG_TOKEN_RE, "").replace(LEADING_EMOJI_RE, "").trim() || (name || "");
 
   function renderRoomChips() {
     roomChips.innerHTML = "";
@@ -841,7 +917,7 @@
       b.dataset.roomId = room.id;
       const unread = (room.id === state.roomId) ? 0 : (room.unread || 0);
       const face = roomFace(room);
-      b.innerHTML = `<span class="room-emoji">${face.emoji}</span>${esc(face.label)}` +
+      b.innerHTML = `<span class="room-emoji">${face.iconHtml}</span>${esc(face.label)}` +
         (unread ? `<span class="room-unread">${unread > 99 ? "99+" : unread}</span>` : "");
       b.addEventListener("click", () => switchRoom(room.id));
       roomChips.appendChild(b);
@@ -852,7 +928,7 @@
     const room = currentRoom();
     if (!room) return;
     const face = roomFace(room);
-    roomTitle.innerHTML = `<span class="room-emoji lg">${face.emoji}</span> ${esc(face.label)}`;
+    roomTitle.innerHTML = `<span class="room-emoji lg">${face.iconHtml}</span> ${esc(face.label)}`;
     const n = room.member_count || 0;
     roomSub.innerHTML = `${n} member${n === 1 ? "" : "s"} · Posting as <b>${esc(VIEWER_NAME)}</b>`;
   }
@@ -1360,32 +1436,58 @@
     credentials: "same-origin",
   });
 
-  let newRoomEmoji = "";   // chosen icon for the room being created
+  let newRoomEmoji = "";   // chosen icon (emoji char or ":key:" token)
 
-  // Render the grouped emoji choices into `container`. onPick(emoji) is
-  // called when one is tapped; `current` pre-selects one.
+  // Render the grouped icon choices into `container`. onPick(value) gets
+  // the chosen value — an emoji character, or a ":key:" token for an SVG
+  // devotional icon. `current` pre-selects a matching tile.
   function buildEmojiPicker(container, current, onPick) {
     container.innerHTML = "";
-    for (const group of Object.keys(EMOJI_GROUPS)) {
+
+    const addGroup = (label, makeTiles) => {
       const lbl = document.createElement("div");
       lbl.className = "emoji-group-label";
-      lbl.textContent = group;
+      lbl.textContent = label;
       container.appendChild(lbl);
       const row = document.createElement("div");
       row.className = "emoji-row";
-      for (const em of EMOJI_GROUPS[group]) {
+      makeTiles(row);
+      container.appendChild(row);
+    };
+
+    // Devotional SVG icons first.
+    addGroup("Devotional", (row) => {
+      for (const key of DEVOTIONAL_KEYS) {
+        const val = ":" + key + ":";
         const b = document.createElement("button");
         b.type = "button";
-        b.className = "emoji-opt" + (em === current ? " sel" : "");
-        b.textContent = em;
+        b.className = "emoji-opt" + (val === current ? " sel" : "");
+        b.innerHTML = SVG_ICONS[key];
         b.addEventListener("click", () => {
           container.querySelectorAll(".emoji-opt").forEach(x => x.classList.remove("sel"));
           b.classList.add("sel");
-          onPick(em);
+          onPick(val);
         });
         row.appendChild(b);
       }
-      container.appendChild(row);
+    });
+
+    // Emoji groups.
+    for (const group of Object.keys(EMOJI_GROUPS)) {
+      addGroup(group, (row) => {
+        for (const em of EMOJI_GROUPS[group]) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "emoji-opt" + (em === current ? " sel" : "");
+          b.textContent = em;
+          b.addEventListener("click", () => {
+            container.querySelectorAll(".emoji-opt").forEach(x => x.classList.remove("sel"));
+            b.classList.add("sel");
+            onPick(em);
+          });
+          row.appendChild(b);
+        }
+      });
     }
   }
 
@@ -1419,10 +1521,11 @@
   document.getElementById("new-room-create").addEventListener("click", async () => {
     const typed = newRoomName.value.trim();
     if (!typed) { toast("Give the room a name", "error"); return; }
-    // The chosen emoji is stored as the name's leading icon (roomFace
-    // reads it back) — strip any emoji the user typed so we don't double
-    // up. No emoji chosen → leave the name as typed (auto-icon kicks in).
-    const label = typed.replace(LEADING_EMOJI_RE, "").trim() || typed;
+    // The chosen icon (emoji or ":key:" devotional token) is stored as
+    // the name's leading prefix (roomFace reads it back). Strip any icon
+    // the user typed so we don't double up. No icon chosen → leave the
+    // name as typed (auto-icon kicks in).
+    const label = stripIcon(typed);
     const name = newRoomEmoji ? (newRoomEmoji + " " + label) : typed;
     const member_ids = Array.from(newRoomMembers.querySelectorAll("input:checked")).map(c => c.value);
     try {
@@ -1510,9 +1613,11 @@
         const wrap = document.getElementById("manage-emoji-wrap");
         if (wrap.style.display !== "none") { wrap.style.display = "none"; return; }
         wrap.style.display = "";
-        const curLabel = (info.name || "").replace(LEADING_EMOJI_RE, "").trim() || info.name;
+        const curLabel = stripIcon(info.name);
+        const sv = SVG_TOKEN_RE.exec(info.name || "");
         const m = LEADING_EMOJI_RE.exec(info.name || "");
-        buildEmojiPicker(document.getElementById("manage-emoji"), m ? m[1] : "", async (em) => {
+        const cur = (sv && SVG_ICONS[sv[1]]) ? (":" + sv[1] + ":") : (m ? m[1] : "");
+        buildEmojiPicker(document.getElementById("manage-emoji"), cur, async (em) => {
           try {
             const r = await jsonPost("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/rename",
                                      { name: em + " " + curLabel });
@@ -1617,6 +1722,32 @@
     if (state.roomTimer) return;
     state.roomTimer = setInterval(() => { if (!document.hidden) loadRooms(); }, 30000);
   }
+
+  // ── Install prompt (Android Chrome) ─────────────────────────────
+  // beforeinstallprompt fires only when the app is installable (not yet
+  // installed, Chromium). We capture it and offer an Install button —
+  // installing is what registers the app in Android's share sheet.
+  let deferredInstall = null;
+  const installTip = document.getElementById("install-tip");
+  if (!localStorage.getItem("dp-install-dismissed")) {
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault();
+      deferredInstall = e;
+      installTip.classList.add("show");
+    });
+  }
+  document.getElementById("install-btn")?.addEventListener("click", async () => {
+    if (!deferredInstall) return;
+    deferredInstall.prompt();
+    try { await deferredInstall.userChoice; } catch (_) {}
+    deferredInstall = null;
+    installTip.classList.remove("show");
+  });
+  document.getElementById("install-dismiss")?.addEventListener("click", () => {
+    installTip.classList.remove("show");
+    try { localStorage.setItem("dp-install-dismissed", "1"); } catch (_) {}
+  });
+  window.addEventListener("appinstalled", () => installTip.classList.remove("show"));
 
   // ── Boot ───────────────────────────────────────────────────────
   if (window.feather) feather.replace();
