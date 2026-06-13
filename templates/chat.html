@@ -261,6 +261,18 @@
   .chat-composer.has-text .chat-collapsible { display: none; }
   .chat-composer.has-text .chat-send { display: inline-flex; }
 
+  /* Rotating proverb bar above the composer — full, wrapping text. */
+  .quote-bar {
+    flex: none;
+    padding: 7px 16px;
+    text-align: center;
+    font-size: 13px; line-height: 1.4; font-style: italic;
+    color: var(--color-text-secondary);
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+  .quote-bar:empty, .quote-bar.hidden { display: none; }
+
   .chat-empty {
     margin: auto; text-align: center;
     color: var(--color-text-secondary); font-size: 14px;
@@ -490,6 +502,21 @@
     .att-img { max-width: 200px; }
   }
 
+  /* Desktop / wide screens: present the chat as a centered panel on a
+     muted backdrop (it looked bare as a white column edge-to-edge). */
+  @media (min-width: 821px) {
+    body { background: var(--color-surface-secondary, #e9edf2); }
+    .chat-shell {
+      background: var(--color-bg);
+      border-left: 1px solid var(--color-border);
+      border-right: 1px solid var(--color-border);
+      box-shadow: 0 0 50px rgba(15, 23, 42, .08);
+    }
+    .chat-header, .room-strip, .chat-filter { border-radius: 0; }
+    .att-img { max-width: 280px; }
+    .msg { max-width: 72%; }
+  }
+
   /* Inline SVG room icons (devotional set) scale with the emoji size. */
   .room-emoji svg { width: 1.15em; height: 1.15em; display: block; border-radius: 50%; }
   .emoji-opt svg  { width: 28px; height: 28px; display: block; }
@@ -623,6 +650,10 @@
       <div>Loading messages…</div>
     </div>
   </div>
+
+  <!-- Rotating proverb / devotional line — full text, wraps so long
+       Thirukkural couplets are readable. Hidden while you're typing. -->
+  <div class="quote-bar" id="quote-bar"></div>
 
   <form class="chat-composer" id="chat-form" autocomplete="off">
     <input type="file" id="chat-file" hidden
@@ -1326,11 +1357,21 @@
     "தீயினாற் சுட்டபுண் உள்ளாறும் ஆறாதே நாவினாற் சுட்ட வடு — a harsh word's scar never heals",
     "எண்ணித் துணிக கருமம் துணிந்தபின் எண்ணுவம் என்பது இழுக்கு — think first, then act",
   ];
+  // The quote lives in a wrapping bar above the composer (so long
+  // Thirukkural couplets are fully readable, not clipped in the input),
+  // and hides while you're typing.
+  const quoteBar = document.getElementById("quote-bar");
   function setRandomQuote() {
-    const q = CHAT_QUOTES[Math.floor(Math.random() * CHAT_QUOTES.length)];
-    input.setAttribute("placeholder", q);
+    quoteBar.textContent = CHAT_QUOTES[Math.floor(Math.random() * CHAT_QUOTES.length)];
+  }
+  function updateQuoteBar() {
+    const hide = document.activeElement === input || input.value.length > 0;
+    quoteBar.classList.toggle("hidden", hide);
   }
   setRandomQuote();
+  updateQuoteBar();
+  input.addEventListener("focus", updateQuoteBar);
+  input.addEventListener("blur", updateQuoteBar);
   setInterval(() => {
     // Only rotate when the box is empty, unfocused, and the tab is
     // visible — never disturb someone mid-thought.
