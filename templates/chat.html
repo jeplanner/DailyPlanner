@@ -1421,12 +1421,14 @@
       input.focus();
     }
   });
-  // Tapping the chatbox while the emoji panel is open collapses it (and
-  // the tap itself re-opens the keyboard). pointerdown fires on a real
-  // user tap but NOT on the programmatic focus from sending, so this
-  // doesn't fight the keyboard-stays-up behaviour.
-  input.addEventListener("pointerdown", () => {
-    if (emojiPanel.classList.contains("open")) closeEmojiPanel();
+  // Tap ANYWHERE outside the emoji panel (chatbox, a message, the room
+  // list…) collapses it — WhatsApp-style. We listen on the document so
+  // it works no matter where the tap lands; taps inside the panel or on
+  // the emoji toggle are ignored so adding emoji / toggling still works.
+  document.addEventListener("pointerdown", (e) => {
+    if (!emojiPanel.classList.contains("open")) return;
+    if (emojiPanel.contains(e.target) || emojiBtn.contains(e.target)) return;
+    closeEmojiPanel();
   });
 
   // Filter chips → drive .chat-stream[data-filter] which the CSS uses
@@ -1482,12 +1484,36 @@
     cameraInput.value = "";
   });
 
+  // Shrink big photos before upload — phone pics are often 3-8 MB at
+  // 4000px, which is slow to upload AND slow for everyone to preview.
+  // Cap to 1600px / re-encode JPEG so they fly. Non-images, GIFs, and
+  // already-small images pass through untouched.
+  async function maybeDownscale(file) {
+    if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const MAX = 1600;
+      const longest = Math.max(bitmap.width, bitmap.height);
+      if (longest <= MAX && file.size < 600 * 1024) { bitmap.close && bitmap.close(); return file; }
+      const scale = Math.min(1, MAX / longest);
+      const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, w, h);
+      bitmap.close && bitmap.close();
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.82));
+      if (!blob || blob.size >= file.size) return file;   // no real gain
+      const base = (file.name || "photo").replace(/\.[^.]+$/, "");
+      return new File([blob], base + ".jpg", { type: "image/jpeg" });
+    } catch (_) { return file; }   // decode failed (e.g. HEIC) — send original
+  }
+
   async function uploadFile(f) {
-    if (f.size > maxMb * 1024 * 1024) {
+    const isImage = (f.type || "").startsWith("image/");
+    if (!isImage && f.size > maxMb * 1024 * 1024) {
       toast(`File too large (max ${maxMb} MB)`, "error");
       return;
     }
-    const isImage = (f.type || "").startsWith("image/");
     // Local preview URL → show the picture INSTANTLY (WhatsApp-style),
     // so the user isn't staring at nothing while it uploads to Drive.
     const localUrl = isImage ? URL.createObjectURL(f) : null;
@@ -1516,8 +1542,18 @@
     input.value = "";
     updateComposer();
 
+    // Downscale photos before sending (keeps the optimistic preview at
+    // full local quality, but uploads/serves a much smaller image).
+    const up = isImage ? await maybeDownscale(f) : f;
+    if (up.size > maxMb * 1024 * 1024) {
+      tempBubble?.remove();
+      state.rendered.delete(tempId);
+      toast(`File too large (max ${maxMb} MB)`, "error");
+      return;
+    }
+
     const fd = new FormData();
-    fd.append("file", f);
+    fd.append("file", up);
     fd.append("room_id", state.roomId);
     if (caption) fd.append("body", caption);
     try {
