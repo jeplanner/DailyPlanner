@@ -1312,13 +1312,33 @@
     const pos = s + text.length;
     try { el.selectionStart = el.selectionEnd = pos; } catch (_) {}
     updateComposer();
-    el.focus();
+    // NB: don't focus the input here — that would pop the keyboard up
+    // over the emoji panel. The panel stays open so you can add several
+    // emoji; tapping the chatbox closes it (handler below).
+  }
+  function closeEmojiPanel() {
+    emojiPanel.classList.remove("open");
+    emojiBtn.classList.remove("is-active");
   }
   emojiBtn?.addEventListener("click", () => {
     buildMsgEmoji();
     const open = emojiPanel.classList.toggle("open");
     emojiBtn.classList.toggle("is-active", open);
-    if (open && state.stickToBottom) scrollToBottom(false);
+    if (open) {
+      // WhatsApp behaviour: opening the emoji panel drops the keyboard so
+      // the panel has room; closing it brings the keyboard back.
+      input.blur();
+      if (state.stickToBottom) scrollToBottom(false);
+    } else {
+      input.focus();
+    }
+  });
+  // Tapping the chatbox while the emoji panel is open collapses it (and
+  // the tap itself re-opens the keyboard). pointerdown fires on a real
+  // user tap but NOT on the programmatic focus from sending, so this
+  // doesn't fight the keyboard-stays-up behaviour.
+  input.addEventListener("pointerdown", () => {
+    if (emojiPanel.classList.contains("open")) closeEmojiPanel();
   });
 
   // Filter chips → drive .chat-stream[data-filter] which the CSS uses
