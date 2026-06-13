@@ -119,6 +119,13 @@
   <p class="muted">No connected Google accounts.</p>
   {% endif %}
 
+  <!-- ── Backup ── -->
+  <h2>Backup</h2>
+  <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <button class="qb-btn-sm" id="backup-btn">⬇ Back up all data to Google Sheet</button>
+    <span class="muted" id="backup-status">Creates a dated multi-tab sheet in your Drive (dailyplanner/backups).</span>
+  </div>
+
   <!-- ── User accounts ── -->
   <h2>User accounts</h2>
   <table>
@@ -178,6 +185,29 @@
 
 <script>
 if (window.feather) feather.replace();
+
+// Backup → Google Sheet.
+document.getElementById("backup-btn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("backup-btn");
+  const status = document.getElementById("backup-status");
+  btn.disabled = true;
+  status.textContent = "Building backup sheet… (this can take a few seconds)";
+  try {
+    const r = await fetch("/api/admin/backup", { method: "POST", credentials: "same-origin" });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (data.connect_url) { status.innerHTML = 'Connect Google Drive first. <a href="' + data.connect_url + '">Connect →</a>'; }
+      else status.textContent = data.error || "Backup failed.";
+      btn.disabled = false;
+      return;
+    }
+    status.innerHTML = '✅ Backup ready (' + (data.tabs || []).join(', ') + '): <a href="' + data.url + '" target="_blank" rel="noopener">open “' + data.title + '” →</a>';
+  } catch (e) {
+    status.textContent = "Backup failed: " + (e.message || e);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // User account disable/enable.
 document.querySelectorAll("[data-act='disable'], [data-act='enable']").forEach(btn => {

@@ -19,11 +19,12 @@ Access is gated to an admin allowlist: ADMIN_EMAILS (comma-separated)
 if set, otherwise the chat family allowlist (CHAT_USER_EMAILS). Empty
 ⇒ nobody, and the route 404s for non-admins so it's invisible.
 """
+import json
 import logging
 import os
 
 import requests
-from flask import Blueprint, abort, jsonify, render_template, session
+from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
 from flask_login import current_user
 
 from auth import login_required
@@ -254,3 +255,133 @@ def enable_user(user_id):
         logger.exception("enable user failed: %s", e)
         return jsonify({"error": "Couldn't enable account"}), 502
     return jsonify({"ok": True})
+
+
+# ── Backup → Google Sheet ────────────────────────────────────────
+
+# Tables dumped into the backup, one tab each. (label, table). Each is
+# fetched with select=* and wrapped in try/except, so a missing table
+# is skipped rather than failing the whole backup.
+BACKUP_TABLES = [
+    ("Expenses", "expenses"),
+    ("Inbox", "inbox_links"),
+    ("QuickBucket", "quick_bucket"),
+    ("Chat", "messages"),
+    ("Checklist", "checklist_items"),
+    ("Events", "daily_events"),
+    ("Notes", "notes"),
+    ("Habits", "habit_logs"),
+]
+_BACKUP_ROW_CAP = 20000
+_BACKUP_CELL_CAP = 5000
+
+
+def _cell(v):
+    if v is None:
+        return ""
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, ensure_ascii=False)[:_BACKUP_CELL_CAP]
+    return str(v)[:_BACKUP_CELL_CAP]
+
+
+def _ensure_drive_subfolder(drive, name, parent=None):
+    from googleapiclient.errors import HttpError
+    q = (f"mimeType='application/vnd.google-apps.folder' and name='{name}' and trashed=false")
+    if parent:
+        q += f" and '{parent}' in parents"
+    try:
+        found = drive.files().list(q=q, fields="files(id)", pageSize=1).execute().get("files", [])
+    except HttpError:
+        found = []
+    if found:
+        return found[0]["id"]
+    body = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    if parent:
+        body["parents"] = [parent]
+    return drive.files().create(body=body, fields="id").execute()["id"]
+
+
+@admin_bp.route("/api/admin/backup", methods=["POST"])
+@login_required
+def backup():
+    """Dump the app's data into a single multi-tab Google Sheet saved to
+    Drive under  dailyplanner/backups . Uses the drive.file scope (which
+    also authorises the Sheets API on files this app creates), so no new
+    permission is needed."""
+    _gate()
+    uid = session.get("user_id")
+    try:
+        from routes.knowledgebase import (
+            _load_token_row, _credentials_from_row, _refresh_if_needed,
+            _build_drive, _row_has_drive_scope,
+        )
+        from googleapiclient.discovery import build
+        from google.auth.exceptions import RefreshError
+    except Exception as e:
+        logger.exception("backup imports failed: %s", e)
+        return jsonify({"error": "Backup unavailable"}), 500
+
+    trow = _load_token_row(uid)
+    if not trow or not trow.get("refresh_token") or not _row_has_drive_scope(trow):
+        return jsonify({"error": "not_connected", "connect_url": url_for("events.google_login")}), 401
+    try:
+        creds = _refresh_if_needed(_credentials_from_row(trow), uid)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed", "connect_url": url_for("events.google_login")}), 401
+
+    # Gather data → one (label, values-grid) per non-empty table.
+    payload = []
+    for label, table in BACKUP_TABLES:
+        try:
+            rows = get(table, {"select": "*", "limit": str(_BACKUP_ROW_CAP)}) or []
+        except Exception:
+            continue
+        if not rows:
+            continue
+        cols, seen = [], set()
+        for r in rows:
+            for k in r.keys():
+                if k not in seen:
+                    seen.add(k)
+                    cols.append(k)
+        grid = [cols] + [[_cell(r.get(c)) for c in cols] for r in rows]
+        payload.append((label, grid))
+
+    if not payload:
+        return jsonify({"error": "No data found to back up"}), 400
+
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H%M")
+    title = f"DailyPlanner Backup {stamp}"
+
+    try:
+        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        ss = sheets.spreadsheets().create(body={
+            "properties": {"title": title},
+            "sheets": [{"properties": {"title": lbl}} for lbl, _ in payload],
+        }).execute()
+        sid = ss["spreadsheetId"]
+        sheets.spreadsheets().values().batchUpdate(
+            spreadsheetId=sid,
+            body={"valueInputOption": "RAW",
+                  "data": [{"range": f"'{lbl}'!A1", "values": grid} for lbl, grid in payload]},
+        ).execute()
+
+        # Move it into dailyplanner/backups.
+        drive = _build_drive(creds)
+        parent = _ensure_drive_subfolder(drive, "dailyplanner")
+        backups = _ensure_drive_subfolder(drive, "backups", parent)
+        meta = drive.files().get(fileId=sid, fields="parents").execute()
+        drive.files().update(
+            fileId=sid, addParents=backups,
+            removeParents=",".join(meta.get("parents", [])), fields="id",
+        ).execute()
+    except Exception as e:
+        logger.exception("backup sheet build failed: %s", e)
+        return jsonify({"error": "Couldn't create the backup sheet. Try reconnecting Google."}), 502
+
+    return jsonify({
+        "ok": True, "title": title,
+        "url": f"https://docs.google.com/spreadsheets/d/{sid}/edit",
+        "tabs": [lbl for lbl, _ in payload],
+    })
