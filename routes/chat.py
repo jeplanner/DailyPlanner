@@ -123,6 +123,22 @@ def _gate():
         abort(404)
 
 
+def _is_app_admin(user=None):
+    """True for the app's admin(s). The Family room has no owner, so
+    only admins may add/remove its members. ADMIN_EMAILS if set,
+    otherwise REGISTRATION_ALLOWLIST (the people who can create accounts
+    — effectively the app owner). Falls back to nobody if neither is
+    set, so the Family room stays locked rather than open-to-all."""
+    user = user or current_user
+    email = (getattr(user, "email", "") or "").lower()
+    if not email:
+        return False
+    raw = (os.environ.get("ADMIN_EMAILS") or "").strip() or \
+          (os.environ.get("REGISTRATION_ALLOWLIST") or "").strip()
+    admins = {e.strip().lower() for e in raw.split(",") if e.strip()}
+    return email in admins
+
+
 def _allowed_user_ids():
     """Resolve allowlisted emails to user_ids via the users table.
     Used to fan push notifications out to everyone in the room.
@@ -183,7 +199,12 @@ def _ensure_default_membership(user_id):
     """Auto-join the viewer to the permanent Family room. New allowlisted
     users get added on first chat load; a user who somehow has a left
     row gets re-joined (the default room is mandatory). Returns the
-    default room id, or None if the rooms migration hasn't run."""
+    default room id, or None if the rooms migration hasn't run.
+
+    A *first-time* user (no membership row at all) is added. A user with
+    an existing row — even a soft-deleted one — is left untouched: a
+    deleted row means an admin intentionally removed them from the
+    Family room, so we must NOT resurrect it on their next load."""
     try:
         rid = _default_room_id()
     except Exception as e:
@@ -196,12 +217,14 @@ def _ensure_default_membership(user_id):
         "room_id": f"eq.{rid}", "user_id": f"eq.{user_id}",
         "select": "id,deleted_at", "limit": "1",
     }) or []
+    if rows:
+        # Already has a row (active or intentionally-removed) — don't
+        # touch it. Returns the room id either way; downstream membership
+        # checks use the active flag, so a removed user still gets None
+        # from _membership and won't see the room.
+        return rid
     try:
-        if not rows:
-            post("chat_room_members", {"room_id": rid, "user_id": user_id})
-        elif rows[0].get("deleted_at"):
-            update("chat_room_members", params={"id": f"eq.{rows[0]['id']}"},
-                   json={"deleted_at": None})
+        post("chat_room_members", {"room_id": rid, "user_id": user_id})
     except Exception:
         logger.exception("chat rooms: auto-join default room failed for %s", user_id)
     return rid
@@ -502,22 +525,23 @@ def list_rooms():
         "select": "id,name,created_by,is_default,created_at",
     }) or []
 
+    # Two batched queries cover unread + latest-activity + member counts
+    # for every room, instead of three queries per room.
+    stats = _room_stats(viewer_id, memberships)
+    counts = _member_counts(room_ids)
+
     out = []
     for r in rooms:
         rid = r["id"]
-        lm = get("messages", {
-            "room_id": f"eq.{rid}", "deleted_at": "is.null",
-            "select": "created_at,body", "order": "created_at.desc", "limit": "1",
-        }) or []
+        s = stats.get(rid, {})
         out.append({
             "id": rid,
             "name": r.get("name") or "Room",
             "is_default": bool(r.get("is_default")),
             "is_owner": str(r.get("created_by")) == str(viewer_id),
-            "member_count": len(_room_member_ids(rid)),
-            "unread": min(_unread_for_room(viewer_id, rid, last_read.get(rid)), UNREAD_CAP),
-            "last_message_at": (lm[0].get("created_at") if lm else r.get("created_at")),
-            "last_preview": ((lm[0].get("body") if lm else "") or "")[:80],
+            "member_count": counts.get(rid, 0),
+            "unread": min(s.get("unread", 0), UNREAD_CAP),
+            "last_message_at": s.get("latest") or r.get("created_at"),
         })
     # Most-recent-activity first, then pull the default room to the top
     # (stable sort keeps the recency order within each group).
@@ -582,16 +606,24 @@ def get_room_members(room_id):
     ids = [r["user_id"] for r in rows if r.get("user_id")]
     info = _users_by_ids(ids)
     owner = str(room.get("created_by"))
+    me = str(session["user_id"])
     members = [{
         "user_id": uid,
         "display_name": info.get(uid, {}).get("display_name", "Member"),
         "email": info.get(uid, {}).get("email", ""),
         "is_owner": str(uid) == owner,
+        "is_self": str(uid) == me,
     } for uid in ids]
+    is_owner = owner == str(session["user_id"])
+    is_default = bool(room.get("is_default"))
+    # Who can add/remove members: the owner of a user room, or an app
+    # admin for the (owner-less) Family room.
+    can_manage = is_owner or (is_default and _is_app_admin())
     return jsonify({
         "members": members,
-        "is_owner": owner == str(session["user_id"]),
-        "is_default": bool(room.get("is_default")),
+        "is_owner": is_owner,
+        "is_default": is_default,
+        "can_manage": can_manage,
         "name": room.get("name"),
     })
 
@@ -628,17 +660,19 @@ def add_room_member(room_id):
 @chat_bp.route("/api/chat/rooms/<room_id>/members/<member_id>", methods=["DELETE"])
 @login_required
 def remove_room_member(room_id, member_id):
-    """Remove a member, or leave (member_id == self). The owner can
-    remove anyone; a non-owner can only remove themselves. The default
-    Family room is mandatory — nobody can leave or be removed from it."""
+    """Remove a member, or leave (member_id == self).
+
+    User rooms: the owner can remove anyone; a non-owner can only remove
+    themselves (leave).
+    Family room: nobody can leave it (it's mandatory), but an app admin
+    can remove *other* people — and that removal sticks, because
+    _ensure_default_membership no longer resurrects a removed row."""
     _gate()
     viewer_id = session["user_id"]
     _require_membership(room_id)
     room = _get_room(room_id)
     if not room:
         abort(404)
-    if room.get("is_default"):
-        return jsonify({"error": "You can't leave the Family room"}), 400
 
     # "self"/"me" sentinels mean the current user (the client doesn't
     # carry its own user_id) — resolve before the ownership checks.
@@ -647,8 +681,15 @@ def remove_room_member(room_id, member_id):
 
     is_owner = str(room.get("created_by")) == str(viewer_id)
     removing_self = str(member_id) == str(viewer_id)
-    if not removing_self and not is_owner:
-        return jsonify({"error": "Only the room owner can remove others"}), 403
+
+    if room.get("is_default"):
+        if removing_self:
+            return jsonify({"error": "You can't leave the Family room"}), 400
+        if not _is_app_admin():
+            return jsonify({"error": "Only an admin can remove members from the Family room"}), 403
+    else:
+        if not removing_self and not is_owner:
+            return jsonify({"error": "Only the room owner can remove others"}), 403
 
     target = get("chat_room_members", {
         "room_id": f"eq.{room_id}", "user_id": f"eq.{member_id}",
@@ -1264,22 +1305,66 @@ def _fanout_push(sender_id, sender_name, body, room_id):
 UNREAD_CAP = 99
 
 
-def _unread_for_room(viewer_id, room_id, last_read):
-    """Count (capped) unread messages in one room for the viewer."""
-    params = {
-        "deleted_at": "is.null",
-        "room_id": f"eq.{room_id}",
-        "user_id": f"neq.{viewer_id}",
-        "select": "id",
-        "limit": str(UNREAD_CAP + 1),
-    }
-    if last_read:
-        params["created_at"] = f"gt.{last_read}"
+def _room_stats(viewer_id, memberships):
+    """Per-room unread count + latest-message timestamp for ALL the
+    viewer's rooms in ONE query (was N queries — one per room — which is
+    what made the chat/room list feel slow). Scans the most recent
+    messages across the viewer's rooms (bounded) and buckets them.
+
+    Returns {room_id: {"unread": int, "latest": iso|None}}.
+
+    Timestamps are compared lexicographically on the ISO-8601 strings,
+    which is safe because created_at and last_read_at both come back from
+    Postgres in the same '...+00:00' format."""
+    room_ids = [m["room_id"] for m in memberships if m.get("room_id")]
+    stats = {rid: {"unread": 0, "latest": None} for rid in room_ids}
+    if not room_ids:
+        return stats
+    last_read = {m["room_id"]: m.get("last_read_at") for m in memberships}
     try:
-        return len(get("messages", params) or [])
+        rows = get("messages", {
+            "room_id": f"in.({','.join(room_ids)})",
+            "deleted_at": "is.null",
+            "select": "room_id,user_id,created_at",
+            "order": "created_at.desc",
+            # Bounded scan — plenty for badges (capped at 99) and for
+            # finding each room's latest message for sort order.
+            "limit": "500",
+        }) or []
     except Exception as e:
-        logger.warning("chat unread: room %s query failed (%s)", room_id, e)
-        return 0
+        logger.warning("chat room stats query failed: %s", e)
+        return stats
+    for r in rows:
+        rid = r.get("room_id")
+        st = stats.get(rid)
+        if st is None:
+            continue
+        ts = r.get("created_at") or ""
+        if st["latest"] is None:        # rows are desc → first seen = latest
+            st["latest"] = ts
+        lr = last_read.get(rid)
+        if str(r.get("user_id")) != str(viewer_id) and (not lr or ts > lr):
+            if st["unread"] <= UNREAD_CAP:
+                st["unread"] += 1
+    return stats
+
+
+def _member_counts(room_ids):
+    """{room_id: active member count} in one query (was one query per
+    room)."""
+    if not room_ids:
+        return {}
+    rows = get("chat_room_members", {
+        "room_id": f"in.({','.join(room_ids)})",
+        "deleted_at": "is.null",
+        "select": "room_id",
+    }) or []
+    counts = {}
+    for r in rows:
+        rid = r.get("room_id")
+        if rid:
+            counts[rid] = counts.get(rid, 0) + 1
+    return counts
 
 
 @chat_bp.route("/api/chat/unread-count", methods=["GET"])
@@ -1306,11 +1391,8 @@ def unread_count():
                        "(run MIGRATION_CHAT_ROOMS.sql?): %s", e)
         return jsonify({"count": 0})
 
-    total = 0
-    for m in memberships:
-        total += _unread_for_room(viewer_id, m.get("room_id"), m.get("last_read_at"))
-        if total > UNREAD_CAP:
-            break
+    stats = _room_stats(viewer_id, memberships)
+    total = sum(s["unread"] for s in stats.values())
 
     return jsonify({
         "count": min(total, UNREAD_CAP),

@@ -186,6 +186,7 @@ def create_app():
     csrf.exempt(knowledgebase_bp)
     csrf.exempt(chat_bp)
     csrf.exempt(family_tasks_bp)
+    csrf.exempt(admin_bp)
 
     # ── PWA: serve SW + manifest from the site root so the service
     # worker's scope is "/" (otherwise it's confined to /static/...).

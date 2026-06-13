@@ -746,9 +746,12 @@
       bubble.querySelector('[data-act="del"]')?.addEventListener("click", () => deleteMessage(m.id));
       bubble.querySelector('[data-act="edit"]')?.addEventListener("click", () => editMessage(m.id, bubble));
     }
-    // Render the file-chip icon if this bubble has a non-image attachment.
-    if (att && att.kind !== "image" && window.feather) feather.replace();
+    // NOTE: feather icons (file-chips) are rendered in a single batch by
+    // the caller after appending a run of messages — calling
+    // feather.replace() here (per message) re-scanned the whole DOM for
+    // every file message and made big rooms load slowly.
   }
+  const featherReplace = () => { if (window.feather) feather.replace(); };
 
   function clearLoadingHint() {
     document.getElementById("chat-empty")?.remove();
@@ -844,6 +847,7 @@
       if (!r.ok) throw new Error(data.error || r.status);
       clearLoadingHint();
       for (const m of data.messages) appendMessage(m);
+      featherReplace();   // one batch render for all file-chip icons
       state.since = data.now;
       scrollToBottom(false);
       renderEmptyState();
@@ -894,6 +898,7 @@
       const wasAtBottom = state.stickToBottom;
       document.getElementById("chat-empty")?.remove();
       for (const m of data.messages) appendMessage(m);
+      featherReplace();   // batch-render any new file-chip icons
       if (wasAtBottom) scrollToBottom(true);
       // New messages while the chat page is in front = the user has
       // already seen them. Bump the read cursor so the badge clears
@@ -1334,7 +1339,8 @@
     for (const m of info.members) {
       const row = document.createElement("div");
       row.className = "member-list-row";
-      const canRemove = info.is_owner && !m.is_owner && !info.is_default;
+      // Owner/admin can remove anyone but themselves and the owner.
+      const canRemove = info.can_manage && !m.is_owner && !m.is_self;
       row.innerHTML = `
         <span><span class="ml-name">${esc(m.display_name)}</span>
           ${m.is_owner ? `<span class="ml-owner"> · owner</span>` : ""}
@@ -1345,11 +1351,13 @@
     manageMembers.querySelectorAll(".ml-remove").forEach(btn =>
       btn.addEventListener("click", () => removeMember(btn.dataset.uid)));
 
-    // Add-member picker — family users not already in the room.
+    // Add-member picker — family users not already in the room. Shown
+    // to anyone who can manage the room (room owner, or admin for the
+    // Family room).
     const fam = await getFamily();
     const addable = fam.filter(u => !memberIds.has(u.user_id));
     document.getElementById("manage-add-wrap").style.display =
-      (info.is_default ? "none" : (addable.length ? "" : "none"));
+      (info.can_manage && addable.length ? "" : "none");
     manageAddPick.innerHTML = "";
     for (const u of addable) {
       const row = document.createElement("div");

@@ -46,6 +46,16 @@
            border-radius: 12px; padding: 12px 15px; font-size: 13.5px; margin: 14px 0; }
   html.dark .alert { background: #2a210a; border-color: #5a4708; color: #fcd34d; }
   .muted { color: var(--color-text-secondary); font-size: 12px; }
+  .qb-btn-sm {
+    font: inherit; font-size: 12px; font-weight: 600;
+    padding: 5px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text);
+  }
+  .qb-btn-sm:hover { background: var(--color-surface-secondary, #f1f5f9); }
+  .qb-btn-sm.danger { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+  .qb-btn-sm.danger:hover { background: #fee2e2; }
+  .qb-btn-sm:disabled { opacity: .5; cursor: not-allowed; }
 </style>
 {% include "_pwa_head.html" %}
 </head>
@@ -109,6 +119,33 @@
   <p class="muted">No connected Google accounts.</p>
   {% endif %}
 
+  <!-- ── User accounts ── -->
+  <h2>User accounts</h2>
+  <table>
+    <thead><tr><th>Account</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for u in data.users %}
+      <tr data-uid="{{ u.id }}">
+        <td>{{ u.display_name }}<div class="muted">{{ u.email }}</div></td>
+        <td class="u-status">
+          {% if u.is_active %}<span class="pill ok">active</span>
+          {% else %}<span class="pill bad">disabled</span>{% endif %}
+        </td>
+        <td>
+          {% if u.id == data.viewer_id %}
+            <span class="muted">you</span>
+          {% elif u.is_active %}
+            <button class="qb-btn-sm danger" data-act="disable" data-uid="{{ u.id }}">Disable</button>
+          {% else %}
+            <button class="qb-btn-sm" data-act="enable" data-uid="{{ u.id }}">Enable</button>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:8px">Disabling cuts the account's access immediately — they can't log in and any active session is dropped on their next request. Re-enable any time. Their data and chat history are untouched.</p>
+
   <!-- ── Migration health ── -->
   <h2>Migration health</h2>
   <table>
@@ -139,6 +176,37 @@
   </table>
 </div>
 
-<script>if (window.feather) feather.replace();</script>
+<script>
+if (window.feather) feather.replace();
+
+// User account disable/enable.
+document.querySelectorAll("[data-act='disable'], [data-act='enable']").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const act = btn.dataset.act, uid = btn.dataset.uid;
+    if (act === "disable" && !confirm("Disable this account? They'll be logged out and can't sign in until re-enabled.")) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/api/admin/users/${encodeURIComponent(uid)}/${act}`, {
+        method: "POST", credentials: "same-origin",
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || r.status);
+      // Reflect the new state in the row without a full reload.
+      const row = btn.closest("tr");
+      const active = (act === "enable");
+      row.querySelector(".u-status").innerHTML = active
+        ? '<span class="pill ok">active</span>'
+        : '<span class="pill bad">disabled</span>';
+      btn.textContent = active ? "Disable" : "Enable";
+      btn.dataset.act = active ? "disable" : "enable";
+      btn.classList.toggle("danger", active);
+      btn.disabled = false;
+    } catch (e) {
+      alert("Failed: " + (e.message || e));
+      btn.disabled = false;
+    }
+  });
+});
+</script>
 </body>
 </html>

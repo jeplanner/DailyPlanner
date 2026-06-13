@@ -27,7 +27,7 @@ from flask import Blueprint, abort, jsonify, render_template, session
 from flask_login import current_user
 
 from auth import login_required
-from supabase_client import SUPABASE_KEY, SUPABASE_URL
+from supabase_client import SUPABASE_KEY, SUPABASE_URL, get, update
 
 logger = logging.getLogger("daily_plan")
 
@@ -184,7 +184,28 @@ def _gather():
         "migrations": migrations,
         "meters": meters,
         "project_ref": ref,
+        "users": _list_users(),
+        "viewer_id": session.get("user_id"),
     }
+
+
+def _list_users():
+    """All accounts for the admin user-management table."""
+    try:
+        rows = get("users", {
+            "select": "id,email,display_name,is_active,created_at",
+            "order": "created_at.asc",
+        }) or []
+    except Exception as e:
+        logger.warning("admin user list failed: %s", e)
+        return []
+    return [{
+        "id": r.get("id"),
+        "email": r.get("email"),
+        "display_name": r.get("display_name") or (r.get("email") or "").split("@", 1)[0],
+        "is_active": bool(r.get("is_active", True)),
+        "created_at": r.get("created_at"),
+    } for r in rows]
 
 
 @admin_bp.route("/admin/usage", methods=["GET"])
@@ -199,3 +220,37 @@ def usage_page():
 def usage_api():
     _gate()
     return jsonify(_gather())
+
+
+def _set_user_active(user_id, active):
+    """Flip a user's is_active. Disabling cuts existing sessions too:
+    the Flask-Login user loader (User.get) only loads is_active=true
+    rows, so the next request from a disabled user resolves to anonymous
+    and bounces to /login."""
+    update("users", params={"id": f"eq.{user_id}"}, json={"is_active": active})
+
+
+@admin_bp.route("/api/admin/users/<user_id>/disable", methods=["POST"])
+@login_required
+def disable_user(user_id):
+    _gate()
+    if str(user_id) == str(session.get("user_id")):
+        return jsonify({"error": "You can't disable your own account."}), 400
+    try:
+        _set_user_active(user_id, False)
+    except Exception as e:
+        logger.exception("disable user failed: %s", e)
+        return jsonify({"error": "Couldn't disable account"}), 502
+    return jsonify({"ok": True})
+
+
+@admin_bp.route("/api/admin/users/<user_id>/enable", methods=["POST"])
+@login_required
+def enable_user(user_id):
+    _gate()
+    try:
+        _set_user_active(user_id, True)
+    except Exception as e:
+        logger.exception("enable user failed: %s", e)
+        return jsonify({"error": "Couldn't enable account"}), 502
+    return jsonify({"ok": True})

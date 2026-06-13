@@ -59,7 +59,15 @@ def login():
                                    email=email)
 
         user = User.get_by_email(email)
-        if user and user.check_password(password):
+        # Disabled accounts can't log in. (Even without this, the
+        # Flask-Login user loader filters is_active=true and would bounce
+        # them on the next request — but blocking here is clearer.)
+        if user and not user.is_active and user.check_password(password):
+            logger.info("Login blocked for disabled account: %s", email)
+            return render_template("login.html",
+                                   error="This account has been disabled.",
+                                   email=email)
+        if user and user.is_active and user.check_password(password):
             login_user(user, remember=True)
             session.permanent = True
             # Cache the user's preferred timezone in the session so the
