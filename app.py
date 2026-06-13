@@ -152,6 +152,17 @@ def create_app():
         except Exception:
             return {"chat_enabled": False}
 
+    # Admin flag — shows the "Usage & Backup" nav link only to admins.
+    @app.context_processor
+    def _inject_admin_flag():
+        try:
+            from flask_login import current_user
+            from routes.admin import _admin_emails
+            email = (getattr(current_user, "email", "") or "").lower()
+            return {"admin_enabled": bool(email) and email in _admin_emails()}
+        except Exception:
+            return {"admin_enabled": False}
+
     # ── Exempt JSON API blueprints from CSRF ────────────
     # These use session auth + @login_required, not form tokens
     csrf.exempt(events_bp)

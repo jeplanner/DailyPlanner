@@ -734,6 +734,13 @@ html.dark .section-title{color:#f1f5f9;}
         Expenses
       </a>
 
+      {% if admin_enabled %}
+      <a href="/admin/usage" data-match="^/admin" title="Usage, backup &amp; restore (admin)">
+        <i data-feather="database"></i>
+        Usage &amp; Backup
+      </a>
+      {% endif %}
+
       <a href="/calendar" data-match="^/calendar" title="Calendar — day and week view">
         <i data-feather="calendar"></i>
         Calendar
