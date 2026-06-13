@@ -1423,11 +1423,12 @@
     .then((r) => (r.ok ? r.json() : []))
     .then((arr) => { if (Array.isArray(arr) && arr.length) CHAT_QUOTES.push(...arr); })
     .catch(() => {});
+  // Each proverb stays for 5 minutes before the next one shows.
   setInterval(() => {
     if (!input.value && document.activeElement !== input && !document.hidden) {
       setRandomQuote();
     }
-  }, 8000);
+  }, 5 * 60 * 1000);
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1442,7 +1443,6 @@
     if (!body) return;
     input.value = "";
     updateComposer();
-    setRandomQuote();   // fresh line for the next message
     sendMessage(body);
     // Keep the keyboard up (WhatsApp-style): re-focus the input in the
     // same gesture so the soft keyboard doesn't close + reopen (which
