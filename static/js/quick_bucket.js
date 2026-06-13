@@ -29,6 +29,7 @@
   const COUNTED_DOWN = new Set([
     "5m","15m","30m","45m",
     "1h","2h","3h","4h","5h","6h","7h","8h",
+    "at",  // pinned absolute time (from an "@1pm today" token)
   ]);
   // Tighter cadence — with 5/15/30/45m options, a 30s tick is too slow
   // to feel "live". 10s keeps the label moving without burning power.
@@ -218,6 +219,15 @@
   const toggleLabel = (it) => {
     if (it.time_bucket === "now")    return BUCKET_LABEL.now;
     if (it.time_bucket === "future") return BUCKET_LABEL.future;
+    // Pinned absolute time: show the clock time (e.g. "1:00 PM"), or
+    // OVERDUE once it's passed.
+    if (it.time_bucket === "at") {
+      const m = minutesUntil(it.due_at);
+      if (m != null && m <= 0) return "OVERDUE";
+      const d = new Date(it.due_at);
+      if (Number.isNaN(d.getTime())) return "⏰";
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
     const mins = minutesUntil(it.due_at);
     if (mins == null) return BUCKET_LABEL[it.time_bucket] || "?";
     if (mins <= 0) return "OVERDUE";
@@ -303,6 +313,16 @@
       // don't double-render in the category groups below.
       if (isInTop5(it)) return;
       if (it.is_done)              groups.done.push(it);
+      else if (it.time_bucket === "at") {
+        // Pinned time → Today if it falls on the local calendar day,
+        // otherwise Future.
+        const d = it.due_at ? new Date(it.due_at) : null;
+        const n = new Date();
+        const sameDay = d && !Number.isNaN(d.getTime()) &&
+          d.getFullYear() === n.getFullYear() &&
+          d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+        (sameDay ? groups.today : groups.future).push(it);
+      }
       else if (it.time_bucket === "now")    groups.now.push(it);
       else if (it.time_bucket === "future") groups.future.push(it);
       else                                  groups.today.push(it);  // 1h..8h
@@ -320,7 +340,8 @@
   };
 
   const renderRow = (it) => {
-    const tb = BUCKETS.includes(it.time_bucket) ? it.time_bucket : "now";
+    const tb = (it.time_bucket === "at") ? "at"
+             : (BUCKETS.includes(it.time_bucket) ? it.time_bucket : "now");
     const overdue = !it.is_done && isOverdue(it);
     const cls = ["qb-row"];
     if (overdue) cls.push("is-overdue");
@@ -1268,15 +1289,22 @@
   const addItem = async (text, opts = {}) => {
     text = (text || "").trim();
     if (!text) return;
+    // A clock-time token like "@1pm today" / "@13:00" pins an ABSOLUTE
+    // time and is resolved server-side (it sets due_at + an "at" bucket
+    // and strips the token). Detect it here and skip the relative
+    // parsers so they don't eat the day word ("tomorrow" → future) or
+    // the raw text before the backend sees it.
+    const hasClockAt = /@\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(text) ||
+                       /@\s*\d{1,2}:\d{2}\b/.test(text);
     // Parse "@5m" / "@1h" / "@1d" first so it wins over the looser NL
     // parser ("in 30 mins" etc). Caller can still pre-pick a bucket
     // (e.g. Top-5 add) — that wins over both.
     let bucket = opts.bucket || null;
-    if (!bucket) {
+    if (!bucket && !hasClockAt) {
       const at = parseAtBucket(text);
       if (at.bucket) { text = at.text; bucket = at.bucket; }
     }
-    if (!bucket) {
+    if (!bucket && !hasClockAt) {
       const parsed = parseNlBucket(text);
       if (parsed.bucket) { text = parsed.text; bucket = parsed.bucket; }
     }
@@ -1300,6 +1328,13 @@
       if (r.item) {
         items.unshift(r.item);
         render();
+        // Confirm a scheduled item so the user knows the alarm is set.
+        if (r.item.time_bucket === "at" && r.item.due_at) {
+          const when = new Date(r.item.due_at).toLocaleString([], {
+            weekday: "short", hour: "numeric", minute: "2-digit",
+          });
+          toast(`⏰ Scheduled for ${when} — alarm set`, "success");
+        }
       } else if (r.queued) {
         // Optimistic insert: temporary row that looks real but is
         // tagged so the SW reconciler can swap it for the server row.

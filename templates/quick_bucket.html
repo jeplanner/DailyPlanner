@@ -428,6 +428,9 @@
   .qb-toggle:hover { filter: brightness(1.05); }
   .qb-toggle--now    { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
   .qb-toggle--future { background: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
+  /* Pinned absolute time (from "@1pm today") — indigo so it reads as a
+     scheduled clock time, distinct from the relative-countdown colors. */
+  .qb-toggle--at     { background: #eef2ff; color: #4338ca; border-color: #c7d2fe; }
   /* Minute buckets — tightest deadlines, deep red. */
   .qb-toggle--5m, .qb-toggle--15m,
   .qb-toggle--30m, .qb-toggle--45m { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
@@ -865,10 +868,10 @@
   <div class="qb-capture-wrap">
     <form id="qb-add-form" class="qb-add" autocomplete="off">
       <textarea id="qb-add-input"
-                placeholder="What needs doing? Use @5m / @1h / @1d to set when. Enter adds."
+                placeholder="What needs doing? @5m / @1h for a timer, or @1pm today to schedule + alarm. Enter adds."
                 maxlength="500" rows="2"></textarea>
       <div class="qb-add-actions">
-        <span class="qb-add-hint">↵ add · ⇧↵ newline · @5m @1h @1d for when</span>
+        <span class="qb-add-hint">↵ add · ⇧↵ newline · @5m @1h timer · @1pm today schedule</span>
         <button id="qb-mic-btn" class="qb-btn" type="button" title="Dictate a task">
           <i data-feather="mic"></i>
         </button>

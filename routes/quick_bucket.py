@@ -26,6 +26,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 from auth import login_required
 from services import quick_bucket_calendar_service as cal_sync
 from supabase_client import get, post, update
+from utils.quick_time import parse_at_schedule
 
 logger = logging.getLogger("daily_plan")
 quick_bucket_bp = Blueprint("quick_bucket", __name__)
@@ -256,11 +257,26 @@ def add_item():
         return jsonify({"error": "Text required"}), 400
     text = text[:_MAX_TEXT_LEN]
 
-    bucket = (data.get("time_bucket") or "now").strip().lower()
-    if bucket not in BUCKET_SET:
-        bucket = "now"
-
     is_done = bool(data.get("is_done", False))
+
+    # Inline "@1pm today" schedule token → pin an absolute due_at and a
+    # special "at" bucket. The existing due_at → Google Calendar mirror
+    # then creates the popup alarm at that time. Done tasks ignore it.
+    scheduled_due = None
+    if not is_done:
+        try:
+            cleaned, scheduled_due = parse_at_schedule(text)
+            if scheduled_due:
+                text = (cleaned[:_MAX_TEXT_LEN] or text)
+        except Exception:
+            logger.exception("quick_bucket @time parse failed; ignoring token")
+            scheduled_due = None
+
+    bucket = (data.get("time_bucket") or "now").strip().lower()
+    if scheduled_due:
+        bucket = "at"
+    elif bucket not in BUCKET_SET:
+        bucket = "now"
     # Pick up X-Client-Id (set by sync-queue.js on every mutating
     # request) or the in-body client_id, whichever was sent. Used by
     # the (user_id, client_id) unique index to dedupe SW replays.
@@ -273,7 +289,9 @@ def add_item():
         "user_id": user_id,
         "text": text,
         "time_bucket": bucket,
-        "due_at": _due_at_for(bucket) if not is_done else None,
+        # Absolute pinned time wins; otherwise fall back to the relative
+        # bucket delta (None for now/future/done).
+        "due_at": scheduled_due if scheduled_due else (_due_at_for(bucket) if not is_done else None),
         "position": int(data.get("position") or 0),
         "is_done": is_done,
         "is_deleted": False,
