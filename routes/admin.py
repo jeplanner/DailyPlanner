@@ -61,10 +61,15 @@ EXTERNAL_METERS = [
 
 
 def _admin_emails():
-    raw = (os.environ.get("ADMIN_EMAILS") or "").strip()
-    if raw:
-        return {e.strip().lower() for e in raw.split(",") if e.strip()}
-    # No explicit admin list → fall back to the chat family allowlist.
+    """Admins = ADMIN_EMAILS if set; otherwise the app owner(s) from
+    REGISTRATION_ALLOWLIST; plus the chat family allowlist as a final
+    fallback. Union keeps the page reachable regardless of which env
+    vars are configured on a given install."""
+    def _split(name):
+        return {e.strip().lower() for e in (os.environ.get(name) or "").split(",") if e.strip()}
+    admins = _split("ADMIN_EMAILS") | _split("REGISTRATION_ALLOWLIST")
+    if admins:
+        return admins
     try:
         from routes.chat import _allowlist
         return _allowlist()
