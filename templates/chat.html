@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>Chat — DailyPlanner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -277,6 +277,9 @@
      the messages and the message box (the proverb bar stays). */
   .chat-shell.kbd-open .room-strip,
   .chat-shell.kbd-open .chat-filter { display: none; }
+  /* …and drop the safe-area (home-indicator) bottom padding, which the
+     keyboard otherwise leaves as a gap between the box and the keys. */
+  .chat-shell.kbd-open .chat-composer { padding-bottom: 6px; }
 
   .chat-empty {
     margin: auto; text-align: center;
