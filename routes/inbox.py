@@ -73,7 +73,22 @@ def share_target():
     # the time we redirect to /login the original POST body is gone, so
     # we save it ourselves before sending the user through auth.
     from flask_login import current_user
+
+    # File shares (images / PDFs / docs from Android's share sheet) go to
+    # chat, not the link inbox. Detect them up front. We can't stash a
+    # binary across the login redirect, so an unauthenticated file share
+    # just asks the user to log in and re-share.
+    has_files = request.method == "POST" and any(
+        f and f.filename for f in request.files.getlist("files")
+    )
+
     if not current_user.is_authenticated:
+        if has_files:
+            try:
+                flash("Open DailyPlanner, log in, then share the file again.", "warning")
+            except Exception:
+                pass
+            return redirect(url_for("auth.login"))
         f = request.form if request.method == "POST" else request.args
         session["pending_share"] = {
             "url":   (f.get("url")   or "").strip(),
@@ -81,6 +96,10 @@ def share_target():
             "title": (f.get("title") or "").strip(),
         }
         return redirect(url_for("auth.login", next="/inbox/share?resume=1"))
+
+    if has_files:
+        from routes.chat import handle_shared_files
+        return handle_shared_files()
 
     # Resume path: after login, /inbox/share?resume=1 replays from session.
     if request.args.get("resume") == "1":

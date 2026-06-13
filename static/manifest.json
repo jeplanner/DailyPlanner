@@ -72,7 +72,19 @@
     "params": {
       "title": "title",
       "text": "text",
-      "url": "url"
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": [
+            "image/*",
+            "application/pdf",
+            "text/plain",
+            "text/csv",
+            ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"
+          ]
+        }
+      ]
     }
   },
   "shortcuts": [

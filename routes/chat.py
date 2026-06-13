@@ -34,8 +34,8 @@ import threading
 from datetime import datetime, timezone
 
 from flask import (
-    Blueprint, Response, abort, jsonify, render_template, request, session,
-    url_for,
+    Blueprint, Response, abort, jsonify, redirect, render_template, request,
+    session, url_for,
 )
 
 from flask_login import current_user
@@ -946,6 +946,158 @@ def upload_attachment():
         daemon=True,
     ).start()
     return jsonify({"message": _shape(msg_row, viewer_id)})
+
+
+# ── Android share-target: files → chat ──────────────────────────
+
+
+def _viewer_rooms_min(viewer_id):
+    """[{id, name, is_default}] for the viewer's rooms — used by the
+    file-share landing page's room picker."""
+    _ensure_default_membership(viewer_id)
+    try:
+        memberships = get("chat_room_members", {
+            "user_id": f"eq.{viewer_id}", "deleted_at": "is.null", "select": "room_id",
+        }) or []
+    except Exception:
+        return []
+    ids = [m["room_id"] for m in memberships if m.get("room_id")]
+    if not ids:
+        return []
+    rooms = get("chat_rooms", {
+        "id": f"in.({','.join(ids)})", "deleted_at": "is.null",
+        "select": "id,name,is_default",
+    }) or []
+    rooms.sort(key=lambda r: (0 if r.get("is_default") else 1, (r.get("name") or "").lower()))
+    return [{"id": r["id"], "name": r.get("name") or "Room",
+             "is_default": bool(r.get("is_default"))} for r in rooms]
+
+
+def handle_shared_files():
+    """Entry point for the Web Share Target (routes.inbox.share_target)
+    when the Android share includes files. The viewer is already
+    authenticated (the caller checked). We upload each file to the
+    sharer's Drive chat folder right away — while we still hold the bytes
+    and an authenticated session — then render a small page to pick which
+    room to post them into (the message rows are created from the
+    already-uploaded files when the user picks a room)."""
+    viewer_id = session["user_id"]
+    files = [f for f in request.files.getlist("files") if f and f.filename]
+    if not files:
+        return redirect(url_for("chat.chat_page"))
+
+    try:
+        service, row = _drive_service_for(viewer_id)
+    except RefreshError:
+        service = None
+    if not service:
+        return render_template(
+            "chat_share_files.html", files=[], rooms=[],
+            error="Connect Google Drive to share files into chat.",
+            connect_url=url_for("events.google_login"),
+        )
+
+    folder_id = _ensure_chat_folder(service, viewer_id, row)
+    uploaded = []
+    for f in files[:10]:  # cap the batch
+        mime = (f.mimetype or "application/octet-stream").lower()
+        if mime not in _ALLOWED_MIMES:
+            continue
+        blob = f.stream.read()
+        if not blob or len(blob) > MAX_ATTACH_BYTES:
+            continue
+        name = (f.filename or "upload").strip()[:200]
+        try:
+            created = service.files().create(
+                body={"name": name, "parents": [folder_id]},
+                media_body=MediaIoBaseUpload(io.BytesIO(blob), mimetype=mime, resumable=False),
+                fields="id, name, size, mimeType, webViewLink",
+            ).execute()
+        except HttpError:
+            logger.exception("share-target: drive upload failed")
+            continue
+        uploaded.append({
+            "file_id": created["id"],
+            "name": created.get("name") or name,
+            "mime": mime,
+            "kind": _attachment_kind(mime),
+            "url": created.get("webViewLink"),
+            "size": int(created["size"]) if created.get("size") else None,
+        })
+
+    if not uploaded:
+        return render_template(
+            "chat_share_files.html", files=[], rooms=[],
+            error="Couldn't process those files (unsupported type or too large).",
+            connect_url=None,
+        )
+
+    return render_template(
+        "chat_share_files.html",
+        files=uploaded, rooms=_viewer_rooms_min(viewer_id),
+        error=None, connect_url=None,
+    )
+
+
+@chat_bp.route("/api/chat/post-uploaded", methods=["POST"])
+@login_required
+def post_uploaded():
+    """Create file-share messages in a room from files already uploaded
+    to Drive by handle_shared_files. Body: {room_id, files:[{file_id,
+    name, mime, kind, url, size}]}."""
+    _gate()
+    viewer_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+    room_id = (data.get("room_id") or "").strip()
+    if not room_id:
+        return jsonify({"error": "room_id required"}), 400
+    _require_membership(room_id)
+    files = data.get("files") or []
+    if not files:
+        return jsonify({"error": "No files"}), 400
+
+    sender_name = _author_name()
+    posted_file_ids = []
+    for fi in files[:10]:
+        file_id = (fi.get("file_id") or "").strip()
+        if not file_id:
+            continue
+        name = (fi.get("name") or "file")[:200]
+        mime = (fi.get("mime") or "application/octet-stream")
+        payload = {
+            "user_id": viewer_id,
+            "author_name": sender_name,
+            "body": name,
+            "kind": "file-share",
+            "room_id": room_id,
+            "attachment_file_id": file_id,
+            "attachment_name": name,
+            "attachment_mime": mime,
+            "attachment_kind": fi.get("kind") or _attachment_kind(mime),
+            "attachment_url": fi.get("url"),
+            "attachment_size": int(fi["size"]) if fi.get("size") else None,
+        }
+        try:
+            post("messages", payload)
+            posted_file_ids.append(file_id)
+        except Exception:
+            logger.exception("post_uploaded insert failed")
+
+    if posted_file_ids:
+        grant_emails = _emails_for_user_ids(_room_member_ids(room_id, exclude_user_id=viewer_id))
+        for fid in posted_file_ids:
+            threading.Thread(target=_grant_drive_read,
+                             args=(viewer_id, fid, grant_emails), daemon=True).start()
+        threading.Thread(
+            target=_fanout_push,
+            args=(viewer_id, sender_name, f"📎 shared {len(posted_file_ids)} file(s)", room_id),
+            daemon=True,
+        ).start()
+
+    return jsonify({
+        "ok": True, "posted": len(posted_file_ids),
+        "redirect": url_for("chat.chat_page") + "?room=" + room_id,
+    })
 
 
 @chat_bp.route("/api/chat/attachment/<msg_id>", methods=["GET"])
