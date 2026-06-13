@@ -368,6 +368,7 @@
   .room-chips::-webkit-scrollbar { display: none; }
   .room-chip {
     flex: none; position: relative;
+    display: inline-flex; align-items: center;
     border: 1px solid var(--color-border); background: transparent;
     color: var(--color-text-secondary);
     font: inherit; font-size: 13px; font-weight: 600;
@@ -377,8 +378,28 @@
   }
   .room-chip:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
   .room-chip.is-active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
-  .room-emoji { display: inline-block; margin-right: 5px; font-size: 14px; line-height: 1; vertical-align: -1px; }
-  .room-emoji.lg { font-size: 20px; margin-right: 6px; vertical-align: -2px; }
+  /* Emoji icons render from the device's full-colour emoji font, so
+     they stay crisp at any size — we just give them room to shine. */
+  .room-emoji {
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 16px; line-height: 1; margin-right: 6px;
+  }
+  .room-emoji.lg { font-size: 24px; margin-right: 8px; }
+  .chat-header h1 { display: flex; align-items: center; }
+
+  /* Emoji picker (new room + change icon) */
+  .emoji-picker { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+  .emoji-group-label { font-size: 11px; font-weight: 700; color: var(--color-text-secondary);
+                       text-transform: uppercase; letter-spacing: .03em; margin-top: 6px; }
+  .emoji-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .emoji-opt {
+    font-size: 24px; line-height: 1; width: 44px; height: 44px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; border-radius: 11px;
+    background: transparent; cursor: pointer;
+  }
+  .emoji-opt:hover { background: var(--color-surface-secondary, #f1f5f9); }
+  .emoji-opt.sel { border-color: var(--color-primary); background: var(--color-primary-ring, rgba(99,102,241,.14)); }
   .room-chip .room-unread {
     display: inline-block; margin-left: 6px; min-width: 17px; height: 17px;
     line-height: 17px; padding: 0 4px; border-radius: 999px;
@@ -547,7 +568,8 @@
   <div class="modal" role="dialog" aria-modal="true" aria-label="New room">
     <h3>New room</h3>
     <input type="text" id="new-room-name" maxlength="80" placeholder="Room name (e.g. 🍕 Pizza night)">
-    <div class="drive-search-hint" style="margin:6px 2px 0">Tip: start the name with an emoji to set the room's icon 🎉 — otherwise we'll pick a fun one.</div>
+    <div class="modal-label">Icon</div>
+    <div class="emoji-picker" id="new-room-emoji"></div>
     <div class="modal-label">Members</div>
     <div class="member-pick" id="new-room-members"></div>
     <div class="modal-actions">
@@ -565,6 +587,10 @@
     <div class="manage-add" id="manage-add-wrap">
       <div class="modal-label">Add member</div>
       <div class="member-pick" id="manage-add-pick"></div>
+    </div>
+    <div id="manage-emoji-wrap" style="display:none">
+      <div class="modal-label">Choose icon</div>
+      <div class="emoji-picker" id="manage-emoji"></div>
     </div>
     <div class="modal-actions" id="manage-actions">
       <button type="button" class="qb-btn qb-btn-danger" id="manage-leave">Leave room</button>
@@ -781,14 +807,20 @@
   }
 
   // ── Rooms ──────────────────────────────────────────────────────
-  // A curated set of fun emoji. Each room gets a stable one (hashed off
-  // its id) so it looks distinct and playful — unless the room's name
-  // already starts with an emoji, in which case we use that (so you can
-  // pick your own icon just by naming a room "🍕 Pizza night").
-  const FUN_EMOJI = ["🦄","🐙","🦖","🐸","🦦","🐧","🦥","🐢","🦔","🐰","🦊",
-    "🐼","🦩","🐲","👽","🤖","🎩","🦜","🐝","🦋","🐳","🦞","🍍","🌮","🦒",
-    "🐊","🦨","🐌","🦚","🪿","🐹","🦕","🍄","🚀","🎸","🦭"];
-  const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}️?)\s*/u;
+  // Emoji choices, grouped for the picker. A room with no chosen icon
+  // gets a stable one (hashed off its id) from the "random pool";
+  // picking in the UI prepends the emoji to the room name, so the icon
+  // persists with no schema change (roomFace reads it back off the name).
+  const EMOJI_GROUPS = {
+    "Spiritual": ["🕉️","🛕","🪔","🪷","🙏","📿","🧘","🔱","☸️","🛐","🪬","🧎"],
+    "Flowers":   ["🌸","🌺","🌻","🌹","🌷","💐","🏵️","🌼","💮","🪻","🌿","🍀"],
+    "Family":    ["👨‍👩‍👧‍👦","👪","👵","👴","🧕","👳","🧑‍🍼","👶","🧑‍🤝‍🧑","👨‍👧","👩‍👦","💑"],
+    "Fun":       ["🦄","🐙","🦖","🐸","🦊","🐼","🐰","🦋","🐳","🦜","🐝","🐢",
+                  "🍍","🌮","🚀","🎸","⭐","🔥","🎉","🏏","🎨","🦚"],
+  };
+  // Random fallback pool — pleasant + neutral (flowers + fun).
+  const FUN_EMOJI = [...EMOJI_GROUPS.Flowers, ...EMOJI_GROUPS.Fun];
+  const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic}|[\u{1F3FB}-\u{1F3FF}])*)\s*/u;
   const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; };
   function roomFace(room) {
     if (room.is_default) return { emoji: "🏡", label: room.name };
@@ -1180,17 +1212,42 @@
   }
 
   // ── Image lightbox (tap an inline image to zoom) ────────────────
+  // We push a history entry when opening so the Android/browser BACK
+  // button just closes the viewer instead of navigating away from chat
+  // (in a standalone PWA, with no extra history entry, Back was exiting
+  // the app to the home screen).
   const lightbox = document.getElementById("img-lightbox");
   const lightboxImg = document.getElementById("img-lightbox-img");
+  let lightboxOpen = false;
+
+  function openLightbox(src) {
+    lightboxImg.src = src;
+    lightbox.classList.add("open");
+    lightboxOpen = true;
+    history.pushState({ lightbox: true }, "");
+  }
+  function closeLightbox() {
+    if (!lightboxOpen) return;
+    lightbox.classList.remove("open");
+    lightboxImg.src = "";
+    lightboxOpen = false;
+  }
+
   stream.addEventListener("click", (e) => {
     const img = e.target.closest("img[data-lightbox]");
     if (!img) return;
-    lightboxImg.src = img.dataset.lightbox;
-    lightbox.classList.add("open");
+    openLightbox(img.dataset.lightbox);
   });
+  // Tapping the backdrop consumes the pushed history entry so Back stays
+  // consistent whether you close by tap or by the Back button.
   lightbox.addEventListener("click", () => {
-    lightbox.classList.remove("open");
-    lightboxImg.src = "";
+    if (history.state && history.state.lightbox) history.back();
+    else closeLightbox();
+  });
+  // Back button (or our own history.back) pops the entry → close, don't
+  // leave the page.
+  window.addEventListener("popstate", () => {
+    if (lightboxOpen) closeLightbox();
   });
 
   // ── Drive search ────────────────────────────────────────────────
@@ -1303,6 +1360,35 @@
     credentials: "same-origin",
   });
 
+  let newRoomEmoji = "";   // chosen icon for the room being created
+
+  // Render the grouped emoji choices into `container`. onPick(emoji) is
+  // called when one is tapped; `current` pre-selects one.
+  function buildEmojiPicker(container, current, onPick) {
+    container.innerHTML = "";
+    for (const group of Object.keys(EMOJI_GROUPS)) {
+      const lbl = document.createElement("div");
+      lbl.className = "emoji-group-label";
+      lbl.textContent = group;
+      container.appendChild(lbl);
+      const row = document.createElement("div");
+      row.className = "emoji-row";
+      for (const em of EMOJI_GROUPS[group]) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "emoji-opt" + (em === current ? " sel" : "");
+        b.textContent = em;
+        b.addEventListener("click", () => {
+          container.querySelectorAll(".emoji-opt").forEach(x => x.classList.remove("sel"));
+          b.classList.add("sel");
+          onPick(em);
+        });
+        row.appendChild(b);
+      }
+      container.appendChild(row);
+    }
+  }
+
   function closeModals() {
     newRoomOverlay.classList.remove("open");
     manageOverlay.classList.remove("open");
@@ -1316,6 +1402,8 @@
     newRoomMembers.innerHTML = `<div class="drive-search-hint">Loading family…</div>`;
     newRoomOverlay.classList.add("open");
     newRoomName.focus();
+    newRoomEmoji = "";
+    buildEmojiPicker(document.getElementById("new-room-emoji"), "", (em) => { newRoomEmoji = em; });
     const fam = await getFamily();
     newRoomMembers.innerHTML = "";
     for (const u of fam) {
@@ -1329,8 +1417,13 @@
   });
   document.getElementById("new-room-cancel").addEventListener("click", closeModals);
   document.getElementById("new-room-create").addEventListener("click", async () => {
-    const name = newRoomName.value.trim();
-    if (!name) { toast("Give the room a name", "error"); return; }
+    const typed = newRoomName.value.trim();
+    if (!typed) { toast("Give the room a name", "error"); return; }
+    // The chosen emoji is stored as the name's leading icon (roomFace
+    // reads it back) — strip any emoji the user typed so we don't double
+    // up. No emoji chosen → leave the name as typed (auto-icon kicks in).
+    const label = typed.replace(LEADING_EMOJI_RE, "").trim() || typed;
+    const name = newRoomEmoji ? (newRoomEmoji + " " + label) : typed;
     const member_ids = Array.from(newRoomMembers.querySelectorAll("input:checked")).map(c => c.value);
     try {
       const r = await jsonPost("/api/chat/rooms", { name, member_ids });
@@ -1354,6 +1447,7 @@
     manageOverlay.classList.add("open");
     manageMembers.innerHTML = `<div class="drive-search-hint">Loading…</div>`;
     manageAddPick.innerHTML = "";
+    document.getElementById("manage-emoji-wrap").style.display = "none";
     let info;
     try {
       const r = await fetch("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/members",
@@ -1402,17 +1496,39 @@
       manageAddPick.appendChild(row);
     }
 
-    // Footer actions: rename + delete for owner of a non-default room;
-    // leave for any non-default room.
+    // Footer actions: rename + change-icon + delete for owner of a
+    // non-default room; leave for any non-default room.
     manageActions.innerHTML = "";
     if (!info.is_default && info.is_owner) {
       const ren = document.createElement("button");
       ren.type = "button"; ren.className = "qb-btn"; ren.textContent = "Rename";
       ren.addEventListener("click", renameRoom);
+
+      const iconBtn = document.createElement("button");
+      iconBtn.type = "button"; iconBtn.className = "qb-btn"; iconBtn.textContent = "🙂 Icon";
+      iconBtn.addEventListener("click", () => {
+        const wrap = document.getElementById("manage-emoji-wrap");
+        if (wrap.style.display !== "none") { wrap.style.display = "none"; return; }
+        wrap.style.display = "";
+        const curLabel = (info.name || "").replace(LEADING_EMOJI_RE, "").trim() || info.name;
+        const m = LEADING_EMOJI_RE.exec(info.name || "");
+        buildEmojiPicker(document.getElementById("manage-emoji"), m ? m[1] : "", async (em) => {
+          try {
+            const r = await jsonPost("/api/chat/rooms/" + encodeURIComponent(state.roomId) + "/rename",
+                                     { name: em + " " + curLabel });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || r.status);
+            await loadRooms();
+            openManage();
+          } catch (e) { toast("Couldn't set icon: " + (e.message || ""), "error"); }
+        });
+      });
+
       const del = document.createElement("button");
       del.type = "button"; del.className = "qb-btn qb-btn-danger"; del.textContent = "Delete";
       del.addEventListener("click", deleteRoom);
       manageActions.appendChild(ren);
+      manageActions.appendChild(iconBtn);
       manageActions.appendChild(del);
     }
     if (!info.is_default) {
