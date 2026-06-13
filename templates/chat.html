@@ -176,6 +176,8 @@
   .msg.mine:hover .msg-del { opacity: 0.85; }
   .msg-del:hover { opacity: 1; text-decoration: underline; }
   .edited-tag { opacity: .7; font-style: italic; }
+  /* Optimistic (still-uploading) bubble. */
+  .msg.is-pending { opacity: .55; }
 
   /* Inline editor — replaces the body while editing a message. */
   .msg-edit { margin-top: 2px; }
@@ -869,6 +871,13 @@
       bubble.querySelector('[data-act="del"]')?.addEventListener("click", () => deleteMessage(m.id));
       bubble.querySelector('[data-act="edit"]')?.addEventListener("click", () => editMessage(m.id, bubble));
     }
+    // An image has zero height until it loads, so a scroll-to-bottom that
+    // ran at append time lands too high. Re-scroll once the image paints
+    // (only if the user is still parked at the bottom).
+    const aimg = bubble.querySelector("img.att-img");
+    if (aimg) {
+      aimg.addEventListener("load", () => { if (state.stickToBottom) scrollToBottom(); });
+    }
     // NOTE: feather icons (file-chips) are rendered in a single batch by
     // the caller after appending a run of messages — calling
     // feather.replace() here (per message) re-scanned the whole DOM for
@@ -1478,13 +1487,38 @@
       toast(`File too large (max ${maxMb} MB)`, "error");
       return;
     }
-    attachBtn.disabled = true;
-    sendBtn.disabled = true;
-    toast("Uploading…");
+    const isImage = (f.type || "").startsWith("image/");
+    // Local preview URL → show the picture INSTANTLY (WhatsApp-style),
+    // so the user isn't staring at nothing while it uploads to Drive.
+    const localUrl = isImage ? URL.createObjectURL(f) : null;
+    const caption = input.value.trim();
+
+    // Optimistic bubble, rendered from the local file before the upload
+    // finishes. Tagged pending (dimmed) until the server confirms.
+    const tempId = "pending-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    state.stickToBottom = true;
+    document.getElementById("chat-empty")?.remove();
+    appendMessage({
+      id: tempId, user_id: "me", is_mine: true, author_name: VIEWER_NAME,
+      body: caption || f.name, created_at: new Date().toISOString(),
+      kind: "file-share",
+      attachment: {
+        kind: isImage ? "image" : (f.type === "application/pdf" ? "pdf" : "file"),
+        name: f.name, raw_url: localUrl || "#", size_bytes: f.size,
+      },
+    });
+    const tempBubble = stream.querySelector('.msg[data-id="' + tempId + '"]');
+    tempBubble?.classList.add("is-pending");
+    if (window.feather) feather.replace();
+    scrollToBottom(true);
+
+    // Clear the composer immediately so it feels responsive.
+    input.value = "";
+    updateComposer();
+
     const fd = new FormData();
     fd.append("file", f);
     fd.append("room_id", state.roomId);
-    const caption = input.value.trim();
     if (caption) fd.append("body", caption);
     try {
       const r = await fetch("/api/chat/upload", {
@@ -1500,18 +1534,23 @@
         }
         throw new Error(data.error || r.status);
       }
-      input.value = "";
-      updateComposer();
-      document.getElementById("chat-empty")?.remove();
+      // Swap the optimistic bubble for the real one. Keep using the
+      // local image URL for the sender so we don't re-download it from
+      // Drive (that round-trip is what made it feel sluggish).
+      tempBubble?.remove();
+      state.rendered.delete(tempId);
       appendMessage(data.message);
+      const realImg = stream.querySelector('.msg[data-id="' + data.message.id + '"] img.att-img');
+      if (realImg && localUrl) realImg.src = localUrl;
       if (window.feather) feather.replace();
       scrollToBottom(true);
     } catch (e) {
       console.error(e);
+      tempBubble?.remove();
+      state.rendered.delete(tempId);
       toast("Upload failed: " + (e.message || ""), "error");
-    } finally {
-      attachBtn.disabled = false;
-      sendBtn.disabled = false;
+      // Restore the caption so they can retry.
+      if (caption) { input.value = caption; updateComposer(); }
     }
   }
 
