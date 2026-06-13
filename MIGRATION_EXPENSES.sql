@@ -33,7 +33,7 @@ alter table expenses
 do $$ begin
   alter table expenses drop constraint if exists expenses_kind_chk;
   alter table expenses add constraint expenses_kind_chk
-    check (kind in ('expense', 'income'));
+    check (kind in ('expense', 'income', 'transfer'));
 end $$;
 
 -- Hot queries: "this user's rows for a day" and "for a month" (reports),

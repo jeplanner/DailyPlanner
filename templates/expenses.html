@@ -22,8 +22,10 @@
   /* Expense / Income segmented toggle */
   .seg { display: flex; gap: 0; border: 1px solid var(--color-border); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
   .seg button { flex: 1; font: inherit; font-size: 14px; font-weight: 700; padding: 10px; border: none; background: var(--color-bg); color: var(--color-text-secondary); cursor: pointer; }
-  .seg button.on[data-kind="expense"] { background: #fef2f2; color: #b91c1c; }
-  .seg button.on[data-kind="income"]  { background: #ecfdf5; color: #047857; }
+  .seg button.on[data-kind="expense"]  { background: #fef2f2; color: #b91c1c; }
+  .seg button.on[data-kind="income"]   { background: #ecfdf5; color: #047857; }
+  .seg button.on[data-kind="transfer"] { background: #eef2ff; color: #4338ca; }
+  .seg button + button { border-left: 1px solid var(--color-border); }
 
   .row { display: flex; gap: 10px; flex-wrap: wrap; }
   .field { display: flex; flex-direction: column; gap: 5px; }
@@ -47,6 +49,8 @@
   .exp { display: flex; align-items: center; gap: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 11px 13px; }
   .exp .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .exp.kind-expense .dot { background: #ef4444; } .exp.kind-income .dot { background: #10b981; }
+  .exp.kind-transfer .dot { background: #6366f1; }
+  .exp.kind-transfer .amt { color: #4338ca; }
   .exp .cat { font-weight: 700; font-size: 15px; }
   .exp .cat.empty { color: var(--color-text-muted, #94a3b8); font-weight: 600; }
   .exp .nt { font-size: 12.5px; color: var(--color-text-secondary); margin-top: 1px; }
@@ -81,6 +85,7 @@
     <div class="seg" id="kind-seg">
       <button type="button" data-kind="expense" class="on">− Expense</button>
       <button type="button" data-kind="income">+ Income</button>
+      <button type="button" data-kind="transfer">⇄ Transfer</button>
     </div>
     <form id="exp-form" autocomplete="off">
       <div class="row">
@@ -124,6 +129,7 @@
     <div class="stat out"><div class="v" id="r-out">₹0</div><div class="l">Expense</div></div>
     <div class="stat"><div class="v" id="r-net">₹0</div><div class="l">Net</div></div>
   </div>
+  <div class="sub" id="r-transfers" style="margin:-4px 2px 10px;"></div>
   <div class="card" id="rep-cats"><div class="empty">No spending this month.</div></div>
 </div>
 
@@ -165,7 +171,7 @@
         <div class="cat ${it.category?"":"empty"}">${it.category?esc(it.category):"Uncategorised"}</div>
         ${it.note?`<div class="nt">${esc(it.note)}</div>`:""}
       </div>
-      <div class="amt">${it.kind==="income"?"+":"−"}${money(it.amount)}</div>
+      <div class="amt">${it.kind==="income"?"+":(it.kind==="transfer"?"⇄ ":"−")}${money(it.amount)}</div>
       <button type="button" class="del" title="Delete"><i data-feather="trash-2"></i></button>`;
     div.querySelector(".del").addEventListener("click",()=>del(it.id,div));
     return div;
@@ -217,6 +223,8 @@
       const d=await r.json();
       $("r-in").textContent=money(d.income); $("r-out").textContent=money(d.expense);
       $("r-net").textContent=(d.net<0?"−":"")+money(Math.abs(d.net));
+      const rt=$("r-transfers");
+      if (rt) rt.textContent = (d.transfers ? "Transfers this month: " + money(d.transfers) : "");
       const cats=d.by_category||[];
       if(!cats.length){ repCats.innerHTML=`<div class="empty">No spending this month.</div>`; return; }
       const max=Math.max(...cats.map(c=>c.amount),1);

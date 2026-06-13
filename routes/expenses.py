@@ -93,9 +93,11 @@ def list_expenses():
     items = [_shape(r) for r in rows]
     spent = round(sum(i["amount"] for i in items if i["kind"] == "expense"), 2)
     received = round(sum(i["amount"] for i in items if i["kind"] == "income"), 2)
+    moved = round(sum(i["amount"] for i in items if i["kind"] == "transfer"), 2)
     return jsonify({
         "date": day, "items": items,
-        "spent": spent, "received": received, "net": round(received - spent, 2),
+        "spent": spent, "received": received, "moved": moved,
+        "net": round(received - spent, 2),
     })
 
 
@@ -122,15 +124,18 @@ def report():
         return jsonify({"month": start[:7], "income": 0, "expense": 0, "net": 0,
                         "by_category": [], "migration_pending": True})
 
-    income = expense = 0.0
+    income = expense = transfers = 0.0
     by_cat = {}   # category -> expense total
     inc_by_cat = {}
     for r in rows:
         amt = float(r["amount"]) if r.get("amount") is not None else 0.0
         cat = (r.get("category") or "Uncategorised").strip() or "Uncategorised"
-        if (r.get("kind") or "expense") == "income":
+        k = r.get("kind") or "expense"
+        if k == "income":
             income += amt
             inc_by_cat[cat] = round(inc_by_cat.get(cat, 0.0) + amt, 2)
+        elif k == "transfer":
+            transfers += amt
         else:
             expense += amt
             by_cat[cat] = round(by_cat.get(cat, 0.0) + amt, 2)
@@ -147,6 +152,7 @@ def report():
         "month": start[:7],
         "income": round(income, 2),
         "expense": round(expense, 2),
+        "transfers": round(transfers, 2),
         "net": round(income - expense, 2),
         "by_category": by_category,
         "income_by_category": income_by_category,
@@ -196,7 +202,7 @@ def add_expense():
         return jsonify({"error": "Amount can't be negative"}), 400
 
     kind = (data.get("kind") or "expense").strip().lower()
-    if kind not in ("expense", "income"):
+    if kind not in ("expense", "income", "transfer"):
         kind = "expense"
     day = (data.get("spent_on") or "").strip() or _today_iso()
     category = (data.get("category") or "").strip()[:_MAX_CATEGORY] or None
