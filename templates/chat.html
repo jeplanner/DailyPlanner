@@ -1270,6 +1270,47 @@
     form.classList.toggle("has-text", input.value.trim().length > 0);
   }
   input.addEventListener("input", updateComposer);
+
+  // Rotating placeholder — a gentle motivational / devotional line
+  // instead of a plain "Message" prompt. Changes on load, after each
+  // send, and slowly while the box sits empty (not while typing).
+  const CHAT_QUOTES = [
+    "Do your duty, leave the rest 🙏",
+    "Karmanye vadhikaraste — act, don't count rewards",
+    "ॐ शांति · peace, peace, peace",
+    "Sarve bhavantu sukhinaḥ — may all be happy",
+    "Vasudhaiva Kutumbakam — the world is one family",
+    "Surrender the fruit, not the effort 🌸",
+    "Start where you are 🌱",
+    "One task at a time…",
+    "Satyameva Jayate — truth alone triumphs",
+    "This too shall pass 🌊",
+    "Seva is worship 🙏",
+    "Krishna walks with you — begin",
+    "राम राम 🙏",
+    "Be steady in joy and sorrow",
+    "Today is a gift 🎁",
+    "Small steps, every day",
+    "Faith moves mountains 🏔️",
+    "Anbe Sivam — love is God",
+    "Let go, and flow 🌊",
+    "The mind is everything — what you think, you become",
+    "Patience is the companion of wisdom",
+    "Lokah Samastah Sukhino Bhavantu 🙏",
+  ];
+  function setRandomQuote() {
+    const q = CHAT_QUOTES[Math.floor(Math.random() * CHAT_QUOTES.length)];
+    input.setAttribute("placeholder", q);
+  }
+  setRandomQuote();
+  setInterval(() => {
+    // Only rotate when the box is empty, unfocused, and the tab is
+    // visible — never disturb someone mid-thought.
+    if (!input.value && document.activeElement !== input && !document.hidden) {
+      setRandomQuote();
+    }
+  }, 8000);
+
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1283,6 +1324,7 @@
     if (!body) return;
     input.value = "";
     updateComposer();
+    setRandomQuote();   // fresh line for the next message
     sendMessage(body);
     // Keep the keyboard up (WhatsApp-style): re-focus the input in the
     // same gesture so the soft keyboard doesn't close + reopen (which
