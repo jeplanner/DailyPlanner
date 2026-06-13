@@ -89,6 +89,7 @@ def create_app():
     from routes.knowledgebase import knowledgebase_bp
     from routes.chat import chat_bp, user_allowed as _chat_allowed
     from routes.family_tasks import family_tasks_bp
+    from routes.admin import admin_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -127,6 +128,7 @@ def create_app():
     app.register_blueprint(knowledgebase_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(family_tasks_bp)
+    app.register_blueprint(admin_bp)
 
     # Expose the bedtime-stories allowlist flag to every template so the
     # nav can hide the link from non-allowed users without each template

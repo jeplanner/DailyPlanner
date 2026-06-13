@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Usage — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 18px 16px 60px; }
+  h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 18px; }
+  h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+       color: var(--color-text-secondary); margin: 26px 0 10px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .card { background: var(--color-surface); border: 1px solid var(--color-border);
+          border-radius: 12px; padding: 13px 15px; }
+  .card .n { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+  .card .l { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px;
+          background: var(--color-surface); border: 1px solid var(--color-border);
+          border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 13px; border-bottom: 1px solid var(--color-border); }
+  th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em;
+       color: var(--color-text-secondary); background: var(--color-surface-secondary, #f8fafc); }
+  tr:last-child td { border-bottom: none; }
+  td .bar { height: 6px; border-radius: 999px; background: var(--color-border); margin-top: 5px; overflow: hidden; }
+  td .bar > i { display: block; height: 100%; background: var(--color-primary); border-radius: 999px; }
+  a { color: var(--color-primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
+          padding: 2px 9px; border-radius: 999px; }
+  .pill.ok  { background: #dcfce7; color: #166534; }
+  .pill.bad { background: #fee2e2; color: #991b1b; }
+  html.dark .pill.ok  { background: #14331f; color: #86efac; }
+  html.dark .pill.bad { background: #3a1414; color: #fca5a5; }
+
+  .alert { background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+           border-radius: 12px; padding: 12px 15px; font-size: 13.5px; margin: 14px 0; }
+  html.dark .alert { background: #2a210a; border-color: #5a4708; color: #fcd34d; }
+  .muted { color: var(--color-text-secondary); font-size: 12px; }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="wrap">
+  <h1>📊 Usage</h1>
+  <p class="sub">Measured live from your database &amp; Google Drive. Billing meters that need a
+     provider login are listed at the bottom with direct links.</p>
+
+  {% set m = data.migrations %}
+  {% if not m['messages.attachment_file_id'] %}
+  <div class="alert">
+    ⚠️ <b>File attachments aren't active.</b> The <code>messages.attachment_*</code> columns are
+    missing — re-run <code>MIGRATION_CHAT_FILES.sql</code> in the Supabase SQL editor (idempotent, safe to re-run).
+  </div>
+  {% endif %}
+
+  <!-- ── Supabase counts ── -->
+  <h2>Supabase database</h2>
+  {% set s = data.supabase %}
+  <div class="cards">
+    <div class="card"><div class="n">{{ s.messages if s.messages is not none else '—' }}</div><div class="l">Chat messages</div></div>
+    <div class="card"><div class="n">{{ s.messages_with_files if s.messages_with_files is not none else '—' }}</div><div class="l">Messages with a file</div></div>
+    <div class="card"><div class="n">{{ s.messages_deleted if s.messages_deleted is not none else '—' }}</div><div class="l">Deleted (soft)</div></div>
+    <div class="card"><div class="n">{{ s.users if s.users is not none else '—' }}</div><div class="l">Registered users</div></div>
+    <div class="card"><div class="n">{{ s.connected_accounts if s.connected_accounts is not none else '—' }}</div><div class="l">Drive-connected</div></div>
+  </div>
+  <p class="muted" style="margin-top:8px">Free tier: 500 MB DB, ~5 GB egress/mo. Text + metadata only — files live in Drive.
+    Exact DB size &amp; egress:
+    <a href="https://supabase.com/dashboard/project/{{ data.project_ref }}/reports" target="_blank" rel="noopener">project reports →</a></p>
+
+  <!-- ── Google Drive storage ── -->
+  <h2>Google Drive storage</h2>
+  {% if data.drive %}
+  <table>
+    <thead><tr><th>Account</th><th>Used</th><th>Files in Drive</th></tr></thead>
+    <tbody>
+    {% for d in data.drive %}
+      <tr>
+        <td>{{ d.email }}</td>
+        {% if d.error %}
+          <td colspan="2" class="muted">Couldn't read quota ({{ d.error }})</td>
+        {% else %}
+          <td>
+            {{ d.used_gb if d.used_gb is not none else '?' }} GB{% if d.limit_gb %} of {{ d.limit_gb }} GB{% endif %}
+            {% if d.limit_gb and d.used_gb is not none %}
+              <div class="bar"><i style="width: {{ (100 * d.used_gb / d.limit_gb) | round(0, 'ceil') }}%"></i></div>
+            {% endif %}
+          </td>
+          <td>{{ d.in_drive_gb if d.in_drive_gb is not none else '?' }} GB</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top:8px">Chat &amp; knowledge-base files count toward "Files in Drive" on the sender's own account.</p>
+  {% else %}
+  <p class="muted">No connected Google accounts.</p>
+  {% endif %}
+
+  <!-- ── Migration health ── -->
+  <h2>Migration health</h2>
+  <table>
+    <thead><tr><th>Column</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for col, ok in data.migrations.items() %}
+      <tr>
+        <td><code>{{ col }}</code></td>
+        <td>{% if ok %}<span class="pill ok">present</span>{% else %}<span class="pill bad">missing</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- ── External meters (dashboard only) ── -->
+  <h2>Billing meters — check the dashboard</h2>
+  <table>
+    <thead><tr><th>Service</th><th>Free limit</th><th></th></tr></thead>
+    <tbody>
+    {% for meter in data.meters %}
+      <tr>
+        <td>{{ meter.name }}<div class="muted">{{ meter.note }}</div></td>
+        <td>{{ meter.limit }}</td>
+        <td><a href="{{ meter.url }}" target="_blank" rel="noopener">open →</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>if (window.feather) feather.replace();</script>
+</body>
+</html>
