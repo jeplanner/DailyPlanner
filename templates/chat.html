@@ -309,6 +309,14 @@
     background: var(--color-bg); color: var(--color-text); outline: none;
   }
   .drive-search-row input:focus { border-color: var(--color-primary); }
+  .drive-search-close {
+    flex: none; width: 36px; height: 36px; border-radius: 9px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-border); background: transparent;
+    color: var(--color-text-secondary); cursor: pointer;
+  }
+  .drive-search-close:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
+  .drive-search-close svg { width: 16px; height: 16px; }
   .drive-search-hint { font-size: 11px; color: var(--color-text-muted, #94a3b8); margin: 6px 2px 0; }
   .drive-results { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; max-height: 38vh; overflow-y: auto; }
   .drive-result {
@@ -480,6 +488,9 @@
     <div class="drive-search-row">
       <input type="search" id="drive-search-input"
              placeholder="Search Drive files by name…" autocomplete="off">
+      <button type="button" class="drive-search-close" id="drive-search-close" title="Close search">
+        <i data-feather="x"></i>
+      </button>
     </div>
     <div class="drive-search-hint">Searches files shared with this app (chat uploads &amp; knowledge base PDFs).</div>
     <div class="drive-results" id="drive-results"></div>
@@ -1149,16 +1160,29 @@
   const searchPanel = document.getElementById("drive-search");
   const searchInput = document.getElementById("drive-search-input");
   const searchResults = document.getElementById("drive-results");
+  const searchClose = document.getElementById("drive-search-close");
   let searchTimer = null;
   let searchLoadedOnce = false;
 
+  function openSearch() {
+    searchPanel.classList.add("open");
+    searchToggle.classList.add("is-active");
+    searchInput.focus();
+    if (!searchLoadedOnce) { searchLoadedOnce = true; runSearch(""); }
+  }
+  function closeSearch() {
+    searchPanel.classList.remove("open");
+    searchToggle.classList.remove("is-active");
+  }
+
   searchToggle.addEventListener("click", () => {
-    const open = searchPanel.classList.toggle("open");
-    searchToggle.classList.toggle("is-active", open);
-    if (open) {
-      searchInput.focus();
-      if (!searchLoadedOnce) { searchLoadedOnce = true; runSearch(""); }
-    }
+    if (searchPanel.classList.contains("open")) closeSearch();
+    else openSearch();
+  });
+  searchClose.addEventListener("click", closeSearch);
+  // Escape closes the panel too.
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
   });
 
   searchInput.addEventListener("input", () => {
