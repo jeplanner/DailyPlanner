@@ -197,41 +197,56 @@
     border: 1px solid var(--color-border);
   }
 
-  /* Composer — sticky bottom strip with textarea + send button. */
+  /* Composer — WhatsApp-style: a rounded pill (emoji + textarea +
+     attach) and a separate round send button. Icons collapse while
+     typing to give the text maximum room. */
   .chat-composer {
-    border-top: 1px solid var(--color-border);
-    background: var(--color-surface);
-    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0));
-    display: flex; gap: 8px; align-items: flex-end;
-  }
-  .chat-composer textarea {
-    flex: 1; min-height: 38px; max-height: 140px;
-    padding: 9px 12px;
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    font: inherit;
     background: var(--color-bg);
-    color: var(--color-text);
-    resize: none;
-    outline: none;
-    line-height: 1.4;
+    padding: 7px 8px calc(7px + env(safe-area-inset-bottom, 0));
+    display: flex; gap: 7px; align-items: flex-end;
   }
-  .chat-composer textarea:focus {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px var(--color-primary-ring, rgba(37,99,235,.15));
+  .composer-pill {
+    flex: 1; min-width: 0;
+    display: flex; align-items: flex-end; gap: 2px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 24px;
+    padding: 3px 5px;
+    transition: border-color .12s;
   }
-  .chat-send {
+  .composer-pill:focus-within { border-color: var(--color-primary); }
+  .composer-pill textarea {
+    flex: 1; min-width: 0; min-height: 26px; max-height: 140px;
+    padding: 9px 4px;
+    border: none; background: transparent; color: var(--color-text);
+    font: inherit; font-size: 16px; line-height: 1.35;
+    resize: none; outline: none;
+  }
+  /* Round ghost icons inside the pill. */
+  .pill-icon {
+    flex: none; width: 40px; height: 40px; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
-    width: 40px; height: 40px;
-    background: var(--color-primary); color: white;
-    border: none; border-radius: 10px;
-    cursor: pointer;
-    transition: background .12s, transform .08s;
+    border: none; background: transparent; color: var(--color-text-secondary);
+    cursor: pointer; transition: background .12s, color .12s;
   }
-  .chat-send:hover { background: var(--color-primary-hover, #1d4ed8); }
-  .chat-send:active { transform: scale(.95); }
-  .chat-send:disabled { background: var(--color-text-muted, #94a3b8); cursor: not-allowed; }
-  .chat-send svg { width: 18px; height: 18px; }
+  .pill-icon:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
+  .pill-icon svg { width: 23px; height: 23px; }
+  .pill-icon.is-active { color: var(--color-primary); }
+  /* Round send button, outside the pill. Hidden until there's text. */
+  .chat-send {
+    display: none; flex: none;
+    align-items: center; justify-content: center;
+    width: 48px; height: 48px;
+    background: var(--color-primary); color: white;
+    border: none; border-radius: 50%;
+    cursor: pointer; transition: transform .08s;
+  }
+  .chat-send:active { transform: scale(.92); }
+  .chat-send svg { width: 23px; height: 23px; }
+  /* Collapse-on-type: with text, the attach icon hides and the send
+     button appears (WhatsApp behaviour) → more room to type. */
+  .chat-composer.has-text .chat-attach { display: none; }
+  .chat-composer.has-text .chat-send { display: inline-flex; }
 
   .chat-empty {
     margin: auto; text-align: center;
@@ -274,15 +289,6 @@
   .att-file .att-sub { font-size: 11px; opacity: .7; }
 
   /* Composer attach button — same footprint as send, ghost style. */
-  .chat-attach {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 40px; height: 40px; flex: none;
-    background: transparent; color: var(--color-text-secondary);
-    border: 1px solid var(--color-border); border-radius: 10px;
-    cursor: pointer; transition: background .12s, color .12s;
-  }
-  .chat-attach:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
-  .chat-attach svg { width: 18px; height: 18px; }
   .chat-attach:disabled { opacity: .5; cursor: not-allowed; }
 
   .chat-connect-nudge {
@@ -486,10 +492,6 @@
   .msg-body a { word-break: break-word; }
   .msg-meta { font-size: 12px; gap: 10px; }
   .msg-del { font-size: 13px; }
-  .chat-composer { padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0)); gap: 10px; }
-  .chat-composer textarea { font-size: 16px; min-height: 46px; padding: 12px 14px; }
-  .chat-send, .chat-attach { width: 48px; height: 48px; }
-  .chat-send svg, .chat-attach svg { width: 22px; height: 22px; }
   .room-chip { font-size: 14px; padding: 7px 14px; }
   .chat-filter-chip { font-size: 13px; padding: 6px 13px; }
   .att-file .att-name { font-size: 15px; }
@@ -615,19 +617,21 @@
   <form class="chat-composer" id="chat-form" autocomplete="off">
     <input type="file" id="chat-file" hidden
            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.zip">
-    <button type="button" class="chat-attach" id="chat-emoji" title="Emoji">
-      <i data-feather="smile"></i>
-    </button>
-    <button type="button" class="chat-attach" id="chat-attach"
-            title="Attach a file"
-            data-drive-ready="{{ 'yes' if drive_ready else 'no' }}"
-            data-connect-url="{{ connect_url }}"
-            data-max-mb="{{ max_upload_mb }}">
-      <i data-feather="paperclip"></i>
-    </button>
-    <textarea id="chat-input"
-              placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
-              rows="1" maxlength="2000"></textarea>
+    <div class="composer-pill">
+      <button type="button" class="pill-icon" id="chat-emoji" title="Emoji">
+        <i data-feather="smile"></i>
+      </button>
+      <textarea id="chat-input"
+                placeholder="Message"
+                rows="1" maxlength="2000"></textarea>
+      <button type="button" class="pill-icon chat-attach" id="chat-attach"
+              title="Attach a file"
+              data-drive-ready="{{ 'yes' if drive_ready else 'no' }}"
+              data-connect-url="{{ connect_url }}"
+              data-max-mb="{{ max_upload_mb }}">
+        <i data-feather="paperclip"></i>
+      </button>
+    </div>
     <button type="submit" class="chat-send" id="chat-send" title="Send">
       <i data-feather="send"></i>
     </button>
@@ -1141,7 +1145,7 @@
       // Restore the unsent text so they can retry without retyping,
       // and refocus so the keyboard is ready for the fix.
       input.value = body;
-      autoResize();
+      updateComposer();
       input.focus();
     } finally {
       sendBtn.disabled = false;
@@ -1242,7 +1246,13 @@
     input.style.height = "auto";
     input.style.height = Math.min(140, input.scrollHeight) + "px";
   }
-  input.addEventListener("input", autoResize);
+  // Auto-grow + toggle the collapse state (attach hides / send appears
+  // once there's text), WhatsApp-style.
+  function updateComposer() {
+    autoResize();
+    form.classList.toggle("has-text", input.value.trim().length > 0);
+  }
+  input.addEventListener("input", updateComposer);
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1255,7 +1265,7 @@
     const body = input.value.trim();
     if (!body) return;
     input.value = "";
-    autoResize();
+    updateComposer();
     sendMessage(body);
     // Keep the keyboard up (WhatsApp-style): re-focus the input in the
     // same gesture so the soft keyboard doesn't close + reopen (which
@@ -1301,7 +1311,7 @@
     el.value = el.value.slice(0, s) + text + el.value.slice(e);
     const pos = s + text.length;
     try { el.selectionStart = el.selectionEnd = pos; } catch (_) {}
-    autoResize();
+    updateComposer();
     el.focus();
   }
   emojiBtn?.addEventListener("click", () => {
@@ -1375,7 +1385,7 @@
         throw new Error(data.error || r.status);
       }
       input.value = "";
-      autoResize();
+      updateComposer();
       document.getElementById("chat-empty")?.remove();
       appendMessage(data.message);
       if (window.feather) feather.replace();
