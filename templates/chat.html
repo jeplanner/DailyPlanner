@@ -742,6 +742,21 @@
   const roomSub   = document.getElementById("room-sub");
   const roomChips = document.getElementById("room-chips");
 
+  // Bulletproof height: pin the page to the *actual* visible viewport
+  // (visualViewport when available — it accounts for the mobile address
+  // bar AND the on-screen keyboard). The body is a flex column with the
+  // chat-shell flexing to fill, so the composer is always pinned at the
+  // bottom and never clipped off-screen on landing. Relying on CSS
+  // 100dvh alone wasn't reliable across devices.
+  function fitViewport() {
+    const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.body.style.height = h + "px";
+  }
+  fitViewport();
+  window.addEventListener("resize", fitViewport);
+  window.addEventListener("orientationchange", fitViewport);
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", fitViewport);
+
   const state = {
     since: null,           // ISO timestamp cursor for next poll
     lastAuthorId: null,    // for bubble grouping
@@ -1358,23 +1373,15 @@
     "எண்ணித் துணிக கருமம் துணிந்தபின் எண்ணுவம் என்பது இழுக்கு — think first, then act",
   ];
   // The quote lives in a wrapping bar above the composer (so long
-  // Thirukkural couplets are fully readable, not clipped in the input),
-  // and hides while you're typing.
+  // Thirukkural couplets are fully readable, not clipped in the input).
+  // It stays visible at all times; only the text rotates, and only when
+  // the box is idle so it never flips mid-thought.
   const quoteBar = document.getElementById("quote-bar");
   function setRandomQuote() {
     quoteBar.textContent = CHAT_QUOTES[Math.floor(Math.random() * CHAT_QUOTES.length)];
   }
-  function updateQuoteBar() {
-    const hide = document.activeElement === input || input.value.length > 0;
-    quoteBar.classList.toggle("hidden", hide);
-  }
   setRandomQuote();
-  updateQuoteBar();
-  input.addEventListener("focus", updateQuoteBar);
-  input.addEventListener("blur", updateQuoteBar);
   setInterval(() => {
-    // Only rotate when the box is empty, unfocused, and the tab is
-    // visible — never disturb someone mid-thought.
     if (!input.value && document.activeElement !== input && !document.hidden) {
       setRandomQuote();
     }
