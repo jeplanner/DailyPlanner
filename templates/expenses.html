@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Expenses — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px 16px 60px; }
+  h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 16px; }
+
+  .card { background: var(--color-surface); border: 1px solid var(--color-border);
+          border-radius: 14px; padding: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .field input {
+    font: inherit; font-size: 16px; padding: 10px 12px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-bg); color: var(--color-text); outline: none;
+  }
+  .field input:focus { border-color: var(--color-primary); }
+  .f-date  { flex: 1 1 150px; }
+  .f-amount{ flex: 1 1 110px; }
+  .f-cat   { flex: 2 1 180px; }
+  .f-note  { flex: 1 1 100%; }
+  .add-btn {
+    margin-top: 12px; width: 100%; font: inherit; font-size: 15px; font-weight: 700;
+    padding: 12px; border: none; border-radius: 11px; cursor: pointer;
+    background: var(--color-primary); color: #fff;
+  }
+  .add-btn:active { transform: scale(.99); }
+
+  .total-bar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin: 22px 2px 10px;
+  }
+  .total-bar .lbl { font-size: 13px; color: var(--color-text-secondary); font-weight: 600; }
+  .total-bar .amt { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .exp {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 12px; padding: 11px 13px;
+  }
+  .exp .cat { font-weight: 700; font-size: 15px; }
+  .exp .cat.empty { color: var(--color-text-muted, #94a3b8); font-weight: 600; }
+  .exp .nt { font-size: 12.5px; color: var(--color-text-secondary); margin-top: 1px; }
+  .exp .mid { flex: 1; min-width: 0; }
+  .exp .amt { font-weight: 800; font-size: 16px; white-space: nowrap; }
+  .exp .del {
+    background: none; border: none; color: #ef4444; cursor: pointer;
+    padding: 4px; display: inline-flex;
+  }
+  .exp .del svg { width: 18px; height: 18px; }
+  .empty { text-align: center; color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="wrap">
+  <h1>💸 Expenses</h1>
+  <p class="sub">Log what you spent. The category box suggests ones you've used before.</p>
+
+  <div class="card">
+    <form id="exp-form" autocomplete="off">
+      <div class="row">
+        <div class="field f-date">
+          <label for="exp-date">Date</label>
+          <input type="date" id="exp-date" value="{{ today }}" max="{{ today }}">
+        </div>
+        <div class="field f-amount">
+          <label for="exp-amount">Amount (₹)</label>
+          <input type="number" id="exp-amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+        </div>
+        <div class="field f-cat">
+          <label for="exp-category">Category</label>
+          <input type="text" id="exp-category" list="cat-suggestions"
+                 placeholder="e.g. Groceries" maxlength="60">
+          <datalist id="cat-suggestions"></datalist>
+        </div>
+        <div class="field f-note">
+          <label for="exp-note">Note (optional)</label>
+          <input type="text" id="exp-note" placeholder="What was it for?" maxlength="300">
+        </div>
+      </div>
+      <button type="submit" class="add-btn" id="exp-add">Add expense</button>
+    </form>
+  </div>
+
+  <div class="total-bar">
+    <span class="lbl" id="total-lbl">Total spent</span>
+    <span class="amt" id="total-amt">₹0</span>
+  </div>
+
+  <div class="list" id="exp-list"></div>
+</div>
+
+<script>
+(() => {
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const dateEl = document.getElementById("exp-date");
+  const amountEl = document.getElementById("exp-amount");
+  const catEl = document.getElementById("exp-category");
+  const noteEl = document.getElementById("exp-note");
+  const form = document.getElementById("exp-form");
+  const listEl = document.getElementById("exp-list");
+  const totalEl = document.getElementById("total-amt");
+  const totalLbl = document.getElementById("total-lbl");
+  const dataList = document.getElementById("cat-suggestions");
+
+  const toast = (m, k="info") => window.showToast ? window.showToast(m, k, 2200) : console.log(m);
+  const esc = (s) => String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+  const money = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+
+  // ── Category suggestions (built from the user's own history) ──
+  async function loadCategories() {
+    try {
+      const r = await fetch("/api/expenses/categories", { credentials: "same-origin" });
+      const data = await r.json();
+      dataList.innerHTML = (data.categories || [])
+        .map(c => `<option value="${esc(c)}"></option>`).join("");
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // ── Day's expenses + total ──
+  function renderRow(it) {
+    const div = document.createElement("div");
+    div.className = "exp";
+    div.dataset.id = it.id;
+    div.innerHTML = `
+      <div class="mid">
+        <div class="cat ${it.category ? "" : "empty"}">${it.category ? esc(it.category) : "Uncategorised"}</div>
+        ${it.note ? `<div class="nt">${esc(it.note)}</div>` : ""}
+      </div>
+      <div class="amt">${money(it.amount)}</div>
+      <button type="button" class="del" title="Delete"><i data-feather="trash-2"></i></button>`;
+    div.querySelector(".del").addEventListener("click", () => del(it.id, div));
+    return div;
+  }
+
+  async function load() {
+    const day = dateEl.value;
+    try {
+      const r = await fetch("/api/expenses?date=" + encodeURIComponent(day), { credentials: "same-origin" });
+      const data = await r.json();
+      listEl.innerHTML = "";
+      if (!data.items.length) {
+        listEl.innerHTML = `<div class="empty">No expenses logged for this day.</div>`;
+      } else {
+        for (const it of data.items) listEl.appendChild(renderRow(it));
+      }
+      totalEl.textContent = money(data.total);
+      totalLbl.textContent = "Total spent" + (day ? "" : "");
+      if (window.feather) feather.replace();
+    } catch (e) {
+      toast("Couldn't load expenses", "error");
+    }
+  }
+
+  async function del(id, el) {
+    if (!confirm("Delete this expense?")) return;
+    try {
+      const r = await fetch("/api/expenses/" + encodeURIComponent(id) + "/delete", {
+        method: "POST", headers: { "X-CSRFToken": CSRF }, credentials: "same-origin",
+      });
+      if (!r.ok) throw new Error();
+      el.remove();
+      load();   // refresh total
+    } catch (_) { toast("Couldn't delete", "error"); }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const amount = parseFloat(amountEl.value);
+    if (!(amount >= 0) || amountEl.value === "") { toast("Enter an amount", "error"); amountEl.focus(); return; }
+    const body = {
+      spent_on: dateEl.value,
+      amount,
+      category: catEl.value.trim(),
+      note: noteEl.value.trim(),
+    };
+    document.getElementById("exp-add").disabled = true;
+    try {
+      const r = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "");
+      // Clear amount + note, keep date and category for fast repeat entry.
+      amountEl.value = ""; noteEl.value = "";
+      amountEl.focus();
+      await load();
+      loadCategories();   // a new category becomes a future suggestion
+    } catch (e) {
+      toast(e.message || "Couldn't save", "error");
+    } finally {
+      document.getElementById("exp-add").disabled = false;
+    }
+  });
+
+  dateEl.addEventListener("change", load);
+
+  // Boot
+  if (window.feather) feather.replace();
+  loadCategories();
+  load();
+})();
+</script>
+</body>
+</html>
