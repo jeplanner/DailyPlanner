@@ -70,6 +70,14 @@ def login():
         if user and user.is_active and user.check_password(password):
             login_user(user, remember=True)
             session.permanent = True
+            # Stamp last login so the chat member list can show "last seen".
+            try:
+                from datetime import datetime, timezone
+                from supabase_client import update as _update
+                _update("users", params={"id": f"eq.{user.id}"},
+                        json={"last_login_at": datetime.now(timezone.utc).isoformat()})
+            except Exception:
+                logger.warning("last_login_at stamp failed for %s", email)
             # Cache the user's preferred timezone in the session so the
             # rest of the app (utils.user_tz.user_now / user_today) can
             # serve "today" in the user's wall-clock without a DB hit

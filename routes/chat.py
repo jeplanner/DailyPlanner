@@ -279,19 +279,22 @@ def _emails_for_user_ids(user_ids):
 
 
 def _users_by_ids(user_ids):
-    """{user_id: {email, display_name}} for member-name rendering."""
+    """{user_id: {email, display_name, last_login_at}} for member rows."""
     if not user_ids:
         return {}
-    rows = get("users", {
-        "id": f"in.({','.join(str(u) for u in user_ids)})",
-        "select": "id,email,display_name",
-    }) or []
+    idin = f"in.({','.join(str(u) for u in user_ids)})"
+    try:
+        rows = get("users", {"id": idin, "select": "id,email,display_name,last_login_at"}) or []
+    except Exception:
+        # last_login_at column not migrated yet — fall back.
+        rows = get("users", {"id": idin, "select": "id,email,display_name"}) or []
     out = {}
     for r in rows:
         email = (r.get("email") or "").lower()
         out[r["id"]] = {
             "email": email,
             "display_name": (r.get("display_name") or "").strip() or email.split("@", 1)[0] or "Member",
+            "last_login_at": r.get("last_login_at"),
         }
     return out
 
@@ -613,6 +616,7 @@ def get_room_members(room_id):
         "email": info.get(uid, {}).get("email", ""),
         "is_owner": str(uid) == owner,
         "is_self": str(uid) == me,
+        "last_login_at": info.get(uid, {}).get("last_login_at"),
     } for uid in ids]
     is_owner = owner == str(session["user_id"])
     is_default = bool(room.get("is_default"))

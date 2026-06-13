@@ -57,6 +57,7 @@
   .exp .mid { flex: 1; min-width: 0; }
   .exp .amt { font-weight: 800; font-size: 16px; white-space: nowrap; }
   .exp.kind-expense .amt { color: #b91c1c; } .exp.kind-income .amt { color: #047857; }
+  .exp .rcpt { text-decoration: none; font-size: 18px; flex: none; }
   .exp .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 4px; display: inline-flex; }
   .exp .del svg { width: 18px; height: 18px; }
   .empty { text-align: center; color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; }
@@ -105,6 +106,10 @@
         <div class="field f-note">
           <label for="exp-note">Note (optional)</label>
           <input type="text" id="exp-note" placeholder="What was it for?" maxlength="300">
+        </div>
+        <div class="field f-note">
+          <label for="exp-receipt">Receipt (optional — image or PDF, saved to Drive)</label>
+          <input type="file" id="exp-receipt" accept="image/*,application/pdf">
         </div>
       </div>
       <button type="submit" class="add-btn" id="exp-add">Add</button>
@@ -171,6 +176,7 @@
         <div class="cat ${it.category?"":"empty"}">${it.category?esc(it.category):"Uncategorised"}</div>
         ${it.note?`<div class="nt">${esc(it.note)}</div>`:""}
       </div>
+      ${it.receipt_url?`<a class="rcpt" href="${esc(it.receipt_url)}" target="_blank" rel="noopener" title="Receipt: ${esc(it.receipt_name||"")}">🧾</a>`:""}
       <div class="amt">${it.kind==="income"?"+":(it.kind==="transfer"?"⇄ ":"−")}${money(it.amount)}</div>
       <button type="button" class="del" title="Delete"><i data-feather="trash-2"></i></button>`;
     div.querySelector(".del").addEventListener("click",()=>del(it.id,div));
@@ -199,16 +205,50 @@
     }catch(_){ toast("Couldn't delete","error"); }
   }
 
+  // Upload a receipt to Drive, handling the "name already exists" case
+  // by asking to overwrite or rename. Returns {file_id,name,web_view},
+  // or "cancelled" if the user backs out.
+  async function uploadReceipt(file, nameOverride, overwrite){
+    const fd=new FormData();
+    fd.append("file",file);
+    if(nameOverride) fd.append("name",nameOverride);
+    if(overwrite) fd.append("overwrite","true");
+    const r=await fetch("/api/expenses/receipt",{method:"POST",headers:{"X-CSRFToken":CSRF},body:fd,credentials:"same-origin"});
+    if(r.status===409){
+      const d=await r.json();
+      const ov=confirm(`A receipt named "${d.name}" already exists.\n\nOK = Overwrite it.\nCancel = save under a new name.`);
+      if(ov) return uploadReceipt(file, nameOverride||d.name, true);
+      const nn=prompt("New file name for the receipt:", d.name);
+      if(!nn||!nn.trim()) return "cancelled";
+      return uploadReceipt(file, nn.trim(), false);
+    }
+    const d=await r.json();
+    if(!r.ok){
+      if(d.connect_url && confirm("Connect Google Drive to save receipts?")) location.href=d.connect_url;
+      throw new Error(d.error||"Receipt upload failed");
+    }
+    return d;
+  }
+
   form.addEventListener("submit",async(e)=>{
     e.preventDefault();
     if(amountEl.value===""||!(parseFloat(amountEl.value)>=0)){ toast("Enter an amount","error"); amountEl.focus(); return; }
-    const body={kind, spent_on:dateEl.value, amount:parseFloat(amountEl.value), category:catEl.value.trim(), note:noteEl.value.trim()};
     $("exp-add").disabled=true;
     try{
+      // Upload receipt first (if attached) so we can attach its link.
+      let receipt=null;
+      const rf=$("exp-receipt").files && $("exp-receipt").files[0];
+      if(rf){
+        toast("Uploading receipt…");
+        receipt=await uploadReceipt(rf);
+        if(receipt==="cancelled"){ toast("Receipt cancelled — entry not saved","info"); $("exp-add").disabled=false; return; }
+      }
+      const body={kind, spent_on:dateEl.value, amount:parseFloat(amountEl.value), category:catEl.value.trim(), note:noteEl.value.trim()};
+      if(receipt){ body.receipt_file_id=receipt.file_id; body.receipt_url=receipt.web_view; body.receipt_name=receipt.name; }
       const r=await fetch("/api/expenses",{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":CSRF},body:JSON.stringify(body),credentials:"same-origin"});
       const d=await r.json();
       if(!r.ok) throw new Error(d.error||"");
-      amountEl.value=""; noteEl.value=""; amountEl.focus();
+      amountEl.value=""; noteEl.value=""; $("exp-receipt").value=""; amountEl.focus();
       await load(); loadCategories(); loadReport();
     }catch(e){ toast(e.message||"Couldn't save","error"); }
     finally{ $("exp-add").disabled=false; }

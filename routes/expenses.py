@@ -7,11 +7,16 @@ and grows into a useful pick-list as they log spends.
 
 Schema: see MIGRATION_EXPENSES.sql. Soft-delete only (deleted_at).
 """
+import io
 import logging
 from collections import Counter
 from datetime import date
 
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import Blueprint, jsonify, render_template, request, session, url_for
+
+from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseUpload
 
 from auth import login_required
 from supabase_client import get, post, update
@@ -24,6 +29,42 @@ expenses_bp = Blueprint("expenses", __name__)
 _MAX_CATEGORY = 60
 _MAX_NOTE = 300
 _CATEGORY_SUGGESTIONS = 40
+_MAX_RECEIPT_BYTES = 15 * 1024 * 1024  # 15 MB
+
+# Drive folder layout for receipts:  dailyplanner / receipts
+_RECEIPT_PARENT = "dailyplanner"
+_RECEIPT_FOLDER = "receipts"
+
+
+def _ensure_receipts_folder(service, user_id, row):
+    """Return the Drive id of  dailyplanner/receipts , creating either
+    folder on first use and caching the receipts id on the token row."""
+    cached = (row or {}).get("receipts_folder_id")
+    if cached:
+        try:
+            service.files().get(fileId=cached, fields="id, trashed").execute()
+            return cached
+        except HttpError:
+            pass
+
+    def _find_or_create(name, parent=None):
+        q = (f"mimeType='application/vnd.google-apps.folder' and name='{name}' "
+             "and trashed=false")
+        if parent:
+            q += f" and '{parent}' in parents"
+        found = service.files().list(q=q, fields="files(id)", pageSize=1).execute().get("files", [])
+        if found:
+            return found[0]["id"]
+        body = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+        if parent:
+            body["parents"] = [parent]
+        return service.files().create(body=body, fields="id").execute()["id"]
+
+    parent_id = _find_or_create(_RECEIPT_PARENT)
+    receipts_id = _find_or_create(_RECEIPT_FOLDER, parent_id)
+    update("user_google_tokens", params={"user_id": f"eq.{user_id}"},
+           json={"receipts_folder_id": receipts_id})
+    return receipts_id
 
 
 def _today_iso():
@@ -42,6 +83,8 @@ def _shape(row):
         "category": row.get("category") or "",
         "note": row.get("note") or "",
         "created_at": row.get("created_at"),
+        "receipt_url": row.get("receipt_url") or "",
+        "receipt_name": row.get("receipt_name") or "",
     }
 
 
@@ -80,7 +123,7 @@ def list_expenses():
             "user_id": f"eq.{user_id}",
             "spent_on": f"eq.{day}",
             "deleted_at": "is.null",
-            "select": "id,kind,spent_on,amount,category,note,created_at",
+            "select": "id,kind,spent_on,amount,category,note,created_at,receipt_url,receipt_name",
             "order": "created_at.desc",
         }) or []
     except Exception as e:
@@ -216,6 +259,12 @@ def add_expense():
         "category": category,
         "note": note,
     }
+    # Optional receipt (already uploaded to Drive via /api/expenses/receipt).
+    rfid = (data.get("receipt_file_id") or "").strip()
+    if rfid:
+        payload["receipt_file_id"] = rfid
+        payload["receipt_url"] = (data.get("receipt_url") or "").strip() or None
+        payload["receipt_name"] = (data.get("receipt_name") or "").strip()[:200] or None
     try:
         rows = post("expenses", payload)
     except Exception as e:
@@ -223,6 +272,71 @@ def add_expense():
         return jsonify({"error": "Couldn't save — please try again"}), 502
 
     return jsonify({"item": _shape(rows[0] if rows else payload)})
+
+
+@expenses_bp.route("/api/expenses/receipt", methods=["POST"])
+@login_required
+def upload_receipt():
+    """Upload a receipt (image/PDF) to Drive  dailyplanner/receipts .
+
+    If a file with the same name already exists there, returns 409
+    {error:'exists'} so the client can ask the user to rename or
+    overwrite. Pass overwrite=true (replaces the existing file's content,
+    keeping the same id/link) or a new `name` to retry."""
+    user_id = session["user_id"]
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file"}), 400
+
+    mime = (f.mimetype or "application/octet-stream").lower()
+    if not (mime.startswith("image/") or mime == "application/pdf"):
+        return jsonify({"error": "Receipt must be an image or a PDF."}), 400
+    blob = f.stream.read()
+    if not blob:
+        return jsonify({"error": "Empty file"}), 400
+    if len(blob) > _MAX_RECEIPT_BYTES:
+        return jsonify({"error": f"Too large (max {_MAX_RECEIPT_BYTES // (1024*1024)} MB)."}), 400
+
+    name = (request.form.get("name") or f.filename or "receipt").strip()[:200]
+    overwrite = (request.form.get("overwrite") or "").strip().lower() in ("1", "true", "yes")
+
+    try:
+        from routes.chat import _drive_service_for
+        service, row = _drive_service_for(user_id)
+    except RefreshError:
+        return jsonify({"error": "refresh_failed", "connect_url": url_for("events.google_login")}), 401
+    if not service:
+        return jsonify({"error": "not_connected", "connect_url": url_for("events.google_login")}), 401
+
+    try:
+        folder = _ensure_receipts_folder(service, user_id, row)
+        safe = name.replace("\\", "\\\\").replace("'", "\\'")
+        existing = service.files().list(
+            q=f"'{folder}' in parents and name='{safe}' and trashed=false",
+            fields="files(id,name)", pageSize=1,
+        ).execute().get("files", [])
+
+        media = MediaIoBaseUpload(io.BytesIO(blob), mimetype=mime, resumable=False)
+        if existing:
+            if not overwrite:
+                # Let the client prompt for rename / overwrite.
+                return jsonify({"error": "exists", "name": name}), 409
+            updated = service.files().update(
+                fileId=existing[0]["id"], media_body=media,
+                fields="id,name,webViewLink",
+            ).execute()
+            return jsonify({"file_id": updated["id"], "name": updated.get("name") or name,
+                            "web_view": updated.get("webViewLink"), "overwritten": True})
+
+        created = service.files().create(
+            body={"name": name, "parents": [folder]}, media_body=media,
+            fields="id,name,webViewLink",
+        ).execute()
+        return jsonify({"file_id": created["id"], "name": created.get("name") or name,
+                        "web_view": created.get("webViewLink")})
+    except HttpError as e:
+        logger.exception("receipt upload failed: %s", e)
+        return jsonify({"error": "Drive upload failed."}), 502
 
 
 @expenses_bp.route("/api/expenses/<item_id>/delete", methods=["POST"])

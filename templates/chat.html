@@ -827,6 +827,21 @@
     return (b / 1024 / 1024).toFixed(1) + " MB";
   };
 
+  // "Last logged in …" relative phrasing for the member list.
+  function lastSeen(iso) {
+    if (!iso) return "Last login: never";
+    const t = new Date(iso);
+    if (Number.isNaN(t.getTime())) return "";
+    const mins = Math.floor((Date.now() - t.getTime()) / 60000);
+    let rel;
+    if (mins < 1) rel = "just now";
+    else if (mins < 60) rel = mins + "m ago";
+    else if (mins < 1440) rel = Math.floor(mins / 60) + "h ago";
+    else if (mins < 10080) rel = Math.floor(mins / 1440) + "d ago";
+    else rel = t.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return "Last login: " + rel;
+  }
+
   // Attachment block for a message bubble. Images render inline (tap to
   // zoom); PDFs/docs render as a chip that opens the file. raw_url is an
   // app-proxied stream so every family member sees it without a Drive
@@ -1980,7 +1995,8 @@
       row.innerHTML = `
         <span><span class="ml-name">${esc(m.display_name)}</span>
           ${m.is_owner ? `<span class="ml-owner"> · owner</span>` : ""}
-          <div class="ml-sub">${esc(m.email)}</div></span>
+          <div class="ml-sub">${esc(m.email)}</div>
+          <div class="ml-sub">${lastSeen(m.last_login_at)}</div></span>
         ${canRemove ? `<button type="button" class="ml-remove" data-uid="${esc(m.user_id)}">remove</button>` : ""}`;
       manageMembers.appendChild(row);
     }
