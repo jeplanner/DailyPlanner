@@ -377,6 +377,8 @@
   }
   .room-chip:hover { background: var(--color-surface-secondary, #f1f5f9); color: var(--color-text); }
   .room-chip.is-active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+  .room-emoji { display: inline-block; margin-right: 5px; font-size: 14px; line-height: 1; vertical-align: -1px; }
+  .room-emoji.lg { font-size: 20px; margin-right: 6px; vertical-align: -2px; }
   .room-chip .room-unread {
     display: inline-block; margin-left: 6px; min-width: 17px; height: 17px;
     line-height: 17px; padding: 0 4px; border-radius: 999px;
@@ -544,7 +546,8 @@
 <div class="modal-overlay" id="new-room-overlay">
   <div class="modal" role="dialog" aria-modal="true" aria-label="New room">
     <h3>New room</h3>
-    <input type="text" id="new-room-name" maxlength="80" placeholder="Room name (e.g. Trip planning)">
+    <input type="text" id="new-room-name" maxlength="80" placeholder="Room name (e.g. 🍕 Pizza night)">
+    <div class="drive-search-hint" style="margin:6px 2px 0">Tip: start the name with an emoji to set the room's icon 🎉 — otherwise we'll pick a fun one.</div>
     <div class="modal-label">Members</div>
     <div class="member-pick" id="new-room-members"></div>
     <div class="modal-actions">
@@ -757,18 +760,46 @@
     document.getElementById("chat-empty")?.remove();
   }
 
+  const EMPTY_LINES = [
+    "No messages yet. Say hi 👋",
+    "Crickets in here… 🦗 break the ice!",
+    "Empty room, big energy ⚡",
+    "Be the first to drop a meme 🐸",
+    "So quiet you can hear the pixels 🤫",
+    "This room is suspiciously calm 🦥",
+  ];
   function renderEmptyState() {
     if (stream.children.length === 0) {
+      const line = EMPTY_LINES[Math.floor((Date.now() / 60000)) % EMPTY_LINES.length];
       stream.innerHTML = `
         <div class="chat-empty">
           <i data-feather="message-circle"></i>
-          <div>No messages yet. Say hi 👋</div>
+          <div>${esc(line)}</div>
         </div>`;
       if (window.feather) feather.replace();
     }
   }
 
   // ── Rooms ──────────────────────────────────────────────────────
+  // A curated set of fun emoji. Each room gets a stable one (hashed off
+  // its id) so it looks distinct and playful — unless the room's name
+  // already starts with an emoji, in which case we use that (so you can
+  // pick your own icon just by naming a room "🍕 Pizza night").
+  const FUN_EMOJI = ["🦄","🐙","🦖","🐸","🦦","🐧","🦥","🐢","🦔","🐰","🦊",
+    "🐼","🦩","🐲","👽","🤖","🎩","🦜","🐝","🦋","🐳","🦞","🍍","🌮","🦒",
+    "🐊","🦨","🐌","🦚","🪿","🐹","🦕","🍄","🚀","🎸","🦭"];
+  const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}️?)\s*/u;
+  const hashStr = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; };
+  function roomFace(room) {
+    if (room.is_default) return { emoji: "🏡", label: room.name };
+    const m = LEADING_EMOJI_RE.exec(room.name || "");
+    if (m) {
+      const rest = (room.name.slice(m[0].length)).trim();
+      return { emoji: m[1], label: rest || room.name };
+    }
+    return { emoji: FUN_EMOJI[hashStr(room.id || room.name || "") % FUN_EMOJI.length], label: room.name };
+  }
+
   function renderRoomChips() {
     roomChips.innerHTML = "";
     for (const room of state.rooms) {
@@ -777,7 +808,8 @@
       b.className = "room-chip" + (room.id === state.roomId ? " is-active" : "");
       b.dataset.roomId = room.id;
       const unread = (room.id === state.roomId) ? 0 : (room.unread || 0);
-      b.innerHTML = esc(room.name) +
+      const face = roomFace(room);
+      b.innerHTML = `<span class="room-emoji">${face.emoji}</span>${esc(face.label)}` +
         (unread ? `<span class="room-unread">${unread > 99 ? "99+" : unread}</span>` : "");
       b.addEventListener("click", () => switchRoom(room.id));
       roomChips.appendChild(b);
@@ -787,7 +819,8 @@
   function updateRoomHeader() {
     const room = currentRoom();
     if (!room) return;
-    roomTitle.textContent = (room.is_default ? "💬 " : "# ") + room.name;
+    const face = roomFace(room);
+    roomTitle.innerHTML = `<span class="room-emoji lg">${face.emoji}</span> ${esc(face.label)}`;
     const n = room.member_count || 0;
     roomSub.innerHTML = `${n} member${n === 1 ? "" : "s"} · Posting as <b>${esc(VIEWER_NAME)}</b>`;
   }
