@@ -645,10 +645,10 @@
 
   <div class="chat-filter" role="tablist">
     <button type="button" class="chat-filter-chip is-active" data-filter="all">All</button>
-    <button type="button" class="chat-filter-chip" data-filter="shares">Shares only</button>
-    <button type="button" class="chat-filter-chip" data-filter="file-share">📎 Files</button>
-    <button type="button" class="chat-filter-chip" data-filter="kb-share">📚 KB</button>
-    <button type="button" class="chat-filter-chip" data-filter="inbox-share">📥 Inbox</button>
+    <button type="button" class="chat-filter-chip" data-filter="shares">Shared</button>
+    <button type="button" class="chat-filter-chip" data-filter="file-share" title="Files shared in this room">📎 Files</button>
+    <button type="button" class="chat-filter-chip" data-filter="kb-share" title="Documents shared in this room">📚 Docs</button>
+    <button type="button" class="chat-filter-chip" data-filter="inbox-share" title="Links shared in this room">📥 Links</button>
   </div>
 
   {% if not drive_ready %}
