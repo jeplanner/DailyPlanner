@@ -273,6 +273,11 @@
   }
   .quote-bar:empty, .quote-bar.hidden { display: none; }
 
+  /* Keyboard up → hide the room tabs + filter chips to free space for
+     the messages and the message box (the proverb bar stays). */
+  .chat-shell.kbd-open .room-strip,
+  .chat-shell.kbd-open .chat-filter { display: none; }
+
   .chat-empty {
     margin: auto; text-align: center;
     color: var(--color-text-secondary); font-size: 14px;
@@ -748,9 +753,16 @@
   // chat-shell flexing to fill, so the composer is always pinned at the
   // bottom and never clipped off-screen on landing. Relying on CSS
   // 100dvh alone wasn't reliable across devices.
+  let _maxVH = 0;
   function fitViewport() {
     const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
     document.body.style.height = h + "px";
+    // Detect the on-screen keyboard: the visible height drops well below
+    // the tallest we've seen. When it's up, hide the room tabs + filter
+    // to give the messages and box more room.
+    _maxVH = Math.max(_maxVH, h);
+    const kbdOpen = h < _maxVH - 150;
+    document.querySelector(".chat-shell")?.classList.toggle("kbd-open", kbdOpen);
   }
   fitViewport();
   window.addEventListener("resize", fitViewport);
@@ -1404,6 +1416,13 @@
     quoteBar.textContent = CHAT_QUOTES[Math.floor(Math.random() * CHAT_QUOTES.length)];
   }
   setRandomQuote();
+  // Load the full Thirukkural set (Aṟam + Poruḷ, no Kāmattuppāl) and
+  // fold it into the rotation. Cached by the service worker after first
+  // load, so it's a one-time fetch.
+  fetch("/static/data/kural_quotes.json", { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.json() : []))
+    .then((arr) => { if (Array.isArray(arr) && arr.length) CHAT_QUOTES.push(...arr); })
+    .catch(() => {});
   setInterval(() => {
     if (!input.value && document.activeElement !== input && !document.hidden) {
       setRandomQuote();
