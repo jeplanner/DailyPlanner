@@ -35,9 +35,20 @@
     border: 1px solid var(--color-border); border-radius: 10px;
     background: var(--color-bg); color: var(--color-text); outline: none;
   }
-  .field input:focus { border-color: var(--color-primary); }
+  .field input:focus, .field select:focus { border-color: var(--color-primary); }
+  .field select {
+    font: inherit; font-size: 15px; padding: 10px 12px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-bg); color: var(--color-text); outline: none;
+  }
   .f-date{flex:1 1 150px;} .f-amount{flex:1 1 110px;} .f-cat{flex:2 1 180px;} .f-note{flex:1 1 100%;}
+  .f-tag{flex:1 1 160px;} .f-sel{flex:1 1 130px;}
   .add-btn { margin-top: 12px; width: 100%; font: inherit; font-size: 15px; font-weight: 700; padding: 12px; border: none; border-radius: 11px; cursor: pointer; background: var(--color-primary); color: #fff; }
+  /* Editing state */
+  .card.editing { border-color: var(--color-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 22%, transparent); }
+  .edit-bar { display: none; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 13px; font-weight: 600; color: var(--color-primary); }
+  .card.editing .edit-bar { display: flex; }
+  .edit-bar button { font: inherit; font-size: 13px; font-weight: 600; background: none; border: 1px solid var(--color-border); border-radius: 8px; padding: 5px 10px; cursor: pointer; color: var(--color-text-secondary); }
 
   .stats { display: flex; gap: 8px; margin: 18px 0 10px; }
   .stat { flex: 1; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 10px 12px; text-align: center; }
@@ -55,16 +66,29 @@
   .exp .cat.empty { color: var(--color-text-muted, #94a3b8); font-weight: 600; }
   .exp .nt { font-size: 12.5px; color: var(--color-text-secondary); margin-top: 1px; }
   .exp .mid { flex: 1; min-width: 0; }
+  .exp .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+  .exp .badge { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); color: var(--color-text-secondary); }
+  .exp .badge.rec { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+  .exp .badge.need { background: #ecfdf5; border-color: #a7f3d0; color: #047857; }
+  .exp .badge.want { background: #fff7ed; border-color: #fed7aa; color: #c2410c; }
+  .exp .badge.saving { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
   .exp .amt { font-weight: 800; font-size: 16px; white-space: nowrap; }
   .exp.kind-expense .amt { color: #b91c1c; } .exp.kind-income .amt { color: #047857; }
   .exp .rcpt { text-decoration: none; font-size: 18px; flex: none; }
-  .exp .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 4px; display: inline-flex; }
-  .exp .del svg { width: 18px; height: 18px; }
+  .exp .acts { display: flex; flex-direction: column; gap: 2px; flex: none; }
+  .exp .del, .exp .edit { background: none; border: none; cursor: pointer; padding: 4px; display: inline-flex; }
+  .exp .del { color: #ef4444; } .exp .edit { color: var(--color-text-secondary); }
+  .exp .del svg, .exp .edit svg { width: 17px; height: 17px; }
   .empty { text-align: center; color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; }
 
   h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 28px 0 10px; }
   .rep-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .rep-head input { font: inherit; font-size: 15px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg); color: var(--color-text); }
+  .pdf-btn { margin-left: auto; font-size: 13px; font-weight: 700; text-decoration: none; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-text); white-space: nowrap; }
+  .dissect { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; }
+  .dissect label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .dissect select { font: inherit; font-size: 14px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg); color: var(--color-text); }
+  .cat-row .cn .pct { color: var(--color-text-muted, #94a3b8); font-weight: 500; font-size: 12px; margin-left: 6px; }
   .cat-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--color-border); }
   .cat-row:last-child { border-bottom: none; }
   .cat-row .cn { flex: 1; font-weight: 600; font-size: 14px; }
@@ -82,7 +106,11 @@
   <h1>💸 Money</h1>
   <p class="sub">Log money spent and received. The category box suggests ones you've used before.</p>
 
-  <div class="card">
+  <div class="card" id="form-card">
+    <div class="edit-bar">
+      <span>✏️ Editing entry</span>
+      <button type="button" id="edit-cancel">Cancel</button>
+    </div>
     <div class="seg" id="kind-seg">
       <button type="button" data-kind="expense" class="on">− Expense</button>
       <button type="button" data-kind="income">+ Income</button>
@@ -102,6 +130,38 @@
           <label for="exp-category">Category</label>
           <input type="text" id="exp-category" list="cat-suggestions" placeholder="e.g. Groceries / Salary" maxlength="60">
           <datalist id="cat-suggestions"></datalist>
+        </div>
+        <div class="field f-tag">
+          <label for="exp-tag">Tag (optional)</label>
+          <input type="text" id="exp-tag" list="tag-suggestions" placeholder="e.g. Trip / Office" maxlength="40">
+          <datalist id="tag-suggestions"></datalist>
+        </div>
+        <div class="field f-sel">
+          <label for="exp-recurrence">Repeats</label>
+          <select id="exp-recurrence">
+            <option value="none">Single (one-off)</option>
+            <option value="daily">Daily</option>
+            <option value="monthly">Monthly</option>
+            <option value="quarterly">Quarterly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+        <div class="field f-sel">
+          <label for="exp-needwant">Need / Want</label>
+          <select id="exp-needwant">
+            <option value="">—</option>
+            <option value="need">Need</option>
+            <option value="want">Want</option>
+            <option value="saving">Saving</option>
+          </select>
+        </div>
+        <div class="field f-sel">
+          <label for="exp-costtype">Fixed / Variable</label>
+          <select id="exp-costtype">
+            <option value="">—</option>
+            <option value="fixed">Fixed</option>
+            <option value="variable">Variable</option>
+          </select>
         </div>
         <div class="field f-note">
           <label for="exp-note">Note (optional)</label>
@@ -133,13 +193,26 @@
   <h2>Monthly report</h2>
   <div class="rep-head">
     <input type="month" id="rep-month">
+    <a id="rep-pdf" class="pdf-btn" href="#" target="_blank" rel="noopener">📄 PDF</a>
   </div>
   <div class="stats">
     <div class="stat in"><div class="v" id="r-in">₹0</div><div class="l">Income</div></div>
     <div class="stat out"><div class="v" id="r-out">₹0</div><div class="l">Expense</div></div>
     <div class="stat"><div class="v" id="r-net">₹0</div><div class="l">Net</div></div>
   </div>
-  <div class="sub" id="r-transfers" style="margin:-4px 2px 10px;"></div>
+  <div class="sub" id="r-transfers" style="margin:-4px 2px 6px;"></div>
+  <div class="sub" id="r-proj" style="margin:-2px 2px 12px;"></div>
+
+  <div class="dissect">
+    <label for="rep-by">Dissect by</label>
+    <select id="rep-by">
+      <option value="category">Category</option>
+      <option value="need_want">Need / Want / Saving</option>
+      <option value="cost_type">Fixed / Variable</option>
+      <option value="tag">Tag</option>
+      <option value="recurrence">Recurrence</option>
+    </select>
+  </div>
   <div class="card" id="rep-cats"><div class="empty">No spending this month.</div></div>
 </div>
 
@@ -148,9 +221,16 @@
   const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const $ = (id) => document.getElementById(id);
   const dateEl=$("exp-date"), amountEl=$("exp-amount"), catEl=$("exp-category"), noteEl=$("exp-note");
-  const form=$("exp-form"), listEl=$("exp-list"), dataList=$("cat-suggestions");
-  const repMonth=$("rep-month"), repCats=$("rep-cats");
+  const tagEl=$("exp-tag"), recEl=$("exp-recurrence"), needEl=$("exp-needwant"), costEl=$("exp-costtype");
+  const form=$("exp-form"), listEl=$("exp-list"), dataList=$("cat-suggestions"), tagList=$("tag-suggestions");
+  const repMonth=$("rep-month"), repCats=$("rep-cats"), repBy=$("rep-by"), repPdf=$("rep-pdf");
+  const formCard=$("form-card"), addBtn=$("exp-add");
   let kind = "expense";
+  let editingId = null;   // null = adding; otherwise the id being edited
+
+  const REC_LABELS={daily:"Daily",monthly:"Monthly",quarterly:"Quarterly",yearly:"Yearly"};
+  const NW_LABELS={need:"Need",want:"Want",saving:"Saving"};
+  const CT_LABELS={fixed:"Fixed",variable:"Variable"};
 
   const toast=(m,k="info")=>window.showToast?window.showToast(m,k,2200):console.log(m);
   const esc=(s)=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
@@ -180,7 +260,17 @@
       const r=await fetch("/api/expenses/categories",{credentials:"same-origin"});
       const d=await r.json();
       dataList.innerHTML=(d.categories||[]).map(c=>`<option value="${esc(c)}"></option>`).join("");
+      tagList.innerHTML=(d.tags||[]).map(c=>`<option value="${esc(c)}"></option>`).join("");
     }catch(_){}
+  }
+
+  function badgesFor(it){
+    const b=[];
+    if(it.recurrence && it.recurrence!=="none") b.push(`<span class="badge rec">↻ ${esc(REC_LABELS[it.recurrence]||it.recurrence)}</span>`);
+    if(it.need_want) b.push(`<span class="badge ${esc(it.need_want)}">${esc(NW_LABELS[it.need_want]||it.need_want)}</span>`);
+    if(it.cost_type) b.push(`<span class="badge">${esc(CT_LABELS[it.cost_type]||it.cost_type)}</span>`);
+    if(it.tag) b.push(`<span class="badge">#${esc(it.tag)}</span>`);
+    return b.length?`<div class="badges">${b.join("")}</div>`:"";
   }
 
   function renderRow(it){
@@ -191,13 +281,50 @@
       <div class="mid">
         <div class="cat ${it.category?"":"empty"}">${it.category?esc(it.category):"Uncategorised"}</div>
         ${it.note?`<div class="nt">${esc(it.note)}</div>`:""}
+        ${badgesFor(it)}
       </div>
       ${it.receipt_url?`<a class="rcpt" href="${esc(it.receipt_url)}" target="_blank" rel="noopener" title="Receipt: ${esc(it.receipt_name||"")}">🧾</a>`:""}
       <div class="amt">${it.kind==="income"?"+":(it.kind==="transfer"?"⇄ ":"−")}${money(it.amount)}</div>
-      <button type="button" class="del" title="Delete"><i data-feather="trash-2"></i></button>`;
+      <div class="acts">
+        <button type="button" class="edit" title="Edit"><i data-feather="edit-2"></i></button>
+        <button type="button" class="del" title="Delete"><i data-feather="trash-2"></i></button>
+      </div>`;
     div.querySelector(".del").addEventListener("click",()=>del(it.id,div));
+    div.querySelector(".edit").addEventListener("click",()=>startEdit(it));
     return div;
   }
+
+  // ── Edit mode ──
+  function setKind(k){
+    kind=k;
+    $("kind-seg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.kind===kind));
+  }
+  function startEdit(it){
+    editingId=it.id;
+    setKind(it.kind);
+    dateEl.value=it.spent_on||dateEl.value;
+    amountEl.value=it.amount;
+    catEl.value=it.category||"";
+    noteEl.value=it.note||"";
+    tagEl.value=it.tag||"";
+    recEl.value=it.recurrence||"none";
+    needEl.value=it.need_want||"";
+    costEl.value=it.cost_type||"";
+    formCard.classList.add("editing");
+    addBtn.textContent="Save changes";
+    formCard.scrollIntoView({behavior:"smooth",block:"start"});
+    amountEl.focus();
+  }
+  function resetForm(){
+    editingId=null;
+    formCard.classList.remove("editing");
+    addBtn.textContent="Add";
+    amountEl.value=""; noteEl.value=""; tagEl.value="";
+    recEl.value="none"; needEl.value=""; costEl.value="";
+    $("exp-receipt").value=""; $("exp-receipt-cam").value="";
+    receiptFile=null; showReceipt();
+  }
+  $("edit-cancel").addEventListener("click",resetForm);
 
   async function load(){
     try{
@@ -246,53 +373,84 @@
     return d;
   }
 
+  function formBody(){
+    return {
+      kind,
+      spent_on: dateEl.value,
+      amount: parseFloat(amountEl.value),
+      category: catEl.value.trim(),
+      note: noteEl.value.trim(),
+      tag: tagEl.value.trim(),
+      recurrence: recEl.value,
+      need_want: needEl.value,
+      cost_type: costEl.value,
+    };
+  }
+
   form.addEventListener("submit",async(e)=>{
     e.preventDefault();
     if(amountEl.value===""||!(parseFloat(amountEl.value)>=0)){ toast("Enter an amount","error"); amountEl.focus(); return; }
-    $("exp-add").disabled=true;
+    addBtn.disabled=true;
     try{
-      // Upload receipt first (if attached, from picker or camera).
+      if(editingId){
+        // Edit — receipt is managed separately, so don't touch it here.
+        const r=await fetch("/api/expenses/"+encodeURIComponent(editingId),{method:"PUT",headers:{"Content-Type":"application/json","X-CSRFToken":CSRF},body:JSON.stringify(formBody()),credentials:"same-origin"});
+        const d=await r.json();
+        if(!r.ok) throw new Error(d.error||"");
+        toast("Saved","success"); resetForm();
+        await load(); loadCategories(); loadReport();
+        return;
+      }
+      // Add — upload receipt first (if attached, from picker or camera).
       let receipt=null;
       if(receiptFile){
         toast("Uploading receipt…");
         receipt=await uploadReceipt(receiptFile);
-        if(receipt==="cancelled"){ toast("Receipt cancelled — entry not saved","info"); $("exp-add").disabled=false; return; }
+        if(receipt==="cancelled"){ toast("Receipt cancelled — entry not saved","info"); addBtn.disabled=false; return; }
       }
-      const body={kind, spent_on:dateEl.value, amount:parseFloat(amountEl.value), category:catEl.value.trim(), note:noteEl.value.trim()};
+      const body=formBody();
       if(receipt){ body.receipt_file_id=receipt.file_id; body.receipt_url=receipt.web_view; body.receipt_name=receipt.name; }
       const r=await fetch("/api/expenses",{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":CSRF},body:JSON.stringify(body),credentials:"same-origin"});
       const d=await r.json();
       if(!r.ok) throw new Error(d.error||"");
-      amountEl.value=""; noteEl.value=""; $("exp-receipt").value=""; $("exp-receipt-cam").value="";
-      receiptFile=null; showReceipt(); amountEl.focus();
+      resetForm(); amountEl.focus();
       await load(); loadCategories(); loadReport();
     }catch(e){ toast(e.message||"Couldn't save","error"); }
-    finally{ $("exp-add").disabled=false; }
+    finally{ addBtn.disabled=false; }
   });
 
   dateEl.addEventListener("change",load);
 
   // ── Monthly report ──
+  function updatePdfLink(){
+    repPdf.href="/expenses/print?month="+encodeURIComponent(repMonth.value||"");
+  }
   async function loadReport(){
+    updatePdfLink();
     try{
-      const r=await fetch("/api/expenses/report?month="+encodeURIComponent(repMonth.value),{credentials:"same-origin"});
+      const url="/api/expenses/report?month="+encodeURIComponent(repMonth.value)+"&by="+encodeURIComponent(repBy.value);
+      const r=await fetch(url,{credentials:"same-origin"});
       const d=await r.json();
       $("r-in").textContent=money(d.income); $("r-out").textContent=money(d.expense);
       $("r-net").textContent=(d.net<0?"−":"")+money(Math.abs(d.net));
       const rt=$("r-transfers");
       if (rt) rt.textContent = (d.transfers ? "Transfers this month: " + money(d.transfers) : "");
-      const cats=d.by_category||[];
+      const rp=$("r-proj");
+      if (rp) rp.textContent = (d.projected_monthly ? "↻ Recurring (normalised): " + money(d.projected_monthly) + "/mo · " + money(d.projected_yearly) + "/yr" : "");
+      const cats=d.breakdown||[];
       if(!cats.length){ repCats.innerHTML=`<div class="empty">No spending this month.</div>`; return; }
+      const total=cats.reduce((s,c)=>s+c.amount,0)||1;
       const max=Math.max(...cats.map(c=>c.amount),1);
       repCats.innerHTML=cats.map(c=>`
         <div class="cat-row">
-          <span class="cn">${esc(c.category)}</span>
+          <span class="cn">${esc(c.label)}<span class="pct">${Math.round(100*c.amount/total)}%</span></span>
           <span class="bar"><i style="width:${Math.round(100*c.amount/max)}%"></i></span>
           <span class="ca">${money(c.amount)}</span>
         </div>`).join("");
     }catch(e){ /* non-fatal */ }
   }
   repMonth.addEventListener("change",loadReport);
+  repBy.addEventListener("change",loadReport);
 
   // Boot
   repMonth.value = "{{ today }}".slice(0,7);

@@ -28,7 +28,32 @@ expenses_bp = Blueprint("expenses", __name__)
 
 _MAX_CATEGORY = 60
 _MAX_NOTE = 300
+_MAX_TAG = 40
 _CATEGORY_SUGGESTIONS = 40
+
+# Recurrence values and how many times each fires per year — used to
+# normalise a recurring amount into a monthly / yearly projection.
+_RECURRENCE = ("none", "daily", "monthly", "quarterly", "yearly")
+_PER_YEAR = {"daily": 365.0, "monthly": 12.0, "quarterly": 4.0, "yearly": 1.0}
+_NEED_WANT = ("need", "want", "saving")
+_COST_TYPE = ("fixed", "variable")
+
+# Fields the user can slice ("dissect") the monthly report by, mapped to
+# the row column that carries them.
+_DISSECT = {
+    "category": "category",
+    "need_want": "need_want",
+    "cost_type": "cost_type",
+    "tag": "tag",
+    "recurrence": "recurrence",
+}
+_DISSECT_FALLBACK = {
+    "category": "Uncategorised",
+    "need_want": "Unclassified",
+    "cost_type": "Unclassified",
+    "tag": "Untagged",
+    "recurrence": "single",
+}
 _MAX_RECEIPT_BYTES = 15 * 1024 * 1024  # 15 MB
 
 # Drive folder layout for receipts:  dailyplanner / receipts
@@ -82,10 +107,56 @@ def _shape(row):
         "amount": float(row["amount"]) if row.get("amount") is not None else 0.0,
         "category": row.get("category") or "",
         "note": row.get("note") or "",
+        "recurrence": row.get("recurrence") or "none",
+        "need_want": row.get("need_want") or "",
+        "cost_type": row.get("cost_type") or "",
+        "tag": row.get("tag") or "",
         "created_at": row.get("created_at"),
         "receipt_url": row.get("receipt_url") or "",
         "receipt_name": row.get("receipt_name") or "",
     }
+
+
+# Columns we read back everywhere (kept in one place so list / report /
+# print stay in sync).
+_SELECT = ("id,kind,spent_on,amount,category,note,recurrence,need_want,"
+           "cost_type,tag,created_at,receipt_url,receipt_name")
+
+
+def _clean_enum(value, allowed):
+    """Lower-cased value if it's one of `allowed`, else None."""
+    v = (value or "").strip().lower()
+    return v if v in allowed else None
+
+
+def _parse_fields(data):
+    """Shared parse/validate for the structured fields on add & edit.
+    Returns (payload_fragment, error_or_None)."""
+    try:
+        amount = round(float(data.get("amount")), 2)
+    except (TypeError, ValueError):
+        return None, "Enter a valid amount"
+    if amount < 0:
+        return None, "Amount can't be negative"
+
+    kind = (data.get("kind") or "expense").strip().lower()
+    if kind not in ("expense", "income", "transfer"):
+        kind = "expense"
+
+    recurrence = _clean_enum(data.get("recurrence"), _RECURRENCE) or "none"
+
+    frag = {
+        "kind": kind,
+        "spent_on": (data.get("spent_on") or "").strip() or _today_iso(),
+        "amount": amount,
+        "category": (data.get("category") or "").strip()[:_MAX_CATEGORY] or None,
+        "note": (data.get("note") or "").strip()[:_MAX_NOTE] or None,
+        "recurrence": recurrence,
+        "need_want": _clean_enum(data.get("need_want"), _NEED_WANT),
+        "cost_type": _clean_enum(data.get("cost_type"), _COST_TYPE),
+        "tag": (data.get("tag") or "").strip()[:_MAX_TAG] or None,
+    }
+    return frag, None
 
 
 def _month_bounds(month):
@@ -123,7 +194,7 @@ def list_expenses():
             "user_id": f"eq.{user_id}",
             "spent_on": f"eq.{day}",
             "deleted_at": "is.null",
-            "select": "id,kind,spent_on,amount,category,note,created_at,receipt_url,receipt_name",
+            "select": _SELECT,
             "order": "created_at.desc",
         }) or []
     except Exception as e:
@@ -144,90 +215,127 @@ def list_expenses():
     })
 
 
-@expenses_bp.route("/api/expenses/report", methods=["GET"])
-@login_required
-def report():
-    """Monthly report: income / expense totals, net, and per-category
-    breakdown. `?month=YYYY-MM` (defaults to the current month)."""
-    user_id = session["user_id"]
-    month = (request.args.get("month") or "").strip()
+def _label_for(row, dim):
+    """Human label for a row under the chosen dissect dimension."""
+    col = _DISSECT[dim]
+    raw = (row.get(col) or "").strip()
+    if not raw:
+        return _DISSECT_FALLBACK[dim]
+    if dim == "recurrence":
+        return "Single" if raw == "none" else raw.capitalize()
+    if dim in ("need_want", "cost_type"):
+        return raw.capitalize()
+    return raw
+
+
+def _build_report(user_id, month, dim):
+    """Compute the monthly report payload, sliced by `dim`. Shared by the
+    JSON API and the printable view. Raises on DB error."""
     start, end = _month_bounds(month)
-    # Month range as a single PostgREST and= filter (a dict can't carry
-    # two spent_on keys).
-    try:
-        rows = get("expenses", {
-            "user_id": f"eq.{user_id}",
-            "and": f"(spent_on.gte.{start},spent_on.lt.{end})",
-            "deleted_at": "is.null",
-            "select": "kind,amount,category",
-            "limit": "100000",
-        }) or []
-    except Exception as e:
-        logger.warning("expenses report failed (run MIGRATION_EXPENSES.sql?): %s", e)
-        return jsonify({"month": start[:7], "income": 0, "expense": 0, "net": 0,
-                        "by_category": [], "migration_pending": True})
+    rows = get("expenses", {
+        "user_id": f"eq.{user_id}",
+        "and": f"(spent_on.gte.{start},spent_on.lt.{end})",
+        "deleted_at": "is.null",
+        "select": "kind,amount,category,need_want,cost_type,tag,recurrence",
+        "limit": "100000",
+    }) or []
 
     income = expense = transfers = 0.0
-    by_cat = {}   # category -> expense total
+    by_dim = {}        # dissect label -> expense total
     inc_by_cat = {}
+    proj_monthly = 0.0  # recurring expenses normalised to a monthly figure
     for r in rows:
         amt = float(r["amount"]) if r.get("amount") is not None else 0.0
-        cat = (r.get("category") or "Uncategorised").strip() or "Uncategorised"
         k = r.get("kind") or "expense"
         if k == "income":
             income += amt
+            cat = (r.get("category") or "Uncategorised").strip() or "Uncategorised"
             inc_by_cat[cat] = round(inc_by_cat.get(cat, 0.0) + amt, 2)
         elif k == "transfer":
             transfers += amt
         else:
             expense += amt
-            by_cat[cat] = round(by_cat.get(cat, 0.0) + amt, 2)
+            label = _label_for(r, dim)
+            by_dim[label] = round(by_dim.get(label, 0.0) + amt, 2)
+            rec = (r.get("recurrence") or "none").strip()
+            if rec in _PER_YEAR:
+                proj_monthly += amt * _PER_YEAR[rec] / 12.0
 
-    by_category = sorted(
-        ({"category": c, "amount": a} for c, a in by_cat.items()),
+    breakdown = sorted(
+        ({"label": c, "amount": a} for c, a in by_dim.items()),
         key=lambda x: -x["amount"],
     )
     income_by_category = sorted(
         ({"category": c, "amount": a} for c, a in inc_by_cat.items()),
         key=lambda x: -x["amount"],
     )
-    return jsonify({
+    return {
         "month": start[:7],
+        "by": dim,
         "income": round(income, 2),
         "expense": round(expense, 2),
         "transfers": round(transfers, 2),
         "net": round(income - expense, 2),
-        "by_category": by_category,
+        "breakdown": breakdown,
+        # Kept for backward-compat with anything still reading by_category.
+        "by_category": [{"category": b["label"], "amount": b["amount"]} for b in breakdown]
+                       if dim == "category" else [],
         "income_by_category": income_by_category,
-    })
+        "projected_monthly": round(proj_monthly, 2),
+        "projected_yearly": round(proj_monthly * 12.0, 2),
+    }
+
+
+@expenses_bp.route("/api/expenses/report", methods=["GET"])
+@login_required
+def report():
+    """Monthly report: income / expense totals, net, and a per-dimension
+    breakdown of spend. `?month=YYYY-MM` (default current month) and
+    `?by=category|need_want|cost_type|tag|recurrence` (default category).
+    Also returns projected monthly / yearly totals of recurring spend."""
+    user_id = session["user_id"]
+    month = (request.args.get("month") or "").strip()
+    dim = (request.args.get("by") or "category").strip().lower()
+    if dim not in _DISSECT:
+        dim = "category"
+    try:
+        return jsonify(_build_report(user_id, month, dim))
+    except Exception as e:
+        logger.warning("expenses report failed (run MIGRATION_EXPENSES*.sql?): %s", e)
+        start, _ = _month_bounds(month)
+        return jsonify({"month": start[:7], "by": dim, "income": 0, "expense": 0,
+                        "transfers": 0, "net": 0, "breakdown": [], "by_category": [],
+                        "income_by_category": [], "projected_monthly": 0,
+                        "projected_yearly": 0, "migration_pending": True})
 
 
 @expenses_bp.route("/api/expenses/categories", methods=["GET"])
 @login_required
 def list_categories():
-    """The user's previously-used categories, most-used first — drives
-    the autocomplete suggestions. Empty list for a brand-new user."""
+    """The user's previously-used categories and tags, most-used first —
+    drives the autocomplete suggestions. Empty lists for a new user."""
     user_id = session["user_id"]
     try:
         rows = get("expenses", {
             "user_id": f"eq.{user_id}",
             "deleted_at": "is.null",
-            "category": "not.is.null",
-            "select": "category",
+            "select": "category,tag",
             "order": "created_at.desc",
             "limit": "1000",
         }) or []
     except Exception as e:
         logger.warning("expenses categories lookup failed: %s", e)
-        return jsonify({"categories": []})
+        return jsonify({"categories": [], "tags": []})
 
-    counts = Counter(
-        (r.get("category") or "").strip()
-        for r in rows if (r.get("category") or "").strip()
-    )
-    # Most-used first, then alphabetical for ties.
-    cats = sorted(counts, key=lambda c: (-counts[c], c.lower()))
-    return jsonify({"categories": cats[:_CATEGORY_SUGGESTIONS]})
+    def _ranked(field):
+        counts = Counter(
+            (r.get(field) or "").strip()
+            for r in rows if (r.get(field) or "").strip()
+        )
+        # Most-used first, then alphabetical for ties.
+        return sorted(counts, key=lambda c: (-counts[c], c.lower()))[:_CATEGORY_SUGGESTIONS]
+
+    return jsonify({"categories": _ranked("category"), "tags": _ranked("tag")})
 
 
 @expenses_bp.route("/api/expenses", methods=["POST"])
@@ -236,29 +344,11 @@ def add_expense():
     user_id = session["user_id"]
     data = request.get_json(silent=True) or {}
 
-    # Amount — required, positive.
-    try:
-        amount = round(float(data.get("amount")), 2)
-    except (TypeError, ValueError):
-        return jsonify({"error": "Enter a valid amount"}), 400
-    if amount < 0:
-        return jsonify({"error": "Amount can't be negative"}), 400
+    frag, err = _parse_fields(data)
+    if err:
+        return jsonify({"error": err}), 400
 
-    kind = (data.get("kind") or "expense").strip().lower()
-    if kind not in ("expense", "income", "transfer"):
-        kind = "expense"
-    day = (data.get("spent_on") or "").strip() or _today_iso()
-    category = (data.get("category") or "").strip()[:_MAX_CATEGORY] or None
-    note = (data.get("note") or "").strip()[:_MAX_NOTE] or None
-
-    payload = {
-        "user_id": user_id,
-        "kind": kind,
-        "spent_on": day,
-        "amount": amount,
-        "category": category,
-        "note": note,
-    }
+    payload = {"user_id": user_id, **frag}
     # Optional receipt (already uploaded to Drive via /api/expenses/receipt).
     rfid = (data.get("receipt_file_id") or "").strip()
     if rfid:
@@ -272,6 +362,43 @@ def add_expense():
         return jsonify({"error": "Couldn't save — please try again"}), 502
 
     return jsonify({"item": _shape(rows[0] if rows else payload)})
+
+
+@expenses_bp.route("/api/expenses/<item_id>", methods=["PUT", "PATCH"])
+@login_required
+def edit_expense(item_id):
+    """Edit an existing entry — amount, kind, date, category, note and the
+    structured dissect fields (recurrence / need_want / cost_type / tag).
+    Receipt is left untouched here; it's managed by the upload flow."""
+    user_id = session["user_id"]
+    data = request.get_json(silent=True) or {}
+
+    frag, err = _parse_fields(data)
+    if err:
+        return jsonify({"error": err}), 400
+
+    try:
+        update(
+            "expenses",
+            params={"id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
+                    "deleted_at": "is.null"},
+            json=frag,
+        )
+    except Exception as e:
+        logger.exception("edit expense failed: %s", e)
+        return jsonify({"error": "Couldn't save changes — please try again"}), 502
+
+    # Read the row back so the client renders exactly what's stored.
+    try:
+        rows = get("expenses", {
+            "id": f"eq.{item_id}", "user_id": f"eq.{user_id}",
+            "select": _SELECT, "limit": "1",
+        }) or []
+    except Exception:
+        rows = []
+    if not rows:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"item": _shape(rows[0])})
 
 
 @expenses_bp.route("/api/expenses/receipt", methods=["POST"])
@@ -354,3 +481,77 @@ def delete_expense(item_id):
         logger.exception("delete expense failed: %s", e)
         return jsonify({"error": "Couldn't delete"}), 502
     return jsonify({"ok": True})
+
+
+# Pretty labels for the printable report.
+_DIM_TITLES = {
+    "category": "Category",
+    "need_want": "Need / Want / Saving",
+    "cost_type": "Fixed / Variable",
+    "tag": "Tag",
+    "recurrence": "Recurrence",
+}
+
+
+@expenses_bp.route("/expenses/print", methods=["GET"])
+@login_required
+def print_report():
+    """A clean, print-optimised page for the month — totals, a breakdown
+    for every dissect dimension, and the full itemised list. The browser's
+    'Save as PDF' turns this into the expenses PDF (no server-side PDF
+    library needed). `?month=YYYY-MM`."""
+    user_id = session["user_id"]
+    month = (request.args.get("month") or "").strip()
+    start, end = _month_bounds(month)
+
+    try:
+        rows = get("expenses", {
+            "user_id": f"eq.{user_id}",
+            "and": f"(spent_on.gte.{start},spent_on.lt.{end})",
+            "deleted_at": "is.null",
+            "select": _SELECT,
+            "order": "spent_on.desc,created_at.desc",
+        }) or []
+    except Exception as e:
+        logger.warning("expenses print failed (run MIGRATION_EXPENSES*.sql?): %s", e)
+        rows = []
+
+    items = [_shape(r) for r in rows]
+    income = round(sum(i["amount"] for i in items if i["kind"] == "income"), 2)
+    expense = round(sum(i["amount"] for i in items if i["kind"] == "expense"), 2)
+    transfers = round(sum(i["amount"] for i in items if i["kind"] == "transfer"), 2)
+
+    # One breakdown per dissect dimension (expenses only).
+    breakdowns = []
+    proj_monthly = 0.0
+    for r in rows:
+        if (r.get("kind") or "expense") != "expense":
+            continue
+        rec = (r.get("recurrence") or "none").strip()
+        if rec in _PER_YEAR:
+            amt = float(r["amount"]) if r.get("amount") is not None else 0.0
+            proj_monthly += amt * _PER_YEAR[rec] / 12.0
+    for dim, title in _DIM_TITLES.items():
+        agg = {}
+        for r in rows:
+            if (r.get("kind") or "expense") != "expense":
+                continue
+            amt = float(r["amount"]) if r.get("amount") is not None else 0.0
+            label = _label_for(r, dim)
+            agg[label] = round(agg.get(label, 0.0) + amt, 2)
+        rows_sorted = sorted(({"label": k, "amount": v} for k, v in agg.items()),
+                             key=lambda x: -x["amount"])
+        if rows_sorted:
+            breakdowns.append({"title": title, "rows": rows_sorted})
+
+    return render_template(
+        "expenses_print.html",
+        month=start[:7],
+        items=items,
+        income=income, expense=expense, transfers=transfers,
+        net=round(income - expense, 2),
+        breakdowns=breakdowns,
+        projected_monthly=round(proj_monthly, 2),
+        projected_yearly=round(proj_monthly * 12.0, 2),
+        generated_on=_today_iso(),
+    )

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Expenses — {{ month }} — DailyPlanner</title>
+<style>
+  :root { --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --red:#b91c1c; --green:#047857; --indigo:#4338ca; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, Segoe UI, Roboto, sans-serif; color: var(--ink); margin: 0; background: #f8fafc; }
+  .sheet { max-width: 800px; margin: 0 auto; background: #fff; padding: 28px 32px 48px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .topbar .actions button { font: inherit; font-weight: 600; font-size: 13px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: #111827; color: #fff; cursor: pointer; }
+  .topbar .actions a { font: inherit; font-weight: 600; font-size: 13px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); text-decoration: none; margin-right: 8px; }
+  h1 { font-size: 22px; margin: 0 0 2px; letter-spacing: -.02em; }
+  .meta { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; }
+  .totals { display: flex; gap: 10px; margin: 0 0 8px; }
+  .tot { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; text-align: center; }
+  .tot .v { font-size: 18px; font-weight: 800; letter-spacing: -.02em; }
+  .tot .l { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: .04em; }
+  .tot.in .v { color: var(--green); } .tot.out .v { color: var(--red); }
+  .proj { font-size: 12.5px; color: var(--muted); margin: 6px 2px 22px; }
+  .proj b { color: var(--ink); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 22px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 5px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 28px; }
+  .brow { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 3px 0; border-bottom: 1px dotted var(--line); }
+  .brow .bl { color: var(--ink); }
+  .brow .ba { font-weight: 700; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 6px 6px; border-bottom: 1px solid var(--line); }
+  tbody td { padding: 6px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:nth-child(even) { background: #fafafa; }
+  td.amt { text-align: right; font-weight: 700; white-space: nowrap; }
+  .k-expense td.amt { color: var(--red); } .k-income td.amt { color: var(--green); } .k-transfer td.amt { color: var(--indigo); }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; background: #f1f5f9; color: #475569; margin-right: 4px; }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); font-size: 13px; padding: 16px 0; }
+  @media print {
+    body { background: #fff; }
+    .sheet { max-width: none; padding: 0; }
+    .no-print { display: none !important; }
+    h2, tr, .brow { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="topbar no-print">
+    <div></div>
+    <div class="actions">
+      <a href="{{ url_for('expenses.expenses_page') }}">← Back</a>
+      <button type="button" onclick="window.print()">Save as PDF / Print</button>
+    </div>
+  </div>
+
+  <h1>💸 Money — {{ month }}</h1>
+  <p class="meta">Expenses report · generated {{ generated_on }}</p>
+
+  <div class="totals">
+    <div class="tot in"><div class="v">₹{{ "{:,.2f}".format(income) }}</div><div class="l">Income</div></div>
+    <div class="tot out"><div class="v">₹{{ "{:,.2f}".format(expense) }}</div><div class="l">Expense</div></div>
+    <div class="tot"><div class="v">{% if net < 0 %}−{% endif %}₹{{ "{:,.2f}".format(net|abs) }}</div><div class="l">Net</div></div>
+  </div>
+  <p class="proj">
+    {% if transfers %}Transfers: <b>₹{{ "{:,.2f}".format(transfers) }}</b> · {% endif %}
+    Recurring commitments (normalised): <b>₹{{ "{:,.2f}".format(projected_monthly) }}</b>/month ·
+    <b>₹{{ "{:,.2f}".format(projected_yearly) }}</b>/year
+  </p>
+
+  {% for bd in breakdowns %}
+    <h2>By {{ bd.title }}</h2>
+    <div class="grid">
+      {% for row in bd.rows %}
+        <div class="brow"><span class="bl">{{ row.label }}</span><span class="ba">₹{{ "{:,.2f}".format(row.amount) }}</span></div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  <h2>All entries ({{ items|length }})</h2>
+  {% if items %}
+  <table>
+    <thead>
+      <tr><th>Date</th><th>Category</th><th>Details</th><th style="text-align:right;">Amount</th></tr>
+    </thead>
+    <tbody>
+      {% for it in items %}
+      <tr class="k-{{ it.kind }}">
+        <td class="muted">{{ it.spent_on }}</td>
+        <td>{{ it.category or "—" }}</td>
+        <td>
+          {% if it.kind == 'income' %}<span class="tag">Income</span>{% elif it.kind == 'transfer' %}<span class="tag">Transfer</span>{% endif %}
+          {% if it.recurrence and it.recurrence != 'none' %}<span class="tag">{{ it.recurrence|capitalize }}</span>{% endif %}
+          {% if it.need_want %}<span class="tag">{{ it.need_want|capitalize }}</span>{% endif %}
+          {% if it.cost_type %}<span class="tag">{{ it.cost_type|capitalize }}</span>{% endif %}
+          {% if it.tag %}<span class="tag">#{{ it.tag }}</span>{% endif %}
+          {% if it.note %}<div class="muted">{{ it.note }}</div>{% endif %}
+        </td>
+        <td class="amt">{% if it.kind == 'income' %}+{% elif it.kind == 'transfer' %}⇄ {% else %}−{% endif %}₹{{ "{:,.2f}".format(it.amount) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty">No entries for this month.</div>
+  {% endif %}
+</div>
+
+<script>
+  // Auto-open the print dialog so "Save as PDF" is one step. The toolbar
+  // stays available (no-print) if they dismiss it.
+  window.addEventListener("load", () => { setTimeout(() => window.print(), 350); });
+</script>
+</body>
+</html>
