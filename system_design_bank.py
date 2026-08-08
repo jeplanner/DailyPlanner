@@ -110,6 +110,55 @@ def _title_tags(title):
     return [w for w in words if w and w not in _TAG_STOP and len(w) > 2]
 
 
+_DETAIL_UID = {
+    "scope": "Generate globally-unique IDs across distributed servers. Clarify: numeric or alphanumeric? time-sortable required? scale (IDs/sec)? 64-bit fit? Assumptions: 64-bit numeric, roughly time-sortable, unique across data centers, 10k+ IDs/s/node, no central bottleneck.",
+    "functional": "Generate unique 64-bit IDs; IDs increase roughly with time (k-sortable); high throughput; each node generates locally without coordination on the hot path.",
+    "nonfunctional": "Absolute uniqueness (no collisions), high availability, very low latency (local generation), horizontal scalability, rough time ordering.",
+    "estimation": "64-bit space ≈ 9.2×10^18 — ample. Snowflake layout: 41-bit ms timestamp = ~69 years; 10-bit node id = 1024 nodes; 12-bit sequence = 4096 IDs/ms/node ≈ 4M IDs/s/node.",
+    "api": "Library call nextId() -> int64, or an ID service GET /id -> {id}. No per-ID network round trip in the library form.",
+    "data_model": "Snowflake is stateless per node (nothing stored). Node-id assignment via Zookeeper/config. (Ticket-server alternative needs a single counter row -> bottleneck.)",
+    "hld": "Each node composes an ID locally from [timestamp | node id | sequence]; no DB/network call per ID. Node ids assigned at startup (Zookeeper ephemeral nodes or static config). Clocks kept in sync via NTP.",
+    "hld_diagram": "64-bit = [ 1 unused | 41 timestamp(ms) | 10 nodeId | 12 sequence ]\n each node builds IDs locally -> zero coordination on the hot path",
+    "algorithms": "Snowflake: id = (ms << 22) | (nodeId << 12) | seq; seq resets each ms and spins to the next ms on overflow. Alternatives: UUIDv4 (128-bit random, not sortable), DB auto-increment (bottleneck), ticket server (SPOF), Flickr-style range hand-out.",
+    "deep_dive": "Clock skew: if the clock moves backward, refuse or wait until it catches up — otherwise duplicates. Node-id uniqueness enforced by Zookeeper (ephemeral nodes) or careful config. Epoch choice sets the 69-year window. If guessability matters, scramble low bits (loses strict sortability). Sequence overflow (>4096/ms) waits for the next millisecond.",
+    "follow_ups": "Two nodes with the same node id? (Zookeeper prevents it). Clock drift across DCs? (bounded by NTP; refuse backward time). Need strictly monotonic, not just roughly? (single generator or logical clock). Shorter/alphanumeric IDs? (base62-encode the 64-bit int).",
+    "final_diagram": " Zookeeper -> assigns a unique nodeId to each generator node\n App -> local ID-gen node -> [timestamp | nodeId | seq] -> 64-bit id\n         (no network hop, ~4M ids/s/node)",
+    "wrap_up": "Snowflake yields collision-free, time-sortable 64-bit IDs generated locally with no hot-path coordination. Main risks — clock skew and node-id uniqueness — are handled by NTP + refuse-backward and Zookeeper assignment. Trade-offs: sortable vs guessable, roughly vs strictly monotonic.",
+}
+
+_DETAIL_KV = {
+    "scope": "Design a distributed key-value store (get/put) that stays available and scales horizontally. Clarify: consistency needs? value size? read/write ratio? durability? Assumptions: eventually consistent (AP) with tunable knobs, values <1MB, huge scale, low latency.",
+    "functional": "put(key, value), get(key) -> value; scale to petabytes; always writable; tunable consistency.",
+    "nonfunctional": "High availability (always writable), horizontal scalability, low latency, durability (no data loss), partition tolerance; consistency tunable per the CAP trade-off.",
+    "estimation": "Target millions of ops/s across the fleet; replication factor N=3; each node owns partition ranges of the ring; storage sharded so adding nodes scales capacity and throughput linearly.",
+    "api": "put(key, value) -> ack; get(key) -> (value, version). Internally: coordinator replicates to N nodes and applies quorum reads/writes.",
+    "data_model": "Keys hashed onto a ring; each key lives on its N successor nodes. Value carries a vector clock/version for conflict resolution. LSM-tree storage (commit log + memtable -> SSTables + compaction) favors high write throughput.",
+    "hld": "Consistent hashing places keys on a ring; any node can act as coordinator and forwards to the N replicas. Tunable quorum: W write acks + R read responses with W+R>N for read-your-writes-ish consistency. Gossip spreads membership/health; hinted handoff covers transient failures; Merkle-tree anti-entropy repairs divergent replicas.",
+    "hld_diagram": "Client -> coordinator(any node) -> N replicas on the hash ring\n write: wait for W acks ; read: gather R responses ; W+R>N\n gossip(membership) + hinted handoff + Merkle-tree repair",
+    "algorithms": "Consistent hashing (+ virtual nodes) for even spread and minimal remap on scaling. Quorum consensus (W+R>N) for tunable consistency. Vector clocks (or last-write-wins) to detect/resolve concurrent writes. Merkle trees to cheaply find divergent ranges during repair. Gossip for decentralized membership.",
+    "deep_dive": "Consistency: W=1/R=1 = fast + eventual; W+R>N = stronger. Conflicts: vector clocks keep concurrent versions for the client to reconcile vs LWW (simpler, can silently drop writes). Failures: hinted handoff stashes writes for a down node and replays them; Merkle trees bound anti-entropy data transfer. Hotspots: virtual nodes balance load; hot keys still need caching. Durability: append to commit log then memtable, flush to immutable SSTables.",
+    "follow_ups": "Add/remove nodes with no downtime? (consistent hashing moves only adjacent ranges). Need strong consistency? (raise quorum or run Paxos/Raft per shard). Very large values? (chunk + store references). Permanently dead node? (re-replicate its ranges). Multi-region? (per-DC replicas + async replication).",
+    "final_diagram": "                [ hash ring: physical + virtual nodes ]\n Client -> coordinator -> { replica1, replica2, replica3 }\n            quorum W/R ; vector-clock versions\n gossip <-> all nodes ; hinted handoff ; Merkle anti-entropy",
+    "wrap_up": "A Dynamo-style store: consistent hashing for partitioning, N-way replication with tunable quorums for the CAP trade-off, vector clocks for conflicts, and gossip + hinted handoff + Merkle trees for resilience and repair. It chooses availability + partition tolerance with tunable (usually eventual) consistency.",
+}
+
+_DETAIL_RL = {
+    "scope": "Design a rate limiter capping requests per client. Clarify: client-side / server-side / gateway? per user / IP / API-key? limits (e.g. 100/min)? distributed? soft vs hard? Assumptions: server-side at the API gateway, per API-key, distributed across gateway nodes, hard limit, 429 on exceed.",
+    "functional": "Allow N requests per window per client; reject excess with HTTP 429 + Retry-After; configurable rules per client/endpoint; accurate across a distributed fleet.",
+    "nonfunctional": "Very low added latency, high availability, accuracy under concurrency, memory efficiency, and a defined fail-open vs fail-closed policy on limiter outage.",
+    "estimation": "Hit on every request at high QPS -> counters in Redis (in-memory, atomic). Memory: token bucket = 1-2 numbers per client; sliding-window log = one entry per in-window request (heavier), so prefer bucket/counter variants at scale.",
+    "api": "Transparent gateway middleware. Internally: atomic check-and-increment keyed by (client, window). Config API: POST /rules {clientId, limit, windowSec, scope}.",
+    "data_model": "Redis keys: rate:{clientId}:{window} -> count (fixed/sliding window) OR a token bucket hash {tokens, lastRefillTs}; TTL = window length. Rules stored in config/DB and cached.",
+    "hld": "Request -> gateway rate-limit middleware -> atomically check+update the client's counter in a shared Redis -> allow (forward to service) or reject (429). All gateway nodes share the same Redis so limits are global, not per-node.",
+    "hld_diagram": "Client -> [Gateway node] -> Redis atomic INCR / Lua (client+window)\n           allow -> backend service ; over limit -> 429 + Retry-After",
+    "algorithms": "Token bucket: tokens refill at a fixed rate up to a cap; each request spends one; allows bursts. Leaky bucket: constant drain, smooths bursts. Fixed window: simple counter (boundary-spike flaw). Sliding-window log: exact but memory-heavy. Sliding-window counter: weighted blend of current+previous window — good accuracy/memory balance. A Redis Lua script makes check-and-set atomic across nodes.",
+    "deep_dive": "Distributed accuracy: a central Redis avoids per-node under-counting; Lua/atomic ops prevent races. Latency: keep it O(1) and colocate Redis; at extreme scale use local approximate counters synced periodically. Fixed-window boundary bursts are fixed by the sliding-window counter. Outage policy: fail-open (allow — favors availability) vs fail-closed (reject — favors protection). Emit 429 + Retry-After + X-RateLimit-* headers. Multiple rules (per-user AND per-IP AND per-endpoint) evaluated together.",
+    "follow_ups": "Redis outage handling? (fail-open + local fallback). Combine per-user, per-IP, and global limits? (evaluate multiple buckets). Allow bursts? (token bucket). Exact fairness across nodes? (central store + atomic ops). Good client feedback? (429 + Retry-After + rate-limit headers).",
+    "final_diagram": "Clients -> [LB] -> { Gateway nodes + rate-limit middleware }\n                        |  atomic check + increment (Lua)\n                        v\n                 [ Redis: client+window counters, TTL ]\n           allowed -> backend services ; exceeded -> 429",
+    "wrap_up": "A gateway-level limiter using token bucket (bursty) or sliding-window counter (accurate), with counters in a shared Redis and atomic Lua for cross-node correctness. Key decisions: algorithm choice, central vs local counting, and fail-open vs fail-closed. Returns 429 + Retry-After.",
+}
+
+
 ENTRIES = [
     # ─────────── Core Building Blocks ───────────
     E("core", "Load Balancing",
@@ -867,7 +916,8 @@ ENTRIES = [
       "64-bit = [ timestamp 41b | machineId 10b | sequence 12b ]  (generated locally per node)",
       "Clock drift/backwards-time; machine-id assignment; not cryptographically random; 69-year epoch limit.",
       "UUID (random, not sortable), DB auto-increment (bottleneck), ULID/KSUID, Snowflake variants.",
-      ["unique-id", "snowflake", "distributed-id", "kv-store", "ordering"]),
+      ["unique-id", "snowflake", "distributed-id", "kv-store", "ordering"],
+      detail=_DETAIL_UID),
     E("classic", "Design a Distributed Key-Value Store (Dynamo)",
       "Store huge KV data with high availability, horizontal scale, and tunable consistency across nodes.",
       "Dynamo-style: partition by consistent hashing onto a ring; replicate to N nodes; leaderless with quorum reads/writes (W+R>N) for tunable consistency; vector clocks / last-write-wins for conflicts; gossip for membership; Merkle trees for anti-entropy repair; hinted handoff for temporary failures.",
@@ -876,7 +926,8 @@ ENTRIES = [
       "Key -> consistent-hash ring -> N replicas ; quorum W+R>N ; gossip + Merkle-tree repair",
       "Eventual consistency & conflict resolution; no complex queries/joins; tombstones; operational tuning.",
       "DynamoDB, Cassandra, Riak, Voldemort; vs strongly-consistent (Spanner) or single-node (Redis).",
-      ["kv-store", "dynamo", "consistent-hashing", "quorum", "vector-clock", "gossip", "merkle-tree"]),
+      ["kv-store", "dynamo", "consistent-hashing", "quorum", "vector-clock", "gossip", "merkle-tree"],
+      detail=_DETAIL_KV),
     E("classic", "Design a Web Crawler",
       "Crawl billions of web pages politely, freshly, and without loops, at scale.",
       "Seed URLs -> URL frontier (prioritized + politeness queues per host) -> fetcher (respect robots.txt, rate-limit per domain) -> parser -> content dedup (checksum/simhash) -> URL extractor -> URL dedup (Bloom filter / seen-set) -> back to frontier. Store pages in object storage; distributed workers.",
@@ -1021,7 +1072,8 @@ ENTRIES = [
       "Request -> [Redis counter per client+window (atomic/Lua)] -> allow or 429 Retry-After",
       "Distributed accuracy (races, clock skew); memory for sliding-window logs; false positives behind NAT.",
       "Token bucket vs sliding window vs leaky bucket; Redis; gateway (Kong/Envoy); vs client-side.",
-      ["rate-limiter", "token-bucket", "sliding-window", "redis", "throttling", "gateway"]),
+      ["rate-limiter", "token-bucket", "sliding-window", "redis", "throttling", "gateway"],
+      detail=_DETAIL_RL),
     E("classic", "Design a Distributed Cache",
       "Serve reads at microsecond latency and take load off databases, across a fleet, larger than one machine's RAM.",
       "Partition keys across cache nodes with consistent hashing (minimal remap on scaling); replicate hot shards; pick an eviction policy (LRU/LFU/TTL) and a write policy (write-through/back/around). Handle cache-miss stampede with request coalescing + jittered TTLs; keep it consistent with the DB via TTL + event-driven invalidation.",

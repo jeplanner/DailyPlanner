@@ -220,6 +220,43 @@ def page():
     return render_template("interview_prep.html")
 
 
+# Whitelisted markdown prep guides shipped in the repo, surfaced in-app.
+_GUIDES = {
+    "ai-sde": ("AI_SDE_INTERVIEW_PLAN.md",
+               "AI SDE Interview Plan (Amazon/Google)"),
+    "system-design": ("SYSTEM_DESIGN_ECOMMERCE_BANK.md",
+                      "System Design Bank (reference)"),
+}
+
+
+@interview_prep_bp.route("/interview-prep/guides", methods=["GET"])
+@interview_prep_bp.route("/interview-prep/guides/<slug>", methods=["GET"])
+@login_required
+def guides(slug=None):
+    """Render a shipped markdown prep guide (e.g. the AI SDE plan) as a
+    readable in-app page. Defaults to the AI SDE plan."""
+    import os
+    from flask import current_app, abort
+    slug = slug or "ai-sde"
+    entry = _GUIDES.get(slug)
+    if not entry:
+        abort(404)
+    filename, title = entry
+    path = os.path.join(current_app.root_path, filename)
+    if not os.path.exists(path):
+        path = os.path.join(os.getcwd(), filename)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        logger.warning("guide read failed for %s: %s", filename, e)
+        content = f"# {title}\n\nCould not load this guide."
+    return render_template(
+        "prep_guide.html", content=content, title=title, slug=slug,
+        guides=[{"slug": s, "title": t} for s, (_, t) in _GUIDES.items()],
+    )
+
+
 @interview_prep_bp.route("/api/interview-prep", methods=["GET"])
 @login_required
 def dashboard():
@@ -887,7 +924,67 @@ def system_design_related(eid):
     except Exception as e:
         logger.warning("related travel_reads lookup failed: %s", e)
 
-    return jsonify({"references": references, "travel_reads": travel_reads})
+    # Knowledge Base: match PDF filenames in the user's Drive KB folder.
+    # Best-effort — only if Drive is connected and the folder already
+    # exists (we never create it here).
+    knowledge_base = []
+    try:
+        from routes.knowledgebase import (_load_token_row, _row_has_drive_scope,
+                                          _credentials_from_row, _refresh_if_needed,
+                                          _build_drive)
+        row = _load_token_row(user_id)
+        folder = (row or {}).get("kb_folder_id")
+        if row and folder and _row_has_drive_scope(row):
+            service = _build_drive(_refresh_if_needed(_credentials_from_row(row), user_id))
+            listed = service.files().list(
+                q=f"'{folder}' in parents and mimeType='application/pdf' and trashed=false",
+                fields="files(id,name,webViewLink)", pageSize=200,
+            ).execute().get("files", [])
+            scored = []
+            for f in listed:
+                name = (f.get("name") or "").lower()
+                score = sum(1 for k in long_kws if k in name)
+                if score:
+                    scored.append((score, f))
+            scored.sort(key=lambda x: -x[0])
+            knowledge_base = [{"title": f.get("name"), "url": f.get("webViewLink")}
+                              for _, f in scored[:5]]
+    except Exception as e:
+        logger.warning("related KB lookup failed: %s", e)
+
+    return jsonify({"references": references, "travel_reads": travel_reads,
+                    "knowledge_base": knowledge_base})
+
+
+@interview_prep_bp.route("/api/interview-prep/system-design/<eid>/save-reference", methods=["POST"])
+@login_required
+def system_design_save_reference(eid):
+    """Push a design into the user's References library (two-way link) so
+    it's searchable alongside their saved articles."""
+    user_id = session["user_id"]
+    if not _valid_sid(eid):
+        return jsonify({"error": "Unknown entry"}), 404
+    items = _sd_merged_items(user_id)
+    entry = next((it for it in items if it["id"] == eid), None)
+    if not entry:
+        return jsonify({"error": "Not found"}), 404
+    desc = (entry.get("problem") or "")
+    if entry.get("answer"):
+        desc = (desc + " — " + entry["answer"])[:600]
+    payload = {
+        "user_id": user_id,
+        "title": entry["title"],
+        "description": desc or None,
+        "url": url_for("interview_prep.system_design_pdf", id=eid, _external=False),
+        "tags": entry.get("tags") or [],
+        "category": "System Design",
+    }
+    try:
+        post("reference_links", payload)
+    except Exception as e:
+        logger.exception("save design to references failed: %s", e)
+        return jsonify({"error": "Couldn't save to References"}), 502
+    return jsonify({"ok": True})
 
 
 @interview_prep_bp.route("/api/interview-prep/system-design/<eid>", methods=["POST"])

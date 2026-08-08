@@ -728,6 +728,7 @@
           <button class="btn sm" data-editsd type="button">✎ Edit</button>
           ${e.edited ? '<button class="btn sm" data-resetsd type="button">↺ Reset</button>' : ''}
           <a class="btn sm" href="/interview-prep/system-design/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a>
+          <button class="btn sm" data-saveref type="button">＋ Save to References</button>
         </div>`;
       return `
       <div class="q-card ${sdPracticed.has(e.id)?'done':''} ${isEd?'open':''}" data-id="${e.id}">
@@ -760,13 +761,15 @@
     box.dataset.related = "loading";
     try {
       const d = await api(`/api/interview-prep/system-design/${id}/related`);
-      const refs = d.references||[], trs = d.travel_reads||[];
-      if(!refs.length && !trs.length){ box.dataset.related = "done"; return; }
+      const refs = d.references||[], trs = d.travel_reads||[], kb = d.knowledge_base||[];
+      if(!refs.length && !trs.length && !kb.length){ box.dataset.related = "done"; return; }
       let html = "";
       if(refs.length) html += `<h5>📎 From your References</h5>` + refs.map(r=>
         `<div class="sd-rel-item"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>${r.category?`<span class="src">${esc(r.category)}</span>`:""}</div>`).join("");
       if(trs.length) html += `<h5>🧳 From your Travel Reads</h5>` + trs.map(t=>
         `<div class="sd-rel-item"><a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${t.source?`<span class="src">${esc(t.source)}</span>`:""}</div>`).join("");
+      if(kb.length) html += `<h5>📚 From your Knowledge Base</h5>` + kb.map(k=>
+        `<div class="sd-rel-item"><a href="${esc(k.url)}" target="_blank" rel="noopener">${esc(k.title)}</a></div>`).join("");
       box.innerHTML = html; box.dataset.related = "done";
     } catch(err){ box.dataset.related = "pending"; }
   }
@@ -797,6 +800,12 @@
       $("sdbank-cat").value = "";              // clear category so the tag search spans all
       renderSDBank();
       document.getElementById("sdbank-search").scrollIntoView({behavior:"smooth", block:"center"});
+      return;
+    }
+    if (e.target.closest("[data-saveref]")) {
+      try { await api(`/api/interview-prep/system-design/${id}/save-reference`,{method:"POST"});
+        toast("Saved to your References 📎","success"); }
+      catch(err){ toast(err.message,"error"); }
       return;
     }
     if (e.target.closest("[data-editsd]")) { editingSD = id; renderSDBank(); return; }
