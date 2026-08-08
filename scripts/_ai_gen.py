@@ -16,152 +16,122 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Closest Binary Search Tree Value",
-         answer="Find the value in a BST closest to a target. Walk down using the BST ordering (go left if target < node, else right), tracking the closest value seen. The ordering means you only follow one root-to-leaf path — O(height), not O(n).",
-         tags=["closest-bst-value","bst","binary-search","dsa"],
-         code='''# Value in the BST closest to a target (walk down using BST ordering).
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def closest_value(root, target):
-    closest = root.val
-    node = root
-    while node:
-        if abs(node.val - target) < abs(closest - target):
-            closest = node.val       # a nearer value
-        node = node.left if target < node.val else node.right
-    return closest''',
-         complexity="Time O(h), space O(1).",
-         pitfalls="Scanning the whole tree (the BST order lets you go straight down); tie-breaking rule.",
-         example="For BST 4 -> (2 -> (1,3), 5), closest_value(root, 3.7) -> 4."),
-    dict(cat="dsa", title="Binary Tree Tilt",
-         answer="A node's TILT is the absolute difference between the sums of its left and right subtrees; return the sum of all nodes' tilts. Post-order DFS returns each subtree's total sum while accumulating the tilt at every node.",
-         tags=["binary-tree-tilt","binary-tree","dfs","recursion","dsa"],
-         code='''# Sum of every node's tilt (abs difference of its subtree sums).
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def find_tilt(root):
-    total_tilt = 0
-    def subtree_sum(node):
-        nonlocal total_tilt
-        if node is None:
-            return 0
-        left = subtree_sum(node.left)
-        right = subtree_sum(node.right)
-        total_tilt += abs(left - right)   # this node's tilt
-        return node.val + left + right    # subtree total for the parent
-    subtree_sum(root)
-    return total_tilt''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Returning the tilt instead of the subtree sum from the recursion; forgetting the abs.",
-         example="For tree 1 -> (2, 3), tilt = |2-3| + 0 + 0 = 1."),
-    dict(cat="dsa", title="Count Good Pairs",
-         answer="Count index pairs (i, j) with i < j and nums[i] == nums[j]. For each value that appears c times, it forms C(c,2) = c*(c-1)/2 pairs; sum over the value counts — O(n) instead of the O(n^2) double loop.",
-         tags=["count-good-pairs","counting","combinatorics","array","dsa"],
-         code='''# Number of index pairs (i<j) with nums[i] == nums[j].
-from collections import Counter
-def num_identical_pairs(nums):
-    counts = Counter(nums)
-    # each value with count c contributes c*(c-1)/2 pairs
-    return sum(c * (c - 1) // 2 for c in counts.values())''',
+    dict(cat="dsa", title="Repeated Substring Pattern",
+         answer="Decide whether a string can be constructed by repeating one of its substrings. Slick trick: concatenate the string with itself and strip the first and last characters; the original string appears in that (2n-2)-length string IFF it's periodic.",
+         tags=["repeated-substring","string","pattern","dsa"],
+         code='''# Can the string be built by repeating one of its substrings?
+def repeated_substring_pattern(s):
+    doubled = (s + s)[1:-1]      # concatenate, then strip one char from each end
+    return s in doubled          # s reappears iff it is periodic''',
+         complexity="Time O(n) (with a good substring search), space O(n).",
+         pitfalls="Not stripping both ends (would always match at position 0); brute-forcing all divisors is slower.",
+         example="repeated_substring_pattern('abab') -> True; repeated_substring_pattern('aba') -> False."),
+    dict(cat="dsa", title="Power of Three",
+         answer="Determine if n is a power of three WITHOUT loops or logs. Since 3 is prime, any power of three divides the largest power of three that fits in a 32-bit int (3^19 = 1162261467). So n>0 is a power of three iff 1162261467 % n == 0.",
+         tags=["power-of-three","math","number-theory","dsa"],
+         code='''# Is n a power of three? (no loops: check divisibility of the max power)
+def is_power_of_three(n):
+    if n <= 0:
+        return False
+    # 3^19 = 1162261467 is the largest power of 3 fitting in a 32-bit int
+    return 1162261467 % n == 0''',
+         complexity="Time O(1), space O(1).",
+         pitfalls="Only works because 3 is prime (this trick fails for composite bases); n must be > 0.",
+         example="is_power_of_three(27) -> True; is_power_of_three(45) -> False."),
+    dict(cat="dsa", title="Number Complement",
+         answer="Flip every bit of a positive integer WITHIN its own bit-length (leading zeros aren't flipped). Build a mask of all 1s the same width as num, then XOR — XOR with 1 flips a bit, so every bit inside the width toggles.",
+         tags=["number-complement","bit-manipulation","xor","dsa"],
+         code='''# Flip every bit of a positive integer within its bit-length.
+def find_complement(num):
+    mask = 1
+    while mask < num:
+        mask = (mask << 1) | 1   # grow a mask of all 1s the width of num
+    return num ^ mask            # XOR flips every bit inside that width''',
+         complexity="Time O(bits), space O(1).",
+         pitfalls="Flipping the leading zeros (mask must match num's width); off-by-one on the mask.",
+         example="find_complement(5) -> 2  (101 -> 010)."),
+    dict(cat="dsa", title="Jewels and Stones",
+         answer="Given a string of jewel types and a string of stones, count how many stones are jewels. Put the jewel characters in a set for O(1) membership, then count stones found in it.",
+         tags=["jewels-stones","hash-set","string","counting","dsa"],
+         code='''# Count how many stones are also jewels (each char in jewels is a type).
+def num_jewels_in_stones(jewels, stones):
+    jewel_set = set(jewels)
+    return sum(1 for s in stones if s in jewel_set)''',
+         complexity="Time O(len(jewels) + len(stones)), space O(len(jewels)).",
+         pitfalls="Using a list membership check (O(n) each) instead of a set; case sensitivity matters.",
+         example="num_jewels_in_stones('aA', 'aAAbbbb') -> 3."),
+    dict(cat="dsa", title="Defanging an IP Address",
+         answer="'Defang' an IPv4 address by replacing every period with '[.]' so it can't be accidentally clicked. A single string replace does it.",
+         tags=["defang-ip","string","replace","dsa"],
+         code='''# Replace every '.' in an IP with '[.]' to 'defang' it.
+def defang_ip_addr(address):
+    return address.replace(".", "[.]")''',
          complexity="Time O(n), space O(n).",
-         pitfalls="Brute-force O(n^2); off-by-one in the C(c,2) formula.",
-         example="num_identical_pairs([1,2,3,1,1,3]) -> 4."),
-    dict(cat="dsa", title="XOR Operation in an Array",
-         answer="Given n and start, the array is nums[i] = start + 2*i for i in [0, n); return the XOR of all its elements. Just accumulate the XOR in a loop (a closed-form O(1) formula also exists).",
-         tags=["xor-operation","bit-manipulation","math","dsa"],
-         code='''# XOR of the array where nums[i] = start + 2*i, for i in [0, n).
-def xor_operation(n, start):
+         pitfalls="Manual char-by-char building when a single replace suffices.",
+         example="defang_ip_addr('1.1.1.1') -> '1[.]1[.]1[.]1'."),
+    dict(cat="dsa", title="Replace Elements with Greatest Element on Right Side",
+         answer="Replace each element with the GREATEST element to its right; the last element becomes -1. Scan from the RIGHT, keeping a running maximum: set each position to the current max-so-far, then update the max with the old value.",
+         tags=["replace-greatest-right","suffix-max","array","dsa"],
+         code='''# Replace each element with the greatest element to its RIGHT (-1 for last).
+def replace_elements(arr):
+    greatest = -1
+    for i in range(len(arr) - 1, -1, -1):
+        arr[i], greatest = greatest, max(greatest, arr[i])
+    return arr''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Scanning left-to-right (needs the suffix max); updating the max before assigning.",
+         example="replace_elements([17,18,5,4,6,1]) -> [18,6,6,6,1,-1]."),
+    dict(cat="dsa", title="Decode XORed Array",
+         answer="An array was XOR-encoded as encoded[i] = arr[i] XOR arr[i+1]; given the encoded array and the first original element, recover the array. Since XOR is its own inverse, arr[i+1] = arr[i] XOR encoded[i] — rebuild forward from 'first'.",
+         tags=["decode-xored-array","xor","bit-manipulation","array","dsa"],
+         code='''# Recover the array from its XOR-encoding, given the first element.
+def decode_xored(encoded, first):
+    result = [first]
+    for e in encoded:
+        result.append(result[-1] ^ e)   # arr[i] = arr[i-1] ^ encoded[i-1]
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Forgetting XOR is self-inverse; off-by-one aligning encoded[i] to arr[i], arr[i+1].",
+         example="decode_xored([1,2,3], 1) -> [1,0,2,1]."),
+    dict(cat="dsa", title="Split a String in Balanced Strings",
+         answer="Count the maximum number of BALANCED substrings (equal numbers of 'L' and 'R') you can split the string into. Greedily track a running balance (+1 for R, -1 for L); every time it returns to 0 a balanced segment closes, so increment the count.",
+         tags=["balanced-split","greedy","string","dsa"],
+         code='''# Max number of balanced substrings (equal count of 'L' and 'R').
+def balanced_string_split(s):
+    count = 0        # running balance: +1 for R, -1 for L
     result = 0
-    for i in range(n):
-        result ^= start + 2 * i
+    for ch in s:
+        count += 1 if ch == 'R' else -1
+        if count == 0:
+            result += 1   # a balanced segment closes here
     return result''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Miscomputing the element formula (start + 2*i); initializing result wrong.",
-         example="xor_operation(5, 0) -> 8  (0^2^4^6^8)."),
-    dict(cat="dsa", title="Subtract the Product and Sum of Digits",
-         answer="Return the product of an integer's digits MINUS the sum of its digits. Extract digits with %10 and //10, multiplying into a running product and adding into a running sum, then subtract.",
-         tags=["product-sum-digits","math","digits","dsa"],
-         code='''# Product of digits minus sum of digits of an integer.
-def subtract_product_and_sum(n):
-    product = 1
-    total = 0
-    while n:
-        d = n % 10
-        product *= d
-        total += d
-        n //= 10
-    return product - total''',
-         complexity="Time O(digits), space O(1).",
-         pitfalls="Initializing product to 0 (kills it); summing instead of multiplying for the product.",
-         example="subtract_product_and_sum(234) -> 15  (2*3*4=24, 2+3+4=9, 24-9=15)."),
-    dict(cat="dsa", title="Find Center of Star Graph",
-         answer="In a star graph, one CENTER node connects to every other node, so it appears in EVERY edge. Therefore the center is the node shared by the first two edges — check which endpoint of edge 0 also appears in edge 1.",
-         tags=["find-center-star","graph","dsa"],
-         code='''# The center node of a star graph appears in every edge.
-def find_center(edges):
-    a, b = edges[0]
-    c, d = edges[1]
-    # the center is the common endpoint of the first two edges
-    return a if a in (c, d) else b''',
-         complexity="Time O(1), space O(1).",
-         pitfalls="Counting degrees over all edges (unnecessary — two edges suffice); index errors.",
-         example="find_center([[1,2],[2,3],[4,2]]) -> 2."),
-    dict(cat="dsa", title="Sum of Unique Elements",
-         answer="Sum the elements that appear EXACTLY ONCE in the array. Count frequencies, then add up the values whose count is 1.",
-         tags=["sum-unique","counting","hash-map","array","dsa"],
-         code='''# Sum of elements that appear exactly once in the array.
-from collections import Counter
-def sum_of_unique(nums):
-    counts = Counter(nums)
-    return sum(n for n, c in counts.items() if c == 1)''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Summing distinct values (that's different — this excludes any repeated value entirely).",
-         example="sum_of_unique([1,2,3,2]) -> 4  (1 + 3)."),
-    dict(cat="dsa", title="Three Consecutive Odds",
-         answer="Return whether the array contains three CONSECUTIVE odd numbers. Track a running streak of odds, resetting to 0 on any even; return True as soon as the streak reaches 3.",
-         tags=["three-consecutive-odds","array","dsa"],
-         code='''# Are there three consecutive odd numbers anywhere in the array?
-def three_consecutive_odds(arr):
-    streak = 0
-    for x in arr:
-        if x % 2 == 1:
-            streak += 1
-            if streak == 3:
-                return True
-        else:
-            streak = 0            # any even resets the streak
-    return False''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Not resetting the streak on an even; off-by-one on the streak length.",
-         example="three_consecutive_odds([2,6,4,1]) -> False; three_consecutive_odds([1,2,34,3,4,5,7,23,12]) -> True."),
-    dict(cat="glossary", title="CORS (Cross-Origin Resource Sharing)",
-         answer="A browser mechanism that RELAXES the same-origin policy so a page can call a DIFFERENT origin, but only if the target server OPTS IN via response headers (Access-Control-Allow-Origin, etc.). For unsafe requests the browser first sends a PREFLIGHT OPTIONS request to check permission. CORS is enforced by the BROWSER (protecting the user), not the server, so it is NOT a server-side access control.",
-         tags=["cors","same-origin-policy","browser","web-security"],
-         example="A frontend at app.com calling api.otherco.com is blocked unless otherco returns Access-Control-Allow-Origin: https://app.com; the browser preflights a POST to confirm."),
-    dict(cat="glossary", title="CSRF (Cross-Site Request Forgery)",
-         answer="An attack where a malicious site tricks a logged-in user's BROWSER into sending an unwanted authenticated request to another site — abusing the fact that the browser auto-attaches the user's cookies. Defended with CSRF TOKENS (a per-request secret the attacker can't read), SameSite cookies, and checking the Origin/Referer header.",
-         tags=["csrf","web-security","cookies","samesite","attack"],
-         example="While you're logged into your bank, visiting evil.com auto-submits a POST to bank.com/transfer with your session cookie; a CSRF token evil.com can't read blocks it."),
-    dict(cat="glossary", title="XSS (Cross-Site Scripting)",
-         answer="Injecting malicious JavaScript into a page that OTHER users view, so it runs in their browser with the site's privileges (stealing cookies/tokens, keylogging, defacing). Types: stored (persisted), reflected (echoed from a request), DOM-based. Defended by ESCAPING/encoding user output, a Content Security Policy, and never trusting user input in HTML/JS contexts.",
-         tags=["xss","web-security","injection","javascript","attack"],
-         example="A comment field that renders <script>steal(document.cookie)</script> unescaped runs it for every viewer; HTML-escaping the comment on output neutralizes it."),
-    dict(cat="glossary", title="SQL injection",
-         answer="An attack where unsanitized user input alters the STRUCTURE of a SQL query, letting an attacker read/modify/delete data or bypass auth (classic: input ' OR '1'='1 makes a check always true). The fix is PARAMETERIZED/prepared statements (bind values separately from the SQL text) — never concatenate user input into SQL — plus least-privilege DB accounts and validation.",
-         tags=["sql-injection","web-security","prepared-statement","injection","attack"],
-         example="\"SELECT * FROM users WHERE name='\" + input + \"'\" with input '; DROP TABLE users; -- is catastrophic; a parameterized query makes the input pure data, not SQL."),
-    dict(cat="glossary", title="Content Security Policy (CSP)",
-         answer="A browser security header that WHITELISTS which sources of scripts, styles, images, etc. a page may load or execute — strong defense-in-depth against XSS. Declaring 'only run scripts from my own domain' (and forbidding inline scripts) means even injected <script> tags won't execute. It doesn't replace output escaping but sharply limits the blast radius; violation reports help find issues.",
-         tags=["csp","content-security-policy","xss","web-security","defense-in-depth"],
-         example="A CSP of script-src 'self' blocks an XSS-injected inline <script> because it isn't from an allowed source — even if the attacker got it into the HTML."),
-    dict(cat="conceptual", title="Why does the browser enforce the same-origin policy, and why do we then need CORS?",
-         answer="The SAME-ORIGIN POLICY (SOP) is a foundational browser rule: script from one origin (scheme+host+port) can't READ responses from a different origin. Without it, any site you visit could silently call your bank/email (your browser auto-sends your cookies) and read the responses — stealing your data or acting as you. SOP isolates origins so a malicious page can't exfiltrate another site's authenticated data. But the modern web legitimately needs cross-origin calls (a frontend on app.com talking to api.com, CDNs, third-party APIs), so CORS is the controlled EXEMPTION: rather than blindly blocking all cross-origin reads, the target SERVER can explicitly opt in via Access-Control-Allow-Origin headers, and the browser enforces those grants (preflighting risky requests). Crucially the BROWSER (protecting the user) enforces both — a non-browser client like curl isn't bound by them, which is why CORS is not server-side access control (you still need real auth). SOP is 'deny by default for safety'; CORS is 'the server-declared allowlist that safely re-enables legitimate cross-origin cases.'",
-         tags=["same-origin-policy","cors","browser","web-security","why"],
-         example="SOP stops evil.com's script from reading your logged-in bank.com data; CORS lets your own app.com frontend read api.app.com only because that API server explicitly allow-listed app.com."),
+         pitfalls="Overcomplicating — greedy closing at balance 0 is optimal; miscounting the direction signs.",
+         example="balanced_string_split('RLRRLLRLRL') -> 4."),
+    dict(cat="glossary", title="TCP vs UDP",
+         answer="Two transport protocols. TCP is CONNECTION-oriented and RELIABLE: a 3-way handshake, then guaranteed in-order, error-checked, retransmitted delivery with flow/congestion control — at the cost of overhead and latency (handshakes, ordering, head-of-line blocking). UDP is CONNECTIONLESS and best-effort: fire datagrams with no delivery/order guarantee and no handshake — minimal overhead/latency. Use TCP when correctness matters (web, files); UDP when timeliness beats perfection (video, VoIP, gaming, DNS).",
+         tags=["tcp","udp","transport","networking"],
+         example="A file download uses TCP (every byte must arrive correctly); a live video call uses UDP (a dropped frame beats stalling the stream to retransmit)."),
+    dict(cat="glossary", title="TLS 1.3 handshake",
+         answer="Establishes an encrypted, authenticated channel, streamlined in TLS 1.3 to ONE round trip (1-RTT), with 0-RTT resumption for repeat visits. The client sends its key share up front; the server replies with its share + certificate, and both derive a shared session key via EPHEMERAL Diffie-Hellman — giving FORWARD SECRECY. It dropped legacy ciphers and starts encryption earlier — faster and safer than TLS 1.2's 2-RTT.",
+         tags=["tls","tls1.3","handshake","forward-secrecy","encryption"],
+         example="On TLS 1.3 the browser and server exchange key shares in one round trip, verify the server's certificate, and derive a forward-secret session key — so a future key compromise can't decrypt today's traffic."),
+    dict(cat="glossary", title="JWT structure & claims",
+         answer="A JSON Web Token has three base64url parts separated by dots: HEADER (algorithm/type), PAYLOAD (the CLAIMS — sub=user id, exp=expiry, iat=issued-at, roles), and SIGNATURE (over header+payload with a secret/private key). The server verifies the signature to trust the claims WITHOUT a DB lookup — stateless auth. Never put secrets in the payload (it's base64-encoded, not encrypted) and always verify exp + signature.",
+         tags=["jwt","claims","authentication","stateless","token"],
+         example="A JWT 'xxxxx.yyyyy.zzzzz' carrying {sub:'123', exp:1699999999, role:'admin'} is trusted after the API verifies its signature and expiry — no session store needed."),
+    dict(cat="glossary", title="Cookie security flags (Secure / HttpOnly / SameSite)",
+         answer="Attributes that harden cookies. SECURE: send only over HTTPS. HTTPONLY: forbid JavaScript access (document.cookie) — mitigates XSS token theft. SAMESITE (Strict/Lax/None): control whether the cookie rides cross-site requests — Lax/Strict mitigate CSRF. Together they protect session cookies from interception, script theft, and forgery.",
+         tags=["cookie-flags","secure","httponly","samesite","web-security"],
+         example="A session cookie set 'Secure; HttpOnly; SameSite=Lax' can't be read by injected JS, can't leak over HTTP, and won't ride a cross-site POST — closing XSS and CSRF vectors."),
+    dict(cat="glossary", title="HSTS (HTTP Strict Transport Security)",
+         answer="A response header telling browsers to ALWAYS use HTTPS for a domain for a set duration, refusing any plain-HTTP connection even if the user types http:// or clicks an old link. It prevents SSL-stripping man-in-the-middle attacks and the insecure initial redirect. Preloading (a browser-shipped list) closes even the first-visit gap.",
+         tags=["hsts","https","ssl-stripping","web-security","networking"],
+         example="With 'Strict-Transport-Security: max-age=31536000; includeSubDomains', a browser upgrades every future request to HTTPS automatically, so an attacker can't downgrade the connection to HTTP."),
+    dict(cat="conceptual", title="Why is UDP used for video, gaming, VoIP, and DNS despite being unreliable?",
+         answer="TCP's reliability costs LATENCY that hurts real-time and tiny-request workloads. TCP guarantees IN-ORDER delivery, so one lost packet triggers a retransmit AND head-of-line blocking — all later data waits a full round trip. For a live call or game that stall is worse than the loss: by the time the retransmitted frame arrives it's stale; you'd rather skip it and show the next. UDP delivers datagrams immediately with no ordering/retransmit, letting the APP decide what to do about loss (interpolate a dropped frame, ignore a stale position). For DNS, a query/response is one tiny exchange; TCP's 3-way handshake would triple the round trips for no benefit, so UDP sends one packet and gets one back (falling back to TCP only for large responses). The principle: use UDP when late data is useless and loss is app-handleable; TCP when every byte and its order matter. (QUIC/HTTP/3 builds selective reliability ON TOP of UDP to get per-stream guarantees without TCP's head-of-line blocking.)",
+         tags=["udp","tcp","latency","real-time","why"],
+         example="A 100ms-late video frame is worthless, so a call uses UDP and drops it; a bank transfer uses TCP because a missing byte corrupts the data — the cost model, not 'reliable is always better', decides."),
 ]
 
 
