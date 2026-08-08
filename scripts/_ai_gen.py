@@ -16,170 +16,199 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Insert Interval",
-         answer="Insert a new interval into a list of SORTED, non-overlapping intervals and merge any overlaps. Three passes in one sweep: (1) copy all intervals that end before the new one starts, (2) merge every interval that overlaps the new one by expanding the new interval's bounds, (3) copy the rest. No re-sorting needed since the input is already sorted.",
-         tags=["insert-interval","intervals","merge","array","dsa"],
-         code='''# Insert a new interval into a sorted, non-overlapping list and merge.
-def insert_interval(intervals, new):
-    result = []
-    i, n = 0, len(intervals)
-    while i < n and intervals[i][1] < new[0]:      # ends before new starts
-        result.append(intervals[i]); i += 1
-    while i < n and intervals[i][0] <= new[1]:      # overlaps new -> merge
-        new[0] = min(new[0], intervals[i][0])
-        new[1] = max(new[1], intervals[i][1])
-        i += 1
-    result.append(new)
-    while i < n:                                    # the rest, after new
-        result.append(intervals[i]); i += 1
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Re-sorting unnecessarily (input is already sorted); wrong overlap test — use intervals[i][0] <= new[1].",
-         example="insert_interval([[1,3],[6,9]], [2,5]) -> [[1,5],[6,9]]."),
-    dict(cat="dsa", title="Gas Station (greedy circuit)",
-         answer="Find the starting station index to complete a circular route, or -1 if impossible. Key insights: if the TOTAL gas is at least the total cost, a solution exists and is unique. Track a running tank; whenever it dips below 0, no station up to here can be the start, so reset the candidate start to the next station and zero the tank. One pass.",
-         tags=["gas-station","greedy","array","dsa"],
-         code='''# Index of the station to start from to complete the circuit, else -1.
-def can_complete_circuit(gas, cost):
-    total = 0        # net gas over the whole loop
-    tank = 0         # running tank from the current candidate start
-    start = 0
-    for i in range(len(gas)):
-        diff = gas[i] - cost[i]
-        total += diff
-        tank += diff
-        if tank < 0:          # can't reach station i+1 from 'start'
-            start = i + 1     # next station becomes the candidate start
-            tank = 0
-    return start if total >= 0 else -1''',
+    dict(cat="dsa", title="Edit Distance (Levenshtein DP)",
+         answer="Minimum number of single-character edits (insert, delete, replace) to turn string a into string b. Classic 2-D DP: dp[i][j] is the distance between the first i chars of a and first j of b. If the current chars match, carry the diagonal; else 1 + the min of delete (up), insert (left), and replace (diagonal). Base cases turn a prefix into the empty string.",
+         tags=["edit-distance","levenshtein","dynamic-programming","string","dp","dsa"],
+         code='''# Minimum single-char edits (insert/delete/replace) to turn a into b.
+def edit_distance(a, b):
+    m, n = len(a), len(b)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1):
+        dp[i][0] = i            # delete all i chars of a
+    for j in range(n + 1):
+        dp[0][j] = j            # insert all j chars of b
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if a[i-1] == b[j-1]:
+                dp[i][j] = dp[i-1][j-1]        # chars match -> no cost
+            else:
+                dp[i][j] = 1 + min(dp[i-1][j],     # delete from a
+                                   dp[i][j-1],     # insert into a
+                                   dp[i-1][j-1])   # replace
+    return dp[m][n]''',
+         complexity="Time O(m*n), space O(m*n) (reducible to O(n)).",
+         pitfalls="Forgetting the base-case row/column; mixing up which neighbour is insert vs delete.",
+         example="edit_distance('horse','ros') -> 3  (horse->rorse->rose->ros)."),
+    dict(cat="dsa", title="Longest Common Subsequence (DP)",
+         answer="Find the length of the longest subsequence common to two strings (characters in order but not necessarily contiguous). 2-D DP: if the current characters match, extend the diagonal by 1; otherwise take the better of dropping one character from either string. The backbone of diff tools and DNA alignment.",
+         tags=["longest-common-subsequence","lcs","dynamic-programming","string","dp","dsa"],
+         code='''# Length of the longest common subsequence of two strings.
+def longest_common_subsequence(a, b):
+    m, n = len(a), len(b)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if a[i-1] == b[j-1]:
+                dp[i][j] = dp[i-1][j-1] + 1    # extend the common subsequence
+            else:
+                dp[i][j] = max(dp[i-1][j], dp[i][j-1])  # drop one character
+    return dp[m][n]''',
+         complexity="Time O(m*n), space O(m*n).",
+         pitfalls="Confusing subsequence (order kept, gaps allowed) with substring (contiguous); off-by-one indexing into the strings.",
+         example="longest_common_subsequence('abcde','ace') -> 3  ('ace')."),
+    dict(cat="dsa", title="Coin Change II (number of ways)",
+         answer="Count the number of distinct combinations of coins (each denomination usable unlimited times) that sum to a target amount. Unbounded-knapsack DP: iterate COINS in the outer loop and amounts inner — this counts combinations (order-independent) rather than permutations. dp[a] += dp[a-coin].",
+         tags=["coin-change","dynamic-programming","unbounded-knapsack","dp","dsa"],
+         code='''# Number of ways to make 'amount' using unlimited coins of each value.
+def change(amount, coins):
+    dp = [0] * (amount + 1)
+    dp[0] = 1                    # one way to make 0: use nothing
+    for coin in coins:          # coins OUTSIDE -> count combinations, not perms
+        for a in range(coin, amount + 1):
+            dp[a] += dp[a - coin]   # add the ways that use this coin
+    return dp[amount]''',
+         complexity="Time O(amount * len(coins)), space O(amount).",
+         pitfalls="Swapping the loop order (counts permutations, over-counts); forgetting dp[0]=1.",
+         example="change(5, [1,2,5]) -> 4  (5 | 2+2+1 | 2+1+1+1 | 1+1+1+1+1)."),
+    dict(cat="dsa", title="Partition Equal Subset Sum",
+         answer="Decide whether an array can be split into two subsets with equal sums. If the total is odd it's impossible; otherwise it reduces to a SUBSET-SUM problem: can any subset reach total/2? Use a boolean DP over achievable sums, iterating each number and updating sums from high to low so each number is used at most once.",
+         tags=["partition-equal-subset","subset-sum","dynamic-programming","0-1-knapsack","dp","dsa"],
+         code='''# Can the array be split into two subsets with equal sum? (subset-sum DP)
+def can_partition(nums):
+    total = sum(nums)
+    if total % 2 != 0:
+        return False            # an odd total can't split evenly
+    target = total // 2
+    dp = [False] * (target + 1)
+    dp[0] = True                # a sum of 0 is always achievable
+    for num in nums:
+        for s in range(target, num - 1, -1):   # go DOWN so each num is used once
+            dp[s] = dp[s] or dp[s - num]
+    return dp[target]''',
+         complexity="Time O(n * target), space O(target).",
+         pitfalls="Iterating sums upward (lets a number be reused); forgetting the odd-total shortcut.",
+         example="can_partition([1,5,11,5]) -> True  ([1,5,5] and [11], each summing to 11)."),
+    dict(cat="dsa", title="Longest Palindromic Substring (expand around center)",
+         answer="Find the longest contiguous substring that reads the same forwards and backwards. For each of the 2n-1 possible centers (each character, and each gap between characters), expand outward while the two ends match, tracking the widest palindrome found. Simple O(n^2) time, O(1) space — no DP table needed.",
+         tags=["longest-palindromic-substring","expand-around-center","string","two-pointers","dsa"],
+         code='''# Longest substring of s that is a palindrome (expand around center).
+def longest_palindrome(s):
+    if not s:
+        return ""
+    start, end = 0, 0
+    def expand(left, right):
+        while left >= 0 and right < len(s) and s[left] == s[right]:
+            left -= 1; right += 1
+        return left + 1, right - 1        # last valid palindrome bounds
+    for i in range(len(s)):
+        l1, r1 = expand(i, i)             # odd-length center at i
+        l2, r2 = expand(i, i + 1)         # even-length center between i, i+1
+        if r1 - l1 > end - start:
+            start, end = l1, r1
+        if r2 - l2 > end - start:
+            start, end = l2, r2
+    return s[start:end + 1]''',
+         complexity="Time O(n^2), space O(1).",
+         pitfalls="Handling only odd centers (misses even palindromes); off-by-one when returning the bounds after the loop overshoots.",
+         example="longest_palindrome('babad') -> 'bab'  (or 'aba')."),
+    dict(cat="dsa", title="Kth Smallest Element in a BST",
+         answer="Return the kth smallest value in a Binary Search Tree. An IN-ORDER traversal of a BST visits values in sorted order, so do an iterative in-order walk (go left as far as possible using a stack, visit, then go right) and stop at the kth visited node. No need to traverse the whole tree.",
+         tags=["kth-smallest-bst","bst","in-order","stack","binary-tree","dsa"],
+         code='''# The kth smallest value via in-order traversal (BST in-order = sorted).
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def kth_smallest(root, k):
+    stack = []
+    node = root
+    while stack or node:
+        while node:               # go as far left as possible
+            stack.append(node)
+            node = node.left
+        node = stack.pop()        # the smallest unvisited node
+        k -= 1
+        if k == 0:
+            return node.val       # this is the kth smallest
+        node = node.right         # then explore its right subtree
+    return -1''',
+         complexity="Time O(h + k), space O(h) for the stack.",
+         pitfalls="Traversing the entire tree (stop early at k); decrementing k in the wrong place.",
+         example="For a BST built from [3,1,4,2], kth_smallest(root, 1) -> 1 and kth_smallest(root, 2) -> 2."),
+    dict(cat="ml_coding", title="Precision, Recall & F1 (from scratch)",
+         answer="Core classification metrics from raw predictions. PRECISION = of everything predicted positive, how much was right (TP/(TP+FP)). RECALL = of all actual positives, how many were caught (TP/(TP+FN)). F1 = harmonic mean of the two, punishing an imbalance between them. Guard against divide-by-zero when a denominator is 0.",
+         tags=["precision","recall","f1","metrics","classification","ml-coding"],
+         code='''# Precision, recall, and F1 from true and predicted binary labels.
+def precision_recall_f1(y_true, y_pred):
+    tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+    fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+    fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 0)
+    precision = tp / (tp + fp) if (tp + fp) else 0.0   # of predicted positives
+    recall = tp / (tp + fn) if (tp + fn) else 0.0      # of actual positives
+    f1 = (2 * precision * recall / (precision + recall)
+          if (precision + recall) else 0.0)            # harmonic mean
+    return precision, recall, f1''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Returning start without the total>=0 feasibility check; resetting to i instead of i+1.",
-         example="can_complete_circuit([1,2,3,4,5],[3,4,5,1,2]) -> 3."),
-    dict(cat="dsa", title="Task Scheduler (cooldown)",
-         answer="Given tasks and a cooldown n (same task can't run within n units), find the minimum total time. The bottleneck is the MOST frequent task: arrange (max_count-1) frames of size (n+1), then append the tasks that share the max frequency. If there are enough distinct tasks to fill the idle gaps, the answer is just len(tasks). Take the max of the two.",
-         tags=["task-scheduler","greedy","scheduling","counting","dsa"],
-         code='''# Minimum time units to run all tasks with cooldown n between same tasks.
-from collections import Counter
-def least_interval(tasks, n):
-    counts = Counter(tasks)
-    max_count = max(counts.values())              # most frequent task's count
-    num_max = sum(1 for c in counts.values() if c == max_count)  # how many tie
-    # (max_count-1) gaps of size (n+1), plus the final group of max tasks
-    intervals = (max_count - 1) * (n + 1) + num_max
-    return max(intervals, len(tasks))             # never fewer than #tasks''',
-         complexity="Time O(t) for t tasks, space O(1) (at most 26 keys).",
-         pitfalls="Forgetting max(..., len(tasks)) when there are many distinct tasks; miscounting the tied maxima.",
-         example="least_interval(['A','A','A','B','B','B'], 2) -> 8  (A B idle A B idle A B)."),
-    dict(cat="dsa", title="Non-overlapping Intervals (min removals)",
-         answer="Find the minimum number of intervals to remove so the rest don't overlap. Greedy: sort by END time and always keep the interval that ends earliest; any later interval that starts before the kept one's end must be removed. Ending earliest leaves the most room for future intervals — the classic activity-selection argument.",
-         tags=["non-overlapping-intervals","greedy","intervals","dsa"],
-         code='''# Min intervals to remove so the rest are non-overlapping (greedy by end).
-def erase_overlap_intervals(intervals):
-    if not intervals:
-        return 0
-    intervals.sort(key=lambda x: x[1])   # sort by END time
-    removals = 0
-    prev_end = intervals[0][1]
-    for start, end in intervals[1:]:
-        if start < prev_end:              # overlaps -> remove this one
-            removals += 1
+         pitfalls="Dividing by zero when there are no positive predictions/labels; confusing precision with recall.",
+         example="precision_recall_f1([1,1,0,0],[1,0,0,0]) -> (1.0, 0.5, 0.667)."),
+    dict(cat="ml_coding", title="Confusion Matrix (from scratch)",
+         answer="Tally the four outcomes of binary classification: true positives, false positives, true negatives, false negatives. Every other metric (precision, recall, accuracy, specificity) is derived from these four counts, so it's the foundation for evaluating a classifier.",
+         tags=["confusion-matrix","metrics","classification","evaluation","ml-coding"],
+         code='''# 2x2 confusion-matrix counts for binary labels.
+def confusion_matrix(y_true, y_pred):
+    tp = fp = tn = fn = 0
+    for t, p in zip(y_true, y_pred):
+        if t == 1 and p == 1:
+            tp += 1     # correctly predicted positive
+        elif t == 0 and p == 1:
+            fp += 1     # false alarm
+        elif t == 0 and p == 0:
+            tn += 1     # correctly predicted negative
         else:
-            prev_end = end                # keep it; advance the boundary
-    return removals''',
-         complexity="Time O(n log n) for the sort, space O(1).",
-         pitfalls="Sorting by start instead of end (greedy breaks); using <= instead of < (touching endpoints don't overlap here).",
-         example="erase_overlap_intervals([[1,2],[2,3],[3,4],[1,3]]) -> 1  (remove [1,3])."),
-    dict(cat="dsa", title="Top-K Frequent Elements (bucket sort)",
-         answer="Return the k most frequent elements. Count frequencies, then BUCKET numbers by their frequency (index = count). Walk buckets from highest frequency down, collecting until you have k. This is O(n) — better than sorting by count (O(n log n)) or a heap (O(n log k)).",
-         tags=["top-k-frequent","bucket-sort","hash-map","counting","dsa"],
-         code='''# The k most frequent elements, using buckets indexed by frequency.
-from collections import Counter
-def top_k_frequent(nums, k):
-    counts = Counter(nums)
-    buckets = [[] for _ in range(len(nums) + 1)]  # buckets[f] = nums seen f times
-    for num, freq in counts.items():
-        buckets[freq].append(num)
-    result = []
-    for freq in range(len(buckets) - 1, 0, -1):   # highest frequency first
-        for num in buckets[freq]:
-            result.append(num)
-            if len(result) == k:
-                return result
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Sizing buckets wrong (max freq is len(nums)); iterating buckets low-to-high (gives least frequent).",
-         example="top_k_frequent([1,1,1,2,2,3], 2) -> [1,2]."),
-    dict(cat="dsa", title="Validate Binary Search Tree",
-         answer="Verify a binary tree is a valid BST: every node's value must lie strictly within an allowed (low, high) range that tightens as you descend. Going left caps the high bound at the parent's value; going right raises the low bound. A naive 'check node vs its two children' check is WRONG — it misses violations deeper in the subtree.",
-         tags=["validate-bst","bst","binary-tree","recursion","dsa"],
-         code='''# Check a binary tree is a valid BST via tightening (low, high) bounds.
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def is_valid_bst(root):
-    def valid(node, low, high):
-        if node is None:
-            return True                     # an empty subtree is valid
-        if not (low < node.val < high):
-            return False                    # value violates the allowed range
-        # left subtree must stay < node.val; right must stay > node.val
-        return valid(node.left, low, node.val) and valid(node.right, node.val, high)
-    return valid(root, float('-inf'), float('inf'))''',
-         complexity="Time O(n), space O(h) recursion.",
-         pitfalls="Only comparing a node to its direct children (misses far violations); using <= where strict < is required.",
-         example="Tree 2 with children 1 and 3 is valid; a tree 5 whose right child is 4 is NOT."),
-    dict(cat="dsa", title="Diameter of a Binary Tree",
-         answer="The diameter is the number of EDGES on the longest path between any two nodes (it need not pass through the root). Compute each node's depth with a post-order DFS; at every node, the longest path THROUGH it is left_depth + right_depth. Track the global max of that while returning 1 + max(left, right) as the node's own depth.",
-         tags=["diameter","binary-tree","dfs","recursion","dsa"],
-         code='''# Length (in edges) of the longest path between any two nodes.
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def diameter_of_binary_tree(root):
-    best = 0
-    def depth(node):
-        nonlocal best
-        if node is None:
-            return 0
-        left = depth(node.left)             # depth of the left subtree
-        right = depth(node.right)           # depth of the right subtree
-        best = max(best, left + right)      # longest path through this node
-        return 1 + max(left, right)         # this node's own depth
-    depth(root)
-    return best''',
-         complexity="Time O(n), space O(h) recursion.",
-         pitfalls="Returning left+right as the depth (should be 1+max); counting nodes instead of edges.",
-         example="For root 1 with left 2 (children 4,5) and right 3, the diameter is 3 edges (4-2-1-3)."),
-    dict(cat="glossary", title="Byte-Pair Encoding (BPE)",
-         answer="A subword tokenization method. Start from characters, then repeatedly MERGE the most frequent adjacent pair into a new token, building a vocabulary of common subword units. It balances vocabulary size against sequence length and handles rare/unknown words by splitting them into known pieces — the tokenizer behind GPT and many LLMs.",
-         tags=["bpe","byte-pair-encoding","tokenization","nlp","subword"],
-         example="'lower' and 'lowest' share the subword 'low'; BPE learns 'low' as one token so a rare word like 'lowishly' still splits into known pieces instead of an <UNK>."),
-    dict(cat="glossary", title="Positional encoding",
-         answer="Because a Transformer's self-attention is ORDER-AGNOSTIC (it sees a set, not a sequence), positional encodings inject each token's position. Classic sinusoidal encodings add position-dependent sine/cosine patterns to the embeddings; learned and rotary (RoPE) variants are common now. Without them the model couldn't tell 'dog bites man' from 'man bites dog'.",
-         tags=["positional-encoding","transformer","attention","nlp"],
-         example="Adding sinusoidal position vectors lets attention distinguish the first 'the' from the second, so word order carries meaning."),
-    dict(cat="glossary", title="Teacher forcing",
-         answer="A training technique for sequence models where, at each step, the model is fed the GROUND-TRUTH previous token rather than its own previous prediction. It speeds and stabilizes training, but creates 'exposure bias': at inference the model must consume its own (possibly wrong) outputs — a distribution it never saw during training.",
-         tags=["teacher-forcing","seq2seq","training","exposure-bias","nlp"],
-         example="Training a translator, you feed the correct French word at each step regardless of the model's guess; at test time it must use its own predictions, so early mistakes can compound."),
-    dict(cat="glossary", title="Label smoothing",
-         answer="A regularization trick for classification: instead of hard one-hot targets (1 for the true class, 0 for the rest), use SOFT targets (e.g. 0.9 for the true class and the remaining 0.1 split across the others). It discourages over-confidence, improves calibration and generalization, and is standard in training modern image and language models.",
-         tags=["label-smoothing","regularization","classification","calibration"],
-         example="For a 5-class problem, the true class target becomes 0.9 and each other class gets 0.025, so the model doesn't push logits to infinity chasing a perfect 1.0."),
-    dict(cat="glossary", title="Weight decay (L2 regularization)",
-         answer="Adding a penalty proportional to the squared magnitude of the weights to the loss — equivalently, shrinking weights slightly each update. It discourages large weights, reducing overfitting and favouring simpler models. In modern optimizers (AdamW) it's DECOUPLED from the adaptive gradient for correctness.",
-         tags=["weight-decay","l2-regularization","overfitting","optimization"],
-         example="Training with weight decay 1e-4 keeps weights small so the model fits the signal without memorizing noise — often the most effective regularizer alongside dropout."),
-    dict(cat="glossary", title="Knowledge distillation",
-         answer="Training a small 'student' model to mimic a large 'teacher' by matching the teacher's SOFT probability outputs (which carry rich 'dark knowledge' about class similarities) rather than just hard labels. The student captures much of the teacher's accuracy at a fraction of the size and latency — key for deploying big models cheaply.",
-         tags=["knowledge-distillation","model-compression","student-teacher","efficiency"],
-         example="A large BERT teacher's softened outputs train a 6-layer DistilBERT student that runs ~2x faster while keeping ~97% of the accuracy."),
-    dict(cat="conceptual", title="Why do Transformers need positional encoding when RNNs don't?",
-         answer="An RNN processes tokens one at a time in order, so position is baked into the computation itself. A Transformer's self-attention instead relates ALL tokens simultaneously as an unordered set — permuting the inputs would give the same result. That property is exactly what makes it parallelizable and great at long-range dependencies, but it means order information must be ADDED explicitly via positional encodings; otherwise 'the cat chased the dog' and 'the dog chased the cat' would look identical to the model.",
-         tags=["positional-encoding","transformer","rnn","attention","why"],
-         example="Remove positional encodings and a Transformer's accuracy collapses on any task where word order matters — it literally can't tell reordered sentences apart."),
+            fn += 1     # missed a positive
+    return {"tp": tp, "fp": fp, "tn": tn, "fn": fn}''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Swapping FP and FN (a common source of metric bugs); assuming labels are 0/1 when they might be strings.",
+         example="confusion_matrix([1,0,1,0],[1,0,0,0]) -> {'tp':1,'fp':0,'tn':2,'fn':1}."),
+    dict(cat="ml_coding", title="ROC AUC (rank-based, from scratch)",
+         answer="Area Under the ROC Curve measures how well scores rank positives above negatives; 1.0 is perfect, 0.5 is random. Instead of integrating the curve, use the equivalent Mann-Whitney formulation: sort by score, sum the ranks of the positive examples, and normalize. It equals the probability a random positive outranks a random negative.",
+         tags=["auc","roc","ranking","metrics","evaluation","ml-coding"],
+         code='''# Area under the ROC curve via the rank-based (Mann-Whitney) formula.
+def roc_auc(y_true, scores):
+    paired = sorted(zip(scores, y_true))      # sort by score ascending
+    pos = sum(1 for t in y_true if t == 1)
+    neg = len(y_true) - pos
+    if pos == 0 or neg == 0:
+        return 0.0                            # AUC undefined with one class
+    rank_sum = 0
+    for rank, (s, label) in enumerate(paired, start=1):
+        if label == 1:
+            rank_sum += rank                  # sum ranks of positive examples
+    # Mann-Whitney U converted to AUC
+    return (rank_sum - pos * (pos + 1) / 2) / (pos * neg)''',
+         complexity="Time O(n log n) for the sort, space O(n).",
+         pitfalls="Not handling all-one-class inputs; tied scores need average ranks for exactness.",
+         example="roc_auc([0,0,1,1],[0.1,0.4,0.35,0.8]) -> 0.75."),
+    dict(cat="glossary", title="Retrieval-Augmented Generation (RAG)",
+         answer="A technique that combines a language model with an external knowledge store. At query time it RETRIEVES relevant documents (via embedding similarity search over a vector database) and feeds them into the model's context, so the model answers from up-to-date, source-grounded facts rather than only its frozen parameters. It reduces hallucination and lets you update knowledge without retraining.",
+         tags=["rag","retrieval-augmented-generation","llm","vector-database","grounding"],
+         example="A support bot embeds the user's question, retrieves the 5 most relevant help-center articles from a vector DB, and prompts the LLM to answer using them — citing current docs instead of guessing."),
+    dict(cat="glossary", title="Hallucination (LLMs)",
+         answer="When a language model generates fluent, confident text that is FACTUALLY WRONG or unsupported — inventing citations, numbers, or events. It happens because the model predicts plausible next tokens, not verified truth. Mitigations include retrieval grounding (RAG), asking for sources, lowering temperature, and adding verification steps.",
+         tags=["hallucination","llm","reliability","factuality"],
+         example="Asked for a citation, an LLM may fabricate a real-sounding paper title, authors, and year that don't actually exist — a hallucination."),
+    dict(cat="glossary", title="Temperature (sampling)",
+         answer="A knob controlling randomness when a model samples the next token. Logits are divided by the temperature T before softmax: T<1 SHARPENS the distribution (more deterministic, safe), T>1 FLATTENS it (more diverse and creative but riskier), and T->0 approaches greedy decoding. It trades coherence against variety.",
+         tags=["temperature","sampling","decoding","llm","generation"],
+         example="At temperature 0.2 a model gives near-identical safe answers; at 1.2 it produces varied, creative — but occasionally incoherent — completions."),
+    dict(cat="glossary", title="Top-p (nucleus) sampling",
+         answer="A decoding method that samples the next token from the SMALLEST set of tokens whose cumulative probability exceeds a threshold p (e.g. 0.9), then renormalizes over that set. Unlike top-k (a fixed count), the nucleus adapts: it's wide when the model is uncertain and narrow when it's confident — avoiding both bland and nonsensical output.",
+         tags=["top-p","nucleus-sampling","decoding","llm","generation"],
+         example="With top-p=0.9, if one token already holds 0.92 probability the model almost always picks it; if probability is spread out, it considers many candidates."),
+    dict(cat="conceptual", title="Why train classifiers with cross-entropy loss instead of accuracy?",
+         answer="Accuracy is a step function of the predictions — flat almost everywhere and jumping at decision boundaries — so its gradient is zero or undefined and you can't do gradient descent on it. Cross-entropy is a smooth, DIFFERENTIABLE surrogate with a useful gradient everywhere: it rewards not just the correct class but CONFIDENCE in it, pushing predicted probabilities toward the truth. It's also convex for linear models and better calibrated. You still REPORT accuracy, but you OPTIMIZE the differentiable proxy.",
+         tags=["cross-entropy","loss","optimization","gradient","why"],
+         example="If the true label is class 1 and the model outputs 0.51 vs 0.99, accuracy is identical (both correct) but cross-entropy is far lower for 0.99 — giving a gradient that keeps improving confidence, which accuracy never would."),
 ]
 
 
