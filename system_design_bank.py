@@ -422,6 +422,54 @@ _DETAIL_ADCLICK = {
     "wrap_up": "Stream clicks through Kafka into a windowed stream aggregator (Flink) writing per-ad/minute counts to an OLAP store for real-time dashboards, with a batch layer reconciling for billing-grade accuracy (lambda). The crux — accuracy under duplicate/late/out-of-order events — is solved with dedup/exactly-once, watermarks, and batch reconciliation.",
 }
 
+_DETAIL_CACHE = {
+    "scope": "Design a distributed cache that serves reads at sub-millisecond latency to offload databases, holding more data than one machine's RAM. Clarify: cache-aside vs read-through? consistency needs with the DB? eviction policy? scale (QPS, dataset size)? Assumptions: cache-aside, read-heavy (~1M reads/s), dataset larger than a single node's RAM, eventual consistency with the DB acceptable.",
+    "functional": "1) GET key (hit -> value; miss -> caller loads from DB and populates). 2) SET / DELETE key. 3) TTL-based expiry. 4) Scale horizontally across nodes. 5) Survive node loss without losing the source of truth (the DB).",
+    "nonfunctional": "Very low latency (microseconds), high availability, horizontal scalability beyond one machine's RAM, graceful handling of node failure/rebalancing, and a defined consistency policy with the backing DB.",
+    "estimation": "1M reads/s at ~1KB values. A 500GB dataset needs ~10 nodes of 64GB (with headroom + replication). Target hit ratio >90% so the DB sees <100k/s. Memory, not CPU, is the binding constraint.",
+    "api": "get(key), set(key, value, ttl), delete(key). Cache-aside in the app: on a miss, read the DB then set(). A client library handles sharding + routing to the owning node.",
+    "data_model": "Key -> value blobs in memory per node; each node owns a slice of the keyspace via consistent hashing. Optional replica per shard. TTL per key; eviction metadata (an LRU list or LFU counters).",
+    "hld": "The client library hashes the key (consistent hashing) to pick the owning node and sends GET. Hit -> return; miss -> the app loads from the DB and SETs it. Adding/removing a node remaps only ~1/N of keys. Hot shards get replicas; the client can read from any replica.",
+    "hld_diagram": "App -> client lib (consistent hash) -> { node A | node B | node C ... }  (each: in-mem LRU, replicated)\n  miss -> App reads DB -> set() into the owning node",
+    "algorithms": "Consistent hashing with virtual nodes minimizes remaps on scaling and balances load. Eviction: LRU (recency), LFU (frequency), or TTL. Write policies: write-through (cache+DB together — consistent, slower), write-back (cache now, DB async — fast, crash risk), write-around (DB only — skip caching write-once data). Stampede control: request coalescing (single-flight) + jittered TTLs.",
+    "deep_dive": "Cache invalidation is the hard part: TTL bounds staleness cheaply, while event-driven invalidation (publish DB changes -> delete keys) keeps it fresh. Hot keys: replicate the shard or add a small local 'near' cache. Thundering herd on expiry: coalesce concurrent misses into one DB load and add TTL jitter. Node failure: since the DB is the source of truth, a lost node just causes misses on a cold shard that warms gradually. Consistency is usually eventual; use write-through + invalidation where it matters.",
+    "follow_ups": "How to keep the cache consistent with the DB? (TTL + event invalidation). A hot key overwhelming one node? (replicate the shard / near-cache). Cache stampede on expiry? (single-flight + jittered TTL). Add nodes without a mass remap? (consistent hashing + vnodes). What happens on node failure? (DB is source of truth; repopulate).",
+    "final_diagram": " App -> [client lib: consistent-hash ring + vnodes]\n         -> { Cache nodes: in-mem store, LRU/LFU, per-shard replica }\n  miss -> load from [DB] -> populate (write-through / write-around)\n  DB change events -> invalidate keys ; TTL + jitter bound staleness",
+    "wrap_up": "A distributed cache shards keys across nodes with consistent hashing, evicts by LRU/LFU/TTL, and fronts the DB (cache-aside). The real challenges — invalidation, hot keys, stampedes — are handled with TTL + event-driven invalidation, shard replication/near-caches, and single-flight loading with jittered TTLs. The DB stays the source of truth, so node loss costs latency, not data.",
+}
+
+_DETAIL_NOTIF = {
+    "scope": "Design a service that delivers notifications across channels (push, SMS, email, in-app) at scale. Clarify: which channels? volume? transactional vs marketing? preferences/opt-out? delivery guarantees? Assumptions: all four channels, billions/day, both transactional and marketing, per-user preferences, at-least-once delivery with dedup.",
+    "functional": "1) Accept a notification request (event or API). 2) Resolve recipient(s), their channel preferences, and opt-outs. 3) Render from templates. 4) Dispatch to the right provider per channel with retries. 5) Track delivery status. 6) Deduplicate to avoid double-sends.",
+    "nonfunctional": "High throughput, reliability (never drop a transactional alert), low latency for transactional (OTP), respect provider rate limits, isolate marketing from transactional, and enforce preferences/opt-outs centrally.",
+    "estimation": "1B notifications/day ≈ 12k/s (very peaky for campaigns). Fan-out: one campaign event expands to millions of per-user messages. Provider throughput caps (APNs/SES limits) shape worker concurrency.",
+    "api": "POST /notify {userId|segment, type, channel?, templateId, data}. Internally: an event bus for producers, a preference store, per-channel queues, and provider adapters.",
+    "data_model": "notification_requests(id, user/segment, type, template, payload, dedup_key). user_preferences(user_id, channel, enabled, quiet_hours). templates(id, channel, body). delivery_status(notification_id, channel, state, attempts). Per-channel job queues.",
+    "hld": "Producers publish events -> the notification service resolves recipients + preferences + template -> enqueues per-channel jobs onto priority queues (transactional > marketing) -> channel workers pull and call providers (APNs/FCM/Twilio/SES) with retries + backoff -> record delivery status. Dedup by key; opt-outs filtered before enqueue.",
+    "hld_diagram": "Event/API -> [Notification svc: resolve prefs + templates + dedup]\n   -> per-channel [priority queues] -> {channel workers} -> providers (APNs/FCM/SMS/SES)\n   status callbacks -> [delivery tracking]",
+    "algorithms": "Fan-out of a segment into individual (batched) messages. Priority queuing separates OTP/transactional from bulk marketing. Idempotency/dedup via a dedup_key + seen-set (don't resend the same OrderShipped on retry). Retry with exponential backoff + a dead-letter queue for permanent failures. Per-provider rate limiting (token bucket).",
+    "deep_dive": "Provider failures/limits: per-provider rate limiters + retries + failover to a secondary provider; a DLQ for poison messages. Ordering is usually unneeded, but per-user ordering can use a keyed partition. Dedup: transactional events carry an idempotency key; a short-TTL seen-set blocks duplicates. Preferences and quiet-hours are enforced centrally before dispatch. Deliverability: warm up sending IPs and handle bounces/unsubscribes to protect sender reputation. Isolation: separate queues/worker pools so a marketing blast can't delay OTPs.",
+    "follow_ups": "Guarantee an OTP isn't delayed by a marketing blast? (priority queues + isolated workers). Avoid double-sends on retry? (idempotency key + seen-set). Provider outage? (retry/backoff + failover + DLQ). Respect opt-outs/quiet hours? (central preference check pre-enqueue). Track delivery? (status callbacks + store).",
+    "final_diagram": " Producers -> [Event bus] -> [Notification svc: prefs + templates + dedup + opt-out]\n     -> { transactional queue (high pri) | marketing queue (low pri) }\n     -> {channel workers: retry/backoff, rate-limit, failover} -> providers\n     bounces/status -> [delivery tracking + preference updates]",
+    "wrap_up": "An event-driven notification service resolves preferences + templates, fans out to per-channel priority queues, and dispatches via provider adapters with retries, rate limits, and dedup. The keys: isolate transactional from marketing (priority + separate workers), enforce idempotency/opt-outs centrally, and absorb provider limits/failures with backoff, failover, and DLQs.",
+}
+
+_DETAIL_LEADERBOARD = {
+    "scope": "Design a real-time leaderboard showing the top-N players and any player's rank across millions of players. Clarify: global or per-game/region/season? top-N only or arbitrary rank lookups? update rate? exact vs approximate rank? Assumptions: per-game seasonal boards, both top-N and 'my rank', millions of players, frequent score updates, near-real-time.",
+    "functional": "1) Update a player's score. 2) Get the top N players. 3) Get a specific player's rank. 4) Get the players around a given player (neighbors). 5) Reset per season.",
+    "nonfunctional": "Real-time updates and reads (<10ms), high availability, scalability to tens of millions of players, and durability (scores must survive failures).",
+    "estimation": "10M players, ~100k score updates/s at peak, very frequent top-100 reads. A sorted structure gives O(log n) updates and rank queries. Memory: ~10M entries × tens of bytes ≈ sub-GB per board — fits in Redis.",
+    "api": "updateScore(board, player, score) ; getTop(board, n) ; getRank(board, player) ; getRange(board, start, end).",
+    "data_model": "A Redis Sorted Set per board: member = player_id, score = points. ZADD to update, ZREVRANGE for top-N, ZREVRANK for a player's rank, ZREVRANGE start end for neighbors. Persist to a durable DB (source of truth) for rebuilds.",
+    "hld": "Score events -> update the Redis sorted set (ZADD, O(log n)) and asynchronously persist to a DB. Reads (top-N, rank) hit Redis directly (O(log n + k)). Shard by board (game/season/region). On failover, rebuild the sorted set from the DB.",
+    "hld_diagram": "Score update -> [Redis SortedSet per board] (ZADD)\n   top-N -> ZREVRANGE ; my rank -> ZREVRANK ; neighbors -> ZREVRANGE start end\n   async -> [durable DB] (rebuild source)",
+    "algorithms": "A Redis sorted set is a skip list + hash, giving O(log n) inserts/updates and rank, O(log n + k) ranges. At tens of millions where exact global rank is costly, approximate: bucket players by score range and sum bucket sizes for an approximate rank, or keep a coarse histogram. Ties are broken by timestamp encoded into the score.",
+    "deep_dive": "Exact rank at huge scale: ZREVRANK is O(log n) but one giant board can be memory-heavy and hot; shard by region/segment and merge, or accept approximate global ranks via score-bucket histograms. Hot board: replicate for reads. Durability: Redis is the fast path but the DB is the source of truth — replay to rebuild after failover. Seasonal reset: a new board key per season, archiving the old. Cheating: validate score updates server-side. Ties: pack (score, -timestamp) so earlier achievers rank higher.",
+    "follow_ups": "Exact rank for 50M players? (shard + merge, or approximate buckets). Millions of updates/s? (Redis O(log n) + async persist). Ties? (encode timestamp into the score). Durability if Redis dies? (DB source of truth + rebuild). Neighbors around me? (ZREVRANK then a ZREVRANGE window). Seasonal boards? (key per season + archive).",
+    "final_diagram": " Score events -> [Redis SortedSet per board: ZADD O(log n)] --async--> [Durable DB]\n   reads: top-N (ZREVRANGE) | my rank (ZREVRANK) | neighbors (ZREVRANGE window)\n   scale: shard by game/season/region ; replicate hot boards ; rebuild from DB on failover",
+    "wrap_up": "A leaderboard is a Redis sorted set per board — O(log n) score updates and rank queries, O(log n + k) top-N — backed by a durable DB as source of truth. Scale by sharding per game/season/region and replicating hot boards; handle exact-rank cost at extreme scale with score-bucket approximation, and encode timestamps to break ties.",
+}
+
 
 ENTRIES = [
     # ─────────── Core Building Blocks ───────────
@@ -1317,7 +1365,8 @@ ENTRIES = [
       "Score update -> Redis SortedSet (ZADD) ; top-N -> ZREVRANGE ; my rank -> ZREVRANK",
       "Memory at scale; exact rank for tens of millions is costly (approximate/bucket); persistence + rebuild.",
       "Redis sorted sets; approximate ranking; sharded leaderboards; DB-backed rebuild.",
-      ["leaderboard", "redis", "sorted-set", "ranking", "real-time", "gaming"]),
+      ["leaderboard", "redis", "sorted-set", "ranking", "real-time", "gaming"],
+      detail=_DETAIL_LEADERBOARD),
     E("classic", "Design a Digital Wallet / Payment Ledger",
       "Move money between accounts with strict correctness (no lost/duplicated funds) and a full audit trail.",
       "Model money as an immutable, append-only double-entry ledger (every transfer = balanced debit + credit). Ensure atomicity across accounts (transaction, or saga + idempotency for cross-service); derive balances from the ledger (or a reconciled snapshot). Idempotency keys stop double-spend on retries; reconciliation catches drift.",
@@ -1354,7 +1403,8 @@ ENTRIES = [
       "Client -> consistent-hash -> {cache node shards (LRU, replicated)} -> miss -> DB -> populate",
       "Invalidation/consistency; hot keys; stampede on expiry; cost of RAM; rebalancing on node change.",
       "Redis Cluster, Memcached, Hazelcast; consistent hashing; write-through vs write-back; near-cache.",
-      ["distributed-cache", "consistent-hashing", "lru", "cache-invalidation", "stampede", "redis"]),
+      ["distributed-cache", "consistent-hashing", "lru", "cache-invalidation", "stampede", "redis"],
+      detail=_DETAIL_CACHE),
     E("classic", "Design a Notification Service",
       "Deliver billions of multi-channel notifications (push/SMS/email/in-app) reliably, with preferences and de-dup.",
       "Event-driven: producers publish notification events -> a service resolves recipients + channel prefs + templates -> enqueues per-channel jobs -> workers dispatch to providers with retries, rate limits, and delivery tracking. Priority queues separate transactional from marketing; idempotency/dedup prevents double-sends; opt-outs are enforced centrally.",
@@ -1363,7 +1413,8 @@ ENTRIES = [
       "Events -> Notification svc (prefs+templates) -> per-channel [Queue] -> workers -> providers (retry/track)",
       "Provider limits/failures; deliverability/spam; ordering; dedup; rate limits; preference management.",
       "SNS/SES, Twilio, FCM/APNs, SendGrid; Kafka/SQS; template engines; per-user preference store.",
-      ["notification", "push", "sms", "email", "fan-out", "queue", "preferences", "idempotency"]),
+      ["notification", "push", "sms", "email", "fan-out", "queue", "preferences", "idempotency"],
+      detail=_DETAIL_NOTIF),
     E("classic", "Design a Payment Reconciliation System",
       "Guarantee that internal ledgers, the payment gateway, and the bank all agree — catching missing, duplicate, or mismatched transactions.",
       "Ingest records from all sources (internal ledger, PSP/gateway settlement files, bank statements) into a common schema, then run a matching engine (by transaction/order ref, amount, date) to classify each as matched / missing / duplicate / amount-mismatch. Exceptions go to a review queue + auto-rules; run as a scheduled batch (e.g., daily) with an immutable audit trail. Idempotency keys upstream reduce duplicates.",
