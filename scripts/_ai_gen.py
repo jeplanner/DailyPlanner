@@ -16,144 +16,152 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Count Negatives in a Sorted Matrix",
-         answer="Count negatives in a matrix whose rows and columns are sorted in NON-INCREASING order. Staircase walk from the bottom-left: if the current cell is negative, all cells to its right in that row are too (add them) and move up; otherwise move right. O(rows+cols).",
-         tags=["count-negatives","matrix","staircase-search","dsa"],
-         code='''# Count negatives in a matrix sorted descending in rows and columns.
-def count_negatives(grid):
-    rows, cols = len(grid), len(grid[0])
-    count = 0
-    r, c = rows - 1, 0                # start at the bottom-left corner
-    while r >= 0 and c < cols:
-        if grid[r][c] < 0:
-            count += cols - c        # all cells to the right are negative too
-            r -= 1                    # move up a row
-        else:
-            c += 1                    # move right
-    return count''',
-         complexity="Time O(rows + cols), space O(1).",
-         pitfalls="Scanning every cell (O(m*n) — the sorted structure allows O(m+n)); wrong start corner.",
-         example="count_negatives([[4,3,2,-1],[3,2,1,-1],[1,1,-1,-2],[-1,-1,-2,-3]]) -> 8."),
-    dict(cat="dsa", title="Lucky Numbers in a Matrix",
-         answer="A lucky number is the MINIMUM of its row AND the MAXIMUM of its column (matrix has distinct values). Compute the set of row-minimums and the set of column-maximums; their intersection is the lucky numbers.",
-         tags=["lucky-numbers","matrix","set-intersection","dsa"],
-         code='''# A lucky number is the min of its row and the max of its column.
-def lucky_numbers(matrix):
-    row_mins = {min(row) for row in matrix}
-    col_maxs = {max(col) for col in zip(*matrix)}   # zip(*m) gives columns
-    return list(row_mins & col_maxs)                # values that are both''',
-         complexity="Time O(m*n), space O(m + n).",
-         pitfalls="Confusing rows/columns; zip(*matrix) transposes to iterate columns.",
-         example="lucky_numbers([[3,7,8],[9,11,13],[15,16,17]]) -> [15]."),
-    dict(cat="dsa", title="Check If It Is a Straight Line",
-         answer="Determine whether all given 2-D points are collinear. Use the CROSS-PRODUCT test to avoid division/slope-by-zero issues: three points are collinear when (y1-y0)(x-x0) == (y-y0)(x1-x0). Check every point against the first two.",
-         tags=["straight-line","geometry","cross-product","dsa"],
-         code='''# Do all points lie on a single straight line? (cross-product, no division)
-def check_straight_line(coordinates):
-    (x0, y0), (x1, y1) = coordinates[0], coordinates[1]
-    for x, y in coordinates[2:]:
-        # collinear iff slopes equal, written without division
-        if (y1 - y0) * (x - x0) != (y - y0) * (x1 - x0):
-            return False
-    return True''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Dividing to compare slopes (vertical lines / float error); comparing only adjacent points.",
-         example="check_straight_line([[1,2],[2,3],[3,4],[4,5]]) -> True; [[1,1],[2,2],[3,4]] -> False."),
-    dict(cat="dsa", title="Valid Mountain Array",
-         answer="A valid mountain STRICTLY increases to a single peak then STRICTLY decreases, with the peak neither first nor last (length >= 3). Walk up while strictly increasing, then require you're not at an end, then walk down; you must finish exactly at the last index.",
-         tags=["valid-mountain","array","two-pointers","dsa"],
-         code='''# Is the array a valid mountain? (strictly up, one peak, strictly down)
-def valid_mountain_array(arr):
-    n = len(arr)
-    if n < 3:
-        return False
-    i = 0
-    while i + 1 < n and arr[i] < arr[i + 1]:
-        i += 1                       # climb up
-    if i == 0 or i == n - 1:
-        return False                 # peak can't be first or last
-    while i + 1 < n and arr[i] > arr[i + 1]:
-        i += 1                       # come down
-    return i == n - 1''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Allowing equal neighbours (must be strict); a plateau or a peak at the boundary.",
-         example="valid_mountain_array([0,3,2,1]) -> True; valid_mountain_array([3,5,5]) -> False."),
-    dict(cat="dsa", title="Kids With the Greatest Number of Candies",
-         answer="Given each kid's candy count and a number of EXTRA candies, for each kid determine if giving them all the extra candies would make them have the GREATEST count (ties count). Compute the current max once, then test c + extra >= max for each kid.",
-         tags=["kids-candies","array","greedy","dsa"],
-         code='''# For each kid, would they have the most candies after getting 'extra' more?
-def kids_with_candies(candies, extra):
-    most = max(candies)
-    return [c + extra >= most for c in candies]''',
-         complexity="Time O(n), space O(n) for the output.",
-         pitfalls="Recomputing the max inside the loop (O(n^2)); using > instead of >= (ties should count).",
-         example="kids_with_candies([2,3,5,1,3], 3) -> [True,True,True,False,True]."),
-    dict(cat="dsa", title="How Many Numbers Are Smaller Than the Current",
-         answer="For each element, count how many OTHER elements are strictly smaller. With bounded values (0..100), use counting sort: tally counts, then a prefix sum gives, for each value v, how many elements are < v — an O(n) answer instead of O(n^2).",
-         tags=["smaller-than-current","counting-sort","prefix-sum","array","dsa"],
-         code='''# For each element, how many other elements are strictly smaller.
-def smaller_numbers_than_current(nums):
-    count = [0] * 101               # values are 0..100
-    for n in nums:
-        count[n] += 1
-    prefix = [0] * 101
-    for i in range(1, 101):
-        prefix[i] = prefix[i - 1] + count[i - 1]   # how many values are < i
-    return [prefix[n] for n in nums]''',
-         complexity="Time O(n + K), space O(K).",
-         pitfalls="O(n^2) brute force when counting-sort is O(n); off-by-one in the prefix (strictly smaller).",
-         example="smaller_numbers_than_current([8,1,2,2,3]) -> [4,0,1,1,3]."),
-    dict(cat="dsa", title="Decompress Run-Length Encoded List",
-         answer="A list encodes pairs [freq, val, freq, val, ...]; expand it so each val appears freq times. Iterate in steps of 2, reading each (freq, val) pair and extending the output with val repeated freq times.",
-         tags=["decompress-rle","run-length","array","dsa"],
-         code='''# Decode pairs [freq, val, freq, val, ...] into the expanded list.
-def decompress_rle_list(nums):
-    result = []
-    for i in range(0, len(nums), 2):
-        freq, val = nums[i], nums[i + 1]
-        result.extend([val] * freq)   # repeat val freq times
+    dict(cat="dsa", title="Closest Binary Search Tree Value",
+         answer="Find the value in a BST closest to a target. Walk down using the BST ordering (go left if target < node, else right), tracking the closest value seen. The ordering means you only follow one root-to-leaf path — O(height), not O(n).",
+         tags=["closest-bst-value","bst","binary-search","dsa"],
+         code='''# Value in the BST closest to a target (walk down using BST ordering).
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def closest_value(root, target):
+    closest = root.val
+    node = root
+    while node:
+        if abs(node.val - target) < abs(closest - target):
+            closest = node.val       # a nearer value
+        node = node.left if target < node.val else node.right
+    return closest''',
+         complexity="Time O(h), space O(1).",
+         pitfalls="Scanning the whole tree (the BST order lets you go straight down); tie-breaking rule.",
+         example="For BST 4 -> (2 -> (1,3), 5), closest_value(root, 3.7) -> 4."),
+    dict(cat="dsa", title="Binary Tree Tilt",
+         answer="A node's TILT is the absolute difference between the sums of its left and right subtrees; return the sum of all nodes' tilts. Post-order DFS returns each subtree's total sum while accumulating the tilt at every node.",
+         tags=["binary-tree-tilt","binary-tree","dfs","recursion","dsa"],
+         code='''# Sum of every node's tilt (abs difference of its subtree sums).
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def find_tilt(root):
+    total_tilt = 0
+    def subtree_sum(node):
+        nonlocal total_tilt
+        if node is None:
+            return 0
+        left = subtree_sum(node.left)
+        right = subtree_sum(node.right)
+        total_tilt += abs(left - right)   # this node's tilt
+        return node.val + left + right    # subtree total for the parent
+    subtree_sum(root)
+    return total_tilt''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Returning the tilt instead of the subtree sum from the recursion; forgetting the abs.",
+         example="For tree 1 -> (2, 3), tilt = |2-3| + 0 + 0 = 1."),
+    dict(cat="dsa", title="Count Good Pairs",
+         answer="Count index pairs (i, j) with i < j and nums[i] == nums[j]. For each value that appears c times, it forms C(c,2) = c*(c-1)/2 pairs; sum over the value counts — O(n) instead of the O(n^2) double loop.",
+         tags=["count-good-pairs","counting","combinatorics","array","dsa"],
+         code='''# Number of index pairs (i<j) with nums[i] == nums[j].
+from collections import Counter
+def num_identical_pairs(nums):
+    counts = Counter(nums)
+    # each value with count c contributes c*(c-1)/2 pairs
+    return sum(c * (c - 1) // 2 for c in counts.values())''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Brute-force O(n^2); off-by-one in the C(c,2) formula.",
+         example="num_identical_pairs([1,2,3,1,1,3]) -> 4."),
+    dict(cat="dsa", title="XOR Operation in an Array",
+         answer="Given n and start, the array is nums[i] = start + 2*i for i in [0, n); return the XOR of all its elements. Just accumulate the XOR in a loop (a closed-form O(1) formula also exists).",
+         tags=["xor-operation","bit-manipulation","math","dsa"],
+         code='''# XOR of the array where nums[i] = start + 2*i, for i in [0, n).
+def xor_operation(n, start):
+    result = 0
+    for i in range(n):
+        result ^= start + 2 * i
     return result''',
-         complexity="Time O(total output length), space O(that).",
-         pitfalls="Swapping freq and val; stepping by 1 instead of 2.",
-         example="decompress_rle_list([1,2,3,4]) -> [2,4,4,4]."),
-    dict(cat="dsa", title="Range Bitwise AND",
-         answer="Compute the bitwise AND of ALL integers in [left, right]. The result is the COMMON BINARY PREFIX of left and right: any bit that differs across the range becomes 0 (since some number in the range flips it). Shift both right until they're equal, then shift the common prefix back.",
-         tags=["range-bitwise-and","bit-manipulation","math","dsa"],
-         code='''# Bitwise AND of all numbers in [left, right] = their common bit prefix.
-def range_bitwise_and(left, right):
-    shift = 0
-    while left < right:              # strip differing low bits
-        left >>= 1
-        right >>= 1
-        shift += 1
-    return left << shift             # restore the common prefix''',
-         complexity="Time O(log right), space O(1).",
-         pitfalls="AND-ing every number (too slow for large ranges); forgetting to shift back.",
-         example="range_bitwise_and(5, 7) -> 4; range_bitwise_and(0, 0) -> 0."),
-    dict(cat="glossary", title="Idempotent HTTP methods",
-         answer="A method is IDEMPOTENT if making the same request multiple times has the same effect as once. GET, PUT, DELETE, HEAD are idempotent (PUT sets a resource to a value; doing it twice leaves the same state; DELETE twice still ends deleted). POST is NOT (each usually creates a new resource). Safe methods (GET/HEAD) don't modify state at all. Idempotency lets clients/proxies safely RETRY on failure.",
-         tags=["idempotent-methods","http","rest","retries","api"],
-         example="A network glitch lets a client safely retry a PUT (same final state) or DELETE (already gone), but retrying a POST 'create order' could duplicate it — so POST needs an idempotency key."),
-    dict(cat="glossary", title="HTTP status code families",
-         answer="Status codes group by first digit: 1xx informational; 2xx SUCCESS (200 OK, 201 Created, 204 No Content); 3xx REDIRECTION (301 permanent, 302 temporary, 304 Not Modified); 4xx CLIENT errors (400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict, 429 Too Many Requests); 5xx SERVER errors (500 Internal, 502 Bad Gateway, 503 Service Unavailable). The family tells you who's at fault and whether a retry could help.",
-         tags=["http-status-codes","http","rest","api","errors"],
-         example="A 503 (server, transient) is worth retrying with backoff; a 400 (client error) fails identically on retry, so don't."),
-    dict(cat="glossary", title="ETag / conditional requests",
-         answer="An ETag is a fingerprint (hash/version) of a resource the server returns. The client caches it and, next time, sends If-None-Match: <etag>; if the resource is unchanged the server replies 304 Not Modified with NO body — saving bandwidth. If-Match enables optimistic concurrency (reject a write if the ETag changed). It's how HTTP does efficient revalidation and conflict detection.",
-         tags=["etag","conditional-request","caching","optimistic-concurrency","http"],
-         example="A browser revalidates a cached image with If-None-Match; the server returns 304 (no body) if unchanged, so the browser reuses its cache instead of re-downloading."),
-    dict(cat="glossary", title="Cookies vs tokens (JWT)",
-         answer="Two ways to carry auth state. COOKIE/session auth stores a session ID in a cookie; the server keeps session state and looks it up each request — stateful, easy to revoke, but needs shared session storage to scale. TOKEN/JWT auth puts SIGNED claims in a token the client sends (usually a header); the server just verifies the signature — STATELESS and scalable, but hard to revoke before expiry and larger per request. Cookies suit browser apps (with CSRF protection); JWTs suit APIs/SPAs/microservices.",
-         tags=["cookies","jwt","authentication","sessions","stateless"],
-         example="A monolith web app uses a session cookie (easy server-side logout); a microservices API uses short-lived JWTs so any service verifies auth without a shared session store."),
-    dict(cat="glossary", title="OAuth2 authorization flow",
-         answer="OAuth2 lets a user grant a third-party app LIMITED, scoped access to their resources WITHOUT sharing their password. Authorization Code flow: the app redirects the user to the provider (Google), the user logs in and consents, the provider redirects back with a short-lived CODE, and the app exchanges that code (plus its secret) server-side for an ACCESS TOKEN (and refresh token) to call APIs with. It separates authentication (proving identity) from authorization (granting scoped access).",
-         tags=["oauth2","authorization","access-token","sso","security"],
-         example="'Sign in with Google': you're sent to Google, approve 'read your profile', Google redirects back with a code, your backend swaps it for an access token and fetches the profile — your Google password never touches the app."),
-    dict(cat="conceptual", title="Why should PUT/DELETE be idempotent but POST not — and why does it matter for retries?",
-         answer="Idempotency means repeating a request yields the same final STATE. PUT ('set resource X to this value') and DELETE ('remove X') are naturally idempotent — applied twice, the result is identical (X has the value; X is gone). POST ('create a new thing') is NOT — each call produces a NEW side effect. This matters for RETRIES on unreliable networks: a client that gets no response can't tell if the request was lost (never ran) or the ACK was lost (ran fine) — so to be safe it must retry. For idempotent methods, retrying is HARMLESS, which is why proxies, load balancers, and clients can safely auto-retry GET/PUT/DELETE. For POST, a blind retry risks DUPLICATE creation (double-charge, double-order), so you either don't auto-retry it or you make it idempotent with an IDEMPOTENCY KEY the server dedupes on. Designing writes to be idempotent (or key-protected) is exactly what makes at-least-once delivery safe.",
-         tags=["idempotency","http","put","post","retries","why"],
-         example="A payment 'POST /charge' retried after a timeout could charge twice; an Idempotency-Key header lets the server recognize the retry and return the original result, making the POST safe to retry like a PUT."),
+         complexity="Time O(n), space O(1).",
+         pitfalls="Miscomputing the element formula (start + 2*i); initializing result wrong.",
+         example="xor_operation(5, 0) -> 8  (0^2^4^6^8)."),
+    dict(cat="dsa", title="Subtract the Product and Sum of Digits",
+         answer="Return the product of an integer's digits MINUS the sum of its digits. Extract digits with %10 and //10, multiplying into a running product and adding into a running sum, then subtract.",
+         tags=["product-sum-digits","math","digits","dsa"],
+         code='''# Product of digits minus sum of digits of an integer.
+def subtract_product_and_sum(n):
+    product = 1
+    total = 0
+    while n:
+        d = n % 10
+        product *= d
+        total += d
+        n //= 10
+    return product - total''',
+         complexity="Time O(digits), space O(1).",
+         pitfalls="Initializing product to 0 (kills it); summing instead of multiplying for the product.",
+         example="subtract_product_and_sum(234) -> 15  (2*3*4=24, 2+3+4=9, 24-9=15)."),
+    dict(cat="dsa", title="Find Center of Star Graph",
+         answer="In a star graph, one CENTER node connects to every other node, so it appears in EVERY edge. Therefore the center is the node shared by the first two edges — check which endpoint of edge 0 also appears in edge 1.",
+         tags=["find-center-star","graph","dsa"],
+         code='''# The center node of a star graph appears in every edge.
+def find_center(edges):
+    a, b = edges[0]
+    c, d = edges[1]
+    # the center is the common endpoint of the first two edges
+    return a if a in (c, d) else b''',
+         complexity="Time O(1), space O(1).",
+         pitfalls="Counting degrees over all edges (unnecessary — two edges suffice); index errors.",
+         example="find_center([[1,2],[2,3],[4,2]]) -> 2."),
+    dict(cat="dsa", title="Sum of Unique Elements",
+         answer="Sum the elements that appear EXACTLY ONCE in the array. Count frequencies, then add up the values whose count is 1.",
+         tags=["sum-unique","counting","hash-map","array","dsa"],
+         code='''# Sum of elements that appear exactly once in the array.
+from collections import Counter
+def sum_of_unique(nums):
+    counts = Counter(nums)
+    return sum(n for n, c in counts.items() if c == 1)''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Summing distinct values (that's different — this excludes any repeated value entirely).",
+         example="sum_of_unique([1,2,3,2]) -> 4  (1 + 3)."),
+    dict(cat="dsa", title="Three Consecutive Odds",
+         answer="Return whether the array contains three CONSECUTIVE odd numbers. Track a running streak of odds, resetting to 0 on any even; return True as soon as the streak reaches 3.",
+         tags=["three-consecutive-odds","array","dsa"],
+         code='''# Are there three consecutive odd numbers anywhere in the array?
+def three_consecutive_odds(arr):
+    streak = 0
+    for x in arr:
+        if x % 2 == 1:
+            streak += 1
+            if streak == 3:
+                return True
+        else:
+            streak = 0            # any even resets the streak
+    return False''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Not resetting the streak on an even; off-by-one on the streak length.",
+         example="three_consecutive_odds([2,6,4,1]) -> False; three_consecutive_odds([1,2,34,3,4,5,7,23,12]) -> True."),
+    dict(cat="glossary", title="CORS (Cross-Origin Resource Sharing)",
+         answer="A browser mechanism that RELAXES the same-origin policy so a page can call a DIFFERENT origin, but only if the target server OPTS IN via response headers (Access-Control-Allow-Origin, etc.). For unsafe requests the browser first sends a PREFLIGHT OPTIONS request to check permission. CORS is enforced by the BROWSER (protecting the user), not the server, so it is NOT a server-side access control.",
+         tags=["cors","same-origin-policy","browser","web-security"],
+         example="A frontend at app.com calling api.otherco.com is blocked unless otherco returns Access-Control-Allow-Origin: https://app.com; the browser preflights a POST to confirm."),
+    dict(cat="glossary", title="CSRF (Cross-Site Request Forgery)",
+         answer="An attack where a malicious site tricks a logged-in user's BROWSER into sending an unwanted authenticated request to another site — abusing the fact that the browser auto-attaches the user's cookies. Defended with CSRF TOKENS (a per-request secret the attacker can't read), SameSite cookies, and checking the Origin/Referer header.",
+         tags=["csrf","web-security","cookies","samesite","attack"],
+         example="While you're logged into your bank, visiting evil.com auto-submits a POST to bank.com/transfer with your session cookie; a CSRF token evil.com can't read blocks it."),
+    dict(cat="glossary", title="XSS (Cross-Site Scripting)",
+         answer="Injecting malicious JavaScript into a page that OTHER users view, so it runs in their browser with the site's privileges (stealing cookies/tokens, keylogging, defacing). Types: stored (persisted), reflected (echoed from a request), DOM-based. Defended by ESCAPING/encoding user output, a Content Security Policy, and never trusting user input in HTML/JS contexts.",
+         tags=["xss","web-security","injection","javascript","attack"],
+         example="A comment field that renders <script>steal(document.cookie)</script> unescaped runs it for every viewer; HTML-escaping the comment on output neutralizes it."),
+    dict(cat="glossary", title="SQL injection",
+         answer="An attack where unsanitized user input alters the STRUCTURE of a SQL query, letting an attacker read/modify/delete data or bypass auth (classic: input ' OR '1'='1 makes a check always true). The fix is PARAMETERIZED/prepared statements (bind values separately from the SQL text) — never concatenate user input into SQL — plus least-privilege DB accounts and validation.",
+         tags=["sql-injection","web-security","prepared-statement","injection","attack"],
+         example="\"SELECT * FROM users WHERE name='\" + input + \"'\" with input '; DROP TABLE users; -- is catastrophic; a parameterized query makes the input pure data, not SQL."),
+    dict(cat="glossary", title="Content Security Policy (CSP)",
+         answer="A browser security header that WHITELISTS which sources of scripts, styles, images, etc. a page may load or execute — strong defense-in-depth against XSS. Declaring 'only run scripts from my own domain' (and forbidding inline scripts) means even injected <script> tags won't execute. It doesn't replace output escaping but sharply limits the blast radius; violation reports help find issues.",
+         tags=["csp","content-security-policy","xss","web-security","defense-in-depth"],
+         example="A CSP of script-src 'self' blocks an XSS-injected inline <script> because it isn't from an allowed source — even if the attacker got it into the HTML."),
+    dict(cat="conceptual", title="Why does the browser enforce the same-origin policy, and why do we then need CORS?",
+         answer="The SAME-ORIGIN POLICY (SOP) is a foundational browser rule: script from one origin (scheme+host+port) can't READ responses from a different origin. Without it, any site you visit could silently call your bank/email (your browser auto-sends your cookies) and read the responses — stealing your data or acting as you. SOP isolates origins so a malicious page can't exfiltrate another site's authenticated data. But the modern web legitimately needs cross-origin calls (a frontend on app.com talking to api.com, CDNs, third-party APIs), so CORS is the controlled EXEMPTION: rather than blindly blocking all cross-origin reads, the target SERVER can explicitly opt in via Access-Control-Allow-Origin headers, and the browser enforces those grants (preflighting risky requests). Crucially the BROWSER (protecting the user) enforces both — a non-browser client like curl isn't bound by them, which is why CORS is not server-side access control (you still need real auth). SOP is 'deny by default for safety'; CORS is 'the server-declared allowlist that safely re-enables legitimate cross-origin cases.'",
+         tags=["same-origin-policy","cors","browser","web-security","why"],
+         example="SOP stops evil.com's script from reading your logged-in bank.com data; CORS lets your own app.com frontend read api.app.com only because that API server explicitly allow-listed app.com."),
 ]
 
 
