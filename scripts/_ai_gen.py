@@ -16,125 +16,98 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="glossary", title="KL divergence",
-         answer="A measure of how one probability distribution differs from another — how much information is lost approximating P with Q. It is asymmetric (KL(P||Q) != KL(Q||P)) and always >= 0, hitting zero only when the distributions are identical. It underlies cross-entropy loss, variational methods, and knowledge distillation.",
-         tags=["kl-divergence","statistics","deep-learning"],
-         example="Distillation minimizes the KL divergence between the student's and teacher's output distributions so the student mimics the teacher."),
-    dict(cat="glossary", title="Softmax temperature",
-         answer="A knob T applied before softmax (dividing the logits by T) that controls how 'peaky' the output probabilities are. High T gives softer, more uniform outputs (more random/creative sampling); low T gives sharper, more confident outputs (near-greedy). It is how you dial an LLM's randomness and how teacher outputs are softened in distillation.",
-         tags=["temperature","softmax","llm","sampling"],
-         example="An LLM at temperature 0.2 gives focused, repetitive answers; at 1.2 it becomes more creative and varied."),
-    dict(cat="glossary", title="Tokenization / BPE",
-         answer="Splitting text into TOKENS (subword units) a model can process. Byte-Pair Encoding (BPE) starts from characters and greedily merges the most frequent pairs into subwords, so common words become a single token while rare words split into pieces — balancing a small vocabulary with the ability to represent any word.",
-         tags=["tokenization","bpe","nlp","llm"],
-         example="'tokenization' might split into 'token' + 'ization'; a rare name like 'Xylophone' splits into several subword tokens."),
-    dict(cat="glossary", title="Contrastive learning",
-         answer="A self-supervised technique that learns representations by pulling SIMILAR (positive) pairs together and pushing DIFFERENT (negative) pairs apart in embedding space. It learns powerful features from unlabeled data (SimCLR for images, CLIP for image-text).",
-         tags=["contrastive-learning","self-supervised","embeddings"],
-         example="Two random crops of the SAME photo are a positive pair (pulled together); crops of different photos are negatives (pushed apart) — the model learns what makes an image itself."),
-    dict(cat="glossary", title="Diffusion model",
-         answer="A generative model that creates data by REVERSING a gradual noising process: it is trained to denoise images step by step, so starting from pure noise it can generate a realistic image. It powers modern text-to-image tools (Stable Diffusion, DALL-E).",
-         tags=["diffusion","generative","deep-learning"],
-         example="Give a diffusion model 'an astronaut riding a horse'; it starts from noise and denoises over ~50 steps into a coherent image."),
-    dict(cat="glossary", title="RLHF (Reinforcement Learning from Human Feedback)",
-         answer="How LLMs are aligned to be helpful and safe: humans rank model outputs, a REWARD MODEL learns to predict those preferences, and the LLM is fine-tuned with reinforcement learning to maximize that reward. It is what turns a raw next-token predictor into a helpful assistant.",
-         tags=["rlhf","alignment","llm","reinforcement-learning"],
-         example="Humans rate ChatGPT answers; the model is then tuned to produce the kinds of answers people preferred — making it more helpful and less toxic."),
-    dict(cat="glossary", title="PR-AUC (Precision-Recall AUC)",
-         answer="The area under the Precision-Recall curve. Unlike ROC-AUC it focuses on the POSITIVE class, making it the better metric for heavily IMBALANCED problems where positives are rare. Higher is better, and the random baseline equals the positive class's prevalence.",
-         tags=["pr-auc","auc","metrics","imbalance"],
-         example="For fraud at 0.5% prevalence, a PR-AUC of 0.6 is strong (baseline 0.005), while ROC-AUC would look deceptively high."),
-    dict(cat="dsa", title="Longest Palindromic Substring",
-         answer="Find the longest palindromic substring. Elegant O(n^2)/O(1) approach: every palindrome has a center, and there are 2n-1 possible centers (each character, and each gap between two characters). Expand outward from each center while both sides match, tracking the longest.",
-         tags=["longest-palindrome","expand-around-center","string","dsa"],
-         code='''# Longest palindromic substring of s.
-def longest_palindrome(s):
-    if not s:
-        return ""
-    start, end = 0, 0                 # best palindrome span so far
-    def expand(l, r):                 # widen while s[l] == s[r]
-        while l >= 0 and r < len(s) and s[l] == s[r]:
-            l -= 1
-            r += 1
-        return l + 1, r - 1           # last valid (inclusive) bounds
-    for i in range(len(s)):
-        l1, r1 = expand(i, i)         # odd-length center (a single char)
-        l2, r2 = expand(i, i + 1)     # even-length center (between chars)
-        if r1 - l1 > end - start:
-            start, end = l1, r1
-        if r2 - l2 > end - start:
-            start, end = l2, r2
-    return s[start:end + 1]''',
-         complexity="Time O(n^2), space O(1).",
-         pitfalls="Only checking odd centers (misses even-length palindromes); off-by-one on the returned bounds.",
-         example="longest_palindrome('babad') -> 'bab' (or 'aba')."),
-    dict(cat="dsa", title="Meeting Rooms II (minimum rooms)",
-         answer="Given meeting intervals, find the minimum number of rooms needed. Sort by start time and keep a MIN-HEAP of end times. For each meeting, if the earliest-ending room is free by its start, reuse it (pop); otherwise open a new room. The heap size is rooms in use; its peak is the answer.",
-         tags=["meeting-rooms","heap","intervals","dsa"],
-         code='''import heapq
+    dict(cat="glossary", title="Residual connection (skip connection)",
+         answer="A shortcut that ADDS a layer's input to its output (output = F(x) + x), so the network only has to learn the RESIDUAL (the change) rather than the full transformation. This lets gradients flow directly backward, enabling very deep networks (ResNet's hundreds of layers) that otherwise wouldn't train due to vanishing gradients.",
+         tags=["residual","skip-connection","resnet","deep-learning"],
+         example="ResNet-152 trains 152 layers only because skip connections let the gradient bypass blocks; without them, past ~20 layers accuracy actually degrades."),
+    dict(cat="glossary", title="Layer normalization",
+         answer="Normalizes each training example ACROSS ITS OWN FEATURES to zero mean and unit variance (unlike batch norm, which normalizes across the batch). It stabilizes training and works well for sequences and small batches, which is why Transformers use it.",
+         tags=["layer-norm","normalization","transformer","deep-learning"],
+         example="Every token's feature vector in a Transformer is layer-normalized so its scale stays consistent regardless of batch size."),
+    dict(cat="glossary", title="Positional encoding",
+         answer="Because a Transformer processes all tokens in parallel with no built-in notion of ORDER, positional encodings add position information to each token's embedding (via fixed sinusoids or learned vectors) so the model knows which word came first.",
+         tags=["positional-encoding","transformer","nlp"],
+         example="Without positional encoding, 'dog bites man' and 'man bites dog' would look identical to a Transformer."),
+    dict(cat="glossary", title="Top-p (nucleus) sampling",
+         answer="An LLM decoding method: instead of always taking the most likely token (greedy) or sampling from the whole vocabulary, sample only from the smallest set of top tokens whose probabilities sum to p (e.g. 0.9). It adapts how many options to consider based on the model's confidence — more diverse than greedy, safer than full sampling.",
+         tags=["top-p","nucleus-sampling","llm","decoding"],
+         example="With top-p 0.9, a confident step samples from just 2-3 tokens; an uncertain one considers 20 — balancing coherence and creativity."),
+    dict(cat="glossary", title="Chain-of-thought prompting",
+         answer="Prompting an LLM to reason STEP BY STEP (e.g. 'let us think step by step') before giving the final answer. Making the intermediate reasoning explicit dramatically improves accuracy on math and logic, because the model works through the problem instead of guessing the answer in one shot.",
+         tags=["chain-of-thought","prompting","llm","reasoning"],
+         example="Asked '23 x 17', a chain-of-thought prompt makes the model compute 23x10=230, 23x7=161, sum=391 — far more reliable than a direct guess."),
+    dict(cat="glossary", title="Hallucination (LLM)",
+         answer="When a language model produces text that is fluent and confident but FACTUALLY WRONG or fabricated — because it predicts plausible-sounding tokens, not verified facts. Mitigations: retrieval-augmented generation (grounding in real documents), requiring citations, and lower temperature.",
+         tags=["hallucination","llm","rag","reliability"],
+         example="Ask an LLM for a citation and it may invent a realistic-looking but nonexistent paper title and authors."),
+    dict(cat="glossary", title="Cosine similarity",
+         answer="A measure of how similar two vectors are by the ANGLE between them (not their length): 1 = same direction, 0 = orthogonal (unrelated), -1 = opposite. It is the standard way to compare EMBEDDINGS for search and recommendations because it ignores magnitude and focuses on direction (meaning).",
+         tags=["cosine-similarity","embeddings","search","vectors"],
+         example="To find documents similar to a query, embed both and rank by cosine similarity; the closest angles are the most relevant."),
+    dict(cat="glossary", title="Vector database / ANN",
+         answer="A database that stores EMBEDDINGS and finds the nearest ones to a query vector fast, using Approximate Nearest Neighbor (ANN) indexes like HNSW instead of comparing against every vector. It powers semantic search and RAG at scale (Pinecone, FAISS, pgvector).",
+         tags=["vector-db","ann","hnsw","rag","embeddings"],
+         example="A RAG chatbot embeds your question and asks the vector DB for the 5 most similar document chunks in milliseconds, out of millions."),
+    dict(cat="dsa", title="Longest Increasing Subsequence",
+         answer="Find the length of the longest strictly-increasing subsequence. The O(n^2) DP is dp[i] = 1 + max(dp[j]) over j<i with nums[j]<nums[i]. The elegant O(n log n) approach uses 'patience sorting': keep an array 'tails' where tails[k] is the smallest possible tail of an increasing subsequence of length k+1, and binary-search each number's slot.",
+         tags=["longest-increasing-subsequence","dp","binary-search","dsa"],
+         code='''import bisect
 
-# Minimum meeting rooms needed for the given [start, end] intervals.
-def min_meeting_rooms(intervals):
-    if not intervals:
-        return 0
-    intervals.sort(key=lambda x: x[0])   # process meetings by start time
-    heap = []                            # min-heap of end times (rooms in use)
-    for start, end in intervals:
-        if heap and heap[0] <= start:    # earliest room frees before this starts
-            heapq.heapreplace(heap, end) #   reuse it (pop old end, push new)
+# Length of the longest strictly increasing subsequence of nums.
+def length_of_lis(nums):
+    tails = []                        # tails[k] = smallest tail of an LIS of length k+1
+    for x in nums:
+        i = bisect.bisect_left(tails, x)   # where x would extend/replace
+        if i == len(tails):
+            tails.append(x)           # x extends the longest subsequence
         else:
-            heapq.heappush(heap, end)    #   otherwise open a new room
-    return len(heap)                     # peak simultaneous rooms''',
+            tails[i] = x              # x gives a smaller tail for that length
+    return len(tails)                 # number of piles = LIS length''',
          complexity="Time O(n log n), space O(n).",
-         pitfalls="end<=start vs end<start (meetings that just touch can share a room); forgetting to sort by start.",
-         example="min_meeting_rooms([[0,30],[5,10],[15,20]]) -> 2."),
-    dict(cat="dsa", title="Validate Binary Search Tree",
-         answer="Check whether a binary tree is a valid BST (every node greater than all left-subtree nodes and less than all right-subtree nodes). Recurse carrying a valid (low, high) RANGE: each node must fall strictly inside it, and its children inherit tightened ranges. The classic bug is only comparing a node to its immediate children.",
-         tags=["validate-bst","tree","recursion","dsa"],
-         code='''# True if the binary tree is a valid BST.
-def is_valid_bst(root):
-    def valid(node, low, high):
-        if not node:                  # an empty subtree is valid
-            return True
-        if not (low < node.val < high):   # node must fall in the allowed range
-            return False
-        # left subtree must stay < node.val; right subtree must stay > node.val
-        return valid(node.left, low, node.val) and valid(node.right, node.val, high)
-    return valid(root, float('-inf'), float('inf'))''',
-         complexity="Time O(n), space O(height).",
-         pitfalls="Only comparing a node to its direct children (misses distant violations); < vs <= for duplicates.",
-         example="A tree with root 5, right child 4 holding a left child 3 is NOT valid — 3 is in 5's right subtree but 3 < 5."),
-    dict(cat="ml_coding", title="Implement Softmax (from scratch)",
-         answer="Turn a vector of raw scores (logits) into a probability distribution. Subtract the max first for NUMERICAL STABILITY (prevents exp overflow), then exponentiate and divide by the sum. Interviewers love the max-subtraction trick because it shows you understand floating-point overflow.",
-         tags=["softmax","numerical-stability","ml-coding"],
-         code='''import numpy as np
-
-# Convert logits into a probability distribution that sums to 1.
-def softmax(logits):
-    z = logits - np.max(logits)   # subtract the max for numerical stability
-    exp = np.exp(z)               # exponentiate (now safe from overflow)
-    return exp / exp.sum()        # normalize so the outputs sum to 1''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Skipping the max-subtraction -> exp overflow (inf/nan) on large logits.",
-         example="softmax(np.array([2.0, 1.0, 0.1])) -> ~[0.659, 0.242, 0.099] (sums to 1)."),
-    dict(cat="ml_coding", title="Confusion matrix from scratch",
-         answer="Build the four counts (TP, FP, TN, FN) that every classification metric derives from, given true labels and predictions (0/1); precision, recall, and accuracy fall right out. Interviewers use this to check you truly understand the metrics rather than just calling a library.",
-         tags=["confusion-matrix","metrics","ml-coding"],
-         code='''# Build a binary confusion matrix and derive precision/recall.
-def confusion(y_true, y_pred):
-    tp = fp = tn = fn = 0
-    for t, p in zip(y_true, y_pred):
-        if t == 1 and p == 1: tp += 1     # correctly predicted positive
-        elif t == 0 and p == 1: fp += 1   # false alarm
-        elif t == 0 and p == 0: tn += 1   # correctly predicted negative
-        else: fn += 1                     # missed a real positive
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    return {'tp': tp, 'fp': fp, 'tn': tn, 'fn': fn,
-            'precision': precision, 'recall': recall}''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Dividing by zero when a class is absent; mixing up FP and FN.",
-         example="confusion([1,1,0,0], [1,0,0,1]) -> tp=1, fp=1, tn=1, fn=1, precision=0.5, recall=0.5."),
+         pitfalls="bisect_left (strictly increasing) vs bisect_right (non-decreasing); the tails array is NOT the actual subsequence.",
+         example="length_of_lis([10,9,2,5,3,7,101,18]) -> 4 (e.g. [2,3,7,18])."),
+    dict(cat="dsa", title="Word Break",
+         answer="Given a string and a dictionary, can the string be segmented into a space-separated sequence of dictionary words? DP over prefixes: dp[i] is True if s[:i] can be segmented, which holds when some j<i has dp[j] True AND s[j:i] is in the dictionary.",
+         tags=["word-break","dp","string","dsa"],
+         code='''# Can s be segmented into words from the set `words`?
+def word_break(s, words):
+    words = set(words)                # O(1) membership
+    dp = [False] * (len(s) + 1)
+    dp[0] = True                      # empty prefix is trivially segmentable
+    for i in range(1, len(s) + 1):
+        for j in range(i):
+            if dp[j] and s[j:i] in words:   # prefix ok + suffix is a word
+                dp[i] = True
+                break
+    return dp[len(s)]''',
+         complexity="Time O(n^2 * k), space O(n).",
+         pitfalls="Not using a set for the dictionary (slow); forgetting dp[0]=True.",
+         example="word_break('leetcode', ['leet','code']) -> True; word_break('catsandog', ['cats','dog','sand','and','cat']) -> False."),
+    dict(cat="dsa", title="Rotate Image (90 degrees, in place)",
+         answer="Rotate an n x n matrix 90 degrees clockwise IN PLACE. Trick: TRANSPOSE the matrix (swap across the diagonal), then REVERSE each row. Transpose turns rows into columns; reversing each row completes the clockwise rotation.",
+         tags=["rotate-image","matrix","in-place","dsa"],
+         code='''# Rotate an n x n matrix 90 degrees clockwise, in place.
+def rotate(matrix):
+    n = len(matrix)
+    # 1) Transpose: swap matrix[i][j] with matrix[j][i] (upper triangle only)
+    for i in range(n):
+        for j in range(i + 1, n):
+            matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]
+    # 2) Reverse each row to finish the clockwise rotation
+    for row in matrix:
+        row.reverse()
+    return matrix''',
+         complexity="Time O(n^2), space O(1) (in place).",
+         pitfalls="Swapping the whole grid (only the upper triangle, j from i+1); reversing columns instead of rows gives a counter-clockwise turn.",
+         example="rotate([[1,2,3],[4,5,6],[7,8,9]]) -> [[7,4,1],[8,5,2],[9,6,3]]."),
+    dict(cat="conceptual", title="Why do Transformers need positional encodings but RNNs don't?",
+         answer="An RNN reads tokens ONE AT A TIME in order, so position is baked into WHEN each token is processed — order is implicit. A Transformer processes all tokens SIMULTANEOUSLY through self-attention, which is permutation-invariant (it sees a 'bag' of tokens with no inherent order). So we must explicitly ADD position information to each token's embedding, or 'dog bites man' and 'man bites dog' would be indistinguishable. It is the price of parallelism: you gain speed and long-range attention but must re-inject the ordering an RNN got for free.",
+         tags=["positional-encoding","transformer","rnn","why"],
+         example="Shuffle the words fed to a Transformer with no positional encoding and the output is unchanged — proof it is order-blind without them."),
+    dict(cat="ml_system_design", title="Design a Fraud Detection System",
+         answer="1) CLARIFY: block fraudulent transactions in real time; metric = fraud caught (recall) vs false blocks (precision), latency <100ms. 2) FRAME as ML: binary classification (fraud/legit), heavily imbalanced. 3) DATA & FEATURES: amount, velocity (txns per minute), device/IP, geo-mismatch, account age; labels come from chargebacks (which arrive late). 4) MODEL: gradient-boosted trees or a neural net; handle imbalance with class weights; a rules layer for known patterns. 5) SERVING: score inline in the payment path; allow / review / deny by threshold; a feature store for real-time features. 6) EVALUATION: precision/recall + PR-AUC offline, then online with a manual-review feedback loop; monitor for drift as fraudsters adapt.",
+         tags=["fraud-detection","ml-system-design","imbalance","real-time"],
+         example="A charge from a new device in a new country for 10x the usual amount scores high-risk and is sent to manual review before completing."),
 ]
 
 
