@@ -16,163 +16,144 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Two City Scheduling (greedy)",
-         answer="Fly 2n people, exactly n to city A and n to city B, minimizing total cost. Greedy: sort people by how much MORE it costs to send them to B versus A (cost_A - cost_B); the people who save the most by going to A (most negative) go to A, the rest to B.",
-         tags=["two-city-scheduling","greedy","sorting","dsa"],
-         code='''# Min cost to fly 2n people, n to city A and n to city B.
-def two_city_sched_cost(costs):
-    # sort by how much cheaper A is than B; biggest A-savings go to A
-    costs.sort(key=lambda c: c[0] - c[1])
-    n = len(costs) // 2
-    total = 0
-    for i in range(len(costs)):
-        total += costs[i][0] if i < n else costs[i][1]
-    return total''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Sorting by absolute cost instead of the A-vs-B difference; violating the n/n split.",
-         example="two_city_sched_cost([[10,20],[30,200],[400,50],[30,20]]) -> 110."),
-    dict(cat="dsa", title="Boats to Save People (greedy)",
-         answer="Each boat holds at most 2 people and a weight limit; find the fewest boats to carry everyone. Sort, then two pointers: the heaviest person always takes a boat, and if the lightest also fits within the limit they share it. Advance accordingly.",
-         tags=["boats-save-people","greedy","two-pointers","sorting","dsa"],
-         code='''# Fewest boats (weight limit, max 2 people/boat) to carry everyone.
-def num_rescue_boats(people, limit):
-    people.sort()
-    i, j = 0, len(people) - 1
-    boats = 0
-    while i <= j:
-        if people[i] + people[j] <= limit:
-            i += 1              # lightest also fits with the heaviest
-        j -= 1                  # heaviest always takes a boat
-        boats += 1
-    return boats''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Trying to fit >2 per boat; not always seating the heaviest.",
-         example="num_rescue_boats([3,2,2,1], 3) -> 3."),
-    dict(cat="dsa", title="Maximum Units on a Truck (greedy)",
-         answer="Given box types (count, units-per-box) and a truck box capacity, maximize total units. Greedy: load boxes with the MOST units per box first until the truck is full, taking a partial batch of the last type if needed.",
-         tags=["maximum-units-truck","greedy","sorting","dsa"],
-         code='''# Max units loadable onto a truck of given box capacity (greedy).
-def maximum_units(box_types, truck_size):
-    box_types.sort(key=lambda b: b[1], reverse=True)   # most units per box first
-    units = 0
-    for count, per_box in box_types:
-        take = min(count, truck_size)
-        units += take * per_box
-        truck_size -= take
-        if truck_size == 0:
-            break
-    return units''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Sorting by box count instead of units-per-box; overfilling past the capacity.",
-         example="maximum_units([[1,3],[2,2],[3,1]], 4) -> 8  (1x3 + 2x2 + 1x1)."),
-    dict(cat="dsa", title="Monotonic Array",
-         answer="Decide whether an array is entirely non-increasing OR entirely non-decreasing. Track two flags in one pass — clear 'increasing' on any drop and 'decreasing' on any rise; the array is monotonic if either flag survives.",
-         tags=["monotonic-array","array","dsa"],
-         code='''# Is the array entirely non-increasing or entirely non-decreasing?
-def is_monotonic(nums):
-    increasing = decreasing = True
-    for i in range(1, len(nums)):
-        if nums[i] > nums[i - 1]:
-            decreasing = False
-        if nums[i] < nums[i - 1]:
-            increasing = False
-    return increasing or decreasing''',
+    dict(cat="dsa", title="Count Negatives in a Sorted Matrix",
+         answer="Count negatives in a matrix whose rows and columns are sorted in NON-INCREASING order. Staircase walk from the bottom-left: if the current cell is negative, all cells to its right in that row are too (add them) and move up; otherwise move right. O(rows+cols).",
+         tags=["count-negatives","matrix","staircase-search","dsa"],
+         code='''# Count negatives in a matrix sorted descending in rows and columns.
+def count_negatives(grid):
+    rows, cols = len(grid), len(grid[0])
+    count = 0
+    r, c = rows - 1, 0                # start at the bottom-left corner
+    while r >= 0 and c < cols:
+        if grid[r][c] < 0:
+            count += cols - c        # all cells to the right are negative too
+            r -= 1                    # move up a row
+        else:
+            c += 1                    # move right
+    return count''',
+         complexity="Time O(rows + cols), space O(1).",
+         pitfalls="Scanning every cell (O(m*n) — the sorted structure allows O(m+n)); wrong start corner.",
+         example="count_negatives([[4,3,2,-1],[3,2,1,-1],[1,1,-1,-2],[-1,-1,-2,-3]]) -> 8."),
+    dict(cat="dsa", title="Lucky Numbers in a Matrix",
+         answer="A lucky number is the MINIMUM of its row AND the MAXIMUM of its column (matrix has distinct values). Compute the set of row-minimums and the set of column-maximums; their intersection is the lucky numbers.",
+         tags=["lucky-numbers","matrix","set-intersection","dsa"],
+         code='''# A lucky number is the min of its row and the max of its column.
+def lucky_numbers(matrix):
+    row_mins = {min(row) for row in matrix}
+    col_maxs = {max(col) for col in zip(*matrix)}   # zip(*m) gives columns
+    return list(row_mins & col_maxs)                # values that are both''',
+         complexity="Time O(m*n), space O(m + n).",
+         pitfalls="Confusing rows/columns; zip(*matrix) transposes to iterate columns.",
+         example="lucky_numbers([[3,7,8],[9,11,13],[15,16,17]]) -> [15]."),
+    dict(cat="dsa", title="Check If It Is a Straight Line",
+         answer="Determine whether all given 2-D points are collinear. Use the CROSS-PRODUCT test to avoid division/slope-by-zero issues: three points are collinear when (y1-y0)(x-x0) == (y-y0)(x1-x0). Check every point against the first two.",
+         tags=["straight-line","geometry","cross-product","dsa"],
+         code='''# Do all points lie on a single straight line? (cross-product, no division)
+def check_straight_line(coordinates):
+    (x0, y0), (x1, y1) = coordinates[0], coordinates[1]
+    for x, y in coordinates[2:]:
+        # collinear iff slopes equal, written without division
+        if (y1 - y0) * (x - x0) != (y - y0) * (x1 - x0):
+            return False
+    return True''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Using strict comparisons (equal neighbours are allowed); two passes when one suffices.",
-         example="is_monotonic([1,2,2,3]) -> True; is_monotonic([1,3,2]) -> False."),
-    dict(cat="dsa", title="Find Pivot Index",
-         answer="Find the leftmost index where the sum of elements to its LEFT equals the sum to its RIGHT. Precompute the total; sweep keeping a running left sum — the right sum is total - left - current, so a match means left == total - left - current.",
-         tags=["pivot-index","prefix-sum","array","dsa"],
-         code='''# Leftmost index where the left sum equals the right sum.
-def pivot_index(nums):
-    total = sum(nums)
-    left = 0
-    for i, n in enumerate(nums):
-        if left == total - left - n:   # left sum == right sum
-            return i
-        left += n
-    return -1''',
+         pitfalls="Dividing to compare slopes (vertical lines / float error); comparing only adjacent points.",
+         example="check_straight_line([[1,2],[2,3],[3,4],[4,5]]) -> True; [[1,1],[2,2],[3,4]] -> False."),
+    dict(cat="dsa", title="Valid Mountain Array",
+         answer="A valid mountain STRICTLY increases to a single peak then STRICTLY decreases, with the peak neither first nor last (length >= 3). Walk up while strictly increasing, then require you're not at an end, then walk down; you must finish exactly at the last index.",
+         tags=["valid-mountain","array","two-pointers","dsa"],
+         code='''# Is the array a valid mountain? (strictly up, one peak, strictly down)
+def valid_mountain_array(arr):
+    n = len(arr)
+    if n < 3:
+        return False
+    i = 0
+    while i + 1 < n and arr[i] < arr[i + 1]:
+        i += 1                       # climb up
+    if i == 0 or i == n - 1:
+        return False                 # peak can't be first or last
+    while i + 1 < n and arr[i] > arr[i + 1]:
+        i += 1                       # come down
+    return i == n - 1''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Including the pivot in either side; recomputing sums each step (O(n^2)).",
-         example="pivot_index([1,7,3,6,5,6]) -> 3  (1+7+3 == 5+6)."),
-    dict(cat="dsa", title="DI String Match",
-         answer="Given a pattern of 'I' (increase) and 'D' (decrease), build ANY permutation of 0..n that follows it. Greedy two-pointer: for 'I' output the current LOW and increment low (leaving room to go up), for 'D' output the current HIGH and decrement high; append the last remaining value.",
-         tags=["di-string-match","greedy","two-pointers","array","dsa"],
-         code='''# Build a permutation of 0..n matching a pattern of 'I' / 'D'.
-def di_string_match(s):
-    low, high = 0, len(s)
+         pitfalls="Allowing equal neighbours (must be strict); a plateau or a peak at the boundary.",
+         example="valid_mountain_array([0,3,2,1]) -> True; valid_mountain_array([3,5,5]) -> False."),
+    dict(cat="dsa", title="Kids With the Greatest Number of Candies",
+         answer="Given each kid's candy count and a number of EXTRA candies, for each kid determine if giving them all the extra candies would make them have the GREATEST count (ties count). Compute the current max once, then test c + extra >= max for each kid.",
+         tags=["kids-candies","array","greedy","dsa"],
+         code='''# For each kid, would they have the most candies after getting 'extra' more?
+def kids_with_candies(candies, extra):
+    most = max(candies)
+    return [c + extra >= most for c in candies]''',
+         complexity="Time O(n), space O(n) for the output.",
+         pitfalls="Recomputing the max inside the loop (O(n^2)); using > instead of >= (ties should count).",
+         example="kids_with_candies([2,3,5,1,3], 3) -> [True,True,True,False,True]."),
+    dict(cat="dsa", title="How Many Numbers Are Smaller Than the Current",
+         answer="For each element, count how many OTHER elements are strictly smaller. With bounded values (0..100), use counting sort: tally counts, then a prefix sum gives, for each value v, how many elements are < v — an O(n) answer instead of O(n^2).",
+         tags=["smaller-than-current","counting-sort","prefix-sum","array","dsa"],
+         code='''# For each element, how many other elements are strictly smaller.
+def smaller_numbers_than_current(nums):
+    count = [0] * 101               # values are 0..100
+    for n in nums:
+        count[n] += 1
+    prefix = [0] * 101
+    for i in range(1, 101):
+        prefix[i] = prefix[i - 1] + count[i - 1]   # how many values are < i
+    return [prefix[n] for n in nums]''',
+         complexity="Time O(n + K), space O(K).",
+         pitfalls="O(n^2) brute force when counting-sort is O(n); off-by-one in the prefix (strictly smaller).",
+         example="smaller_numbers_than_current([8,1,2,2,3]) -> [4,0,1,1,3]."),
+    dict(cat="dsa", title="Decompress Run-Length Encoded List",
+         answer="A list encodes pairs [freq, val, freq, val, ...]; expand it so each val appears freq times. Iterate in steps of 2, reading each (freq, val) pair and extending the output with val repeated freq times.",
+         tags=["decompress-rle","run-length","array","dsa"],
+         code='''# Decode pairs [freq, val, freq, val, ...] into the expanded list.
+def decompress_rle_list(nums):
     result = []
-    for ch in s:
-        if ch == 'I':
-            result.append(low); low += 1     # leave room to increase next
-        else:
-            result.append(high); high -= 1   # leave room to decrease next
-    result.append(low)                        # low == high at the end
+    for i in range(0, len(nums), 2):
+        freq, val = nums[i], nums[i + 1]
+        result.extend([val] * freq)   # repeat val freq times
     return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Forgetting the final appended value; swapping the low/high roles.",
-         example="di_string_match('IDID') -> [0,4,1,3,2]."),
-    dict(cat="dsa", title="Maximum Ascending Subarray Sum",
-         answer="Find the largest sum of a strictly ASCENDING contiguous subarray. Sweep keeping a current run sum; extend it while each element is greater than the previous, otherwise restart the run at the current element. Track the best sum seen.",
-         tags=["max-ascending-sum","array","greedy","dsa"],
-         code='''# Largest sum of a strictly ascending contiguous subarray.
-def max_ascending_sum(nums):
-    best = current = nums[0]
-    for i in range(1, len(nums)):
-        if nums[i] > nums[i - 1]:
-            current += nums[i]      # extend the ascending run
-        else:
-            current = nums[i]       # restart the run
-        best = max(best, current)
-    return best''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Allowing equal neighbours (must be strictly ascending); not resetting on a non-increase.",
-         example="max_ascending_sum([10,20,30,5,10,50]) -> 65  (5+10+50)."),
-    dict(cat="dsa", title="Degree of an Array",
-         answer="The degree of an array is the maximum frequency of any element; find the SHORTEST contiguous subarray with the same degree. Track each value's first index and running count; whenever a value's count reaches (or ties) the degree, the candidate length is last_index - first_index + 1.",
-         tags=["degree-of-array","hash-map","array","dsa"],
-         code='''# Shortest subarray whose degree (max frequency) equals the array's degree.
-def find_shortest_sub_array(nums):
-    first, count = {}, {}
-    degree = 0
-    best = 0
-    for i, n in enumerate(nums):
-        if n not in first:
-            first[n] = i            # first index of this value
-        count[n] = count.get(n, 0) + 1
-        if count[n] > degree:
-            degree = count[n]
-            best = i - first[n] + 1
-        elif count[n] == degree:
-            best = min(best, i - first[n] + 1)
-    return best''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Not updating best on ties at the same degree; forgetting the first-index map.",
-         example="find_shortest_sub_array([1,2,2,3,1]) -> 2  (the [2,2] subarray)."),
-    dict(cat="glossary", title="HTTP keep-alive (persistent connections)",
-         answer="Reusing a single TCP connection for MULTIPLE HTTP request/response cycles instead of opening a new one per request (the HTTP/1.0 default). It avoids repeated TCP + TLS handshakes (each costing round-trips), cutting latency and server load. HTTP/1.1 enables it by default; Connection headers and idle timeouts govern it.",
-         tags=["http-keep-alive","persistent-connection","http","networking","latency"],
-         example="Loading a page with 30 assets over one keep-alive connection avoids 30 separate TCP/TLS handshakes, dramatically speeding up the load."),
-    dict(cat="glossary", title="HTTP/2 multiplexing",
-         answer="HTTP/2 carries MULTIPLE concurrent requests/responses over a SINGLE TCP connection as interleaved, independently-framed STREAMS — so one slow response doesn't block others at the HTTP layer (fixing HTTP/1.1's need for many connections or serial pipelining). It also adds header compression (HPACK) and server push. A big latency win for many small resources.",
-         tags=["http2","multiplexing","streams","networking","performance"],
-         example="A page fetching 100 resources over HTTP/2 interleaves them concurrently on one connection, instead of HTTP/1.1 opening ~6 connections and queueing the rest."),
-    dict(cat="glossary", title="Head-of-line blocking",
-         answer="When the FIRST item in a queue/stream stalls and BLOCKS everything behind it, even items that could proceed. It appears at multiple layers: HTTP/1.1 (a slow response blocks pipelined ones) and, subtly, at the TCP layer for HTTP/2, where a single lost packet stalls ALL multiplexed streams because TCP delivers bytes in order. HTTP/3 (over QUIC/UDP) fixes the transport-level version with independent streams.",
-         tags=["head-of-line-blocking","http2","tcp","quic","networking"],
-         example="On HTTP/2, one dropped TCP packet halts every multiplexed stream until it's retransmitted; HTTP/3's QUIC lets the other streams keep flowing."),
-    dict(cat="glossary", title="gRPC vs REST",
-         answer="Two API styles. REST is resource-oriented over HTTP/1.1 with JSON — human-readable, universally supported, cache-friendly, but verbose and loosely typed. gRPC uses HTTP/2 + Protocol Buffers (binary, schema-defined) with generated typed clients — faster/smaller payloads, streaming, strong contracts, but not browser-native (needs a proxy) and less readable. Use gRPC for internal low-latency service-to-service; REST for public/browser-facing APIs.",
-         tags=["grpc","rest","protobuf","http2","api-design"],
-         example="Internal microservices use gRPC for compact, strongly-typed, streaming calls; a public API stays REST/JSON so any client or browser can consume it easily."),
-    dict(cat="glossary", title="Index selectivity",
-         answer="A measure of how well an index NARROWS a query — the ratio of distinct values to total rows (high selectivity = many distinct values = each matches few rows). The optimizer prefers HIGH-selectivity indexes because they eliminate most rows; a LOW-selectivity index (e.g. a boolean where 90% are true) is nearly useless — a full scan may beat the index lookup + row fetches. It drives whether an index is used at all.",
-         tags=["index-selectivity","indexing","query-optimization","database"],
-         example="An index on 'email' (unique, high selectivity) is great for lookups; an index on 'gender' (2 values, low selectivity) is usually ignored because it matches half the table."),
-    dict(cat="conceptual", title="Why does HTTP/2 multiplexing not fully eliminate head-of-line blocking, and how does HTTP/3 fix it?",
-         answer="HTTP/1.1 blocks at the HTTP layer: responses on a connection are serialized, so one slow response blocks everything queued behind it. HTTP/2 fixes THAT by multiplexing independent streams over one TCP connection, interleaving their frames so they progress concurrently — no HTTP-layer blocking. BUT it runs over TCP, which guarantees IN-ORDER byte delivery: if one TCP packet is lost, the kernel withholds ALL subsequently-received bytes (of any stream) until the retransmit arrives — so a single loss stalls every multiplexed stream. That's TRANSPORT-level head-of-line blocking, which HTTP/2 can't escape because the blocking lives below it in TCP. HTTP/3 moves to QUIC (over UDP), implementing streams AT THE TRANSPORT layer with per-stream loss handling, so a lost packet only stalls its own stream while others keep delivering. The lesson: a layer can only fix blocking at or above it.",
-         tags=["head-of-line-blocking","http2","http3","quic","tcp","why"],
-         example="On a lossy mobile network an HTTP/2 page freezes all resources when one packet drops; the same page over HTTP/3 keeps loading the unaffected resources because QUIC isolates the loss to one stream."),
+         complexity="Time O(total output length), space O(that).",
+         pitfalls="Swapping freq and val; stepping by 1 instead of 2.",
+         example="decompress_rle_list([1,2,3,4]) -> [2,4,4,4]."),
+    dict(cat="dsa", title="Range Bitwise AND",
+         answer="Compute the bitwise AND of ALL integers in [left, right]. The result is the COMMON BINARY PREFIX of left and right: any bit that differs across the range becomes 0 (since some number in the range flips it). Shift both right until they're equal, then shift the common prefix back.",
+         tags=["range-bitwise-and","bit-manipulation","math","dsa"],
+         code='''# Bitwise AND of all numbers in [left, right] = their common bit prefix.
+def range_bitwise_and(left, right):
+    shift = 0
+    while left < right:              # strip differing low bits
+        left >>= 1
+        right >>= 1
+        shift += 1
+    return left << shift             # restore the common prefix''',
+         complexity="Time O(log right), space O(1).",
+         pitfalls="AND-ing every number (too slow for large ranges); forgetting to shift back.",
+         example="range_bitwise_and(5, 7) -> 4; range_bitwise_and(0, 0) -> 0."),
+    dict(cat="glossary", title="Idempotent HTTP methods",
+         answer="A method is IDEMPOTENT if making the same request multiple times has the same effect as once. GET, PUT, DELETE, HEAD are idempotent (PUT sets a resource to a value; doing it twice leaves the same state; DELETE twice still ends deleted). POST is NOT (each usually creates a new resource). Safe methods (GET/HEAD) don't modify state at all. Idempotency lets clients/proxies safely RETRY on failure.",
+         tags=["idempotent-methods","http","rest","retries","api"],
+         example="A network glitch lets a client safely retry a PUT (same final state) or DELETE (already gone), but retrying a POST 'create order' could duplicate it — so POST needs an idempotency key."),
+    dict(cat="glossary", title="HTTP status code families",
+         answer="Status codes group by first digit: 1xx informational; 2xx SUCCESS (200 OK, 201 Created, 204 No Content); 3xx REDIRECTION (301 permanent, 302 temporary, 304 Not Modified); 4xx CLIENT errors (400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict, 429 Too Many Requests); 5xx SERVER errors (500 Internal, 502 Bad Gateway, 503 Service Unavailable). The family tells you who's at fault and whether a retry could help.",
+         tags=["http-status-codes","http","rest","api","errors"],
+         example="A 503 (server, transient) is worth retrying with backoff; a 400 (client error) fails identically on retry, so don't."),
+    dict(cat="glossary", title="ETag / conditional requests",
+         answer="An ETag is a fingerprint (hash/version) of a resource the server returns. The client caches it and, next time, sends If-None-Match: <etag>; if the resource is unchanged the server replies 304 Not Modified with NO body — saving bandwidth. If-Match enables optimistic concurrency (reject a write if the ETag changed). It's how HTTP does efficient revalidation and conflict detection.",
+         tags=["etag","conditional-request","caching","optimistic-concurrency","http"],
+         example="A browser revalidates a cached image with If-None-Match; the server returns 304 (no body) if unchanged, so the browser reuses its cache instead of re-downloading."),
+    dict(cat="glossary", title="Cookies vs tokens (JWT)",
+         answer="Two ways to carry auth state. COOKIE/session auth stores a session ID in a cookie; the server keeps session state and looks it up each request — stateful, easy to revoke, but needs shared session storage to scale. TOKEN/JWT auth puts SIGNED claims in a token the client sends (usually a header); the server just verifies the signature — STATELESS and scalable, but hard to revoke before expiry and larger per request. Cookies suit browser apps (with CSRF protection); JWTs suit APIs/SPAs/microservices.",
+         tags=["cookies","jwt","authentication","sessions","stateless"],
+         example="A monolith web app uses a session cookie (easy server-side logout); a microservices API uses short-lived JWTs so any service verifies auth without a shared session store."),
+    dict(cat="glossary", title="OAuth2 authorization flow",
+         answer="OAuth2 lets a user grant a third-party app LIMITED, scoped access to their resources WITHOUT sharing their password. Authorization Code flow: the app redirects the user to the provider (Google), the user logs in and consents, the provider redirects back with a short-lived CODE, and the app exchanges that code (plus its secret) server-side for an ACCESS TOKEN (and refresh token) to call APIs with. It separates authentication (proving identity) from authorization (granting scoped access).",
+         tags=["oauth2","authorization","access-token","sso","security"],
+         example="'Sign in with Google': you're sent to Google, approve 'read your profile', Google redirects back with a code, your backend swaps it for an access token and fetches the profile — your Google password never touches the app."),
+    dict(cat="conceptual", title="Why should PUT/DELETE be idempotent but POST not — and why does it matter for retries?",
+         answer="Idempotency means repeating a request yields the same final STATE. PUT ('set resource X to this value') and DELETE ('remove X') are naturally idempotent — applied twice, the result is identical (X has the value; X is gone). POST ('create a new thing') is NOT — each call produces a NEW side effect. This matters for RETRIES on unreliable networks: a client that gets no response can't tell if the request was lost (never ran) or the ACK was lost (ran fine) — so to be safe it must retry. For idempotent methods, retrying is HARMLESS, which is why proxies, load balancers, and clients can safely auto-retry GET/PUT/DELETE. For POST, a blind retry risks DUPLICATE creation (double-charge, double-order), so you either don't auto-retry it or you make it idempotent with an IDEMPOTENCY KEY the server dedupes on. Designing writes to be idempotent (or key-protected) is exactly what makes at-least-once delivery safe.",
+         tags=["idempotency","http","put","post","retries","why"],
+         example="A payment 'POST /charge' retried after a timeout could charge twice; an Idempotency-Key header lets the server recognize the retry and return the original result, making the POST safe to retry like a PUT."),
 ]
 
 
