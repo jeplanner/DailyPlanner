@@ -16,210 +16,193 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Dijkstra's Shortest Path (min-heap)",
-         answer="Find the shortest distance from a source to every node in a weighted graph with NON-NEGATIVE edge weights. Use a min-heap keyed by tentative distance: pop the closest unfinalized node, relax its neighbours (update if a shorter path is found and push them). Skip stale heap entries whose distance is worse than the best known. Greedy and correct because non-negative weights mean the first time you pop a node it's final.",
-         tags=["dijkstra","shortest-path","graph","heap","greedy","dsa"],
-         code='''# Shortest distances from a source in a weighted graph (non-negative weights).
-import heapq
-def dijkstra(graph, source):
-    # graph: dict node -> list of (neighbour, weight)
-    dist = {source: 0}
-    heap = [(0, source)]              # (distance so far, node)
-    while heap:
-        d, node = heapq.heappop(heap)
-        if d > dist.get(node, float('inf')):
-            continue                  # stale entry -> skip
-        for nbr, w in graph.get(node, []):
-            nd = d + w
-            if nd < dist.get(nbr, float('inf')):
-                dist[nbr] = nd        # found a shorter path
-                heapq.heappush(heap, (nd, nbr))
+    dict(cat="dsa", title="Bellman-Ford (shortest path with negative edges)",
+         answer="Compute shortest distances from a source in a graph that MAY have negative edge weights (where Dijkstra fails). Relax every edge V-1 times — after k rounds all shortest paths using at most k edges are correct. A final relaxation pass that still improves any distance proves a reachable NEGATIVE CYCLE exists.",
+         tags=["bellman-ford","shortest-path","negative-weights","graph","dynamic-programming","dsa"],
+         code='''# Shortest distances from source, allowing negative edges; detects neg cycles.
+def bellman_ford(n, edges, source):
+    # edges: list of (u, v, weight); nodes 0..n-1
+    dist = [float('inf')] * n
+    dist[source] = 0
+    for _ in range(n - 1):            # relax all edges n-1 times
+        for u, v, w in edges:
+            if dist[u] != float('inf') and dist[u] + w < dist[v]:
+                dist[v] = dist[u] + w
+    for u, v, w in edges:             # one more pass -> detects a negative cycle
+        if dist[u] != float('inf') and dist[u] + w < dist[v]:
+            return None               # negative cycle reachable from source
     return dist''',
-         complexity="Time O((V+E) log V), space O(V).",
-         pitfalls="Using it with negative weights (use Bellman-Ford instead); not skipping stale heap entries.",
-         example="graph {A:[(B,1),(C,4)], B:[(C,2)], C:[]}, dijkstra from A -> {A:0, B:1, C:3}."),
-    dict(cat="dsa", title="Topological Sort (Kahn's algorithm)",
-         answer="Produce a linear ordering of a Directed Acyclic Graph where every edge u->v has u before v. Kahn's BFS approach: compute in-degrees, start a queue with all zero-in-degree nodes, repeatedly pop one into the order and decrement its neighbours' in-degrees, enqueueing any that hit zero. If the order doesn't include all nodes, the graph had a CYCLE.",
-         tags=["topological-sort","kahn","graph","bfs","dag","dsa"],
-         code='''# Topological order of a DAG via Kahn's algorithm (BFS on in-degrees).
+         complexity="Time O(V*E), space O(V).",
+         pitfalls="Skipping the unreachable (inf) guard before relaxing; forgetting the negative-cycle detection pass.",
+         example="bellman_ford(3, [(0,1,4),(0,2,5),(1,2,-3)], 0) -> [0,4,1]."),
+    dict(cat="dsa", title="Flood Fill",
+         answer="The 'paint bucket' operation: starting at a pixel, recolor it and every 4-connected neighbour of the SAME original color to a new color. DFS/BFS from the start, stopping at cells that don't match the original color. Guard the no-op case where the new color equals the old (else infinite recursion).",
+         tags=["flood-fill","dfs","grid","recursion","dsa"],
+         code='''# Fill a region starting at (sr, sc) with new_color, like a paint bucket.
+def flood_fill(image, sr, sc, new_color):
+    rows, cols = len(image), len(image[0])
+    old_color = image[sr][sc]
+    if old_color == new_color:
+        return image                  # nothing to change (avoids infinite loop)
+    def dfs(r, c):
+        if r < 0 or r >= rows or c < 0 or c >= cols or image[r][c] != old_color:
+            return
+        image[r][c] = new_color       # paint this cell
+        dfs(r+1, c); dfs(r-1, c); dfs(r, c+1); dfs(r, c-1)
+    dfs(sr, sc)
+    return image''',
+         complexity="Time O(rows*cols), space O(rows*cols) recursion.",
+         pitfalls="Infinite loop when new_color == old_color; checking color equality after painting.",
+         example="flood_fill([[1,1,1],[1,1,0],[1,0,1]], 1, 1, 2) -> [[2,2,2],[2,2,0],[2,0,1]]."),
+    dict(cat="dsa", title="01 Matrix (distance to nearest zero)",
+         answer="For each cell in a binary matrix, compute the distance to the nearest 0. MULTI-SOURCE BFS: seed the queue with every 0 (distance 0) at once and expand outward; the first time BFS reaches a cell is its shortest distance. Doing BFS from each 1 separately would be far slower.",
+         tags=["01-matrix","bfs","multi-source","grid","dsa"],
+         code='''# Distance from each cell to the nearest 0 (multi-source BFS from all zeros).
 from collections import deque
-def topological_sort(num_nodes, edges):
-    graph = {i: [] for i in range(num_nodes)}
-    indegree = [0] * num_nodes
-    for u, v in edges:                # edge u -> v
-        graph[u].append(v)
-        indegree[v] += 1
-    queue = deque(i for i in range(num_nodes) if indegree[i] == 0)
-    order = []
-    while queue:
-        node = queue.popleft()
-        order.append(node)
-        for nbr in graph[node]:
-            indegree[nbr] -= 1        # remove this edge
-            if indegree[nbr] == 0:
-                queue.append(nbr)
-    return order if len(order) == num_nodes else []   # [] signals a cycle''',
-         complexity="Time O(V+E), space O(V+E).",
-         pitfalls="Not detecting cycles (check the output length); assuming a unique order (many are valid).",
-         example="4 nodes, edges [(0,1),(0,2),(1,3),(2,3)] -> [0,1,2,3] (one valid order)."),
-    dict(cat="dsa", title="Union-Find / Disjoint Set Union (DSU)",
-         answer="A data structure that tracks a partition of elements into disjoint sets, supporting near-O(1) 'find which set' and 'union two sets'. Two optimizations make it almost constant: PATH COMPRESSION (flatten the tree during find) and UNION BY RANK (attach the shorter tree under the taller). It underpins Kruskal's MST, connectivity, and cycle detection in undirected graphs.",
-         tags=["union-find","dsu","disjoint-set","graph","path-compression","dsa"],
-         code='''# Disjoint-Set Union with path compression and union by rank.
-class UnionFind:
-    def __init__(self, n):
-        self.parent = list(range(n))   # each node starts as its own root
-        self.rank = [0] * n
-
-    def find(self, x):
-        while self.parent[x] != x:
-            self.parent[x] = self.parent[self.parent[x]]   # path compression
-            x = self.parent[x]
-        return x
-
-    def union(self, a, b):
-        ra, rb = self.find(a), self.find(b)
-        if ra == rb:
-            return False               # already in the same set
-        if self.rank[ra] < self.rank[rb]:
-            ra, rb = rb, ra            # attach the smaller tree under the larger
-        self.parent[rb] = ra
-        if self.rank[ra] == self.rank[rb]:
-            self.rank[ra] += 1
-        return True''',
-         complexity="Near O(1) amortized per op (inverse-Ackermann), space O(n).",
-         pitfalls="Skipping path compression or union by rank (degrades to O(n)); forgetting union returns False when already joined.",
-         example="uf=UnionFind(5); uf.union(0,1); uf.union(1,2): find(0)==find(2) is True, find(0)==find(3) is False."),
-    dict(cat="dsa", title="Course Schedule (cycle detection)",
-         answer="Given course prerequisites, decide whether ALL courses can be finished — equivalently, whether the prerequisite directed graph is acyclic. Run Kahn's topological sort and count how many nodes you can process; if you process all of them there's no cycle (a valid order exists), otherwise a cycle blocks completion.",
-         tags=["course-schedule","cycle-detection","topological-sort","graph","dsa"],
-         code='''# Can all courses be finished? (no cycle in the prerequisite graph)
-from collections import deque
-def can_finish(num_courses, prerequisites):
-    graph = {i: [] for i in range(num_courses)}
-    indegree = [0] * num_courses
-    for course, prereq in prerequisites:   # must take prereq before course
-        graph[prereq].append(course)
-        indegree[course] += 1
-    queue = deque(i for i in range(num_courses) if indegree[i] == 0)
-    taken = 0
-    while queue:
-        node = queue.popleft()
-        taken += 1
-        for nbr in graph[node]:
-            indegree[nbr] -= 1
-            if indegree[nbr] == 0:
-                queue.append(nbr)
-    return taken == num_courses            # all taken -> acyclic''',
-         complexity="Time O(V+E), space O(V+E).",
-         pitfalls="Reversing the edge direction (prereq -> course); comparing to the wrong count.",
-         example="can_finish(2, [[1,0]]) -> True; can_finish(2, [[1,0],[0,1]]) -> False (mutual prereqs = cycle)."),
-    dict(cat="dsa", title="Number of Connected Components",
-         answer="Count the connected components of an undirected graph. Build an adjacency list, then iterate all nodes; each unvisited node starts a new component and a DFS/BFS marks everything reachable from it. The number of times you launch a fresh traversal is the component count. (Union-Find also solves this.)",
-         tags=["connected-components","graph","dfs","union-find","dsa"],
-         code='''# Count connected components in an undirected graph using DFS.
-def count_components(n, edges):
-    graph = {i: [] for i in range(n)}
-    for u, v in edges:
-        graph[u].append(v)
-        graph[v].append(u)
-    seen = set()
-    def dfs(node):
-        seen.add(node)
-        for nbr in graph[node]:
-            if nbr not in seen:
-                dfs(nbr)
-    count = 0
-    for i in range(n):
-        if i not in seen:
-            count += 1                # a new component
-            dfs(i)
-    return count''',
-         complexity="Time O(V+E), space O(V+E).",
-         pitfalls="Treating the graph as directed (add both directions); recursion depth on huge graphs (use iterative BFS).",
-         example="count_components(5, [[0,1],[1,2],[3,4]]) -> 2  ({0,1,2} and {3,4})."),
-    dict(cat="dsa", title="Bipartite Graph Check (BFS 2-coloring)",
-         answer="Decide whether a graph's nodes can be 2-colored so that no edge connects same-colored nodes (equivalently, the graph has no odd-length cycle). BFS from each uncolored node, coloring neighbours the opposite color; if you ever find an edge whose endpoints already share a color, it's not bipartite.",
-         tags=["bipartite","graph","bfs","coloring","dsa"],
-         code='''# Is the graph 2-colorable (bipartite)? BFS coloring.
-from collections import deque
-def is_bipartite(graph):
-    # graph: adjacency list (list of lists) over nodes 0..n-1
-    color = {}
-    for start in range(len(graph)):
-        if start in color:
-            continue
-        color[start] = 0
-        queue = deque([start])
-        while queue:
-            node = queue.popleft()
-            for nbr in graph[node]:
-                if nbr not in color:
-                    color[nbr] = 1 - color[node]   # opposite color
-                    queue.append(nbr)
-                elif color[nbr] == color[node]:
-                    return False       # same color across an edge -> not bipartite
-    return True''',
-         complexity="Time O(V+E), space O(V).",
-         pitfalls="Not handling disconnected components (loop over all start nodes); coloring with the same value.",
-         example="is_bipartite([[1,3],[0,2],[1,3],[0,2]]) -> True (a 4-cycle); a triangle is False."),
-    dict(cat="dsa", title="Rotting Oranges (multi-source BFS)",
-         answer="In a grid of empty(0)/fresh(1)/rotten(2) cells, each minute every rotten orange rots its 4-adjacent fresh neighbours; return the minutes until none are fresh, or -1 if some fresh orange can never rot. Multi-source BFS: seed the queue with ALL rotten oranges at time 0 and spread outward level by level, tracking the max time and counting remaining fresh cells.",
-         tags=["rotting-oranges","bfs","grid","multi-source","dsa"],
-         code='''# Minutes until all fresh oranges (1) rot from rotten ones (2); -1 if impossible.
-from collections import deque
-def oranges_rotting(grid):
-    rows, cols = len(grid), len(grid[0])
+def update_matrix(mat):
+    rows, cols = len(mat), len(mat[0])
+    dist = [[-1] * cols for _ in range(rows)]
     queue = deque()
-    fresh = 0
     for r in range(rows):
         for c in range(cols):
-            if grid[r][c] == 2:
-                queue.append((r, c, 0))   # (row, col, minute) - all sources
-            elif grid[r][c] == 1:
-                fresh += 1
-    minutes = 0
+            if mat[r][c] == 0:
+                dist[r][c] = 0        # zeros are the BFS sources
+                queue.append((r, c))
     while queue:
-        r, c, t = queue.popleft()
-        minutes = max(minutes, t)
+        r, c = queue.popleft()
         for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
             nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == 1:
-                grid[nr][nc] = 2          # this fresh orange rots now
-                fresh -= 1
-                queue.append((nr, nc, t + 1))
-    return minutes if fresh == 0 else -1  # -1 if any fresh orange is unreachable''',
+            if 0 <= nr < rows and 0 <= nc < cols and dist[nr][nc] == -1:
+                dist[nr][nc] = dist[r][c] + 1   # first visit = shortest
+                queue.append((nr, nc))
+    return dist''',
          complexity="Time O(rows*cols), space O(rows*cols).",
-         pitfalls="Seeding BFS from one source (must be all rotten at once); returning minutes when fresh remain.",
-         example="oranges_rotting([[2,1,1],[1,1,0],[0,1,1]]) -> 4."),
-    dict(cat="glossary", title="Cosine annealing (LR schedule)",
-         answer="A learning-rate schedule that smoothly decreases the LR along a COSINE curve from its initial value down to near zero over training (or a cycle). The curved decay — fast at first, slow near the end — often generalizes better than step decay; 'warm restarts' periodically reset it to help escape and explore multiple minima.",
-         tags=["cosine-annealing","learning-rate","schedule","optimization","training"],
-         example="Over 100 epochs, cosine annealing eases the LR from 0.1 to ~0 along a half-cosine, spending more time at low LR to fine-tune near the minimum."),
-    dict(cat="glossary", title="Group vs Layer normalization",
-         answer="Normalization layers that, unlike batch norm, don't depend on the batch. LAYER NORM normalizes across all features of a SINGLE example (used in Transformers; works for any batch size or sequence length). GROUP NORM splits channels into groups and normalizes within each group (used in vision with tiny batches). Both stabilize training without coupling to batch statistics.",
-         tags=["group-norm","layer-norm","normalization","deep-learning"],
-         example="Transformers use layer norm so each token is normalized independently of the batch; a detection model with batch size 2 uses group norm because batch norm's statistics would be too noisy."),
-    dict(cat="glossary", title="Calibration (Platt / isotonic)",
-         answer="Making a classifier's predicted PROBABILITIES match real-world frequencies — if it says 0.8, about 80% of such cases should be positive. Many models (SVMs, boosted trees, deep nets) are miscalibrated. PLATT SCALING fits a logistic function to the scores; ISOTONIC REGRESSION fits a flexible monotonic mapping. It's measured with reliability diagrams / Expected Calibration Error.",
-         tags=["calibration","platt-scaling","isotonic","probability","evaluation"],
-         example="A boosted tree that outputs overconfident 0.95s is passed through isotonic regression so a 0.95 really means ~95% positive — important when the probability feeds a downstream decision."),
-    dict(cat="glossary", title="Bootstrap sampling",
-         answer="Estimating the uncertainty of a statistic by resampling your dataset WITH REPLACEMENT many times, computing the statistic on each resample, and inspecting the spread. It needs no distributional assumptions and yields confidence intervals for almost anything; it's also the 'bagging' that powers random forests.",
-         tags=["bootstrap","resampling","statistics","confidence-interval","bagging"],
-         example="For a confidence interval on a model's AUC, resample the test set 1000 times with replacement, compute AUC each time, and take the 2.5th-97.5th percentiles."),
-    dict(cat="glossary", title="Inverse propensity weighting (IPW)",
-         answer="A technique to correct for BIAS in logged/observational data where some items were shown more than others. Weight each observed example by 1/(probability it was shown) — its 'propensity' — so under-exposed items count more, approximating what a randomized experiment would have shown. It's core to off-policy evaluation of recommenders and ads.",
-         tags=["inverse-propensity-weighting","ipw","off-policy","causal-inference","debiasing"],
-         example="Evaluating a new ranking policy from logs where popular items dominated, IPW up-weights the rare-item impressions so the estimate isn't skewed toward what the old system happened to show."),
-    dict(cat="behavioral", title="Tell me about your biggest failure and what you learned (behavioral: failure)",
-         answer="Use STAR. SITUATION: I led a team ML project and, overconfident in the model, skipped a proper validation split and tests to 'save time'. TASK: deliver a working classifier on schedule. ACTION / what went wrong: two days before the deadline we found our 95% accuracy was inflated by DATA LEAKAGE — an ID feature correlated with the label — and the real model was far worse; we scrambled to fix it. RESULT: we salvaged it but shipped late and below target. LESSON: I now treat a clean validation setup and leakage checks as non-negotiable FIRST steps, not afterthoughts — and I've caught two leaks since. HOW TO TELL IT: own the failure honestly, focus on the concrete lesson and the behaviour change, and show growth rather than blame.",
-         tags=["behavioral","star","failure","lesson-learned"],
-         example="Skipped a proper validation split to save time; a data leak inflated accuracy to 95% and we shipped late — now leak checks are my non-negotiable first step."),
-    dict(cat="behavioral", title="Tell me about a time you received difficult feedback (behavioral: feedback)",
-         answer="Use STAR. SITUATION: A mentor told me my code worked but was unreadable — nobody could review or reuse it. TASK: take the criticism constructively and improve. ACTION: instead of getting defensive, I asked for specific examples, studied a well-structured open-source codebase, adopted clear naming, docstrings, and smaller functions, then asked the mentor to re-review. RESULT: my next PR was approved with zero readability comments and a teammate reused my module. LESSON: feedback about my work isn't a judgment of me; acting on it quickly built credibility. HOW TO TELL IT: show you sought specifics, acted fast, and it paid off — with no defensiveness.",
-         tags=["behavioral","star","feedback","growth"],
-         example="A mentor said my code was unreadable; I asked for specifics, refactored with clear naming + docstrings, and my next PR passed review with a teammate reusing it."),
+         pitfalls="Running single-source BFS per 1 (too slow); revisiting cells (mark with -1 sentinel).",
+         example="update_matrix([[0,0,0],[0,1,0],[1,1,1]]) -> [[0,0,0],[0,1,0],[1,2,1]]."),
+    dict(cat="dsa", title="Redundant Connection (Union-Find)",
+         answer="A graph is a tree of n nodes plus ONE extra edge that creates a cycle; find that redundant edge (the last one that closes a cycle). Process edges with Union-Find: for each edge, if its two endpoints are already connected (same root), that edge is the redundant one; otherwise union them.",
+         tags=["redundant-connection","union-find","cycle-detection","graph","dsa"],
+         code='''# In a graph that's a tree plus one extra edge, find the edge to remove.
+def find_redundant_connection(edges):
+    parent = list(range(len(edges) + 1))   # 1-indexed nodes
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]   # path compression
+            x = parent[x]
+        return x
+    for u, v in edges:
+        ru, rv = find(u), find(v)
+        if ru == rv:
+            return [u, v]             # this edge closes a cycle -> redundant
+        parent[ru] = rv               # union the two components
+    return []''',
+         complexity="Time O(n * α(n)) ~ O(n), space O(n).",
+         pitfalls="Sizing parent by node count not edge count; returning the first cycle edge instead of the closing one.",
+         example="find_redundant_connection([[1,2],[1,3],[2,3]]) -> [2,3]."),
+    dict(cat="dsa", title="Network Delay Time (Dijkstra application)",
+         answer="A signal starts at node k and travels along directed edges with given delays; return the time for ALL n nodes to receive it, or -1 if some can't. It's single-source shortest paths (Dijkstra): the answer is the MAXIMUM of the shortest distances to every node (the last one to hear the signal).",
+         tags=["network-delay","dijkstra","shortest-path","graph","heap","dsa"],
+         code='''# Time for a signal from node k to reach ALL nodes (Dijkstra); -1 if unreachable.
+import heapq
+def network_delay_time(times, n, k):
+    graph = {i: [] for i in range(1, n + 1)}
+    for u, v, w in times:
+        graph[u].append((v, w))
+    dist = {}
+    heap = [(0, k)]                   # (elapsed time, node)
+    while heap:
+        d, node = heapq.heappop(heap)
+        if node in dist:
+            continue                  # already finalized
+        dist[node] = d
+        for nbr, w in graph[node]:
+            if nbr not in dist:
+                heapq.heappush(heap, (d + w, nbr))
+    return max(dist.values()) if len(dist) == n else -1''',
+         complexity="Time O(E log V), space O(V+E).",
+         pitfalls="Returning the sum instead of the max distance; forgetting the -1 case when a node is unreachable.",
+         example="network_delay_time([[2,1,1],[2,3,1],[3,4,1]], 4, 2) -> 2."),
+    dict(cat="dsa", title="Shortest Path in Binary Matrix (8-directional BFS)",
+         answer="Find the shortest clear path from the top-left to the bottom-right cell of an n×n 0/1 grid, moving in any of 8 directions through 0-cells; return the number of cells on it, or -1. Unweighted shortest path = BFS: expand level by level from the start, marking visited cells, and return the length when you reach the target.",
+         tags=["shortest-path-binary-matrix","bfs","grid","8-directional","dsa"],
+         code='''# Shortest clear path top-left to bottom-right in a 0/1 grid (8-directional).
+from collections import deque
+def shortest_path_binary_matrix(grid):
+    n = len(grid)
+    if grid[0][0] == 1 or grid[n-1][n-1] == 1:
+        return -1                     # blocked start or end
+    queue = deque([(0, 0, 1)])        # (row, col, cells in path so far)
+    seen = {(0, 0)}
+    while queue:
+        r, c, length = queue.popleft()
+        if r == n - 1 and c == n - 1:
+            return length
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < n and 0 <= nc < n and grid[nr][nc] == 0 and (nr, nc) not in seen:
+                    seen.add((nr, nc))
+                    queue.append((nr, nc, length + 1))
+    return -1''',
+         complexity="Time O(n^2), space O(n^2).",
+         pitfalls="Skipping diagonal moves (8-directional, not 4); not marking cells seen when enqueuing (duplicates).",
+         example="shortest_path_binary_matrix([[0,0,0],[1,1,0],[1,1,0]]) -> 4."),
+    dict(cat="glossary", title="p-value",
+         answer="In hypothesis testing, the probability of observing data at least as extreme as yours IF the null hypothesis were true. A small p-value (e.g. <0.05) means the data would be surprising under the null, so you reject it. It is NOT the probability the hypothesis is true, and 'not significant' isn't proof of no effect — always report an effect size too.",
+         tags=["p-value","hypothesis-testing","statistics","significance"],
+         example="An A/B test shows a 2% lift with p=0.01: if the change truly did nothing, you'd see a lift this big only 1% of the time — evidence the lift is real."),
+    dict(cat="glossary", title="Confidence interval",
+         answer="A range of plausible values for an unknown quantity, computed so that if you repeated the experiment many times, X% (e.g. 95%) of such intervals would contain the true value. Wider intervals mean more uncertainty (small samples). It conveys precision, not just a single point estimate.",
+         tags=["confidence-interval","statistics","uncertainty","estimation"],
+         example="A model's accuracy is 0.86 with a 95% CI of [0.83, 0.89] — narrow enough to trust it's meaningfully above 0.80, unlike a wide [0.70, 0.95]."),
+    dict(cat="glossary", title="Statistical power",
+         answer="The probability that a test correctly DETECTS a real effect (rejects a false null) — i.e. 1 minus the false-negative rate. Power rises with larger sample size, a bigger true effect, and lower noise. Under-powered experiments miss real effects and give unreliable, often exaggerated results when they do 'find' something.",
+         tags=["statistical-power","hypothesis-testing","sample-size","experimentation"],
+         example="To detect a 1% conversion lift at 80% power, an A/B test may need hundreds of thousands of users; run it under-powered and you'll likely see 'no significant effect' even if the lift is real."),
+    dict(cat="glossary", title="Simpson's paradox",
+         answer="A trend that appears in separate groups can REVERSE when the groups are combined (or vice versa), usually due to a lurking confounder or unequal group sizes. It's a warning that aggregated statistics can mislead — always check whether a relationship holds within the relevant subgroups.",
+         tags=["simpsons-paradox","statistics","confounding","aggregation","bias"],
+         example="A treatment looks worse overall but is actually better for BOTH mild and severe patients — the aggregate flipped because severe cases (lower success rate) were over-represented in the treatment group."),
+    dict(cat="glossary", title="Confounding variable",
+         answer="A variable that influences BOTH the supposed cause and the effect, creating a spurious association between them. Ignoring it leads to wrong causal conclusions; you control for it via randomization, stratification, or by including it in the model. It's the core reason correlation isn't causation.",
+         tags=["confounding","causal-inference","bias","statistics"],
+         example="Ice-cream sales correlate with drownings — but 'hot weather' is the confounder driving both; controlling for temperature makes the ice-cream/drowning link vanish."),
+    dict(cat="ml_coding", title="k-Nearest Neighbors (from scratch)",
+         answer="A lazy, non-parametric classifier: to predict a query's label, find the k training points closest to it (by Euclidean distance) and take the majority vote of their labels. There's no training beyond storing the data; all work happens at query time, which makes prediction O(n) per query.",
+         tags=["knn","k-nearest-neighbors","classification","distance","ml-coding"],
+         code='''# k-Nearest-Neighbors: predict the majority label among the k closest points.
+import math
+from collections import Counter
+def knn_predict(train_X, train_y, query, k):
+    dists = []
+    for x, y in zip(train_X, train_y):
+        d = math.sqrt(sum((a - b) ** 2 for a, b in zip(x, query)))  # Euclidean
+        dists.append((d, y))
+    dists.sort(key=lambda t: t[0])                # nearest first
+    top_k = [label for _, label in dists[:k]]
+    return Counter(top_k).most_common(1)[0][0]    # majority vote''',
+         complexity="Time O(n*d + n log n) per query, space O(n*d).",
+         pitfalls="Not scaling features (large-range features dominate the distance); even k causing vote ties.",
+         example="knn_predict([[0,0],[0,1],[5,5],[5,4]], [0,0,1,1], [0,0.5], 3) -> 0."),
+    dict(cat="ml_coding", title="Logistic Regression prediction (from scratch)",
+         answer="A logistic-regression model outputs a probability by squashing a linear combination of features through the SIGMOID: p = 1/(1+e^-(w·x+b)). Classify positive when p >= 0.5. This is the forward/prediction pass (training would fit w and b via gradient descent on log-loss).",
+         tags=["logistic-regression","sigmoid","classification","ml-coding"],
+         code='''# Logistic regression prediction: sigmoid of a linear score -> probability.
+import math
+def sigmoid(z):
+    return 1.0 / (1.0 + math.exp(-z))
+
+def logistic_predict(weights, bias, x):
+    z = sum(w * xi for w, xi in zip(weights, x)) + bias   # linear score
+    prob = sigmoid(z)                                      # squash to (0,1)
+    return prob, 1 if prob >= 0.5 else 0                   # probability and class''',
+         complexity="Time O(d) per prediction, space O(1).",
+         pitfalls="math.exp overflow for very negative z (clip z or use a stable sigmoid); wrong decision threshold for imbalanced data.",
+         example="logistic_predict([0.5, -0.5], 0.0, [2, 0]) -> (~0.73, 1)."),
+    dict(cat="conceptual", title="Why is accuracy a poor metric for imbalanced classification?",
+         answer="When one class dominates (say 99% negatives), a trivial model that always predicts the majority class scores 99% accuracy while being useless — it never catches the rare positive you actually care about (fraud, disease). Accuracy rewards the easy majority and hides failure on the minority. Use precision/recall, F1, PR-AUC, or class-weighted metrics that focus on the rare class, and choose the threshold by the real cost of false positives vs false negatives.",
+         tags=["imbalance","accuracy","metrics","precision-recall","why"],
+         example="A fraud detector that flags nothing gets 99.8% accuracy on a 0.2%-fraud dataset yet catches zero fraud — recall (0%) exposes it instantly where accuracy lied."),
 ]
 
 
