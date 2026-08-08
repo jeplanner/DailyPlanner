@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Interview Prep — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px 16px 72px; }
+  h1 { font-size: 22px; font-weight: 900; letter-spacing: -.02em; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 16px; }
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 16px; padding: 16px; }
+  h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 26px 0 10px; }
+  input, select, textarea { font: inherit; color: var(--color-text); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 10px; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: var(--color-primary); }
+  .btn { font: inherit; font-weight: 700; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 10px; padding: 9px 13px; cursor: pointer; }
+  .btn.primary { background: var(--color-primary); color: #fff; border-color: transparent; }
+  .btn.sm { padding: 5px 9px; font-size: 12.5px; }
+
+  /* ── Header / hero ── */
+  .hero { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .hero .ring { flex: none; position: relative; width: 128px; height: 128px; }
+  .hero .ring svg { transform: rotate(-90deg); }
+  .hero .ring .pct { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .hero .ring .pct b { font-size: 30px; font-weight: 900; letter-spacing: -.02em; line-height: 1; }
+  .hero .ring .pct span { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--color-text-secondary); margin-top: 3px; }
+  .hero .meta { flex: 1; min-width: 220px; }
+  .role-input { width: 100%; font-size: 16px; font-weight: 800; padding: 8px 10px; margin-bottom: 8px; }
+  .hero-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .field-inline { display: flex; flex-direction: column; gap: 3px; }
+  .field-inline label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); }
+  .field-inline input { padding: 7px 9px; font-size: 14px; }
+  .field-inline input.mins { width: 70px; }
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .chip { display: flex; align-items: baseline; gap: 6px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 6px 12px; }
+  .chip b { font-size: 16px; font-weight: 900; letter-spacing: -.01em; }
+  .chip span { font-size: 11px; color: var(--color-text-secondary); font-weight: 600; }
+  .chip.count b { color: #b91c1c; }
+  .chip.streak b { color: #ea580c; } .chip.days b { color: #4338ca; }
+
+  /* ── Coach banner ── */
+  .coach { margin-top: 14px; border-radius: 16px; padding: 15px 16px; border: 1px solid; }
+  .coach p { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.4; }
+  .coach .q { margin-top: 8px; font-size: 12.5px; font-weight: 500; font-style: italic; opacity: .85; }
+  .coach.scold { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .coach.push { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+  .coach.cheer { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .coach.celebrate { background: #eef2ff; border-color: #c7d2fe; color: #3730a3; }
+  html.dark .coach.scold { background: #2a1414; } html.dark .coach.push { background: #2a1c10; }
+  html.dark .coach.cheer { background: #0f2a20; } html.dark .coach.celebrate { background: #161a33; }
+
+  /* ── Today panel ── */
+  .today-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 620px) { .today-grid { grid-template-columns: 1fr; } .hero .ring { margin: 0 auto; } }
+  .prog { height: 12px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; overflow: hidden; margin: 8px 0; }
+  .prog > i { display: block; height: 100%; background: #10b981; border-radius: 999px; width: 0; transition: width .3s; }
+  .mini-lbl { font-size: 12px; color: var(--color-text-secondary); font-weight: 600; }
+  .log-form { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .log-form .row { display: flex; gap: 8px; }
+  .log-form input.min { width: 90px; }
+  .log-form input.foc { flex: 1; }
+  .log-form input, .log-form textarea { padding: 9px 11px; font-size: 14px; }
+  .focus-list { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+  .focus-item { display: flex; align-items: center; gap: 8px; font-size: 13.5px; padding: 8px 10px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 10px; }
+  .focus-item .cat { font-size: 10.5px; color: var(--color-text-secondary); font-weight: 700; margin-left: auto; white-space: nowrap; }
+  .focus-item.weak { border-left: 3px solid #ef4444; }
+  .focus-item.story { border-left: 3px solid #6366f1; }
+  .breakdown { display: flex; gap: 8px; margin-top: 10px; }
+  .bd { flex: 1; text-align: center; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 10px; padding: 8px; }
+  .bd b { font-size: 17px; font-weight: 900; } .bd span { display: block; font-size: 10.5px; color: var(--color-text-secondary); font-weight: 600; margin-top: 2px; }
+
+  /* ── Topics / syllabus ── */
+  .cat-block { margin-bottom: 14px; }
+  .cat-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 800; color: var(--color-text); margin: 0 2px 6px; }
+  .cat-head .n { font-size: 11px; color: var(--color-text-secondary); font-weight: 600; }
+  .topic { display: flex; align-items: center; gap: 10px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 11px; padding: 9px 12px; margin-bottom: 6px; }
+  .topic .t { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; }
+  .pips { display: flex; gap: 4px; flex: none; }
+  .pip { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg); cursor: pointer; padding: 0; }
+  .pip.on { background: linear-gradient(135deg,#f59e0b,#10b981); border-color: transparent; }
+  .topic .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 3px; flex: none; }
+  .topic .del svg { width: 15px; height: 15px; }
+  .add-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .add-row input { flex: 1; min-width: 160px; padding: 9px 11px; font-size: 14px; }
+  .add-row select { padding: 9px 11px; font-size: 14px; }
+
+  /* ── Stories ── */
+  .story { border: 1px solid var(--color-border); border-radius: 13px; padding: 12px 13px; margin-bottom: 10px; background: var(--color-surface); }
+  .story.done { border-color: #a7f3d0; }
+  .story-head { display: flex; gap: 8px; align-items: center; }
+  .story-head input.title { flex: 1; font-weight: 700; font-size: 15px; padding: 7px 9px; }
+  .story-head input.comp { width: 130px; font-size: 13px; padding: 7px 9px; }
+  .star-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
+  @media (max-width: 620px) { .star-grid { grid-template-columns: 1fr; } .story-head { flex-wrap: wrap; } .story-head input.comp { width: 100%; } }
+  .star-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); }
+  .star-grid textarea { min-height: 58px; resize: vertical; padding: 8px 10px; font-size: 13.5px; }
+  .story-foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .story-foot .reh { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .story-foot .spacer { flex: 1; }
+  .story-foot .del { background: none; border: none; color: #ef4444; cursor: pointer; font-weight: 600; font-size: 13px; }
+
+  .sess { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 8px 11px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; margin-bottom: 6px; }
+  .sess .m { font-weight: 800; color: #047857; white-space: nowrap; }
+  .sess .d { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
+  .sess .f { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 3px; }
+  .sess .del svg { width: 14px; height: 14px; }
+  .empty { color: var(--color-text-secondary); font-size: 13px; padding: 8px 2px; }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="wrap">
+  <h1>🎯 Interview Prep Coach</h1>
+  <p class="sub">Build readiness, keep your streak, and let the coach keep you honest.</p>
+
+  <!-- HERO -->
+  <div class="card">
+    <div class="hero">
+      <div class="ring">
+        <svg width="128" height="128" viewBox="0 0 128 128">
+          <circle cx="64" cy="64" r="52" fill="none" stroke="var(--color-border)" stroke-width="12"/>
+          <circle id="ring-fill" cx="64" cy="64" r="52" fill="none" stroke="#10b981" stroke-width="12"
+                  stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+        </svg>
+        <div class="pct"><b id="readiness">0%</b><span>ready</span></div>
+      </div>
+      <div class="meta">
+        <input class="role-input" id="role" placeholder="Target role" maxlength="140">
+        <div class="hero-row">
+          <div class="field-inline">
+            <label>Interview date</label>
+            <input type="date" id="target-date">
+          </div>
+          <div class="field-inline">
+            <label>Daily goal</label>
+            <input type="number" class="mins" id="goal" min="0" max="600" step="5" inputmode="numeric">
+          </div>
+          <div class="field-inline"><label>&nbsp;</label><span class="mini-lbl" style="padding:7px 0;">min/day</span></div>
+        </div>
+        <div class="chips">
+          <div class="chip days"><b id="days-left">–</b><span>days left</span></div>
+          <div class="chip streak"><b id="streak">0</b><span>day streak 🔥</span></div>
+          <div class="chip"><b id="mastered">0</b><span>topics mastered</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="coach cheer" id="coach">
+      <p id="coach-msg">Loading your coach…</p>
+      <div class="q" id="coach-quote"></div>
+    </div>
+  </div>
+
+  <!-- TODAY -->
+  <h2>Today's focus</h2>
+  <div class="today-grid">
+    <div class="card">
+      <div class="mini-lbl"><b id="today-min">0</b> / <span id="today-goal">0</span> min practiced today</div>
+      <div class="prog"><i id="today-prog"></i></div>
+      <form class="log-form" id="log-form" autocomplete="off">
+        <div class="row">
+          <input class="min" id="log-min" type="number" min="1" max="1440" inputmode="numeric" placeholder="min" required>
+          <input class="foc" id="log-focus" maxlength="140" placeholder="What did you work on?">
+        </div>
+        <textarea id="log-reflect" rows="2" maxlength="4000" placeholder="Reflection / what to improve (optional)"></textarea>
+        <button class="btn primary" type="submit">＋ Log practice</button>
+      </form>
+      <div class="breakdown">
+        <div class="bd"><b id="bd-topics">0%</b><span>Topics</span></div>
+        <div class="bd"><b id="bd-stories">0%</b><span>Stories</span></div>
+        <div class="bd"><b id="bd-consistency">0%</b><span>Consistency</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="mini-lbl" style="margin-bottom:8px;">Attack these next</div>
+      <div class="focus-list" id="focus-list"></div>
+    </div>
+  </div>
+
+  <!-- SYLLABUS -->
+  <h2>Syllabus &amp; confidence</h2>
+  <div id="topics"></div>
+  <div class="card" style="margin-top:6px;">
+    <div class="add-row">
+      <input id="add-topic-title" maxlength="140" placeholder="Add a topic…">
+      <select id="add-topic-cat"></select>
+      <button class="btn" id="add-topic-btn" type="button">Add</button>
+    </div>
+  </div>
+
+  <!-- STORIES -->
+  <h2>STAR story bank</h2>
+  <div id="stories"></div>
+  <button class="btn" id="add-story-btn" type="button" style="margin-top:4px;">＋ Add a story</button>
+
+  <!-- LOG -->
+  <h2>Recent practice</h2>
+  <div id="sessions"></div>
+</div>
+
+<script>
+(function(){
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const RING_C = 326.7;
+  let data = null;
+
+  const api = async (path, opts={}) => {
+    const r = await fetch(path, {
+      credentials:"same-origin",
+      headers: opts.body ? {"Content-Type":"application/json","X-CSRFToken":CSRF} : {"X-CSRFToken":CSRF},
+      ...opts,
+    });
+    let j = {}; try { j = await r.json(); } catch(_){}
+    if (!r.ok) throw new Error(j.error || "Something went wrong");
+    return j;
+  };
+
+  const fmtDate = (iso) => { if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return isNaN(d)?iso:d.toLocaleDateString("en-IN",{day:"numeric",month:"short"}); };
+
+  function render(){
+    const p = data.plan||{}, s = data.stats||{};
+    if (data.migration_pending) {
+      $("coach").className = "coach scold";
+      $("coach-msg").textContent = "Run MIGRATION_INTERVIEW_PREP.sql on Supabase to activate your prep coach.";
+    }
+    // Hero
+    $("role").value = p.role_title || "";
+    $("target-date").value = p.target_date || "";
+    $("goal").value = p.daily_goal_minutes ?? 45;
+    const rd = s.readiness || 0;
+    $("readiness").textContent = rd + "%";
+    $("ring-fill").style.strokeDashoffset = (RING_C * (1 - rd/100)).toFixed(1);
+    $("ring-fill").style.stroke = rd>=70 ? "#10b981" : rd>=40 ? "#f59e0b" : "#ef4444";
+    $("days-left").textContent = (s.days_left==null) ? "–" : s.days_left;
+    $("streak").textContent = s.streak || 0;
+    $("mastered").textContent = `${s.topics_mastered||0}/${s.topics_total||0}`;
+    // Coach
+    if (!data.migration_pending) {
+      $("coach").className = "coach " + (s.tone || "cheer");
+      $("coach-msg").textContent = s.coach || "";
+      $("coach-quote").textContent = s.quote ? `"${s.quote}" — ${s.quote_by}` : "";
+    }
+    // Today
+    const goal = p.daily_goal_minutes || 0, mt = s.minutes_today || 0;
+    $("today-min").textContent = mt; $("today-goal").textContent = goal;
+    $("today-prog").style.width = (goal>0 ? Math.min(100, Math.round(mt/goal*100)) : 0) + "%";
+    $("today-prog").style.background = (s.goal_met ? "#10b981" : "#f59e0b");
+    $("bd-topics").textContent = (s.topic_score||0)+"%";
+    $("bd-stories").textContent = (s.story_score||0)+"%";
+    $("bd-consistency").textContent = (s.consistency||0)+"%";
+    // Focus list
+    const fl = $("focus-list");
+    const weak = (s.weakest||[]).map(t=>`<div class="focus-item weak"><span>${esc(t.title)}</span><span class="cat">conf ${t.confidence}/4 · ${esc(t.category)}</span></div>`);
+    const reh = (s.to_rehearse||[]).map(x=>`<div class="focus-item story"><span>Rehearse: ${esc(x.title)}</span><span class="cat">${esc(x.competency)}</span></div>`);
+    fl.innerHTML = (weak.concat(reh).join("")) || '<div class="empty">All caught up — add topics or stories to get sharper.</div>';
+    // Categories select
+    const sel = $("add-topic-cat");
+    if (sel && !sel.children.length) sel.innerHTML = (data.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
+    renderTopics();
+    renderStories();
+    renderSessions();
+    if (window.feather) feather.replace();
+  }
+
+  function renderTopics(){
+    const wrap = $("topics");
+    const cats = data.categories || [];
+    const byCat = {};
+    (data.topics||[]).forEach(t=>{ (byCat[t.category]=byCat[t.category]||[]).push(t); });
+    wrap.innerHTML = cats.filter(c=>(byCat[c.key]||[]).length).map(c=>{
+      const list = byCat[c.key];
+      const avg = Math.round(list.reduce((a,t)=>a+(t.confidence||0),0)/list.length/4*100);
+      const rows = list.map(t=>`
+        <div class="topic" data-id="${t.id}">
+          <div class="t">${esc(t.title)}</div>
+          <div class="pips">${[1,2,3,4].map(i=>`<button class="pip ${t.confidence>=i?'on':''}" data-conf="${i}" title="Set confidence ${i}/4"></button>`).join("")}</div>
+          <button class="del" data-del title="Remove"><i data-feather="x"></i></button>
+        </div>`).join("");
+      return `<div class="cat-block"><div class="cat-head">${esc(c.label)} <span class="n">· ${avg}% avg</span></div>${rows}</div>`;
+    }).join("") || '<div class="card"><div class="empty">No topics yet — add your syllabus below.</div></div>';
+  }
+
+  function renderStories(){
+    const wrap = $("stories");
+    wrap.innerHTML = (data.stories||[]).map(s=>`
+      <div class="story ${s.rehearsed?'done':''}" data-id="${s.id}">
+        <div class="story-head">
+          <input class="title" value="${esc(s.title)}" placeholder="Story title" maxlength="140">
+          <input class="comp" value="${esc(s.competency||'')}" placeholder="Competency" maxlength="140">
+        </div>
+        <div class="star-grid">
+          <label>Situation<textarea data-f="situation" placeholder="Context…">${esc(s.situation||'')}</textarea></label>
+          <label>Task<textarea data-f="task" placeholder="Your responsibility…">${esc(s.task||'')}</textarea></label>
+          <label>Action<textarea data-f="action" placeholder="What you did…">${esc(s.action||'')}</textarea></label>
+          <label>Result<textarea data-f="result" placeholder="Measurable outcome…">${esc(s.result||'')}</textarea></label>
+        </div>
+        <div class="story-foot">
+          <label class="reh"><input type="checkbox" data-reh ${s.rehearsed?'checked':''}> Rehearsed ✓</label>
+          <span class="spacer"></span>
+          <button class="btn sm" data-save type="button">Save</button>
+          <button class="del" data-del type="button">Delete</button>
+        </div>
+      </div>`).join("") || '<div class="card"><div class="empty">No stories yet.</div></div>';
+  }
+
+  function renderSessions(){
+    const wrap = $("sessions");
+    wrap.innerHTML = (data.sessions||[]).map(s=>`
+      <div class="sess" data-id="${s.id}">
+        <span class="m">${s.minutes}m</span>
+        <span class="d">${fmtDate(s.practiced_on)}</span>
+        <span class="f">${esc(s.focus||'—')}</span>
+        <button class="del" data-del title="Delete"><i data-feather="trash-2"></i></button>
+      </div>`).join("") || '<div class="empty">No practice logged yet. Log your first session above 👆</div>';
+  }
+
+  async function reload(){
+    try { data = await api("/api/interview-prep"); render(); }
+    catch(e){ if(window.toast) toast(e.message||"Couldn't load", "error"); }
+  }
+
+  // ── Plan edits (auto-save) ──
+  const savePlan = async (patch) => { try { await api("/api/interview-prep/plan",{method:"POST",body:JSON.stringify(patch)}); reload(); } catch(e){ toast(e.message,"error"); } };
+  $("role").addEventListener("change", e => savePlan({role_title: e.target.value}));
+  $("target-date").addEventListener("change", e => savePlan({target_date: e.target.value}));
+  $("goal").addEventListener("change", e => savePlan({daily_goal_minutes: e.target.value}));
+
+  // ── Log practice ──
+  $("log-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const minutes = $("log-min").value;
+    if (!minutes) return;
+    try {
+      await api("/api/interview-prep/sessions",{method:"POST",body:JSON.stringify({
+        minutes, focus:$("log-focus").value, reflection:$("log-reflect").value,
+      })});
+      $("log-form").reset();
+      toast("Logged — nice work 💪","success");
+      reload();
+    } catch(err){ toast(err.message,"error"); }
+  });
+
+  // ── Topics ──
+  $("topics").addEventListener("click", async (e) => {
+    const row = e.target.closest(".topic"); if(!row) return;
+    const id = row.dataset.id;
+    const pip = e.target.closest(".pip");
+    if (pip) {
+      const t = (data.topics||[]).find(x=>x.id===id); if(!t) return;
+      let conf = parseInt(pip.dataset.conf,10);
+      if (t.confidence === conf) conf = conf - 1;   // click current level to decrement
+      t.confidence = conf; renderTopics(); if(window.feather) feather.replace();
+      try { await api(`/api/interview-prep/topics/${id}`,{method:"POST",body:JSON.stringify({confidence:conf})}); reload(); }
+      catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    if (e.target.closest("[data-del]")) {
+      if(!confirm("Remove this topic?")) return;
+      try { await api(`/api/interview-prep/topics/${id}/delete`,{method:"POST"}); reload(); }
+      catch(err){ toast(err.message,"error"); }
+    }
+  });
+  const addTopic = async () => {
+    const title = $("add-topic-title").value.trim();
+    if(!title){ $("add-topic-title").focus(); return; }
+    try { await api("/api/interview-prep/topics",{method:"POST",body:JSON.stringify({title, category:$("add-topic-cat").value})});
+      $("add-topic-title").value=""; reload(); }
+    catch(err){ toast(err.message,"error"); }
+  };
+  $("add-topic-btn").addEventListener("click", addTopic);
+  $("add-topic-title").addEventListener("keydown", e => { if(e.key==="Enter"){ e.preventDefault(); addTopic(); } });
+
+  // ── Stories ──
+  $("stories").addEventListener("click", async (e) => {
+    const card = e.target.closest(".story"); if(!card) return;
+    const id = card.dataset.id;
+    if (e.target.closest("[data-save]")) {
+      const body = {
+        title: card.querySelector(".title").value,
+        competency: card.querySelector(".comp").value,
+      };
+      card.querySelectorAll("textarea[data-f]").forEach(t => body[t.dataset.f] = t.value);
+      try { await api(`/api/interview-prep/stories/${id}`,{method:"POST",body:JSON.stringify(body)}); toast("Saved","success"); reload(); }
+      catch(err){ toast(err.message,"error"); }
+    } else if (e.target.closest("[data-del]")) {
+      if(!confirm("Delete this story?")) return;
+      try { await api(`/api/interview-prep/stories/${id}/delete`,{method:"POST"}); reload(); }
+      catch(err){ toast(err.message,"error"); }
+    }
+  });
+  $("stories").addEventListener("change", async (e) => {
+    const reh = e.target.closest("[data-reh]"); if(!reh) return;
+    const id = e.target.closest(".story").dataset.id;
+    try { await api(`/api/interview-prep/stories/${id}`,{method:"POST",body:JSON.stringify({rehearsed:reh.checked})});
+      if(reh.checked && window.toast) toast("Story locked in 🔒","success"); reload(); }
+    catch(err){ toast(err.message,"error"); }
+  });
+  $("add-story-btn").addEventListener("click", async () => {
+    try { await api("/api/interview-prep/stories",{method:"POST",body:JSON.stringify({title:"New story"})}); reload(); }
+    catch(err){ toast(err.message,"error"); }
+  });
+
+  // ── Sessions ──
+  $("sessions").addEventListener("click", async (e) => {
+    if (!e.target.closest("[data-del]")) return;
+    const id = e.target.closest(".sess").dataset.id;
+    try { await api(`/api/interview-prep/sessions/${id}/delete`,{method:"POST"}); reload(); }
+    catch(err){ toast(err.message,"error"); }
+  });
+
+  reload();
+})();
+</script>
+</body>
+</html>

@@ -92,6 +92,7 @@ def create_app():
     from routes.admin import admin_bp
     from routes.expenses import expenses_bp
     from routes.investments import investments_bp
+    from routes.interview_prep import interview_prep_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(system_bp)
@@ -133,6 +134,7 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(expenses_bp)
     app.register_blueprint(investments_bp)
+    app.register_blueprint(interview_prep_bp)
 
     # Expose the bedtime-stories allowlist flag to every template so the
     # nav can hide the link from non-allowed users without each template
