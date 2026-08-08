@@ -168,6 +168,28 @@
   .sess .del { background: none; border: none; color: #ef4444; cursor: pointer; padding: 3px; }
   .sess .del svg { width: 14px; height: 14px; }
   .empty { color: var(--color-text-secondary); font-size: 13px; padding: 8px 2px; }
+
+  /* ── Mobile ── */
+  @media (max-width: 640px) {
+    .wrap { padding: 12px 11px 72px; }
+    h1 { font-size: 20px; }
+    .today-grid { grid-template-columns: 1fr; }
+    .hero { gap: 12px; }
+    .hero .ring { margin: 0 auto; }
+    .hero .meta { min-width: 0; }
+    .breakdown { flex-wrap: wrap; }
+    /* Bank controls stack on phones so nothing overflows */
+    .qbank-controls { flex-direction: column; align-items: stretch; }
+    .qbank-controls select, .qbank-controls input.search, .qbank-controls button { width: 100%; box-sizing: border-box; }
+    .qbank-only { padding: 2px 0; }
+    /* Cards: drop the wide left indent, shrink monospace so diagrams/code fit */
+    .q-body { padding: 0 11px 12px 12px; }
+    .q-head { padding: 10px 11px; }
+    .sd-arch, .code { font-size: 10.5px; padding: 8px 9px; -webkit-overflow-scrolling: touch; }
+    .sd-sec .b, .fld { font-size: 13px; }
+    .trend-controls { flex-wrap: wrap; }
+    .star b { width: 18px; height: 18px; }
+  }
 </style>
 {% include "_pwa_head.html" %}
 </head>
