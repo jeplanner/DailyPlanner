@@ -125,7 +125,11 @@
   .star b { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; font-weight: 800; color: #fff; margin-right: 7px; vertical-align: 1px; }
   .star.s b { background: #6366f1; } .star.t b { background: #0ea5e9; } .star.a b { background: #f59e0b; } .star.r b { background: #10b981; }
   .q-tip { font-size: 12.5px; font-style: italic; color: var(--color-text-secondary); margin: 8px 0 10px; }
-  .q-body .btn { }
+  .q-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .q-edited { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 999px; padding: 2px 7px; flex: none; }
+  .q-edit label { display: block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 8px 0 3px; }
+  .q-edit textarea { width: 100%; box-sizing: border-box; min-height: 46px; resize: vertical; padding: 8px 10px; font-size: 13.5px; }
+  .q-edit textarea.q { min-height: 40px; font-weight: 600; }
 
   .sess { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 8px 11px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; margin-bottom: 6px; }
   .sess .m { font-weight: 800; color: #047857; white-space: nowrap; }
@@ -455,6 +459,7 @@
 
   // ── Behavioral question bank ──
   let QBANK = null;
+  let editingQ = null;
   const qCatLabel = {};
   const PRAC_KEY = "ip_practiced";
   const practiced = new Set();
@@ -473,22 +478,43 @@
       (!term || q.q.toLowerCase().includes(term) || (qCatLabel[q.cat]||"").toLowerCase().includes(term))
     );
     bankProg();
-    $("qbank-list").innerHTML = list.map(q => `
-      <div class="q-card ${practiced.has(q.id)?'done':''}" data-id="${q.id}">
+    const ta = (f, cls, val) => `<label>${f}<textarea class="${cls}" data-e="${cls}">${esc(val)}</textarea></label>`;
+    $("qbank-list").innerHTML = list.map(q => {
+      const isEd = editingQ === q.id;
+      const body = isEd ? `
+        <div class="q-edit">
+          ${ta("Question", "q", q.q)}
+          ${ta("Situation", "situation", q.s)}
+          ${ta("Task", "task", q.t)}
+          ${ta("Action", "action", q.a)}
+          ${ta("Result", "result", q.r)}
+          ${ta("Tip", "tip", q.tip)}
+          <div class="q-actions">
+            <button class="btn sm primary" data-savq type="button">Save</button>
+            <button class="btn sm" data-cancelq type="button">Cancel</button>
+          </div>
+        </div>` : `
+        <div class="star s"><b>S</b>${esc(q.s)}</div>
+        <div class="star t"><b>T</b>${esc(q.t)}</div>
+        <div class="star a"><b>A</b>${esc(q.a)}</div>
+        <div class="star r"><b>R</b>${esc(q.r)}</div>
+        <div class="q-tip">💡 ${esc(q.tip)}</div>
+        <div class="q-actions">
+          <button class="btn sm" data-use type="button">＋ Use as my story</button>
+          <button class="btn sm" data-edit type="button">✎ Edit</button>
+          ${q.edited ? '<button class="btn sm" data-reset type="button">↺ Reset</button>' : ''}
+        </div>`;
+      return `
+      <div class="q-card ${practiced.has(q.id)?'done':''} ${isEd?'open':''}" data-id="${q.id}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${practiced.has(q.id)?'checked':''} title="Mark practiced">
           <span class="q-text">${esc(q.q)}</span>
+          ${q.edited ? '<span class="q-edited">edited</span>' : ''}
           <span class="q-badge">${esc(qCatLabel[q.cat]||q.cat)}</span>
         </div>
-        <div class="q-body">
-          <div class="star s"><b>S</b>${esc(q.s)}</div>
-          <div class="star t"><b>T</b>${esc(q.t)}</div>
-          <div class="star a"><b>A</b>${esc(q.a)}</div>
-          <div class="star r"><b>R</b>${esc(q.r)}</div>
-          <div class="q-tip">💡 ${esc(q.tip)}</div>
-          <button class="btn sm" data-use type="button">＋ Use as my story</button>
-        </div>
-      </div>`).join("") || '<div class="card"><div class="empty">No questions match.</div></div>';
+        <div class="q-body">${body}</div>
+      </div>`;
+    }).join("") || '<div class="card"><div class="empty">No questions match.</div></div>';
   }
 
   async function loadBank(){
@@ -527,7 +553,34 @@
       } catch(err){ toast(err.message,"error"); }
       return;
     }
-    card.classList.toggle("open");
+    if (e.target.closest("[data-edit]")) { editingQ = id; renderBank(); return; }
+    if (e.target.closest("[data-cancelq]")) { editingQ = null; renderBank(); return; }
+    if (e.target.closest("[data-savq]")) {
+      const vals = {};
+      card.querySelectorAll("textarea[data-e]").forEach(t => vals[t.dataset.e] = t.value);
+      if (!(vals.q||"").trim()) { toast("The question can't be empty","error"); return; }
+      try {
+        await api(`/api/interview-prep/questions/${id}`,{method:"POST",body:JSON.stringify({
+          question: vals.q, situation: vals.situation, task: vals.task,
+          action: vals.action, result: vals.result, tip: vals.tip,
+        })});
+        // Reflect locally without a refetch.
+        q.q=vals.q; q.s=vals.situation; q.t=vals.task; q.a=vals.action; q.r=vals.result; q.tip=vals.tip; q.edited=true;
+        editingQ = null; renderBank();
+        toast("Saved your version ✍️","success");
+      } catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    if (e.target.closest("[data-reset]")) {
+      if (!confirm("Reset to the original answer? Your edits will be discarded.")) return;
+      try {
+        await api(`/api/interview-prep/questions/${id}/reset`,{method:"POST"});
+        editingQ = null; toast("Reverted to the original","info"); loadBank();
+      } catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    // Toggle expand only when the header itself is clicked.
+    if (e.target.closest(".q-head")) card.classList.toggle("open");
   });
 
   reload();

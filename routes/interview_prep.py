@@ -344,18 +344,111 @@ def dashboard():
 
 # ─────────── plan settings ───────────────────────────────────
 
+def _valid_qid(qid):
+    """True if qid is a real bank id like 'q17'."""
+    if not (isinstance(qid, str) and qid.startswith("q")):
+        return False
+    try:
+        return 0 <= int(qid[1:]) < len(QUESTIONS)
+    except ValueError:
+        return False
+
+
+# Bank field -> override column. The bank uses short keys (s/t/a/r); the
+# table stores full names.
+_OVERRIDE_MAP = {"q": "question", "s": "situation", "t": "task",
+                 "a": "action", "r": "result", "tip": "tip"}
+
+
 @interview_prep_bp.route("/api/interview-prep/questions", methods=["GET"])
 @login_required
 def question_bank():
     """The behavioral question bank: 100+ common questions with STAR model
-    answers, grouped by competency. Static/read-only content the user
-    studies and can adapt into their own story bank."""
-    items = [{"id": f"q{i}", **q} for i, q in enumerate(QUESTIONS)]
+    answers, grouped by competency. Static reference content, with each
+    answer overlaid by the user's own edits (interview_question_overrides)
+    when present, so edits persist across deploys."""
+    user_id = session["user_id"]
+    items = [{"id": f"q{i}", **q, "edited": False} for i, q in enumerate(QUESTIONS)]
+
+    try:
+        overrides = get("interview_question_overrides", {
+            "user_id": f"eq.{user_id}", "deleted_at": "is.null",
+            "select": "question_id,question,situation,task,action,result,tip",
+            "limit": "1000",
+        }) or []
+    except Exception:
+        # Table not created yet — just serve the originals.
+        overrides = []
+    ovmap = {o.get("question_id"): o for o in overrides}
+
+    for it in items:
+        o = ovmap.get(it["id"])
+        if not o:
+            continue
+        # Only apply a non-empty edited question; other fields may be blank.
+        if (o.get("question") or "").strip():
+            it["q"] = o["question"]
+        for short, col in _OVERRIDE_MAP.items():
+            if short == "q":
+                continue
+            if o.get(col) is not None:
+                it[short] = o[col]
+        it["edited"] = True
+
     return jsonify({
         "categories": [{"key": k, "label": v} for k, v in QUESTION_CATEGORIES.items()],
         "questions": items,
         "total": len(items),
     })
+
+
+@interview_prep_bp.route("/api/interview-prep/questions/<qid>", methods=["POST"])
+@login_required
+def save_question_override(qid):
+    """Upsert the user's edited copy of a bank question."""
+    user_id = session["user_id"]
+    if not _valid_qid(qid):
+        return jsonify({"error": "Unknown question"}), 404
+    data = request.get_json(silent=True) or {}
+    question = (data.get("question") or "").strip()[:_MAX_TEXT]
+    if not question:
+        return jsonify({"error": "The question can't be empty"}), 400
+    payload = {
+        "user_id": user_id,
+        "question_id": qid,
+        "question": question,
+        "situation": (data.get("situation") or "").strip()[:_MAX_TEXT] or None,
+        "task": (data.get("task") or "").strip()[:_MAX_TEXT] or None,
+        "action": (data.get("action") or "").strip()[:_MAX_TEXT] or None,
+        "result": (data.get("result") or "").strip()[:_MAX_TEXT] or None,
+        "tip": (data.get("tip") or "").strip()[:_MAX_TEXT] or None,
+        "deleted_at": None,          # revive if it was previously reset
+        "updated_at": _now_iso(),
+    }
+    try:
+        post("interview_question_overrides?on_conflict=user_id,question_id",
+             payload, prefer="resolution=merge-duplicates")
+    except Exception as e:
+        logger.exception("save question override failed: %s", e)
+        return jsonify({"error": "Couldn't save — run MIGRATION_INTERVIEW_QUESTION_OVERRIDES.sql?"}), 502
+    return jsonify({"ok": True})
+
+
+@interview_prep_bp.route("/api/interview-prep/questions/<qid>/reset", methods=["POST"])
+@login_required
+def reset_question_override(qid):
+    """Soft-delete the override so the original bank answer shows again."""
+    user_id = session["user_id"]
+    if not _valid_qid(qid):
+        return jsonify({"error": "Unknown question"}), 404
+    try:
+        update("interview_question_overrides",
+               params={"user_id": f"eq.{user_id}", "question_id": f"eq.{qid}"},
+               json={"deleted_at": _now_iso()})
+    except Exception as e:
+        logger.exception("reset question override failed: %s", e)
+        return jsonify({"error": "Couldn't reset"}), 502
+    return jsonify({"ok": True})
 
 
 @interview_prep_bp.route("/api/interview-prep/plan", methods=["POST"])
