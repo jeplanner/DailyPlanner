@@ -16,173 +16,215 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Evaluate Reverse Polish Notation",
-         answer="Evaluate an arithmetic expression written in postfix (Reverse Polish) form using a stack. Push numbers; on an operator, pop the two most recent operands, apply it, and push the result. Postfix needs no parentheses or precedence rules — the order encodes everything. Careful with operand order and integer division truncation.",
-         tags=["reverse-polish-notation","stack","expression","dsa"],
-         code='''# Evaluate an arithmetic expression in Reverse Polish (postfix) Notation.
-def eval_rpn(tokens):
-    stack = []
-    ops = {'+', '-', '*', '/'}
-    for tok in tokens:
-        if tok in ops:
-            b = stack.pop()               # right operand (popped first)
-            a = stack.pop()               # left operand
-            if tok == '+': stack.append(a + b)
-            elif tok == '-': stack.append(a - b)
-            elif tok == '*': stack.append(a * b)
-            else: stack.append(int(a / b))   # truncate toward zero
-        else:
-            stack.append(int(tok))        # a number -> push it
-    return stack[0]''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Swapping operand order for - and / (b is popped first); wrong truncation direction for division.",
-         example="eval_rpn(['2','1','+','3','*']) -> 9  ((2+1)*3)."),
-    dict(cat="dsa", title="Decode String (stack)",
-         answer="Decode strings like '3[a2[c]]' into 'accaccacc'. Use a stack: build the current string and a running count; on '[' push the (string-so-far, count) and reset; on ']' pop and expand the bracket by repeating the inner string. Handles arbitrary nesting because the stack remembers each outer context.",
-         tags=["decode-string","stack","string","nested","dsa"],
-         code='''# Decode strings like '3[a2[c]]' -> 'accaccacc' using a stack.
-def decode_string(s):
-    stack = []                            # holds (previous string, repeat count)
-    current = ""
+    dict(cat="dsa", title="Basic Calculator (with parentheses)",
+         answer="Evaluate a string expression with +, -, non-negative integers, and nested parentheses. Scan left to right accumulating the current number and a running result with a sign; on '(' push the result and sign and reset; on ')' fold the inner result back using the saved sign and outer result. No operator precedence needed since only + and -.",
+         tags=["basic-calculator","stack","expression","parsing","dsa"],
+         code='''# Evaluate a string with +, -, non-negative ints, and parentheses.
+def calculate(s):
+    result = 0
     num = 0
+    sign = 1                              # current sign: +1 or -1
+    stack = []                            # saves (outer result, outer sign) at '('
     for ch in s:
         if ch.isdigit():
             num = num * 10 + int(ch)      # build a multi-digit number
-        elif ch == '[':
-            stack.append((current, num))  # save the outer context
-            current, num = "", 0
-        elif ch == ']':
-            prev, count = stack.pop()
-            current = prev + current * count   # expand the bracketed part
-        else:
-            current += ch
-    return current''',
-         complexity="Time O(output length), space O(depth).",
-         pitfalls="Resetting num/current at the wrong moment; not supporting multi-digit counts.",
-         example="decode_string('3[a2[c]]') -> 'accaccacc'."),
-    dict(cat="dsa", title="Asteroid Collision (stack)",
-         answer="Simulate asteroids on a line: positive values move right, negative move left; when a right-mover meets a left-mover the smaller explodes (both if equal). A stack holds surviving asteroids; each incoming left-mover is compared against the stack top while collisions can happen, popping or exploding as needed.",
-         tags=["asteroid-collision","stack","simulation","dsa"],
-         code='''# Positive asteroids move right, negative move left; equal sizes both explode.
-def asteroid_collision(asteroids):
-    stack = []
-    for a in asteroids:
-        alive = True
-        while alive and a < 0 and stack and stack[-1] > 0:
-            # a (moving left) meets stack top (moving right) -> collision
-            if stack[-1] < -a:
-                stack.pop()               # top is smaller -> it explodes, keep going
-                continue
-            elif stack[-1] == -a:
-                stack.pop()               # equal -> both explode
-            alive = False                 # incoming asteroid does not survive
-        if alive:
-            stack.append(a)
-    return stack''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Only colliding when top>0 and a<0; forgetting the equal-size double-explosion.",
-         example="asteroid_collision([5,10,-5]) -> [5,10]; asteroid_collision([8,-8]) -> []."),
-    dict(cat="dsa", title="Daily Temperatures (monotonic stack)",
-         answer="For each day, find how many days you must wait for a warmer temperature (0 if none). Keep a MONOTONIC decreasing stack of indices whose warmer day hasn't been found; when a warmer temperature arrives, pop all colder days and record the day gap. Each index is pushed/popped once, so O(n).",
-         tags=["daily-temperatures","monotonic-stack","array","dsa"],
-         code='''# For each day, how many days until a warmer temperature (monotonic stack).
-def daily_temperatures(temps):
-    result = [0] * len(temps)
-    stack = []                            # indices of days awaiting a warmer day
-    for i, t in enumerate(temps):
-        while stack and temps[stack[-1]] < t:
-            prev = stack.pop()
-            result[prev] = i - prev       # number of days waited
-        stack.append(i)
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Storing temperatures instead of indices (you need the gap); using <= (equal isn't warmer).",
-         example="daily_temperatures([73,74,75,71,69,72,76,73]) -> [1,1,4,2,1,1,0,0]."),
-    dict(cat="dsa", title="Next Greater Element II (circular)",
-         answer="For each element in a CIRCULAR array, find the next greater element scanning forward with wrap-around (-1 if none). Trick: iterate 2n times using index i % n to simulate the wrap, maintaining a monotonic decreasing stack of indices; only push real indices on the first pass so answers aren't overwritten.",
-         tags=["next-greater-element","monotonic-stack","circular","array","dsa"],
-         code='''# Next greater element for each item in a circular array (-1 if none).
-def next_greater_elements(nums):
-    n = len(nums)
-    result = [-1] * n
-    stack = []                            # indices still awaiting an answer
-    for i in range(2 * n):                # loop twice to simulate wrap-around
-        num = nums[i % n]
-        while stack and nums[stack[-1]] < num:
-            result[stack.pop()] = num
-        if i < n:
-            stack.append(i)               # only push first-pass (real) indices
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Pushing indices on the second pass (double answers); forgetting the i % n wrap.",
-         example="next_greater_elements([1,2,1]) -> [2,-1,2]."),
-    dict(cat="dsa", title="K Closest Points to Origin (heap)",
-         answer="Return the k points nearest the origin. Keep a MAX-heap of size k keyed by squared distance (no sqrt needed since it preserves order): push each point and, if the heap exceeds k, pop the farthest. What remains are the k closest. O(n log k) beats sorting all n points.",
-         tags=["k-closest-points","heap","priority-queue","geometry","dsa"],
-         code='''# The k points closest to the origin, using a size-k max-heap.
+        elif ch in '+-':
+            result += sign * num          # apply the pending number
+            num = 0
+            sign = 1 if ch == '+' else -1
+        elif ch == '(':
+            stack.append(result)          # save context before recursing
+            stack.append(sign)
+            result, sign = 0, 1           # start fresh inside the parens
+        elif ch == ')':
+            result += sign * num          # finish the inner expression
+            num = 0
+            result *= stack.pop()         # apply the sign that preceded '('
+            result += stack.pop()         # add back the saved outer result
+    return result + sign * num            # apply any trailing number''',
+         complexity="Time O(n), space O(n) for the stack depth.",
+         pitfalls="Forgetting the trailing number after the loop; mixing up the push/pop order of sign and result.",
+         example="calculate('(1+(4+5+2)-3)+(6+8)') -> 23."),
+    dict(cat="dsa", title="Largest Number (custom sort)",
+         answer="Arrange a list of non-negative integers to form the LARGEST possible concatenated number. The key is a custom comparator: a should come before b if the string a+b is greater than b+a. Sort by that rule and concatenate; handle the all-zeros edge case so you return '0', not '00'.",
+         tags=["largest-number","custom-sort","comparator","greedy","dsa"],
+         code='''# Arrange numbers to form the largest possible concatenated number.
+import functools
+def largest_number(nums):
+    strs = [str(n) for n in nums]
+    def cmp(a, b):
+        if a + b > b + a:                 # a should come first
+            return -1
+        if a + b < b + a:
+            return 1
+        return 0
+    strs.sort(key=functools.cmp_to_key(cmp))
+    result = "".join(strs)
+    return "0" if result[0] == "0" else result   # collapse all-zeros to zero''',
+         complexity="Time O(n log n) comparisons of O(d)-length strings, space O(n).",
+         pitfalls="Comparing numerically instead of by concatenation; returning '000...' for all-zero input.",
+         example="largest_number([3,30,34,5,9]) -> '9534330'."),
+    dict(cat="dsa", title="Meeting Rooms II (minimum rooms)",
+         answer="Given meeting time intervals, find the minimum number of rooms needed (the peak number of simultaneous meetings). Sort by start time and keep a MIN-HEAP of end times of ongoing meetings; for each new meeting, free a room if the earliest end is <= its start, then occupy a room. The heap size is the answer.",
+         tags=["meeting-rooms","heap","intervals","scheduling","dsa"],
+         code='''# Minimum number of meeting rooms needed for overlapping intervals.
 import heapq
-def k_closest(points, k):
-    heap = []                             # max-heap via negated distance
-    for x, y in points:
-        d = x * x + y * y                 # squared distance (sqrt unnecessary)
-        heapq.heappush(heap, (-d, x, y))
-        if len(heap) > k:
-            heapq.heappop(heap)           # drop the current farthest
-    return [[x, y] for _, x, y in heap]''',
-         complexity="Time O(n log k), space O(k).",
-         pitfalls="Taking sqrt (wastes time, same ordering); using a min-heap of size k (keeps the wrong points).",
-         example="k_closest([[1,3],[-2,2],[5,8],[0,1]], 2) -> [[-2,2],[0,1]] (order may vary)."),
-    dict(cat="dsa", title="Reorganize String (greedy heap)",
-         answer="Rearrange a string so no two adjacent characters are equal, or return '' if impossible. Greedy: always place the MOST frequent remaining character that isn't the one just placed. A max-heap by count drives this; hold the previously placed char aside for one turn (to 'cool down') before pushing it back. Impossible iff some char exceeds (n+1)/2.",
-         tags=["reorganize-string","heap","greedy","string","dsa"],
-         code='''# Rearrange so no two adjacent chars match, or '' if impossible.
-import heapq
-from collections import Counter
-def reorganize_string(s):
-    counts = Counter(s)
-    max_heap = [(-cnt, ch) for ch, cnt in counts.items()]
-    heapq.heapify(max_heap)               # most frequent char on top
+def min_meeting_rooms(intervals):
+    if not intervals:
+        return 0
+    intervals.sort(key=lambda x: x[0])    # sort by start time
+    heap = []                             # end times of meetings in progress
+    for start, end in intervals:
+        if heap and heap[0] <= start:
+            heapq.heappop(heap)           # earliest-ending room frees up
+        heapq.heappush(heap, end)         # occupy a room until 'end'
+    return len(heap)                      # peak concurrency = rooms needed''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Not sorting by start first; using < instead of <= when a meeting ends exactly as another starts.",
+         example="min_meeting_rooms([[0,30],[5,10],[15,20]]) -> 2."),
+    dict(cat="dsa", title="Partition Labels (greedy)",
+         answer="Split a string into as many parts as possible so that each letter appears in at most one part; return the part sizes. Precompute the LAST index of every character. Sweep, extending the current partition's end to the furthest last-occurrence seen; when the scan index reaches that end, close the partition.",
+         tags=["partition-labels","greedy","string","intervals","dsa"],
+         code='''# Partition a string so each letter appears in only one part; return part sizes.
+def partition_labels(s):
+    last = {ch: i for i, ch in enumerate(s)}   # last index of each char
     result = []
-    prev = None                           # char just placed (cools down one turn)
-    while max_heap:
-        cnt, ch = heapq.heappop(max_heap)
-        result.append(ch)
-        if prev and prev[0] < 0:
-            heapq.heappush(max_heap, prev)   # re-add the cooled-down char
-        prev = (cnt + 1, ch)              # used one occurrence (cnt is negative)
-    res = "".join(result)
-    return res if len(res) == len(s) else ""''',
-         complexity="Time O(n log k), space O(k) for k distinct chars.",
-         pitfalls="Pushing the previous char back too early (adjacent duplicates); mishandling the negated counts.",
-         example="reorganize_string('aab') -> 'aba' (a valid arrangement)."),
-    dict(cat="glossary", title="Data augmentation",
-         answer="Artificially expanding a training set by applying LABEL-PRESERVING transformations to existing examples — cropping/flipping/rotating/colour-jittering images, synonym-swapping or back-translating text, adding noise to audio. It improves generalization and robustness by teaching the model useful invariances, and combats overfitting when data is scarce.",
-         tags=["data-augmentation","regularization","vision","nlp","training"],
-         example="Randomly flipping and cropping training photos of cats teaches a classifier a cat is a cat regardless of position or orientation — often adding a few points of accuracy for free."),
-    dict(cat="glossary", title="SMOTE",
-         answer="Synthetic Minority Over-sampling TEchnique — balances an imbalanced dataset by creating SYNTHETIC minority-class examples rather than just duplicating them. It interpolates between a minority point and its nearest minority neighbours, generating plausible new points along the connecting lines. This reduces the overfitting that naive duplication causes.",
-         tags=["smote","imbalance","oversampling","synthetic-data"],
-         example="For a fraud dataset with 1% positives, SMOTE synthesizes new fraud-like rows between real frauds, giving the classifier more varied positive examples to learn from."),
-    dict(cat="glossary", title="Mixup",
-         answer="A data-augmentation/regularization technique that trains on CONVEX COMBINATIONS of pairs of examples AND their labels: x = λ·x_i + (1-λ)·x_j and y = λ·y_i + (1-λ)·y_j. This linear-interpolation regularizer smooths decision boundaries, improves calibration, and increases robustness to noisy labels and adversarial examples.",
-         tags=["mixup","data-augmentation","regularization","calibration"],
-         example="Mixing a cat image (70%) with a dog image (30%) and training toward a 0.7-cat / 0.3-dog label makes the model less overconfident and generalize better."),
-    dict(cat="glossary", title="Weak supervision",
-         answer="Training with LARGE amounts of NOISY, imprecise, or programmatically-generated labels instead of scarce hand-labeled data — from heuristics, rules, distant supervision, or crowd labels. Frameworks like Snorkel combine many noisy 'labeling functions' and model their accuracies to produce probabilistic training labels at scale.",
-         tags=["weak-supervision","labeling","snorkel","noisy-labels","data"],
-         example="Instead of hand-labeling 100k emails, you write 20 heuristic rules ('contains an unsubscribe link -> promo'); a weak-supervision model reconciles their disagreements into training labels."),
-    dict(cat="glossary", title="Stratified sampling",
-         answer="Splitting or sampling data so each subgroup (stratum) appears in the same PROPORTION as in the full population — e.g. keeping the class ratio identical across train/test and every CV fold. It reduces evaluation variance and prevents a rare class from being absent in a fold, which matters a lot for imbalanced data.",
-         tags=["stratified-sampling","cross-validation","imbalance","evaluation"],
-         example="For a dataset that's 5% positive, stratified 5-fold CV ensures every fold has ~5% positives, so no fold accidentally has zero positives to validate on."),
-    dict(cat="ml_system_design", title="Design a Churn Prediction system",
-         answer="Predict which users/customers are likely to STOP using a product so you can intervene. (1) CLARIFY & SCALE: define churn precisely (e.g. no activity for 30 days, or a subscription cancellation) with a prediction horizon; the goal is enabling retention, so ranking at-risk users well matters most. (2) DATA & LABELS: historical users labeled churned/retained over a window; mind the label definition and survivorship. (3) FEATURES: engagement/usage TRENDS (declining activity is a strong signal), recency-frequency-monetary, tenure, support tickets, plan, product events. (4) MODEL: gradient-boosted trees on tabular features are the workhorse, outputting a churn probability. (5) EVAL: AUC/PR-AUC and — crucially — precision/recall at the top-k users you can actually target; calibrate probabilities; measure lift over baseline. (6) SERVING/MONITORING/AB: score users on a schedule, route high-risk users to retention campaigns, and A/B TEST the intervention (not just the model), since the real goal is reduced churn; monitor drift.",
-         tags=["churn-prediction","retention","gradient-boosting","ml-system-design"],
-         example="A user whose weekly logins dropped from 10 to 1 and who filed a support ticket scores high churn risk; the model flags them for a win-back offer, and an A/B test confirms the offer actually reduces churn versus a holdout."),
-    dict(cat="ml_system_design", title="Design a Customer Lifetime Value (LTV) prediction system",
-         answer="Predict the future LIFETIME VALUE a customer will generate, to guide acquisition spend and targeting. (1) CLARIFY & SCALE: define the LTV horizon (e.g. 12-month revenue/margin); it's used to bid for acquisition and prioritize high-value users. (2) DATA & LABELS: historical customers with realized spend over the horizon; needs customers old enough for a full label (right-censoring is the challenge). (3) FEATURES: EARLY behaviour (first-week/month activity and purchases), acquisition channel, demographics, engagement, RFM. (4) MODEL: a regression (gradient-boosted trees) or a two-stage 'will they buy?' × 'how much?' model; probabilistic BG/NBD + Gamma-Gamma for non-contractual settings. (5) EVAL: regression metrics (MAE, RMSE) plus decile/rank calibration (do predicted high-LTV users actually spend more?), validated on a future cohort. (6) SERVING/MONITORING/AB: batch-score new customers early, feed LTV into marketing bids and segmentation, watch for drift and feedback loops, and validate against realized value as cohorts mature.",
-         tags=["ltv","lifetime-value","regression","marketing","ml-system-design"],
-         example="From a new user's first-week purchases and channel, the model predicts a 12-month LTV of $180, so marketing will pay more to acquire similar users — later validated against what the cohort actually spent."),
+    start = end = 0
+    for i, ch in enumerate(s):
+        end = max(end, last[ch])          # must extend to ch's last occurrence
+        if i == end:                      # partition is self-contained
+            result.append(end - start + 1)
+            start = i + 1
+    return result''',
+         complexity="Time O(n), space O(1) (at most 26 keys).",
+         pitfalls="Closing a partition before reaching the furthest last-index; off-by-one in the size.",
+         example="partition_labels('ababcbacadefegdehijhklij') -> [9,7,8]."),
+    dict(cat="dsa", title="Longest Consecutive Sequence",
+         answer="Find the length of the longest run of consecutive integers in an unsorted array, in O(n) — no sorting. Put everything in a set; only start counting from a number that has no predecessor (n-1 absent), then walk upward while successors exist. Each number is visited at most twice, keeping it linear.",
+         tags=["longest-consecutive","hash-set","array","dsa"],
+         code='''# Length of the longest run of consecutive integers, O(n) with a set.
+def longest_consecutive(nums):
+    num_set = set(nums)
+    best = 0
+    for n in num_set:
+        if n - 1 not in num_set:          # only start at a run's beginning
+            length = 1
+            while n + length in num_set:  # extend the run upward
+                length += 1
+            best = max(best, length)
+    return best''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Starting a walk from every element (O(n^2)); the predecessor check is what keeps it linear.",
+         example="longest_consecutive([100,4,200,1,3,2]) -> 4  ([1,2,3,4])."),
+    dict(cat="dsa", title="Product of Array Except Self",
+         answer="Return an array where each position holds the product of all OTHER elements — without using division. Two sweeps: first fill each slot with the running product of everything to its LEFT, then multiply in the running product of everything to its RIGHT. O(n) time, O(1) extra space beyond the output.",
+         tags=["product-except-self","prefix-product","array","dsa"],
+         code='''# For each index, the product of all other elements, without division.
+def product_except_self(nums):
+    n = len(nums)
+    result = [1] * n
+    prefix = 1
+    for i in range(n):
+        result[i] = prefix                # product of everything to the left
+        prefix *= nums[i]
+    suffix = 1
+    for i in range(n - 1, -1, -1):
+        result[i] *= suffix               # multiply in everything to the right
+        suffix *= nums[i]
+    return result''',
+         complexity="Time O(n), space O(1) beyond the output.",
+         pitfalls="Using division (fails on zeros); overwriting before you've used the left product.",
+         example="product_except_self([1,2,3,4]) -> [24,12,8,6]."),
+    dict(cat="dsa", title="Container With Most Water (two pointers)",
+         answer="Given heights of vertical lines, find two that with the x-axis hold the most water. Two pointers at the ends: the area is the shorter height times the width; always move the SHORTER side inward, because moving the taller side can only shrink the area (width drops, height capped by the shorter line anyway).",
+         tags=["container-most-water","two-pointers","array","greedy","dsa"],
+         code='''# Max water a container can hold between two vertical lines (two pointers).
+def max_area(height):
+    left, right = 0, len(height) - 1
+    best = 0
+    while left < right:
+        h = min(height[left], height[right])
+        best = max(best, h * (right - left))   # area = shorter side * width
+        if height[left] < height[right]:
+            left += 1                     # move the shorter side inward
+        else:
+            right -= 1
+    return best''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Moving the taller side (never helps); recomputing width incorrectly.",
+         example="max_area([1,8,6,2,5,4,8,3,7]) -> 49."),
+    dict(cat="dsa", title="Find the Duplicate Number (Floyd's cycle)",
+         answer="An array of n+1 integers each in [1, n] has exactly one duplicate; find it WITHOUT modifying the array or extra space. Treat values as 'next' pointers — the duplicate creates a cycle. Use Floyd's tortoise-and-hare: find a meeting point in the cycle, then walk one pointer from the start until they meet at the cycle's entrance (the duplicate).",
+         tags=["find-duplicate","floyd","cycle-detection","two-pointers","dsa"],
+         code='''# Find the one duplicate in n+1 ints in [1,n] (Floyd's cycle detection).
+def find_duplicate(nums):
+    slow = fast = nums[0]
+    while True:                           # phase 1: find a meeting point
+        slow = nums[slow]
+        fast = nums[nums[fast]]
+        if slow == fast:
+            break
+    slow = nums[0]                        # phase 2: find the cycle entrance
+    while slow != fast:
+        slow = nums[slow]
+        fast = nums[fast]
+    return slow                           # the entrance == the duplicate''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Modifying the array (not allowed); stopping at phase 1 (that's not the duplicate yet).",
+         example="find_duplicate([1,3,4,2,2]) -> 2."),
+    dict(cat="glossary", title="Catastrophic forgetting",
+         answer="When a neural network trained SEQUENTIALLY on new tasks/data abruptly loses performance on earlier ones — the new gradients overwrite the weights that encoded old knowledge. It's the central obstacle to CONTINUAL/lifelong learning. Mitigations: rehearsal (replay old data), regularization that protects important weights (EWC), or dedicated per-task parameters.",
+         tags=["catastrophic-forgetting","continual-learning","training","stability"],
+         example="A model fine-tuned on task B forgets task A almost entirely; replaying a small buffer of task-A examples during B training preserves both."),
+    dict(cat="glossary", title="Domain adaptation",
+         answer="Adapting a model trained on a SOURCE domain to work well on a related but different TARGET domain with little or no target labels (e.g. synthetic->real images, one hospital's scans->another's). Techniques align the source and target feature distributions (adversarial alignment, importance weighting) so the learned knowledge transfers despite the shift.",
+         tags=["domain-adaptation","transfer-learning","distribution-shift","robustness"],
+         example="A pedestrian detector trained on sunny daytime footage is domain-adapted to work at night by aligning day/night feature distributions, without labeling many night images."),
+    dict(cat="glossary", title="Covariate shift vs label shift",
+         answer="Two kinds of distribution shift between training and deployment. COVARIATE (feature) SHIFT: the input distribution P(x) changes but P(y|x) is stable (a new user mix, yet the feature->label rule holds). LABEL/PRIOR SHIFT: the label distribution P(y) changes while P(x|y) stays (a disease becomes more prevalent). Each needs a different correction — reweighting by density ratio vs by class prior.",
+         tags=["covariate-shift","label-shift","distribution-shift","mlops"],
+         example="A spam filter seeing more mail from a new region is covariate shift; the same filter during a spam surge (more spam overall) faces label shift — you'd recalibrate the class prior."),
+    dict(cat="glossary", title="Exponential moving average (EMA)",
+         answer="A running average that weights recent values more heavily, updated as ema = β·ema + (1-β)·x. In deep learning, keeping an EMA of the MODEL WEIGHTS during training often yields a smoother, better-generalizing final model than the raw last-step weights; it also smooths noisy metrics and underlies optimizer moment estimates (Adam).",
+         tags=["ema","exponential-moving-average","training","optimization","smoothing"],
+         example="Averaging model weights with β=0.999 over training gives a 'polished' EMA model that usually validates a bit higher than the last-step weights — common in modern image/LLM training."),
+    dict(cat="ml_coding", title="Gaussian Naive Bayes (from scratch)",
+         answer="A probabilistic classifier that assumes features are conditionally independent given the class. FIT: estimate each class's prior and, per feature, the mean and variance. PREDICT: for each class sum the log-prior and the log Gaussian likelihoods of the features (logs avoid underflow) and pick the highest. Fast, needs little data, and is a strong baseline.",
+         tags=["naive-bayes","gaussian","probabilistic","classification","ml-coding"],
+         code='''# Gaussian Naive Bayes: fit priors + per-feature mean/variance, then predict.
+import math
+def gnb_fit(X, y):
+    classes = set(y)
+    stats = {}                            # class -> (prior, [(mean, var) per feature])
+    for c in classes:
+        rows = [X[i] for i in range(len(X)) if y[i] == c]
+        prior = len(rows) / len(X)
+        feats = []
+        for j in range(len(X[0])):
+            col = [row[j] for row in rows]
+            mean = sum(col) / len(col)
+            var = sum((v - mean) ** 2 for v in col) / len(col) + 1e-9   # avoid /0
+            feats.append((mean, var))
+        stats[c] = (prior, feats)
+    return stats
+
+def gnb_predict(stats, x):
+    best_c, best_log = None, float('-inf')
+    for c, (prior, feats) in stats.items():
+        log_prob = math.log(prior)        # log prior
+        for (mean, var), xi in zip(feats, x):
+            # add the log Gaussian likelihood of this feature
+            log_prob += -0.5 * math.log(2 * math.pi * var) - (xi - mean) ** 2 / (2 * var)
+        if log_prob > best_log:
+            best_log, best_c = log_prob, c
+    return best_c''',
+         complexity="Fit O(n*d), predict O(classes*d); space O(classes*d).",
+         pitfalls="Multiplying raw probabilities (underflow — sum logs instead); zero variance (add epsilon).",
+         example="Fit on X=[[1.0],[1.2],[5.0],[5.2]], y=[0,0,1,1]; gnb_predict for [1.1] -> 0."),
+    dict(cat="conceptual", title="Why do ensembles (bagging, boosting) usually beat a single model?",
+         answer="Because they attack different parts of prediction error. BAGGING (random forests) trains many high-variance models on bootstrap samples and AVERAGES them, cancelling their uncorrelated errors and cutting VARIANCE without raising bias — averaging independent noisy estimates yields a steadier one. BOOSTING (gradient boosting) trains models SEQUENTIALLY, each correcting the prior ensemble's mistakes, which mainly reduces BIAS, turning weak learners into a strong one. Both rely on members making somewhat INDEPENDENT errors; ensembling identical/correlated models gains nothing.",
+         tags=["ensemble","bagging","boosting","bias-variance","why"],
+         example="One decision tree overfits (high variance); a 200-tree random forest averages that noise away, while boosting stacks shallow trees to steadily drive down error."),
 ]
 
 
