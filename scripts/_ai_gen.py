@@ -8,8 +8,10 @@ commands. Validates every code block (ast.parse) before writing.
 import ast
 import importlib
 import os
+import sys
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. Each dict: cat, title, answer, tags,
 #    and optional code/example/complexity/pitfalls/followups. ──
@@ -86,6 +88,13 @@ def qsrc(e):
 for e in BATCH:
     if e.get("code"):
         ast.parse(e["code"])
+
+# Skip any titles already present (so re-running never double-inserts).
+_existing = {e["title"] for e in importlib.import_module("ai_sde_bank").ENTRIES}
+BATCH = [e for e in BATCH if e["title"] not in _existing]
+if not BATCH:
+    print("nothing new to insert (all titles already present)")
+    raise SystemExit(0)
 
 block = "".join(qsrc(e) for e in BATCH)
 path = "ai_sde_bank.py"
