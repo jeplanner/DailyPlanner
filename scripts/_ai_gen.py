@@ -16,169 +16,166 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Isomorphic Strings",
-         answer="Two strings are isomorphic if there's a consistent ONE-TO-ONE mapping between their characters preserving order. Track two maps (s->t and t->s); a mismatch in either — a char already mapped to something else — means not isomorphic. Both directions are needed so two chars can't map to the same target.",
-         tags=["isomorphic-strings","hash-map","string","dsa"],
-         code='''# Are s and t isomorphic (a consistent one-to-one char mapping)?
-def is_isomorphic(s, t):
-    if len(s) != len(t):
+    dict(cat="dsa", title="N-th Tribonacci Number",
+         answer="Like Fibonacci but each term sums the previous THREE: T0=0, T1=1, T2=1, Tn = Tn-1 + Tn-2 + Tn-3. Roll three variables forward to compute Tn in O(n) time, O(1) space.",
+         tags=["tribonacci","dynamic-programming","fibonacci","dp","dsa"],
+         code='''# The n-th Tribonacci number: T0=0, T1=1, T2=1, Tn=Tn-1+Tn-2+Tn-3.
+def tribonacci(n):
+    if n == 0:
+        return 0
+    if n <= 2:
+        return 1
+    a, b, c = 0, 1, 1
+    for _ in range(3, n + 1):
+        a, b, c = b, c, a + b + c   # slide the window of three
+    return c''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Wrong base cases (T2 is 1); summing only two terms.",
+         example="tribonacci(4) -> 4  (0,1,1,2,4); tribonacci(25) -> 1389537."),
+    dict(cat="dsa", title="Integer Break (DP)",
+         answer="Break an integer n into the sum of at least two positive integers to MAXIMIZE their product. DP: dp[i] = the best product for i; for each split point j, take the max of j*(i-j) (don't break further) and j*dp[i-j] (break the rest). Mathematically the optimum uses as many 3s as possible.",
+         tags=["integer-break","dynamic-programming","math","dp","dsa"],
+         code='''# Break n into >=2 positive integers to MAXIMIZE their product (DP).
+def integer_break(n):
+    dp = [0] * (n + 1)
+    dp[1] = 1
+    for i in range(2, n + 1):
+        for j in range(1, i):
+            # j*(i-j): don't break i-j ; j*dp[i-j]: break i-j further
+            dp[i] = max(dp[i], j * (i - j), j * dp[i - j])
+    return dp[n]''',
+         complexity="Time O(n^2), space O(n).",
+         pitfalls="Requiring the whole number unbroken (must be >=2 parts); forgetting the j*(i-j) option.",
+         example="integer_break(10) -> 36  (3*3*4); integer_break(2) -> 1."),
+    dict(cat="dsa", title="Ugly Number",
+         answer="An ugly number is a POSITIVE integer whose only prime factors are 2, 3, and 5. Repeatedly divide out all factors of 2, 3, and 5; if nothing but 1 remains, it's ugly. (0 and negatives are not ugly.)",
+         tags=["ugly-number","math","factorization","dsa"],
+         code='''# Is n an ugly number? (positive, only prime factors 2, 3, 5)
+def is_ugly(n):
+    if n <= 0:
         return False
-    map_st, map_ts = {}, {}
-    for a, b in zip(s, t):
-        if a in map_st and map_st[a] != b:
-            return False        # a already maps to a different char
-        if b in map_ts and map_ts[b] != a:
-            return False        # b already mapped from a different char
-        map_st[a] = b
-        map_ts[b] = a
-    return True''',
-         complexity="Time O(n), space O(1) (bounded alphabet).",
-         pitfalls="Checking only one direction (lets two chars map to the same target); ignoring unequal lengths.",
-         example="is_isomorphic('egg','add') -> True; is_isomorphic('foo','bar') -> False."),
-    dict(cat="dsa", title="Word Pattern",
-         answer="Check whether a string of words follows a pattern with a BIJECTION between pattern letters and words. Split into words, verify equal length, then maintain char->word and word->char maps — a conflict in either direction breaks the pattern (same idea as isomorphic strings but with words).",
-         tags=["word-pattern","hash-map","string","bijection","dsa"],
-         code='''# Does s follow the given pattern (bijection pattern-char <-> word)?
-def word_pattern(pattern, s):
-    words = s.split()
-    if len(pattern) != len(words):
-        return False
-    char_to_word, word_to_char = {}, {}
-    for c, w in zip(pattern, words):
-        if c in char_to_word and char_to_word[c] != w:
-            return False
-        if w in word_to_char and word_to_char[w] != c:
-            return False
-        char_to_word[c] = w
-        word_to_char[w] = c
-    return True''',
-         complexity="Time O(n), space O(unique words).",
-         pitfalls="Not checking both directions (two letters -> same word); mismatched counts of letters vs words.",
-         example="word_pattern('abba', 'dog cat cat dog') -> True; word_pattern('abba', 'dog cat cat fish') -> False."),
-    dict(cat="dsa", title="Ransom Note",
-         answer="Determine if a ransom note can be built from the letters of a magazine, each magazine letter usable once. Count the magazine's letters, then consume one per note character; if a needed letter runs out, it's impossible.",
-         tags=["ransom-note","hash-map","counting","string","dsa"],
-         code='''# Can ransom_note be built from the letters in magazine (each used once)?
-from collections import Counter
-def can_construct(ransom_note, magazine):
-    available = Counter(magazine)
-    for ch in ransom_note:
-        if available[ch] <= 0:
-            return False        # not enough of this letter
-        available[ch] -= 1
-    return True''',
-         complexity="Time O(n + m), space O(alphabet).",
-         pitfalls="Reusing a magazine letter more than once; comparing sets instead of counts.",
-         example="can_construct('aa','aab') -> True; can_construct('aa','ab') -> False."),
-    dict(cat="dsa", title="First Unique Character in a String",
-         answer="Return the index of the first non-repeating character, or -1 if none. Two passes: count every character's frequency, then scan left to right for the first character whose count is 1.",
-         tags=["first-unique-char","hash-map","counting","string","dsa"],
-         code='''# Index of the first non-repeating character, or -1 if none.
-from collections import Counter
-def first_uniq_char(s):
-    counts = Counter(s)
-    for i, ch in enumerate(s):
-        if counts[ch] == 1:
-            return i            # first char that appears exactly once
-    return -1''',
-         complexity="Time O(n), space O(alphabet).",
-         pitfalls="Returning the character instead of its index; a single pass can't know future repeats.",
-         example="first_uniq_char('leetcode') -> 0; first_uniq_char('aabb') -> -1."),
-    dict(cat="dsa", title="Intersection of Two Arrays II",
-         answer="Return the intersection of two arrays INCLUDING duplicates — each element appears min(count in A, count in B) times. Count one array, then walk the other consuming matches from the counts.",
-         tags=["intersection-arrays","hash-map","counting","array","dsa"],
-         code='''# Intersection of two arrays including duplicates (min of the counts).
-from collections import Counter
-def intersect(nums1, nums2):
-    counts = Counter(nums1)
+    for factor in (2, 3, 5):
+        while n % factor == 0:
+            n //= factor        # divide out all 2s, 3s, then 5s
+    return n == 1               # ugly iff nothing else remains''',
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Treating 0/negatives as ugly; not fully dividing out each factor.",
+         example="is_ugly(6) -> True (2*3); is_ugly(14) -> False (has factor 7)."),
+    dict(cat="dsa", title="Wiggle Subsequence (greedy)",
+         answer="Find the length of the longest subsequence whose consecutive differences strictly ALTERNATE between positive and negative. Greedy O(n): track the longest wiggle ending on an 'up' move and on a 'down' move; a rise extends a down-ending, a fall extends an up-ending. Equal neighbours are ignored.",
+         tags=["wiggle-subsequence","greedy","dynamic-programming","array","dsa"],
+         code='''# Length of the longest subsequence whose differences strictly alternate sign.
+def wiggle_max_length(nums):
+    if len(nums) < 2:
+        return len(nums)
+    up = down = 1               # longest wiggle ending going up / down
+    for i in range(1, len(nums)):
+        if nums[i] > nums[i - 1]:
+            up = down + 1        # a rise extends a down-ending subsequence
+        elif nums[i] < nums[i - 1]:
+            down = up + 1        # a fall extends an up-ending subsequence
+    return max(up, down)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Counting equal adjacent values as a wiggle; overcomplicating with full DP.",
+         example="wiggle_max_length([1,7,4,9,2,5]) -> 6; wiggle_max_length([1,2,2,2,3,4]) -> 2."),
+    dict(cat="dsa", title="Backspace String Compare",
+         answer="Two strings are equal if, after applying backspaces (where '#' deletes the preceding character), the results match. Build each final string with a stack (push normal chars, pop on '#'), then compare. (An O(1)-space two-pointer scan from the end also works.)",
+         tags=["backspace-compare","stack","string","two-pointers","dsa"],
+         code='''# Do two strings equal after applying backspaces ('#' deletes previous char)?
+def backspace_compare(s, t):
+    def build(string):
+        stack = []
+        for ch in string:
+            if ch != '#':
+                stack.append(ch)
+            elif stack:
+                stack.pop()      # backspace removes the last kept char
+        return stack
+    return build(s) == build(t)''',
+         complexity="Time O(n + m), space O(n + m) (O(1) with two pointers).",
+         pitfalls="Popping an empty stack on a leading '#'; comparing before applying backspaces.",
+         example="backspace_compare('ab#c','ad#c') -> True (both -> 'ac'); backspace_compare('a#c','b') -> False."),
+    dict(cat="dsa", title="Add Strings",
+         answer="Add two non-negative integers given as strings WITHOUT converting the whole strings to ints. Add digit by digit from the right with a carry (like elementary-school addition), building the result and reversing at the end.",
+         tags=["add-strings","string","math","carry","dsa"],
+         code='''# Add two non-negative integers given as strings, digit by digit.
+def add_strings(num1, num2):
+    i, j = len(num1) - 1, len(num2) - 1
+    carry = 0
     result = []
-    for n in nums2:
-        if counts[n] > 0:
-            result.append(n)
-            counts[n] -= 1      # consume one occurrence
-    return result''',
-         complexity="Time O(n + m), space O(min(n, m)).",
-         pitfalls="Deduping (this variant keeps duplicates); not decrementing the count after a match.",
-         example="intersect([1,2,2,1],[2,2]) -> [2,2]."),
-    dict(cat="dsa", title="Is Subsequence",
-         answer="Check whether s is a subsequence of t — s's characters appear in t in the same order (not necessarily contiguous). Two pointers: sweep t and advance the s-pointer on each match; s is a subsequence iff the pointer reaches the end of s.",
-         tags=["is-subsequence","two-pointers","string","dsa"],
-         code='''# Is s a subsequence of t? (chars of s appear in order within t)
-def is_subsequence(s, t):
-    i = 0
-    for ch in t:
-        if i < len(s) and s[i] == ch:
-            i += 1              # matched the next char of s
-    return i == len(s)          # matched all of s''',
-         complexity="Time O(len(t)), space O(1).",
-         pitfalls="Requiring contiguity (that's substring); advancing the s-pointer without a match.",
-         example="is_subsequence('abc','ahbgdc') -> True; is_subsequence('axc','ahbgdc') -> False."),
-    dict(cat="dsa", title="Valid Palindrome II (delete at most one)",
-         answer="Determine if a string can become a palindrome by deleting AT MOST ONE character. Use two pointers inward; on the first mismatch, try skipping EITHER the left or the right character and check if the remainder is a palindrome. If no mismatch ever occurs, it already is one.",
-         tags=["valid-palindrome","two-pointers","greedy","string","dsa"],
-         code='''# Can s become a palindrome by deleting at most ONE character?
-def valid_palindrome(s):
-    def is_pal(lo, hi):
-        while lo < hi:
-            if s[lo] != s[hi]:
-                return False
-            lo += 1; hi -= 1
-        return True
-    left, right = 0, len(s) - 1
-    while left < right:
-        if s[left] != s[right]:
-            # try skipping either the left or the right mismatched char
-            return is_pal(left + 1, right) or is_pal(left, right - 1)
-        left += 1; right -= 1
-    return True''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Trying only one side of the mismatch; attempting more than one deletion.",
-         example="valid_palindrome('abca') -> True (delete 'c' or 'b'); valid_palindrome('abc') -> False."),
-    dict(cat="dsa", title="String Compression (in place)",
-         answer="Compress runs of repeated characters IN PLACE: a run of a character followed by its count when >1 (e.g. 'aaabb' -> 'a3b2'), returning the new length. Use a read pointer to count each run and a write pointer to emit the char and, for runs longer than 1, each digit of the count.",
-         tags=["string-compression","two-pointers","in-place","string","dsa"],
-         code='''# Compress runs of repeated chars in place: 'aaabb' -> 'a3b2'; return length.
-def compress(chars):
-    write = 0
-    read = 0
-    n = len(chars)
-    while read < n:
-        ch = chars[read]
-        count = 0
-        while read < n and chars[read] == ch:
-            read += 1; count += 1     # count the current run
-        chars[write] = ch; write += 1
-        if count > 1:
-            for digit in str(count):  # write each digit of the run length
-                chars[write] = digit; write += 1
-    return write''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Writing '1' for single characters (only counts >1); multi-digit counts need each digit.",
-         example="chars=['a','a','b','b','c','c','c'] -> compress -> 6, with chars starting ['a','2','b','2','c','3']."),
-    dict(cat="glossary", title="Vector clocks",
-         answer="A mechanism to track CAUSALITY across distributed nodes without synchronized clocks. Each node keeps a vector of counters (one per node), increments its own on each event, and merges (element-wise max) on message receipt. Comparing two vectors tells you whether one event happened-before another or whether they're CONCURRENT (conflicting). Used to detect conflicting replica writes (Dynamo).",
-         tags=["vector-clocks","causality","distributed-systems","conflict-detection"],
-         example="Two replicas update the same key concurrently; their vector clocks are incomparable (neither dominates), so the system flags a conflict and keeps both versions for the client to resolve."),
-    dict(cat="glossary", title="Snapshot isolation",
-         answer="A transaction isolation level where each transaction reads from a consistent SNAPSHOT of the database as of its start, and writes are conflict-checked at commit. It prevents dirty and non-repeatable reads and gives high concurrency (readers don't block writers, via MVCC), but permits the WRITE SKEW anomaly — so it's weaker than serializable.",
-         tags=["snapshot-isolation","mvcc","transactions","isolation-levels","database"],
-         example="Two on-call doctors each see '2 on call' in their snapshot and each removes themselves — snapshot isolation allows this write skew, leaving zero on call; serializable would forbid it."),
-    dict(cat="glossary", title="Backpressure",
-         answer="A flow-control mechanism where a slow CONSUMER signals upstream producers to slow down, preventing unbounded queue growth and memory blowup when demand exceeds capacity. Rather than buffering forever (and crashing), the system pushes back — blocking, dropping, or rate-limiting the producer. It's core to reactive streams and stable pipelines.",
-         tags=["backpressure","flow-control","streaming","reliability"],
-         example="A stream processor can't keep up with Kafka; backpressure pauses its fetch (letting lag grow) instead of buffering unbounded records in memory and running out of memory."),
-    dict(cat="glossary", title="Dead-letter queue (DLQ)",
-         answer="A separate queue where messages that repeatedly FAIL processing (after max retries) or can't be delivered are set aside — instead of blocking the main queue or being silently lost. Engineers inspect, fix, and replay them. It isolates 'poison' messages so one bad message doesn't stall the whole pipeline.",
-         tags=["dead-letter-queue","dlq","messaging","reliability","retries"],
-         example="A malformed order event that throws on every attempt is moved to the DLQ after 5 retries, so the worker keeps processing good messages while the team investigates the poison one."),
-    dict(cat="glossary", title="SLI / SLO / SLA (+ error budget)",
-         answer="The reliability vocabulary. An SLI (indicator) is a measured metric like success rate or p99 latency. An SLO (objective) is your internal target for it (e.g. 99.9% success). An SLA (agreement) is a contractual promise to customers with penalties, usually looser than the SLO. The ERROR BUDGET = 1 - SLO — the unreliability you're allowed to 'spend' on risk/releases before you must freeze changes.",
-         tags=["slo","sla","sli","error-budget","reliability","sre"],
-         example="A 99.9% availability SLO gives a ~43-minute monthly error budget; if a botched deploy burns it, the team halts feature launches and focuses on reliability until it recovers."),
-    dict(cat="conceptual", title="Why report p99/tail latency instead of average latency?",
-         answer="Averages HIDE the bad experiences. A 50ms mean can coexist with 1% of requests taking 2 seconds — and those slow requests hit real users, often the most active ones (more requests = higher chance of hitting the tail). Latency distributions are right-skewed, so the mean doesn't reflect the worst-case user. PERCENTILES (p99, p99.9) directly answer 'how bad is it for the unluckiest 1%?' — the SLO-relevant question. Tail latency also COMPOUNDS: a page making 100 backend calls almost certainly hits at least one p99-slow call, so the tail becomes the common case at the page level. That's why SLOs target p99, not the average.",
-         tags=["tail-latency","p99","percentiles","latency","why"],
-         example="Two services both average 50ms, but one has p99=60ms and the other p99=2s; the average calls them equal while users of the second see frequent multi-second stalls — only the percentile exposes it."),
+    while i >= 0 or j >= 0 or carry:
+        d1 = ord(num1[i]) - ord('0') if i >= 0 else 0
+        d2 = ord(num2[j]) - ord('0') if j >= 0 else 0
+        total = d1 + d2 + carry
+        result.append(str(total % 10))
+        carry = total // 10
+        i -= 1; j -= 1
+    return "".join(reversed(result))''',
+         complexity="Time O(max(n, m)), space O(that).",
+         pitfalls="Dropping the final carry; not handling unequal lengths.",
+         example="add_strings('456','77') -> '533'."),
+    dict(cat="dsa", title="Last Stone Weight (max-heap)",
+         answer="Repeatedly smash the two heaviest stones: if unequal, the difference goes back; if equal, both are destroyed. Return the last remaining stone's weight, or 0. A MAX-heap (negate values in Python's min-heap) always gives the two heaviest in O(log n).",
+         tags=["last-stone-weight","heap","priority-queue","simulation","dsa"],
+         code='''# Smash the two heaviest stones repeatedly; return the last weight (or 0).
+import heapq
+def last_stone_weight(stones):
+    heap = [-s for s in stones]    # max-heap via negatives
+    heapq.heapify(heap)
+    while len(heap) > 1:
+        first = -heapq.heappop(heap)
+        second = -heapq.heappop(heap)
+        if first != second:
+            heapq.heappush(heap, -(first - second))   # the difference remains
+    return -heap[0] if heap else 0''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Forgetting Python's heap is a min-heap (negate for max); not handling an empty heap.",
+         example="last_stone_weight([2,7,4,1,8,1]) -> 1."),
+    dict(cat="dsa", title="Kth Largest Element in a Stream",
+         answer="Support add(val) returning the kth largest element seen so far. Keep a MIN-heap of size k: its root is always the kth largest; on each add, push and, if the heap exceeds k, pop the smallest. O(log k) per add.",
+         tags=["kth-largest-stream","heap","priority-queue","design","dsa"],
+         code='''# Maintain the kth largest element as numbers stream in (min-heap of size k).
+import heapq
+class KthLargest:
+    def __init__(self, k, nums):
+        self.k = k
+        self.heap = nums[:]
+        heapq.heapify(self.heap)
+        while len(self.heap) > k:
+            heapq.heappop(self.heap)   # keep only the k largest
+
+    def add(self, val):
+        heapq.heappush(self.heap, val)
+        if len(self.heap) > self.k:
+            heapq.heappop(self.heap)   # evict the smallest
+        return self.heap[0]            # heap root = kth largest''',
+         complexity="add is O(log k); space O(k).",
+         pitfalls="Using a max-heap of everything (O(n) memory); returning the wrong end of the heap.",
+         example="KthLargest(3, [4,5,8,2]): add(3)->4, add(5)->5, add(10)->5, add(9)->8, add(4)->8."),
+    dict(cat="glossary", title="Raft consensus",
+         answer="A consensus algorithm (a more understandable alternative to Paxos) that keeps a replicated LOG consistent across nodes despite failures. One elected LEADER accepts all writes, appends them to its log, and replicates to followers; an entry is COMMITTED once a majority (quorum) stores it. Leader election uses randomized timeouts + monotonic terms, and a new leader must have the most up-to-date log. It powers etcd, Consul, and CockroachDB.",
+         tags=["raft","consensus","replication","leader-election","distributed-systems"],
+         example="In etcd, the Raft leader replicates each key write to followers; once a majority acknowledge it's committed, and if the leader dies the followers elect a new one that has the latest log."),
+    dict(cat="glossary", title="Gossip protocol",
+         answer="A decentralized way to spread information (membership, state, failures) across a cluster: each node periodically exchanges state with a few RANDOM peers, so information propagates EXPONENTIALLY like an epidemic. It's robust (no coordinator), scalable, and eventually consistent, with some propagation delay. Used for membership and failure detection in Cassandra, Consul, and DynamoDB.",
+         tags=["gossip-protocol","membership","failure-detection","eventual-consistency","distributed-systems"],
+         example="In Cassandra each node gossips with a few random peers every second, so a node failure becomes known cluster-wide within seconds without any central registry."),
+    dict(cat="glossary", title="Read-repair",
+         answer="An anti-entropy technique in eventually-consistent replicated stores: on a READ, the coordinator compares responses from multiple replicas and, if some are stale, writes the newest value back to them — repairing divergence during normal reads. It piggybacks on reads (cheap) and works alongside hinted handoff and background anti-entropy to converge replicas.",
+         tags=["read-repair","anti-entropy","replication","eventual-consistency","dynamo"],
+         example="A quorum read finds replica C returns an old value while A and B return the new one; the coordinator returns the new value AND writes it back to C, healing the staleness."),
+    dict(cat="glossary", title="Change Data Capture (CDC)",
+         answer="A technique that captures row-level CHANGES (inserts/updates/deletes) from a database — typically by tailing its write-ahead log / binlog — and streams them to other systems in near-real-time. It keeps caches, search indexes, and warehouses in sync WITHOUT dual-writes or batch ETL. Debezium + Kafka is the common stack.",
+         tags=["cdc","change-data-capture","debezium","streaming","data-integration"],
+         example="Debezium reads MySQL's binlog and publishes each row change to Kafka, so a search index and a cache update within seconds of a DB write — no app-level dual-write needed."),
+    dict(cat="glossary", title="OLAP vs OLTP",
+         answer="Two database workloads. OLTP (transactional) handles many small, fast reads/writes of individual rows (orders, payments) — row-oriented, normalized, low-latency, high concurrency (Postgres/MySQL). OLAP (analytical) runs large aggregate SCANS over huge datasets for reporting/BI — column-oriented, denormalized, throughput-optimized (Snowflake/BigQuery/Redshift). You typically ETL/CDC from OLTP into an OLAP warehouse rather than analyzing the live transactional DB.",
+         tags=["olap","oltp","columnar","data-warehouse","database"],
+         example="Checkout writes to an OLTP Postgres (fast single-row insert); nightly, sales load into a columnar OLAP warehouse where 'revenue by region this quarter' scans billions of rows efficiently."),
+    dict(cat="conceptual", title="Why do we need consensus algorithms (Raft/Paxos) instead of a naive majority vote?",
+         answer="A naive vote breaks under distributed-system realities: messages are delayed, reordered, duplicated, or lost; nodes crash and restart; and network PARTITIONS can split the cluster so two halves each think they have a majority (SPLIT-BRAIN) and accept conflicting writes. Consensus solves agreement SAFELY: a quorum (majority) so any two decisions overlap on at least one node (preventing two conflicting commits), monotonic TERMS/epochs to fence out stale leaders, and a replicated log with a single leader so all nodes apply the same operations in the same order. The hard part isn't counting votes — it's guaranteeing safety (never two different committed values) AND liveness under arbitrary failures, which is subtle (see FLP). That's why you use a proven protocol.",
+         tags=["consensus","raft","paxos","split-brain","quorum","why"],
+         example="Without consensus, a partition could elect two leaders that accept different writes; Raft's terms + quorum ensure only the leader with majority support commits, so both sides can't make conflicting progress."),
 ]
 
 
