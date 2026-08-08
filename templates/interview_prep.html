@@ -106,6 +106,27 @@
   .story-foot .spacer { flex: 1; }
   .story-foot .del { background: none; border: none; color: #ef4444; cursor: pointer; font-weight: 600; font-size: 13px; }
 
+  /* ── Question bank ── */
+  .qbank-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .qbank-controls select, .qbank-controls input[type=text] { padding: 9px 11px; font-size: 14px; }
+  .qbank-controls select { flex: 0 0 auto; } .qbank-controls input.search { flex: 1; min-width: 160px; }
+  .qbank-only { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); white-space: nowrap; }
+  .qbank-prog { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
+  .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
+  .q-card.done { border-color: #a7f3d0; }
+  .q-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
+  .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
+  .q-head .q-text { flex: 1; font-size: 14px; font-weight: 600; }
+  .q-head .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
+  .q-card.done .q-text { color: var(--color-text-secondary); }
+  .q-body { padding: 0 13px 13px 41px; display: none; }
+  .q-card.open .q-body { display: block; }
+  .star { font-size: 13.5px; line-height: 1.45; margin: 4px 0; }
+  .star b { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; font-weight: 800; color: #fff; margin-right: 7px; vertical-align: 1px; }
+  .star.s b { background: #6366f1; } .star.t b { background: #0ea5e9; } .star.a b { background: #f59e0b; } .star.r b { background: #10b981; }
+  .q-tip { font-size: 12.5px; font-style: italic; color: var(--color-text-secondary); margin: 8px 0 10px; }
+  .q-body .btn { }
+
   .sess { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 8px 11px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; margin-bottom: 6px; }
   .sess .m { font-weight: 800; color: #047857; white-space: nowrap; }
   .sess .d { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
@@ -202,6 +223,18 @@
   <h2>STAR story bank</h2>
   <div id="stories"></div>
   <button class="btn" id="add-story-btn" type="button" style="margin-top:4px;">＋ Add a story</button>
+
+  <!-- QUESTION BANK -->
+  <h2>Behavioral question bank <span class="qbank-prog" id="qbank-prog"></span></h2>
+  <div class="card" style="margin-bottom:10px;">
+    <div class="qbank-controls">
+      <select id="qbank-cat"><option value="">All competencies</option></select>
+      <input type="text" class="search" id="qbank-search" placeholder="Search questions…">
+      <label class="qbank-only"><input type="checkbox" id="qbank-unpracticed"> Unpracticed only</label>
+    </div>
+    <p class="mini-lbl" style="margin:9px 2px 0;">100+ common questions with STAR model answers — adapt each to your own experience, then tap “Use as my story” to draft it into your bank.</p>
+  </div>
+  <div id="qbank-list"></div>
 
   <!-- LOG -->
   <h2>Recent practice</h2>
@@ -420,7 +453,85 @@
     catch(err){ toast(err.message,"error"); }
   });
 
+  // ── Behavioral question bank ──
+  let QBANK = null;
+  const qCatLabel = {};
+  const PRAC_KEY = "ip_practiced";
+  const practiced = new Set();
+  try { (JSON.parse(localStorage.getItem(PRAC_KEY)||"[]")||[]).forEach(x=>practiced.add(x)); } catch(_){}
+  const savePracticed = () => { try { localStorage.setItem(PRAC_KEY, JSON.stringify([...practiced])); } catch(_){} };
+  const bankProg = () => { if(QBANK) $("qbank-prog").textContent = `${practiced.size} / ${QBANK.total} practiced`; };
+
+  function renderBank(){
+    if(!QBANK) return;
+    const cat = $("qbank-cat").value;
+    const term = ($("qbank-search").value||"").trim().toLowerCase();
+    const onlyUn = $("qbank-unpracticed").checked;
+    const list = QBANK.questions.filter(q =>
+      (!cat || q.cat===cat) &&
+      (!onlyUn || !practiced.has(q.id)) &&
+      (!term || q.q.toLowerCase().includes(term) || (qCatLabel[q.cat]||"").toLowerCase().includes(term))
+    );
+    bankProg();
+    $("qbank-list").innerHTML = list.map(q => `
+      <div class="q-card ${practiced.has(q.id)?'done':''}" data-id="${q.id}">
+        <div class="q-head" data-toggle>
+          <input type="checkbox" class="q-prac" ${practiced.has(q.id)?'checked':''} title="Mark practiced">
+          <span class="q-text">${esc(q.q)}</span>
+          <span class="q-badge">${esc(qCatLabel[q.cat]||q.cat)}</span>
+        </div>
+        <div class="q-body">
+          <div class="star s"><b>S</b>${esc(q.s)}</div>
+          <div class="star t"><b>T</b>${esc(q.t)}</div>
+          <div class="star a"><b>A</b>${esc(q.a)}</div>
+          <div class="star r"><b>R</b>${esc(q.r)}</div>
+          <div class="q-tip">💡 ${esc(q.tip)}</div>
+          <button class="btn sm" data-use type="button">＋ Use as my story</button>
+        </div>
+      </div>`).join("") || '<div class="card"><div class="empty">No questions match.</div></div>';
+  }
+
+  async function loadBank(){
+    try {
+      QBANK = await api("/api/interview-prep/questions");
+      (QBANK.categories||[]).forEach(c => qCatLabel[c.key]=c.label);
+      const sel = $("qbank-cat");
+      if (sel.children.length <= 1)
+        sel.innerHTML = '<option value="">All competencies</option>' +
+          (QBANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
+      renderBank();
+    } catch(e){ /* bank is best-effort */ }
+  }
+
+  $("qbank-cat").addEventListener("change", renderBank);
+  $("qbank-search").addEventListener("input", renderBank);
+  $("qbank-unpracticed").addEventListener("change", renderBank);
+
+  $("qbank-list").addEventListener("click", async (e) => {
+    const card = e.target.closest(".q-card"); if(!card) return;
+    const id = card.dataset.id;
+    const q = QBANK && QBANK.questions.find(x=>x.id===id); if(!q) return;
+    if (e.target.classList.contains("q-prac")) {
+      if (e.target.checked) practiced.add(id); else practiced.delete(id);
+      savePracticed(); card.classList.toggle("done", e.target.checked); bankProg();
+      return;
+    }
+    if (e.target.closest("[data-use]")) {
+      try {
+        await api("/api/interview-prep/stories",{method:"POST",body:JSON.stringify({
+          title: q.q, competency: qCatLabel[q.cat]||q.cat,
+          situation:q.s, task:q.t, action:q.a, result:q.r,
+        })});
+        toast("Added to your story bank — now make it yours ✍️","success");
+        reload();
+      } catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    card.classList.toggle("open");
+  });
+
   reload();
+  loadBank();
 })();
 </script>
 </body>

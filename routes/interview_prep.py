@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
+from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -343,6 +344,20 @@ def dashboard():
 
 # ─────────── plan settings ───────────────────────────────────
 
+@interview_prep_bp.route("/api/interview-prep/questions", methods=["GET"])
+@login_required
+def question_bank():
+    """The behavioral question bank: 100+ common questions with STAR model
+    answers, grouped by competency. Static/read-only content the user
+    studies and can adapt into their own story bank."""
+    items = [{"id": f"q{i}", **q} for i, q in enumerate(QUESTIONS)]
+    return jsonify({
+        "categories": [{"key": k, "label": v} for k, v in QUESTION_CATEGORIES.items()],
+        "questions": items,
+        "total": len(items),
+    })
+
+
 @interview_prep_bp.route("/api/interview-prep/plan", methods=["POST"])
 @login_required
 def update_plan():
@@ -451,12 +466,17 @@ def add_story():
     user_id = session["user_id"]
     data = request.get_json(silent=True) or {}
     title = (data.get("title") or "").strip()[:_MAX_TITLE] or "New story"
+    payload = {
+        "user_id": user_id, "title": title,
+        "competency": (data.get("competency") or "").strip()[:_MAX_TITLE] or None,
+        "position": 999,
+    }
+    # Optional STAR prefill (used by "Use as my story" from the question bank).
+    for f in ("situation", "task", "action", "result"):
+        if data.get(f):
+            payload[f] = str(data.get(f)).strip()[:_MAX_TEXT] or None
     try:
-        rows = post("interview_stories", {
-            "user_id": user_id, "title": title,
-            "competency": (data.get("competency") or "").strip()[:_MAX_TITLE] or None,
-            "position": 999,
-        })
+        rows = post("interview_stories", payload)
     except Exception as e:
         logger.exception("interview_prep add story failed: %s", e)
         return jsonify({"error": "Couldn't add"}), 502
