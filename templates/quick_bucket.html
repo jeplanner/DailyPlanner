@@ -504,6 +504,46 @@
   .qb-row.is-done .qb-text { text-decoration: line-through; color: var(--color-text-muted, #6b7280); }
   .qb-row.is-done .qb-toggle { display: none; }
 
+  /* Daily productive-hours summary (planned vs actual) */
+  .qb-effort-summary {
+    max-width: 720px; margin: 12px auto 0;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: 14px; padding: 14px 16px;
+  }
+  .qb-eff-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .qb-eff-head h2 { font-size: 15px; font-weight: 800; margin: 0; }
+  .qb-eff-date {
+    margin-left: auto; font: inherit; font-size: 13px; padding: 6px 9px;
+    border: 1px solid var(--color-border); border-radius: 9px;
+    background: var(--color-bg); color: var(--color-text);
+  }
+  .qb-eff-bars { display: flex; flex-direction: column; gap: 8px; }
+  .qb-eff-bar-row { display: flex; align-items: center; gap: 10px; }
+  .qb-eff-bar-lbl { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); width: 58px; flex: none; }
+  .qb-eff-bar { flex: 1; height: 12px; background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; overflow: hidden; }
+  .qb-eff-fill { display: block; height: 100%; width: 0; border-radius: 999px; transition: width .3s ease; }
+  .qb-eff-fill--planned { background: #6366f1; }
+  .qb-eff-fill--actual { background: #10b981; }
+  .qb-eff-bar-val { font-size: 13px; font-weight: 800; min-width: 52px; text-align: right; }
+  .qb-eff-note { font-size: 13px; color: var(--color-text-secondary); margin: 10px 0 0; }
+  .qb-eff-note b.over { color: #b45309; } .qb-eff-note b.under { color: #047857; } .qb-eff-note b.ontrack { color: #4338ca; }
+  .qb-eff-tasks { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .qb-eff-tasks li { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; border-top: 1px solid var(--color-border); }
+  .qb-eff-tasks li .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qb-eff-tasks li .t.done { text-decoration: line-through; color: var(--color-text-secondary); }
+  .qb-eff-tasks li .h { font-weight: 700; color: var(--color-text-secondary); white-space: nowrap; }
+
+  /* Effort inputs in the edit modal */
+  .qb-effort-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+  .qb-effort-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; }
+  .qb-effort-field span { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .qb-effort-field input {
+    font: inherit; font-size: 15px; padding: 9px 10px;
+    border: 1px solid var(--color-border); border-radius: 9px;
+    background: var(--color-bg); color: var(--color-text); outline: none;
+  }
+  .qb-effort-field input:focus { border-color: var(--color-primary); }
+
   /* "Move to category" modal */
   .qb-modal-backdrop {
     position: fixed; inset: 0; background: rgba(15,23,42,.5);
@@ -860,6 +900,29 @@
     </button>
   </section>
 
+  <!-- Daily productive-hours summary: planned vs actual, for the picked
+       day (defaults to today). Populated from /api/quick-bucket/effort-summary. -->
+  <section class="qb-effort-summary" id="qb-effort-summary" aria-label="Daily effort summary">
+    <div class="qb-eff-head">
+      <h2>⏱ Productive time</h2>
+      <input type="date" id="qb-eff-date" class="qb-eff-date" aria-label="Summary date">
+    </div>
+    <div class="qb-eff-bars">
+      <div class="qb-eff-bar-row">
+        <span class="qb-eff-bar-lbl">Planned</span>
+        <div class="qb-eff-bar"><i class="qb-eff-fill qb-eff-fill--planned" id="qb-eff-planned-bar"></i></div>
+        <span class="qb-eff-bar-val" id="qb-eff-planned-val">0m</span>
+      </div>
+      <div class="qb-eff-bar-row">
+        <span class="qb-eff-bar-lbl">Actual</span>
+        <div class="qb-eff-bar"><i class="qb-eff-fill qb-eff-fill--actual" id="qb-eff-actual-bar"></i></div>
+        <span class="qb-eff-bar-val" id="qb-eff-actual-val">0m</span>
+      </div>
+    </div>
+    <p class="qb-eff-note" id="qb-eff-note">No effort logged for this day yet.</p>
+    <ul class="qb-eff-tasks" id="qb-eff-tasks"></ul>
+  </section>
+
   <div id="qb-handsfree-status" class="qb-handsfree-status" hidden>
     <span class="qb-handsfree-dot"></span>
     <span id="qb-handsfree-status-text">Listening — say "Hello" to dictate</span>
@@ -963,6 +1026,26 @@
         <textarea id="qb-edit-text-input" class="qb-edit-text-input"
                   rows="2" maxlength="500"
                   placeholder="What needs doing?"></textarea>
+      </div>
+      <div class="qb-modal-section">
+        <h4>Effort <span class="qb-form-note-inline">(minutes)</span></h4>
+        <div class="qb-effort-grid">
+          <label class="qb-effort-field">
+            <span>Planned</span>
+            <input type="number" id="qb-edit-planned" min="0" step="5"
+                   inputmode="numeric" placeholder="0">
+          </label>
+          <label class="qb-effort-field">
+            <span>Actual</span>
+            <input type="number" id="qb-edit-actual" min="0" step="5"
+                   inputmode="numeric" placeholder="0">
+          </label>
+          <label class="qb-effort-field">
+            <span>Date</span>
+            <input type="date" id="qb-edit-effort-date">
+          </label>
+        </div>
+        <p class="qb-form-note-inline" style="margin-top:6px;">Counts towards that day's planned-vs-actual summary.</p>
       </div>
       <div class="qb-modal-section">
         <h4>Move to module <span class="qb-form-note-inline">(optional)</span></h4>

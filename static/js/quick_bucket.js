@@ -248,8 +248,69 @@
       if (r.today) todayIso = r.today;
       if (r.top5_limit) top5Limit = r.top5_limit;
       render();
+      loadEffortSummary();
     } catch (err) {
       toast(err.message || "Could not load", "error");
+    }
+  };
+
+  // ─────────── Daily effort summary (planned vs actual) ──────
+
+  const fmtMins = (m) => `${Math.round(Number(m) || 0)}m`;
+
+  const renderEffortSummary = (r) => {
+    const planned = Number(r.planned) || 0;
+    const actual = Number(r.actual) || 0;
+    const max = Math.max(planned, actual, 0.01);
+    const pBar = $("#qb-eff-planned-bar"), aBar = $("#qb-eff-actual-bar");
+    if (pBar) pBar.style.width = Math.round((planned / max) * 100) + "%";
+    if (aBar) aBar.style.width = Math.round((actual / max) * 100) + "%";
+    const pVal = $("#qb-eff-planned-val"), aVal = $("#qb-eff-actual-val");
+    if (pVal) pVal.textContent = fmtMins(planned);
+    if (aVal) aVal.textContent = fmtMins(actual);
+
+    const note = $("#qb-eff-note");
+    if (note) {
+      const count = r.count || 0;
+      const plural = count === 1 ? "" : "s";
+      if (r.migration_pending) {
+        note.textContent = "Run MIGRATION_QUICK_BUCKET_EFFORT.sql to enable effort tracking.";
+      } else if (count === 0) {
+        note.textContent = "No effort logged for this day yet. Tap a task → Effort to add minutes.";
+      } else {
+        const diff = Math.round(actual - planned);
+        if (diff === 0) {
+          note.innerHTML = `<b class="ontrack">On plan</b> — ${fmtMins(actual)} across ${count} task${plural}.`;
+        } else if (diff > 0) {
+          note.innerHTML = `${fmtMins(actual)} actual vs ${fmtMins(planned)} planned — <b class="over">▲ ${fmtMins(diff)} over</b> across ${count} task${plural}.`;
+        } else {
+          note.innerHTML = `${fmtMins(actual)} actual vs ${fmtMins(planned)} planned — <b class="under">▼ ${fmtMins(-diff)} under</b> across ${count} task${plural}.`;
+        }
+      }
+    }
+
+    const list = $("#qb-eff-tasks");
+    if (list) {
+      list.innerHTML = (r.tasks || []).map(t => `
+        <li>
+          <span class="t${t.is_done ? " done" : ""}" title="${escapeHTML(t.text)}">${escapeHTML(t.text)}</span>
+          <span class="h">${fmtMins(t.actual)} actual / ${fmtMins(t.planned)} plan</span>
+        </li>`).join("");
+    }
+  };
+
+  const loadEffortSummary = async () => {
+    const dateInput = $("#qb-eff-date");
+    if (!dateInput) return;
+    if (!dateInput.value) {
+      dateInput.value = todayIso || new Date().toISOString().slice(0, 10);
+    }
+    const day = dateInput.value;
+    try {
+      const r = await apiFetch(`/api/quick-bucket/effort-summary?date=${encodeURIComponent(day)}`);
+      renderEffortSummary(r);
+    } catch (err) {
+      // Best-effort — leave the previous render in place on transient errors.
     }
   };
 
@@ -905,6 +966,7 @@
       toast(cheer(), "success");
       // Closed items stay in `items` so the Done group can render them.
       render();
+      loadEffortSummary();  // done/undone flips the crossed-out styling
     } catch (err) {
       toast(err.message || "Couldn't mark done", "error");
     }
@@ -916,6 +978,7 @@
       it.is_done = false;
       it.done_at = null;
       render();
+      loadEffortSummary();
     } catch (err) {
       toast(err.message || "Couldn't reopen", "error");
     }
@@ -926,6 +989,7 @@
       await apiFetch(`/api/quick-bucket/${it.id}/archive`, { method: "POST", body: "{}" });
       items = items.filter(x => x.id !== it.id);
       render();
+      loadEffortSummary();  // an archived task leaves the day's totals
     } catch (err) {
       toast(err.message || "Couldn't remove", "error");
     }
@@ -1101,6 +1165,13 @@
     moveCategory = null;
     const textInput = $("#qb-edit-text-input");
     if (textInput) textInput.value = it.text || "";
+    // Effort fields.
+    const plannedIn = $("#qb-edit-planned");
+    const actualIn = $("#qb-edit-actual");
+    const effDateIn = $("#qb-edit-effort-date");
+    if (plannedIn) plannedIn.value = (it.planned_minutes != null ? it.planned_minutes : "");
+    if (actualIn) actualIn.value = (it.actual_minutes != null ? it.actual_minutes : "");
+    if (effDateIn) effDateIn.value = it.effort_date || (todayIso || new Date().toISOString().slice(0, 10));
     renderMoveCategoryButtons();
     renderMoveForm();
     updateSaveLabel();
@@ -1149,11 +1220,43 @@
         moveItem.text = newText;
       }
 
-      // No category picked → text-only edit, we're done.
+      // Persist effort (planned / actual minutes + date) whenever any of
+      // them changed, so the daily planned-vs-actual summary stays right.
+      const parseMin = (v) => {
+        const s = (v == null ? "" : v).toString().trim();
+        if (s === "") return null;
+        const n = Number(s);
+        return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+      };
+      const intOrNull = (v) => (v == null ? null : Math.round(Number(v)));
+      const planned = parseMin($("#qb-edit-planned")?.value);
+      const actual = parseMin($("#qb-edit-actual")?.value);
+      const pickedDate = ($("#qb-edit-effort-date")?.value || "").trim() || null;
+      const hasEffort = planned != null || actual != null;
+      // No minutes → clear the date so the task drops out of every day's
+      // summary. Minutes with no date → count for today.
+      const effDate = hasEffort
+        ? (pickedDate || todayIso || new Date().toISOString().slice(0, 10))
+        : null;
+      const curPlanned = intOrNull(moveItem.planned_minutes);
+      const curActual = intOrNull(moveItem.actual_minutes);
+      const curDate = moveItem.effort_date || null;
+      if (planned !== curPlanned || actual !== curActual || effDate !== curDate) {
+        await apiFetch(`/api/quick-bucket/${moveItem.id}/update`, {
+          method: "POST",
+          body: JSON.stringify({ planned_minutes: planned, actual_minutes: actual, effort_date: effDate }),
+        });
+        moveItem.planned_minutes = planned;
+        moveItem.actual_minutes = actual;
+        moveItem.effort_date = effDate;
+      }
+
+      // No category picked → text/effort edit only, we're done.
       if (!moveCategory || !MOVE_FIELDS[moveCategory]) {
         toast("Saved", "success");
         closeEditModal();
         render();
+        loadEffortSummary();
         return;
       }
 
@@ -1213,6 +1316,8 @@
     $("#qb-move-close").addEventListener("click", closeEditModal);
     $("#qb-move-cancel").addEventListener("click", closeEditModal);
     $("#qb-move-save").addEventListener("click", submitEdit);
+    // Re-fetch the daily summary when the user picks a different day.
+    $("#qb-eff-date")?.addEventListener("change", loadEffortSummary);
     $("#qb-move-modal").addEventListener("click", (e) => {
       if (e.target.id === "qb-move-modal") closeEditModal();
     });

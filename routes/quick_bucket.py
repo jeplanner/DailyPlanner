@@ -94,6 +94,29 @@ def _auto_roll_top5(user_id):
         logger.exception("auto-roll top5 failed for %s", user_id)
 
 
+# Keys the effort tracker adds to a task. Kept in one place so the
+# update path and its column-missing fallback stay in sync.
+_EFFORT_KEYS = ("planned_minutes", "actual_minutes", "effort_date")
+_MAX_MINUTES = 60 * 24 * 366  # sanity cap — no single task logs > a year
+
+
+def _parse_minutes(raw):
+    """('' / None → clear) or a non-negative whole number of minutes,
+    capped. Returns (value, ok): value is None to clear, an int to set,
+    and ok is False when the input was present but unparseable."""
+    if raw is None:
+        return None, True
+    if isinstance(raw, str) and not raw.strip():
+        return None, True
+    try:
+        v = int(round(float(raw)))
+    except (TypeError, ValueError):
+        return None, False
+    if v < 0 or v > _MAX_MINUTES:
+        return None, False
+    return v, True
+
+
 def _next_bucket(cur):
     try:
         i = BUCKETS.index(cur or "now")
@@ -209,6 +232,12 @@ def list_items():
     # hasn't been applied yet. Without this fallback, a missing column
     # on Supabase makes the whole list query 400 and the page renders
     # empty — which is what just happened.
+    select_effort = (
+        "id,text,time_bucket,due_at,is_done,done_at,position,"
+        "top5_date,top5_position,priority_label,"
+        "planned_minutes,actual_minutes,effort_date,"
+        "created_at,updated_at"
+    )
     select_full = (
         "id,text,time_bucket,due_at,is_done,done_at,position,"
         "top5_date,top5_position,priority_label,"
@@ -226,7 +255,7 @@ def list_items():
         "limit": "500",
     }
     rows = None
-    for sel in (select_full, select_legacy):
+    for sel in (select_effort, select_full, select_legacy):
         try:
             rows = get("quick_bucket", params={**base_params, "select": sel}) or []
             break
@@ -429,6 +458,25 @@ def update_item(item_id):
             except (TypeError, ValueError):
                 pass
 
+    # Effort tracking: planned / actual minutes + the day they count for.
+    for key in ("planned_minutes", "actual_minutes"):
+        if key in data:
+            val, ok = _parse_minutes(data.get(key))
+            if not ok:
+                return jsonify({"error": "Minutes must be a positive whole number"}), 400
+            patch[key] = val
+    if "effort_date" in data:
+        d = (data.get("effort_date") or "").strip()
+        patch["effort_date"] = d or None
+
+    # If the user logged any minutes but didn't pin a date, default the
+    # effort to today so it shows up in today's summary automatically.
+    logging_minutes = (
+        patch.get("planned_minutes") is not None or patch.get("actual_minutes") is not None
+    )
+    if logging_minutes and not patch.get("effort_date") and "effort_date" not in data:
+        patch["effort_date"] = date.today().isoformat()
+
     if not patch:
         return jsonify({"ok": True, "noop": True})
 
@@ -452,13 +500,14 @@ def update_item(item_id):
             json=patch,
         )
     except Exception as e:
-        # Same defensive fallback as the GET / create paths: if
-        # priority_label triggered the failure (column missing on
-        # un-migrated environments), retry without it so other patch
-        # fields (text / time_bucket / position) still save.
-        if "priority_label" in patch:
-            logger.warning("quick_bucket update retry without priority_label: %s", e)
-            retry = {k: v for k, v in patch.items() if k != "priority_label"}
+        # Same defensive fallback as the GET / create paths: if an
+        # optional column (priority_label or the effort fields) triggered
+        # the failure on an un-migrated environment, retry without those
+        # so the core patch (text / time_bucket / position) still saves.
+        optional = ("priority_label", *_EFFORT_KEYS)
+        if any(k in patch for k in optional):
+            logger.warning("quick_bucket update retry without optional cols: %s", e)
+            retry = {k: v for k, v in patch.items() if k not in optional}
             if retry:
                 try:
                     update(
@@ -484,6 +533,65 @@ def update_item(item_id):
         )
 
     return jsonify({"ok": True, "patch": patch})
+
+
+# ─────────── daily effort summary (planned vs actual) ────────
+
+@quick_bucket_bp.route("/api/quick-bucket/effort-summary", methods=["GET"])
+@login_required
+def effort_summary():
+    """Planned vs actual productive minutes for one day (default today).
+
+    `?date=YYYY-MM-DD`. Sums planned_minutes / actual_minutes across the
+    user's non-archived tasks whose effort_date is that day, and returns
+    the per-task breakdown so the page can show where the time went."""
+    user_id = session["user_id"]
+    day = (request.args.get("date") or "").strip() or date.today().isoformat()
+    try:
+        rows = get(
+            "quick_bucket",
+            params={
+                "user_id": f"eq.{user_id}",
+                "is_deleted": "eq.false",
+                "effort_date": f"eq.{day}",
+                "select": "id,text,planned_minutes,actual_minutes,is_done",
+                "limit": "500",
+            },
+        ) or []
+    except Exception as e:
+        # Effort columns missing (migration pending) → empty summary
+        # rather than a 500, so the page still renders.
+        logger.warning(
+            "quick_bucket effort summary failed (run MIGRATION_QUICK_BUCKET_EFFORT.sql?): %s", e
+        )
+        return jsonify({
+            "date": day, "planned": 0, "actual": 0, "count": 0,
+            "tasks": [], "migration_pending": True,
+        })
+
+    tasks = []
+    planned = actual = 0
+    for r in rows:
+        p = int(r["planned_minutes"]) if r.get("planned_minutes") is not None else 0
+        a = int(r["actual_minutes"]) if r.get("actual_minutes") is not None else 0
+        planned += p
+        actual += a
+        tasks.append({
+            "id": r.get("id"),
+            "text": r.get("text") or "",
+            "planned": p,
+            "actual": a,
+            "is_done": bool(r.get("is_done")),
+        })
+    # Most time-consuming first, so the summary reads top-down by effort.
+    tasks.sort(key=lambda t: (-t["actual"], -t["planned"]))
+    return jsonify({
+        "date": day,
+        "planned": planned,
+        "actual": actual,
+        "count": len(tasks),
+        "tasks": tasks,
+    })
 
 
 # ─────────── mark done ───────────────────────────────────────
