@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>Net Worth — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px 16px 60px; }
+  h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 16px; }
+
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; padding: 14px; }
+  .card.editing { border-color: var(--color-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 22%, transparent); }
+  .edit-bar { display: none; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 13px; font-weight: 600; color: var(--color-primary); }
+  .card.editing .edit-bar { display: flex; }
+  .edit-bar button { font: inherit; font-size: 13px; font-weight: 600; background: none; border: 1px solid var(--color-border); border-radius: 8px; padding: 5px 10px; cursor: pointer; color: var(--color-text-secondary); }
+
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .field input {
+    font: inherit; font-size: 16px; padding: 10px 12px;
+    border: 1px solid var(--color-border); border-radius: 10px;
+    background: var(--color-bg); color: var(--color-text); outline: none;
+  }
+  .field input:focus { border-color: var(--color-primary); }
+  .f-name{flex:2 1 200px;} .f-type{flex:1 1 150px;} .f-date{flex:1 1 150px;} .f-amount{flex:1 1 140px;}
+  .add-btn { margin-top: 12px; width: 100%; font: inherit; font-size: 15px; font-weight: 700; padding: 12px; border: none; border-radius: 11px; cursor: pointer; background: var(--color-primary); color: #fff; }
+
+  .total-card { margin: 18px 0 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; padding: 16px; text-align: center; }
+  .total-card .v { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+  .total-card .l { font-size: 12px; color: var(--color-text-secondary); margin-top: 3px; text-transform: uppercase; letter-spacing: .04em; }
+
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .inv { display: flex; align-items: center; gap: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 11px 13px; }
+  .inv .mid { flex: 1; min-width: 0; }
+  .inv .nm { font-weight: 700; font-size: 15px; }
+  .inv .meta { font-size: 12.5px; color: var(--color-text-secondary); margin-top: 2px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .inv .badge { font-size: 10.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--color-bg); border: 1px solid var(--color-border); color: var(--color-text-secondary); }
+  .inv .val { font-weight: 800; font-size: 16px; white-space: nowrap; }
+  .inv .acts { display: flex; flex-direction: column; gap: 2px; flex: none; }
+  .inv .del, .inv .edit { background: none; border: none; cursor: pointer; padding: 4px; display: inline-flex; }
+  .inv .del { color: #ef4444; } .inv .edit { color: var(--color-text-secondary); }
+  .inv .del svg, .inv .edit svg { width: 17px; height: 17px; }
+  .empty { text-align: center; color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; }
+  h2 { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 24px 0 10px; }
+
+  .chart-card { padding: 14px; }
+  .chart-wrap { position: relative; height: 230px; }
+  .trend-note { margin-top: 10px; font-size: 13px; color: var(--color-text-secondary); text-align: center; }
+  .trend-note b.up { color: #16a34a; } .trend-note b.down { color: #dc2626; }
+  .trend-controls { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; }
+  .trend-controls label { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); }
+  .trend-controls select { font: inherit; font-size: 14px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-bg); color: var(--color-text); }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+
+<div class="wrap">
+  <h1>💰 Net Worth</h1>
+  <p class="sub">Add each investment — name, type, date and total amount. Everything you add is summed into your grand total below.</p>
+
+  <div class="card" id="form-card">
+    <div class="edit-bar">
+      <span>✏️ Editing entry</span>
+      <button type="button" id="edit-cancel">Cancel</button>
+    </div>
+    <form id="inv-form" autocomplete="off">
+      <div class="row">
+        <div class="field f-name">
+          <label for="inv-name">Name</label>
+          <input type="text" id="inv-name" list="name-suggestions" placeholder="e.g. HDFC Flexi Cap" required>
+          <datalist id="name-suggestions"></datalist>
+        </div>
+        <div class="field f-type">
+          <label for="inv-type">Type</label>
+          <input type="text" id="inv-type" list="type-suggestions" placeholder="e.g. Mutual fund, Gold">
+          <datalist id="type-suggestions"></datalist>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div class="field f-date">
+          <label for="inv-date">Date</label>
+          <input type="date" id="inv-date" value="{{ today }}">
+        </div>
+        <div class="field f-amount">
+          <label for="inv-amount">Total amount (₹)</label>
+          <input type="number" id="inv-amount" inputmode="decimal" step="0.01" min="0" placeholder="0" required>
+        </div>
+      </div>
+      <button type="submit" class="add-btn" id="inv-add">Add investment</button>
+    </form>
+  </div>
+
+  <div class="total-card">
+    <div class="v" id="grand-total">₹0</div>
+    <div class="l">Total value</div>
+  </div>
+
+  <h2>Trend</h2>
+  <div class="trend-controls">
+    <label for="trend-by">Show</label>
+    <select id="trend-by">
+      <option value="total">Total value</option>
+      <option value="type">By type</option>
+    </select>
+  </div>
+  <div class="card chart-card">
+    <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
+    <div class="trend-note" id="trend-note"></div>
+  </div>
+
+  <h2>Your investments</h2>
+  <div class="list" id="inv-list"></div>
+</div>
+
+<script>
+(function(){
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || "";
+  const TODAY = "{{ today }}";
+  const $ = (id) => document.getElementById(id);
+  const nameEl=$("inv-name"), typeEl=$("inv-type"), dateEl=$("inv-date"), amountEl=$("inv-amount");
+  const nameList=$("name-suggestions"), typeList=$("type-suggestions");
+  const form=$("inv-form"), listEl=$("inv-list"), totalEl=$("grand-total");
+  const formCard=$("form-card"), addBtn=$("inv-add");
+  let editingId = null;
+
+  const money=(n)=>"₹"+Number(n||0).toLocaleString("en-IN",{maximumFractionDigits:2});
+  const esc=(s)=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const fmtDate=(iso)=>{ if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return isNaN(d)?iso:d.toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}); };
+  const fmtShort=(iso)=>{ if(!iso) return ""; const d=new Date(iso+"T00:00:00"); return isNaN(d)?iso:d.toLocaleDateString("en-IN",{day:"numeric",month:"short"}); };
+  const shortNum=(n)=>{ n=Number(n)||0; const s=n<0?"-":""; n=Math.abs(n);
+    if(n>=1e7) return s+(n/1e7).toFixed(2).replace(/\.?0+$/,"")+"Cr";
+    if(n>=1e5) return s+(n/1e5).toFixed(2).replace(/\.?0+$/,"")+"L";
+    if(n>=1e3) return s+(n/1e3).toFixed(1).replace(/\.0$/,"")+"K";
+    return s+String(Math.round(n)); };
+
+  function formBody(){
+    return { name:nameEl.value.trim(), type:typeEl.value.trim(), invested_on:dateEl.value, amount:amountEl.value };
+  }
+
+  function resetForm(){
+    editingId=null;
+    form.reset();
+    dateEl.value=TODAY;
+    formCard.classList.remove("editing");
+    addBtn.textContent="Add investment";
+  }
+
+  function startEdit(item){
+    editingId=item.id;
+    nameEl.value=item.name;
+    typeEl.value=item.type||"";
+    dateEl.value=item.invested_on||TODAY;
+    amountEl.value=item.amount;
+    formCard.classList.add("editing");
+    addBtn.textContent="Save changes";
+    nameEl.focus();
+    formCard.scrollIntoView({behavior:"smooth",block:"start"});
+  }
+  $("edit-cancel").addEventListener("click",resetForm);
+
+  function render(items,total){
+    totalEl.textContent=money(total);
+    if(!items.length){
+      listEl.innerHTML='<div class="empty">No investments yet. Add your first one above.</div>';
+      return;
+    }
+    listEl.innerHTML=items.map(it=>`
+      <div class="inv" data-id="${it.id}">
+        <div class="mid">
+          <div class="nm">${esc(it.name)}</div>
+          <div class="meta">
+            ${it.type?`<span class="badge">${esc(it.type)}</span>`:""}
+            <span>${esc(fmtDate(it.invested_on))}</span>
+          </div>
+        </div>
+        <div class="val">${money(it.amount)}</div>
+        <div class="acts">
+          <button class="edit" title="Edit" data-act="edit"><i data-feather="edit-2"></i></button>
+          <button class="del" title="Delete" data-act="del"><i data-feather="trash-2"></i></button>
+        </div>
+      </div>`).join("");
+    if(window.feather) feather.replace();
+  }
+
+  async function loadSuggestions(){
+    try{
+      const r=await fetch("/api/investments/suggestions",{credentials:"same-origin"});
+      const d=await r.json();
+      nameList.innerHTML=(d.names||[]).map(n=>`<option value="${esc(n)}">`).join("");
+      typeList.innerHTML=(d.types||[]).map(t=>`<option value="${esc(t)}">`).join("");
+    }catch(e){ /* suggestions are best-effort */ }
+  }
+
+  // ── Trend chart: cumulative total value over time ──
+  const COLORS=['#16a34a','#2563eb','#7c3aed','#d97706','#ec4899','#06b6d4','#84cc16','#f43f5e','#0ea5e9','#f59e0b'];
+  let trendChart=null;
+
+  function cumulativeByDate(items){
+    // One point per distinct date = running total up to & including that date.
+    const sorted=[...items].filter(i=>i.invested_on)
+      .sort((a,b)=>a.invested_on<b.invested_on?-1:(a.invested_on>b.invested_on?1:0));
+    const m=new Map(); let run=0;
+    for(const it of sorted){ run+=Number(it.amount)||0; m.set(it.invested_on,run); }
+    return { dates:[...m.keys()], totals:[...m.values()] };
+  }
+
+  function renderTrend(items){
+    const noteEl=$("trend-note");
+    const mode=$("trend-by").value;
+    const distinctDates=new Set(items.map(i=>i.invested_on).filter(Boolean));
+    if(!window.Chart || distinctDates.size<1){
+      if(trendChart){ trendChart.destroy(); trendChart=null; }
+      noteEl.textContent = items.length? "Add entries on more dates to see a trend." : "";
+      return;
+    }
+
+    let datasets, labels;
+    if(mode==="type"){
+      // Cumulative line per Type, sharing a common sorted date axis.
+      labels=[...new Set(items.map(i=>i.invested_on).filter(Boolean))].sort();
+      const byType={};
+      for(const it of items){ const t=(it.type||"Untyped"); (byType[t]=byType[t]||[]).push(it); }
+      datasets=Object.entries(byType).map(([t,list],i)=>{
+        const {dates,totals}=cumulativeByDate(list);
+        const map=new Map(dates.map((d,ix)=>[d,totals[ix]]));
+        let last=null;
+        const data=labels.map(d=>{ if(map.has(d)) last=map.get(d); return last; }); // carry forward
+        return { label:t, data, borderColor:COLORS[i%COLORS.length], backgroundColor:"transparent",
+                 tension:0.3, pointRadius:2, spanGaps:true };
+      });
+    }else{
+      const {dates,totals}=cumulativeByDate(items);
+      labels=dates;
+      datasets=[{ label:"Total value", data:totals, borderColor:"#16a34a",
+                  backgroundColor:"rgba(22,163,74,0.12)", fill:true, tension:0.3, pointRadius:3 }];
+    }
+
+    if(trendChart) trendChart.destroy();
+    const ctx=$("trend-chart");
+    trendChart=new Chart(ctx,{
+      type:"line",
+      data:{ labels:labels.map(fmtShort), datasets },
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ display:mode==="type", position:"bottom", labels:{boxWidth:10,padding:10,font:{size:11}} },
+                  tooltip:{ callbacks:{ label:c=>`${c.dataset.label}: ${money(c.parsed.y)}` } } },
+        scales:{ y:{ ticks:{ callback:v=>"₹"+shortNum(v), font:{size:10} }, grid:{color:"rgba(0,0,0,0.05)"} },
+                 x:{ ticks:{ maxTicksLimit:8, font:{size:10} }, grid:{display:false} } }
+      }
+    });
+
+    // Growth note (based on the overall cumulative line).
+    const {dates,totals}=cumulativeByDate(items);
+    if(totals.length>=2){
+      const first=totals[0], last=totals[totals.length-1], chg=last-first;
+      const pct=first>0?((chg/first)*100):0;
+      const up=chg>=0;
+      noteEl.innerHTML=`<b class="${up?'up':'down'}">${up?'▲':'▼'} ${money(Math.abs(chg))} `
+        +`(${up?'+':'−'}${Math.abs(pct).toFixed(1)}%)</b> since ${esc(fmtDate(dates[0]))}`;
+    }else{
+      noteEl.textContent="Add entries on more dates to see growth.";
+    }
+  }
+  $("trend-by").addEventListener("change",()=>renderTrend(cache));
+
+  let cache=[];
+  async function load(){
+    try{
+      const r=await fetch("/api/investments",{credentials:"same-origin"});
+      const d=await r.json();
+      cache=d.items||[];
+      render(cache,d.total||0);
+      renderTrend(cache);
+      if(d.migration_pending && window.toast) toast("Run MIGRATION_INVESTMENTS.sql to enable saving.");
+    }catch(e){ if(window.toast) toast("Couldn't load investments"); }
+    loadSuggestions();
+  }
+
+  listEl.addEventListener("click",async(e)=>{
+    const btn=e.target.closest("button[data-act]"); if(!btn) return;
+    const row=btn.closest(".inv"); const id=row?.dataset.id; if(!id) return;
+    if(btn.dataset.act==="edit"){
+      const item=cache.find(x=>x.id===id); if(item) startEdit(item);
+    }else if(btn.dataset.act==="del"){
+      if(!confirm("Delete this investment?")) return;
+      try{
+        const r=await fetch("/api/investments/"+encodeURIComponent(id)+"/delete",{method:"POST",headers:{"X-CSRFToken":CSRF},credentials:"same-origin"});
+        if(r.ok){ if(editingId===id) resetForm(); load(); }
+        else if(window.toast) toast("Couldn't delete");
+      }catch(err){ if(window.toast) toast("Couldn't delete"); }
+    }
+  });
+
+  form.addEventListener("submit",async(e)=>{
+    e.preventDefault();
+    if(!nameEl.value.trim()){ nameEl.focus(); return; }
+    const editing=editingId;
+    const url=editing?("/api/investments/"+encodeURIComponent(editing)):"/api/investments";
+    const method=editing?"PUT":"POST";
+    addBtn.disabled=true;
+    try{
+      const r=await fetch(url,{method,headers:{"Content-Type":"application/json","X-CSRFToken":CSRF},body:JSON.stringify(formBody()),credentials:"same-origin"});
+      const d=await r.json();
+      if(!r.ok){ if(window.toast) toast(d.error||"Couldn't save"); return; }
+      resetForm();
+      load();
+    }catch(err){ if(window.toast) toast("Couldn't save"); }
+    finally{ addBtn.disabled=false; }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
