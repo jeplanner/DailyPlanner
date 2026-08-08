@@ -470,6 +470,54 @@ _DETAIL_LEADERBOARD = {
     "wrap_up": "A leaderboard is a Redis sorted set per board — O(log n) score updates and rank queries, O(log n + k) top-N — backed by a durable DB as source of truth. Scale by sharding per game/season/region and replicating hot boards; handle exact-rank cost at extreme scale with score-bucket approximation, and encode timestamps to break ties.",
 }
 
+_DETAIL_HOTEL = {
+    "scope": "Design a hotel reservation system that books rooms without overbooking under concurrency. Clarify: search + availability + booking + payment? cancellations? scale (hotels, rooms, QPS)? Assumptions: ~5k hotels, ~1M rooms, read-heavy search with a much smaller booking write rate, strong consistency required on the reservation write, hold-during-checkout, payment via an external gateway.",
+    "functional": "1) Search hotels by location/date/guests. 2) Show room-type availability + price. 3) Reserve (hold) a room during checkout. 4) Confirm on successful payment. 5) Cancel/modify a booking. 6) Never overbook.",
+    "nonfunctional": "Strong consistency on the booking write (no overbooking is non-negotiable), high availability for search, low search latency, and correctness under concurrent bookings of the last room.",
+    "estimation": "5k hotels × ~200 rooms = ~1M rooms. Availability is per (room_type, date). Search QPS ~ thousands/s (cacheable); bookings ~ tens/s (must be correct). Storage is small — availability counts per room-type per day for a booking horizon (~1-2 years).",
+    "api": "GET /search?city&checkin&checkout&guests -> hotels+prices. POST /reservations {hotelId, roomType, dates, guests, idempotencyKey} -> hold. POST /reservations/{id}/confirm {paymentToken}. DELETE /reservations/{id}.",
+    "data_model": "hotels(id, name, location). room_types(id, hotel_id, capacity, base_price). inventory(hotel_id, room_type_id, date, total, reserved) — the crux table. reservations(id, user_id, room_type_id, dates, status[held|confirmed|cancelled], idempotency_key, hold_expires_at). Payments tracked separately.",
+    "hld": "Search service reads a cached availability/price index. Booking: an atomic conditional update on the inventory row(s) for each date — reserved+1 only if reserved < total — inside one transaction, marking the reservation 'held' with a TTL. A saga then charges payment; on success -> 'confirmed', on failure/timeout -> release (reserved-1). Idempotency keys make retries safe.",
+    "hld_diagram": "Search -> [availability cache] -> hotels+prices\n Book -> [txn: for each date, UPDATE inventory SET reserved=reserved+1 WHERE reserved<total] -> hold (TTL)\n      -> [payment saga] -> confirm  OR  timeout/fail -> release",
+    "algorithms": "Overbooking prevention: an atomic conditional decrement/increment (optimistic 'reserved < total' guard) per date, all dates in one transaction so a multi-night stay is all-or-nothing. Reserve-with-TTL holds inventory during checkout and auto-releases if payment stalls. Saga pattern coordinates hold -> pay -> confirm across services with compensating releases. Idempotency keys dedupe retried bookings.",
+    "deep_dive": "The last-room race: two users booking the last room both pass a naive read; the atomic conditional write (or a row lock) ensures exactly one succeeds. Multi-night atomicity: wrap all per-date updates in one transaction — if night 3 is full, roll back nights 1-2. Hold expiry: a TTL + a sweeper releases abandoned holds so inventory isn't stranded. Payment coupling: never hold a DB transaction open across a slow external payment — hold first, pay in a saga, confirm/release after. Search freshness: availability cache can lag slightly; the authoritative check happens at booking. Scale: shard inventory by hotel.",
+    "follow_ups": "Two people book the last room at once? (atomic conditional write / row lock). Multi-night partial availability? (single transaction over all dates). Payment takes 30s? (hold with TTL + saga, don't hold a txn open). Abandoned checkouts? (TTL sweeper releases holds). Search shows a room that's now gone? (authoritative re-check at booking). Overbook on purpose for no-shows? (configurable oversell factor).",
+    "final_diagram": " Search -> [Availability/price cache] (eventually consistent)\n Booking svc -> [Inventory DB: atomic conditional update per date, one txn] -> reservation 'held' (TTL)\n            -> [Payment saga] --success--> 'confirmed'\n                              --fail/timeout--> compensate: release inventory\n idempotency keys dedupe retries ; sweeper reclaims expired holds",
+    "wrap_up": "Overbooking is prevented by an atomic conditional inventory update per date inside one transaction, plus reserve-with-TTL holds and a payment saga that confirms or releases. Search runs off a cache for speed while booking hits the authoritative inventory. Idempotency keys and a hold-expiry sweeper keep retries and abandoned checkouts safe.",
+}
+
+_DETAIL_PROXIMITY = {
+    "scope": "Design a proximity service that finds businesses/objects within a radius of a location (Yelp 'nearby', driver matching). Clarify: static businesses or moving objects? radius vs top-K nearest? scale? read/write ratio? Assumptions: ~200M businesses (mostly static), 'within R km' and 'K nearest' queries, read-heavy, low latency.",
+    "functional": "1) Add/update a business's location. 2) Given (lat, long, radius), return businesses inside it. 3) Return the K nearest. 4) Filter by category/rating. 5) Rank results by distance/relevance.",
+    "nonfunctional": "Low query latency (<100ms), high availability, scalability to hundreds of millions of points, and correctness near cell boundaries.",
+    "estimation": "200M businesses × ~1KB ≈ 200GB of business data (a DB). The geo index is far smaller (a cell id per business). Reads dominate (millions/day); writes (new/edited businesses) are comparatively rare. Precompute/refresh cells on write.",
+    "api": "POST /business {id, lat, long, ...}. GET /search?lat&long&radius&category -> businesses. GET /search?lat&long&k -> K nearest. Internals: a geo-index service + a business-data store.",
+    "data_model": "businesses(id, name, lat, long, category, rating) in a DB. Geo index: geohash(lat,long) prefix -> set of business ids (or a quadtree/S2-cell -> ids). Hot cells cached in Redis.",
+    "hld": "On write, compute the point's geohash (or S2 cell) and index it under that cell. On query, compute the query cell at a precision matching the radius, gather THAT cell plus its 8 neighbors (to cover boundary spillover), fetch candidate businesses, then filter by exact haversine distance and rank. Cache hot regions.",
+    "hld_diagram": "Business -> geohash/S2 cell -> [Geo index: cell -> business ids]\n Query(lat,long,R) -> cover cell + 8 neighbors -> candidate ids -> [Business DB] -> exact-distance filter -> rank",
+    "algorithms": "Geohash: interleave lat/long bits into a base32 string so nearby points share a prefix — prefix length sets cell size. Quadtree: recursively subdivide space, deeper where density is high (adapts to hotspots). Google S2 / Uber H3: hierarchical cells with better boundary/area properties. Haversine for exact great-circle distance in the final filter. For K-nearest, expand rings of cells outward until K candidates are found.",
+    "deep_dive": "Boundary problem: a point just across a cell edge would be missed, so always query the neighboring cells too. Density skew: dense downtowns overflow a fixed-size cell — quadtree/variable precision or finer cells for hot areas. Radius vs precision: pick a geohash length whose cell ~ covers the radius so you scan few cells. Moving objects (drivers): high update rate -> keep the live index in memory (Redis Geo) and re-bucket on movement. Ranking: distance + business relevance (rating, sponsored). Scale: shard the index by cell prefix; cache popular regions.",
+    "follow_ups": "Point right on a cell boundary? (query the 8 neighbor cells too). Dense city center? (quadtree / finer cells for hotspots). Moving drivers? (in-memory geo index, re-bucket on update). Exactly K nearest, not radius? (expand cell rings until K found). Which scheme — geohash vs S2 vs H3? (S2/H3 have nicer area/adjacency; geohash is simplest). Combine with category filters? (filter candidates post-fetch).",
+    "final_diagram": " Writes -> geohash/S2 cell id -> [Geo index (sharded by prefix), hot cells in Redis]\n Query -> cover cell + neighbors (precision ~ radius) -> candidate ids\n       -> [Business DB] -> haversine exact filter -> rank(distance, rating) -> results",
+    "wrap_up": "Index locations by a spatial scheme (geohash, quadtree, or S2/H3) so nearby points share a cell, query the covering cell plus its neighbors to beat boundary effects, then filter candidates by exact haversine distance and rank. Handle density skew with adaptive cells and moving objects with an in-memory geo index; shard by cell prefix and cache hot regions.",
+}
+
+_DETAIL_MAPS = {
+    "scope": "Design a mapping service providing map tiles, geocoding, and routing/ETA over a planet-scale road network. Clarify: which pieces (display, search, navigation)? live traffic? scale? Assumptions: global road graph, tile display + address<->coordinate geocoding + fastest-route with ETA, live-traffic-aware, read-heavy at massive scale.",
+    "functional": "1) Render map tiles at multiple zoom levels. 2) Geocode (address -> coordinates) and reverse-geocode. 3) Compute the fastest route between two points. 4) Estimate ETA using live traffic. 5) Reroute dynamically on new conditions.",
+    "nonfunctional": "Very low latency for tiles/routing, high availability, planet scale, fresh live traffic, and reasonable freshness of map data updates.",
+    "estimation": "Tiles: pre-rendered per zoom level, served from a CDN (billions of tile reads/day, near-100% cache hit). Road graph: ~hundreds of millions of nodes/edges — too big to Dijkstra end-to-end interactively, so precompute. Routing QPS high; each must return in tens of ms.",
+    "api": "GET /tile/{z}/{x}/{y} -> image (CDN). GET /geocode?q=address -> lat,long. GET /route?from&to&mode -> polyline + ETA + steps. Internals: tile service, geocoding service, routing service, traffic pipeline.",
+    "data_model": "Road graph: nodes = intersections, edges = road segments with weights (length, speed limit, turn restrictions). Precomputed contraction-hierarchy shortcuts. Tiles: pre-rendered images keyed by z/x/y in object storage + CDN. Live traffic: per-edge current speed, updated from aggregated GPS.",
+    "hld": "Tiles are pre-rendered and served from a CDN. Geocoding uses a search index over addresses/places. Routing runs a shortest-path (A*/Dijkstra) accelerated by precomputed CONTRACTION HIERARCHIES so cross-country routes resolve in milliseconds; edge weights blend static travel time with live traffic speeds. A traffic pipeline aggregates anonymized GPS into per-edge speeds that continuously adjust weights and ETAs.",
+    "hld_diagram": "Tiles -> [pre-rendered, Object storage + CDN]\n Geocode -> [address search index] -> lat/long\n Route -> [A*/Dijkstra + contraction hierarchies] with edge weights = static + live traffic -> polyline + ETA\n GPS traces -> [traffic aggregation] -> per-edge live speeds",
+    "algorithms": "Dijkstra / A* (with a geographic heuristic) for shortest path. Contraction Hierarchies (or ALT/Arc-Flags) precompute shortcut edges so long routes skip most of the graph — turning a continent-scale query into milliseconds. Map partitioning/tiling for display and for regional graph sharding. ETA = sum of per-edge (distance / current speed) using live traffic. Map-matching snaps raw GPS to the road graph.",
+    "deep_dive": "Precompute vs freshness: contraction hierarchies make routing fast but must be rebuilt when the map or long-lived weights change — do it offline periodically. Live traffic: overlay dynamic per-edge speeds on the static hierarchy; large changes may need lightweight re-routing rather than full recompute. Dynamic rerouting: recompute from the current position when traffic shifts or the user goes off-route. Scale: shard the graph by region, serve tiles from CDN, cache popular routes. Map updates: continuous ingestion (new roads, closures) with periodic hierarchy rebuilds. ETA accuracy: blend historical time-of-day patterns with live speeds.",
+    "follow_ups": "Cross-country routing fast enough? (contraction hierarchies precomputed offline). Live traffic without recomputing everything? (dynamic edge-weight overlay + local reroute). User goes off-route? (map-match + reroute from current position). Tile scale? (pre-render + CDN). Map data changes? (continuous ingest + periodic hierarchy rebuild). ETA accuracy? (historical + live speed blend).",
+    "final_diagram": " Display: [tiles pre-rendered -> Object storage -> CDN]\n Geocoding: [address/place search index] <-> coordinates\n Routing: request -> [A*/Dijkstra over contraction-hierarchy graph] , weights = static + live\n          -> polyline + turn-by-turn + ETA\n Traffic: [GPS traces -> aggregation -> per-edge live speeds] -> feeds routing/ETA",
+    "wrap_up": "A maps service is three subsystems: pre-rendered tiles from a CDN, a geocoding search index, and a routing engine that runs A*/Dijkstra over a road graph accelerated by precomputed contraction hierarchies with edge weights blending static travel time and live traffic. The hard trade-off — precompute speed vs freshness — is handled by offline hierarchy builds plus a dynamic live-traffic overlay and local rerouting.",
+}
+
 
 ENTRIES = [
     # ─────────── Core Building Blocks ───────────
@@ -1338,7 +1386,8 @@ ENTRIES = [
       "Search(avail cache) -> hold room (TTL, atomic) -> pay (saga) -> confirm / release on timeout",
       "Overbooking under concurrency; hold expiry; distributed transaction across pay+book; search freshness.",
       "SQL transactions/row locks vs reserve-with-TTL; saga; idempotency keys; vs eventual-consistency (risky here).",
-      ["reservation", "booking", "concurrency", "overbooking", "saga", "inventory"]),
+      ["reservation", "booking", "concurrency", "overbooking", "saga", "inventory"],
+      detail=_DETAIL_HOTEL),
     E("classic", "Design a Proximity Service (Yelp / Nearby)",
       "Find businesses/objects within a radius of a location, fast, at scale.",
       "Index locations with a geospatial scheme: geohash (encode lat/long into a prefix string — nearby points share prefixes) or a quadtree/S2 cells. Query = find the cell(s) covering the radius and scan candidates, then filter by exact distance. Store business data in a DB; cache hot regions.",
@@ -1347,7 +1396,8 @@ ENTRIES = [
       "Locations -> [geohash / quadtree / S2 index] ; query(lat,long,radius) -> cover cells -> candidates -> distance filter",
       "Cell-boundary edge cases; dense-area hotspots; dynamic (moving) objects; radius vs cell granularity.",
       "Geohash, quadtree, Google S2, Uber H3; PostGIS, Redis Geo, Elasticsearch geo.",
-      ["proximity", "geospatial", "geohash", "quadtree", "s2", "location", "nearby"]),
+      ["proximity", "geospatial", "geohash", "quadtree", "s2", "location", "nearby"],
+      detail=_DETAIL_PROXIMITY),
     E("classic", "Design Google Maps",
       "Provide maps, geocoding, and route/ETA computation over a planet-scale road graph.",
       "Store the road network as a graph (nodes=intersections, edges=roads with weights). Routing uses shortest-path (Dijkstra/A*) with precomputed contraction hierarchies for speed at scale; partition the map into regions/tiles served from a CDN. ETA blends edge weights with live traffic (from aggregated GPS). Geocoding maps addresses<->coordinates.",
@@ -1356,7 +1406,8 @@ ENTRIES = [
       "Road graph -> [contraction hierarchies] ; route: A*/Dijkstra + live traffic -> ETA ; tiles via CDN",
       "Graph size/precompute cost; live-traffic freshness; dynamic rerouting; map data updates.",
       "Dijkstra/A*, contraction hierarchies, OSRM/Valhalla; tile servers; S2 for spatial.",
-      ["maps", "routing", "shortest-path", "dijkstra", "graph", "geospatial", "eta"]),
+      ["maps", "routing", "shortest-path", "dijkstra", "graph", "geospatial", "eta"],
+      detail=_DETAIL_MAPS),
     E("classic", "Design a Real-time Gaming Leaderboard",
       "Show top-N players and a user's rank over millions of players, updated in real time.",
       "Use a Redis sorted set (score->member) — O(log n) updates and O(log n + k) top-k/rank queries. Shard by game/season; for huge scale, approximate ranks or bucket by score. Persist to a DB for durability; recompute/rebuild on failover.",
