@@ -16,141 +16,152 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Base 7 Conversion",
-         answer="Convert an integer to its base-7 string. Repeatedly take num % 7 for the next least-significant digit and floor-divide by 7, collecting digits, then reverse. Handle 0 and the negative sign separately.",
-         tags=["base-7","base-conversion","math","dsa"],
-         code='''# Convert an integer to its base-7 string representation.
-def convert_to_base7(num):
-    if num == 0:
-        return "0"
-    negative = num < 0
-    num = abs(num)
-    digits = []
-    while num:
-        digits.append(str(num % 7))   # least-significant digit first
-        num //= 7
-    result = "".join(reversed(digits))
-    return "-" + result if negative else result''',
-         complexity="Time O(log n), space O(log n).",
-         pitfalls="Not handling 0 or the sign; forgetting to reverse the collected digits.",
-         example="convert_to_base7(100) -> '202'; convert_to_base7(-7) -> '-10'."),
-    dict(cat="dsa", title="Add to Array-Form of Integer",
-         answer="A number is given as an array of digits; add an integer k to it and return the digit array of the sum. Walk from the least-significant digit, folding k in as a running carry (add the digit, take %10 as the output digit, //10 as the carry) until both the array and k are exhausted.",
-         tags=["array-form","math","carry","array","dsa"],
-         code='''# Add an integer k to a number represented as an array of digits.
-def add_to_array_form(num, k):
-    i = len(num) - 1
-    result = []
-    while i >= 0 or k:
-        if i >= 0:
-            k += num[i]              # fold in the current digit
-            i -= 1
-        result.append(k % 10)        # output digit
-        k //= 10                     # carry to the next position
-    return result[::-1]''',
-         complexity="Time O(max(len(num), digits of k)), space O(that).",
-         pitfalls="Stopping before k's carry is fully consumed; forgetting to reverse.",
-         example="add_to_array_form([1,2,0,0], 34) -> [1,2,3,4]."),
-    dict(cat="dsa", title="Number to Excel Column Title",
-         answer="Convert a positive integer to its Excel column title (1->A, 26->Z, 27->AA). It's base-26 but 1-indexed (no zero digit), so subtract 1 before each modulo to map into 0..25, then convert to a letter and divide down.",
-         tags=["excel-column-title","base-conversion","string","math","dsa"],
-         code='''# Convert a positive integer to its Excel column title (1->A, 27->AA).
-def convert_to_title(n):
-    result = []
-    while n:
-        n -= 1                        # shift to 0-based for the modulo
-        result.append(chr(n % 26 + ord('A')))
-        n //= 26
-    return "".join(reversed(result))''',
-         complexity="Time O(log n), space O(log n).",
-         pitfalls="Forgetting the n -= 1 (this is 1-indexed, not 0-indexed); not reversing.",
-         example="convert_to_title(28) -> 'AB'; convert_to_title(701) -> 'ZY'."),
-    dict(cat="dsa", title="Number of Steps to Reduce a Number to Zero",
-         answer="Count the steps to reduce n to 0 where each step halves n if it's even, or subtracts 1 if it's odd. Simulate directly; equivalently it's (number of bits) + (number of set bits) - 1.",
-         tags=["steps-to-zero","bit-manipulation","math","simulation","dsa"],
-         code='''# Steps to reduce n to 0: if even, halve it; if odd, subtract 1.
-def number_of_steps(num):
-    steps = 0
-    while num:
-        if num % 2 == 0:
-            num //= 2
-        else:
-            num -= 1
-        steps += 1
-    return steps''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Off-by-one on the final step to 0; infinite loop if the update is wrong.",
-         example="number_of_steps(14) -> 6."),
-    dict(cat="dsa", title="Reverse String (in place)",
-         answer="Reverse an array of characters IN PLACE with O(1) extra space. Two pointers from the ends swap inward until they meet.",
-         tags=["reverse-string","two-pointers","in-place","string","dsa"],
-         code='''# Reverse a list of characters in place (two pointers).
-def reverse_string(s):
-    left, right = 0, len(s) - 1
-    while left < right:
-        s[left], s[right] = s[right], s[left]
-        left += 1; right -= 1
-    return s''',
+    dict(cat="dsa", title="Assign Cookies (greedy)",
+         answer="Maximize the number of content children: child i is content if given a cookie of size >= their greed g[i]. Sort both greeds and cookie sizes, then greedily give the smallest sufficient cookie to the least-greedy remaining child using two pointers.",
+         tags=["assign-cookies","greedy","two-pointers","sorting","dsa"],
+         code='''# Max children satisfied: child i needs a cookie of size >= greed g[i].
+def find_content_children(g, s):
+    g.sort(); s.sort()
+    child = cookie = 0
+    while child < len(g) and cookie < len(s):
+        if s[cookie] >= g[child]:
+            child += 1              # this cookie satisfies the child
+        cookie += 1                 # advance the cookie pointer regardless
+    return child''',
+         complexity="Time O(n log n + m log m), space O(1).",
+         pitfalls="Not sorting both arrays; advancing the child pointer on a non-match.",
+         example="find_content_children([1,2,3],[1,1]) -> 1."),
+    dict(cat="dsa", title="Lemonade Change (greedy)",
+         answer="Each lemonade costs $5; customers pay with $5, $10, or $20 bills and you must give correct change. Greedily track your $5 and $10 counts; for a $20 prefer paying with a $10 + $5 (keeping $5s, which are more useful) and fall back to three $5s. Return False if you ever can't make change.",
+         tags=["lemonade-change","greedy","simulation","dsa"],
+         code='''# Can you give correct change selling lemonade at $5 (bills 5, 10, 20)?
+def lemonade_change(bills):
+    fives = tens = 0
+    for bill in bills:
+        if bill == 5:
+            fives += 1
+        elif bill == 10:
+            if fives == 0:
+                return False
+            fives -= 1; tens += 1
+        else:                        # a $20: prefer a 10 + 5, else three 5s
+            if tens > 0 and fives > 0:
+                tens -= 1; fives -= 1
+            elif fives >= 3:
+                fives -= 3
+            else:
+                return False
+    return True''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Building a new string instead of in-place; off-by-one on the pointers.",
-         example="reverse_string(['h','e','l','l','o']) -> ['o','l','l','e','h']."),
-    dict(cat="dsa", title="Detect Capital",
-         answer="A word's capitalization is valid if it's ALL uppercase ('USA'), ALL lowercase ('leetcode'), or Title case with only the first letter capitalized ('Google'). Check those three cases directly.",
-         tags=["detect-capital","string","dsa"],
-         code='''# Is the capitalization of a word valid? (all caps, all lower, or Title case)
-def detect_capital_use(word):
-    return word.isupper() or word.islower() or word.istitle()''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Missing the title-case rule (first letter only); edge cases with single-letter words.",
-         example="detect_capital_use('USA') -> True; detect_capital_use('FlaG') -> False."),
-    dict(cat="dsa", title="Maximum Product of Three Numbers",
-         answer="Find the maximum product of any three numbers in an array. After sorting, the answer is either the three LARGEST values, or the two SMALLEST (potentially large negatives whose product is positive) times the largest value. Take the max of those two candidates.",
-         tags=["max-product-three","sorting","greedy","array","dsa"],
-         code='''# Max product of any three numbers (watch two large negatives).
-def maximum_product(nums):
+         pitfalls="Giving three $5s when a $10+$5 is available (wastes flexible $5s); no $20 bank needed.",
+         example="lemonade_change([5,5,5,10,20]) -> True; lemonade_change([5,5,10,10,20]) -> False."),
+    dict(cat="dsa", title="Can Place Flowers (greedy)",
+         answer="Given a flowerbed (0=empty, 1=planted) where no two flowers may be adjacent, decide if n new flowers can be planted. Greedily plant in any empty spot whose neighbours are also empty. Padding the bed with 0 sentinels on both ends removes boundary special-cases.",
+         tags=["can-place-flowers","greedy","array","dsa"],
+         code='''# Can you plant n new flowers with no two adjacent? (0=empty, 1=planted)
+def can_place_flowers(flowerbed, n):
+    count = 0
+    bed = [0] + flowerbed + [0]      # sentinels avoid boundary checks
+    for i in range(1, len(bed) - 1):
+        if bed[i - 1] == 0 and bed[i] == 0 and bed[i + 1] == 0:
+            bed[i] = 1               # plant here
+            count += 1
+    return count >= n''',
+         complexity="Time O(n), space O(n) (O(1) without the padding copy).",
+         pitfalls="Boundary index errors (use sentinels); not marking a planted spot before checking the next.",
+         example="can_place_flowers([1,0,0,0,1], 1) -> True; can_place_flowers([1,0,0,0,1], 2) -> False."),
+    dict(cat="dsa", title="Array Partition I",
+         answer="Split 2n numbers into n pairs to MAXIMIZE the sum of each pair's minimum. Sorting and pairing adjacent elements is optimal — take every element at an EVEN index (each pair's smaller element), because pairing a large number with the next-largest minimizes the 'loss' of the larger one.",
+         tags=["array-partition","greedy","sorting","array","dsa"],
+         code='''# Max sum of min(pairs) when pairing 2n numbers: sort, take every other.
+def array_pair_sum(nums):
     nums.sort()
-    # three largest, OR two smallest (very negative) times the largest
-    return max(nums[-1] * nums[-2] * nums[-3], nums[0] * nums[1] * nums[-1])''',
-         complexity="Time O(n log n) (O(n) with a linear scan for extremes), space O(1).",
-         pitfalls="Ignoring two negative extremes (their product is positive); only taking the top three.",
-         example="maximum_product([-4,-3,-2,1,60]) -> 720  ((-4)*(-3)*60)."),
-    dict(cat="dsa", title="Best Time to Buy and Sell Stock II (greedy)",
-         answer="Maximize profit with UNLIMITED transactions (you may buy and sell repeatedly, one share at a time). Greedy: capture every upswing — sum all positive day-to-day differences. This equals the best achievable profit because any longer rising run is the sum of its consecutive gains.",
-         tags=["buy-sell-stock","greedy","array","dsa"],
-         code='''# Max profit with unlimited transactions (buy/sell many times), greedy.
-def max_profit(prices):
-    profit = 0
-    for i in range(1, len(prices)):
-        if prices[i] > prices[i - 1]:
-            profit += prices[i] - prices[i - 1]   # capture every upswing
-    return profit''',
+    return sum(nums[::2])            # sum of every element at an even index''',
+         complexity="Time O(n log n), space O(1).",
+         pitfalls="Pairing large with small (wastes the large one); summing odd indices.",
+         example="array_pair_sum([1,4,3,2]) -> 4  (min(1,2) + min(3,4) = 1 + 3)."),
+    dict(cat="dsa", title="Squares of a Sorted Array",
+         answer="Given a sorted (possibly negative) array, return the squares sorted, in O(n). The largest squares come from the extremes, so use two pointers from both ends and fill the result array from the BACK with the larger square each step.",
+         tags=["sorted-squares","two-pointers","array","dsa"],
+         code='''# Squares of a sorted array, returned sorted, in O(n) (two pointers).
+def sorted_squares(nums):
+    n = len(nums)
+    result = [0] * n
+    left, right = 0, n - 1
+    for i in range(n - 1, -1, -1):
+        if abs(nums[left]) > abs(nums[right]):
+            result[i] = nums[left] ** 2   # larger magnitude fills the back
+            left += 1
+        else:
+            result[i] = nums[right] ** 2
+            right -= 1
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Sorting after squaring (O(n log n) — the two-pointer fill is O(n)); filling from the front.",
+         example="sorted_squares([-4,-1,0,3,10]) -> [0,1,9,16,100]."),
+    dict(cat="dsa", title="Sort Array By Parity",
+         answer="Rearrange an array so all EVEN numbers come before all odd numbers (any relative order). Two pointers from the ends: skip evens on the left and odds on the right, and swap when the left is odd and the right is even.",
+         tags=["sort-by-parity","two-pointers","in-place","array","dsa"],
+         code='''# Move all even numbers before all odd numbers (any order), two pointers.
+def sort_array_by_parity(nums):
+    left, right = 0, len(nums) - 1
+    while left < right:
+        if nums[left] % 2 == 0:
+            left += 1               # even already on the left
+        elif nums[right] % 2 == 1:
+            right -= 1              # odd already on the right
+        else:
+            nums[left], nums[right] = nums[right], nums[left]
+    return nums''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Trying to find one buy/sell pair (that's Stock I); holding across a dip needlessly.",
-         example="max_profit([7,1,5,3,6,4]) -> 7  ((5-1)+(6-3))."),
-    dict(cat="glossary", title="Event time vs processing time",
-         answer="Two notions of time in stream processing. EVENT TIME is when an event actually OCCURRED (a timestamp in the data). PROCESSING TIME is when the system processes it. Networks and buffering make events arrive late/out-of-order, so aggregating by processing time gives wrong, non-reproducible results. Event time (with WATERMARKS to bound lateness) produces correct, deterministic windows regardless of arrival time.",
-         tags=["event-time","processing-time","stream-processing","watermark"],
-         example="A user clicks at 11:59 but the event reaches the pipeline at 12:03; event-time windowing counts it in the 11:xx window (correct), while processing-time would wrongly bucket it into 12:xx."),
-    dict(cat="glossary", title="Log compaction (Kafka)",
-         answer="A retention mode that, instead of deleting old messages by time/size, keeps only the LATEST value per KEY. The log becomes a compacted changelog where every key's most recent state survives, so a consumer can rebuild full current state by replaying it. Ideal for topics representing entity state (a table as a stream).",
-         tags=["log-compaction","kafka","changelog","retention","streaming"],
-         example="A 'user-profile' topic keyed by user_id uses log compaction: old updates are pruned but the latest per user is kept, so a new service bootstraps current profiles by reading the whole topic."),
-    dict(cat="glossary", title="ISR (in-sync replicas)",
-         answer="In Kafka, the set of a partition's replicas that are fully CAUGHT UP with the leader. With acks=all, a write commits once all ISR members have it, so any ISR replica can become leader without data loss. A lagging/dead replica falls OUT of the ISR; min.insync.replicas sets how many must be in-sync to accept writes — trading availability for durability.",
-         tags=["isr","in-sync-replicas","kafka","replication","durability"],
-         example="With replication factor 3 and min.insync.replicas=2, a partition accepts writes while 2 replicas are in the ISR; if too many lag, writes are rejected to guarantee durability."),
-    dict(cat="glossary", title="Idempotent producer",
-         answer="A Kafka producer feature that prevents DUPLICATE messages from producer retries. Each producer gets an ID and each message a sequence number; the broker dedupes retried sends per partition, so a network retry after an ambiguous ack doesn't write the message twice. It's a foundation of Kafka's exactly-once semantics (with transactions).",
-         tags=["idempotent-producer","kafka","exactly-once","deduplication"],
-         example="A producer times out waiting for an ack and retries; without idempotence the message could be written twice, but sequence numbers let the broker discard the duplicate."),
-    dict(cat="glossary", title="At-least-once vs at-most-once vs exactly-once",
-         answer="The three delivery guarantees. AT-MOST-ONCE: never retry -> messages may be LOST but never duplicated (fire-and-forget). AT-LEAST-ONCE: retry until acked -> never lost but may DUPLICATE (the common default). EXACTLY-ONCE: each message takes effect once — achieved not by magical delivery but by at-least-once + dedup/idempotency or transactions. Choose based on whether loss or duplication is worse.",
-         tags=["delivery-semantics","at-least-once","at-most-once","exactly-once","messaging"],
-         example="Metrics collection tolerates at-most-once (a lost sample is fine); payments need exactly-once effect via at-least-once + idempotency keys so no charge is lost OR duplicated."),
-    dict(cat="conceptual", title="Why aggregate streams by event time instead of processing time?",
-         answer="Because processing time makes results WRONG and non-reproducible when data arrives late or out of order — which it always does (network delays, retries, buffering, backfills). Bucketing 'clicks per minute' by when the system happened to process each event means the same input replayed later lands in different windows, and a 2-minute delay silently shifts events into the wrong minute. EVENT time uses when the event actually happened, so an event always falls in the same window regardless of processing time — giving correct, deterministic, replayable aggregates. The cost is handling LATE data: you can't close a window immediately, so WATERMARKS estimate 'event time has advanced past T, windows before T-δ are likely complete' to decide when to emit, plus allowed-lateness for stragglers. Processing time is simpler/lower-latency (fine for rough dashboards), but event time is required when correctness under out-of-order data matters.",
-         tags=["event-time","processing-time","watermark","stream-processing","why"],
-         example="Reprocessing yesterday's log through a processing-time pipeline buckets everything into 'now', destroying the per-minute breakdown; an event-time pipeline reproduces the exact same per-minute counts as the original run."),
+         pitfalls="Advancing both pointers on a swap without re-checking; infinite loop with wrong conditions.",
+         example="sort_array_by_parity([3,1,2,4]) -> [4,2,1,3] (evens first; order may vary)."),
+    dict(cat="dsa", title="Find the Difference (XOR)",
+         answer="String t is string s shuffled with one EXTRA character added; find the extra one. XOR the char codes of every character in both strings — each character of s cancels its match in t, leaving only the code of the added character.",
+         tags=["find-difference","xor","bit-manipulation","string","dsa"],
+         code='''# t is s shuffled plus one extra char; find it via XOR (all pairs cancel).
+def find_the_difference(s, t):
+    result = 0
+    for ch in s + t:
+        result ^= ord(ch)          # each char in s cancels its match in t
+    return chr(result)             # the lone extra char's code remains''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Using counts (works but heavier); forgetting XOR of a value with itself is 0.",
+         example="find_the_difference('abcd','abcde') -> 'e'."),
+    dict(cat="dsa", title="Distribute Candies",
+         answer="A person may eat only n/2 candies (n even). Maximize the number of DISTINCT flavours eaten. The answer is min(number of distinct types, n/2) — you can taste every type up to the eating limit.",
+         tags=["distribute-candies","greedy","hash-set","array","dsa"],
+         code='''# Max kinds of candy eaten if you eat exactly n/2 candies.
+def distribute_candies(candy_type):
+    kinds = len(set(candy_type))              # distinct flavours available
+    return min(kinds, len(candy_type) // 2)   # capped by how many you eat''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Forgetting the n/2 cap; counting total candies instead of distinct types.",
+         example="distribute_candies([1,1,2,2,3,3]) -> 3; distribute_candies([1,1,1,1]) -> 1."),
+    dict(cat="glossary", title="Connection pooling",
+         answer="Keeping a POOL of pre-established, reusable database connections instead of opening a new one per request. Opening a DB connection is expensive (TCP + TLS + auth + session setup, often milliseconds), and DBs cap concurrent connections. A pool lends an idle connection and reclaims it after use — cutting latency and protecting the DB from connection exhaustion. Size the pool to the DB's connection limit.",
+         tags=["connection-pooling","database","performance","concurrency"],
+         example="A web app with a pool of 20 connections serves thousands of requests/sec by reusing them, rather than paying the setup cost (and overwhelming the DB) on every request."),
+    dict(cat="glossary", title="N+1 query problem",
+         answer="A common ORM/data-access anti-pattern: fetching a list of N items triggers ONE query for the list plus N more (one per item) to load related data — N+1 queries instead of 1-2. Round-trip latency then dominates. Fixed by eager loading, a JOIN, or batching the related fetch into a single IN(...) query.",
+         tags=["n-plus-one","orm","database","performance","query"],
+         example="Loading 100 posts then lazily fetching each post's author fires 1 + 100 = 101 queries; a JOIN or 'authors WHERE id IN (...)' batch cuts it to 2."),
+    dict(cat="glossary", title="Zero-copy",
+         answer="An I/O optimization that moves data between a file and a socket WITHOUT copying it through user-space application buffers (and often fewer kernel copies), via calls like sendfile()/mmap. It saves CPU and memory bandwidth for high-throughput transfer. Kafka famously uses zero-copy to send log segments from the OS page cache straight to the network socket.",
+         tags=["zero-copy","io","sendfile","performance","kafka"],
+         example="Kafka serves a consumer by sendfile()-ing bytes directly from the OS page cache to the socket, skipping a copy into the JVM heap — a big reason it sustains such high throughput."),
+    dict(cat="glossary", title="fsync (durability)",
+         answer="A system call that forces buffered writes to be PHYSICALLY persisted to the storage device, not just held in the OS page cache — without it, a crash loses recently 'written' data still in memory. Databases fsync the WAL before acknowledging a commit to guarantee durability (the D in ACID), but fsync is slow (waits on the disk), so it's a core throughput/durability trade-off (group commit batches many fsyncs).",
+         tags=["fsync","durability","wal","acid","storage"],
+         example="Postgres fsyncs the WAL on commit so an acknowledged transaction survives power loss; disabling synchronous_commit skips the wait for higher throughput, risking loss of the last few transactions on a crash."),
+    dict(cat="glossary", title="Prepared statement",
+         answer="A parameterized SQL statement PARSED, PLANNED, and compiled ONCE, then executed many times with different bound parameter values. Benefits: performance (skip re-parsing/re-planning each run) and SECURITY — parameters are sent separately from the SQL text, so user input can't alter the query structure, preventing SQL INJECTION. Always prefer them over string-concatenated queries.",
+         tags=["prepared-statement","sql-injection","database","security","performance"],
+         example="'SELECT * FROM users WHERE email = ?' with a bound value is safe and fast; concatenating the email into the SQL string risks injection like ' OR '1'='1."),
+    dict(cat="conceptual", title="Why use connection pooling instead of a database connection per request?",
+         answer="Opening a DB connection is EXPENSIVE and slow: a TCP handshake, TLS negotiation, authentication, and server-side session/backend setup — often several milliseconds that dwarf a fast query and add up under load. Databases also CAP concurrent connections (each costs memory/a backend process), so connection-per-request under high concurrency exhausts the limit and the DB rejects or thrashes. A POOL fixes both: it keeps a fixed set of warm, authenticated connections and lends an idle one per request, returning it afterward — so requests pay ~zero setup cost and the DB never exceeds pool-size concurrency. The pool size doubles as a concurrency limiter/backpressure tuned to the DB's capacity. Trade-offs: managing sizing, timeouts, and dead-connection recovery — too small bottlenecks, too large overloads the DB.",
+         tags=["connection-pooling","database","performance","backpressure","why"],
+         example="Without pooling, 1000 req/s each opening a fresh connection would swamp Postgres's ~100-connection limit and pay ~2ms setup each; a pool of 20 warm connections serves all of them by reusing connections, keeping the DB healthy and latency low."),
 ]
 
 
