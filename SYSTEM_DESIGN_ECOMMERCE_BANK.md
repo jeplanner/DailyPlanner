@@ -474,3 +474,120 @@ To grow this bank toward broad coverage, each of these becomes a full entry (sam
 - **The honest math:** 45 core designs × (3 scales × 3 lenses) already yields ~400 genuinely distinct, high-value questions. That — not 5,000 stubs — is what actually gets you the offer.
 
 > *"Simplicity is the ultimate sophistication."* Master these building blocks and you can design anything they throw at you.
+
+---
+
+# PART E — Databases, Data Platforms & Analytics at Scale
+
+> The whole of this Part (plus Parts A–B) is also available as a **browsable, searchable, editable in-app track** on the DailyPlanner Interview Prep page. This section adds elaborate depth on the specifically-requested topics.
+
+## E1. TiDB — Distributed NewSQL / HTAP (elaborate)
+- **Problem it solves:** You've outgrown a single MySQL — you need horizontal write scale and ACID transactions, *and* you want fresh analytics on the same data without exporting to a separate warehouse. Traditional options force a choice: shard MySQL (app complexity, no cross-shard transactions) or bolt on a warehouse (stale, ETL-heavy).
+- **How it works (architecture):** TiDB uses a **disaggregated, layered** design:
+  - **TiDB (SQL layer):** stateless MySQL-compatible query nodes — parse, optimize, and route. Scale by adding nodes.
+  - **TiKV (storage layer):** a distributed, transactional, **row-based** key-value store. Data is range-partitioned into **Regions** (~96MB), each **Raft-replicated** across 3+ nodes for strong consistency and auto-failover. Transactions use a **Percolator-style** two-phase commit with a global timestamp.
+  - **TiFlash (columnar engine):** a **columnar** replica of TiKV data, kept in sync as a **Raft learner**. This is what makes it **HTAP** — the optimizer routes OLTP to TiKV (row) and OLAP scans to TiFlash (column), consistently, on live data.
+  - **PD (Placement Driver):** the brain — stores metadata, hands out globally-ordered timestamps (**TSO**), and auto-rebalances Regions as load/data shifts.
+- **Example (how it's implemented):** A payments/orders platform migrates from sharded MySQL: the app keeps speaking the MySQL protocol (minimal rewrite), transactions scale out on TiKV, and the analytics team runs revenue dashboards directly on TiFlash — **no nightly ETL, sub-second-fresh analytics.**
+- **Use cases:** Scale-out OLTP beyond one MySQL, real-time HTAP, multi-region strong consistency, MySQL migrations without re-architecting.
+- **Architecture:**
+```
+   App ──(MySQL protocol)──▶ [ TiDB SQL nodes (stateless) ]
+                                    │            │
+                          ┌─────────┘            └──────────┐
+                          ▼                                 ▼
+                  [ TiKV: row store ]  ──Raft learner──▶ [ TiFlash: columnar ]
+                  (Regions, Raft x3, OLTP)                 (OLAP scans)
+                          ▲
+                   [ PD: metadata, TSO (timestamps), auto-rebalance ]
+```
+- **Disadvantages:** Many moving parts (heavier ops than one MySQL); distributed-transaction latency vs a local commit; TiFlash adds storage/compute; overkill for small workloads; a few MySQL features unsupported.
+- **Competing technologies:** **CockroachDB, Google Spanner, YugabyteDB** (distributed SQL); **Vitess** (sharded MySQL, no HTAP); **SingleStore** (HTAP); **Snowflake / ClickHouse** for pure OLAP; **Aurora** for managed scale-up.
+
+## E2. Aerospike — Real-time NoSQL at Scale (elaborate)
+- **Problem it solves:** Serve **terabytes-to-petabytes** with **sub-millisecond** reads/writes at **very high throughput** (100k → millions ops/sec), reliably and cheaply — where Redis (RAM-bound) gets too expensive and disk databases are too slow.
+- **How it works:** A distributed key-value/row store built around a **Hybrid Memory Architecture**: the **primary index lives in RAM** (fast lookups) while **data lives on SSD**, accessed **directly** (bypassing the filesystem/page cache) for near-in-memory latency at SSD cost/capacity. A **smart client** holds the cluster's **partition map** and talks **directly** to the owning node (no proxy hop). Data is sharded by consistent hashing, **synchronously replicated**, self-healing on node loss, and offers **strong-consistency** or high-availability modes. **Cross-Datacenter Replication (XDR)** gives global low latency.
+- **Example:** A **real-time bidding** (ad-tech) service reads a user profile in **<1 ms** during the ad auction; or a **fraud/feature store** serving models at request time under a tight latency budget.
+- **Use cases:** Real-time bidding, fraud detection, recommendation/feature stores, large session stores, any huge low-latency KV workload.
+- **Architecture:**
+```
+  Smart client ──(partition map, direct)──▶ [ Aerospike node ]
+                                              RAM: primary index
+                                              SSD: record data (direct I/O)
+                                              ── sync replica ──▶ peer node
+                                              ── XDR ──▶ another datacenter
+```
+- **Disadvantages:** KV/row data model (limited joins/rich queries); specialized ops knowledge; enterprise features are licensed; overkill for small/low-QPS apps.
+- **Competing technologies:** **Redis** (in-memory, smaller data), **DynamoDB**, **Cassandra/ScyllaDB**, **Couchbase**, **Memcached**.
+
+## E3. Data Platforms at Scale (the big picture)
+- **Problem it solves:** As data grows across many sources and teams, you need a platform that lands, stores, transforms, governs, and serves data for BI **and** ML — reliably, cheaply, and at scale.
+- **The reference architecture (assemble the building blocks):**
+```
+  SOURCES            INGESTION          STORAGE (Lakehouse)        SERVE
+  ┌────────┐   CDC   ┌────────┐   ┌───────────────────────────┐  ┌──────────┐
+  │ OLTP DB│──────▶ │ Kafka /│──▶│ Bronze(raw)→Silver(clean)  │─▶│ Warehouse│▶ BI/dashboards
+  │ Events │  events │ Kinesis│   │ →Gold(marts)  [Iceberg/    │  │  (OLAP)  │
+  │ SaaS   │──batch─▶│ Airbyte│   │  Delta on S3/object store] │  ├──────────┤
+  │ Logs   │         └────────┘   └───────────────────────────┘  │ Feature  │▶ ML models
+  └────────┘              │   ┌──────────┐          ▲             │  store   │
+                          └──▶│ Flink    │─realtime─┘             ├──────────┤
+                              │ (stream) │                         │ Reverse  │▶ back to apps
+                              └──────────┘                         │  ETL     │
+        Orchestration: Airflow/Dagster · Transform: dbt/Spark · Governance/Catalog: Unity/DataHub
+```
+- **The layers explained:**
+  - **Ingestion:** batch (Airbyte/Fivetran) + streaming (**Kafka**) + **CDC** (Debezium) from OLTP.
+  - **Storage — the Lakehouse:** cheap object storage + a **table format (Iceberg/Delta/Hudi)** giving ACID, schema evolution, time travel. Layered **Bronze → Silver → Gold** (medallion).
+  - **Processing:** **batch** (Spark) for heavy transforms, **stream** (Flink) for real-time; orchestrated by **Airflow/Dagster**, modeled with **dbt**.
+  - **Serving:** **warehouse/OLAP** (Snowflake/BigQuery/ClickHouse) for BI; **feature store** for ML; **reverse-ETL** to push insights back to apps.
+  - **Governance:** catalog, lineage, access control (Unity Catalog, DataHub, Amundsen).
+- **Architectural styles:** **Lambda** (batch + speed layers) vs **Kappa** (one streaming path); **centralized platform** vs **Data Mesh** (domain-owned data products).
+- **Disadvantages:** Real complexity and cost; many tools to integrate/operate; governance and data quality are ongoing battles; skills-intensive.
+- **Competing technologies:** **Databricks** (lakehouse), **Snowflake** (warehouse-first), **BigQuery/Redshift/Synapse**, **open stack** (Iceberg + Spark/Trino + Kafka + Airflow + dbt).
+
+## E4. Data Analytics — the landscape
+- **Problem it solves:** Turning raw data into decisions — dashboards, ad-hoc analysis, real-time signals, and experiments — without hammering production systems.
+- **The spectrum:**
+  - **OLTP vs OLAP:** transactions (row store, current data) vs analytics (**columnar, MPP**, history). Separate them; move data via ETL/CDC.
+  - **Batch analytics:** scheduled transforms over big datasets → **warehouse** → **BI dashboards** (Tableau/Looker/Power BI/Superset) over a **semantic layer** (consistent metric definitions).
+  - **Real-time/streaming analytics:** **Kafka → Flink → real-time OLAP (Druid/Pinot/ClickHouse) → live dashboards**, with windowing and watermarks for late events.
+  - **Product analytics:** clickstream funnels, retention, cohorts (Amplitude/Segment).
+  - **Experimentation:** **A/B testing platforms** with proper randomization, guardrails, and statistics.
+  - **ETL vs ELT:** transform-before-load vs load-raw-then-transform-in-warehouse (**ELT** is the modern default via dbt).
+- **Example:** During a sale, a **real-time GMV + 'trending now'** dashboard is computed by Flink from the clickstream (seconds-fresh), while **cohort/retention** reports run as nightly dbt models in Snowflake (batch).
+- **Architecture:**
+```
+  Events ─▶ Kafka ─┬─▶ Flink ─▶ real-time OLAP (Druid) ─▶ live dashboards
+                   └─▶ Lake ─▶ warehouse (dbt models) ─▶ BI + experiments
+```
+- **Disadvantages:** Two paths (batch+stream) to maintain; metric governance (everyone must agree what "active user" means); streaming state/exactly-once complexity; cost at volume.
+- **Competing technologies:** Snowflake/BigQuery/Redshift/ClickHouse; Flink/Spark/Materialize; Druid/Pinot; Looker/Tableau/Power BI/Superset; dbt; Optimizely/Statsig.
+
+## E5. Common Data Model (Canonical Data Model) — elaborate
+- **Problem it solves:** In a big enterprise, every system defines core entities differently — CRM's "Customer" ≠ billing's "Account" ≠ the webshop's "User". Integrating **N systems point-to-point** needs **N×(N−1) mappings**, analytics can't join across systems, and every new integration is bespoke pain.
+- **How it works:** Define a **single shared, standardized schema** for core business entities (Customer, Product, Order, Address...) that **every system maps to once**. Integrations translate **to/from the canonical model**, turning **N-to-N mappings into N-to-1**. It's a design pattern (canonical model in an ESB/iPaaS or MDM), and there are ready-made industry CDMs:
+  - **Microsoft Common Data Model / Dataverse** — standardized entities for business apps (Power Platform, Dynamics).
+  - **OMOP** (health data), **FHIR** (healthcare interop), **ARTS/ARTS ODM** (retail), **ACORD** (insurance).
+- **Example:** An enterprise defines a canonical **Customer**; CRM, billing, support, and the webshop each write one mapping to it. Now a **Customer-360** view and cross-system analytics "just work," and adding a new SaaS tool means writing **one** mapping, not integrating with everything.
+- **Use cases:** Enterprise application integration (canonical model in the message bus), **Master Data Management (MDM)**, data-warehouse conformance (conformed dimensions), partner/EDI exchange, unifying microservice data for a single analytical view.
+- **Architecture:**
+```
+  CRM ──map──┐                      ┌──map── Billing
+             ▼                      ▼
+        [  CANONICAL DATA MODEL (Customer, Order, Product) ]
+             ▲                      ▲
+  Webshop ─map┘                     └─map── Support
+        (each system maps ONCE → N-to-1, not N-to-N)
+```
+- **Disadvantages:** Significant upfront design + ongoing **governance**; a rigid canonical model can lag fast-changing business needs; risk of over-generalizing (a "Customer" that fits everything fits nothing well); needs a clear owner.
+- **Competing technologies:** **Point-to-point mapping** (simple, doesn't scale); **Microsoft CDM/Dataverse**; industry standards (OMOP/FHIR/ARTS/ACORD); **MDM tools** (Informatica, Reltio); **data-contract / semantic-layer** approaches (a more modern, decentralized take).
+
+## E6. Data Modeling — quick reference
+- **Dimensional modeling (Kimball):** facts (measurable events) + dimensions (context) in **star/snowflake** schemas — the BI workhorse.
+- **Normalization vs denormalization:** integrity/write-efficiency (OLTP) vs read speed (OLAP/NoSQL); choose by read/write ratio.
+- **Slowly Changing Dimensions (SCD):** Type 1 (overwrite), **Type 2** (new row + effective dates = full history), Type 3 (previous-value column). Type 2 is standard for point-in-time analytics.
+- **Data Vault:** hubs/links/satellites — auditable, flexible enterprise warehouse modeling.
+- **3NF (Inmon)** vs **star (Kimball)** vs **One Big Table** — pick per query patterns and governance needs.
+
+> *"Data is a precious thing and will last longer than the systems themselves."* — Tim Berners-Lee. Model it well and everything downstream gets easier.

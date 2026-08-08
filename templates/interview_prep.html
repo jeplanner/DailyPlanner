@@ -131,6 +131,14 @@
   .q-edit textarea { width: 100%; box-sizing: border-box; min-height: 46px; resize: vertical; padding: 8px 10px; font-size: 13.5px; }
   .q-edit textarea.q { min-height: 40px; font-weight: 600; }
 
+  /* System-design entry fields */
+  .sd-field { margin: 7px 0; font-size: 13.5px; line-height: 1.45; }
+  .sd-field .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); display: block; margin-bottom: 2px; }
+  .sd-field.problem .lbl { color: #b45309; } .sd-field.answer .lbl { color: #4338ca; }
+  .sd-field.disadv .lbl { color: #b91c1c; } .sd-field.compete .lbl { color: #047857; }
+  .sd-arch { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 9px 11px; margin: 7px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-x: auto; }
+  .q-edit textarea.arch { font-family: ui-monospace, monospace; font-size: 12px; }
+
   .sess { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 8px 11px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; margin-bottom: 6px; }
   .sess .m { font-weight: 800; color: #047857; white-space: nowrap; }
   .sess .d { color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
@@ -239,6 +247,18 @@
     <p class="mini-lbl" style="margin:9px 2px 0;">100+ common questions with STAR model answers — adapt each to your own experience, then tap “Use as my story” to draft it into your bank.</p>
   </div>
   <div id="qbank-list"></div>
+
+  <!-- SYSTEM DESIGN BANK -->
+  <h2>System design bank <span class="qbank-prog" id="sdbank-prog"></span></h2>
+  <div class="card" style="margin-bottom:10px;">
+    <div class="qbank-controls">
+      <select id="sdbank-cat"><option value="">All categories</option></select>
+      <input type="text" class="search" id="sdbank-search" placeholder="Search e.g. TiDB, Aerospike, sharding…">
+      <label class="qbank-only"><input type="checkbox" id="sdbank-unpracticed"> Unstudied only</label>
+    </div>
+    <p class="mini-lbl" style="margin:9px 2px 0;">Building blocks, databases (incl. TiDB, Aerospike), data platforms, analytics, data modeling &amp; e-commerce designs — each with problem, approach, example, architecture, disadvantages &amp; competing tech. Editable and yours to keep.</p>
+  </div>
+  <div id="sdbank-list"></div>
 
   <!-- LOG -->
   <h2>Recent practice</h2>
@@ -583,8 +603,126 @@
     if (e.target.closest(".q-head")) card.classList.toggle("open");
   });
 
+  // ── System design bank ──
+  let SDBANK = null;
+  let editingSD = null;
+  const sdCatLabel = {};
+  const SD_PRAC_KEY = "sd_practiced";
+  const sdPracticed = new Set();
+  try { (JSON.parse(localStorage.getItem(SD_PRAC_KEY)||"[]")||[]).forEach(x=>sdPracticed.add(x)); } catch(_){}
+  const saveSdPrac = () => { try { localStorage.setItem(SD_PRAC_KEY, JSON.stringify([...sdPracticed])); } catch(_){} };
+  const sdProg = () => { if(SDBANK) $("sdbank-prog").textContent = `${sdPracticed.size} / ${SDBANK.total} studied`; };
+  const SD_LABELS = { problem:"Problem it solves", answer:"Approach", example:"Example",
+                      use_cases:"Use cases", arch:"Architecture", disadvantages:"Disadvantages", competing:"Competing tech" };
+
+  function renderSDBank(){
+    if(!SDBANK) return;
+    const cat = $("sdbank-cat").value;
+    const term = ($("sdbank-search").value||"").trim().toLowerCase();
+    const onlyUn = $("sdbank-unpracticed").checked;
+    const list = SDBANK.entries.filter(e =>
+      (!cat || e.cat===cat) &&
+      (!onlyUn || !sdPracticed.has(e.id)) &&
+      (!term || e.title.toLowerCase().includes(term) || (e.answer||"").toLowerCase().includes(term)
+        || (e.competing||"").toLowerCase().includes(term) || (sdCatLabel[e.cat]||"").toLowerCase().includes(term))
+    );
+    sdProg();
+    const fields = ["problem","answer","example","use_cases","arch","disadvantages","competing"];
+    const clsFor = { problem:"problem", answer:"answer", disadvantages:"disadv", competing:"compete" };
+    const ta = (f, cls, val, extra) => `<label>${SD_LABELS[f]||f}<textarea class="${extra||''}" data-e="${f}">${esc(val)}</textarea></label>`;
+    $("sdbank-list").innerHTML = list.map(e => {
+      const isEd = editingSD === e.id;
+      const read = fields.map(f => {
+        if (!e[f]) return "";
+        if (f === "arch") return `<div class="sd-field"><span class="lbl">Architecture</span></div><div class="sd-arch">${esc(e.arch)}</div>`;
+        return `<div class="sd-field ${clsFor[f]||''}"><span class="lbl">${SD_LABELS[f]}</span>${esc(e[f])}</div>`;
+      }).join("");
+      const body = isEd ? `
+        <div class="q-edit">
+          <label>Title<textarea class="q" data-e="title">${esc(e.title)}</textarea></label>
+          ${ta("problem","",e.problem)}
+          ${ta("answer","",e.answer)}
+          ${ta("example","",e.example)}
+          ${ta("use_cases","",e.use_cases)}
+          ${ta("arch","arch",e.arch,"arch")}
+          ${ta("disadvantages","",e.disadvantages)}
+          ${ta("competing","",e.competing)}
+          <div class="q-actions">
+            <button class="btn sm primary" data-savsd type="button">Save</button>
+            <button class="btn sm" data-cancelsd type="button">Cancel</button>
+          </div>
+        </div>` : `
+        ${read}
+        <div class="q-actions">
+          <button class="btn sm" data-editsd type="button">✎ Edit</button>
+          ${e.edited ? '<button class="btn sm" data-resetsd type="button">↺ Reset</button>' : ''}
+        </div>`;
+      return `
+      <div class="q-card ${sdPracticed.has(e.id)?'done':''} ${isEd?'open':''}" data-id="${e.id}">
+        <div class="q-head" data-toggle>
+          <input type="checkbox" class="q-prac" ${sdPracticed.has(e.id)?'checked':''} title="Mark studied">
+          <span class="q-text">${esc(e.title)}</span>
+          ${e.edited ? '<span class="q-edited">edited</span>' : ''}
+          <span class="q-badge">${esc(sdCatLabel[e.cat]||e.cat)}</span>
+        </div>
+        <div class="q-body">${body}</div>
+      </div>`;
+    }).join("") || '<div class="card"><div class="empty">No entries match.</div></div>';
+  }
+
+  async function loadSDBank(){
+    try {
+      SDBANK = await api("/api/interview-prep/system-design");
+      (SDBANK.categories||[]).forEach(c => sdCatLabel[c.key]=c.label);
+      const sel = $("sdbank-cat");
+      if (sel.children.length <= 1)
+        sel.innerHTML = '<option value="">All categories</option>' +
+          (SDBANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
+      renderSDBank();
+    } catch(e){ /* best-effort */ }
+  }
+
+  $("sdbank-cat").addEventListener("change", renderSDBank);
+  $("sdbank-search").addEventListener("input", renderSDBank);
+  $("sdbank-unpracticed").addEventListener("change", renderSDBank);
+
+  $("sdbank-list").addEventListener("click", async (e) => {
+    const card = e.target.closest(".q-card"); if(!card) return;
+    const id = card.dataset.id;
+    const it = SDBANK && SDBANK.entries.find(x=>x.id===id); if(!it) return;
+    if (e.target.classList.contains("q-prac")) {
+      if (e.target.checked) sdPracticed.add(id); else sdPracticed.delete(id);
+      saveSdPrac(); card.classList.toggle("done", e.target.checked); sdProg();
+      return;
+    }
+    if (e.target.closest("[data-editsd]")) { editingSD = id; renderSDBank(); return; }
+    if (e.target.closest("[data-cancelsd]")) { editingSD = null; renderSDBank(); return; }
+    if (e.target.closest("[data-savsd]")) {
+      const vals = {};
+      card.querySelectorAll("textarea[data-e]").forEach(t => vals[t.dataset.e] = t.value);
+      if (!(vals.title||"").trim()) { toast("The title can't be empty","error"); return; }
+      try {
+        await api(`/api/interview-prep/system-design/${id}`,{method:"POST",body:JSON.stringify(vals)});
+        Object.assign(it, vals); it.edited = true;
+        editingSD = null; renderSDBank();
+        toast("Saved your version ✍️","success");
+      } catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    if (e.target.closest("[data-resetsd]")) {
+      if (!confirm("Reset to the original entry? Your edits will be discarded.")) return;
+      try {
+        await api(`/api/interview-prep/system-design/${id}/reset`,{method:"POST"});
+        editingSD = null; toast("Reverted to the original","info"); loadSDBank();
+      } catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    if (e.target.closest(".q-head")) card.classList.toggle("open");
+  });
+
   reload();
   loadBank();
+  loadSDBank();
 })();
 </script>
 </body>

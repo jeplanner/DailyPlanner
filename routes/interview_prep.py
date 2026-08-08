@@ -18,6 +18,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 
 from auth import login_required
 from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
+from system_design_bank import CATEGORIES as SD_CATEGORIES, ENTRIES as SD_ENTRIES
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -447,6 +448,102 @@ def reset_question_override(qid):
                json={"deleted_at": _now_iso()})
     except Exception as e:
         logger.exception("reset question override failed: %s", e)
+        return jsonify({"error": "Couldn't reset"}), 502
+    return jsonify({"ok": True})
+
+
+# ─────────── system design bank ─────────────────────────────
+
+_SD_FIELDS = ("title", "problem", "answer", "example", "use_cases",
+              "arch", "disadvantages", "competing")
+
+
+def _valid_sid(eid):
+    if not (isinstance(eid, str) and eid.startswith("sd")):
+        return False
+    try:
+        return 0 <= int(eid[2:]) < len(SD_ENTRIES)
+    except ValueError:
+        return False
+
+
+@interview_prep_bp.route("/api/interview-prep/system-design", methods=["GET"])
+@login_required
+def system_design_bank():
+    """The system-design knowledge bank: building blocks, data stores,
+    data platforms, analytics, data modeling and e-commerce scenarios —
+    each with problem/answer/example/use-cases/architecture/disadvantages/
+    competing tech. User edits (system_design_overrides) merged in."""
+    user_id = session["user_id"]
+    items = [{"id": f"sd{i}", **e, "edited": False} for i, e in enumerate(SD_ENTRIES)]
+
+    try:
+        overrides = get("system_design_overrides", {
+            "user_id": f"eq.{user_id}", "deleted_at": "is.null",
+            "select": "entry_id,title,problem,answer,example,use_cases,arch,disadvantages,competing",
+            "limit": "1000",
+        }) or []
+    except Exception:
+        overrides = []
+    ovmap = {o.get("entry_id"): o for o in overrides}
+
+    for it in items:
+        o = ovmap.get(it["id"])
+        if not o:
+            continue
+        if (o.get("title") or "").strip():
+            it["title"] = o["title"]
+        for f in _SD_FIELDS:
+            if f == "title":
+                continue
+            if o.get(f) is not None:
+                it[f] = o[f]
+        it["edited"] = True
+
+    return jsonify({
+        "categories": [{"key": k, "label": v} for k, v in SD_CATEGORIES.items()],
+        "entries": items,
+        "total": len(items),
+    })
+
+
+@interview_prep_bp.route("/api/interview-prep/system-design/<eid>", methods=["POST"])
+@login_required
+def save_system_design_override(eid):
+    user_id = session["user_id"]
+    if not _valid_sid(eid):
+        return jsonify({"error": "Unknown entry"}), 404
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()[:_MAX_TITLE]
+    if not title:
+        return jsonify({"error": "The title can't be empty"}), 400
+    payload = {"user_id": user_id, "entry_id": eid, "title": title,
+               "deleted_at": None, "updated_at": _now_iso()}
+    for f in _SD_FIELDS:
+        if f == "title":
+            continue
+        payload[f] = (data.get(f) or "").strip()[:_MAX_TEXT] or None
+    try:
+        post("system_design_overrides?on_conflict=user_id,entry_id",
+             payload, prefer="resolution=merge-duplicates")
+    except Exception as e:
+        logger.exception("save system design override failed: %s", e)
+        return jsonify({"error": "Couldn't save — run MIGRATION_SYSTEM_DESIGN_OVERRIDES.sql?"}), 502
+    return jsonify({"ok": True})
+
+
+@interview_prep_bp.route("/api/interview-prep/system-design/<eid>/reset", methods=["POST"])
+@login_required
+def reset_system_design_override(eid):
+    user_id = session["user_id"]
+    if not _valid_sid(eid):
+        return jsonify({"error": "Unknown entry"}), 404
+    try:
+        update("system_design_overrides",
+               params={"user_id": f"eq.{user_id}", "entry_id": f"eq.{eid}"},
+               json={"deleted_at": _now_iso()})
+    except Exception as e:
+        logger.exception("reset system design override failed: %s", e)
         return jsonify({"error": "Couldn't reset"}), 502
     return jsonify({"ok": True})
 
