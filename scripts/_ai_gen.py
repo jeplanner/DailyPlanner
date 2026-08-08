@@ -16,131 +16,211 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="behavioral", title="Tell me about a time you simplified something complex (LP: Invent and Simplify)",
-         answer="Use STAR. SITUATION: Our research lab tracked experiments in scattered spreadsheets, so people constantly lost hyperparameters and re-ran work. TASK: Reduce the time everyone wasted on bookkeeping. ACTION: I wrote a tiny 30-line Python wrapper that auto-logged each run's config, git commit, and metrics to one shared dashboard — no behaviour change required from users, just import and go. RESULT: Experiment setup dropped from ~30 minutes to ~2, duplicate runs nearly vanished, and the whole lab adopted it within a week. LESSON: The best simplification removes work without adding process. HOW TO TELL IT: emphasize you invented a lightweight tool, removed complexity for others, and quantify the time saved.",
-         tags=["behavioral","star","invent-and-simplify","amazon-lp"],
-         example="Wrote a 30-line auto-logger that cut experiment setup from 30 min to 2 and was adopted lab-wide in a week."),
-    dict(cat="behavioral", title="Tell me about a time you made a good call with limited data (LP: Are Right A Lot)",
-         answer="Use STAR. SITUATION: For a class project with only ~800 labeled examples, a teammate pushed for a deep neural net because it sounded impressive. TASK: Choose the approach most likely to actually work. ACTION: I reasoned that with so little data a big model would overfit, and proposed a regularized gradient-boosted tree with solid feature engineering; I backed the judgment with a quick 5-fold cross-validation comparison rather than just opinion. RESULT: The simpler model beat the deep net by 9 F1 points and trained in seconds. LESSON: Good judgment uses both intuition (data size vs model capacity) and evidence, and I stayed open to being wrong by testing it. HOW TO TELL IT: show the reasoning, the evidence you gathered, and that you sought input and could have updated.",
-         tags=["behavioral","star","are-right-a-lot","amazon-lp"],
-         example="Argued a boosted tree would beat a deep net on 800 examples, proved it with 5-fold CV (+9 F1), and it trained in seconds."),
-    dict(cat="behavioral", title="Tell me about a time you refused to lower the quality bar (LP: Insist on the Highest Standards)",
-         answer="Use STAR. SITUATION: Close to a project deadline, a teammate reported 95% accuracy — but I noticed it was measured on the TRAINING data. TASK: Make sure we reported an honest, trustworthy number even if it looked worse. ACTION: I insisted we build a proper held-out test set and re-evaluate; I did the split and re-ran it despite the time pressure. RESULT: Real accuracy was 78%, so we spent the remaining days actually improving the model instead of shipping a false result — and finished at a genuine 84%. LESSON: A metric you can't trust is worse than no metric. HOW TO TELL IT: show you held the bar under pressure and that it prevented a real mistake.",
-         tags=["behavioral","star","highest-standards","amazon-lp"],
-         example="Caught a '95%' that was measured on training data; insisted on a real test set (true 78%), then improved it to an honest 84%."),
-    dict(cat="behavioral", title="Tell me about a time you thought bigger than the immediate task (LP: Think Big)",
-         answer="Use STAR. SITUATION: I was asked to build a single weekly data report for one course project. TASK: Deliver that report. ACTION: While building it I realized several teammates were each hand-pulling the same data differently, so I proposed and prototyped a small shared data-loading module with clean, reusable queries — beyond my assigned scope. RESULT: The report shipped, and the shared module was adopted by four other sub-teams, eliminating inconsistent numbers across the whole project. LESSON: Solving the general problem behind a specific task multiplies the impact. HOW TO TELL IT: show the bigger vision AND that you still delivered the concrete first step.",
-         tags=["behavioral","star","think-big","amazon-lp"],
-         example="Asked for one report, I built a reusable shared data module that four other sub-teams adopted, killing inconsistent numbers."),
-    dict(cat="behavioral", title="Tell me about a time you earned others' trust (LP: Earn Trust)",
-         answer="Use STAR. SITUATION: I joined a new project team mid-semester where I was the unknown newcomer. TASK: Become someone the team could rely on. ACTION: I started by delivering small, reliable wins on time; when I introduced a bug that broke a shared notebook, I flagged it openly the same hour, fixed it, and added a test so it couldn't recur; and I consistently credited others' ideas in reviews. RESULT: Within a month I was the person teammates came to for code reviews and design questions. LESSON: Trust is built through consistency, candor about mistakes, and giving credit. HOW TO TELL IT: emphasize owning a mistake openly, dependable delivery, and listening.",
-         tags=["behavioral","star","earn-trust","amazon-lp"],
-         example="As the new teammate, I built trust with reliable delivery and by openly owning a bug I caused (fixed it + added a test the same hour)."),
-    dict(cat="behavioral", title="Tell me about a time you disagreed but committed (LP: Have Backbone; Disagree and Commit)",
-         answer="Use STAR. SITUATION: My team chose accuracy as the success metric for a heavily imbalanced fraud dataset (only 3% positives). TASK: Voice a real concern without stalling the team. ACTION: I respectfully disagreed, showing with a quick analysis that a model predicting 'never fraud' would score 97% accuracy while catching zero fraud, and recommended precision/recall or F1. The team still preferred accuracy for simplicity, so I committed fully — helped optimize it AND quietly tracked recall on the side. RESULT: Two weeks in, recall was near zero as I'd warned; because I had the data ready, we switched to F1 quickly with no drama. LESSON: Disagree with evidence, then commit genuinely — and keep watching. HOW TO TELL IT: show respectful, data-backed pushback followed by true commitment.",
-         tags=["behavioral","star","have-backbone","disagree-and-commit","amazon-lp"],
-         example="Warned that accuracy on a 3%-positive fraud set was misleading, committed anyway, tracked recall, and had the data ready when we switched to F1."),
-    dict(cat="glossary", title="LoRA / PEFT",
-         answer="Low-Rank Adaptation, a Parameter-Efficient Fine-Tuning method. Instead of updating all of a large model's weights, LoRA FREEZES them and injects small trainable low-rank matrices into each layer, training only those (a tiny fraction of parameters). You get most of full fine-tuning's quality at a fraction of the memory/compute, and can hot-swap adapters per task.",
-         tags=["lora","peft","fine-tuning","efficiency","llm"],
-         example="Fine-tuning a 7B model with LoRA trains only ~0.1% of the parameters, so it fits on one GPU and yields a few-MB adapter you can swap per task."),
-    dict(cat="glossary", title="Flash attention",
-         answer="A memory- and speed-optimized EXACT attention algorithm. It computes attention in tiles that stay in fast on-chip SRAM, avoiding materializing the huge N×N attention matrix in slow GPU memory (HBM). The math is identical but memory traffic drops sharply — enabling much longer context windows and faster training/inference.",
-         tags=["flash-attention","attention","gpu","efficiency","transformer"],
-         example="Flash attention lets a Transformer handle sequences of tens of thousands of tokens without running out of memory, by never storing the full attention matrix."),
-    dict(cat="glossary", title="Perplexity",
-         answer="A standard metric for language models measuring how 'surprised' the model is by a test text — the exponential of the average negative log-likelihood per token. Lower is better: it roughly equals the effective number of equally-likely choices the model weighs at each step. A perplexity of 10 means it's as uncertain as choosing uniformly among 10 words.",
-         tags=["perplexity","language-model","evaluation","metric","nlp"],
-         example="If model A has perplexity 20 and model B has 15 on the same test set, B predicts the text better (it's less surprised)."),
-    dict(cat="glossary", title="K-fold cross-validation",
-         answer="A robust way to estimate model performance with limited data. Split the data into k equal folds; train on k-1 folds and validate on the held-out fold, rotating so each fold is the validation set exactly once; average the k scores. It uses all data for both training and validation and gives a more stable estimate than a single split.",
-         tags=["cross-validation","k-fold","evaluation","model-selection","validation"],
-         example="5-fold CV trains 5 models, each validated on a different 20% slice; averaging their scores (say 0.81 ± 0.02) estimates generalization more reliably than one train/test split."),
-    dict(cat="dsa", title="Flatten Binary Tree to Linked List",
-         answer="Flatten a binary tree into a 'linked list' that follows PRE-ORDER, using the right pointers (left pointers become null), in place. Morris-style trick: for each node with a left child, find the rightmost node of that left subtree, attach the node's current right subtree there, then move the whole left subtree to the right. O(1) extra space.",
-         tags=["flatten-tree","binary-tree","morris","in-place","dsa"],
-         code='''# Flatten a binary tree into a right-pointer linked list in pre-order, in place.
+    dict(cat="dsa", title="Binary Tree Right Side View",
+         answer="Return the values visible from the RIGHT side of a binary tree, top to bottom — i.e. the last node in each level. Do a BFS level-order traversal and record the final node dequeued in each level. (A right-first DFS tracking depth also works.)",
+         tags=["right-side-view","bfs","binary-tree","level-order","dsa"],
+         code='''# The values visible from the right side of a binary tree, top to bottom.
+from collections import deque
 class TreeNode:
     def __init__(self, val=0, left=None, right=None):
         self.val = val; self.left = left; self.right = right
 
-def flatten(root):
-    node = root
-    while node:
-        if node.left:
-            rightmost = node.left           # find the left subtree's tail
-            while rightmost.right:
-                rightmost = rightmost.right
-            rightmost.right = node.right     # splice current right after it
-            node.right = node.left           # move left subtree to the right
-            node.left = None                 # clear the left pointer
-        node = node.right                    # advance down the flattened list
-    return root''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Forgetting to null the left pointer; losing the original right subtree (attach it to the left subtree's tail first).",
-         example="The tree 1 -> (2 -> (3,4), 5 -> (_,6)) flattens to 1,2,3,4,5,6 along right pointers."),
-    dict(cat="dsa", title="Path Sum (root-to-leaf boolean)",
-         answer="Decide whether the tree has any ROOT-TO-LEAF path whose node values add up to a target. Recurse subtracting the current node's value from the remaining target; at a LEAF, success is remaining == the leaf's value. A node with one child is not a leaf, so don't treat it as one.",
-         tags=["path-sum","binary-tree","dfs","recursion","dsa"],
-         code='''# Is there a root-to-leaf path whose values sum to target?
+def right_side_view(root):
+    if not root:
+        return []
+    result = []
+    queue = deque([root])
+    while queue:
+        n = len(queue)
+        for i in range(n):
+            node = queue.popleft()
+            if i == n - 1:               # last node of this level = rightmost
+                result.append(node.val)
+            if node.left: queue.append(node.left)
+            if node.right: queue.append(node.right)
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Taking the rightmost child instead of the last node in the level (a left child can be rightmost if the right side is short).",
+         example="right_side_view of 1 -> (2 -> (_,5), 3 -> (_,4)) gives [1,3,4]."),
+    dict(cat="dsa", title="Sum Root to Leaf Numbers",
+         answer="Each root-to-leaf path spells a number (root is the most significant digit); return the sum of all such numbers. DFS carrying the running number: at each node do current = current*10 + node.val, and when you hit a leaf add the completed number to the total.",
+         tags=["sum-root-to-leaf","binary-tree","dfs","recursion","dsa"],
+         code='''# Sum of all root-to-leaf numbers, each path read as a digit string.
 class TreeNode:
     def __init__(self, val=0, left=None, right=None):
         self.val = val; self.left = left; self.right = right
 
-def has_path_sum(root, target):
+def sum_numbers(root):
+    def dfs(node, current):
+        if node is None:
+            return 0
+        current = current * 10 + node.val    # extend the number by one digit
+        if node.left is None and node.right is None:
+            return current                   # a leaf completes one number
+        return dfs(node.left, current) + dfs(node.right, current)
+    return dfs(root, 0)''',
+         complexity="Time O(n), space O(h) recursion.",
+         pitfalls="Adding at every node instead of only at leaves; not resetting the number per path (recursion handles this).",
+         example="For the tree 1 -> (2, 3), the numbers are 12 and 13, summing to 25."),
+    dict(cat="dsa", title="Count Good Nodes in a Binary Tree",
+         answer="A node is 'good' if no node on the path from the root down to it has a GREATER value. Count them with a DFS that carries the maximum value seen on the current path: a node is good when its value is >= that running max, and you pass the updated max down to its children.",
+         tags=["count-good-nodes","binary-tree","dfs","recursion","dsa"],
+         code='''# A node is 'good' if no node on the root->node path is greater than it.
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def good_nodes(root):
+    def dfs(node, max_so_far):
+        if node is None:
+            return 0
+        good = 1 if node.val >= max_so_far else 0    # >= path max -> good
+        new_max = max(max_so_far, node.val)
+        return good + dfs(node.left, new_max) + dfs(node.right, new_max)
+    return dfs(root, float('-inf'))''',
+         complexity="Time O(n), space O(h) recursion.",
+         pitfalls="Using > instead of >= (the root and ties must count); not updating the max before recursing.",
+         example="For 3 -> (1 -> 3, 4 -> (1, 5)), there are 4 good nodes (3, the deeper 3, 4, and 5)."),
+    dict(cat="dsa", title="Subtree of Another Tree",
+         answer="Check whether a tree contains a subtree that is IDENTICAL (structure and values) to a given smaller tree. At each node of the big tree, test whether the subtree rooted there equals the target using a same-tree helper; otherwise recurse into the children.",
+         tags=["subtree","binary-tree","recursion","dfs","dsa"],
+         code='''# Does 'root' contain a subtree identical to 'sub'?
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def is_subtree(root, sub):
+    def same(a, b):
+        if a is None and b is None:
+            return True
+        if a is None or b is None or a.val != b.val:
+            return False
+        return same(a.left, b.left) and same(a.right, b.right)
     if root is None:
         return False
-    if root.left is None and root.right is None:    # a leaf
-        return root.val == target
-    remaining = target - root.val
-    return has_path_sum(root.left, remaining) or has_path_sum(root.right, remaining)''',
-         complexity="Time O(n), space O(h) recursion.",
-         pitfalls="Checking the sum at a null child instead of at a leaf (mishandles single-child nodes); forgetting the empty-tree case.",
-         example="For the tree 5 -> (4 -> 11 -> (7,2), 8) with target 22, the path 5->4->11->2 sums to 22 -> True."),
-    dict(cat="dsa", title="Path Sum II (all root-to-leaf paths)",
-         answer="Return every ROOT-TO-LEAF path whose values sum to a target. Backtracking DFS: append the current node to the path, and when you reach a leaf whose remaining target equals its value, record a copy of the path; otherwise recurse into children with the reduced target, then pop the node on the way back up.",
-         tags=["path-sum","backtracking","binary-tree","dfs","dsa"],
-         code='''# All root-to-leaf paths whose values sum to target.
+    if same(root, sub):                  # does a match start right here?
+        return True
+    return is_subtree(root.left, sub) or is_subtree(root.right, sub)''',
+         complexity="Time O(m*n) worst case, space O(h).",
+         pitfalls="Matching only values without full structure; treating a partial (non-leaf-aligned) match as success.",
+         example="root 3 -> (4 -> (1,2), 5) contains sub 4 -> (1,2) -> True."),
+    dict(cat="dsa", title="Construct Binary Tree from Preorder and Inorder",
+         answer="Rebuild a unique binary tree from its preorder and inorder traversals. The FIRST preorder value is the root; its position in inorder splits the inorder into left and right subtrees. Consume preorder left-to-right (a moving pointer) and recurse on the inorder index ranges. A value->index map makes the split O(1).",
+         tags=["construct-tree","preorder","inorder","recursion","divide-and-conquer","dsa"],
+         code='''# Rebuild a binary tree from its preorder and inorder traversals.
 class TreeNode:
     def __init__(self, val=0, left=None, right=None):
         self.val = val; self.left = left; self.right = right
 
-def path_sum(root, target):
-    result = []
-    def dfs(node, remaining, path):
+def build_tree(preorder, inorder):
+    idx = {v: i for i, v in enumerate(inorder)}   # value -> index in inorder
+    pos = [0]                                       # pointer into preorder
+    def build(lo, hi):
+        if lo > hi:
+            return None
+        root_val = preorder[pos[0]]
+        pos[0] += 1
+        root = TreeNode(root_val)
+        mid = idx[root_val]                         # split inorder at the root
+        root.left = build(lo, mid - 1)              # left first (preorder order)
+        root.right = build(mid + 1, hi)
+        return root
+    return build(0, len(inorder) - 1)''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Building the right subtree before the left (breaks the preorder pointer); assuming duplicate values (indices become ambiguous).",
+         example="preorder [3,9,20,15,7], inorder [9,3,15,20,7] rebuilds the tree with root 3, left 9, right 20 -> (15,7)."),
+    dict(cat="dsa", title="Binary Tree Maximum Path Sum",
+         answer="Find the maximum sum of any path (from any node to any node, following parent-child edges) in a binary tree. Post-order DFS: each node returns the best DOWNWARD gain (its value plus the larger positive child gain); meanwhile track a global best that may 'turn' through a node using BOTH children. Clamp negative gains to 0.",
+         tags=["max-path-sum","binary-tree","dfs","recursion","hard","dsa"],
+         code='''# Maximum sum of any node-to-node path in a binary tree.
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def max_path_sum(root):
+    best = float('-inf')
+    def gain(node):
+        nonlocal best
         if node is None:
-            return
-        path.append(node.val)
-        if node.left is None and node.right is None and remaining == node.val:
-            result.append(path[:])          # a valid leaf path -> copy it
-        else:
-            dfs(node.left, remaining - node.val, path)
-            dfs(node.right, remaining - node.val, path)
-        path.pop()                          # backtrack
-    dfs(root, target, [])
-    return result''',
-         complexity="Time O(n^2) worst case (copying paths), space O(h).",
-         pitfalls="Appending the path reference instead of a copy; forgetting to pop when backtracking.",
-         example="For the tree 1 -> (2, 3) with target 3, path_sum returns [[1,2]]."),
-    dict(cat="dsa", title="Lowest Common Ancestor of a Binary Tree",
-         answer="Find the deepest node that is an ancestor of both p and q in a GENERAL binary tree (not a BST). Recurse: if the current node is null or is p or q, return it. If p and q are found in DIFFERENT subtrees (both recursive calls return non-null), the current node is the LCA; otherwise pass up whichever side found something.",
-         tags=["lowest-common-ancestor","binary-tree","recursion","dfs","dsa"],
-         code='''# Lowest common ancestor of p and q in a general binary tree.
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def lowest_common_ancestor(root, p, q):
-    if root is None or root is p or root is q:
-        return root                     # found a target (or hit empty)
-    left = lowest_common_ancestor(root.left, p, q)
-    right = lowest_common_ancestor(root.right, p, q)
-    if left and right:
-        return root                     # p and q split here -> this is the LCA
-    return left or right                # both on one side (or neither found)''',
+            return 0
+        left = max(gain(node.left), 0)    # drop negative contributions
+        right = max(gain(node.right), 0)
+        best = max(best, node.val + left + right)   # path turning through node
+        return node.val + max(left, right)          # best straight-down gain
+    gain(root)
+    return best''',
          complexity="Time O(n), space O(h) recursion.",
-         pitfalls="Assuming BST ordering (this must work without it); returning early before checking both subtrees.",
-         example="In the tree 3 -> (5, 1), the LCA of nodes 5 and 1 is 3 (they're in different subtrees)."),
+         pitfalls="Returning left+right upward (a path can't split then continue); forgetting to clamp negatives to 0.",
+         example="For -10 -> (9, 20 -> (15, 7)), the best path is 15+20+7 = 42."),
+    dict(cat="glossary", title="BLEU",
+         answer="A metric for machine translation (and other generation) that measures how much the model's output OVERLAPS with reference translations via n-gram precision (n=1..4), with a BREVITY PENALTY so it can't win by being too short. It ranges 0-100; higher is closer to the references. It rewards exact n-gram matches, not meaning.",
+         tags=["bleu","machine-translation","evaluation","metric","nlp"],
+         example="If the reference is 'the cat is on the mat' and the model outputs 'the cat is on mat', BLEU counts the matching 1-4 grams and applies a brevity penalty for the missing word."),
+    dict(cat="glossary", title="Target leakage",
+         answer="When information that won't be available at prediction time (or that encodes the label itself) sneaks into the training features, producing amazing offline scores that collapse in production. It's a top cause of 'too good to be true' models. Prevent it with strict point-in-time feature construction and by asking 'would I actually know this at prediction time?'",
+         tags=["target-leakage","data-leakage","features","mlops","pitfall"],
+         example="Including 'account_closed_date' to predict churn leaks the answer — that date only exists after churn, so the model looks perfect offline but is useless live."),
+    dict(cat="glossary", title="Mean Reciprocal Rank (MRR)",
+         answer="A ranking metric focused on the position of the FIRST relevant result. For each query take 1/(rank of the first correct item), then average across queries. It rewards putting a right answer high and is ideal when there's a single correct answer, like question answering or 'I'm feeling lucky' search.",
+         tags=["mrr","ranking","evaluation","metric","information-retrieval"],
+         example="If the correct answer is at rank 2 for one query (1/2) and rank 1 for another (1/1), MRR = (0.5 + 1)/2 = 0.75."),
+    dict(cat="glossary", title="Recall@k",
+         answer="Of all the relevant items for a query, the fraction that appear in the top-k retrieved results. It measures how much of the good stuff your retrieval CAPTURES within a cutoff — crucial for the candidate-generation stage of search/recommendations, where missing relevant items before a precise re-ranker is costly.",
+         tags=["recall-at-k","ranking","retrieval","evaluation","metric"],
+         example="If a query has 5 relevant docs and 3 of them land in your top-10, recall@10 = 3/5 = 0.6."),
+    dict(cat="glossary", title="Pointwise vs pairwise vs listwise ranking",
+         answer="Three learning-to-rank formulations. POINTWISE predicts an absolute relevance score per item independently (regression/classification). PAIRWISE learns which of two items should rank higher, optimizing correct orderings (e.g. RankNet). LISTWISE optimizes a metric over the WHOLE ordered list directly (e.g. LambdaMART toward NDCG). Pairwise/listwise usually rank better because ranking is inherently relative.",
+         tags=["learning-to-rank","pointwise","pairwise","listwise","ranking"],
+         example="Pointwise scores each result 0-1; pairwise learns 'doc A > doc B'; listwise directly pushes the ordering that maximizes NDCG for the whole page."),
+    dict(cat="ml_coding", title="Gini, Entropy & Information Gain (from scratch)",
+         answer="The impurity measures a decision tree uses to choose splits. GINI = 1 - sum of squared class proportions (0 = pure). ENTROPY = -sum p*log2(p) (0 = pure, higher = mixed). INFORMATION GAIN = parent entropy minus the weighted average entropy of the child splits; the tree picks the split that maximizes it.",
+         tags=["gini","entropy","information-gain","decision-tree","ml-coding"],
+         code='''# Gini impurity, entropy, and information gain for a decision-tree split.
+import math
+def gini(labels):
+    n = len(labels)
+    if n == 0:
+        return 0.0
+    counts = {}
+    for y in labels:
+        counts[y] = counts.get(y, 0) + 1
+    return 1.0 - sum((c / n) ** 2 for c in counts.values())   # 1 - sum p^2
+
+def entropy(labels):
+    n = len(labels)
+    if n == 0:
+        return 0.0
+    counts = {}
+    for y in labels:
+        counts[y] = counts.get(y, 0) + 1
+    return -sum((c / n) * math.log2(c / n) for c in counts.values())
+
+def information_gain(parent, left, right):
+    n = len(parent)
+    # parent entropy minus the size-weighted entropy of the two children
+    child = (len(left) / n) * entropy(left) + (len(right) / n) * entropy(right)
+    return entropy(parent) - child''',
+         complexity="Time O(n) per measure, space O(unique classes).",
+         pitfalls="log2(0) blows up (only sum over present classes); forgetting to weight children by their size.",
+         example="gini([0,0,1,1]) -> 0.5; information_gain([0,0,1,1],[0,0],[1,1]) -> 1.0 (a perfect split)."),
+    dict(cat="ml_coding", title="Min-Max Scaler (from scratch)",
+         answer="Rescale a feature so its values map linearly onto [0, 1]: subtract the min and divide by the range (max - min). Unlike standardization (z-score), it bounds the output but is sensitive to outliers (a single extreme value squashes everything else). Handle a constant feature (range 0) to avoid divide-by-zero.",
+         tags=["min-max-scaler","normalization","preprocessing","feature-scaling","ml-coding"],
+         code='''# Scale a feature column to the [0, 1] range (min-max normalization).
+def min_max_scale(column):
+    lo = min(column)
+    hi = max(column)
+    if hi == lo:
+        return [0.0 for _ in column]           # constant feature -> all zeros
+    span = hi - lo
+    return [(x - lo) / span for x in column]    # min -> 0, max -> 1''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Divide-by-zero on a constant column; fitting min/max on test data (fit on train, apply to test).",
+         example="min_max_scale([10, 20, 30]) -> [0.0, 0.5, 1.0]."),
+    dict(cat="behavioral", title="Tell me about a time you did more with less (LP: Frugality)",
+         answer="Use STAR. SITUATION: Our student project had no cloud budget but a model that seemed to need an expensive GPU to train and serve. TASK: Ship the full demo at (near) zero infra cost. ACTION: I trained on a free-tier Colab GPU, used mixed precision + gradient accumulation to fit a larger effective batch in limited memory, quantized the final model to run inference on CPU, and cached results to avoid recomputation. RESULT: We shipped the complete demo for $0 in infrastructure, with inference under 200ms on a laptop. LESSON: Constraints forced sharper engineering, not a worse product. HOW TO TELL IT: show resourcefulness and that the constraint led to a smarter solution, quantifying the savings.",
+         tags=["behavioral","star","frugality","amazon-lp"],
+         example="Shipped a full ML demo for $0 infra — free Colab GPU, mixed precision + grad accumulation to train, and CPU quantization for <200ms inference."),
 ]
 
 
