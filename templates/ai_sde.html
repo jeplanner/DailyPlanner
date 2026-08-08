@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>AI SDE Prep — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 16px 16px 72px; }
+  h1 { font-size: 22px; font-weight: 900; letter-spacing: -.02em; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 14px; }
+  .sub a { color: var(--color-primary); font-weight: 700; text-decoration: none; }
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; padding: 14px; }
+  .btn { font: inherit; font-weight: 700; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+  .btn.sm { padding: 5px 9px; font-size: 12.5px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .controls select, .controls input[type=text] { font: inherit; font-size: 14px; padding: 9px 11px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg); color: var(--color-text); }
+  .controls input.search { flex: 1; min-width: 160px; }
+  .only { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); white-space: nowrap; }
+  .prog { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
+
+  .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
+  .q-card.done { border-color: #a7f3d0; }
+  .q-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
+  .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
+  .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; }
+  .q-head .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
+  .q-card.done .q-text { color: var(--color-text-secondary); }
+  .q-body { padding: 0 13px 13px 41px; display: none; }
+  .q-card.open .q-body { display: block; }
+  .fld { margin: 8px 0; font-size: 13.5px; line-height: 1.5; }
+  .fld .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); display: block; margin-bottom: 2px; }
+  .fld.answer .lbl { color: #4338ca; } .fld.pitfall .lbl { color: #b45309; } .fld.follow .lbl { color: #047857; } .fld.cx .lbl { color: #0369a1; }
+  .code { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 10px 12px; margin: 8px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.45; white-space: pre; overflow-x: auto; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
+  .tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+  html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+  .q-actions { margin-top: 8px; }
+  .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }
+  h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 22px 0 10px; }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+<div class="wrap">
+  <h1>🚀 AI SDE Prep <span class="prog" id="prog"></span></h1>
+  <p class="sub">Interactive study bank for AI/ML SDE interviews (Amazon/Google) — DSA, ML concepts, coding, system design &amp; behavioral, each explained in depth. &nbsp;<a href="/interview-prep/guides/ai-sde">📖 Read the full 16-week plan →</a></p>
+
+  <div class="card" style="margin-bottom:10px;">
+    <div class="controls">
+      <select id="cat"><option value="">All topics</option></select>
+      <input type="text" class="search" id="search" placeholder="Search e.g. sliding window, attention, recall, STAR…">
+      <label class="only"><input type="checkbox" id="unstudied"> Unstudied only</label>
+      <button class="btn sm" id="pdf" type="button" title="Open a printable PDF for the current filter">⤓ Export PDF</button>
+    </div>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
+  let BANK = null; const catLabel = {};
+  const PKEY = "ai_sde_studied"; const studied = new Set();
+  try { (JSON.parse(localStorage.getItem(PKEY)||"[]")||[]).forEach(x=>studied.add(x)); } catch(_){}
+  const saveP = () => { try { localStorage.setItem(PKEY, JSON.stringify([...studied])); } catch(_){} };
+  const prog = () => { if(BANK) $("prog").textContent = `${studied.size} / ${BANK.total} studied`; };
+
+  function render(){
+    if(!BANK) return;
+    const cat = $("cat").value, term = ($("search").value||"").trim().toLowerCase(), onlyUn = $("unstudied").checked;
+    const list = BANK.entries.filter(e =>
+      (!cat || e.cat===cat) && (!onlyUn || !studied.has(e.id)) &&
+      (!term || e.title.toLowerCase().includes(term) || (e.answer||"").toLowerCase().includes(term) || (e.tags||[]).some(t=>t.includes(term)))
+    );
+    prog();
+    const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
+    $("list").innerHTML = list.map(e => `
+      <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}">
+        <div class="q-head" data-toggle>
+          <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
+          <span class="q-text">${esc(e.title)}</span>
+          <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
+        </div>
+        <div class="q-body">
+          ${fld("answer","Answer / reasoning",e.answer)}
+          ${e.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(e.code)}</div>` : ""}
+          ${fld("","Example",e.example)}
+          ${fld("cx","Complexity",e.complexity)}
+          ${fld("pitfall","Common pitfalls",e.pitfalls)}
+          ${fld("follow","Follow-up questions",e.followups)}
+          ${e.tags&&e.tags.length ? `<div class="tags">${e.tags.map(t=>`<button class="tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
+          <div class="q-actions"><a class="btn sm" href="/ai-sde/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a></div>
+        </div>
+      </div>`).join("") || '<div class="card"><div class="empty">No topics match.</div></div>';
+  }
+
+  $("list").addEventListener("click", (e) => {
+    const card = e.target.closest(".q-card"); if(!card) return;
+    const id = card.dataset.id;
+    if (e.target.classList.contains("q-prac")) {
+      if (e.target.checked) studied.add(id); else studied.delete(id);
+      saveP(); card.classList.toggle("done", e.target.checked); prog(); return;
+    }
+    const tag = e.target.closest("[data-tag]");
+    if (tag) { $("search").value = tag.dataset.tag; $("cat").value=""; render(); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    if (e.target.closest("a")) return;               // let PDF link navigate
+    if (e.target.closest(".q-head")) card.classList.toggle("open");
+  });
+
+  $("cat").addEventListener("change", render);
+  $("search").addEventListener("input", render);
+  $("unstudied").addEventListener("change", render);
+  $("pdf").addEventListener("click", () => {
+    const p = new URLSearchParams();
+    if ($("cat").value) p.set("cat", $("cat").value);
+    const term = ($("search").value||"").trim(); if (term) p.set("q", term);
+    window.open("/ai-sde/pdf" + (p.toString()?"?"+p.toString():""), "_blank", "noopener");
+  });
+
+  (async () => {
+    try {
+      BANK = await api("/api/ai-sde");
+      (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);
+      $("cat").innerHTML = '<option value="">All topics</option>' + (BANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
+      render();
+    } catch(e){ if(window.toast) toast("Couldn't load","error"); }
+    if (window.feather) feather.replace();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -23,6 +23,8 @@ from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
 from system_design_bank import (CATEGORIES as SD_CATEGORIES,
                                  DETAIL_ORDER as SD_DETAIL_ORDER,
                                  ENTRIES as SD_ENTRIES)
+from ai_sde_bank import (CATEGORIES as AI_SDE_CATEGORIES,
+                         ENTRIES as AI_SDE_ENTRIES)
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -227,6 +229,58 @@ _GUIDES = {
     "system-design": ("SYSTEM_DESIGN_ECOMMERCE_BANK.md",
                       "System Design Bank (reference)"),
 }
+
+
+# ─────────── AI SDE prep bank (for the new-grad AI/ML SDE track) ──────
+
+@interview_prep_bp.route("/ai-sde", methods=["GET"])
+@login_required
+def ai_sde_page():
+    return render_template("ai_sde.html")
+
+
+@interview_prep_bp.route("/api/ai-sde", methods=["GET"])
+@login_required
+def ai_sde_bank():
+    """The AI SDE prep bank: DSA patterns (with worked code), ML/AI
+    concepts, ML coding, ML system design, CS fundamentals, behavioral and
+    company process — each explained in depth. Static reference content."""
+    items = [{"id": f"ai{i}", **e} for i, e in enumerate(AI_SDE_ENTRIES)]
+    return jsonify({
+        "categories": [{"key": k, "label": v} for k, v in AI_SDE_CATEGORIES.items()],
+        "entries": items, "total": len(items),
+    })
+
+
+@interview_prep_bp.route("/ai-sde/pdf", methods=["GET"])
+@login_required
+def ai_sde_pdf():
+    """Server PDF of the AI SDE bank (same ?cat/?tag/?q/?id filters)."""
+    items = [{"id": f"ai{i}", **e} for i, e in enumerate(AI_SDE_ENTRIES)]
+    selected, label = _bank_select(items, ("title", "answer", "pitfalls"),
+                                   AI_SDE_CATEGORIES, "title")
+    heading = label or "AI SDE Prep Bank"
+    subtitle = (f"{len(selected)} topic{'' if len(selected) == 1 else 's'} "
+                f"| DailyPlanner Interview Prep | {_today().isoformat()}")
+    sections = []
+    for it in selected:
+        fields = [("Answer / reasoning", it.get("answer")),
+                  ("Example", it.get("example")),
+                  ("Complexity", it.get("complexity")),
+                  ("Pitfalls", it.get("pitfalls")),
+                  ("Follow-ups", it.get("followups"))]
+        mono = [("Code", it.get("code"))] if it.get("code") else []
+        sections.append({
+            "title": it["title"],
+            "cat": AI_SDE_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
+            "fields": fields, "arch": None, "mono_blocks": mono, "tags": it.get("tags"),
+        })
+    try:
+        pdf = _pdf_bytes(heading, subtitle, sections)
+    except ImportError:
+        return redirect(url_for("interview_prep.ai_sde_page"))
+    fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "ai-sde-bank.pdf"
+    return _pdf_response(pdf, fname)
 
 
 @interview_prep_bp.route("/interview-prep/guides", methods=["GET"])
