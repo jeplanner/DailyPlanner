@@ -222,6 +222,70 @@ _DETAIL_AUTOCOMPLETE = {
     "wrap_up": "A Trie annotated with precomputed top-k completions makes each suggestion an O(prefix) lookup; frequencies come from aggregated batch + streaming query logs, rebuilt periodically for freshness. Latency is won by precomputation + in-memory serving + client debounce + edge caching; extensions add typo tolerance and personalization.",
 }
 
+_DETAIL_VIDEO = {
+    "scope": "Design a video platform to upload, store, transcode, and stream video to billions with low buffering. Clarify: VOD or live? scale? resolutions? DRM? Assumptions: VOD, billions of views, adaptive quality, global reach, upload + playback.",
+    "functional": "1) Upload video. 2) Transcode into multiple resolutions/formats. 3) Stream with adaptive quality. 4) Metadata (title, views). 5) Thumbnails. (Search/recommendations are separate pipelines.)",
+    "nonfunctional": "Low startup latency + minimal buffering globally, high availability, massive storage + bandwidth, scalable transcoding, durability.",
+    "estimation": "500M DAU × ~5 views ≈ 2.5B views/day. A 1-hour video across bitrates is several GB; total storage grows to exabytes -> object storage + tiering. Cost is dominated by CDN egress bandwidth.",
+    "api": "POST /upload (resumable, chunked) -> videoId; GET /videos/{id} -> manifest (HLS/DASH); playback pulls chunk URLs from the CDN; GET /videos/{id}/meta.",
+    "data_model": "videos(id, uploader, title, status, created_at) + view counts in a DB; raw file, renditions, chunks and thumbnails in object storage; manifest files (HLS .m3u8 / DASH .mpd) reference chunk URLs.",
+    "hld": "Upload -> raw file to object storage -> a transcoding pipeline (queue + workers) produces multiple bitrate renditions, each split into small chunks + a manifest -> pushed to CDN edges. Playback: the client fetches the manifest, then streams chunks from the nearest CDN edge, switching bitrate by measured bandwidth (adaptive bitrate).",
+    "hld_diagram": "Upload -> [Object storage raw] -> [Transcode queue -> workers] -> renditions/chunks + manifest -> CDN edges\n Player -> manifest -> adaptive bitrate -> pull chunks from nearest CDN",
+    "algorithms": "Adaptive Bitrate Streaming (HLS/DASH): video split into ~2-10s chunks at several bitrates; the player picks the bitrate matching current bandwidth/buffer and switches seamlessly. Transcoding parallelized per chunk. CDN caching by popularity. Chunked/resumable upload for large files.",
+    "deep_dive": "Transcoding at scale: a DAG (split -> transcode each chunk in parallel -> package) on a worker fleet; prioritize popular creators. Storage tiering: hot videos on fast storage/CDN, cold to cheaper tiers. CDN drives latency + cost — pre-warm popular content, evict cold. Live variant uses low-latency chunks + a different ingest path. DRM/encryption for premium. Thumbnails generated during transcode.",
+    "follow_ups": "Live streaming vs VOD? (low-latency chunking, different ingest). Reduce buffering? (ABR + CDN + right chunk size). Viral video? (CDN scales; pre-warm). Storage cost? (tiering + delete unwatched). Resumable uploads? (chunked + offsets).",
+    "final_diagram": " Upload (resumable) -> [Raw object storage]\n     -> [Transcode pipeline: split -> parallel transcode -> package (HLS/DASH)]\n     -> renditions + chunks + manifest -> [Object storage] -> [CDN edges]\n Metadata/views -> DB ; Player -> manifest -> ABR -> nearest CDN edge chunks",
+    "wrap_up": "Upload to object storage, transcode into chunked multi-bitrate renditions via a parallel worker pipeline, and serve via CDN with adaptive bitrate streaming (HLS/DASH). The dominant concerns — transcoding throughput, storage tiering, and CDN bandwidth/latency — are handled by parallel per-chunk transcoding, popularity-based caching, and global edges.",
+}
+
+_DETAIL_GDRIVE = {
+    "scope": "Design a file storage + sync service (Dropbox/Drive). Clarify: file sizes? sync across devices? sharing? versioning? offline edits? Assumptions: multi-device sync, large files, sharing, version history, efficient bandwidth.",
+    "functional": "1) Upload/download files. 2) Sync changes across a user's devices. 3) Share files/folders. 4) Version history. 5) Handle offline edits + conflicts.",
+    "nonfunctional": "Durability (never lose files), consistency across devices, bandwidth efficiency (don't re-upload whole files), scalability, low sync latency.",
+    "estimation": "100M users × ~50GB -> exabytes -> object storage. Most bytes are file blocks; metadata is small but high-QPS; sync events per change are tiny.",
+    "api": "POST /files (chunked upload), GET /files/{id}, GET /changes?cursor (delta since last sync), POST /files/{id}/share. The client watches the local folder and reconciles.",
+    "data_model": "metadata(file_id, name, owner, version, block_manifest, updated_at). Blocks: content-addressed (hash) chunks in object storage, deduplicated. A per-user change journal drives sync. Sharing ACLs.",
+    "hld": "Files are split into fixed-size BLOCKS; only changed blocks upload/download (delta sync). A metadata service tracks files, versions, and block manifests; blocks live in object storage, deduplicated by content hash. A notification/sync service tells other devices 'you have changes'; they pull the delta. Conflicts resolved by versioning (last-writer + a 'conflicted copy').",
+    "hld_diagram": "Client (watch folder) -> chunk into blocks -> upload changed blocks -> [Block store (dedup)]\n                          -> update [Metadata + version] -> notify other devices -> they pull delta",
+    "algorithms": "Block-level delta sync: hash each block, upload only blocks whose hash changed (rsync-style) -> huge bandwidth savings on small edits. Content-addressed storage dedups identical blocks. Change journal + cursor for incremental sync. Conflict resolution via version vectors.",
+    "deep_dive": "Consistency across devices: a per-user monotonic change journal; each device syncs from its last cursor. Large files: chunk + parallel block upload + resume. Dedup vs privacy (per-user vs global). Offline edits: queue local changes, reconcile on reconnect, create a conflicted copy if both sides changed. Sharing: ACLs + the file appears in others' journals. The metadata store is high-QPS -> shard by user.",
+    "follow_ups": "Simultaneous edits? (version vectors + conflicted copy). Sync a 5GB file efficiently? (block delta + resume). Real-time collaborative editing (Docs)? (OT/CRDTs — a different problem). Safe dedup? (per-user / convergent encryption). Instant device notify? (long-poll/WebSocket).",
+    "final_diagram": " Client watcher -> block hashing -> upload changed blocks -> [Block store (content-addressed, dedup)]\n     -> [Metadata + version service (sharded by user)] -> [Notification/sync svc]\n other devices <- notify -> pull change journal (cursor) -> download delta blocks -> reconcile (conflict -> copy)",
+    "wrap_up": "Split files into content-addressed blocks and sync only the changed ones (delta sync) for bandwidth efficiency; a metadata service tracks versions/manifests while blocks live deduplicated in object storage; a change journal + notifications keep devices consistent, with versioning resolving conflicts. Scale metadata by sharding on user; durability from replicated object storage.",
+}
+
+_DETAIL_METRICS = {
+    "scope": "Design a metrics monitoring + alerting system (Prometheus/Datadog-like). Clarify: metrics only or logs/traces too? scale (# series)? retention? real-time alerts? Assumptions: numeric time-series, millions of series, near-real-time alerts, tiered retention.",
+    "functional": "1) Collect metrics from services/hosts. 2) Store time-series efficiently. 3) Query + visualize (dashboards). 4) Evaluate alert rules and notify. 5) Retention + downsampling.",
+    "nonfunctional": "Scalable ingestion (high write volume), low-latency dashboard queries, near-real-time alerting, high availability, cost-efficient storage.",
+    "estimation": "1M active series × sample every 10s = 100k samples/s. ~16 bytes/sample compressed. Retention: raw for days, downsampled rollups for months/years (tiered).",
+    "api": "Ingest via push (agent -> gateway) or pull (scrape /metrics). Query: GET /query?expr=... (a PromQL-like language). Alerts: rules {expr, threshold, for, notify}.",
+    "data_model": "A time-series = (metric name + labels) -> a stream of (timestamp, value). Stored in a Time-Series DB: columnar, heavily compressed (delta-of-delta timestamps + XOR floats), partitioned by time, with retention tiers + downsampling.",
+    "hld": "Agents/exporters emit metrics -> ingestion layer -> Time-Series DB (compressed, time-partitioned). A query engine serves dashboards; an alerting engine periodically evaluates rules against recent data and fires to notification channels with dedup/grouping/silencing. Pull (scrape) or push model.",
+    "hld_diagram": "Services/exporters -> [Ingestion] -> [Time-Series DB (compressed, tiered retention)]\n                                  -> [Query engine] -> dashboards\n                                  -> [Alert engine: rules] -> notify (dedup/group)",
+    "algorithms": "Time-series compression: delta-of-delta timestamps + XOR (Gorilla) float encoding -> ~10x compression. Cardinality control on labels to avoid explosion. Downsampling: precompute rollups (avg/min/max per hour) for long retention. Alert evaluation with a 'for' duration to avoid flapping.",
+    "deep_dive": "Cardinality explosion is the #1 problem — a high-cardinality label (e.g., user_id) creates millions of series; enforce limits. Storage: recent data in memory/SSD, older downsampled + moved to cheap storage. Query: index by label; time-partitioned chunks. Alerting: scheduled rule eval; group + dedup + silence to fight fatigue; route by severity. HA/scale: replicate ingestion; a sharded/federated TSDB (Cortex/Thanos/M3).",
+    "follow_ups": "Cardinality explosion? (limits, drop high-card labels). Cheap long retention? (downsample + tiering). Alert flapping? ('for' duration + hysteresis). Scale the TSDB? (shard by series). Pull vs push? (pull = discovery + health; push = short-lived jobs).",
+    "final_diagram": " Exporters/agents -> [Ingestion (scrape or push)] -> [TSDB: compressed chunks, time-partitioned]\n                                                   -> retention tiers (raw -> downsampled -> cold)\n [Query engine] -> Grafana dashboards ; [Alert engine: rule eval] -> group/dedup/silence -> PagerDuty/Slack",
+    "wrap_up": "A metrics system = high-volume ingestion into a compressed, time-partitioned time-series DB, a query engine for dashboards, and a scheduled alert engine with grouping/dedup. The key challenges — cardinality, storage cost, and alert fatigue — are handled by label limits, downsampling/tiering, and 'for'-duration + grouping/silencing.",
+}
+
+_DETAIL_ADCLICK = {
+    "scope": "Design a system aggregating a massive stream of ad-click events into real-time counts for dashboards + billing. Clarify: real-time + accurate? scale? dimensions? Assumptions: billions of clicks/day, near-real-time aggregates by ad/minute, billing-grade accuracy.",
+    "functional": "1) Ingest click events. 2) Aggregate counts by ad/campaign per time window. 3) Serve real-time dashboards. 4) Support accurate billing (reconciled). 5) Handle late/duplicate events.",
+    "nonfunctional": "High-throughput ingestion, low-latency aggregates, accuracy (billing!), scalability, fault tolerance, tolerance of out-of-order/late events.",
+    "estimation": "1B clicks/day ≈ 12k/s (peaks far higher). Each event a few hundred bytes. Aggregates are tiny (counts per ad per minute). Raw events retained for reconciliation.",
+    "api": "Ingest: SDK/collector -> event. Query: GET /stats?adId=&window= -> counts. Internally: stream -> aggregator -> aggregated store.",
+    "data_model": "Raw events -> a log (Kafka) partitioned by adId, each with an event_id for dedup. Aggregated table: (adId, minute) -> count in an OLAP/KV store. Raw retained for the batch/reconciliation layer.",
+    "hld": "Clicks -> collector -> Kafka (partitioned by adId) -> a stream processor (Flink) does windowed aggregation by ad + minute -> writes counts to an OLAP store powering dashboards + billing. A batch layer periodically recomputes from raw events to correct any streaming inaccuracy (lambda architecture).",
+    "hld_diagram": "Clicks -> Collector -> [Kafka (by adId)] -> [Flink windowed agg by ad/minute] -> [OLAP store] -> dashboards\n                              raw retained -> [Batch recompute (nightly)] -> reconcile/correct",
+    "algorithms": "Windowed stream aggregation (tumbling 1-min windows) with watermarks for out-of-order/late events. Exactly-once via idempotent writes / dedup by event_id (critical for billing). Lambda architecture: fast streaming layer for real-time + batch layer for correctness. Partition by adId for parallelism (watch hot ads).",
+    "deep_dive": "Exactly-once vs at-least-once: billing must not double-count -> dedup by event_id + idempotent aggregate updates, or Flink's exactly-once. Late events: watermarks + allowed lateness; very late ones corrected by the batch layer. Hot ads (skew): sub-partition or salt keys. Fault tolerance: checkpoint stream state, replay from Kafka. Audit: reconcile streaming vs batch counts.",
+    "follow_ups": "No double-billing? (idempotent/exactly-once + dedup). Events hours late? (batch reconciliation). Hot-ad skew? (key salting/sub-partitions). Fraud clicks? (separate detection pipeline). Scale dashboards? (pre-aggregated OLAP).",
+    "final_diagram": " Clicks -> Collector -> [Kafka partitioned by adId, event_id for dedup]\n     -> [Flink: tumbling windows by ad/minute, watermarks, exactly-once] -> [OLAP store] -> dashboards/billing\n     raw events retained -> [Batch layer (Spark) nightly recompute] -> reconcile + correct",
+    "wrap_up": "Stream clicks through Kafka into a windowed stream aggregator (Flink) writing per-ad/minute counts to an OLAP store for real-time dashboards, with a batch layer reconciling for billing-grade accuracy (lambda). The crux — accuracy under duplicate/late/out-of-order events — is solved with dedup/exactly-once, watermarks, and batch reconciliation.",
+}
+
 
 ENTRIES = [
     # ─────────── Core Building Blocks ───────────
@@ -1040,7 +1104,8 @@ ENTRIES = [
       "Upload -> S3 -> [Transcode -> renditions/chunks] -> CDN edges ; player -> adaptive bitrate (HLS/DASH)",
       "Transcoding cost/latency; storage of many renditions; CDN cost; live vs VOD; DRM.",
       "HLS/DASH adaptive streaming; CDN (CloudFront/Akamai); transcoding (FFmpeg/MediaConvert).",
-      ["video-streaming", "youtube", "transcoding", "cdn", "hls", "adaptive-bitrate"]),
+      ["video-streaming", "youtube", "transcoding", "cdn", "hls", "adaptive-bitrate"],
+      detail=_DETAIL_VIDEO),
     E("classic", "Design Google Drive / File Sync",
       "Store, sync, and share files across devices with consistency, versioning, and efficient bandwidth.",
       "Files split into blocks (chunks); only changed blocks upload/download (delta sync). Metadata service tracks files, versions, block manifests; blocks in object storage (deduped by hash). A sync/notification service pushes changes to clients; conflicts resolved by versioning. Client watches the local folder and reconciles.",
@@ -1049,7 +1114,8 @@ ENTRIES = [
       "Client (block delta) <-> Metadata service + Block store (deduped) <-> notification -> other devices",
       "Conflict resolution; large-file sync; dedup vs privacy; consistency across devices; offline edits.",
       "Block-level delta sync; content-addressed storage; vs naive full-file sync.",
-      ["file-sync", "google-drive", "dropbox", "block-storage", "dedup", "delta-sync", "versioning"]),
+      ["file-sync", "google-drive", "dropbox", "block-storage", "dedup", "delta-sync", "versioning"],
+      detail=_DETAIL_GDRIVE),
     E("classic", "Design a Distributed Message Queue (Kafka)",
       "Move high-throughput event streams between producers and consumers, durably, ordered, and replayable.",
       "An append-only, partitioned commit log: topics split into partitions (ordering within a partition), each replicated across brokers. Producers append; consumers track their own offset and pull; consumer groups parallelize across partitions. Retention lets you replay. Partition key controls ordering + parallelism.",
@@ -1068,7 +1134,8 @@ ENTRIES = [
       "Sources -> ingest -> [Time-series DB (downsample/retention)] -> dashboards + alert engine -> notify",
       "Cardinality explosion; storage/retention cost; alert fatigue/false positives; scaling the TSDB.",
       "Prometheus, InfluxDB, TimescaleDB, M3/Cortex/Thanos, Datadog; pull vs push.",
-      ["monitoring", "metrics", "time-series", "alerting", "prometheus", "observability"]),
+      ["monitoring", "metrics", "time-series", "alerting", "prometheus", "observability"],
+      detail=_DETAIL_METRICS),
     E("classic", "Design Ad Click Event Aggregation",
       "Aggregate a massive stream of ad-click events into real-time counts (for billing/dashboards) accurately.",
       "Clicks -> stream (Kafka) -> stream processor (Flink) with windowed aggregation by ad/minute -> aggregated store (OLAP) -> dashboards/billing. Handle exactly-once (idempotent writes/dedup by event id), late/out-of-order events (watermarks), and a batch reconciliation layer (lambda) for correctness.",
@@ -1077,7 +1144,8 @@ ENTRIES = [
       "Clicks -> Kafka -> [Flink windowed aggregation] -> OLAP store -> dashboards ; batch reconcile (lambda)",
       "Exactly-once vs at-least-once; late events; dedup at scale; hot keys (popular ads); accuracy for billing.",
       "Flink/Spark Streaming; Kafka; lambda architecture; OLAP (Druid/Pinot/ClickHouse).",
-      ["ad-click", "aggregation", "streaming", "flink", "exactly-once", "windowing", "lambda-architecture"]),
+      ["ad-click", "aggregation", "streaming", "flink", "exactly-once", "windowing", "lambda-architecture"],
+      detail=_DETAIL_ADCLICK),
     E("classic", "Design a Hotel Reservation System",
       "Book rooms without overbooking under concurrency, with search, availability, and payment.",
       "Inventory of room-type/date availability with strong consistency on the reservation write (transaction/conditional update or reserve-with-TTL). Search service over availability (cached); a reservation service holds a room during checkout, confirms on payment (saga), and releases on timeout. Idempotency prevents double-booking on retries.",
