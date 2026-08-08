@@ -16,171 +16,140 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Rotate Image (in-place 90 degrees)",
-         answer="Rotate an n×n matrix 90 degrees clockwise IN PLACE. Two-step trick: TRANSPOSE the matrix (swap element [i][j] with [j][i]), then REVERSE each row. Transpose flips across the main diagonal; reversing rows completes the clockwise rotation. O(1) extra space.",
-         tags=["rotate-image","matrix","in-place","transpose","dsa"],
-         code='''# Rotate an n x n matrix 90 degrees clockwise, in place.
-def rotate_image(matrix):
-    n = len(matrix)
-    for i in range(n):                     # transpose across the main diagonal
-        for j in range(i + 1, n):
-            matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]
-    for row in matrix:                     # then reverse each row
-        row.reverse()
-    return matrix''',
-         complexity="Time O(n^2), space O(1).",
-         pitfalls="Transposing the full range (double-swaps back to original) — only j>i; reversing columns instead of rows.",
-         example="rotate_image([[1,2,3],[4,5,6],[7,8,9]]) -> [[7,4,1],[8,5,2],[9,6,3]]."),
-    dict(cat="dsa", title="Spiral Matrix II (generate)",
-         answer="Generate an n×n matrix filled with 1..n^2 in spiral (clockwise) order. Maintain four shrinking boundaries (top, bottom, left, right) and walk the perimeter — top row left-to-right, right column top-to-bottom, bottom row right-to-left, left column bottom-to-top — writing an incrementing counter, shrinking the boundary after each side.",
-         tags=["spiral-matrix","matrix","simulation","dsa"],
-         code='''# Generate an n x n matrix filled 1..n^2 in spiral order.
-def generate_spiral(n):
-    matrix = [[0] * n for _ in range(n)]
-    top, bottom, left, right = 0, n - 1, 0, n - 1
-    num = 1
-    while top <= bottom and left <= right:
-        for c in range(left, right + 1):
-            matrix[top][c] = num; num += 1
-        top += 1
-        for r in range(top, bottom + 1):
-            matrix[r][right] = num; num += 1
-        right -= 1
-        for c in range(right, left - 1, -1):
-            matrix[bottom][c] = num; num += 1
-        bottom -= 1
-        for r in range(bottom, top - 1, -1):
-            matrix[r][left] = num; num += 1
-        left += 1
-    return matrix''',
-         complexity="Time O(n^2), space O(n^2) for the output.",
-         pitfalls="Not shrinking the boundaries; overwriting the center on odd n (the while bounds handle it).",
-         example="generate_spiral(3) -> [[1,2,3],[8,9,4],[7,6,5]]."),
-    dict(cat="dsa", title="Pow(x, n) — fast exponentiation",
-         answer="Compute x^n in O(log n) using BINARY (fast) exponentiation: square the base while walking the bits of n, multiplying the result whenever a bit is set — because x^n = product of x^(2^k) for each set bit k. Handle negative n by inverting x and negating n.",
-         tags=["fast-exponentiation","pow","bit-manipulation","math","dsa"],
-         code='''# Compute x^n in O(log n) via fast (binary) exponentiation.
-def my_pow(x, n):
-    if n < 0:
-        x = 1 / x
-        n = -n
-    result = 1.0
-    while n > 0:
-        if n & 1:           # current bit set -> multiply in the current power
-            result *= x
-        x *= x              # square the base for the next bit
-        n >>= 1
-    return result''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Multiplying x by itself n times (O(n) — too slow); mishandling negative n.",
-         example="my_pow(2.0, 10) -> 1024.0; my_pow(2.0, -2) -> 0.25."),
-    dict(cat="dsa", title="Sqrt(x) — integer square root (binary search)",
-         answer="Return the floor of the square root of a non-negative integer WITHOUT a float sqrt. Binary-search the answer in [1, x//2]: for a candidate mid, compare mid*mid to x and narrow the range. When the loop ends, the high pointer sits on floor(sqrt(x)).",
-         tags=["sqrt","binary-search","math","dsa"],
-         code='''# Integer square root of x (floor) via binary search, no float sqrt.
-def my_sqrt(x):
-    if x < 2:
-        return x
-    lo, hi = 1, x // 2
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        sq = mid * mid
-        if sq == x:
-            return mid
-        if sq < x:
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return hi                # hi ends on the floor of the square root''',
-         complexity="Time O(log x), space O(1).",
-         pitfalls="Overflow of mid*mid in low-level languages; returning lo instead of hi for the floor.",
-         example="my_sqrt(8) -> 2; my_sqrt(16) -> 4."),
-    dict(cat="dsa", title="Count Primes (Sieve of Eratosthenes)",
-         answer="Count the primes strictly less than n. The Sieve of Eratosthenes marks composites: for each prime p, cross off its multiples starting at p*p (smaller multiples were already crossed by smaller primes). Only sieve p up to sqrt(n). The remaining unmarked numbers are prime.",
-         tags=["count-primes","sieve-of-eratosthenes","math","dsa"],
-         code='''# Count primes strictly less than n using the Sieve of Eratosthenes.
-def count_primes(n):
-    if n < 3:
-        return 0
-    is_prime = [True] * n
-    is_prime[0] = is_prime[1] = False
-    p = 2
-    while p * p < n:
-        if is_prime[p]:
-            for multiple in range(p * p, n, p):   # cross off multiples of p
-                is_prime[multiple] = False
-        p += 1
-    return sum(is_prime)''',
-         complexity="Time O(n log log n), space O(n).",
-         pitfalls="Starting the inner loop at 2*p instead of p*p (slower); sieving p beyond sqrt(n) (wasted work).",
-         example="count_primes(10) -> 4  (2, 3, 5, 7)."),
-    dict(cat="dsa", title="Happy Number",
-         answer="A number is 'happy' if repeatedly replacing it with the sum of the squares of its digits eventually reaches 1; otherwise it loops forever. Detect the loop with a seen-set (or Floyd's cycle detection): if you revisit a number before hitting 1, it's not happy.",
-         tags=["happy-number","hash-set","cycle-detection","math","dsa"],
-         code='''# Is n 'happy'? Repeatedly sum squares of digits; happy if it reaches 1.
-def is_happy(n):
-    seen = set()
-    while n != 1 and n not in seen:
-        seen.add(n)
-        n = sum(int(d) ** 2 for d in str(n))   # sum of squared digits
-    return n == 1''',
-         complexity="Time O(log n) per step over few steps, space O(count of seen).",
-         pitfalls="No cycle detection -> infinite loop for unhappy numbers; summing digits instead of their squares.",
-         example="is_happy(19) -> True (1+81+... -> ... -> 1); is_happy(2) -> False."),
-    dict(cat="dsa", title="Reverse Bits",
-         answer="Reverse the bit order of a 32-bit unsigned integer. Build the result by repeatedly shifting it left and appending the current lowest bit of the input, while shifting the input right — 32 iterations move each bit to its mirrored position.",
-         tags=["reverse-bits","bit-manipulation","dsa"],
-         code='''# Reverse the bits of a 32-bit unsigned integer.
-def reverse_bits(n):
+    dict(cat="dsa", title="Hamming Distance",
+         answer="The Hamming distance between two integers is the number of bit positions where they differ. XOR the two numbers (bits are 1 exactly where they differ), then count the set bits in the result.",
+         tags=["hamming-distance","bit-manipulation","xor","dsa"],
+         code='''# Number of positions where the bits of two integers differ.
+def hamming_distance(x, y):
+    xor = x ^ y                 # bits set exactly where x and y differ
+    count = 0
+    while xor:
+        count += xor & 1        # add the lowest bit
+        xor >>= 1
+    return count''',
+         complexity="Time O(number of bits), space O(1).",
+         pitfalls="Comparing digits instead of bits; forgetting to XOR first.",
+         example="hamming_distance(1, 4) -> 2  (0001 vs 0100)."),
+    dict(cat="dsa", title="Number of 1 Bits (popcount)",
+         answer="Count the set bits (population count) of an integer. The elegant trick n &= n-1 clears the LOWEST set bit each iteration, so the loop runs exactly as many times as there are 1-bits — faster than checking all 32 bits.",
+         tags=["number-of-1-bits","popcount","bit-manipulation","dsa"],
+         code='''# Count the set bits (population count) of an integer.
+def hamming_weight(n):
+    count = 0
+    while n:
+        n &= n - 1              # clears the lowest set bit each step
+        count += 1
+    return count''',
+         complexity="Time O(number of set bits), space O(1).",
+         pitfalls="Looping all 32 bits unnecessarily; forgetting n & (n-1) clears the lowest 1.",
+         example="hamming_weight(11) -> 3  (binary 1011)."),
+    dict(cat="dsa", title="Power of Two",
+         answer="Check whether n is a power of two. A power of two has EXACTLY ONE set bit, and n & (n-1) clears the lowest set bit — so for a power of two that yields 0. Guard n>0 (zero and negatives aren't powers of two).",
+         tags=["power-of-two","bit-manipulation","math","dsa"],
+         code='''# Is n a power of two? A power of two has exactly one set bit.
+def is_power_of_two(n):
+    return n > 0 and (n & (n - 1)) == 0   # n & (n-1) clears the lone bit -> 0''',
+         complexity="Time O(1), space O(1).",
+         pitfalls="Not guarding n>0 (0 and negatives); using a loop of divisions when a bit trick is O(1).",
+         example="is_power_of_two(16) -> True; is_power_of_two(18) -> False."),
+    dict(cat="dsa", title="Plus One",
+         answer="Add one to a non-negative integer represented as an array of digits (most significant first). Walk from the last digit: if it's < 9, increment and return; if it's 9 it becomes 0 and the carry continues left. If every digit was 9, prepend a leading 1.",
+         tags=["plus-one","array","math","carry","dsa"],
+         code='''# Add one to a number represented as an array of digits.
+def plus_one(digits):
+    for i in range(len(digits) - 1, -1, -1):
+        if digits[i] < 9:
+            digits[i] += 1          # no carry -> done
+            return digits
+        digits[i] = 0               # 9 becomes 0, carry continues left
+    return [1] + digits             # all nines -> prepend a leading 1''',
+         complexity="Time O(n), space O(1) (or O(n) for the all-nines case).",
+         pitfalls="Forgetting the all-nines carry-out (99 -> 100); iterating left-to-right.",
+         example="plus_one([1,2,9]) -> [1,3,0]; plus_one([9,9]) -> [1,0,0]."),
+    dict(cat="dsa", title="Add Binary",
+         answer="Add two binary strings and return their sum as a binary string. Walk both from the least significant bit, summing digit + digit + carry; the current output bit is total%2 and the new carry is total//2. Continue while either string has digits or a carry remains, then reverse.",
+         tags=["add-binary","string","bit-manipulation","carry","dsa"],
+         code='''# Add two binary strings and return the binary sum as a string.
+def add_binary(a, b):
+    i, j = len(a) - 1, len(b) - 1
+    carry = 0
+    result = []
+    while i >= 0 or j >= 0 or carry:
+        total = carry
+        if i >= 0:
+            total += int(a[i]); i -= 1
+        if j >= 0:
+            total += int(b[j]); j -= 1
+        result.append(str(total % 2))   # current output bit
+        carry = total // 2              # carry to the next position
+    return "".join(reversed(result))''',
+         complexity="Time O(max(len a, len b)), space O(that).",
+         pitfalls="Dropping the final carry; not reversing the accumulated bits.",
+         example="add_binary('11', '1') -> '100'."),
+    dict(cat="dsa", title="Excel Sheet Column Number",
+         answer="Convert an Excel column title (A, B, ..., Z, AA, AB, ...) to its 1-based number. It's base-26 but with digits 1..26 (A=1, not 0): for each character, result = result*26 + (value of the letter).",
+         tags=["excel-column","base-conversion","string","math","dsa"],
+         code='''# Convert an Excel column title (A, B, ..., Z, AA, ...) to its number.
+def title_to_number(s):
     result = 0
-    for _ in range(32):
-        result = (result << 1) | (n & 1)   # shift result left, take n's low bit
-        n >>= 1                             # drop n's low bit
+    for ch in s:
+        # base-26 where A=1..Z=26 (no zero digit)
+        result = result * 26 + (ord(ch) - ord('A') + 1)
     return result''',
-         complexity="Time O(32) = O(1), space O(1).",
-         pitfalls="Not fixing the 32-bit width; forgetting to shift the result left before OR-ing.",
-         example="reverse_bits(43261596) -> 964176192."),
-    dict(cat="dsa", title="Roman to Integer",
-         answer="Convert a Roman numeral to an integer. Scan left to right adding each symbol's value, EXCEPT when a smaller value precedes a larger one (e.g. IV, IX, CM) — then subtract it. Checking the next symbol's value handles all six subtractive cases uniformly.",
-         tags=["roman-to-integer","string","math","dsa"],
-         code='''# Convert a Roman numeral string to an integer.
-def roman_to_int(s):
-    values = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}
-    total = 0
-    for i in range(len(s)):
-        # a smaller value before a larger one is subtractive (IV = 4)
-        if i + 1 < len(s) and values[s[i]] < values[s[i + 1]]:
-            total -= values[s[i]]
-        else:
-            total += values[s[i]]
-    return total''',
          complexity="Time O(len(s)), space O(1).",
-         pitfalls="Not handling the subtractive pairs; index out of range on the last char (guard i+1).",
-         example="roman_to_int('MCMXCIV') -> 1994."),
-    dict(cat="glossary", title="Bloom filter",
-         answer="A space-efficient PROBABILISTIC set that answers 'is x possibly in the set?' with NO false negatives but some false positives. It hashes each element to k bits in a bit array and sets them; a lookup checks those k bits — any 0 means definitely absent, all 1s means probably present. Used to skip expensive lookups (does this key exist before I hit disk?).",
-         tags=["bloom-filter","probabilistic","hashing","data-structure"],
-         example="An LSM database checks a per-file Bloom filter before reading an SSTable from disk — if it says 'no', it skips the disk read entirely, saving I/O for keys that aren't there."),
-    dict(cat="glossary", title="LSM tree vs B-tree",
-         answer="Two storage-engine index structures. A B-TREE updates data in place (great for reads, range scans, and random access) — the classic relational-DB index. An LSM TREE (log-structured merge) buffers writes in memory then flushes sorted files to disk, merging them via background COMPACTION — optimized for high WRITE throughput (sequential writes) at some read/space-amplification cost. LSM powers write-heavy stores (Cassandra, RocksDB, LevelDB).",
-         tags=["lsm-tree","b-tree","storage-engine","database","indexing"],
-         example="A write-heavy ingest/time-series workload uses an LSM engine (RocksDB) for fast sequential writes; a read/update-heavy OLTP workload uses a B-tree (InnoDB/Postgres)."),
-    dict(cat="glossary", title="Write-ahead log (WAL)",
-         answer="A durability + crash-recovery technique: before applying a change to the database's data pages, first APPEND it to a sequential on-disk log. If the system crashes mid-operation, replaying the log restores committed changes and discards incomplete ones. Sequential log writes are fast, and the log doubles as the source for replication.",
-         tags=["write-ahead-log","wal","durability","recovery","database"],
-         example="Postgres writes every change to the WAL and fsyncs it before acknowledging a commit; after a crash it replays the WAL to recover, and replicas stream the WAL to stay in sync."),
-    dict(cat="glossary", title="MVCC (Multi-Version Concurrency Control)",
-         answer="A concurrency scheme where writers create NEW versions of rows instead of overwriting, so readers see a consistent SNAPSHOT without blocking writers (and vice versa). Each transaction reads the version valid as of its start. It gives high read concurrency and snapshot isolation; obsolete versions are garbage-collected. Used by Postgres, Oracle, and MySQL/InnoDB.",
-         tags=["mvcc","concurrency","snapshot-isolation","database","transactions"],
-         example="In Postgres, a long report reads a consistent snapshot as of its start time even as other transactions update rows — because each update writes a new row version rather than overwriting."),
-    dict(cat="glossary", title="Quorum (read/write, W+R>N)",
-         answer="In a system with N replicas, require W replicas to ack a write and R to answer a read. If W + R > N, the read set and write set OVERLAP on at least one replica, so a read always sees the latest write — tunable consistency. Larger W/R means stronger consistency but lower availability/higher latency; it's the classic Dynamo-style knob.",
-         tags=["quorum","replication","consistency","distributed-systems","dynamo"],
-         example="With N=3, W=2, R=2 (W+R=4>3), a write acked by 2 nodes and a read from 2 nodes always overlap on at least one up-to-date replica, so reads see the latest write."),
-    dict(cat="conceptual", title="Why do databases use B-trees / LSM-trees instead of a hash index for most workloads?",
-         answer="A hash index gives O(1) point lookups but CANNOT do range queries, ordered scans, or prefix searches, and it handles larger-than-memory data less gracefully. Most real workloads need WHERE x BETWEEN, ORDER BY, and range/prefix scans, which require an ORDERED structure. B-trees keep keys sorted in shallow, disk-friendly nodes (few seeks per lookup) and support ranges; LSM-trees keep sorted runs merged over time for write-heavy ordered data. Hash indexes fit only narrow exact-match, in-memory cases. Ordering + disk-efficiency + range support matter more than a marginally faster point lookup.",
-         tags=["b-tree","lsm-tree","hash-index","database","why"],
-         example="'SELECT * FROM orders WHERE created BETWEEN X AND Y ORDER BY created' is trivial on a B-tree (walk a sorted range) but impossible on a hash index, which stores keys in no meaningful order."),
+         pitfalls="Treating A as 0 (it's 1); not accumulating in base 26.",
+         example="title_to_number('AB') -> 28; title_to_number('ZY') -> 701."),
+    dict(cat="dsa", title="Perfect Squares (DP)",
+         answer="Find the FEWEST perfect-square numbers (1,4,9,16,...) that sum to n. DP where dp[i] = min squares summing to i: for each i, try every square j*j <= i and take 1 + dp[i - j*j]. Bottom-up fill gives dp[n].",
+         tags=["perfect-squares","dynamic-programming","math","dp","dsa"],
+         code='''# Fewest perfect-square numbers that sum to n (DP).
+def num_squares(n):
+    dp = [0] + [float('inf')] * n     # dp[i] = fewest squares summing to i
+    for i in range(1, n + 1):
+        j = 1
+        while j * j <= i:
+            dp[i] = min(dp[i], dp[i - j * j] + 1)
+            j += 1
+    return dp[n]''',
+         complexity="Time O(n * sqrt(n)), space O(n).",
+         pitfalls="Iterating all numbers instead of just squares; off-by-one on dp size.",
+         example="num_squares(12) -> 3  (4+4+4); num_squares(13) -> 2  (4+9)."),
+    dict(cat="dsa", title="Min Cost Climbing Stairs (DP)",
+         answer="Each stair i costs cost[i] to step on; from a stair you climb 1 or 2 steps, and you may start at stair 0 or 1. Find the min cost to go PAST the top. DP: the cheapest way onto stair i is cost[i] + min(cost to reach i-1, i-2); the answer is the min of reaching the last two stairs (the top is one step beyond).",
+         tags=["min-cost-climbing-stairs","dynamic-programming","dp","dsa"],
+         code='''# Min cost to reach the top, paying cost[i] to step on stair i (climb 1 or 2).
+def min_cost_climbing_stairs(cost):
+    prev, curr = 0, 0                 # min cost to reach the two stairs below
+    for c in cost:
+        prev, curr = curr, c + min(prev, curr)   # cheapest way onto this stair
+    return min(prev, curr)            # top is just past the last stair''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Paying to step off the top (you don't); mixing up which neighbour is i-1 vs i-2.",
+         example="min_cost_climbing_stairs([10,15,20]) -> 15; min_cost_climbing_stairs([1,100,1,1,1,100,1,1,100,1]) -> 6."),
+    dict(cat="glossary", title="Consistent hashing",
+         answer="A hashing scheme that maps both KEYS and NODES onto a ring; a key is owned by the next node clockwise. When a node is added or removed, only the keys between it and its predecessor move — about 1/N of keys — instead of nearly everything remapping as with modulo hashing. VIRTUAL NODES spread load evenly. It underpins distributed caches, sharded databases, and CDNs.",
+         tags=["consistent-hashing","sharding","distributed-systems","load-balancing"],
+         example="Adding a 5th cache node to a 4-node cluster remaps only ~1/5 of keys (those now landing on the new node) instead of rehashing everything and causing a cache-wide miss storm."),
+    dict(cat="glossary", title="PACELC theorem",
+         answer="An extension of CAP: if there's a network Partition (P), a system trades between Availability and Consistency (A/C); but Else (E), even with NO partition, it trades between Latency and Consistency (L/C). It captures that consistency costs latency even in normal operation — not just during failures.",
+         tags=["pacelc","cap-theorem","consistency","latency","distributed-systems"],
+         example="Dynamo-style stores are PA/EL (favor availability under partition, low latency otherwise); Spanner is PC/EC (consistency always, paying latency)."),
+    dict(cat="glossary", title="Circuit breaker",
+         answer="A resilience pattern that STOPS calling a failing dependency to prevent cascading failure. Like an electrical breaker it 'trips' OPEN after a failure threshold — failing fast instead of hammering the dead service — then periodically goes HALF-OPEN to test recovery, closing again when calls succeed. It keeps a slow/broken downstream from exhausting the caller's threads/resources.",
+         tags=["circuit-breaker","resilience","microservices","fault-tolerance"],
+         example="If the payment service starts timing out, the breaker trips open so checkout fails fast (with a fallback) instead of every request hanging 30s and exhausting the gateway's thread pool."),
+    dict(cat="glossary", title="Idempotency key",
+         answer="A unique client-supplied token attached to a request so the server can DEDUPLICATE retries — processing the operation once even if the request arrives multiple times (network retry, timeout). The server records the key + result; a repeat with the same key returns the stored result instead of re-executing. Essential for safely retrying non-idempotent operations like payments.",
+         tags=["idempotency-key","retries","exactly-once","api","reliability"],
+         example="A payment API takes an Idempotency-Key header; a client retry after a timeout sends the same key, so the server returns the original charge result rather than charging twice."),
+    dict(cat="glossary", title="Exactly-once semantics",
+         answer="The (hard) guarantee that a message/operation takes effect exactly once despite failures and retries. True exactly-once DELIVERY is impossible over an asynchronous network, so systems achieve exactly-once EFFECT via at-least-once delivery + IDEMPOTENT processing (dedupe by id) or an atomic/transactional commit. 'Exactly-once' in practice means 'at-least-once + dedup'.",
+         tags=["exactly-once","idempotency","messaging","delivery-semantics"],
+         example="Kafka's 'exactly-once' combines idempotent producers with transactional writes so a consumer's output reflects each input once, even though messages may be delivered more than once underneath."),
+    dict(cat="conceptual", title="Why is exactly-once delivery essentially impossible, and how do systems fake it?",
+         answer="Over an asynchronous network a sender can't distinguish 'the message was lost' from 'it arrived but the ack was lost', so it must either retry (risking DUPLICATES) or not (risking LOSS) — giving at-most-once or at-least-once, but never a guaranteed single delivery (the two-generals problem: no finite protocol makes both sides certain). Systems therefore target exactly-once EFFECT, not delivery: at-least-once delivery + IDEMPOTENT processing (dedupe by a unique id) or an atomic/transactional commit so duplicates are harmless. The delivery may repeat; the effect happens once.",
+         tags=["exactly-once","two-generals","idempotency","distributed-systems","why"],
+         example="A payment webhook is delivered at-least-once; the receiver dedupes on the event id, so a re-delivered 'charge $10' is ignored — money moves exactly once even though the message arrived twice."),
 ]
 
 
