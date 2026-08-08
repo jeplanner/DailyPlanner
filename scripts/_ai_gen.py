@@ -2,8 +2,9 @@
 
 Runs as a single simple command (`python3 scripts/_ai_gen.py`) so the
 permission parser can allow it — no heredocs, pipes, or && chains.
-Edit the BATCH list, run it, then git add/commit/push as separate simple
-commands. Validates every code block (ast.parse) before writing.
+Replace the BATCH list, run it, then git add/commit/push as separate
+simple commands. Validates every code block (ast.parse), dedups against
+existing titles, and checks every entry has an example before writing.
 """
 import ast
 import importlib
@@ -13,66 +14,127 @@ import sys
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
-# ── The batch to add this iteration. Each dict: cat, title, answer, tags,
-#    and optional code/example/complexity/pitfalls/followups. ──
+# ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="glossary", title="BERT",
-         answer="A Transformer ENCODER pretrained to UNDERSTAND language by predicting randomly-masked words using BOTH left and right context (bidirectional). You then fine-tune it on your task (classification, Q&A). It made powerful language understanding reusable and reset the NLP state of the art.",
-         tags=["bert","transformer","nlp","pretraining"],
-         example="Fine-tune BERT on movie reviews for sentiment — it already 'knows' English from pretraining, so little labeled data is needed."),
-    dict(cat="glossary", title="GPT",
-         answer="A Transformer DECODER pretrained to predict the NEXT token given all previous tokens (left-to-right, 'autoregressive'). That makes it great at generating text, code, and answers. Scaling GPT up produced modern LLMs like ChatGPT.",
-         tags=["gpt","transformer","llm","nlp"],
-         example="Given 'The capital of France is', GPT predicts 'Paris', then keeps generating token by token to write a full answer."),
-    dict(cat="glossary", title="Self-supervised learning",
-         answer="Training on UNLABELED data by creating the labels FROM the data itself — e.g. hide part of the input and predict it. It unlocks huge unlabeled corpora (all text, all images) without costly human labeling, and is how LLMs and modern vision models are pretrained.",
-         tags=["self-supervised","pretraining","deep-learning"],
-         example="BERT hides 15% of words and predicts them; the 'label' is just the original word — no human annotation needed."),
-    dict(cat="glossary", title="Beam search",
-         answer="A decoding strategy for sequence models (translation, text generation): instead of greedily taking the single most likely next token, keep the top-k ('beam width') partial sequences at each step and expand them, finally choosing the best COMPLETE sequence. It finds higher-probability outputs than greedy, at more compute.",
-         tags=["beam-search","decoding","nlp","llm"],
-         example="Translating with beam width 5 explores 5 candidate translations in parallel and returns the most fluent overall — better than committing word by word."),
-    dict(cat="glossary", title="Reinforcement learning (agent, reward, policy)",
-         answer="A paradigm where an AGENT takes ACTIONS in an ENVIRONMENT to maximize cumulative REWARD, learning by trial and error. Key terms: state (the situation), action (a choice), reward (feedback), policy (the strategy mapping states to actions). Used in games, robotics, and RLHF for aligning LLMs.",
-         tags=["reinforcement-learning","agent","reward","policy"],
-         example="AlphaGo learned Go by playing millions of games, rewarded for winning — its policy improved until it beat world champions."),
-    dict(cat="glossary", title="Label smoothing",
-         answer="A regularization trick for classification: instead of hard targets (1 for the true class, 0 elsewhere), train toward SOFT targets like 0.9 and a little spread on the rest. This stops the model becoming over-confident, improving calibration and generalization.",
-         tags=["label-smoothing","regularization","classification"],
-         example="Instead of target [0,1,0], train toward [0.033, 0.933, 0.033] — the model stays a bit humble and generalizes better."),
-    dict(cat="glossary", title="Weight initialization",
-         answer="How a neural network's weights are set BEFORE training. Bad init stalls learning: all-zeros makes every neuron identical; too-large values explode activations. Good schemes (Xavier/Glorot for tanh/sigmoid, He for ReLU) scale the random init by the layer size so signals and gradients stay healthy through deep networks.",
-         tags=["weight-init","deep-learning","training"],
-         example="Initializing a deep ReLU net with He initialization keeps activations from vanishing or exploding, so it trains from the first epoch."),
-    dict(cat="glossary", title="Learning-rate schedule",
-         answer="Changing the learning rate DURING training rather than keeping it fixed. Common patterns: warmup (start small, ramp up) then decay (shrink over time), or step/cosine decay. A high rate early explores fast; a low rate later fine-tunes into the minimum — improving both speed and final accuracy.",
-         tags=["lr-schedule","training","optimizer"],
-         example="Warm up the LR over the first 1000 steps, then cosine-decay it toward zero — standard for training Transformers."),
-    dict(cat="dsa", title="Edit Distance (Levenshtein)",
-         answer="Minimum number of insertions, deletions, or substitutions to turn string a into string b. 2-D DP: if the current characters MATCH it is free (carry dp[i-1][j-1]); otherwise 1 + the cheapest of insert (dp[i][j-1]), delete (dp[i-1][j]), or substitute (dp[i-1][j-1]).",
-         tags=["edit-distance","levenshtein","dp","string","dsa"],
-         code="# Minimum edits (insert/delete/substitute) to turn a into b.\ndef edit_distance(a, b):\n    m, n = len(a), len(b)\n    dp = [[0] * (n + 1) for _ in range(m + 1)]\n    for i in range(m + 1):\n        dp[i][0] = i                 # delete all of a[:i]\n    for j in range(n + 1):\n        dp[0][j] = j                 # insert all of b[:j]\n    for i in range(1, m + 1):\n        for j in range(1, n + 1):\n            if a[i-1] == b[j-1]:\n                dp[i][j] = dp[i-1][j-1]          # chars match -> free\n            else:\n                dp[i][j] = 1 + min(dp[i-1][j],   # delete\n                                   dp[i][j-1],   # insert\n                                   dp[i-1][j-1]) # substitute\n    return dp[m][n]",
-         complexity="Time O(m*n), space O(m*n).",
-         pitfalls="Forgetting the first row/column base cases (all inserts / all deletes).",
-         example="edit_distance('horse', 'ros') -> 3."),
-    dict(cat="dsa", title="Gas Station",
-         answer="Given gas[i] and cost[i] to drive from station i to i+1 around a circle, find a start that completes the loop, or -1. Greedy: a solution exists iff total gas >= total cost. Track a running tank; whenever it goes negative you can't have started anywhere up to here, so restart from the next station.",
-         tags=["gas-station","greedy","array","dsa"],
-         code="# Starting station to complete the circular route, or -1.\ndef can_complete_circuit(gas, cost):\n    if sum(gas) < sum(cost):\n        return -1                    # not enough total gas -> impossible\n    tank = 0\n    start = 0\n    for i in range(len(gas)):\n        tank += gas[i] - cost[i]     # net gas gained crossing to i+1\n        if tank < 0:                 # cannot reach i+1 from `start`\n            start = i + 1            # so try starting just after i\n            tank = 0                 # reset the tank\n    return start",
+    dict(cat="glossary", title="KL divergence",
+         answer="A measure of how one probability distribution differs from another — how much information is lost approximating P with Q. It is asymmetric (KL(P||Q) != KL(Q||P)) and always >= 0, hitting zero only when the distributions are identical. It underlies cross-entropy loss, variational methods, and knowledge distillation.",
+         tags=["kl-divergence","statistics","deep-learning"],
+         example="Distillation minimizes the KL divergence between the student's and teacher's output distributions so the student mimics the teacher."),
+    dict(cat="glossary", title="Softmax temperature",
+         answer="A knob T applied before softmax (dividing the logits by T) that controls how 'peaky' the output probabilities are. High T gives softer, more uniform outputs (more random/creative sampling); low T gives sharper, more confident outputs (near-greedy). It is how you dial an LLM's randomness and how teacher outputs are softened in distillation.",
+         tags=["temperature","softmax","llm","sampling"],
+         example="An LLM at temperature 0.2 gives focused, repetitive answers; at 1.2 it becomes more creative and varied."),
+    dict(cat="glossary", title="Tokenization / BPE",
+         answer="Splitting text into TOKENS (subword units) a model can process. Byte-Pair Encoding (BPE) starts from characters and greedily merges the most frequent pairs into subwords, so common words become a single token while rare words split into pieces — balancing a small vocabulary with the ability to represent any word.",
+         tags=["tokenization","bpe","nlp","llm"],
+         example="'tokenization' might split into 'token' + 'ization'; a rare name like 'Xylophone' splits into several subword tokens."),
+    dict(cat="glossary", title="Contrastive learning",
+         answer="A self-supervised technique that learns representations by pulling SIMILAR (positive) pairs together and pushing DIFFERENT (negative) pairs apart in embedding space. It learns powerful features from unlabeled data (SimCLR for images, CLIP for image-text).",
+         tags=["contrastive-learning","self-supervised","embeddings"],
+         example="Two random crops of the SAME photo are a positive pair (pulled together); crops of different photos are negatives (pushed apart) — the model learns what makes an image itself."),
+    dict(cat="glossary", title="Diffusion model",
+         answer="A generative model that creates data by REVERSING a gradual noising process: it is trained to denoise images step by step, so starting from pure noise it can generate a realistic image. It powers modern text-to-image tools (Stable Diffusion, DALL-E).",
+         tags=["diffusion","generative","deep-learning"],
+         example="Give a diffusion model 'an astronaut riding a horse'; it starts from noise and denoises over ~50 steps into a coherent image."),
+    dict(cat="glossary", title="RLHF (Reinforcement Learning from Human Feedback)",
+         answer="How LLMs are aligned to be helpful and safe: humans rank model outputs, a REWARD MODEL learns to predict those preferences, and the LLM is fine-tuned with reinforcement learning to maximize that reward. It is what turns a raw next-token predictor into a helpful assistant.",
+         tags=["rlhf","alignment","llm","reinforcement-learning"],
+         example="Humans rate ChatGPT answers; the model is then tuned to produce the kinds of answers people preferred — making it more helpful and less toxic."),
+    dict(cat="glossary", title="PR-AUC (Precision-Recall AUC)",
+         answer="The area under the Precision-Recall curve. Unlike ROC-AUC it focuses on the POSITIVE class, making it the better metric for heavily IMBALANCED problems where positives are rare. Higher is better, and the random baseline equals the positive class's prevalence.",
+         tags=["pr-auc","auc","metrics","imbalance"],
+         example="For fraud at 0.5% prevalence, a PR-AUC of 0.6 is strong (baseline 0.005), while ROC-AUC would look deceptively high."),
+    dict(cat="dsa", title="Longest Palindromic Substring",
+         answer="Find the longest palindromic substring. Elegant O(n^2)/O(1) approach: every palindrome has a center, and there are 2n-1 possible centers (each character, and each gap between two characters). Expand outward from each center while both sides match, tracking the longest.",
+         tags=["longest-palindrome","expand-around-center","string","dsa"],
+         code='''# Longest palindromic substring of s.
+def longest_palindrome(s):
+    if not s:
+        return ""
+    start, end = 0, 0                 # best palindrome span so far
+    def expand(l, r):                 # widen while s[l] == s[r]
+        while l >= 0 and r < len(s) and s[l] == s[r]:
+            l -= 1
+            r += 1
+        return l + 1, r - 1           # last valid (inclusive) bounds
+    for i in range(len(s)):
+        l1, r1 = expand(i, i)         # odd-length center (a single char)
+        l2, r2 = expand(i, i + 1)     # even-length center (between chars)
+        if r1 - l1 > end - start:
+            start, end = l1, r1
+        if r2 - l2 > end - start:
+            start, end = l2, r2
+    return s[start:end + 1]''',
+         complexity="Time O(n^2), space O(1).",
+         pitfalls="Only checking odd centers (misses even-length palindromes); off-by-one on the returned bounds.",
+         example="longest_palindrome('babad') -> 'bab' (or 'aba')."),
+    dict(cat="dsa", title="Meeting Rooms II (minimum rooms)",
+         answer="Given meeting intervals, find the minimum number of rooms needed. Sort by start time and keep a MIN-HEAP of end times. For each meeting, if the earliest-ending room is free by its start, reuse it (pop); otherwise open a new room. The heap size is rooms in use; its peak is the answer.",
+         tags=["meeting-rooms","heap","intervals","dsa"],
+         code='''import heapq
+
+# Minimum meeting rooms needed for the given [start, end] intervals.
+def min_meeting_rooms(intervals):
+    if not intervals:
+        return 0
+    intervals.sort(key=lambda x: x[0])   # process meetings by start time
+    heap = []                            # min-heap of end times (rooms in use)
+    for start, end in intervals:
+        if heap and heap[0] <= start:    # earliest room frees before this starts
+            heapq.heapreplace(heap, end) #   reuse it (pop old end, push new)
+        else:
+            heapq.heappush(heap, end)    #   otherwise open a new room
+    return len(heap)                     # peak simultaneous rooms''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="end<=start vs end<start (meetings that just touch can share a room); forgetting to sort by start.",
+         example="min_meeting_rooms([[0,30],[5,10],[15,20]]) -> 2."),
+    dict(cat="dsa", title="Validate Binary Search Tree",
+         answer="Check whether a binary tree is a valid BST (every node greater than all left-subtree nodes and less than all right-subtree nodes). Recurse carrying a valid (low, high) RANGE: each node must fall strictly inside it, and its children inherit tightened ranges. The classic bug is only comparing a node to its immediate children.",
+         tags=["validate-bst","tree","recursion","dsa"],
+         code='''# True if the binary tree is a valid BST.
+def is_valid_bst(root):
+    def valid(node, low, high):
+        if not node:                  # an empty subtree is valid
+            return True
+        if not (low < node.val < high):   # node must fall in the allowed range
+            return False
+        # left subtree must stay < node.val; right subtree must stay > node.val
+        return valid(node.left, low, node.val) and valid(node.right, node.val, high)
+    return valid(root, float('-inf'), float('inf'))''',
+         complexity="Time O(n), space O(height).",
+         pitfalls="Only comparing a node to its direct children (misses distant violations); < vs <= for duplicates.",
+         example="A tree with root 5, right child 4 holding a left child 3 is NOT valid — 3 is in 5's right subtree but 3 < 5."),
+    dict(cat="ml_coding", title="Implement Softmax (from scratch)",
+         answer="Turn a vector of raw scores (logits) into a probability distribution. Subtract the max first for NUMERICAL STABILITY (prevents exp overflow), then exponentiate and divide by the sum. Interviewers love the max-subtraction trick because it shows you understand floating-point overflow.",
+         tags=["softmax","numerical-stability","ml-coding"],
+         code='''import numpy as np
+
+# Convert logits into a probability distribution that sums to 1.
+def softmax(logits):
+    z = logits - np.max(logits)   # subtract the max for numerical stability
+    exp = np.exp(z)               # exponentiate (now safe from overflow)
+    return exp / exp.sum()        # normalize so the outputs sum to 1''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Skipping the max-subtraction -> exp overflow (inf/nan) on large logits.",
+         example="softmax(np.array([2.0, 1.0, 0.1])) -> ~[0.659, 0.242, 0.099] (sums to 1)."),
+    dict(cat="ml_coding", title="Confusion matrix from scratch",
+         answer="Build the four counts (TP, FP, TN, FN) that every classification metric derives from, given true labels and predictions (0/1); precision, recall, and accuracy fall right out. Interviewers use this to check you truly understand the metrics rather than just calling a library.",
+         tags=["confusion-matrix","metrics","ml-coding"],
+         code='''# Build a binary confusion matrix and derive precision/recall.
+def confusion(y_true, y_pred):
+    tp = fp = tn = fn = 0
+    for t, p in zip(y_true, y_pred):
+        if t == 1 and p == 1: tp += 1     # correctly predicted positive
+        elif t == 0 and p == 1: fp += 1   # false alarm
+        elif t == 0 and p == 0: tn += 1   # correctly predicted negative
+        else: fn += 1                     # missed a real positive
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    return {'tp': tp, 'fp': fp, 'tn': tn, 'fn': fn,
+            'precision': precision, 'recall': recall}''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Not checking total gas first; forgetting to reset the tank on restart.",
-         example="can_complete_circuit([1,2,3,4,5], [3,4,5,1,2]) -> 3."),
-    dict(cat="dsa", title="Jump Game",
-         answer="Given an array where each value is the max jump length from that index, can you reach the last index? Greedy: track the FARTHEST index reachable so far; scan left to right, and if you ever stand on an index beyond that reach you are stuck. Otherwise update reach = max(reach, i + nums[i]).",
-         tags=["jump-game","greedy","array","dsa"],
-         code="# Can you reach the last index? nums[i] = max jump length from i.\ndef can_jump(nums):\n    reach = 0                        # farthest index reachable so far\n    for i, jump in enumerate(nums):\n        if i > reach:                # we cannot even stand on i\n            return False\n        reach = max(reach, i + jump) # extend our reach from here\n    return True",
-         complexity="Time O(n), space O(1).",
-         pitfalls="Overcomplicating with DP when greedy is O(n); off-by-one on 'reach'.",
-         example="can_jump([2,3,1,1,4]) -> True; can_jump([3,2,1,0,4]) -> False."),
-    dict(cat="conceptual", title="Why does pretraining + fine-tuning beat training from scratch?",
-         answer="Pretraining on a huge general dataset teaches the model reusable low-level structure — edges and textures for images, grammar and word meaning for text. Your specific task then only has to learn the LAST MILE on top of that, so it works with far less labeled data and compute. Training from scratch would waste your small dataset re-learning the basics everyone else already learned. It is like hiring someone who already speaks English to learn your company's jargon, versus teaching a baby to speak first.",
-         tags=["pretraining","fine-tuning","transfer-learning","why"],
-         example="500 labeled X-rays fine-tuning a pretrained vision model beats 500 X-rays training a fresh network, because the pretrained model already sees shapes and edges."),
+         pitfalls="Dividing by zero when a class is absent; mixing up FP and FN.",
+         example="confusion([1,1,0,0], [1,0,0,1]) -> tp=1, fp=1, tn=1, fn=1, precision=0.5, recall=0.5."),
 ]
 
 
@@ -104,7 +166,6 @@ assert text.count(marker) == 1, "insert marker not found/unique"
 text = text.replace(marker, "),\n" + block + "]\n\n# Fill tags: explicit + category-derived.")
 open(path, "w").write(text)
 
-# Re-import fresh to confirm the module loads and every code block runs.
 b = importlib.import_module("ai_sde_bank")
 importlib.reload(b)
 for e in b.ENTRIES:
