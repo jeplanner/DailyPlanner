@@ -158,6 +158,70 @@ _DETAIL_RL = {
     "wrap_up": "A gateway-level limiter using token bucket (bursty) or sliding-window counter (accurate), with counters in a shared Redis and atomic Lua for cross-node correctness. Key decisions: algorithm choice, central vs local counting, and fail-open vs fail-closed. Returns 429 + Retry-After.",
 }
 
+_DETAIL_FEED = {
+    "scope": "Design a home news feed of ranked posts from followed accounts. Clarify: ranked or chronological? media? scale (DAU)? read/write ratio? Assumptions: ranked feed, 10M DAU, read-heavy, a following graph, text + media.",
+    "functional": "1) Publish a post (fan out to followers). 2) Build a user's feed from accounts they follow. 3) Rank the feed. 4) Paginate / infinite scroll.",
+    "nonfunctional": "Low feed-load latency (<200ms), high availability, scalable to huge follower counts, eventual consistency acceptable (a post can appear slightly late).",
+    "estimation": "10M DAU × ~5 loads/day ≈ 50M reads/day ≈ 600/s (peak higher). ~2M posts/day. Fan-out: a post by someone with F followers writes F feed entries — celebrities blow this up.",
+    "api": "POST /post {content}; GET /feed?cursor= -> ranked posts (paginated). Internals: a fan-out service + a per-user feed store.",
+    "data_model": "posts(post_id Snowflake, user_id, content, created_at). follows(follower_id, followee_id). Per-user feed cache = list of post_ids (Redis). Posts in a KV/wide-column store; media in object storage.",
+    "hld": "Write: user posts -> fan-out service finds followers -> pushes post_id into each follower's feed cache (fan-out-on-write). Read: load feed -> read post_ids from feed cache -> hydrate posts -> rank -> return. Hybrid: high-follower accounts use fan-out-on-read (pull) to avoid write explosions.",
+    "hld_diagram": "Post -> [Fan-out service] -> follower feed caches (Redis lists)\n Load feed -> read feed cache -> hydrate posts -> rank -> page\n celebrity posts -> pulled at read time and merged",
+    "algorithms": "Fan-out-on-write (push): precompute feeds — fast reads, heavy writes for popular users. Fan-out-on-read (pull): assemble at read — cheap writes, slower reads. Hybrid by follower threshold. Ranking: ML model over recency, affinity, and predicted engagement on a candidate set.",
+    "deep_dive": "Celebrity problem: a 100M-follower post = 100M feed writes -> use pull for them and merge at read. Cap each cached feed (e.g., latest 1000 ids); older via pagination from source. Feeds are eventually consistent. Media stored in object storage + CDN; the feed holds references. Deletions/edits handled as tombstones at read. Ranking runs at read over the merged push+pull candidates.",
+    "follow_ups": "Celebrity with 100M followers? (fan-out-on-read + merge). Chronological vs ranked toggle? Real-time updates? (WebSocket/poll). Repost/dedup handling? Brand-new user cold start? (popular/onboarding feed). Avoid showing the same post twice? (cursor + seen-set).",
+    "final_diagram": " Publish -> [Post store] + [Fan-out svc]\n    normal followers -> push post_id -> [Feed cache: Redis per user]\n    high-follower      -> mark for pull\n Load feed -> feed cache (push) + pull celebrity posts -> hydrate -> [Ranker] -> paginate\n media -> [Object storage + CDN]",
+    "wrap_up": "Hybrid fan-out (push for normal users, pull for celebrities) balances write amplification vs read latency; feeds are cached per user as post-id lists, hydrated and ranked at read time. The bottleneck — celebrity fan-out — is solved by the pull path; scale via caching, capped feed size, and a CDN for media.",
+}
+
+_DETAIL_CRAWLER = {
+    "scope": "Design a scalable web crawler to fetch billions of pages for indexing. Clarify: scope (whole web / subset)? freshness? content types? politeness? Assumptions: billions of pages, HTML focus, polite (robots.txt + per-host rate), fresh-ish, distributed.",
+    "functional": "1) Start from seed URLs. 2) Fetch pages. 3) Extract links and enqueue new URLs. 4) Store page content. 5) Avoid re-crawls / loops. 6) Respect robots.txt + politeness.",
+    "nonfunctional": "Scalability (billions of URLs), politeness (don't hammer a host), robustness (traps, bad HTML), freshness, extensibility (new content types), efficiency.",
+    "estimation": "1B pages/month ≈ 400 pages/s. ~500 KB/page -> ~500 TB/month raw -> object storage. A seen-URL set for billions of URLs -> Bloom filter (memory-efficient) + a backing store.",
+    "api": "Internal pipeline (not user-facing). Components: URL Frontier, Fetcher, Parser, Content store, URL dedup, DNS resolver.",
+    "data_model": "URL frontier: prioritized front queues + per-host politeness back queues. Seen-URLs: Bloom filter + store. Pages: object storage keyed by URL hash. Metadata (last-crawled, content checksum) in a DB.",
+    "hld": "Seeds -> URL Frontier (priority + politeness) -> Fetcher (DNS resolve, robots.txt check, per-host rate limit) -> Parser (extract text + links) -> content dedup (checksum/simhash) -> URL extractor -> URL dedup (Bloom filter) -> back into the frontier. Stateless distributed workers; pages in object storage.",
+    "hld_diagram": "Seeds -> [URL Frontier: priority + per-host queues]\n   -> Fetcher(robots, rate-limit, DNS cache) -> Parser\n   -> content dedup(simhash) -> extract URLs -> URL dedup(Bloom) -> Frontier\n   pages -> [Object storage]",
+    "algorithms": "URL frontier: two-level queues — front (priority) + back (per-host politeness). URL dedup: Bloom filter (fast, tiny memory, small false-positive rate). Near-duplicate content: simhash/minhash. BFS traversal by default. DNS caching to avoid a resolver bottleneck. Politeness: per-host delay + robots.txt cache.",
+    "deep_dive": "Politeness vs throughput: per-host back-queues keep one polite connection per host while thousands of hosts crawl in parallel. Traps/infinite spaces: depth limits, URL-pattern filters, content dedup. Freshness: re-crawl priority by estimated change frequency. Scale: shard the frontier by host hash; stateless fetchers. Robustness: timeouts + retry/backoff + tolerant HTML parsing. Storage dedup via content checksum.",
+    "follow_ups": "Keep it polite yet fast? (per-host queues + global parallelism). Detect spider traps? (depth + dedup + pattern rules). Prioritize important pages? (PageRank-ish priority). Distributed frontier consistency? (shard by host). JS-rendered pages? (headless-browser fetchers). Freshness? (adaptive re-crawl).",
+    "final_diagram": " Seeds -> [URL Frontier (sharded by host): front=priority, back=politeness]\n            |\n   {Fetcher workers} -> DNS cache -> robots.txt cache -> download\n            |\n         Parser -> extract links -> [Bloom filter seen-set] -> Frontier\n            |\n     content dedup (simhash) -> [Object storage] + metadata DB",
+    "wrap_up": "A crawler is a smart URL frontier (priority + politeness) feeding stateless fetchers and parsers, with Bloom-filter URL dedup and simhash content dedup, storing pages in object storage. The hard parts — politeness, traps, freshness, dedup at scale — are handled by per-host queues, depth/pattern limits, adaptive re-crawl, and probabilistic dedup structures.",
+}
+
+_DETAIL_MQ = {
+    "scope": "Design a distributed message queue / streaming log (Kafka-like). Clarify: pub-sub or point-to-point? ordering? durability? replay? throughput? Assumptions: high-throughput durable pub-sub log, ordered within a partition, replayable, at-least-once by default.",
+    "functional": "Producers publish to topics; consumers subscribe and read; durable retention; ordering within a partition; consumer groups for parallel consumption; replay from an offset.",
+    "nonfunctional": "High throughput (millions msgs/s), durability (no loss), horizontal scalability, low latency, fault tolerance, per-partition ordering.",
+    "estimation": "1M msgs/s × 1KB = 1 GB/s ingest. 7-day retention -> ~600 TB. Partitions provide parallelism; brokers hold partition replicas; sequential disk writes drive throughput.",
+    "api": "produce(topic, key, value); consume(topic, group) -> messages + offsets; commitOffset(group, partition, offset). Admin: createTopic(name, partitions, replicationFactor).",
+    "data_model": "Topic -> N partitions; each partition = an append-only ordered log segmented into files; each message has an offset. Consumer group tracks a committed offset per partition. Partitions replicated across brokers (1 leader + followers, ISR).",
+    "hld": "Producers append to a partition (chosen by key hash) on its leader broker; the leader replicates to followers; consumers in a group each own a subset of partitions and pull sequentially, tracking offsets. A coordinator (ZooKeeper/KRaft) manages metadata, leader election, and consumer-group rebalancing. Sequential disk I/O + zero-copy = throughput.",
+    "hld_diagram": "Producer -(hash key)-> partition leader broker -> replicate to followers\n Topic: [P0][P1][P2] (append-only logs)\n Consumer group: c1->P0, c2->P1, c3->P2 (own offsets, pull)",
+    "algorithms": "Partition by key hash for ordering + parallelism. Append-only log with sequential writes + segment files. Leader-follower replication with ISR (in-sync replicas) for durability. Consumer-group rebalancing to spread partitions. Offset tracking for at-least-once (exactly-once via idempotent producers + transactions). Zero-copy transfer.",
+    "deep_dive": "Ordering is per-partition only — choose the partition key well. Delivery: at-least-once (commit after processing) by default; exactly-once needs idempotent producers + transactional commits. Durability: replication factor + ISR + acks=all. Rebalancing briefly pauses consumption — sticky assignment reduces churn. Retention: time/size-based; log compaction for keyed latest-value topics. Consumers pull (natural backpressure). Skewed keys create hot partitions.",
+    "follow_ups": "Exactly-once? (idempotent producer + transactions). Global ordering? (single partition — caps throughput). Slow consumer? (pull model + lag monitoring). Broker failure? (leader re-election from ISR). Replay? (reset offset). Scale a topic? (add partitions — but changes key->partition mapping).",
+    "final_diagram": " Producers -> [partitioner by key]\n Brokers: topic partitions (leader + follower replicas, ISR)\n   P0: leader B1 / followers B2,B3    P1: leader B2 ...\n Consumer groups pull; offsets committed; coordinator (KRaft) = metadata + rebalancing\n retention: segmented append-only logs on disk (sequential I/O + zero-copy)",
+    "wrap_up": "A partitioned, replicated, append-only commit log: producers append by key hash, consumers pull and track offsets, leader-follower + ISR gives durability, consumer groups give parallelism, retention enables replay. Throughput comes from sequential disk I/O and zero-copy; the core trade-off is ordering (per-partition) vs parallelism.",
+}
+
+_DETAIL_AUTOCOMPLETE = {
+    "scope": "Design search autocomplete/typeahead returning top suggestions as the user types. Clarify: how many suggestions? personalized? typo tolerance? QPS? latency budget? Assumptions: top 5-10, <100ms, huge volume, based on popular queries.",
+    "functional": "As the user types a prefix, return the top-k most relevant/popular completions; reflect trending queries over time.",
+    "nonfunctional": "Very low latency (<100ms end-to-end), high availability, scalable to high QPS, fresh-ish (trending), relevant ranking.",
+    "estimation": "10M searches/day × ~5 keystrokes fetching suggestions = 50M suggestion requests/day ≈ 600/s (debounced on the client). A Trie of top queries fits in memory; precompute top-k per node.",
+    "api": "GET /suggest?q=prefix -> [suggestions]. Data pipeline: aggregate query logs -> build/refresh the suggestion structure.",
+    "data_model": "A Trie where each node = a prefix and stores/points to its top-k completions (with frequencies). Alternative: an edge-n-gram inverted index. Frequencies come from aggregated query logs.",
+    "hld": "Offline: a pipeline aggregates raw query logs into (query, frequency), builds a Trie annotated with top-k completions per prefix node, and ships it to the serving layer (in-memory/Redis). Online: keystroke -> debounced request -> prefix lookup -> return precomputed top-k. Hot prefixes cached at the edge.",
+    "hld_diagram": "Query logs -> [Aggregator] -> build Trie(top-k per node) -> serving (in-mem/Redis)\n Keystroke -> debounce -> GET /suggest?q=prefix -> top-k lookup -> suggestions",
+    "algorithms": "Trie with precomputed top-k per node -> lookup is O(prefix length), not a scan. Precompute top-k bottom-up. Recency-decayed frequency for trending. Typo tolerance via edit-distance/fuzzy or an n-gram index. Count-Min sketch for approximate frequencies at scale.",
+    "deep_dive": "Latency: precompute top-k so serving is a pointer walk; keep it in memory; debounce keystrokes; cache hot prefixes. Freshness vs cost: rebuild the Trie periodically (e.g., hourly) from logs, plus a streaming layer for trending. Scale: shard the Trie by leading characters; replicate for read QPS. Personalization: blend a global Trie with a small per-user history. Memory: compressed/ternary Trie, top-k only. Filter inappropriate suggestions with a blocklist.",
+    "follow_ups": "Surface trending queries fast? (streaming layer + frequent rebuild). Typo tolerance? (fuzzy/n-gram). Personalized suggestions? (blend user history). Scale the Trie? (shard by prefix, replicate). Reduce memory? (compressed Trie). Filter offensive terms? (blocklist).",
+    "final_diagram": " Query logs -> [Stream + batch aggregation] -> (query, weighted freq)\n            -> build Trie: each node -> precomputed top-k\n            -> ship to [Serving: in-memory Tries, sharded by prefix, replicated] + edge cache\n Client keystroke -> debounce -> /suggest?q=prefix -> O(len) top-k lookup -> render",
+    "wrap_up": "A Trie annotated with precomputed top-k completions makes each suggestion an O(prefix) lookup; frequencies come from aggregated batch + streaming query logs, rebuilt periodically for freshness. Latency is won by precomputation + in-memory serving + client debounce + edge caching; extensions add typo tolerance and personalization.",
+}
+
 
 ENTRIES = [
     # ─────────── Core Building Blocks ───────────
@@ -936,7 +1000,8 @@ ENTRIES = [
       "Seeds -> [URL Frontier (priority+politeness)] -> Fetcher(robots) -> Parser -> dedup(Bloom) -> extract URLs -> Frontier",
       "Traps/infinite spaces; politeness vs speed; freshness vs cost; dynamic/JS pages; scale of dedup.",
       "Bloom filter for seen-URLs; BFS frontier; Nutch/Scrapy; simhash for near-dup content.",
-      ["web-crawler", "url-frontier", "bloom-filter", "robots-txt", "dedup", "simhash"]),
+      ["web-crawler", "url-frontier", "bloom-filter", "robots-txt", "dedup", "simhash"],
+      detail=_DETAIL_CRAWLER),
     E("classic", "Design a News Feed / Timeline",
       "Build and deliver a personalized, ranked feed of posts from followed accounts at social scale.",
       "Two strategies: fan-out-on-write (push) precomputes each user's feed into a cache on post (fast reads, expensive for celebrities); fan-out-on-read (pull) assembles the feed at read time (cheap writes, slow reads). Hybrid: push for normal users, pull for high-follower accounts. Rank by an ML model; cache aggressively.",
@@ -945,7 +1010,8 @@ ENTRIES = [
       "Post -> fan-out-on-write -> follower feed caches ; celebrity -> fan-out-on-read merge ; rank -> serve",
       "Celebrity fan-out explosion; feed staleness vs cost; ranking complexity; storage for precomputed feeds.",
       "Push vs pull vs hybrid; Redis feed cache; ranking model; vs chronological.",
-      ["news-feed", "timeline", "fan-out", "social", "ranking", "cache"]),
+      ["news-feed", "timeline", "fan-out", "social", "ranking", "cache"],
+      detail=_DETAIL_FEED),
     E("classic", "Design a Chat System (WhatsApp/Messenger)",
       "Deliver 1:1 and group messages in real time with presence, ordering, and offline delivery at billions-of-messages scale.",
       "Clients hold a persistent connection (WebSocket) to chat servers via a load balancer; a service discovery/session store maps user->server. Messages route through the server, persist to a message store (sharded by user/chat), and push to online recipients; offline users get a push notification and sync on reconnect. Presence via heartbeats.",
@@ -964,7 +1030,8 @@ ENTRIES = [
       "Query logs -> aggregate -> [Trie with top-k per prefix] (in memory/Redis) ; keystroke -> prefix -> top-k",
       "Trie memory at scale; freshness (trending) vs precompute; personalization; typo tolerance.",
       "Trie + top-k cache; Elasticsearch completion suggester; vs full search; edge n-grams.",
-      ["autocomplete", "typeahead", "trie", "top-k", "search", "prefix"]),
+      ["autocomplete", "typeahead", "trie", "top-k", "search", "prefix"],
+      detail=_DETAIL_AUTOCOMPLETE),
     E("classic", "Design Video Streaming (YouTube/Netflix)",
       "Ingest, store, transcode, and stream video to billions with low buffering worldwide.",
       "Upload -> object storage -> transcoding pipeline produces multiple resolutions/bitrates + chunks (HLS/DASH). Metadata in a DB; video chunks + thumbnails served from a CDN close to users. Client uses adaptive bitrate streaming (switches quality by bandwidth). Recommendations + view counts via separate pipelines.",
@@ -991,7 +1058,8 @@ ENTRIES = [
       "Producers -> [Topic: partitions (replicated log)] -> consumer groups (own offsets, pull)",
       "Ordering only within a partition; rebalancing pauses; exactly-once is hard; ops (ZK/KRaft); hot partitions.",
       "Kafka, Pulsar, Kinesis, RabbitMQ (broker model), Redis Streams; log vs queue semantics.",
-      ["message-queue", "kafka", "commit-log", "partition", "offset", "streaming", "pub-sub"]),
+      ["message-queue", "kafka", "commit-log", "partition", "offset", "streaming", "pub-sub"],
+      detail=_DETAIL_MQ),
     E("classic", "Design Metrics Monitoring & Alerting",
       "Collect, store, and query billions of time-series metrics and alert on them in near-real-time.",
       "Agents/exporters emit metrics -> ingestion -> a time-series DB (columnar, downsampled, retention tiers) -> query/dashboards + an alerting engine evaluating rules against thresholds/anomalies -> notification channels. Use pull (Prometheus scrape) or push; aggregate at write for cardinality control.",
