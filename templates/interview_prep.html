@@ -138,6 +138,10 @@
   .sd-field.disadv .lbl { color: #b91c1c; } .sd-field.compete .lbl { color: #047857; }
   .sd-arch { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 9px 11px; margin: 7px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-x: auto; }
   .q-edit textarea.arch { font-family: ui-monospace, monospace; font-size: 12px; }
+  .sd-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
+  .sd-tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+  .sd-tag:hover { background: #e0e7ff; }
+  html.dark .sd-tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
 
   .sess { display: flex; align-items: center; gap: 10px; font-size: 13.5px; padding: 8px 11px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; margin-bottom: 6px; }
   .sess .m { font-weight: 800; color: #047857; white-space: nowrap; }
@@ -624,7 +628,8 @@
       (!cat || e.cat===cat) &&
       (!onlyUn || !sdPracticed.has(e.id)) &&
       (!term || e.title.toLowerCase().includes(term) || (e.answer||"").toLowerCase().includes(term)
-        || (e.competing||"").toLowerCase().includes(term) || (sdCatLabel[e.cat]||"").toLowerCase().includes(term))
+        || (e.competing||"").toLowerCase().includes(term) || (sdCatLabel[e.cat]||"").toLowerCase().includes(term)
+        || (e.tags||[]).some(t => t.includes(term)))
     );
     sdProg();
     const fields = ["problem","answer","example","use_cases","arch","disadvantages","competing"];
@@ -636,7 +641,8 @@
         if (!e[f]) return "";
         if (f === "arch") return `<div class="sd-field"><span class="lbl">Architecture</span></div><div class="sd-arch">${esc(e.arch)}</div>`;
         return `<div class="sd-field ${clsFor[f]||''}"><span class="lbl">${SD_LABELS[f]}</span>${esc(e[f])}</div>`;
-      }).join("");
+      }).join("") + (e.tags && e.tags.length
+        ? `<div class="sd-tags">${e.tags.map(t=>`<button class="sd-tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : "");
       const body = isEd ? `
         <div class="q-edit">
           <label>Title<textarea class="q" data-e="title">${esc(e.title)}</textarea></label>
@@ -693,6 +699,14 @@
     if (e.target.classList.contains("q-prac")) {
       if (e.target.checked) sdPracticed.add(id); else sdPracticed.delete(id);
       saveSdPrac(); card.classList.toggle("done", e.target.checked); sdProg();
+      return;
+    }
+    const tagBtn = e.target.closest("[data-tag]");
+    if (tagBtn) {
+      $("sdbank-search").value = tagBtn.dataset.tag;
+      $("sdbank-cat").value = "";              // clear category so the tag search spans all
+      renderSDBank();
+      document.getElementById("sdbank-search").scrollIntoView({behavior:"smooth", block:"center"});
       return;
     }
     if (e.target.closest("[data-editsd]")) { editingSD = id; renderSDBank(); return; }

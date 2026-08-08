@@ -591,3 +591,93 @@ To grow this bank toward broad coverage, each of these becomes a full entry (sam
 - **3NF (Inmon)** vs **star (Kimball)** vs **One Big Table** — pick per query patterns and governance needs.
 
 > *"Data is a precious thing and will last longer than the systems themselves."* — Tim Berners-Lee. Model it well and everything downstream gets easier.
+
+---
+
+# PART F — AI Solutions & Information Security
+
+> The full, **tagged, searchable, editable** versions of everything below live in the in-app **System design bank** (categories *AI Solutions* and *Information Security*). Search by tag (e.g. `rag`, `zero-trust`, `mlops`, `prompt-injection`). This section is the elaborate written companion for the two charters.
+
+## F1 · AI Solutions
+
+**ML System Design (framework).** Clarify objective & business metric → frame as ML → data/features (leakage checks) → baseline then advanced model → serving (batch vs real-time; retrieve→rank funnel) → evaluation (offline + online A/B) → monitoring & retraining. *Tags: ml-system-design, ranking, recommendation.*
+
+**MLOps & lifecycle.** Version data+code+models, reproducible pipelines, CI/CD for models (test/validate/canary), model registry, automated deploy, monitoring→retrain. Tools: MLflow, Kubeflow, SageMaker/Vertex, DVC, W&B. *Tags: mlops, ci-cd, model-registry.*
+
+**Model serving & inference at scale.** Batch vs real-time; model server + autoscaling + request batching + GPU scheduling + caching; optimize with quantization/distillation/ONNX/TensorRT; canary/shadow. Tools: Triton, KServe, Ray Serve, vLLM. *Tags: inference, serving, gpu, latency.*
+
+**RAG (Retrieval-Augmented Generation).** Chunk & embed docs → vector DB; query → embed → retrieve top-k (hybrid + re-rank) → stuff into prompt → LLM answers with citations. Grounds LLMs in private/fresh data with no retraining. Watch: retrieval quality caps answer quality; chunking; context limits. *Tags: rag, llm, vector-db, embeddings, hallucination.*
+```
+Docs -> chunk -> embed -> [Vector DB]
+Query -> embed -> retrieve top-k -> rerank -> LLM(context) -> grounded answer + sources
+```
+
+**Vector database & ANN search.** Store embeddings; query nearest-neighbor with ANN indexes (HNSW/IVF/PQ) trading a little recall for big speed; metadata + hybrid search. Tools: Pinecone, Weaviate, Milvus, Qdrant, pgvector, FAISS. *Tags: vector-db, ann, semantic-search, hnsw.*
+
+**Prompting vs fine-tuning vs RAG.** Ladder: prompt/few-shot (cheapest) → RAG (needs your data) → fine-tune/LoRA (needs specific behavior/latency). Often combine RAG + light fine-tune. *Tags: llm, fine-tuning, rag, prompt-engineering, lora.*
+
+**LLMOps, prompt management & guardrails.** Versioned prompts + A/B; input/output guardrails (PII redaction, toxicity, **prompt-injection/jailbreak** defense, schema validation); eval (LLM-as-judge + human + regression); observe cost/latency/tokens; cache + route. Tools: LangSmith, Langfuse, Guardrails AI, Ragas. *Tags: llmops, guardrails, eval, prompt-injection.*
+
+**Agentic AI / tool use.** LLM loop: reason → pick tool (function calling) → execute → observe → iterate; add planning, memory (vector store), multi-agent, strict tool permissions + human-in-the-loop. Tools: LangGraph, CrewAI, Temporal. *Tags: agents, tool-use, orchestration.*
+
+**Model monitoring & drift.** Track input/prediction distributions (data/concept drift via PSI/KS) and live accuracy when labels arrive → alert → retrain. Tools: Evidently, Arize, WhyLabs, Fiddler. *Tags: monitoring, drift, retraining.*
+
+**Distributed training (GPUs).** Data parallelism (replicate + all-reduce), tensor/model parallelism (split model), pipeline parallelism (split layers); mixed precision, checkpointing, NVLink/InfiniBand. Tools: PyTorch FSDP/DDP, DeepSpeed, Megatron. *Tags: training, distributed, gpu, deepspeed.*
+
+**Responsible AI.** Bias/fairness testing per group, explainability (SHAP/LIME, model cards), human oversight for high-stakes, privacy (DP), governance/audit. Tools: SHAP, Fairlearn, AIF360. *Tags: responsible-ai, fairness, explainability, governance.*
+
+**LLM cost & latency optimization.** Prompt + semantic response caching; model routing (small vs large); distillation/quantization; batching; streaming; context trimming; budget controls. *Tags: llm, cost, latency, caching, routing.*
+
+**Data labeling & annotation.** Guidelines + tool/workforce + QC (consensus, gold tasks, IAA) + active learning + weak/auto-labeling. Tools: Label Studio, Scale AI, Snorkel. *Tags: data-labeling, active-learning, rlhf.*
+
+## F2 · Information Security
+
+**Threat modeling (STRIDE).** DFD + trust boundaries → enumerate Spoofing/Tampering/Repudiation/Info-disclosure/DoS/Elevation → mitigate/accept/transfer → track. Also PASTA, LINDDUN (privacy). *Tags: threat-modeling, stride, secure-sdlc.*
+
+**Zero Trust.** "Never trust, always verify" — authenticate+authorize every request on identity + device posture + context regardless of network; least privilege, micro-segmentation, continuous verification. BeyondCorp, Zscaler, Cloudflare Access. *Tags: zero-trust, least-privilege, identity.*
+```
+User/device -> identity-aware proxy (verify identity + posture + context) -> per-resource least-privilege
+```
+
+**IAM.** AuthN (who) vs AuthZ (what); RBAC/ABAC least privilege; MFA; joiner/mover/leaver lifecycle; SSO; access reviews. Okta, Entra, AWS IAM, Keycloak. *Tags: iam, rbac, abac, mfa, sso.*
+
+**OAuth2 / OIDC / SSO.** OAuth2 delegates authorization via scoped access tokens (no password sharing); OIDC adds authentication (ID token/JWT); SSO = one login → many apps; use auth-code + PKCE. *Tags: oauth, oidc, sso, jwt.*
+
+**Encryption (rest/transit/KMS).** TLS/mTLS in transit; disk/DB/field encryption at rest; KMS + envelope encryption (data key encrypts data, master key encrypts data key) with rotation + audit; tokenization for sensitive fields. AWS KMS, Vault, AES-256. *Tags: encryption, tls, mtls, kms, key-management.*
+
+**Secrets management.** Vault secrets with access control, dynamic short-lived creds, rotation, audit; fetch at runtime, never commit; scan repos. HashiCorp Vault, AWS Secrets Manager. *Tags: secrets, vault, rotation.*
+
+**Network security.** Segmentation (VPC/subnets/SGs) to limit blast radius; firewalls; WAF (SQLi/XSS); DDoS protection; private endpoints/bastion. Cloudflare, AWS Shield/WAF, Palo Alto. *Tags: network-security, waf, ddos, segmentation.*
+
+**AppSec / OWASP Top 10.** Input validation + parameterized queries (injection), strong auth/session, access-control checks (IDOR), output encoding (XSS), dependency management, logging; secure SDLC. *Tags: appsec, owasp, sqli, xss, secure-coding.*
+
+**API security.** AuthN every call; per-object authorization (stop BOLA/IDOR); validate + rate-limit; avoid excessive data exposure; TLS; API gateway. OWASP API Top 10. *Tags: api-security, bola, idor, gateway.*
+
+**PKI / certificates / mTLS.** CA issues certs binding identity↔public key; TLS/mTLS for auth+encryption; lifecycle: issue/rotate/revoke (OCSP/CRL); automate to avoid expiry outages. Let's Encrypt/ACME, Vault PKI, service mesh. *Tags: pki, certificates, mtls, ca.*
+
+**SIEM / SOC / detection & response.** Centralize logs → correlate into alerts (rules + anomaly/ML) → SOC + SOAR; map to MITRE ATT&CK; measure MTTD/MTTR; EDR/XDR telemetry. Splunk, Sentinel, Elastic, Chronicle. *Tags: siem, soc, detection, mitre-attack, soar.*
+
+**DevSecOps.** Automate SAST + SCA + secret scanning + DAST + IaC + image scanning in CI/CD (fail on critical); sign artifacts; SBOM/supply-chain. Snyk, Semgrep, Trivy, ZAP, Sigstore. *Tags: devsecops, sast, dast, sca, supply-chain.*
+
+**Cloud security.** Shared-responsibility model; least-priv IAM; encryption; network/storage lockdown; CSPM for misconfig/drift; central logging + guardrails (SCPs). AWS Security Hub/GuardDuty, Wiz, Prisma. *Tags: cloud-security, cspm, misconfiguration, guardrails.*
+
+**Container & Kubernetes security.** Scan+sign images, minimal/distroless base, drop root/caps, pod security standards + network policies, lock down K8s API/RBAC, runtime detection. Trivy, Falco, OPA/Gatekeeper, Kyverno. *Tags: container-security, kubernetes, image-scanning, runtime-security.*
+
+**Data security / DLP.** Classify by sensitivity; discover across stores; controls (encrypt/mask/tokenize/access); DLP to detect/block exfiltration; retention/deletion. Microsoft Purview. *Tags: data-security, dlp, classification, pii, masking.*
+
+**Privileged Access Management (PAM).** Vault + rotate privileged creds; just-in-time / just-enough access (no standing admin); approval + MFA; session brokering + recording; kill shared admin. CyberArk, BeyondTrust, Teleport. *Tags: pam, jit, privileged-access, audit.*
+
+**Incident response & forensics.** NIST cycle: Prepare → Detect/Analyze → Contain → Eradicate → Recover → Post-incident. Roles, runbooks, evidence/chain-of-custody, blameless retro, tabletop drills. *Tags: incident-response, forensics, ransomware, nist.*
+
+**Compliance & frameworks.** Map controls to SOC 2, ISO 27001, PCI-DSS, GDPR/DPDP, HIPAA, NIST CSF; risk assessment → controls → continuous evidence → audit. Compliance is a byproduct of real security. Vanta/Drata. *Tags: compliance, soc2, iso27001, pci-dss, gdpr, nist.*
+
+**Vulnerability management.** Continuous discovery → prioritize (CVSS + exploitability + asset value) → patch/remediate → verify; SLAs by severity. *Tags: vulnerability, patching, cvss.*
+
+**Security for AI/ML (bridges both charters).** Defend the ML lifecycle: data-poisoning provenance, adversarial/evasion robustness, model-theft protection, privacy (membership-inference/DP); for LLMs: **prompt-injection & jailbreak defenses**, output filtering, tool-permission scoping, RAG data-leak guards. Map to **OWASP LLM Top 10 / MITRE ATLAS**. *Tags: ai-security, adversarial, prompt-injection, model-theft, owasp-llm, mitre-atlas.*
+```
+Data (provenance) -> robust training -> access-controlled model -> input/output guardrails -> monitor
+```
+
+**Backup / ransomware resilience / DR.** 3-2-1 backups with immutable/air-gapped copies; tested restores; RPO/RTO; DR failover + drills; segment backups from prod creds. S3 Object Lock, Veeam. *Tags: backup, ransomware, disaster-recovery, rpo-rto.*
+
+> *"Security is a process, not a product."* — Bruce Schneier. And in AI: *"With great capability comes great attack surface."* Design both in from day one.
