@@ -73,19 +73,155 @@ def E(cat, title, problem, answer, example, use_cases, arch, disadv, competing, 
 # ─────────── Full framework walkthroughs (worked examples) ───────────
 
 _DETAIL_URL = {
-    "scope": "Shorten long URLs to short aliases and redirect back. Clarifying questions: traffic volume? alias length? custom aliases? link expiry? click analytics? read/write ratio? Assumptions: 100M new URLs/day, 100:1 read:write, 7-char alias, links live ~10 years, analytics optional.",
-    "functional": "1) Given a long URL, return a shorter unique URL. 2) Given the short URL, redirect (HTTP 3xx) to the original. 3) Optional: custom alias, expiry date, click analytics.",
-    "nonfunctional": "High availability (a broken redirect breaks every link ever shared). Low-latency redirects (<100 ms). Horizontally scalable to billions of URLs. Short keys should not be easily guessable/enumerable. Durable — no lost mappings.",
-    "estimation": "Writes: 100M/day ÷ 86,400 ≈ 1,160 writes/s. Reads (100:1) ≈ 116,000 reads/s. Storage: 100M/day × 365 × 10y ≈ 365B records; ~500 B each ≈ ~180 TB. Key space: 62^7 ≈ 3.5 trillion — enough for 7 chars. Cache the hot 20% of links to absorb the read QPS.",
-    "api": "POST /api/v1/data/shorten  body {longUrl}  ->  {shortUrl}.  GET /{shortKey}  ->  301/302 redirect to the long URL.  Optional body fields: customAlias, expireAt.",
-    "data_model": "urls(short_key PK, long_url, user_id, created_at, expire_at). Access is a pure key lookup by short_key -> use a KV store (DynamoDB/Cassandra) or sharded SQL. Click events go to a separate analytics store (append-only), never the hot path.",
-    "hld": "Write: client -> API -> unique-ID/key generator -> persist (short_key -> long_url) -> return short URL. Read: client -> API -> cache lookup -> DB on miss -> HTTP redirect. A CDN/edge can cache redirects for very hot links.",
-    "hld_diagram": "Write:  Client -> API -> [ID gen -> base62] -> KV store\nRead:   Client -> API -> [Cache] --miss--> KV store -> 301 redirect",
-    "algorithms": "Key generation: (A) Base62-encode a globally-unique ID (DB ticket-server ranges or Snowflake) — collision-free and short; add per-value salt/scramble so keys aren't sequentially guessable. (B) Hash the URL (MD5/SHA) and take the first 7 base62 chars — simple but needs collision handling (rehash/append). Prefer (A): no collisions, scales without coordination on the hot path.",
-    "deep_dive": "Unique IDs at scale: a single auto-increment DB is a bottleneck — use a distributed ticket server (Zookeeper-assigned ranges) or Snowflake so each node mints IDs locally. 301 (permanent) is cached by browsers → fewer origin hits but no per-click analytics; 302 (temporary) hits the origin every time → enables analytics at higher load. Read path is cache-first (LRU) + CDN; shard the KV store by hash(short_key). Rate-limit creation to prevent abuse; scan new URLs against a safe-browsing list. Expiry via TTL + a lazy/batch cleanup job. Custom alias = conditional insert (unique constraint) to avoid races.",
-    "follow_ups": "How do you add click analytics without slowing redirects? (emit an async event -> Kafka -> aggregation). How to block malicious URLs? (rate limit + URL reputation check). A single link goes viral — how to serve it? (CDN/edge cache + request coalescing). Support link deletion/expiry? (TTL). Custom domains and multi-region? (geo-DNS + regional replicas).",
-    "final_diagram": "                         +-----------+\n Client --> API GW --> LB --> App nodes --> ID/key gen (Snowflake)\n                                  |             \n                    read: [Redis cache] --miss--> [KV store (sharded)]\n                                  |                       ^\n                          301/302 redirect               | write\n   click events -> [Kafka] -> [Aggregator] -> [Analytics store]",
-    "wrap_up": "Core: base62 of a distributed unique ID for collision-free short keys; a sharded KV store as the system of record; a read-dominant path served by cache + CDN; the 301-vs-302 analytics trade-off; async click analytics off the hot path. Main bottlenecks — ID generation and read hotspots — are solved by a distributed ID scheme and aggressive caching.",
+    "scope": (
+        "Start by agreeing with the interviewer on WHAT you're building and HOW big it is. Jumping straight to a solution "
+        "is the most common mistake — a minute of scoping earns you the rest of the interview.\n\n"
+        "The core idea: given a long URL, produce a short alias; given that short alias, send the user to the original URL.\n\n"
+        "Ask clarifying questions (and say why each matters):\n"
+        "- How much traffic? -> drives every capacity and infrastructure decision.\n"
+        "- How long should the short link be? -> 7 characters is the usual answer.\n"
+        "- Do we need custom aliases (vanity links)?\n"
+        "- Should links expire?\n"
+        "- Do we need click analytics?\n"
+        "- What is the read-to-write ratio? -> redirects vastly outnumber creations, which shapes the whole design.\n\n"
+        "State assumptions out loud so you can move on: ~100 million new URLs/day; a 100:1 read:write ratio; a 7-character "
+        "alias; links live ~10 years; analytics is a nice-to-have, not core."
+    ),
+    "functional": (
+        "The concrete things the system must DO:\n\n"
+        "1. Shorten - accept a long URL and return a unique short URL.\n"
+        "2. Redirect - when someone visits the short URL, respond with an HTTP redirect (301/302) to the original long URL.\n"
+        "3. (Optional) Custom alias - let a user choose their own short key.\n"
+        "4. (Optional) Expiration - a link can have a time-to-live, after which it stops working.\n"
+        "5. (Optional) Analytics - count clicks per link.\n\n"
+        "Keep the optional items explicitly optional so you nail the core first and add extras if time allows."
+    ),
+    "nonfunctional": (
+        "The QUALITIES the system must have. For a URL shortener these matter even more than the features, because they "
+        "decide the architecture:\n\n"
+        "- High availability - if the redirect service is down, every short link anyone ever shared breaks. This must be "
+        "extremely reliable; availability beats consistency here (a slightly stale mapping is fine, an unavailable one is not).\n"
+        "- Low latency - a redirect sits between a user's click and the page they want, so it must feel instant (well under 100 ms).\n"
+        "- Scalability - store billions of mappings and serve ~100,000 redirects per second.\n"
+        "- Unpredictability - short keys shouldn't be guessable in sequence, or someone could scrape every link.\n"
+        "- Durability - once a mapping is created it must never be lost."
+    ),
+    "estimation": (
+        "Do the math out loud so every later decision is grounded in numbers.\n\n"
+        "WRITES (new URLs):\n"
+        "100,000,000 per day / 86,400 seconds per day ~= 1,160 writes per second.\n\n"
+        "READS (redirects), at a 100:1 ratio:\n"
+        "1,160 x 100 ~= 116,000 reads per second. This is a heavily READ-dominant system.\n\n"
+        "STORAGE over 10 years:\n"
+        "100M/day x 365 days x 10 years ~= 365 billion URLs.\n"
+        "At ~500 bytes/record (short key + long URL + metadata): 365 billion x 500 B ~= ~182 TB.\n\n"
+        "KEY SPACE (is 7 characters enough?):\n"
+        "base62 (a-z, A-Z, 0-9) gives 62^7 ~= 3.5 trillion combinations - far more than the ~365 billion we need, so 7 chars is plenty.\n\n"
+        "What the numbers force on us: read-heavy and storage-heavy, so (a) put a cache/CDN in front of the read path, and "
+        "(b) use a horizontally-scalable key-value store, not a single relational database."
+    ),
+    "api": (
+        "Two endpoints cover the core:\n\n"
+        "1) Create a short URL\n"
+        "   POST /api/v1/shorten\n"
+        "   body: { longUrl, customAlias (optional), expireAt (optional) }\n"
+        "   response: { shortUrl }\n\n"
+        "2) Redirect\n"
+        "   GET /{shortKey}\n"
+        "   response: HTTP 301 (or 302) with a Location header pointing at the original long URL.\n\n"
+        "The redirect is a plain GET so browsers and CDNs handle it natively."
+    ),
+    "data_model": (
+        "The access pattern is dead simple: look up the long URL by its short key. That's a pure key-value lookup, which tells "
+        "us to prefer a KV store over a relational DB with joins.\n\n"
+        "Table `urls`:\n"
+        "  short_key   (primary key)   e.g. 'aB3xK9z'\n"
+        "  long_url    text\n"
+        "  user_id     who created it\n"
+        "  created_at  timestamp\n"
+        "  expire_at   timestamp (nullable)\n\n"
+        "Store it in a horizontally-scalable KV store (DynamoDB / Cassandra) or a sharded SQL table, partitioned by short_key. "
+        "Click-analytics events go to a SEPARATE append-only store, never into this hot read path."
+    ),
+    "hld": (
+        "Two flows: creating a link (write) and using a link (read).\n\n"
+        "WRITE PATH:\n"
+        "Client -> API server -> a unique-key generator produces a new short key -> store the (short_key -> long_url) mapping -> "
+        "return the short URL. The key generator is the interesting part (see Algorithms).\n\n"
+        "READ PATH (the hot one, ~116k/s):\n"
+        "Client requests the short URL -> API checks the CACHE first -> on a hit, immediately return a redirect; on a miss, read "
+        "from the KV store, populate the cache, then redirect. Very hot links can be cached at the CDN/edge so the request never "
+        "reaches our servers.\n\n"
+        "The point of this shape: reads (which dominate) are served from memory, not disk."
+    ),
+    "hld_diagram": (
+        "WRITE:  Client -> [API] -> [Key generator -> base62] -> [KV store]\n"
+        "READ:   Client -> [API] -> [Cache] --hit--> 301 redirect\n"
+        "                             |--miss--> [KV store] -> populate cache -> 301 redirect\n"
+        "        (very hot links also cached at the CDN edge)"
+    ),
+    "algorithms": (
+        "How do we generate the short key? This is the crux. Two main approaches:\n\n"
+        "APPROACH A - base62 of a unique number (recommended):\n"
+        "Generate a globally-unique 64-bit number (from a distributed ID generator like Snowflake, or a ticket server that hands "
+        "out number ranges), then convert it to base62. base62 uses 62 characters, so a big number becomes a short string. "
+        "Because every number is unique, keys never COLLIDE. Downside: consecutive numbers give guessable keys, so "
+        "scramble/permute the number first if unpredictability matters.\n\n"
+        "APPROACH B - hash the URL:\n"
+        "Run the long URL through a hash (MD5/SHA), take the first 7 base62 chars. Simple, but two URLs can hash to the same "
+        "7 chars (a COLLISION), so you must detect it and re-hash or append characters - extra complexity.\n\n"
+        "Pick A: collision-free by construction, and each server can generate keys locally without coordinating - which is what "
+        "lets the write path scale."
+    ),
+    "deep_dive": (
+        "This is where you show depth. Pick the 2-3 hardest parts and go deep:\n\n"
+        "1) Generating unique IDs at scale.\n"
+        "A single auto-increment column in one DB is a bottleneck and a single point of failure. Use a DISTRIBUTED scheme: "
+        "Snowflake (each server builds a unique 64-bit ID locally from timestamp + machine id + a counter, no network call), or a "
+        "ticket server that pre-hands each server a RANGE of numbers. Either way, no coordination on the hot path.\n\n"
+        "2) 301 vs 302 redirect - a real trade-off.\n"
+        "301 (permanent) is CACHED by the browser, so after the first click it goes straight to the destination - great for load "
+        "but you can't count those clicks. 302 (temporary) is NOT cached, so every click returns to us - worse for load but it "
+        "enables per-click analytics. Choose based on whether analytics matters.\n\n"
+        "3) Serving 116k reads/second.\n"
+        "Cache aggressively (Redis, LRU) - a small fraction of links get most traffic. Put a CDN in front for the hottest links. "
+        "Shard the KV store by hash(short_key) so load spreads evenly.\n\n"
+        "4) Safety and housekeeping.\n"
+        "Rate-limit link creation to stop abuse; check new URLs against a safe-browsing/reputation list. Handle expiry with a TTL "
+        "plus lazy cleanup (delete on access if expired) or a batch job. A custom alias is a conditional insert against a unique "
+        "constraint so two people can't grab the same alias at once."
+    ),
+    "follow_ups": (
+        "Common follow-ups and crisp answers:\n\n"
+        "- 'Add click analytics without slowing redirects?' -> Don't write to the DB on the hot path; emit an async event to a "
+        "stream (Kafka) and aggregate offline.\n"
+        "- 'Block malicious URLs?' -> Rate-limit creation + check against a URL-reputation / safe-browsing service.\n"
+        "- 'A link goes viral - how do you serve it?' -> It's a hot key: CDN/edge caching plus request coalescing so one cache "
+        "miss doesn't stampede the DB.\n"
+        "- 'Support deletion/expiry?' -> TTL on the record + lazy or batch cleanup.\n"
+        "- 'Custom domains / multi-region?' -> Geo-DNS routes users to the nearest region; each region has replicas so redirects "
+        "stay fast worldwide."
+    ),
+    "final_diagram": (
+        " Client --> [CDN edge] --> [API / Load Balancer] --> [App servers] --> [Key generator (Snowflake)]\n"
+        "                |                                          |\n"
+        "          (hot links)                    READ: [Redis cache] --miss--> [KV store (sharded by short_key)]\n"
+        "                                                  |                              ^\n"
+        "                                          301/302 redirect                       | WRITE (store mapping)\n"
+        "\n"
+        "   click events --> [Kafka] --> [Aggregator] --> [Analytics store]   (off the hot path)"
+    ),
+    "wrap_up": (
+        "Recap of the design and the reasoning behind it:\n\n"
+        "- Short keys = base62 of a distributed unique ID, so they're short and never collide.\n"
+        "- A sharded key-value store is the source of truth (simple key lookup, billions of rows, ~182 TB).\n"
+        "- The system is read-dominant (~100:1), so the redirect path is served from cache + CDN, keeping latency under 100 ms.\n"
+        "- 301 vs 302 is a conscious trade-off between load and analytics.\n"
+        "- Analytics runs asynchronously so it never slows a redirect.\n\n"
+        "The two real bottlenecks - generating unique IDs and serving read hotspots - are solved by a distributed ID generator "
+        "and aggressive caching. If you covered scope, estimation, the key-generation choice, and read-path caching, that's a "
+        "strong answer."
+    ),
 }
 
 _DETAIL_CHAT = {
