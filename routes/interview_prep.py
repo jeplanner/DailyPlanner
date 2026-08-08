@@ -467,16 +467,10 @@ def _valid_sid(eid):
         return False
 
 
-@interview_prep_bp.route("/api/interview-prep/system-design", methods=["GET"])
-@login_required
-def system_design_bank():
-    """The system-design knowledge bank: building blocks, data stores,
-    data platforms, analytics, data modeling and e-commerce scenarios —
-    each with problem/answer/example/use-cases/architecture/disadvantages/
-    competing tech. User edits (system_design_overrides) merged in."""
-    user_id = session["user_id"]
+def _sd_merged_items(user_id):
+    """The full system-design bank with the user's edits merged over the
+    static originals. Shared by the JSON API and the printable view."""
     items = [{"id": f"sd{i}", **e, "edited": False} for i, e in enumerate(SD_ENTRIES)]
-
     try:
         overrides = get("system_design_overrides", {
             "user_id": f"eq.{user_id}", "deleted_at": "is.null",
@@ -486,7 +480,6 @@ def system_design_bank():
     except Exception:
         overrides = []
     ovmap = {o.get("entry_id"): o for o in overrides}
-
     for it in items:
         o = ovmap.get(it["id"])
         if not o:
@@ -499,12 +492,76 @@ def system_design_bank():
             if o.get(f) is not None:
                 it[f] = o[f]
         it["edited"] = True
+    return items
 
+
+@interview_prep_bp.route("/api/interview-prep/system-design", methods=["GET"])
+@login_required
+def system_design_bank():
+    """The system-design knowledge bank: building blocks, data stores,
+    data platforms, analytics, data modeling, classic (Alex Xu) designs,
+    AI solutions, information security and e-commerce scenarios — each
+    with problem/answer/example/architecture/disadvantages/competing tech
+    and tags. User edits (system_design_overrides) merged in."""
+    user_id = session["user_id"]
     return jsonify({
         "categories": [{"key": k, "label": v} for k, v in SD_CATEGORIES.items()],
-        "entries": items,
-        "total": len(items),
+        "entries": _sd_merged_items(user_id),
+        "total": len(SD_ENTRIES),
     })
+
+
+@interview_prep_bp.route("/interview-prep/system-design/print", methods=["GET"])
+@login_required
+def system_design_print():
+    """A clean, print-optimised page for the bank — one entry per section
+    with every field. The browser's 'Save as PDF' turns it into a PDF
+    (no server-side PDF library, no blobs in the DB). Filters:
+    ?cat=<key>  ?tag=<tag>  ?q=<text>  ?id=sdN  (any combination)."""
+    user_id = session["user_id"]
+    items = _sd_merged_items(user_id)
+
+    cat = (request.args.get("cat") or "").strip()
+    tag = (request.args.get("tag") or "").strip().lower()
+    q = (request.args.get("q") or "").strip().lower()
+    one = (request.args.get("id") or "").strip()
+
+    def _match(it):
+        if one:
+            return it["id"] == one
+        if cat and it.get("cat") != cat:
+            return False
+        if tag and tag not in [t.lower() for t in (it.get("tags") or [])]:
+            return False
+        if q:
+            hay = " ".join(str(it.get(f) or "") for f in
+                           ("title", "answer", "problem", "competing")).lower()
+            hay += " " + " ".join(it.get("tags") or [])
+            if q not in hay:
+                return False
+        return True
+
+    selected = [it for it in items if _match(it)]
+
+    # Human title for the header / filename hint.
+    label = "System Design Bank"
+    if one and selected:
+        label = selected[0]["title"]
+    elif cat:
+        label = SD_CATEGORIES.get(cat, cat)
+    elif tag:
+        label = f"Tag: #{tag}"
+    elif q:
+        label = f"Search: {q}"
+
+    return render_template(
+        "system_design_print.html",
+        entries=selected,
+        category_labels=SD_CATEGORIES,
+        heading=label,
+        count=len(selected),
+        today=_today().isoformat(),
+    )
 
 
 @interview_prep_bp.route("/api/interview-prep/system-design/<eid>", methods=["POST"])

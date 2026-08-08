@@ -257,8 +257,9 @@
   <div class="card" style="margin-bottom:10px;">
     <div class="qbank-controls">
       <select id="sdbank-cat"><option value="">All categories</option></select>
-      <input type="text" class="search" id="sdbank-search" placeholder="Search e.g. TiDB, Aerospike, sharding…">
+      <input type="text" class="search" id="sdbank-search" placeholder="Search e.g. TiDB, Aerospike, RAG, zero-trust, kafka…">
       <label class="qbank-only"><input type="checkbox" id="sdbank-unpracticed"> Unstudied only</label>
+      <button class="btn sm" id="sdbank-pdf" type="button" title="Open a printable page for the current filter — then Save as PDF">⤓ Export PDF</button>
     </div>
     <p class="mini-lbl" style="margin:9px 2px 0;">Building blocks, databases (incl. TiDB, Aerospike), data platforms, analytics, data modeling &amp; e-commerce designs — each with problem, approach, example, architecture, disadvantages &amp; competing tech. Editable and yours to keep.</p>
   </div>
@@ -662,6 +663,7 @@
         <div class="q-actions">
           <button class="btn sm" data-editsd type="button">✎ Edit</button>
           ${e.edited ? '<button class="btn sm" data-resetsd type="button">↺ Reset</button>' : ''}
+          <a class="btn sm" href="/interview-prep/system-design/print?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a>
         </div>`;
       return `
       <div class="q-card ${sdPracticed.has(e.id)?'done':''} ${isEd?'open':''}" data-id="${e.id}">
@@ -691,6 +693,13 @@
   $("sdbank-cat").addEventListener("change", renderSDBank);
   $("sdbank-search").addEventListener("input", renderSDBank);
   $("sdbank-unpracticed").addEventListener("change", renderSDBank);
+  $("sdbank-pdf").addEventListener("click", () => {
+    const p = new URLSearchParams();
+    if ($("sdbank-cat").value) p.set("cat", $("sdbank-cat").value);
+    const term = ($("sdbank-search").value||"").trim();
+    if (term) p.set("q", term);
+    window.open("/interview-prep/system-design/print" + (p.toString() ? "?"+p.toString() : ""), "_blank", "noopener");
+  });
 
   $("sdbank-list").addEventListener("click", async (e) => {
     const card = e.target.closest(".q-card"); if(!card) return;
