@@ -29,3 +29,8 @@ youtube-transcript-api>=0.6.2
 # Python, ~300 KB, no native deps. We only count len(reader.pages)
 # on upload — heavy text extraction is never used.
 pypdf>=4.0
+
+# Server-side PDF generation for the Interview Prep banks (system design /
+# behavioral). Pure Python, no native deps. Imported lazily in the route,
+# so a missing install degrades to the browser print/export view.
+fpdf2>=2.7

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ heading }} — Behavioral STAR</title>
+<style>
+  :root { --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --accent:#4338ca; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Inter, Arial, sans-serif; color: var(--ink); max-width: 900px; margin: 0 auto; padding: 32px 28px 48px; line-height: 1.5; }
+  .doc-head { border-bottom: 3px solid var(--accent); padding-bottom: 12px; margin-bottom: 18px; }
+  .doc-head h1 { font-size: 23px; margin: 0 0 4px; letter-spacing: -.02em; }
+  .doc-head .meta { font-size: 12px; color: var(--muted); }
+  .toolbar { margin: 14px 0 22px; }
+  .toolbar button { font: inherit; font-size: 14px; font-weight: 700; background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 9px 16px; cursor: pointer; }
+  .toolbar span { font-size: 12px; color: var(--muted); margin-left: 10px; }
+
+  .entry { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid; }
+  .entry .cat { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; }
+  .entry h2 { font-size: 16px; margin: 6px 0 8px; letter-spacing: -.01em; }
+  .star { font-size: 13.5px; line-height: 1.45; margin: 5px 0; }
+  .star b { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; font-weight: 800; color: #fff; margin-right: 8px; vertical-align: 1px; }
+  .star.s b { background: #6366f1; } .star.t b { background: #0ea5e9; } .star.a b { background: #f59e0b; } .star.r b { background: #10b981; }
+  .tip { font-size: 12.5px; font-style: italic; color: var(--muted); margin: 8px 0 4px; }
+  .tags { margin-top: 6px; }
+  .tag { display: inline-block; font-size: 10.5px; color: var(--accent); background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 1px 8px; margin: 2px 3px 0 0; }
+  .empty { color: var(--muted); font-size: 14px; padding: 30px 0; text-align: center; }
+  .foot { margin-top: 24px; font-size: 11px; color: var(--muted); text-align: center; }
+
+  @media print { .toolbar { display: none; } body { padding: 0; } .entry { border-color: #d1d5db; } }
+</style>
+</head>
+<body>
+  <div class="doc-head">
+    <h1>{{ heading }}</h1>
+    <div class="meta">{{ count }} question{{ '' if count == 1 else 's' }} · DailyPlanner Interview Prep · {{ today }}</div>
+  </div>
+  <div class="toolbar">
+    <button onclick="window.print()">⤓ Save as PDF / Print</button>
+    <span>Tip: choose “Save as PDF” as the destination in the print dialog.</span>
+  </div>
+
+  {% if not questions %}<div class="empty">No questions match this filter.</div>{% endif %}
+
+  {% for q in questions %}
+  <div class="entry">
+    <div><span class="cat">{{ category_labels.get(q.cat, q.cat) }}</span></div>
+    <h2>{{ q.q }}</h2>
+    {% if q.s %}<div class="star s"><b>S</b>{{ q.s }}</div>{% endif %}
+    {% if q.t %}<div class="star t"><b>T</b>{{ q.t }}</div>{% endif %}
+    {% if q.a %}<div class="star a"><b>A</b>{{ q.a }}</div>{% endif %}
+    {% if q.r %}<div class="star r"><b>R</b>{{ q.r }}</div>{% endif %}
+    {% if q.tip %}<div class="tip">💡 {{ q.tip }}</div>{% endif %}
+    {% if q.tags %}<div class="tags">{% for t in q.tags %}<span class="tag">#{{ t }}</span>{% endfor %}</div>{% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="foot">Generated from the DailyPlanner Behavioral bank. These are adaptable templates — make each answer your own with real experiences and numbers.</div>
+</body>
+</html>

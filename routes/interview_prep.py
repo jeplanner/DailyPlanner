@@ -14,7 +14,8 @@ import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import (Blueprint, Response, jsonify, redirect, render_template,
+                   request, session, url_for)
 
 from auth import login_required
 from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
@@ -369,8 +370,17 @@ def question_bank():
     answer overlaid by the user's own edits (interview_question_overrides)
     when present, so edits persist across deploys."""
     user_id = session["user_id"]
-    items = [{"id": f"q{i}", **q, "edited": False} for i, q in enumerate(QUESTIONS)]
+    return jsonify({
+        "categories": [{"key": k, "label": v} for k, v in QUESTION_CATEGORIES.items()],
+        "questions": _beh_merged_items(user_id),
+        "total": len(QUESTIONS),
+    })
 
+
+def _beh_merged_items(user_id):
+    """Behavioral bank with the user's edits merged over the originals.
+    Shared by the JSON API and the printable view."""
+    items = [{"id": f"q{i}", **q, "edited": False} for i, q in enumerate(QUESTIONS)]
     try:
         overrides = get("interview_question_overrides", {
             "user_id": f"eq.{user_id}", "deleted_at": "is.null",
@@ -378,15 +388,12 @@ def question_bank():
             "limit": "1000",
         }) or []
     except Exception:
-        # Table not created yet — just serve the originals.
         overrides = []
     ovmap = {o.get("question_id"): o for o in overrides}
-
     for it in items:
         o = ovmap.get(it["id"])
         if not o:
             continue
-        # Only apply a non-empty edited question; other fields may be blank.
         if (o.get("question") or "").strip():
             it["q"] = o["question"]
         for short, col in _OVERRIDE_MAP.items():
@@ -395,12 +402,78 @@ def question_bank():
             if o.get(col) is not None:
                 it[short] = o[col]
         it["edited"] = True
+    return items
 
-    return jsonify({
-        "categories": [{"key": k, "label": v} for k, v in QUESTION_CATEGORIES.items()],
-        "questions": items,
-        "total": len(items),
-    })
+
+@interview_prep_bp.route("/interview-prep/behavioral/print", methods=["GET"])
+@login_required
+def behavioral_print():
+    """Print-optimised page for the behavioral bank (browser Save-as-PDF).
+    Filters: ?cat=<key>  ?tag=<tag>  ?q=<text>  ?id=qN."""
+    user_id = session["user_id"]
+    items = _beh_merged_items(user_id)
+    cat = (request.args.get("cat") or "").strip()
+    tag = (request.args.get("tag") or "").strip().lower()
+    q = (request.args.get("q") or "").strip().lower()
+    one = (request.args.get("id") or "").strip()
+
+    def _match(it):
+        if one:
+            return it["id"] == one
+        if cat and it.get("cat") != cat:
+            return False
+        if tag and tag not in [t.lower() for t in (it.get("tags") or [])]:
+            return False
+        if q:
+            hay = (it.get("q", "") + " " + " ".join(it.get("tags") or [])).lower()
+            if q not in hay:
+                return False
+        return True
+
+    selected = [it for it in items if _match(it)]
+    label = "Behavioral Question Bank"
+    if one and selected:
+        label = selected[0]["q"][:80]
+    elif cat:
+        label = QUESTION_CATEGORIES.get(cat, cat)
+    elif tag:
+        label = f"Tag: #{tag}"
+    elif q:
+        label = f"Search: {q}"
+
+    return render_template(
+        "behavioral_print.html",
+        questions=selected,
+        category_labels=QUESTION_CATEGORIES,
+        heading=label, count=len(selected), today=_today().isoformat(),
+    )
+
+
+@interview_prep_bp.route("/interview-prep/behavioral/pdf", methods=["GET"])
+@login_required
+def behavioral_pdf():
+    """Server-generated PDF of the behavioral bank (STAR answers), same
+    filters. Falls back to the print view if fpdf2 is unavailable."""
+    user_id = session["user_id"]
+    selected, label = _bank_select(
+        _beh_merged_items(user_id), ("q",), QUESTION_CATEGORIES, "q")
+    heading = label or "Behavioral Question Bank"
+    subtitle = (f"{len(selected)} question{'' if len(selected) == 1 else 's'} "
+                f"| DailyPlanner Interview Prep | {_today().isoformat()}")
+    sections = [{
+        "title": it["q"],
+        "cat": QUESTION_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
+        "fields": [("Situation", it.get("s")), ("Task", it.get("t")),
+                   ("Action", it.get("a")), ("Result", it.get("r")),
+                   ("Tip", it.get("tip"))],
+        "arch": None, "tags": it.get("tags"),
+    } for it in selected]
+    try:
+        pdf = _pdf_bytes(heading, subtitle, sections)
+    except ImportError:
+        return redirect(url_for("interview_prep.behavioral_print", **request.args.to_dict()))
+    fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "behavioral-bank.pdf"
+    return _pdf_response(pdf, fname)
 
 
 @interview_prep_bp.route("/api/interview-prep/questions/<qid>", methods=["POST"])
@@ -465,6 +538,129 @@ def _valid_sid(eid):
         return 0 <= int(eid[2:]) < len(SD_ENTRIES)
     except ValueError:
         return False
+
+
+# ─────────── PDF generation (server-side, pure Python) ──────
+
+# Map the Unicode we use (box-drawing, arrows, smart punctuation) to ASCII
+# so fpdf2's built-in latin-1 core fonts can render it without a bundled
+# TTF. Anything still outside latin-1 is replaced rather than erroring.
+_UNI_MAP = {
+    "—": "-", "–": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "…": "...", "•": "-",
+    "→": "->", "←": "<-", "↑": "^", "↓": "v",
+    "⇄": "<->", "▶": ">", "◀": "<", "▲": "^", "▼": "v",
+    "─": "-", "━": "-", "│": "|", "┌": "+", "┐": "+",
+    "└": "+", "┘": "+", "├": "+", "┤": "+", "┬": "+",
+    "┴": "+", "┼": "+", "⬇": "v", "‹": "<", "›": ">",
+    "✓": "[ok]", "≤": "<=", "≥": ">=", "²": "2",
+    "₹": "Rs ", "″": '"', "′": "'",
+}
+
+
+def _latin1(s):
+    if not s:
+        return ""
+    for k, v in _UNI_MAP.items():
+        s = s.replace(k, v)
+    return s.encode("latin-1", "replace").decode("latin-1")
+
+
+def _pdf_bytes(heading, subtitle, sections):
+    """Build a PDF from sections. Each section:
+    {title, cat, fields:[(label,text)...], arch, tags}. Raises ImportError
+    if fpdf2 isn't installed (caller falls back to the print view)."""
+    from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+
+    NX, NY = XPos.LMARGIN, YPos.NEXT  # each line returns to the left margin
+
+    def cell(pdf, h, txt, **kw):
+        pdf.multi_cell(0, h, txt, new_x=NX, new_y=NY, **kw)
+
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_margins(14, 14, 14)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 18)
+    cell(pdf, 8, _latin1(heading))
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(120, 120, 120)
+    cell(pdf, 5, _latin1(subtitle))
+    pdf.set_text_color(20, 20, 20)
+    pdf.ln(2)
+
+    for sec in sections:
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(67, 56, 202)
+        cell(pdf, 4, _latin1((sec.get("cat") or "").upper()))
+        pdf.set_text_color(17, 24, 39)
+        pdf.set_font("Helvetica", "B", 13)
+        cell(pdf, 6, _latin1(sec["title"]))
+        pdf.ln(0.5)
+        for label, text in sec.get("fields", []):
+            if not text:
+                continue
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.set_text_color(107, 114, 128)
+            cell(pdf, 4, _latin1(label.upper()))
+            pdf.set_text_color(17, 24, 39)
+            pdf.set_font("Helvetica", "", 10)
+            cell(pdf, 4.6, _latin1(text))
+            pdf.ln(0.4)
+        if sec.get("arch"):
+            pdf.set_font("Courier", "", 8)
+            pdf.set_fill_color(245, 246, 250)
+            cell(pdf, 3.8, _latin1(sec["arch"]), fill=True)
+        if sec.get("tags"):
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_text_color(67, 56, 202)
+            cell(pdf, 4, _latin1("  ".join("#" + t for t in sec["tags"])))
+            pdf.set_text_color(17, 24, 39)
+        pdf.ln(3.5)
+
+    return bytes(pdf.output())
+
+
+def _bank_select(items, text_fields, categories, title_key):
+    """Apply ?cat/?tag/?q/?id filters (from request.args) and return
+    (selected_items, human_label)."""
+    cat = (request.args.get("cat") or "").strip()
+    tag = (request.args.get("tag") or "").strip().lower()
+    q = (request.args.get("q") or "").strip().lower()
+    one = (request.args.get("id") or "").strip()
+
+    def _match(it):
+        if one:
+            return it["id"] == one
+        if cat and it.get("cat") != cat:
+            return False
+        if tag and tag not in [t.lower() for t in (it.get("tags") or [])]:
+            return False
+        if q:
+            hay = " ".join(str(it.get(f) or "") for f in text_fields).lower()
+            hay += " " + " ".join(it.get("tags") or [])
+            if q not in hay:
+                return False
+        return True
+
+    selected = [it for it in items if _match(it)]
+    label = None
+    if one and selected:
+        label = str(selected[0].get(title_key, ""))[:80]
+    elif cat:
+        label = categories.get(cat, cat)
+    elif tag:
+        label = f"Tag: #{tag}"
+    elif q:
+        label = f"Search: {q}"
+    return selected, label
+
+
+def _pdf_response(pdf, filename):
+    return Response(pdf, mimetype="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{filename}"',
+    })
 
 
 def _sd_merged_items(user_id):
@@ -562,6 +758,38 @@ def system_design_print():
         count=len(selected),
         today=_today().isoformat(),
     )
+
+
+@interview_prep_bp.route("/interview-prep/system-design/pdf", methods=["GET"])
+@login_required
+def system_design_pdf():
+    """Server-generated PDF of the system-design bank (same ?cat/?tag/?q/?id
+    filters, user edits merged). Falls back to the print view if fpdf2 is
+    unavailable."""
+    user_id = session["user_id"]
+    selected, label = _bank_select(
+        _sd_merged_items(user_id),
+        ("title", "answer", "problem", "competing"), SD_CATEGORIES, "title")
+    heading = label or "System Design Bank"
+    subtitle = (f"{len(selected)} entr{'y' if len(selected) == 1 else 'ies'} "
+                f"| DailyPlanner Interview Prep | {_today().isoformat()}")
+    sections = [{
+        "title": it["title"],
+        "cat": SD_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
+        "fields": [("Problem it solves", it.get("problem")),
+                   ("Approach", it.get("answer")),
+                   ("Example", it.get("example")),
+                   ("Use cases", it.get("use_cases")),
+                   ("Disadvantages", it.get("disadvantages")),
+                   ("Competing technologies", it.get("competing"))],
+        "arch": it.get("arch"), "tags": it.get("tags"),
+    } for it in selected]
+    try:
+        pdf = _pdf_bytes(heading, subtitle, sections)
+    except ImportError:
+        return redirect(url_for("interview_prep.system_design_print", **request.args.to_dict()))
+    fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "system-design-bank.pdf"
+    return _pdf_response(pdf, fname)
 
 
 @interview_prep_bp.route("/api/interview-prep/system-design/<eid>", methods=["POST"])

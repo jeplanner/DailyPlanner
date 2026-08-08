@@ -245,8 +245,9 @@
   <div class="card" style="margin-bottom:10px;">
     <div class="qbank-controls">
       <select id="qbank-cat"><option value="">All competencies</option></select>
-      <input type="text" class="search" id="qbank-search" placeholder="Search questions…">
+      <input type="text" class="search" id="qbank-search" placeholder="Search questions or tags (conflict, failure, ambiguity)…">
       <label class="qbank-only"><input type="checkbox" id="qbank-unpracticed"> Unpracticed only</label>
+      <button class="btn sm" id="qbank-pdf" type="button" title="Open a printable page for the current filter — then Save as PDF">⤓ Export PDF</button>
     </div>
     <p class="mini-lbl" style="margin:9px 2px 0;">100+ common questions with STAR model answers — adapt each to your own experience, then tap “Use as my story” to draft it into your bank.</p>
   </div>
@@ -500,7 +501,8 @@
     const list = QBANK.questions.filter(q =>
       (!cat || q.cat===cat) &&
       (!onlyUn || !practiced.has(q.id)) &&
-      (!term || q.q.toLowerCase().includes(term) || (qCatLabel[q.cat]||"").toLowerCase().includes(term))
+      (!term || q.q.toLowerCase().includes(term) || (qCatLabel[q.cat]||"").toLowerCase().includes(term)
+        || (q.tags||[]).some(t => t.includes(term)))
     );
     bankProg();
     const ta = (f, cls, val) => `<label>${f}<textarea class="${cls}" data-e="${cls}">${esc(val)}</textarea></label>`;
@@ -524,10 +526,12 @@
         <div class="star a"><b>A</b>${esc(q.a)}</div>
         <div class="star r"><b>R</b>${esc(q.r)}</div>
         <div class="q-tip">💡 ${esc(q.tip)}</div>
+        ${q.tags && q.tags.length ? `<div class="sd-tags">${q.tags.map(t=>`<button class="sd-tag" data-qtag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
         <div class="q-actions">
           <button class="btn sm" data-use type="button">＋ Use as my story</button>
           <button class="btn sm" data-edit type="button">✎ Edit</button>
           ${q.edited ? '<button class="btn sm" data-reset type="button">↺ Reset</button>' : ''}
+          <a class="btn sm" href="/interview-prep/behavioral/pdf?id=${q.id}" target="_blank" rel="noopener">⤓ PDF</a>
         </div>`;
       return `
       <div class="q-card ${practiced.has(q.id)?'done':''} ${isEd?'open':''}" data-id="${q.id}">
@@ -557,6 +561,13 @@
   $("qbank-cat").addEventListener("change", renderBank);
   $("qbank-search").addEventListener("input", renderBank);
   $("qbank-unpracticed").addEventListener("change", renderBank);
+  $("qbank-pdf").addEventListener("click", () => {
+    const p = new URLSearchParams();
+    if ($("qbank-cat").value) p.set("cat", $("qbank-cat").value);
+    const term = ($("qbank-search").value||"").trim();
+    if (term) p.set("q", term);
+    window.open("/interview-prep/behavioral/pdf" + (p.toString() ? "?"+p.toString() : ""), "_blank", "noopener");
+  });
 
   $("qbank-list").addEventListener("click", async (e) => {
     const card = e.target.closest(".q-card"); if(!card) return;
@@ -576,6 +587,12 @@
         toast("Added to your story bank — now make it yours ✍️","success");
         reload();
       } catch(err){ toast(err.message,"error"); }
+      return;
+    }
+    const qtag = e.target.closest("[data-qtag]");
+    if (qtag) {
+      $("qbank-search").value = qtag.dataset.qtag; $("qbank-cat").value = "";
+      renderBank(); document.getElementById("qbank-search").scrollIntoView({behavior:"smooth", block:"center"});
       return;
     }
     if (e.target.closest("[data-edit]")) { editingQ = id; renderBank(); return; }
@@ -663,7 +680,7 @@
         <div class="q-actions">
           <button class="btn sm" data-editsd type="button">✎ Edit</button>
           ${e.edited ? '<button class="btn sm" data-resetsd type="button">↺ Reset</button>' : ''}
-          <a class="btn sm" href="/interview-prep/system-design/print?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a>
+          <a class="btn sm" href="/interview-prep/system-design/pdf?id=${e.id}" target="_blank" rel="noopener">⤓ PDF</a>
         </div>`;
       return `
       <div class="q-card ${sdPracticed.has(e.id)?'done':''} ${isEd?'open':''}" data-id="${e.id}">
@@ -698,7 +715,7 @@
     if ($("sdbank-cat").value) p.set("cat", $("sdbank-cat").value);
     const term = ($("sdbank-search").value||"").trim();
     if (term) p.set("q", term);
-    window.open("/interview-prep/system-design/print" + (p.toString() ? "?"+p.toString() : ""), "_blank", "noopener");
+    window.open("/interview-prep/system-design/pdf" + (p.toString() ? "?"+p.toString() : ""), "_blank", "noopener");
   });
 
   $("sdbank-list").addEventListener("click", async (e) => {

@@ -36,6 +36,41 @@ def _q(cat, q, s, t, a, r, tip):
     return {"cat": cat, "q": q, "s": s, "t": t, "a": a, "r": r, "tip": tip}
 
 
+# Behavioral theme vocabulary → tags, matched against each question so the
+# bank is searchable by theme (e.g. "conflict", "failure", "ambiguity").
+_BEH_VOCAB = {
+    "leadership": ["lead", "led", "leading", "leader"],
+    "ownership": ["own", "ownership", "responsib"],
+    "conflict": ["conflict", "disagree", "difficult", "tension"],
+    "failure": ["fail", "failed", "mistake", "regret", "wrong", "missed"],
+    "ambiguity": ["ambigu", "unclear", "uncertain", "incomplete", "chaos"],
+    "deadline": ["deadline", "tight", "aggressive", "pressure", "time"],
+    "feedback": ["feedback", "criticism", "critique"],
+    "influence": ["influence", "persuad", "convince", "authority", "buy-in", "coalition"],
+    "stakeholder": ["stakeholder", "executive", "exec", "leadership team", "manage up", "managing up"],
+    "prioritization": ["priorit", "trade-off", "tradeoff", "deprioriti"],
+    "teamwork": ["team", "collaborat", "cross-functional", "silo", "partner"],
+    "decision": ["decision", "decide", "judgment", "data-driven"],
+    "people": ["mentor", "underperform", "hire", "coach", "develop", "morale", "delegat"],
+    "strategy": ["strategy", "vision", "long-term", "roadmap"],
+    "risk": ["risk", "crisis", "incident", "outage", "mitigat"],
+    "communication": ["communicat", "present", "explain", "message", "bluf"],
+    "customer": ["customer", "user"],
+    "change": ["change", "transform", "reorg", "restructur", "migration"],
+    "growth": ["learn", "quickly", "comfort zone", "improve", "grow"],
+    "delivery": ["deliver", "launch", "ship", "program", "execution"],
+}
+
+
+def _beh_tags(q):
+    text = (q["q"] + " " + q.get("s", "")).lower()
+    tags = {q["cat"]}
+    for tag, needles in _BEH_VOCAB.items():
+        if any(n in text for n in needles):
+            tags.add(tag)
+    return sorted(tags)
+
+
 QUESTIONS = [
     # ─────────── Leadership & Ownership ───────────
     _q("leadership",
@@ -783,3 +818,7 @@ QUESTIONS = [
        "That's precisely what a Head-of-TPM mandate needs, and where I do my best work.",
        "Tie your signature strengths directly to THIS role's mandate and scale."),
 ]
+
+# Derive searchable theme tags for every question.
+for _q_item in QUESTIONS:
+    _q_item["tags"] = _beh_tags(_q_item)
