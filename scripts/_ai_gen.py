@@ -16,158 +16,141 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Convert BST to Greater Tree",
-         answer="Replace each node's value with the original value PLUS the sum of all values greater than it. A REVERSE in-order traversal (right, node, left) visits values from largest to smallest, so a running total accumulates the greater values before you reach each node.",
-         tags=["convert-bst-greater","bst","reverse-inorder","recursion","dsa"],
-         code='''# Replace each node's value with the sum of all values >= it (reverse in-order).
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def convert_bst(root):
-    running = 0
-    def reverse_inorder(node):
-        nonlocal running
-        if node is None:
-            return
-        reverse_inorder(node.right)   # visit larger values first
-        running += node.val
-        node.val = running            # node now holds the sum of all >= it
-        reverse_inorder(node.left)
-    reverse_inorder(root)
-    return root''',
-         complexity="Time O(n), space O(h) recursion.",
-         pitfalls="Using forward in-order (accumulates smaller values); resetting the running sum per subtree.",
-         example="BST 4 -> (1 -> (0,2), 6 -> (5,7)): node 6 becomes 6+7=13, node 4 becomes 4+5+6+7=22."),
-    dict(cat="dsa", title="Add Digits (digital root)",
-         answer="Repeatedly sum a number's digits until a single digit remains — but do it in O(1) using the DIGITAL ROOT formula: for n>0, the result is 1 + (n-1) % 9 (and 0 for 0). This works because a number is congruent to its digit sum mod 9.",
-         tags=["add-digits","digital-root","math","dsa"],
-         code='''# Repeatedly sum digits until one digit remains — O(1) via the digital root.
-def add_digits(num):
+    dict(cat="dsa", title="Base 7 Conversion",
+         answer="Convert an integer to its base-7 string. Repeatedly take num % 7 for the next least-significant digit and floor-divide by 7, collecting digits, then reverse. Handle 0 and the negative sign separately.",
+         tags=["base-7","base-conversion","math","dsa"],
+         code='''# Convert an integer to its base-7 string representation.
+def convert_to_base7(num):
     if num == 0:
-        return 0
-    return 1 + (num - 1) % 9    # digital-root formula''',
-         complexity="Time O(1), space O(1).",
-         pitfalls="Special-casing 0 (formula would give 1); looping the digit sum when O(1) exists.",
-         example="add_digits(38) -> 2  (3+8=11 -> 1+1=2)."),
-    dict(cat="dsa", title="Self Dividing Numbers",
-         answer="A self-dividing number is divisible by EVERY digit it contains and contains no zero digit. List all such numbers in [1, n] by checking each number's digits.",
-         tags=["self-dividing","math","digits","dsa"],
-         code='''# Numbers divisible by each of their own digits (no zero digit), in [1, n].
-def self_dividing_numbers(n):
+        return "0"
+    negative = num < 0
+    num = abs(num)
+    digits = []
+    while num:
+        digits.append(str(num % 7))   # least-significant digit first
+        num //= 7
+    result = "".join(reversed(digits))
+    return "-" + result if negative else result''',
+         complexity="Time O(log n), space O(log n).",
+         pitfalls="Not handling 0 or the sign; forgetting to reverse the collected digits.",
+         example="convert_to_base7(100) -> '202'; convert_to_base7(-7) -> '-10'."),
+    dict(cat="dsa", title="Add to Array-Form of Integer",
+         answer="A number is given as an array of digits; add an integer k to it and return the digit array of the sum. Walk from the least-significant digit, folding k in as a running carry (add the digit, take %10 as the output digit, //10 as the carry) until both the array and k are exhausted.",
+         tags=["array-form","math","carry","array","dsa"],
+         code='''# Add an integer k to a number represented as an array of digits.
+def add_to_array_form(num, k):
+    i = len(num) - 1
     result = []
-    for num in range(1, n + 1):
-        s = str(num)
-        if '0' not in s and all(num % int(d) == 0 for d in s):
-            result.append(num)
-    return result''',
-         complexity="Time O(n * digits), space O(n).",
-         pitfalls="Dividing by a zero digit (must exclude any 0); off-by-one on the inclusive range.",
-         example="self_dividing_numbers(22) -> [1,2,3,4,5,6,7,8,9,11,12,15,22]."),
-    dict(cat="dsa", title="Perfect Number",
-         answer="A perfect number equals the sum of its PROPER divisors (all positive divisors except itself). Sum divisors up to sqrt(n), adding both i and n//i for each factor pair, then compare to n. (1 is a proper divisor of any n>1.)",
-         tags=["perfect-number","math","divisors","dsa"],
-         code='''# Is n a perfect number (equals the sum of its proper divisors)?
-def is_perfect_number(n):
-    if n <= 1:
-        return False
-    total = 1                       # 1 is always a proper divisor
-    i = 2
-    while i * i <= n:
-        if n % i == 0:
-            total += i
-            if i != n // i:
-                total += n // i     # add the paired divisor
-        i += 1
-    return total == n''',
-         complexity="Time O(sqrt(n)), space O(1).",
-         pitfalls="Including n itself as a divisor; double-counting a perfect-square factor.",
-         example="is_perfect_number(28) -> True (1+2+4+7+14); is_perfect_number(12) -> False."),
-    dict(cat="dsa", title="Arranging Coins",
-         answer="Build a staircase where row k needs k coins; given n coins, return the number of COMPLETE rows. Since k full rows use k(k+1)/2 coins, binary-search the largest k with k(k+1)/2 <= n (or solve the quadratic directly).",
-         tags=["arranging-coins","binary-search","math","dsa"],
-         code='''# Full rows of a staircase you can build with n coins (row k needs k coins).
-def arrange_coins(n):
-    lo, hi = 0, n
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        coins_used = mid * (mid + 1) // 2   # coins for mid full rows
-        if coins_used == n:
-            return mid
-        if coins_used < n:
-            lo = mid + 1
+    while i >= 0 or k:
+        if i >= 0:
+            k += num[i]              # fold in the current digit
+            i -= 1
+        result.append(k % 10)        # output digit
+        k //= 10                     # carry to the next position
+    return result[::-1]''',
+         complexity="Time O(max(len(num), digits of k)), space O(that).",
+         pitfalls="Stopping before k's carry is fully consumed; forgetting to reverse.",
+         example="add_to_array_form([1,2,0,0], 34) -> [1,2,3,4]."),
+    dict(cat="dsa", title="Number to Excel Column Title",
+         answer="Convert a positive integer to its Excel column title (1->A, 26->Z, 27->AA). It's base-26 but 1-indexed (no zero digit), so subtract 1 before each modulo to map into 0..25, then convert to a letter and divide down.",
+         tags=["excel-column-title","base-conversion","string","math","dsa"],
+         code='''# Convert a positive integer to its Excel column title (1->A, 27->AA).
+def convert_to_title(n):
+    result = []
+    while n:
+        n -= 1                        # shift to 0-based for the modulo
+        result.append(chr(n % 26 + ord('A')))
+        n //= 26
+    return "".join(reversed(result))''',
+         complexity="Time O(log n), space O(log n).",
+         pitfalls="Forgetting the n -= 1 (this is 1-indexed, not 0-indexed); not reversing.",
+         example="convert_to_title(28) -> 'AB'; convert_to_title(701) -> 'ZY'."),
+    dict(cat="dsa", title="Number of Steps to Reduce a Number to Zero",
+         answer="Count the steps to reduce n to 0 where each step halves n if it's even, or subtracts 1 if it's odd. Simulate directly; equivalently it's (number of bits) + (number of set bits) - 1.",
+         tags=["steps-to-zero","bit-manipulation","math","simulation","dsa"],
+         code='''# Steps to reduce n to 0: if even, halve it; if odd, subtract 1.
+def number_of_steps(num):
+    steps = 0
+    while num:
+        if num % 2 == 0:
+            num //= 2
         else:
-            hi = mid - 1
-    return hi                        # largest k with k(k+1)/2 <= n''',
+            num -= 1
+        steps += 1
+    return steps''',
          complexity="Time O(log n), space O(1).",
-         pitfalls="Overflow of k(k+1)/2 in fixed-int languages; returning lo instead of hi.",
-         example="arrange_coins(5) -> 2  (rows 1 and 2 use 3 coins; a full row 3 needs 3 more)."),
-    dict(cat="dsa", title="Longest Common Prefix",
-         answer="Find the longest string that is a prefix of ALL strings in an array. Start with the first string as the candidate prefix and, for each other string, trim the prefix from the right until it matches that string's start; empty means no common prefix.",
-         tags=["longest-common-prefix","string","dsa"],
-         code='''# Longest common prefix string among an array of strings.
-def longest_common_prefix(strs):
-    if not strs:
-        return ""
-    prefix = strs[0]
-    for s in strs[1:]:
-        while not s.startswith(prefix):   # shrink until it matches s's start
-            prefix = prefix[:-1]
-            if not prefix:
-                return ""
-    return prefix''',
-         complexity="Time O(total characters), space O(1).",
-         pitfalls="Not handling an empty input list; assuming the first string is the shortest.",
-         example="longest_common_prefix(['flower','flow','flight']) -> 'fl'."),
-    dict(cat="dsa", title="Implement strStr() (indexOf)",
-         answer="Return the index of the first occurrence of a needle string in a haystack, or -1 (like indexOf). The straightforward approach checks each length-m window of the haystack against the needle; KMP or Rabin-Karp does it in linear time for large inputs.",
-         tags=["strstr","indexof","string-matching","string","dsa"],
-         code='''# Index of the first occurrence of needle in haystack, or -1 (like indexOf).
-def str_str(haystack, needle):
-    if needle == "":
-        return 0
-    n, m = len(haystack), len(needle)
-    for i in range(n - m + 1):
-        if haystack[i:i + m] == needle:   # check each window of length m
-            return i
-    return -1''',
-         complexity="Time O(n*m) naive (O(n+m) with KMP), space O(1).",
-         pitfalls="Off-by-one on the window range (n-m+1); not handling an empty needle.",
-         example="str_str('sadbutsad','sad') -> 0; str_str('leetcode','leeto') -> -1."),
-    dict(cat="dsa", title="Reverse Words in a String",
-         answer="Reverse the ORDER of words in a string while collapsing extra whitespace (leading/trailing/multiple spaces). Split on runs of whitespace (which drops empty tokens), reverse the word list, and join with single spaces.",
-         tags=["reverse-words","string","split","dsa"],
-         code='''# Reverse the order of words, collapsing extra whitespace.
-def reverse_words(s):
-    words = s.split()            # split on whitespace runs, dropping empties
-    return " ".join(reversed(words))''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Reversing characters instead of words; not collapsing multiple/leading/trailing spaces.",
-         example="reverse_words('  the sky  is blue ') -> 'blue is sky the'."),
-    dict(cat="glossary", title="Sidecar pattern",
-         answer="A deployment pattern where a helper container/process runs ALONGSIDE the main application (same pod/host, shared network and lifecycle) and handles CROSS-CUTTING concerns — logging, metrics, TLS, proxying, config — so the app doesn't have to. It keeps business code clean and lets you add capabilities uniformly across services without changing them.",
-         tags=["sidecar","microservices","proxy","cross-cutting","deployment"],
-         example="An Envoy proxy sidecar beside each service handles mTLS, retries, and metrics, so the service makes plain HTTP calls while the sidecar transparently secures and observes them."),
-    dict(cat="glossary", title="Service mesh",
-         answer="An infrastructure layer that manages SERVICE-TO-SERVICE communication for microservices via SIDECAR proxies (the data plane) coordinated by a control plane. It provides mTLS, traffic routing/load balancing, retries/timeouts/circuit breaking, and observability — WITHOUT app code changes (Istio, Linkerd). It moves resilience and security concerns out of each service into the platform.",
-         tags=["service-mesh","istio","linkerd","sidecar","microservices"],
-         example="With Istio you configure a 10%-to-v2 canary split and mutual TLS in the control plane; the sidecars enforce it, so no service needs to know about routing or certificates."),
-    dict(cat="glossary", title="Streaming windows (tumbling / sliding / session)",
-         answer="Ways to bound an infinite stream into finite chunks for aggregation. TUMBLING windows are fixed, non-overlapping intervals (every 1 min). SLIDING windows are fixed-size but overlap, advancing by a smaller step (last 5 min, updated every 1 min). SESSION windows group events by activity, closing after a gap of inactivity. Windowing plus watermarks handles out-of-order/late events.",
-         tags=["streaming-windows","tumbling","sliding","session-window","stream-processing"],
-         example="Clicks-per-minute uses tumbling windows; a 5-minute moving average uses sliding windows; grouping a user's actions until they're idle 30 min uses a session window."),
-    dict(cat="glossary", title="Bitmap index",
-         answer="An index storing, for each distinct value of a column, a BITMAP (one bit per row) marking which rows have that value. Extremely space-efficient and fast for LOW-cardinality columns; queries combine conditions with cheap bitwise AND/OR/NOT. Great for analytical/read-heavy warehouses but poor for high-cardinality or frequently-updated columns.",
-         tags=["bitmap-index","indexing","olap","low-cardinality","database"],
-         example="A 'gender' bitmap index answers 'WHERE gender=F AND country=US' by AND-ing two bitmaps — near-instant and tiny, ideal for OLAP."),
-    dict(cat="glossary", title="Data skew",
-         answer="When data is UNEVENLY distributed across partitions/keys, so a few partitions (or reducers/workers) get far more data than others — creating STRAGGLERS that bottleneck a distributed job (one task runs 10x longer while others finish). Common with popular keys or group-bys on a hot value. Mitigated by salting keys, skew-join handling, or repartitioning.",
-         tags=["data-skew","partitioning","stragglers","spark","distributed-computing"],
-         example="A Spark join on user_id where one 'guest' id covers 40% of rows overloads a single reducer; salting the hot key across N buckets spreads the load evenly."),
-    dict(cat="conceptual", title="Why use a sidecar / service mesh instead of a shared library in each service?",
-         answer="A shared LIBRARY forces every service to adopt it, be written in a compatible language, and REDEPLOY to get a fix or new policy — painful across dozens of polyglot services. A SIDECAR/mesh moves those concerns (mTLS, retries, timeouts, routing, metrics, tracing) into a proxy process beside each service, so they're LANGUAGE-AGNOSTIC (Python and Go services behave identically), UPGRADED INDEPENDENTLY of app code (patch the proxy, not 50 services), and CONFIGURED CENTRALLY via the control plane (change a timeout or canary split fleet-wide at once). The trade-offs are added latency (an extra proxy hop), resource overhead (a proxy per instance), and operational complexity — so a mesh pays off at scale/heterogeneity but is overkill for a few homogeneous services.",
-         tags=["service-mesh","sidecar","microservices","cross-cutting","why"],
-         example="To enforce mTLS everywhere, a library approach needs every team to add code and redeploy; with a mesh you flip one control-plane setting and the sidecars secure all traffic — no service code changes."),
+         pitfalls="Off-by-one on the final step to 0; infinite loop if the update is wrong.",
+         example="number_of_steps(14) -> 6."),
+    dict(cat="dsa", title="Reverse String (in place)",
+         answer="Reverse an array of characters IN PLACE with O(1) extra space. Two pointers from the ends swap inward until they meet.",
+         tags=["reverse-string","two-pointers","in-place","string","dsa"],
+         code='''# Reverse a list of characters in place (two pointers).
+def reverse_string(s):
+    left, right = 0, len(s) - 1
+    while left < right:
+        s[left], s[right] = s[right], s[left]
+        left += 1; right -= 1
+    return s''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Building a new string instead of in-place; off-by-one on the pointers.",
+         example="reverse_string(['h','e','l','l','o']) -> ['o','l','l','e','h']."),
+    dict(cat="dsa", title="Detect Capital",
+         answer="A word's capitalization is valid if it's ALL uppercase ('USA'), ALL lowercase ('leetcode'), or Title case with only the first letter capitalized ('Google'). Check those three cases directly.",
+         tags=["detect-capital","string","dsa"],
+         code='''# Is the capitalization of a word valid? (all caps, all lower, or Title case)
+def detect_capital_use(word):
+    return word.isupper() or word.islower() or word.istitle()''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Missing the title-case rule (first letter only); edge cases with single-letter words.",
+         example="detect_capital_use('USA') -> True; detect_capital_use('FlaG') -> False."),
+    dict(cat="dsa", title="Maximum Product of Three Numbers",
+         answer="Find the maximum product of any three numbers in an array. After sorting, the answer is either the three LARGEST values, or the two SMALLEST (potentially large negatives whose product is positive) times the largest value. Take the max of those two candidates.",
+         tags=["max-product-three","sorting","greedy","array","dsa"],
+         code='''# Max product of any three numbers (watch two large negatives).
+def maximum_product(nums):
+    nums.sort()
+    # three largest, OR two smallest (very negative) times the largest
+    return max(nums[-1] * nums[-2] * nums[-3], nums[0] * nums[1] * nums[-1])''',
+         complexity="Time O(n log n) (O(n) with a linear scan for extremes), space O(1).",
+         pitfalls="Ignoring two negative extremes (their product is positive); only taking the top three.",
+         example="maximum_product([-4,-3,-2,1,60]) -> 720  ((-4)*(-3)*60)."),
+    dict(cat="dsa", title="Best Time to Buy and Sell Stock II (greedy)",
+         answer="Maximize profit with UNLIMITED transactions (you may buy and sell repeatedly, one share at a time). Greedy: capture every upswing — sum all positive day-to-day differences. This equals the best achievable profit because any longer rising run is the sum of its consecutive gains.",
+         tags=["buy-sell-stock","greedy","array","dsa"],
+         code='''# Max profit with unlimited transactions (buy/sell many times), greedy.
+def max_profit(prices):
+    profit = 0
+    for i in range(1, len(prices)):
+        if prices[i] > prices[i - 1]:
+            profit += prices[i] - prices[i - 1]   # capture every upswing
+    return profit''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Trying to find one buy/sell pair (that's Stock I); holding across a dip needlessly.",
+         example="max_profit([7,1,5,3,6,4]) -> 7  ((5-1)+(6-3))."),
+    dict(cat="glossary", title="Event time vs processing time",
+         answer="Two notions of time in stream processing. EVENT TIME is when an event actually OCCURRED (a timestamp in the data). PROCESSING TIME is when the system processes it. Networks and buffering make events arrive late/out-of-order, so aggregating by processing time gives wrong, non-reproducible results. Event time (with WATERMARKS to bound lateness) produces correct, deterministic windows regardless of arrival time.",
+         tags=["event-time","processing-time","stream-processing","watermark"],
+         example="A user clicks at 11:59 but the event reaches the pipeline at 12:03; event-time windowing counts it in the 11:xx window (correct), while processing-time would wrongly bucket it into 12:xx."),
+    dict(cat="glossary", title="Log compaction (Kafka)",
+         answer="A retention mode that, instead of deleting old messages by time/size, keeps only the LATEST value per KEY. The log becomes a compacted changelog where every key's most recent state survives, so a consumer can rebuild full current state by replaying it. Ideal for topics representing entity state (a table as a stream).",
+         tags=["log-compaction","kafka","changelog","retention","streaming"],
+         example="A 'user-profile' topic keyed by user_id uses log compaction: old updates are pruned but the latest per user is kept, so a new service bootstraps current profiles by reading the whole topic."),
+    dict(cat="glossary", title="ISR (in-sync replicas)",
+         answer="In Kafka, the set of a partition's replicas that are fully CAUGHT UP with the leader. With acks=all, a write commits once all ISR members have it, so any ISR replica can become leader without data loss. A lagging/dead replica falls OUT of the ISR; min.insync.replicas sets how many must be in-sync to accept writes — trading availability for durability.",
+         tags=["isr","in-sync-replicas","kafka","replication","durability"],
+         example="With replication factor 3 and min.insync.replicas=2, a partition accepts writes while 2 replicas are in the ISR; if too many lag, writes are rejected to guarantee durability."),
+    dict(cat="glossary", title="Idempotent producer",
+         answer="A Kafka producer feature that prevents DUPLICATE messages from producer retries. Each producer gets an ID and each message a sequence number; the broker dedupes retried sends per partition, so a network retry after an ambiguous ack doesn't write the message twice. It's a foundation of Kafka's exactly-once semantics (with transactions).",
+         tags=["idempotent-producer","kafka","exactly-once","deduplication"],
+         example="A producer times out waiting for an ack and retries; without idempotence the message could be written twice, but sequence numbers let the broker discard the duplicate."),
+    dict(cat="glossary", title="At-least-once vs at-most-once vs exactly-once",
+         answer="The three delivery guarantees. AT-MOST-ONCE: never retry -> messages may be LOST but never duplicated (fire-and-forget). AT-LEAST-ONCE: retry until acked -> never lost but may DUPLICATE (the common default). EXACTLY-ONCE: each message takes effect once — achieved not by magical delivery but by at-least-once + dedup/idempotency or transactions. Choose based on whether loss or duplication is worse.",
+         tags=["delivery-semantics","at-least-once","at-most-once","exactly-once","messaging"],
+         example="Metrics collection tolerates at-most-once (a lost sample is fine); payments need exactly-once effect via at-least-once + idempotency keys so no charge is lost OR duplicated."),
+    dict(cat="conceptual", title="Why aggregate streams by event time instead of processing time?",
+         answer="Because processing time makes results WRONG and non-reproducible when data arrives late or out of order — which it always does (network delays, retries, buffering, backfills). Bucketing 'clicks per minute' by when the system happened to process each event means the same input replayed later lands in different windows, and a 2-minute delay silently shifts events into the wrong minute. EVENT time uses when the event actually happened, so an event always falls in the same window regardless of processing time — giving correct, deterministic, replayable aggregates. The cost is handling LATE data: you can't close a window immediately, so WATERMARKS estimate 'event time has advanced past T, windows before T-δ are likely complete' to decide when to emit, plus allowed-lateness for stragglers. Processing time is simpler/lower-latency (fine for rough dashboards), but event time is required when correctness under out-of-order data matters.",
+         tags=["event-time","processing-time","watermark","stream-processing","why"],
+         example="Reprocessing yesterday's log through a processing-time pipeline buckets everything into 'now', destroying the per-minute breakdown; an event-time pipeline reproduces the exact same per-minute counts as the original run."),
 ]
 
 
