@@ -16,207 +16,205 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Minimum Depth of Binary Tree",
-         answer="The minimum depth is the number of nodes on the SHORTEST root-to-LEAF path. BFS level-by-level and return the depth of the first LEAF you encounter — BFS reaches the shallowest leaf first, so it's optimal (and avoids the DFS pitfall of a node with one missing child).",
-         tags=["minimum-depth","bfs","binary-tree","dsa"],
-         code='''# Minimum depth: shortest root-to-LEAF path length (number of nodes).
-from collections import deque
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def min_depth(root):
-    if root is None:
-        return 0
-    queue = deque([(root, 1)])
-    while queue:
-        node, depth = queue.popleft()
-        if node.left is None and node.right is None:
-            return depth              # first leaf reached (BFS) = min depth
-        if node.left: queue.append((node.left, depth + 1))
-        if node.right: queue.append((node.right, depth + 1))
-    return 0''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Using naive DFS min(left,right)+1 (a node with one child isn't a leaf); off-by-one on depth.",
-         example="For tree 3 -> (9, 20 -> (15, 7)), min_depth -> 2."),
-    dict(cat="dsa", title="Average of Levels in Binary Tree",
-         answer="Return the average value of the nodes on each level. Standard BFS by levels: process all nodes currently in the queue (one level), sum their values, divide by the level's node count, and enqueue their children for the next level.",
-         tags=["average-of-levels","bfs","binary-tree","level-order","dsa"],
-         code='''# Average value of the nodes on each level of a binary tree.
-from collections import deque
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def average_of_levels(root):
-    result = []
-    queue = deque([root])
-    while queue:
-        n = len(queue)
-        level_sum = 0
-        for _ in range(n):
-            node = queue.popleft()
-            level_sum += node.val
-            if node.left: queue.append(node.left)
-            if node.right: queue.append(node.right)
-        result.append(level_sum / n)     # mean of this level
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Fixing the level count after mutating the queue; integer instead of float division.",
-         example="For [3,9,20,null,null,15,7], average_of_levels -> [3.0, 14.5, 11.0]."),
-    dict(cat="dsa", title="Sum of Left Leaves",
-         answer="Sum the values of all LEFT leaves — leaves that are the LEFT child of their parent. Recurse: whenever a node's left child exists and is itself a leaf, add its value; then recurse into both subtrees.",
-         tags=["sum-left-leaves","binary-tree","recursion","dfs","dsa"],
-         code='''# Sum of all LEFT leaves (leaves that are a left child).
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def sum_of_left_leaves(root):
-    if root is None:
-        return 0
-    total = 0
-    if root.left and root.left.left is None and root.left.right is None:
-        total += root.left.val          # a left child that is a leaf
-    total += sum_of_left_leaves(root.left)
-    total += sum_of_left_leaves(root.right)
-    return total''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Counting any leaf (must be a LEFT child); missing the leaf check on the left child.",
-         example="For 3 -> (9, 20 -> (15, 7)), sum_of_left_leaves -> 24 (9 + 15)."),
-    dict(cat="dsa", title="Path Sum III (prefix sum)",
-         answer="Count the downward paths (any node to any descendant) whose values sum to a target. Use a running prefix sum with a hash map of prefix-sum counts: at each node the number of valid paths ending here is how many earlier prefix sums equal (running - target). Backtrack the map on the way up.",
-         tags=["path-sum","prefix-sum","binary-tree","hash-map","dfs","dsa"],
-         code='''# Count root-to-any downward paths summing to target (prefix-sum hashmap).
-from collections import defaultdict
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def path_sum_iii(root, target):
-    prefix = defaultdict(int)
-    prefix[0] = 1                        # the empty prefix
-    def dfs(node, running):
-        if node is None:
-            return 0
-        running += node.val
-        count = prefix[running - target] # paths ending here summing to target
-        prefix[running] += 1
-        count += dfs(node.left, running) + dfs(node.right, running)
-        prefix[running] -= 1             # backtrack: leave this path
-        return count
-    return dfs(root, 0)''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Not backtracking the prefix map (over-counts across branches); forgetting prefix[0]=1.",
-         example="For [10,5,-3,3,2,null,11,3,-2,null,1], path_sum_iii(root, 8) -> 3."),
-    dict(cat="dsa", title="Two Sum IV - Input is a BST",
-         answer="Determine if a BST contains two distinct elements summing to k. Traverse and keep a SET of seen values; at each node, if k minus the node's value is already in the set, return True. (You could also do a two-pointer walk over the in-order sorted values.)",
-         tags=["two-sum-bst","bst","hash-set","dfs","dsa"],
-         code='''# Does the BST contain two elements summing to k? (seen-set traversal)
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def find_target(root, k):
-    seen = set()
-    def dfs(node):
-        if node is None:
-            return False
-        if k - node.val in seen:
-            return True                  # complement already seen
-        seen.add(node.val)
-        return dfs(node.left) or dfs(node.right)
-    return dfs(root)''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Using the same node twice (the set holds only previously visited nodes); ignoring the BST order that enables a two-pointer variant.",
-         example="For a BST holding {2,3,4,5,6,7}, find_target(root, 9) -> True (2+7 or 3+6)."),
-    dict(cat="dsa", title="Minimum Absolute Difference in BST",
-         answer="Find the minimum absolute difference between any two node values in a BST. An IN-ORDER traversal visits values in sorted order, so the answer is the smallest gap between ADJACENT in-order values — track the previous value and update the best difference.",
-         tags=["min-abs-diff-bst","bst","in-order","dsa"],
-         code='''# Minimum absolute difference between any two node values in a BST.
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def min_diff_in_bst(root):
-    prev = None
-    best = float('inf')
-    def inorder(node):
-        nonlocal prev, best
-        if node is None:
-            return
-        inorder(node.left)
-        if prev is not None:
-            best = min(best, node.val - prev)   # sorted -> adjacent gap
-        prev = node.val
-        inorder(node.right)
-    inorder(root)
-    return best''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Comparing all pairs (O(n^2)); not using in-order sorted order.",
-         example="For BST 4 -> (2 -> (1,3), 6), min_diff_in_bst -> 1."),
-    dict(cat="dsa", title="Middle of the Linked List",
-         answer="Return the middle node (the SECOND middle if the length is even). Fast/slow pointers: advance slow by one and fast by two; when fast reaches the end, slow is at the middle — a single pass with no length precomputation.",
-         tags=["middle-linked-list","fast-slow-pointers","linked-list","dsa"],
-         code='''# The middle node of a linked list (second middle if even length).
+    dict(cat="dsa", title="Swap Nodes in Pairs",
+         answer="Swap every two adjacent nodes of a linked list and return the new head (swap the nodes, not just their values). A dummy head plus a 'prev' pointer makes the pointer surgery clean: for each pair, relink prev -> second -> first -> rest, then advance prev by two.",
+         tags=["swap-pairs","linked-list","dummy-node","pointers","dsa"],
+         code='''# Swap every two adjacent nodes and return the new head.
 class ListNode:
     def __init__(self, val=0, next=None):
         self.val = val; self.next = next
 
-def middle_node(head):
-    slow = fast = head
-    while fast and fast.next:
-        slow = slow.next            # one step
-        fast = fast.next.next       # two steps
-    return slow                     # slow lands on the middle''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Off-by-one on even length (this returns the second middle); wrong loop condition.",
-         example="1->2->3->4->5 returns node 3; 1->2->3->4->5->6 returns node 4."),
-    dict(cat="dsa", title="Remove Nth Node From End of List",
-         answer="Remove the nth node from the end in ONE pass. Use a dummy head and two pointers: advance fast n steps ahead, then move both until fast hits the end — slow now sits just BEFORE the target, so relink to skip it. The dummy handles removing the head.",
-         tags=["remove-nth-from-end","two-pointers","linked-list","dummy-node","dsa"],
-         code='''# Remove the nth node from the END of a list in one pass (two pointers).
-class ListNode:
-    def __init__(self, val=0, next=None):
-        self.val = val; self.next = next
-
-def remove_nth_from_end(head, n):
+def swap_pairs(head):
     dummy = ListNode(0, head)
-    fast = slow = dummy
-    for _ in range(n):
-        fast = fast.next            # advance fast n steps ahead
-    while fast.next:
-        fast = fast.next
-        slow = slow.next            # slow stops just before the target
-    slow.next = slow.next.next      # unlink the nth-from-end node
+    prev = dummy
+    while prev.next and prev.next.next:
+        first = prev.next
+        second = first.next
+        # relink: prev -> second -> first -> rest
+        first.next = second.next
+        second.next = first
+        prev.next = second
+        prev = first            # advance two nodes
     return dummy.next''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Not using a dummy (removing the head breaks); off-by-one in the n-step advance.",
-         example="1->2->3->4->5 with n=2 -> 1->2->3->5."),
-    dict(cat="glossary", title="Chaos engineering",
-         answer="The practice of deliberately INJECTING failures into a production (or prod-like) system — killing servers, adding latency, dropping network — to proactively find weaknesses BEFORE they cause real outages. Pioneered by Netflix's Chaos Monkey: form a hypothesis ('the system stays up if a node dies'), run a controlled experiment, and fix what breaks. It builds real confidence in resilience.",
-         tags=["chaos-engineering","resilience","reliability","testing","sre"],
-         example="Chaos Monkey randomly terminates production instances during business hours; if a service can't survive losing one, the team finds and fixes the single point of failure before a real crash does."),
-    dict(cat="glossary", title="LSM internals (memtable, SSTable, compaction)",
-         answer="How a log-structured merge tree stores data. Writes go to an in-memory sorted MEMTABLE plus a WAL; when it fills, it's flushed to an immutable, sorted on-disk SSTABLE. Reads probe SSTables newest-first (with Bloom filters). Background COMPACTION merges SSTables, discarding overwritten/deleted entries — reclaiming space and keeping reads fast. Writes are sequential (fast) at the cost of read/space amplification.",
-         tags=["lsm","memtable","sstable","compaction","storage-engine"],
-         example="In RocksDB/Cassandra, a burst of writes fills the memtable, flushes to an SSTable, and later compaction merges many SSTables into fewer sorted files so reads needn't check dozens of them."),
-    dict(cat="glossary", title="Tombstone (deletes)",
-         answer="A marker that records a DELETE in append-only/LSM and distributed stores, instead of physically removing the data (impossible in immutable files, and it would resurrect on replica sync). Reads treat a tombstoned key as absent; compaction/GC purges the data and tombstone after a grace period longer than max replica downtime. Too many tombstones slow reads.",
-         tags=["tombstone","deletes","lsm","replication","compaction"],
-         example="Deleting a row in Cassandra writes a tombstone; a replica that missed the delete learns of it via the tombstone during repair, so the row can't resurrect — then compaction purges both after the grace period."),
-    dict(cat="glossary", title="Write / read / space amplification",
-         answer="Overhead ratios of a storage engine. WRITE amplification = bytes written to disk vs bytes of user data (LSM compaction rewrites data repeatedly -> high). READ amplification = disk reads per query (an LSM read may probe several SSTables -> higher than a B-tree). SPACE amplification = disk used vs live data (stale versions before compaction). Engines and compaction strategies trade these off.",
-         tags=["write-amplification","read-amplification","space-amplification","lsm","storage-engine"],
-         example="An LSM tree ingests fast but has high write amplification because compaction rewrites the same data across levels; a B-tree has lower read amplification but higher write amplification from in-place page updates."),
-    dict(cat="glossary", title="Hot partition",
-         answer="When one shard/partition receives a DISPROPORTIONATE share of traffic (a celebrity user, a popular key, a monotonically increasing timestamp key), overloading a single node while others idle — a scalability killer despite 'horizontal scaling'. Fix by choosing a high-cardinality, evenly-distributed partition key, salting hot keys with a hash/random suffix, or splitting the hot partition.",
-         tags=["hot-partition","sharding","skew","scalability","partition-key"],
-         example="Partitioning events by day makes today's partition a hot spot (all writes land there); partitioning by hash(user_id) or salting the key spreads writes evenly across nodes."),
-    dict(cat="conceptual", title="Why do LSM/append-only stores delete with tombstones instead of removing the data?",
-         answer="Because their on-disk files are IMMUTABLE (append-only) — you can't edit an SSTable in place to erase a key. And in a distributed, replicated store, physically deleting on one replica isn't enough: a replica that was down during the delete would, via anti-entropy/read-repair, see the key still present elsewhere and RESURRECT it. A tombstone is an explicit 'deleted as of time T' record that is itself an append (fits the immutable model), propagates to replicas so all agree it's gone, and shadows older values on reads. Compaction later physically drops the data AND the tombstone — but only after a grace period longer than max replica downtime, so a lagging replica still learns of the delete first. The cost: many tombstones slow reads until compaction cleans them.",
-         tags=["tombstone","lsm","deletes","replication","why"],
-         example="Delete a key in Cassandra: a tombstone is written and replicated; a replica that missed it learns of the delete via the tombstone during repair (so the row doesn't come back), then compaction purges both after gc_grace_seconds."),
+         pitfalls="Losing the rest of the list (set first.next before second.next); forgetting the dummy for the head.",
+         example="1->2->3->4 becomes 2->1->4->3."),
+    dict(cat="dsa", title="Odd Even Linked List",
+         answer="Reorder a list so all ODD-position nodes come first, then all EVEN-position nodes, preserving relative order (by position, not value). Weave two pointers: an odd chain and an even chain built in one pass, then attach the even chain after the odd chain.",
+         tags=["odd-even-list","linked-list","pointers","dsa"],
+         code='''# Group odd-indexed nodes first, then even-indexed, preserving order.
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+def odd_even_list(head):
+    if head is None:
+        return None
+    odd = head
+    even = head.next
+    even_head = even
+    while even and even.next:
+        odd.next = even.next    # link to the next odd node
+        odd = odd.next
+        even.next = odd.next    # link to the next even node
+        even = even.next
+    odd.next = even_head        # attach the even chain after the odds
+    return head''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Forgetting to save even_head; wrong loop condition leaving a dangling pointer.",
+         example="1->2->3->4->5 becomes 1->3->5->2->4."),
+    dict(cat="dsa", title="Palindrome Linked List",
+         answer="Check if a singly linked list is a palindrome in O(1) space. Find the middle with fast/slow pointers, REVERSE the second half, then compare it node-by-node with the first half. (Optionally restore the list afterward.)",
+         tags=["palindrome-linked-list","fast-slow-pointers","reverse","linked-list","dsa"],
+         code='''# Is the linked list a palindrome? (reverse second half, compare)
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+def is_palindrome(head):
+    slow = fast = head
+    while fast and fast.next:            # find the middle
+        slow = slow.next
+        fast = fast.next.next
+    prev = None                          # reverse the second half
+    while slow:
+        slow.next, prev, slow = prev, slow, slow.next
+    left, right = head, prev             # compare the two halves
+    while right:
+        if left.val != right.val:
+            return False
+        left = left.next
+        right = right.next
+    return True''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Comparing to the wrong end after reversal; mishandling odd-length middle.",
+         example="1->2->2->1 -> True; 1->2->3 -> False."),
+    dict(cat="dsa", title="Remove Duplicates from Sorted List",
+         answer="Remove duplicate values from a SORTED linked list, keeping one node per value. Walk with a single pointer; when the next node has the same value, skip it (relink past it); otherwise advance. Sortedness means duplicates are always adjacent.",
+         tags=["remove-duplicates-list","linked-list","pointers","dsa"],
+         code='''# Remove duplicates from a SORTED linked list (keep one of each value).
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+def delete_duplicates(head):
+    current = head
+    while current and current.next:
+        if current.val == current.next.val:
+            current.next = current.next.next   # skip the duplicate
+        else:
+            current = current.next
+    return head''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Advancing past a node before checking the next duplicate; assuming unsorted input.",
+         example="1->1->2->3->3 becomes 1->2->3."),
+    dict(cat="dsa", title="Rotate List",
+         answer="Rotate a linked list to the RIGHT by k places. Find the length and tail, connect the tail to the head to form a CIRCLE, then walk length - (k mod length) steps to the new tail and break the circle there. The modulo handles k larger than the list.",
+         tags=["rotate-list","linked-list","pointers","dsa"],
+         code='''# Rotate the list to the right by k places.
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+def rotate_right(head, k):
+    if head is None or head.next is None or k == 0:
+        return head
+    length = 1                           # find length and tail
+    tail = head
+    while tail.next:
+        tail = tail.next
+        length += 1
+    k %= length
+    if k == 0:
+        return head
+    tail.next = head                     # make the list circular
+    steps = length - k                   # walk to the new tail
+    new_tail = head
+    for _ in range(steps - 1):
+        new_tail = new_tail.next
+    new_head = new_tail.next
+    new_tail.next = None                 # break the circle
+    return new_head''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Forgetting k %= length (k can exceed the length); off-by-one on the new tail.",
+         example="1->2->3->4->5 with k=2 -> 4->5->1->2->3."),
+    dict(cat="dsa", title="Reverse Integer",
+         answer="Reverse the digits of a signed 32-bit integer, returning 0 if the result OVERFLOWS the 32-bit range. Pop digits with %10 and build the reversed number with *10; apply the sign; then check the [-2^31, 2^31-1] bounds.",
+         tags=["reverse-integer","math","overflow","dsa"],
+         code='''# Reverse the digits of a signed 32-bit integer; return 0 on overflow.
+def reverse_integer(x):
+    sign = -1 if x < 0 else 1
+    x = abs(x)
+    result = 0
+    while x:
+        result = result * 10 + x % 10   # append the last digit
+        x //= 10
+    result *= sign
+    if result < -2**31 or result > 2**31 - 1:   # 32-bit overflow check
+        return 0
+    return result''',
+         complexity="Time O(digits), space O(1).",
+         pitfalls="Not checking 32-bit overflow; mishandling the sign for negatives.",
+         example="reverse_integer(123) -> 321; reverse_integer(-120) -> -21; reverse_integer(1534236469) -> 0."),
+    dict(cat="dsa", title="Palindrome Number",
+         answer="Determine whether an integer reads the same forwards and backwards WITHOUT converting to a string. Negatives are never palindromes. Rebuild the number reversed (pop digits with %10) and compare to the original.",
+         tags=["palindrome-number","math","dsa"],
+         code='''# Is an integer a palindrome (reads the same forwards and backwards)?
+def is_palindrome_number(x):
+    if x < 0:
+        return False            # negatives aren't palindromes
+    reversed_num = 0
+    original = x
+    while x:
+        reversed_num = reversed_num * 10 + x % 10
+        x //= 10
+    return reversed_num == original''',
+         complexity="Time O(digits), space O(1).",
+         pitfalls="Treating negatives as palindromes; overflow in languages with fixed ints (reverse only half to avoid it).",
+         example="is_palindrome_number(121) -> True; is_palindrome_number(-121) -> False; is_palindrome_number(10) -> False."),
+    dict(cat="dsa", title="Fizz Buzz",
+         answer="For 1..n, output 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, 'FizzBuzz' for multiples of both, else the number as a string. Check the multiple-of-15 (both) case FIRST so it isn't shadowed by the individual checks.",
+         tags=["fizzbuzz","math","simulation","dsa"],
+         code='''# FizzBuzz: 1..n, multiples of 3 -> 'Fizz', 5 -> 'Buzz', both -> 'FizzBuzz'.
+def fizz_buzz(n):
+    result = []
+    for i in range(1, n + 1):
+        if i % 15 == 0:
+            result.append("FizzBuzz")
+        elif i % 3 == 0:
+            result.append("Fizz")
+        elif i % 5 == 0:
+            result.append("Buzz")
+        else:
+            result.append(str(i))
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Checking 3/5 before 15 (misses 'FizzBuzz'); returning ints instead of strings.",
+         example="fizz_buzz(5) -> ['1','2','Fizz','4','Buzz']."),
+    dict(cat="glossary", title="Join algorithms (nested-loop / hash / sort-merge)",
+         answer="How a database physically combines two tables. NESTED-LOOP: for each row of A, scan B — fine when one side is tiny or indexed, O(A*B) otherwise. HASH join: build a hash table on the smaller table's join key, probe with the larger — great for equi-joins on unsorted data, O(A+B). SORT-MERGE: sort both by the key then merge in lockstep — good when inputs are already sorted or for range joins. The optimizer picks based on sizes, indexes, and sortedness.",
+         tags=["join-algorithms","hash-join","sort-merge-join","nested-loop","database"],
+         example="Joining a 10-row dimension to a billion-row fact table, the optimizer builds a hash table on the 10 rows and probes it once per fact row (hash join) rather than a nested-loop scan."),
+    dict(cat="glossary", title="Cost-based optimizer (query plan)",
+         answer="The component that turns declarative SQL into an efficient EXECUTION PLAN by estimating the COST (I/O, CPU, rows) of alternative plans — join orders, join algorithms, index vs full scan — using table STATISTICS (row counts, histograms) and picking the cheapest. Stale/missing statistics lead to bad plans. You inspect its choice with EXPLAIN.",
+         tags=["cost-based-optimizer","query-plan","statistics","explain","database"],
+         example="For a 3-table join, the optimizer uses row-count stats to choose the join ORDER and hash-join the small table first, avoiding a plan that materializes a huge intermediate result."),
+    dict(cat="glossary", title="Predicate pushdown",
+         answer="A query optimization that pushes FILTERS (WHERE predicates) as close to the data as possible — applying them during the scan or even at the storage/file layer — so fewer rows flow up the plan. In columnar formats (Parquet) with engines like Spark, it skips row groups whose min/max stats can't match the predicate, reading far less data.",
+         tags=["predicate-pushdown","query-optimization","parquet","spark","columnar"],
+         example="SELECT ... WHERE year=2024 on Parquet: predicate pushdown skips every row group whose year min/max excludes 2024, reading only the relevant files instead of the whole dataset."),
+    dict(cat="glossary", title="Columnar encoding (RLE / dictionary)",
+         answer="Compression that exploits columnar storage where a column's values are similar. RUN-LENGTH ENCODING (RLE) stores a repeated value once with a count ('US x 1000'). DICTIONARY encoding maps distinct values to small integer codes plus a dictionary — great for low-cardinality columns. These shrink storage and speed scans (operate on compressed data), a key reason columnar analytics is fast.",
+         tags=["columnar-encoding","rle","dictionary-encoding","compression","olap"],
+         example="A 'country' column with 200 distinct values dictionary-encodes each as a 1-byte code, cutting size ~8x and letting the engine filter on integer codes directly."),
+    dict(cat="glossary", title="Clustered vs non-clustered index",
+         answer="A CLUSTERED index sets the PHYSICAL order of the table's rows (the data IS the index leaf) — one per table, and range scans on it are very fast (data is contiguous). A NON-CLUSTERED (secondary) index is a separate structure mapping keys to row locations/primary keys — you can have many, but a lookup may need an extra step to fetch the row (unless it's a 'covering' index). Pick the clustered key for your most common range/sort access.",
+         tags=["clustered-index","non-clustered-index","secondary-index","database","indexing"],
+         example="In InnoDB the PRIMARY KEY is the clustered index (rows stored in PK order), so range scans by PK are sequential; a secondary index on 'email' points back to the PK and needs a second lookup for other columns."),
+    dict(cat="conceptual", title="Why is a columnar storage format faster for analytics than a row format?",
+         answer="Analytics reads a FEW columns across MANY rows (e.g. SUM(revenue) over a billion rows), while OLTP reads whole rows. In ROW storage a row's columns sit together, so reading one column still pulls entire rows off disk — wasted I/O. In COLUMNAR storage each column is contiguous, so you read ONLY the columns you need. Columns also compress far better (adjacent values are similar -> RLE/dictionary/delta), shrinking data 5-10x and enabling vectorized/SIMD execution over tight arrays, plus per-block min/max stats power predicate pushdown to skip irrelevant blocks. The trade-off: updating one row touches many column files, so columnar is poor for OLTP — hence row-store for transactions, columnar for analytics.",
+         tags=["columnar","row-store","olap","io","why"],
+         example="SUM(price) over a billion-row table reads just the compressed 'price' column (a few GB) in a columnar store versus scanning entire multi-column rows (hundreds of GB) in a row store — often 10-100x less I/O."),
 ]
 
 
