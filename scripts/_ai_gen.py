@@ -16,162 +16,126 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="ml_system_design", title="Design a Query Autocomplete (typeahead) system",
-         answer="Suggest completions as the user types a query prefix. (1) CLARIFY & SCALE: return the top ~10 relevant completions within a few ms per keystroke; enormous query volume, personalized and fresh (trending). (2) DATA & LABELS: historical query logs with frequencies; clicks on suggestions as positive signal; time-decay to favour recent/trending queries. (3) FEATURES: prefix match, query popularity, recency/trending, user context (location, history), language. (4) STRUCTURE/MODEL: a TRIE (prefix tree) where each node caches its top-k completions by score gives O(prefix) lookup; scores blend popularity + personalization + recency; an optional learned ranker re-scores candidates. (5) EVAL: offline Mean Reciprocal Rank of the chosen suggestion and coverage; online suggestion CTR and characters saved. (6) SERVING/MONITORING/AB: in-memory sharded trie updated incrementally, cache hot prefixes, A/B on CTR and query success, and filter unsafe completions.",
-         tags=["autocomplete","typeahead","trie","ranking","ml-system-design"],
-         example="Typing 'new y', the trie node for that prefix returns its cached top completions ('new york', 'new year', 'new york times') ranked by popularity and your location in a couple milliseconds."),
-    dict(cat="ml_system_design", title="Design a Fraud / Payment-Risk Detection system",
-         answer="Score transactions/accounts for fraud risk in real time. (1) CLARIFY & SCALE: block fraud while minimizing false declines (they anger good customers); milliseconds per transaction, highly imbalanced, ADVERSARIAL and cost-sensitive (a missed fraud and a false decline have very different costs). (2) DATA & LABELS: confirmed chargebacks/fraud (delayed weeks) and manual review; noisy and imbalanced. (3) FEATURES: transaction (amount, merchant, time), account history & VELOCITY (spend rate, new device/IP, geo-distance from last txn), GRAPH features (cards/devices shared across accounts), windowed aggregates. (4) MODEL: gradient-boosted trees on tabular signals, plus graph/anomaly models for rings and a rules engine for hard blocks; increasingly deep models over transaction sequences. (5) EVAL: precision/recall at an operating threshold, PR-AUC, and DOLLAR-weighted metrics; choose the threshold by FP-vs-FN cost. (6) SERVING/MONITORING/AB: real-time scoring via a feature store, async deeper checks + human review queue, chargebacks retrain it, monitor for new attack patterns, and step-up auth (OTP) for borderline cases.",
-         tags=["fraud-detection","payment-risk","imbalance","graph-features","ml-system-design"],
-         example="A card swipe 500 miles from the last one, on a new device, for an unusual amount scores high risk; the model declines or triggers a one-time passcode, and a later confirmed chargeback becomes a fresh training label."),
-    dict(cat="ml_system_design", title="Design for Recommendation Cold-Start",
-         answer="Recommend well for NEW users or NEW items that have little or no interaction history. (1) CLARIFY & SCALE: standard collaborative filtering fails with no history; you still need sensible recs from day one. (2) DATA & LABELS: implicit feedback for warm entities; for cold ones lean on CONTENT/METADATA and onboarding signals. (3) FEATURES: item metadata (category, text, image embeddings), user profile/onboarding answers, demographics, context. (4) STRATEGIES: content-based recs for cold items (match item features to user preferences), popularity/trending fallbacks for cold users, HYBRID models combining content + collaborative signals, and EXPLORATION (multi-armed bandits) to gather feedback fast; ask onboarding preferences. (5) EVAL: measure on the cold segment specifically (new-user / new-item slices), not just overall. (6) SERVING/MONITORING/AB: gradually shift an entity from content-based to collaborative as data accrues; A/B the cold-start strategy on new-cohort retention.",
-         tags=["cold-start","recommendation","content-based","bandit","ml-system-design"],
-         example="A brand-new streaming user picks 3 favourite genres at signup; until they watch enough, recs come from content similarity + trending in those genres while a bandit explores to learn their taste quickly."),
-    dict(cat="ml_system_design", title="Design a large-scale Image Classification pipeline",
-         answer="Classify images into categories at scale (e.g. product/photo tagging). (1) CLARIFY & SCALE: N classes, millions-to-billions of images, target accuracy & latency, batch (offline tagging) vs real-time. (2) DATA & LABELS: labeled images (human annotation, weak labels from tags); handle class imbalance and label noise; augmentation (crop, flip, colour jitter). (3) REPRESENTATION: raw pixels into a CNN or Vision Transformer, usually starting from a PRETRAINED backbone (ImageNet) and fine-tuning (transfer learning). (4) MODEL: ResNet/EfficientNet or ViT; for huge label spaces use hierarchical or embedding-based retrieval. (5) TRAINING/EVAL: cross-entropy with label smoothing; top-1/top-5 accuracy and per-class recall for rare classes; validate on a held-out set. (6) SERVING/MONITORING/AB: batch GPU inference for offline, quantized/distilled models for real-time; monitor accuracy drift and emerging categories; a data flywheel sends low-confidence images to human labeling.",
-         tags=["image-classification","cnn","transfer-learning","vision","ml-system-design"],
-         example="An e-commerce catalog fine-tunes a pretrained EfficientNet on its product categories; low-confidence predictions are routed to human reviewers whose labels feed the next training round."),
-    dict(cat="ml_system_design", title="Design a Feature Store",
-         answer="A central system to define, compute, store, and serve ML FEATURES consistently for training and inference. (1) CLARIFY & SCALE: eliminate training-serving SKEW (a feature computed identically offline and online) and enable feature reuse across teams; low-latency online reads plus large offline reads. (2) DATA: raw event/log/table sources feed feature pipelines. (3) COMPONENTS: an OFFLINE store (columnar warehouse for training, with point-in-time-correct joins to prevent label leakage) and an ONLINE store (low-latency KV like Redis for serving); a shared feature registry; batch + streaming ingestion. (4) GUARANTEES: identical transformation logic for both stores, point-in-time correctness (only features known at event time), and versioning. (5) OPS/EVAL: monitor feature freshness, null rates, and distribution drift. (6) SERVING: models fetch features by entity key in milliseconds; backfills recompute history. Examples: Feast, Tecton.",
-         tags=["feature-store","mlops","training-serving-skew","serving","ml-system-design"],
-         example="A fraud model's 'transactions in the last hour' feature is computed once by a streaming job and written to BOTH the offline store (for training) and Redis (for serving), so training and production see the exact same value — killing training-serving skew."),
-    dict(cat="ml_system_design", title="Design an A/B Testing (experimentation) platform",
-         answer="A platform to run controlled online experiments that measure the causal impact of changes. (1) CLARIFY & SCALE: reliably decide whether a change (new model/feature) improves a metric; thousands of concurrent experiments, millions of users. (2) ASSIGNMENT: randomly and DETERMINISTICALLY bucket users (hash user_id) into control/treatment; keep assignment consistent and use mutually-exclusive layers for conflicting tests. (3) METRICS: a north-star metric plus guardrails; log exposures and outcomes. (4) ANALYSIS: estimate the treatment effect with statistical significance (t-test, CUPED variance reduction), correct for multiple comparisons, and watch novelty effects and sample-ratio mismatch. (5) VALIDITY: enough statistical power (sample size), run across weekly seasonality, check for network interference. (6) SERVING/MONITORING: a config service delivers assignments, a pipeline builds results dashboards, and automatic guardrail alerts stop harmful experiments early.",
-         tags=["ab-testing","experimentation","causal-inference","statistics","ml-system-design"],
-         example="To test a new ranking model, 5% of users are hashed into treatment; after two weeks the platform reports +1.2% engagement (p<0.01) with no guardrail regressions, so it ships — while a sample-ratio-mismatch check confirms the split was truly random."),
-    dict(cat="glossary", title="RLHF (Reinforcement Learning from Human Feedback)",
-         answer="The technique that aligns LLMs to human preferences. Three steps: (1) collect human RANKINGS of model outputs, (2) train a REWARD MODEL to predict those preferences, (3) fine-tune the LLM with reinforcement learning (e.g. PPO) to maximize the reward while a KL penalty keeps it close to the original model. It's why modern assistants are helpful and far less toxic than the raw pretrained model.",
-         tags=["rlhf","alignment","reward-model","ppo","llm"],
-         example="Given two chatbot replies, humans mark which is better; a reward model learns that preference, then PPO nudges the LLM to produce more of the preferred style."),
-    dict(cat="glossary", title="Mixture of Experts (MoE)",
-         answer="An architecture with many specialized sub-networks ('experts') where a lightweight ROUTER activates only a few per input (sparse activation). Total parameters can grow enormously while compute per token stays roughly constant — giving huge model capacity at a fraction of the inference cost of a dense model of the same size.",
-         tags=["mixture-of-experts","moe","sparse","routing","efficiency"],
-         example="A MoE layer with 64 experts routes each token to its top-2 experts, so a trillion-parameter model runs only ~2 experts' worth of compute per token."),
-    dict(cat="glossary", title="Contrastive learning",
-         answer="A self-supervised approach that learns representations by pulling SIMILAR (positive) pairs together and pushing DISSIMILAR (negative) pairs apart in embedding space — no labels required. Positives are often two augmented views of the same item. It powers SimCLR, CLIP (image-text), and modern sentence embeddings.",
-         tags=["contrastive-learning","self-supervised","embeddings","representation"],
-         example="SimCLR treats two random crops of the same photo as a positive pair and crops of other photos as negatives, learning features that transfer well to downstream tasks with little labeled data."),
-    dict(cat="glossary", title="Self-supervised learning",
-         answer="Learning useful representations from UNLABELED data by inventing a pretext task whose labels come free from the data itself — e.g. predict a masked word, the next token, or whether two views match. It unlocks the internet's vast unlabeled data; the pretrained model is then fine-tuned on a small labeled set. It's the paradigm behind BERT, GPT, and modern vision models.",
-         tags=["self-supervised","pretraining","representation-learning","pretext-task"],
-         example="BERT masks 15% of words and trains to predict them from context — no human labels — producing representations that fine-tune to many NLP tasks with little data."),
-    dict(cat="glossary", title="Quantization (model)",
-         answer="Reducing the numerical PRECISION of a model's weights/activations (e.g. 32-bit floats to 8-bit or 4-bit integers) to shrink memory and speed up inference with minimal accuracy loss. Post-training quantization is quick; quantization-aware training recovers more accuracy. It's essential for running large models on phones/edge and for cutting serving cost.",
-         tags=["quantization","efficiency","inference","edge","compression"],
-         example="Quantizing a 7B-parameter LLM from FP16 to 4-bit cuts its memory ~4x, letting it run on a single consumer GPU with only a small quality drop."),
-    dict(cat="dsa", title="LRU Cache (hash map + doubly linked list)",
-         answer="Design a cache with O(1) get and put that evicts the LEAST-RECENTLY-USED key when full. Combine a hash map (key -> node) for O(1) lookup with a doubly linked list ordered by recency: move a node to the front on every access, and evict from the back (the LRU) when over capacity. Sentinel head/tail nodes simplify the pointer surgery.",
-         tags=["lru-cache","hash-map","linked-list","design","dsa"],
-         code='''# O(1) get/put cache that evicts the least-recently-used key.
-class Node:
-    def __init__(self, key=0, val=0):
-        self.key = key; self.val = val
-        self.prev = None; self.next = None
+    dict(cat="behavioral", title="Tell me about a time you put the user first (LP: Customer Obsession)",
+         answer="Use STAR. SITUATION: In my final-year capstone we built a study-planner app, and usage logs showed most students dropped off on a cluttered onboarding screen. TASK: Even though I was the ML lead, I took on improving activation. ACTION: I interviewed 8 classmates, learned the 9-field sign-up overwhelmed them, and proposed cutting it to 3 fields with the rest deferred; I prototyped it and ran a quick A/B test across two class sections. RESULT: Onboarding completion rose from 55% to 82% and weekly active users nearly doubled. LESSON: Working backwards from real user pain — not our assumptions — is what moved the metric. HOW TO TELL IT: quantify the user impact, show you listened to actual users, and tie it to a business metric.",
+         tags=["behavioral","star","customer-obsession","amazon-lp"],
+         example="Cut a 9-field sign-up to 3 after interviewing users; onboarding completion jumped 55%->82% and weekly actives nearly doubled."),
+    dict(cat="behavioral", title="Tell me about a time you took ownership beyond your role (LP: Ownership)",
+         answer="Use STAR. SITUATION: During a summer internship, the data pipeline feeding my model silently failed on weekends, and no one owned it after the original engineer left. TASK: My model's metrics looked wrong, and instead of just flagging it I decided to fix the root cause. ACTION: I traced the failure to an unhandled upstream schema change, added input validation and alerting, wrote a runbook, and documented it — none of which was in my intern project. RESULT: Weekend failures dropped to zero and the team adopted my alerting on three other pipelines. LESSON: Ownership means caring about the outcome, not the org chart. HOW TO TELL IT: emphasize you treated it as yours, fixed the root cause (not the symptom), and left it documented.",
+         tags=["behavioral","star","ownership","amazon-lp"],
+         example="Fixed a recurring weekend pipeline failure that wasn't my job — added validation + alerting, cut failures to zero, and the team reused it."),
+    dict(cat="behavioral", title="Tell me about a time you dug into details to solve a hard problem (LP: Dive Deep)",
+         answer="Use STAR. SITUATION: My image-classifier project suddenly lost 12% accuracy after an innocent-looking data refresh, days before a demo. TASK: Find the cause fast. ACTION: Instead of guessing, I sliced accuracy BY CLASS and saw the drop was concentrated in two classes; inspecting raw samples revealed the new data had mislabeled images from a vendor change. I wrote a script to detect label inconsistencies and quarantined the bad batch. RESULT: Accuracy fully recovered, and the label-audit script caught future bad batches automatically. LESSON: An average metric hides specific, findable causes — you must look under it. HOW TO TELL IT: show the systematic investigation (slice, inspect, verify) instead of trial-and-error.",
+         tags=["behavioral","star","dive-deep","amazon-lp"],
+         example="A 12% accuracy drop was mislabeled vendor images in two classes — found by slicing metrics per class, then built an auto label-audit to prevent recurrence."),
+    dict(cat="behavioral", title="Tell me about a time you moved fast with incomplete information (LP: Bias for Action)",
+         answer="Use STAR. SITUATION: Two days before a hackathon deadline, our third-party sentiment API got rate-limited and broke a core feature. TASK: Keep the demo working without waiting for a perfect fix. ACTION: Rather than stall debating options, I shipped a lightweight local logistic-regression sentiment model trained on a public dataset as a fallback, put it behind a feature flag so we could swap back if the API recovered, and moved on. RESULT: The demo ran flawlessly and actually faster; we placed 2nd. LESSON: Many decisions are reversible — a good-enough reversible choice now beats a perfect one too late. HOW TO TELL IT: stress the calculated speed, the reversibility (feature flag), and the outcome.",
+         tags=["behavioral","star","bias-for-action","amazon-lp"],
+         example="When a sentiment API broke 2 days before a hackathon, I shipped a reversible local-model fallback behind a flag — the demo worked and we placed 2nd."),
+    dict(cat="behavioral", title="Tell me about a time you taught yourself something to deliver (LP: Learn and Be Curious)",
+         answer="Use STAR. SITUATION: A research project needed me to deploy a model as a real-time API, but I'd only ever run models in notebooks. TASK: Learn enough serving to ship it in three weeks. ACTION: I self-studied FastAPI and Docker, built a serving prototype, load-tested it, and learned latency/batching by measuring and iterating; I asked a senior student for a code review to catch mistakes. RESULT: I shipped an API handling ~200 requests/sec at p95 under 100ms and wrote a short guide so labmates could reuse it. LESSON: Curiosity paired with a concrete deliverable is the fastest way to learn. HOW TO TELL IT: show initiative, a real deliverable, and that you shared the knowledge.",
+         tags=["behavioral","star","learn-and-be-curious","amazon-lp"],
+         example="Self-taught FastAPI + Docker in 3 weeks to serve a model at ~200 rps / p95<100ms, and documented it for labmates."),
+    dict(cat="behavioral", title="Tell me about a time you delivered under a tight deadline (LP: Deliver Results)",
+         answer="Use STAR. SITUATION: My team's final project had slipped and one week remained with the model underperforming (F1 ~0.62 vs a 0.75 goal). TASK: As ML lead, hit target without burning out the team. ACTION: I prioritized ruthlessly — dropped two nice-to-have features, focused on the highest-leverage fixes (better class balancing and stronger features), set daily checkpoints, and parallelized the work. RESULT: We reached F1 0.78, submitted on time, and earned the top grade in the class. LESSON: Delivering is about focus and prioritization under constraint, not doing everything. HOW TO TELL IT: show the trade-offs you made, the focus on the right levers, and the concrete result.",
+         tags=["behavioral","star","deliver-results","amazon-lp"],
+         example="One week left and F1 stuck at 0.62 — cut scope, focused on class balancing + feature engineering with daily checkpoints, and hit 0.78 on time."),
+    dict(cat="glossary", title="Cross-attention",
+         answer="The attention mechanism where one sequence attends to ANOTHER sequence — queries come from one, keys and values from the other — as opposed to self-attention where a sequence attends to itself. It's how a decoder looks at the encoder's output in seq2seq/translation, and how multimodal models let text attend to image features.",
+         tags=["cross-attention","attention","transformer","seq2seq","nlp"],
+         example="In translation, the decoder generating French uses cross-attention to look back at the encoded English words, focusing on the relevant source word for each output token."),
+    dict(cat="glossary", title="Masked language modeling (MLM)",
+         answer="A self-supervised pretraining objective (used by BERT) where random input tokens are hidden ('masked') and the model predicts them from the surrounding CONTEXT ON BOTH SIDES. This bidirectional objective yields rich representations for understanding tasks, unlike left-to-right next-token prediction.",
+         tags=["masked-language-modeling","mlm","bert","self-supervised","nlp"],
+         example="Given 'The cat sat on the [MASK]', the model learns to predict 'mat' from both left and right context — learning language structure without labels."),
+    dict(cat="glossary", title="KV cache",
+         answer="An inference optimization for autoregressive Transformers. Since each new token attends to all previous tokens, the model CACHES the key and value vectors of past tokens instead of recomputing them each step. This turns generation from O(n^2) recompute into O(n) per token, dramatically speeding up long-text generation — at the cost of extra memory.",
+         tags=["kv-cache","inference","transformer","optimization","llm"],
+         example="Generating the 500th token, the model reuses cached K/V for tokens 1-499 and only computes them for the new token, avoiding a full recompute of the sequence."),
+    dict(cat="glossary", title="Early stopping",
+         answer="A regularization technique that halts training when validation performance stops improving (after a 'patience' number of epochs), preventing overfitting from training too long. You keep the checkpoint with the best validation score. Simple, cheap, and one of the most effective anti-overfitting tools.",
+         tags=["early-stopping","regularization","overfitting","training"],
+         example="Validation loss bottoms out at epoch 30 then creeps up; with patience 5 training stops at epoch 35 and restores the epoch-30 weights — avoiding the overfitting continued training would cause."),
+    dict(cat="dsa", title="Invert a Binary Tree",
+         answer="Produce the mirror image of a binary tree by swapping every node's left and right children. A one-line recursive swap at each node, recursing into both subtrees, does it. The famous 'whiteboard' question — trivial once you see it's just a post/pre-order swap.",
+         tags=["invert-tree","binary-tree","recursion","dfs","dsa"],
+         code='''# Mirror a binary tree: swap every node's left and right children.
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
 
-class LRUCache:
-    def __init__(self, capacity):
-        self.cap = capacity
-        self.map = {}                    # key -> Node
-        self.head = Node()               # sentinel: most-recently-used side
-        self.tail = Node()               # sentinel: least-recently-used side
-        self.head.next = self.tail
-        self.tail.prev = self.head
+def invert_tree(root):
+    if root is None:
+        return None
+    root.left, root.right = root.right, root.left   # swap the children
+    invert_tree(root.left)                           # recurse into both sides
+    invert_tree(root.right)
+    return root''',
+         complexity="Time O(n), space O(h) recursion.",
+         pitfalls="Swapping after recursing works too, but be consistent; forgetting the None base case.",
+         example="Inverting the tree 4 -> (2, 7) yields 4 -> (7, 2)."),
+    dict(cat="dsa", title="Symmetric Tree",
+         answer="Check whether a binary tree is a MIRROR image of itself around its center. Compare two subtrees in mirrored fashion: the left subtree's left child must match the right subtree's right child, and the left's right must match the right's left. Recurse on those mirrored pairs.",
+         tags=["symmetric-tree","binary-tree","recursion","dsa"],
+         code='''# Is the tree a mirror image of itself around its center?
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
 
-    def _remove(self, node):
-        node.prev.next = node.next
-        node.next.prev = node.prev
+def is_symmetric(root):
+    def mirror(a, b):
+        if a is None and b is None:
+            return True                 # both empty -> symmetric here
+        if a is None or b is None or a.val != b.val:
+            return False                # one empty or values differ
+        # outer pair and inner pair must both mirror
+        return mirror(a.left, b.right) and mirror(a.right, b.left)
+    return root is None or mirror(root.left, root.right)''',
+         complexity="Time O(n), space O(h) recursion.",
+         pitfalls="Comparing left-to-left instead of left-to-right (that checks equality, not mirroring).",
+         example="The tree [1, 2, 2, 3, 4, 4, 3] is symmetric -> True."),
+    dict(cat="dsa", title="Same Tree",
+         answer="Determine whether two binary trees are structurally identical AND have equal node values. Recurse in lockstep: both nodes null means equal here; if exactly one is null or the values differ they're not the same; otherwise recurse on both left and right children.",
+         tags=["same-tree","binary-tree","recursion","dsa"],
+         code='''# Are two binary trees structurally identical with equal values?
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
 
-    def _add_front(self, node):          # just after head = most recent
-        node.next = self.head.next
-        node.prev = self.head
-        self.head.next.prev = node
-        self.head.next = node
+def is_same_tree(p, q):
+    if p is None and q is None:
+        return True                     # both empty
+    if p is None or q is None or p.val != q.val:
+        return False                    # structure or value mismatch
+    return is_same_tree(p.left, q.left) and is_same_tree(p.right, q.right)''',
+         complexity="Time O(n), space O(h) recursion.",
+         pitfalls="Only comparing values without checking structure (null vs node); short-circuit the null cases first.",
+         example="Trees [1,2,3] and [1,2,3] -> True; [1,2] and [1,null,2] -> False."),
+    dict(cat="dsa", title="Balanced Binary Tree",
+         answer="Check that a tree is height-balanced: for every node, the heights of its two subtrees differ by at most 1. Compute heights bottom-up, but return a sentinel -1 the moment any subtree is unbalanced so the whole recursion short-circuits — giving O(n) instead of the naive O(n^2).",
+         tags=["balanced-tree","binary-tree","dfs","recursion","dsa"],
+         code='''# Is the tree height-balanced (subtree heights differ by <=1 everywhere)?
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
 
-    def get(self, key):
-        if key not in self.map:
-            return -1
-        node = self.map[key]
-        self._remove(node); self._add_front(node)   # mark recently used
-        return node.val
-
-    def put(self, key, value):
-        if key in self.map:
-            self._remove(self.map[key])
-        node = Node(key, value)
-        self.map[key] = node
-        self._add_front(node)
-        if len(self.map) > self.cap:                 # over capacity -> evict LRU
-            lru = self.tail.prev
-            self._remove(lru)
-            del self.map[lru.key]''',
-         complexity="Time O(1) per get/put, space O(capacity).",
-         pitfalls="Forgetting to move a node to the front on get; not deleting the evicted key from the map.",
-         example="cap=2: put(1,1), put(2,2), get(1)->1, put(3,3) evicts key 2, get(2)->-1."),
-    dict(cat="dsa", title="Min Stack (O(1) getMin)",
-         answer="A stack that supports push, pop, top, and getMin all in O(1). Keep a SECOND stack that tracks the running minimum: on each push, store min(new value, current min) alongside the main stack, so the top of the min-stack is always the minimum of the current contents. Pop both together.",
-         tags=["min-stack","stack","design","dsa"],
-         code='''# Stack with push/pop/top/getMin all O(1) via a second min-tracking stack.
-class MinStack:
-    def __init__(self):
-        self.stack = []
-        self.mins = []          # mins[-1] = minimum of the whole stack
-
-    def push(self, x):
-        self.stack.append(x)
-        # carry the running minimum forward
-        self.mins.append(x if not self.mins else min(x, self.mins[-1]))
-
-    def pop(self):
-        self.mins.pop()
-        return self.stack.pop()
-
-    def top(self):
-        return self.stack[-1]
-
-    def get_min(self):
-        return self.mins[-1]''',
-         complexity="Time O(1) per operation, space O(n).",
-         pitfalls="Storing only the single global min (breaks after popping it); forgetting to pop the min-stack in lockstep.",
-         example="push(-2), push(0), push(-3): get_min()->-3; pop(); get_min()->-2."),
-    dict(cat="dsa", title="Implement a Trie (prefix tree)",
-         answer="A tree for storing strings by shared prefixes, supporting insert, exact-word search, and prefix search. Each node holds a map of child characters and a boolean marking the end of a complete word. Insert/search walk character by character; starts_with just checks the prefix path exists. Great for autocomplete and dictionary lookups.",
-         tags=["trie","prefix-tree","string","design","dsa"],
-         code='''# Prefix tree supporting insert, exact search, and prefix search.
-class TrieNode:
-    def __init__(self):
-        self.children = {}      # char -> TrieNode
-        self.is_end = False     # True if a word ends here
-
-class Trie:
-    def __init__(self):
-        self.root = TrieNode()
-
-    def insert(self, word):
-        node = self.root
-        for ch in word:
-            if ch not in node.children:
-                node.children[ch] = TrieNode()
-            node = node.children[ch]
-        node.is_end = True      # mark the end of a full word
-
-    def _find(self, prefix):
-        node = self.root
-        for ch in prefix:
-            if ch not in node.children:
-                return None
-            node = node.children[ch]
-        return node
-
-    def search(self, word):
-        node = self._find(word)
-        return node is not None and node.is_end   # must be a complete word
-
-    def starts_with(self, prefix):
-        return self._find(prefix) is not None     # any word with this prefix''',
-         complexity="Time O(len(word)) per op, space O(total chars inserted).",
-         pitfalls="Confusing search (needs is_end) with starts_with (path exists); not handling the empty string.",
-         example="insert('apple'): search('apple')->True, search('app')->False, starts_with('app')->True."),
+def is_balanced(root):
+    def height(node):
+        if node is None:
+            return 0
+        lh = height(node.left)
+        if lh == -1:
+            return -1                   # left subtree already unbalanced
+        rh = height(node.right)
+        if rh == -1:
+            return -1                   # right subtree already unbalanced
+        if abs(lh - rh) > 1:
+            return -1                   # this node is unbalanced
+        return 1 + max(lh, rh)          # normal height
+    return height(root) != -1''',
+         complexity="Time O(n), space O(h) recursion.",
+         pitfalls="Recomputing height at every node (O(n^2)); use the -1 sentinel to short-circuit.",
+         example="A full tree of 7 nodes is balanced -> True; a right-leaning chain of 3 nodes -> False."),
 ]
 
 
