@@ -16,214 +16,76 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Counting Sort",
-         answer="Sort non-negative integers in a small range WITHOUT comparisons. Count how many times each value appears, then emit each value that many times in order. Linear when the value range is comparable to n — it beats the O(n log n) comparison-sort lower bound by exploiting the bounded key range.",
-         tags=["counting-sort","sorting","non-comparison","dsa"],
-         code='''# Sort non-negative integers by counting occurrences (no comparisons).
-def counting_sort(a):
-    if not a:
-        return a
-    max_val = max(a)
-    counts = [0] * (max_val + 1)       # counts[v] = how many times v appears
-    for v in a:
-        counts[v] += 1
-    result = []
-    for v in range(max_val + 1):
-        result.extend([v] * counts[v]) # emit each value counts[v] times
-    return result''',
-         complexity="Time O(n + k) where k is the value range; space O(k).",
-         pitfalls="Huge k wastes memory (range must be small); doesn't handle negatives without an offset.",
-         example="counting_sort([3,1,3,0,2,1]) -> [0,1,1,2,3,3]."),
-    dict(cat="dsa", title="Rotate Array by k (reversal trick)",
-         answer="Rotate an array to the RIGHT by k positions in place. The elegant trick: reverse the whole array, then reverse the first k elements, then reverse the remaining n-k. This lands every element in its rotated position with O(1) extra space. Remember k %= n so k larger than the length wraps.",
-         tags=["rotate-array","reversal","in-place","array","dsa"],
-         code='''# Rotate an array to the right by k steps, in place, using reversals.
-def rotate(nums, k):
-    n = len(nums)
-    k %= n                              # k larger than n just wraps around
-    def reverse(lo, hi):
-        while lo < hi:
-            nums[lo], nums[hi] = nums[hi], nums[lo]
-            lo += 1; hi -= 1
-    reverse(0, n - 1)                   # reverse the whole array
-    reverse(0, k - 1)                   # reverse the first k elements
-    reverse(k, n - 1)                   # reverse the remaining n-k
-    return nums''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Forgetting k %= n (index error when k >= n); off-by-one in the sub-range reversals.",
-         example="rotate([1,2,3,4,5,6,7], 3) -> [5,6,7,1,2,3,4]."),
-    dict(cat="dsa", title="Binary Search Lower Bound (bisect_left)",
-         answer="Find the LEFTMOST index at which a target could be inserted to keep the array sorted — i.e. the first element not less than target. This is the building block for counting occurrences, range queries, and 'first/last position' problems. Keep hi exclusive and move hi=mid (not mid-1) so you don't skip the answer.",
-         tags=["binary-search","lower-bound","bisect","array","dsa"],
-         code='''# Leftmost index where target could be inserted to keep 'a' sorted.
-def lower_bound(a, target):
-    lo, hi = 0, len(a)                  # hi is exclusive
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if a[mid] < target:
-            lo = mid + 1                # target must be to the right
-        else:
-            hi = mid                    # mid could still be the answer; keep it
-    return lo''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Using hi=mid-1 (skips the boundary); making hi inclusive (off-by-one).",
-         example="lower_bound([1,2,2,2,3], 2) -> 1  (first index of a 2)."),
-    dict(cat="dsa", title="Spiral Matrix",
-         answer="Return all elements of an m×n matrix in clockwise SPIRAL order. Keep four boundaries (top, bottom, left, right); walk the top row left-to-right, the right column top-to-bottom, the bottom row right-to-left, the left column bottom-to-top, shrinking the boundary after each pass. Guard the last two passes so a single remaining row/column isn't double-visited.",
-         tags=["spiral-matrix","matrix","simulation","dsa"],
-         code='''# Return all elements of a matrix in clockwise spiral order.
-def spiral_order(matrix):
-    if not matrix:
+    dict(cat="ml_system_design", title="Design a News Feed Ranking system",
+         answer="Rank the posts in a user's feed to maximize meaningful long-term engagement. (1) CLARIFY & SCALE: objective is long-term engagement (not just clicks); billions of users, thousands of candidate posts per request, <200ms, fully personalized. (2) DATA & LABELS: implicit-feedback logs — impressions, clicks, likes, comments, shares, dwell time; hides/reports are strong negatives; build (user, post, context) -> engagement labels, and correct for position/exposure bias. (3) FEATURES: user (interests, past engagement, demographics), post/author (topic, age, media type, author affinity), user-author interaction history, context (time, device). (4) MODEL: two stages — a lightweight candidate GENERATOR (two-tower embeddings + approximate-nearest-neighbour retrieval) narrows thousands to hundreds, then a heavier RANKER (gradient-boosted trees or a deep multi-task net) predicts P(like)/P(comment)/P(share) and blends them. (5) TRAINING/EVAL: per-objective AUC and NDCG offline; calibrate probabilities; guard against feedback loops. (6) SERVING/MONITORING/AB: real-time feature store, log everything, A/B on north-star metrics (sessions, retention), monitor drift and integrity so you don't amplify clickbait.",
+         tags=["news-feed","ranking","recommendation","two-tower","ml-system-design"],
+         example="A feed system fetches ~500 candidates with a two-tower retrieval model, scores each for like/comment/share with a multi-task ranker, blends the scores, then re-ranks for diversity so you don't see five posts from one author."),
+    dict(cat="ml_system_design", title="Design a Search Ranking system",
+         answer="Rank documents for a text query by relevance. (1) CLARIFY & SCALE: return the most relevant results high on the page; billions of docs, tens-of-ms budget, judged by relevance + engagement. (2) DATA & LABELS: graded human relevance judgments (0-4) plus click logs; clicks are position/presentation biased, so debias or use pairwise preferences. (3) FEATURES: query (length, intent, entities), document (freshness, authority/PageRank, quality), query-document match (BM25, semantic-embedding similarity, exact/phrase match), user/context (location, personalization). (4) MODEL: multi-stage — cheap retrieval (inverted index + BM25, or ANN over embeddings) builds a candidate set, then LEARNING-TO-RANK (LambdaMART / GBTs, or a neural cross-encoder) reorders the top-k. (5) TRAINING/EVAL: a ranking loss; evaluate with NDCG, MRR, MAP offline. (6) SERVING/MONITORING/AB: latency-tiered (fast recall, slower precise re-rank), cache popular queries, A/B on click-through and query success, watch for relevance regressions.",
+         tags=["search-ranking","learning-to-rank","information-retrieval","ndcg","ml-system-design"],
+         example="For 'best running shoes', ~1000 docs are pulled by BM25+embedding recall, then LambdaMART re-ranks the top 100 by freshness/authority/semantic match; NDCG@10 tracks quality offline while CTR and query-reformulation rate track it online."),
+    dict(cat="ml_system_design", title="Design an Ad Click-Through-Rate (CTR) prediction system",
+         answer="Predict the probability a user clicks an ad so ads can be ranked by expected value. (1) CLARIFY & SCALE: goal is a well-CALIBRATED P(click) used in bid = P(click) x value; massive scale, <10ms, extreme class imbalance (clicks are rare). (2) DATA & LABELS: impression logs labeled clicked/not; huge, sparse, high-cardinality categoricals; handle delayed feedback and imbalance. (3) FEATURES: user (history, demographics), ad (advertiser, category, creative), context (page, device, time), and crucial CROSS features (user x ad-category). (4) MODEL: logistic regression with feature hashing was classic; now factorization machines / Wide & Deep / DeepFM capture feature interactions with embeddings for high-cardinality IDs. (5) TRAINING/EVAL: log-loss and AUC, but CALIBRATION matters most (predicted CTR must match actual) — check calibration plots; retrain often since data drifts fast. (6) SERVING/MONITORING/AB: streaming/online learning, feature store, monitor calibration drift and revenue; A/B on revenue and long-term experience, and cap ad load.",
+         tags=["ad-ctr","calibration","deepfm","wide-and-deep","ml-system-design"],
+         example="A DeepFM model embeds advertiser and query-category IDs and outputs 0.03; multiplied by the bid it sets the ad's rank. Nightly calibration checks catch it if predicted 3% but actual is 5% (bids systematically too low)."),
+    dict(cat="ml_system_design", title="Design a Video Recommendation system (YouTube-style)",
+         answer="Recommend the next videos to maximize long-term satisfaction/watch time. (1) CLARIFY & SCALE: optimize expected WATCH TIME/satisfaction, not raw clicks (avoid clickbait); billions of videos and users, fresh content, cold start. (2) DATA & LABELS: watch logs — impressions, clicks, watch duration, completion, likes, 'not interested'; use watch time as a weighted label. (3) FEATURES: user watch history (a sequence of video embeddings), video (topic, channel, age, length), context (device, time), demographics. (4) MODEL: two stages — a candidate GENERATION network learns user & video embeddings and retrieves hundreds via ANN from millions, then a RANKING network predicts expected watch time per candidate with rich features. (5) TRAINING/EVAL: weighted logistic/regression on watch time; offline held-out AUC and top-k recall; beware feedback loops narrowing interests. (6) SERVING/MONITORING/AB: continuously refreshed nearest-neighbour index, A/B on watch time, retention and diversity, add EXPLORATION for fresh/cold-start content, monitor for filter bubbles.",
+         tags=["video-recommendation","watch-time","candidate-generation","exploration","ml-system-design"],
+         example="A candidate generator turns your watch history into an embedding and retrieves ~500 videos via ANN, then a ranker orders them by predicted watch time; exploration mixes in a few new videos so recommendations don't stagnate."),
+    dict(cat="ml_system_design", title="Design a Spam / Abuse Detection system",
+         answer="Classify content/accounts as spam/abuse and act on them. (1) CLARIFY & SCALE: high recall on spam while keeping false positives low (don't punish real users); ADVERSARIAL (attackers adapt), high volume, low latency. (2) DATA & LABELS: user reports, human moderation, known campaigns; labels are noisy and delayed; positive class is rare. (3) FEATURES: content (text/URL/image signals), behavioural (send rate, account age, IP/device reputation, connection graph), velocity/anomaly features. (4) MODEL: gradient-boosted trees or neural nets, combined with RULES for known patterns and GRAPH features to catch coordinated rings; anomaly detection for novel attacks. (5) TRAINING/EVAL: precision/recall at chosen thresholds, PR-AUC (imbalance), cost-sensitive (false-positive vs false-negative costs differ); retrain often as adversaries evolve. (6) SERVING/MONITORING/AB: real-time scoring plus async deeper checks, human-in-the-loop for borderline, appeals feed back as labels, monitor evasion/drift; tiered enforcement (rate-limit -> challenge -> ban).",
+         tags=["spam-detection","abuse","adversarial","imbalance","ml-system-design"],
+         example="An email provider scores each message: a GBT plus reputation and velocity features flags a burst of identical links from a young account — high-confidence spam is quarantined, borderline gets a CAPTCHA, and 'report spam' clicks become fresh labels."),
+    dict(cat="ml_system_design", title="Design a Near-Duplicate Detection system",
+         answer="Detect items (documents, images, listings) that are near — not exact — duplicates at scale. (1) CLARIFY & SCALE: find 'almost the same' pairs among billions cheaply; used for dedup, plagiarism, spam clustering. (2) DATA & LABELS: pairs labeled duplicate/not (human review or known reposts); define the similarity threshold. (3) REPRESENTATION: shingles/n-grams for text, perceptual hashes for images, or learned embeddings — the goal is a compact fingerprint. (4) METHOD: Locality-Sensitive Hashing — MinHash for Jaccard set similarity, or SimHash for cosine — buckets similar items so you only compare candidates in the same bucket instead of all N^2 pairs; embeddings + ANN is the modern variant. (5) EVAL: precision/recall of duplicate pairs at the threshold; tune the number of hash bands vs buckets for the recall/precision trade-off. (6) SERVING/MONITORING/AB: index fingerprints, query new items against buckets in near-real-time, monitor false merges, allow human override.",
+         tags=["near-duplicate","lsh","minhash","simhash","ml-system-design"],
+         example="To dedup near-identical news articles, each article's MinHash signature is banded into buckets; only articles sharing a bucket are compared — turning an impossible N^2 comparison into near-linear work — and pairs above 0.8 Jaccard are merged."),
+    dict(cat="glossary", title="Out-of-distribution (OOD)",
+         answer="Data at inference time that differs from the training distribution — new classes, shifted feature ranges, or a different domain. Models are unreliable and often OVERCONFIDENT on OOD inputs, so detecting them (via confidence, density estimates, or dedicated OOD detectors) matters for safety. It's a systematic mismatch, distinct from random noise.",
+         tags=["out-of-distribution","ood","robustness","safety"],
+         example="A model trained only on daytime photos sees a night image at inference — that's OOD, and it may confidently give a wrong label unless an OOD detector flags it for a human."),
+    dict(cat="glossary", title="Learning-rate warmup",
+         answer="Starting training with a SMALL learning rate and ramping it up over the first few hundred/thousand steps before the normal schedule begins. Early on the weights are random and gradients noisy, so a large LR can destabilize training (especially for Transformers and large-batch runs); warmup lets the statistics settle first, then full-speed learning proceeds.",
+         tags=["learning-rate-warmup","optimization","training","transformer"],
+         example="Training a Transformer, the LR climbs linearly from 0 to its peak over the first 4000 steps then decays — skipping warmup often makes the loss diverge early."),
+    dict(cat="glossary", title="Exploding gradient",
+         answer="When gradients grow exponentially large during backpropagation (common in deep or recurrent nets), causing huge weight updates, NaNs, and divergence — the opposite of vanishing gradients. Fixes: GRADIENT CLIPPING (cap the norm), careful initialization, normalization layers, and smaller learning rates.",
+         tags=["exploding-gradient","backpropagation","gradient-clipping","rnn"],
+         example="An RNN on long sequences sees its loss suddenly jump to NaN; clipping the gradient norm to 1.0 stabilizes training."),
+    dict(cat="glossary", title="Gradient accumulation",
+         answer="A trick to simulate a LARGE batch size that won't fit in memory: run several small mini-batches, SUM (accumulate) their gradients, and only update the weights after N of them — as if you'd used a batch N times larger. It trades extra compute time for reduced memory.",
+         tags=["gradient-accumulation","training","memory","large-batch"],
+         example="You want an effective batch of 256 but only 32 fits on the GPU; accumulate gradients over 8 mini-batches of 32, then step once — mathematically like a batch of 256."),
+    dict(cat="glossary", title="Mixed-precision training",
+         answer="Training with a mix of 16-bit and 32-bit floating point: most operations run in fast, memory-light FP16/bfloat16 while a 32-bit master copy of the weights and a 'loss scale' preserve numerical stability. It roughly doubles throughput and halves memory on modern GPUs with little accuracy loss.",
+         tags=["mixed-precision","fp16","training","gpu","efficiency"],
+         example="Training a large model in FP16 on a GPU with tensor cores nearly doubles speed and fits a bigger batch, while loss scaling stops tiny gradients from underflowing to zero."),
+    dict(cat="conceptual", title="Why can a model score great offline but fail once deployed online?",
+         answer="Offline metrics measure the past under assumptions that break in production: (a) TRAINING-SERVING SKEW — features are computed differently offline vs online; (b) FEEDBACK LOOPS — the model changes user behaviour and thus future data (a recommender that only shows popular items makes them more popular); (c) DISTRIBUTION SHIFT — the world moves on from your frozen test set; (d) PROXY-METRIC MISMATCH — you optimized AUC but the business cares about retention; (e) position/selection BIAS baked into logged data. That's why online A/B tests on the true north-star metric, not offline scores alone, decide launches.",
+         tags=["offline-online-gap","ab-testing","feedback-loop","distribution-shift","why"],
+         example="A feed ranker with higher offline click-AUC ships and click-through rises, but time-spent and 7-day retention fall — it learned to surface clickbait, and only the A/B test on retention caught it."),
+    dict(cat="conceptual", title="Why do we need a separate validation set AND a test set?",
+         answer="You use the VALIDATION set repeatedly to tune hyperparameters and choose models, so information from it slowly LEAKS into your decisions — you implicitly overfit to it. The TEST set is touched only once, at the very end, to get an HONEST estimate of generalization on data that influenced no choice. Reusing the test set for tuning inflates your reported score. Train = learn weights; validation = tune/choose; test = final unbiased report.",
+         tags=["validation-set","test-set","overfitting","generalization","why"],
+         example="You try 50 hyperparameter settings and pick the best on validation (0.92); the untouched test set reads 0.88 — that 0.04 gap is the optimism you'd have wrongly reported if you'd tuned on the test set."),
+    dict(cat="dsa", title="Merge Intervals",
+         answer="Merge all overlapping intervals into a minimal set of non-overlapping ones. Sort by start time, then sweep left to right: if the next interval starts at or before the end of the last merged one, they overlap — extend the last one's end; otherwise it's disjoint, so start a new interval. Sorting dominates the cost.",
+         tags=["merge-intervals","sorting","intervals","greedy","dsa"],
+         code='''# Merge all overlapping intervals into non-overlapping ones.
+def merge_intervals(intervals):
+    if not intervals:
         return []
-    result = []
-    top, bottom = 0, len(matrix) - 1
-    left, right = 0, len(matrix[0]) - 1
-    while top <= bottom and left <= right:
-        for c in range(left, right + 1):
-            result.append(matrix[top][c])        # top row, left -> right
-        top += 1
-        for r in range(top, bottom + 1):
-            result.append(matrix[r][right])      # right col, top -> bottom
-        right -= 1
-        if top <= bottom:                        # guard against a single row
-            for c in range(right, left - 1, -1):
-                result.append(matrix[bottom][c]) # bottom row, right -> left
-            bottom -= 1
-        if left <= right:                        # guard against a single col
-            for r in range(bottom, top - 1, -1):
-                result.append(matrix[r][left])   # left col, bottom -> top
-            left += 1
-    return result''',
-         complexity="Time O(m*n), space O(1) beyond the output.",
-         pitfalls="Double-visiting the middle row/column (missing the two guards); mixing up the shrink order.",
-         example="spiral_order([[1,2,3],[4,5,6],[7,8,9]]) -> [1,2,3,6,9,8,7,4,5]."),
-    dict(cat="dsa", title="Set Matrix Zeroes (O(1) space)",
-         answer="If any cell is 0, set its whole row and column to 0 — in place, without an extra matrix. Trick: use the first row and first column themselves as the marker storage for which rows/columns must be zeroed; handle the first row/column separately with two boolean flags to avoid clobbering the markers.",
-         tags=["set-matrix-zeroes","matrix","in-place","dsa"],
-         code='''# If a cell is 0, zero its entire row and column, in place (O(1) extra).
-def set_zeroes(matrix):
-    rows, cols = len(matrix), len(matrix[0])
-    first_row_zero = any(matrix[0][c] == 0 for c in range(cols))
-    first_col_zero = any(matrix[r][0] == 0 for r in range(rows))
-    for r in range(1, rows):                 # use row 0 / col 0 as markers
-        for c in range(1, cols):
-            if matrix[r][c] == 0:
-                matrix[r][0] = 0             # mark this row
-                matrix[0][c] = 0             # mark this column
-    for r in range(1, rows):
-        for c in range(1, cols):
-            if matrix[r][0] == 0 or matrix[0][c] == 0:
-                matrix[r][c] = 0             # zero out any marked cell
-    if first_row_zero:
-        for c in range(cols):
-            matrix[0][c] = 0
-    if first_col_zero:
-        for r in range(rows):
-            matrix[r][0] = 0
-    return matrix''',
-         complexity="Time O(m*n), space O(1).",
-         pitfalls="Overwriting markers before you use them (do the first row/col last); forgetting the two edge flags.",
-         example="set_zeroes([[1,1,1],[1,0,1],[1,1,1]]) -> [[1,0,1],[0,0,0],[1,0,1]]."),
-    dict(cat="dsa", title="Merge k Sorted Lists (min-heap)",
-         answer="Merge k already-sorted lists into one sorted list. Push the first element of each list into a min-heap tagged with (value, list index, element index); repeatedly pop the smallest and push the next element from the SAME list. The heap always holds at most k items, so each of the N total elements costs O(log k).",
-         tags=["merge-k-sorted","heap","priority-queue","merge","dsa"],
-         code='''# Merge k sorted lists into one sorted list using a min-heap.
-import heapq
-def merge_k_sorted(lists):
-    heap = []
-    for i, lst in enumerate(lists):
-        if lst:
-            # (value, list index, element index) — indices break ties safely
-            heapq.heappush(heap, (lst[0], i, 0))
-    result = []
-    while heap:
-        val, i, j = heapq.heappop(heap)
-        result.append(val)
-        if j + 1 < len(lists[i]):
-            heapq.heappush(heap, (lists[i][j + 1], i, j + 1))  # next from list i
-    return result''',
-         complexity="Time O(N log k) for N total elements, space O(k).",
-         pitfalls="Comparing raw objects that aren't orderable (include the index tiebreaker); pushing all N at once (O(N) heap instead of O(k)).",
-         example="merge_k_sorted([[1,4,5],[1,3,4],[2,6]]) -> [1,1,2,3,4,4,5,6]."),
-    dict(cat="ml_coding", title="Linear Regression via Gradient Descent",
-         answer="Fit y = X·w + b by minimizing mean squared error with batch gradient descent. Each step computes predictions, the residual error, and the MSE gradients w.r.t. w and b, then nudges the parameters downhill by the learning rate. (numpy — shown for study; validated by ast.parse, not run here.)",
-         tags=["linear-regression","gradient-descent","numpy","ml-coding","regression"],
-         code='''# Fit y = X.w + b by batch gradient descent (numpy).
-import numpy as np
-def linear_regression_gd(X, y, lr=0.01, epochs=1000):
-    n, d = X.shape
-    w = np.zeros(d)                     # weights start at zero
-    b = 0.0                             # bias
-    for _ in range(epochs):
-        y_pred = X.dot(w) + b           # forward prediction
-        error = y_pred - y              # residuals
-        grad_w = (2 / n) * X.T.dot(error)   # dMSE/dw
-        grad_b = (2 / n) * error.sum()      # dMSE/db
-        w -= lr * grad_w                # gradient-descent step on w
-        b -= lr * grad_b                # ... and on b
-    return w, b''',
-         complexity="Time O(epochs * n * d), space O(d).",
-         pitfalls="Learning rate too high (diverges) or too low (crawls); forgetting to scale features first.",
-         example="For X=[[1],[2],[3]], y=[2,4,6], training converges to w≈2, b≈0 — the line y=2x."),
-    dict(cat="ml_coding", title="Softmax (numerically stable)",
-         answer="Turn a vector of raw scores (logits) into a probability distribution: exponentiate each and normalize so they sum to 1. The key trick is subtracting the max logit first — mathematically identical but it prevents exp() from overflowing on large inputs. (numpy — validated by ast.parse.)",
-         tags=["softmax","numpy","ml-coding","classification","numerical-stability"],
-         code='''# Convert a vector of scores into a probability distribution.
-import numpy as np
-def softmax(logits):
-    z = logits - np.max(logits)         # subtract max for numerical stability
-    exp = np.exp(z)                     # exponentiate
-    return exp / exp.sum()              # normalize so probabilities sum to 1''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Skipping the max-subtraction (overflow on big logits); applying it across the wrong axis for a batch.",
-         example="softmax([2.0, 1.0, 0.1]) -> roughly [0.66, 0.24, 0.10], summing to 1."),
-    dict(cat="ml_coding", title="Cosine Similarity (from scratch)",
-         answer="Measure how similar two vectors' DIRECTIONS are, ignoring their magnitudes: the dot product divided by the product of their lengths, giving a value in [-1, 1]. 1 = same direction, 0 = orthogonal, -1 = opposite. It's the standard similarity for text/embedding vectors.",
-         tags=["cosine-similarity","embeddings","vectors","ml-coding"],
-         code='''# Cosine similarity: cosine of the angle between two vectors, in [-1, 1].
-import math
-def cosine_similarity(a, b):
-    dot = sum(x * y for x, y in zip(a, b))          # dot product
-    norm_a = math.sqrt(sum(x * x for x in a))       # length of a
-    norm_b = math.sqrt(sum(y * y for y in b))       # length of b
-    if norm_a == 0 or norm_b == 0:
-        return 0.0                                  # avoid divide-by-zero
-    return dot / (norm_a * norm_b)''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Dividing by a zero-norm vector; confusing it with Euclidean distance (cosine ignores magnitude).",
-         example="cosine_similarity([1,0,1],[1,1,0]) -> 0.5  (a 60-degree angle)."),
-    dict(cat="ml_coding", title="One-Hot Encoding (from scratch)",
-         answer="Convert categorical labels into binary vectors so a model can use them: each category becomes a column, and a sample's vector has a single 1 in its category's column and 0 elsewhere. Avoids implying a false ordering that integer-encoding would (e.g. cat=0 < dog=1).",
-         tags=["one-hot","encoding","preprocessing","categorical","ml-coding"],
-         code='''# Turn a list of category labels into one-hot vectors.
-def one_hot_encode(labels):
-    classes = sorted(set(labels))       # a stable, ordered class list
-    index = {c: i for i, c in enumerate(classes)}   # class -> column number
-    vectors = []
-    for lab in labels:
-        row = [0] * len(classes)
-        row[index[lab]] = 1             # a single 1 in this class's column
-        vectors.append(row)
-    return vectors''',
-         complexity="Time O(n * k), space O(n * k) for k classes.",
-         pitfalls="Unseen categories at inference time (fix the class list at train time); exploding width with high-cardinality features.",
-         example="one_hot_encode(['cat','dog','cat']) -> [[1,0],[0,1],[1,0]]."),
-    dict(cat="cs_fundamentals", title="Paging & virtual memory",
-         answer="Virtual memory gives each process its own large, contiguous address space mapped to physical RAM in fixed-size blocks called PAGES (e.g. 4 KB). The OS keeps a page table mapping virtual pages to physical frames, and the MMU translates addresses on the fly. Pages not in RAM live on disk and are fetched on a 'page fault'. Benefits: process isolation, more apparent memory than physical RAM, and simpler allocation.",
-         tags=["paging","virtual-memory","os","memory","cs"],
-         example="A program reads address 0x4000; the MMU looks up its page, finds it on disk, triggers a page fault, and the OS loads that 4 KB page into a free frame before the instruction resumes."),
-    dict(cat="cs_fundamentals", title="TLS / HTTPS handshake",
-         answer="HTTPS is HTTP over TLS. In the handshake the client and server negotiate a cipher, the server proves its identity with a CERTIFICATE signed by a trusted Certificate Authority, and they establish a shared symmetric session key — typically via ephemeral Diffie-Hellman for forward secrecy. After that, all traffic is encrypted and integrity-protected with fast symmetric crypto.",
-         tags=["tls","https","security","encryption","cs"],
-         example="Visiting https://bank.com, your browser verifies the bank's certificate chain up to a trusted root CA, both sides derive a session key, and the padlock shows the channel is encrypted."),
-    dict(cat="cs_fundamentals", title="DNS resolution",
-         answer="The Domain Name System translates human names (example.com) into IP addresses. A resolver walks a hierarchy: root servers point to the .com TLD servers, which point to the domain's authoritative name server, which returns the IP. Results are CACHED at each level with a TTL to cut latency. It's essentially the internet's phone book.",
-         tags=["dns","networking","resolution","caching","cs"],
-         example="Typing example.com, your resolver walks root -> .com -> example.com's authoritative server, gets 93.184.216.34, caches it, and the browser connects."),
-    dict(cat="glossary", title="Batch vs online learning",
-         answer="Two training regimes. BATCH (offline) learning trains on the whole fixed dataset at once and redeploys periodically — simple and stable but stale between retrains. ONLINE learning updates the model incrementally as each new example arrives — it adapts to changing data (concept drift) and handles streams, but is noisier and harder to debug. Mini-batch is the common middle ground.",
-         tags=["batch-learning","online-learning","training","concept-drift"],
-         example="A spam filter retrained nightly on all email is batch; one that updates the instant a user marks 'spam' is online, adapting immediately to new patterns."),
+    intervals.sort(key=lambda x: x[0])   # sort by start time
+    merged = [intervals[0][:]]
+    for start, end in intervals[1:]:
+        if start <= merged[-1][1]:        # overlaps the last merged interval
+            merged[-1][1] = max(merged[-1][1], end)  # extend its end
+        else:
+            merged.append([start, end])   # disjoint -> start a new interval
+    return merged''',
+         complexity="Time O(n log n) for the sort, space O(n) for the output.",
+         pitfalls="Forgetting to sort first; using max() (not just end) when extending — a nested interval must not shrink the end.",
+         example="merge_intervals([[1,3],[2,6],[8,10],[15,18]]) -> [[1,6],[8,10],[15,18]]."),
 ]
 
 
