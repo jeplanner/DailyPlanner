@@ -16,137 +16,202 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Majority Element (Boyer-Moore voting)",
-         answer="Find the element appearing more than n/2 times. Boyer-Moore voting keeps a candidate and a count: when count hits 0, adopt the current element as the candidate; then increment if it matches, decrement if not. The majority element survives because it outnumbers all others combined. O(n) time, O(1) space.",
-         tags=["majority-element","boyer-moore","voting","array","dsa"],
-         code='''# The element appearing more than n/2 times (assumed to exist).
-def majority_element(nums):
-    candidate = None
+    dict(cat="dsa", title="Number of Islands (DFS flood-fill)",
+         answer="Count connected groups of '1' (land) in a 2-D grid of '1'/'0'. Scan every cell; when you hit unvisited land, increment the count and DFS/flood-fill its whole landmass, sinking each visited cell to '0' so it isn't counted again. Explores 4-directional neighbours.",
+         tags=["number-of-islands","dfs","grid","flood-fill","graph","dsa"],
+         code='''# Count connected groups of '1' (land) in a grid via DFS flood-fill.
+def num_islands(grid):
+    if not grid:
+        return 0
+    rows, cols = len(grid), len(grid[0])
+    def sink(r, c):
+        if r < 0 or r >= rows or c < 0 or c >= cols or grid[r][c] != '1':
+            return                # off-grid or water/visited -> stop
+        grid[r][c] = '0'          # mark visited by sinking the land
+        sink(r+1, c); sink(r-1, c); sink(r, c+1); sink(r, c-1)  # 4 neighbours
     count = 0
-    for x in nums:
-        if count == 0:
-            candidate = x         # adopt a new candidate when the count is 0
-        count += 1 if x == candidate else -1   # vote for or against
-    return candidate''',
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] == '1':
+                count += 1        # a fresh island
+                sink(r, c)        # sink its whole landmass
+    return count''',
+         complexity="Time O(rows*cols), space O(rows*cols) worst-case recursion.",
+         pitfalls="Not marking cells visited (infinite loop / double count); mixing up row/col bounds.",
+         example="num_islands([['1','1','0'],['1','0','0'],['0','0','1']]) -> 2."),
+    dict(cat="dsa", title="Word Ladder (shortest transformation, BFS)",
+         answer="Find the length of the shortest chain from begin to end where each step changes ONE letter and every intermediate word is in the dictionary. BFS explores words level by level, so the first time you reach 'end' you've used the fewest steps. Remove words as you visit them to avoid revisiting.",
+         tags=["word-ladder","bfs","graph","shortest-path","dsa"],
+         code='''# Shortest transformation length from begin to end, one letter at a time.
+from collections import deque
+def ladder_length(begin, end, word_list):
+    words = set(word_list)            # O(1) membership tests
+    if end not in words:
+        return 0
+    queue = deque([(begin, 1)])       # (current word, steps taken so far)
+    while queue:
+        word, steps = queue.popleft()
+        if word == end:
+            return steps              # BFS guarantees this is shortest
+        for i in range(len(word)):
+            for ch in "abcdefghijklmnopqrstuvwxyz":
+                nxt = word[:i] + ch + word[i+1:]   # change one letter
+                if nxt in words:
+                    words.remove(nxt)              # mark visited
+                    queue.append((nxt, steps + 1))
+    return 0''',
+         complexity="Time O(N * L * 26) where N=words, L=word length; space O(N).",
+         pitfalls="Using DFS (won't give shortest); not marking visited (revisits explode).",
+         example="ladder_length('hit','cog',['hot','dot','dog','lot','log','cog']) -> 5."),
+    dict(cat="dsa", title="Binary Tree Zigzag Level-Order Traversal",
+         answer="Traverse a binary tree level by level, but ALTERNATE direction: left-to-right on the first level, right-to-left on the next, and so on. Standard BFS by levels; use a deque per level and append to the front when going right-to-left, then flip the direction each level.",
+         tags=["zigzag","bfs","binary-tree","level-order","dsa"],
+         code='''# Level-order traversal alternating left->right / right->left per level.
+from collections import deque
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def zigzag_level_order(root):
+    if not root:
+        return []
+    result = []
+    queue = deque([root])
+    left_to_right = True
+    while queue:
+        level = deque()
+        for _ in range(len(queue)):       # process exactly one level
+            node = queue.popleft()
+            if left_to_right:
+                level.append(node.val)      # normal order
+            else:
+                level.appendleft(node.val)  # reversed order
+            if node.left: queue.append(node.left)
+            if node.right: queue.append(node.right)
+        result.append(list(level))
+        left_to_right = not left_to_right   # flip direction each level
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Reversing the whole result at the end (wrong per-level flip); losing the level boundary (fix the for-loop count up front).",
+         example="Tree 3 -> (9, 20 -> (15, 7)) gives [[3],[20,9],[15,7]]."),
+    dict(cat="dsa", title="Decode Ways (DP)",
+         answer="Count how many ways a digit string can be decoded where 1->A, 2->B, ..., 26->Z. It's a Fibonacci-like DP: at each position you can take one digit (if not '0') or two digits (if they form 10..26). dp[i] = dp[i-1] (single) + dp[i-2] (pair). Track two rolling values for O(1) space.",
+         tags=["decode-ways","dynamic-programming","string","dp","dsa"],
+         code='''# Count ways to decode a digit string where 1->A ... 26->Z.
+def num_decodings(s):
+    if not s or s[0] == '0':
+        return 0                       # leading zero can't decode
+    prev, curr = 1, 1                  # dp[i-2], dp[i-1]
+    for i in range(1, len(s)):
+        cur = 0
+        if s[i] != '0':                # single-digit decode is valid
+            cur += curr
+        two = int(s[i-1:i+1])          # the two-digit number
+        if 10 <= two <= 26:            # valid pair 10..26
+            cur += prev
+        prev, curr = curr, cur
+    return curr''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Assumes a majority exists; if unsure, verify the candidate with a second pass.",
-         example="majority_element([2,2,1,1,1,2,2]) -> 2."),
-    dict(cat="dsa", title="Missing Number",
-         answer="An array holds n distinct numbers from 0..n with exactly one missing; find it. The sum of 0..n is n(n+1)/2; subtract the actual array sum to get the gap. (XOR also works and avoids overflow.) O(n) time, O(1) space.",
-         tags=["missing-number","math","array","dsa"],
-         code='''# The missing number from an array containing 0..n with one gap.
-def missing_number(nums):
-    n = len(nums)
-    expected = n * (n + 1) // 2    # sum of 0, 1, ..., n
-    return expected - sum(nums)    # the gap is exactly what's missing''',
+         pitfalls="Mishandling '0' (only valid as part of 10/20); off-by-one in the two-digit slice.",
+         example="num_decodings('226') -> 3  (2 2 6 | 22 6 | 2 26)."),
+    dict(cat="dsa", title="Unique Paths II (grid with obstacles)",
+         answer="Count paths from top-left to bottom-right moving only right or down, where some cells are obstacles (1) you can't enter. DP where dp[c] = paths from top + paths from left; an obstacle zeroes its cell. A single rolling row gives O(cols) space.",
+         tags=["unique-paths","dynamic-programming","grid","obstacles","dp","dsa"],
+         code='''# Count right/down paths top-left to bottom-right, avoiding obstacles (1).
+def unique_paths_with_obstacles(grid):
+    if not grid or grid[0][0] == 1:
+        return 0                       # blocked start -> no paths
+    cols = len(grid[0])
+    dp = [0] * cols
+    dp[0] = 1                          # one way to be at the start
+    for row in grid:
+        for c in range(cols):
+            if row[c] == 1:
+                dp[c] = 0              # no path through an obstacle
+            elif c > 0:
+                dp[c] += dp[c-1]       # from top (dp[c]) + from left (dp[c-1])
+    return dp[-1]''',
+         complexity="Time O(rows*cols), space O(cols).",
+         pitfalls="Forgetting to zero an obstacle cell; not handling a blocked start/end.",
+         example="unique_paths_with_obstacles([[0,0,0],[0,1,0],[0,0,0]]) -> 2."),
+    dict(cat="dsa", title="Maximal Square (DP)",
+         answer="Find the largest square containing only 1's in a binary matrix and return its area. DP where dp[r][c] = side length of the largest square whose bottom-right corner is (r,c). If the cell is 1, it's 1 + min of the top, left, and top-left neighbours (all three must support the square). Answer is best_side squared.",
+         tags=["maximal-square","dynamic-programming","matrix","dp","dsa"],
+         code='''# Area of the largest all-1's square in a binary matrix.
+def maximal_square(matrix):
+    if not matrix:
+        return 0
+    rows, cols = len(matrix), len(matrix[0])
+    dp = [[0] * (cols + 1) for _ in range(rows + 1)]   # padded with a 0 border
+    best = 0
+    for r in range(1, rows + 1):
+        for c in range(1, cols + 1):
+            if matrix[r-1][c-1] == 1:
+                # a square here is limited by its smallest neighbour + 1
+                dp[r][c] = min(dp[r-1][c], dp[r][c-1], dp[r-1][c-1]) + 1
+                best = max(best, dp[r][c])
+    return best * best''',
+         complexity="Time O(rows*cols), space O(rows*cols).",
+         pitfalls="Returning the side instead of the area; forgetting the min-of-three (any smaller neighbour caps the square).",
+         example="maximal_square([[1,0,1,0,0],[1,0,1,1,1],[1,1,1,1,1],[1,0,0,1,0]]) -> 4."),
+    dict(cat="dsa", title="House Robber II (circular street)",
+         answer="Max money robbing houses arranged in a CIRCLE where adjacent houses can't both be robbed (and the first and last are adjacent). Trick: the first and last can never both be taken, so run the linear house-robber twice — once excluding the last house, once excluding the first — and take the better result.",
+         tags=["house-robber","dynamic-programming","circular","dp","dsa"],
+         code='''# Max non-adjacent sum where houses form a circle (first & last adjacent).
+def rob_circular(nums):
+    if len(nums) == 1:
+        return nums[0]
+    def rob_line(houses):
+        prev, curr = 0, 0
+        for money in houses:
+            prev, curr = curr, max(curr, prev + money)  # skip vs take
+        return curr
+    # never rob both ends: try [0..n-2] and [1..n-1], keep the max
+    return max(rob_line(nums[:-1]), rob_line(nums[1:]))''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Integer overflow in low-level languages (use XOR instead); off-by-one on the range.",
-         example="missing_number([3,0,1]) -> 2."),
-    dict(cat="dsa", title="Move Zeroes",
-         answer="Move all zeros to the end of an array IN PLACE while keeping the order of the non-zeros. Use a 'write' pointer for the next non-zero slot: scan and pack each non-zero toward the front, then fill the rest with zeros. O(n) time, O(1) space.",
-         tags=["move-zeroes","two-pointers","array","in-place","dsa"],
-         code='''# Move all zeros to the end in place, preserving non-zero order.
-def move_zeroes(nums):
-    write = 0                      # next slot for a non-zero value
-    for x in nums:
-        if x != 0:
-            nums[write] = x        # pack non-zeros toward the front
-            write += 1
-    for i in range(write, len(nums)):
-        nums[i] = 0                # fill the remainder with zeros
-    return nums''',
+         pitfalls="Applying the linear solution directly (double-counts the wrap-around adjacency); mishandling the single-house case.",
+         example="rob_circular([2,3,2]) -> 3  (can't take both end 2's since they're adjacent)."),
+    dict(cat="dsa", title="Jump Game II (fewest jumps)",
+         answer="Given nums where nums[i] is the max jump length from index i, return the FEWEST jumps to reach the last index. Greedy BFS-by-levels: track the farthest index reachable in the current jump; when you reach the end of the current jump's range, you must jump, so increment the count and extend the reach to the farthest seen.",
+         tags=["jump-game","greedy","array","bfs","dsa"],
+         code='''# Fewest jumps to reach the last index; nums[i] = max jump from i.
+def jump(nums):
+    jumps = 0
+    current_end = 0        # boundary reachable with the jumps taken so far
+    farthest = 0           # farthest index seen while scanning this level
+    for i in range(len(nums) - 1):     # no need to jump from the last index
+        farthest = max(farthest, i + nums[i])
+        if i == current_end:           # reached the edge -> must jump now
+            jumps += 1
+            current_end = farthest      # new boundary is the farthest reach
+    return jumps''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Breaking the relative order of non-zeros; forgetting to zero-fill the tail.",
-         example="move_zeroes([0,1,0,3,12]) -> [1,3,12,0,0]."),
-    dict(cat="dsa", title="Implement a Queue using two Stacks",
-         answer="Build a FIFO queue from two LIFO stacks. Push onto an 'in' stack. To pop/peek, if the 'out' stack is empty, pour everything from 'in' into 'out' (which reverses the order), then take from 'out'. Each element is moved at most once, so operations are O(1) AMORTIZED.",
-         tags=["queue-using-stacks","stack","queue","design","dsa"],
-         code='''# A FIFO queue built from two LIFO stacks.
-class MyQueue:
-    def __init__(self):
-        self.in_stack = []
-        self.out_stack = []
-
-    def push(self, x):
-        self.in_stack.append(x)        # newest goes on the 'in' stack
-
-    def _move(self):
-        if not self.out_stack:         # only refill when 'out' is empty
-            while self.in_stack:
-                self.out_stack.append(self.in_stack.pop())  # reverses order
-
-    def pop(self):
-        self._move()
-        return self.out_stack.pop()    # oldest element is now on top of 'out'
-
-    def peek(self):
-        self._move()
-        return self.out_stack[-1]
-
-    def empty(self):
-        return not self.in_stack and not self.out_stack''',
-         complexity="Amortized O(1) per operation; space O(n).",
-         pitfalls="Refilling 'out' when it is not empty (breaks FIFO order); forgetting the amortized argument.",
-         example="push(1), push(2): peek()->1, pop()->1, pop()->2."),
-    dict(cat="dsa", title="Merge Sort",
-         answer="The classic divide-and-conquer STABLE sort: recursively split the array in half, sort each half, then MERGE the two sorted halves by repeatedly taking the smaller front element. O(n log n) always, O(n) extra space, and stable.",
-         tags=["merge-sort","divide-and-conquer","sorting","stable","dsa"],
-         code='''# Stable O(n log n) sort by divide-and-conquer.
-def merge_sort(a):
-    if len(a) <= 1:
-        return a                  # a single element is already sorted
-    mid = len(a) // 2
-    left = merge_sort(a[:mid])    # sort each half recursively
-    right = merge_sort(a[mid:])
-    res = []
-    i = j = 0
-    while i < len(left) and j < len(right):
-        if left[i] <= right[j]:   # <= (not <) keeps the sort STABLE
-            res.append(left[i]); i += 1
-        else:
-            res.append(right[j]); j += 1
-    res.extend(left[i:])          # append whichever half still has elements
-    res.extend(right[j:])
-    return res''',
-         complexity="Time O(n log n) always, space O(n).",
-         pitfalls="Using < instead of <= (loses stability); off-by-one in the merge loop.",
-         example="merge_sort([5,2,4,1,3]) -> [1,2,3,4,5]."),
-    dict(cat="glossary", title="Encoder-decoder (seq2seq)",
-         answer="An architecture for turning one sequence into another (translation, summarization): the ENCODER reads the input into a context representation, and the DECODER generates the output token by token from it. Modern versions add attention so the decoder can look back at any input position. It is the shape behind machine translation and the original Transformer.",
-         tags=["encoder-decoder","seq2seq","nlp","transformer"],
-         example="Translating English to French: the encoder reads the English sentence; the decoder emits French words one at a time, attending to the relevant English words."),
-    dict(cat="glossary", title="Focal loss",
-         answer="A loss for extreme class imbalance (e.g. object detection) that DOWN-WEIGHTS easy, already-correct examples so training focuses on the HARD ones. It multiplies cross-entropy by (1-p)^gamma, shrinking the loss for confident-correct predictions and preventing many easy negatives from swamping the gradient.",
-         tags=["focal-loss","imbalance","loss","deep-learning"],
-         example="In detection where 99% of image regions are 'background', focal loss stops those easy backgrounds from drowning out the rare objects."),
-    dict(cat="glossary", title="Huber loss",
-         answer="A regression loss that behaves like squared error (MSE) for SMALL errors but like absolute error (MAE) for LARGE ones — combining MSE's smoothness with MAE's robustness to outliers. A threshold delta controls where it switches.",
-         tags=["huber-loss","regression","loss","robustness"],
-         example="Predicting house prices with a few extreme outliers: Huber loss won't let those outliers dominate training the way MSE would."),
-    dict(cat="glossary", title="t-SNE / UMAP",
-         answer="Techniques to project high-dimensional data (like embeddings) down to 2-D for VISUALIZATION, preserving local neighborhoods so similar points cluster together. t-SNE gives great visuals but is slow and non-deterministic; UMAP is faster and keeps more global structure. Use them to SEE the data, not as downstream features.",
-         tags=["t-sne","umap","dimensionality-reduction","visualization"],
-         example="Plot word embeddings with UMAP and you'll see clusters of related words (animals, countries) — a quick sanity check on what the model learned."),
-    dict(cat="glossary", title="DBSCAN",
-         answer="A clustering algorithm that groups points that are DENSELY packed together and marks isolated points as noise/outliers. Unlike k-means it finds arbitrary-shaped clusters and does not need you to pick the number of clusters (you set a neighborhood radius and a min-points threshold). Great for spatial data and anomaly detection.",
-         tags=["dbscan","clustering","unsupervised","anomaly-detection"],
-         example="Clustering GPS check-ins, DBSCAN finds dense hotspots (a mall, a stadium) and labels lone points in empty areas as noise."),
-    dict(cat="cs_fundamentals", title="Deadlock (the four conditions)",
-         answer="A deadlock is when processes are stuck forever, each waiting for a resource another holds. It requires ALL FOUR conditions at once: mutual exclusion (resources non-shareable), hold-and-wait (hold one while waiting for another), no preemption (can't force a release), and circular wait (a cycle of waiters). Break any ONE to prevent it — e.g. impose a global lock ordering to kill circular wait.",
-         tags=["deadlock","concurrency","os","cs"],
-         example="Thread A holds lock 1 and wants lock 2; thread B holds lock 2 and wants lock 1 — circular wait, both stuck. Always acquiring locks in the same order prevents it."),
-    dict(cat="cs_fundamentals", title="Sharding vs Replication",
-         answer="Two ways to scale a database. SHARDING splits data ACROSS servers (each holds a subset, e.g. by hash of user-id) to handle more data and writes — but cross-shard queries are hard. REPLICATION copies the SAME data to multiple servers for availability and read scaling — but writes must propagate (replication lag). They are often combined.",
-         tags=["sharding","replication","database","scaling","cs"],
-         example="Shard orders by hash(user_id) across 10 servers for write scale, and give each shard 2 read replicas for availability and read throughput."),
-    dict(cat="cs_fundamentals", title="Load balancing",
-         answer="Distributing incoming requests across multiple servers so no single one is overwhelmed, using algorithms like round-robin, least-connections, or IP-hash. It enables horizontal scaling and high availability (a dead server is removed via health checks). Layer-4 balances on IP/port; Layer-7 on HTTP content.",
-         tags=["load-balancing","scaling","availability","cs"],
-         example="A load balancer spreads traffic across 5 app servers; if one crashes, health checks route around it with no downtime."),
-    dict(cat="conceptual", title="Why can two O(n log n) sorts (merge sort vs quicksort) perform so differently?",
-         answer="Big-O hides the CONSTANTS and the worst case. Quicksort is O(n log n) on AVERAGE and usually faster in practice because it sorts in place (cache-friendly, low memory) with small constants — but its WORST case is O(n^2) on already-sorted or adversarial input (bad pivots). Merge sort is O(n log n) GUARANTEED and stable, but uses O(n) extra memory and has worse cache behaviour. So the 'same' complexity can mean very different real-world speed, memory, and stability — which is why libraries use hybrids (Timsort, introsort).",
-         tags=["sorting","big-o","constants","why"],
-         example="Python's sort (Timsort) is a merge-sort variant chosen for stability and real-world speed; C++ std::sort uses introsort (quicksort that falls back to heapsort to dodge the O(n^2) trap)."),
+         pitfalls="Iterating to the last index (adds a phantom jump); confusing 'farthest' with 'current_end'.",
+         example="jump([2,3,1,1,4]) -> 2  (index 0 -> 1 -> 4)."),
+    dict(cat="glossary", title="Greedy decoding",
+         answer="In sequence generation (translation, text), greedy decoding picks the single HIGHEST-probability token at each step and feeds it back to generate the next. Fast and deterministic, but short-sighted: a locally best token can lead to a worse overall sentence. Beam search and sampling exist to explore alternatives greedy misses.",
+         tags=["greedy-decoding","nlp","generation","decoding"],
+         example="A model doing greedy decoding might commit to 'The' early and never recover if a better sentence started with 'A' — beam search keeps several candidates to avoid that trap."),
+    dict(cat="glossary", title="Prompt engineering",
+         answer="The practice of crafting the input text (the 'prompt') to steer a large language model toward a desired output — via clear instructions, worked examples (few-shot), role framing, or step-by-step ('chain-of-thought') cues. Since the model conditions entirely on its context, small wording changes can shift quality a lot.",
+         tags=["prompt-engineering","llm","nlp","in-context-learning"],
+         example="Adding 'Let's think step by step' to a math prompt often makes the model show its reasoning and get the right answer, versus blurting a wrong one."),
+    dict(cat="glossary", title="ROUGE",
+         answer="A family of metrics for summarization/translation that measures OVERLAP between generated text and reference text — mainly recall of n-grams (ROUGE-N) or longest common subsequence (ROUGE-L). Higher means more of the reference's content was captured. It rewards content overlap, not fluency or meaning.",
+         tags=["rouge","nlp","evaluation","summarization","metric"],
+         example="If the reference is 'the cat sat on the mat' and the model outputs 'the cat sat', ROUGE-1 recall counts how many reference words were recovered."),
+    dict(cat="glossary", title="n-gram",
+         answer="A contiguous sequence of n items (usually words or characters) from text: unigrams are single words, bigrams pairs, trigrams triples. Classic language models estimate the next word's probability from the previous n-1 words. Simple and fast, but blind to long-range context and exploding in count as n grows.",
+         tags=["n-gram","nlp","language-model","statistics"],
+         example="For 'I love NLP', the bigrams are ('I','love') and ('love','NLP') — a bigram model predicts the next word from just the one before."),
+    dict(cat="glossary", title="Stemming vs Lemmatization",
+         answer="Two ways to reduce word variants to a base form. STEMMING chops suffixes with crude rules (running->run, studies->studi) — fast but can produce non-words. LEMMATIZATION uses a dictionary and part-of-speech to return a real base word (studies->study, better->good) — slower but linguistically correct.",
+         tags=["stemming","lemmatization","nlp","preprocessing"],
+         example="Stemming can turn 'caring' into 'car' (wrong!); lemmatization correctly returns 'care'."),
+    dict(cat="glossary", title="Named-entity recognition (NER)",
+         answer="An NLP task that finds and classifies named entities in text — people, organizations, locations, dates, amounts. It's a token-labeling problem used to extract structured facts from unstructured text; it powers search, question answering, and knowledge-graph building.",
+         tags=["ner","named-entity-recognition","nlp","information-extraction"],
+         example="In 'Sundar Pichai leads Google in California', NER tags 'Sundar Pichai'=PERSON, 'Google'=ORG, 'California'=LOCATION."),
 ]
 
 
