@@ -61,6 +61,17 @@
     {% if e.arch %}<div class="field"><span class="lbl">Architecture</span></div><div class="arch">{{ e.arch }}</div>{% endif %}
     {% if e.disadvantages %}<div class="field disadv"><span class="lbl">Disadvantages</span>{{ e.disadvantages }}</div>{% endif %}
     {% if e.competing %}<div class="field compete"><span class="lbl">Competing technologies</span>{{ e.competing }}</div>{% endif %}
+    {% if e.detail %}
+      {% for key, label, is_mono in detail_order %}
+        {% if e.detail.get(key) %}
+          {% if is_mono %}
+            <div class="field"><span class="lbl">{{ label }}</span></div><div class="arch">{{ e.detail.get(key) }}</div>
+          {% else %}
+            <div class="field"><span class="lbl">{{ label }}</span>{{ e.detail.get(key) }}</div>
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
     {% if e.tags %}<div class="tags">{% for t in e.tags %}<span class="tag">#{{ t }}</span>{% endfor %}</div>{% endif %}
   </div>
   {% endfor %}

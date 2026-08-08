@@ -11,6 +11,7 @@ sessions — nothing to keep in sync. Schema: MIGRATION_INTERVIEW_PREP.sql.
 Soft-delete only (deleted_at).
 """
 import logging
+import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
@@ -19,7 +20,9 @@ from flask import (Blueprint, Response, jsonify, redirect, render_template,
 
 from auth import login_required
 from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
-from system_design_bank import CATEGORIES as SD_CATEGORIES, ENTRIES as SD_ENTRIES
+from system_design_bank import (CATEGORIES as SD_CATEGORIES,
+                                 DETAIL_ORDER as SD_DETAIL_ORDER,
+                                 ENTRIES as SD_ENTRIES)
 from supabase_client import get, post, update
 from utils.user_tz import user_today
 
@@ -612,6 +615,17 @@ def _pdf_bytes(heading, subtitle, sections):
             pdf.set_font("Courier", "", 8)
             pdf.set_fill_color(245, 246, 250)
             cell(pdf, 3.8, _latin1(sec["arch"]), fill=True)
+        # Optional monospace blocks (framework diagrams).
+        for label, text in sec.get("mono_blocks", []):
+            if not text:
+                continue
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.set_text_color(107, 114, 128)
+            cell(pdf, 4, _latin1(label.upper()))
+            pdf.set_text_color(17, 24, 39)
+            pdf.set_font("Courier", "", 8)
+            pdf.set_fill_color(245, 246, 250)
+            cell(pdf, 3.8, _latin1(text), fill=True)
         if sec.get("tags"):
             pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(67, 56, 202)
@@ -754,6 +768,7 @@ def system_design_print():
         "system_design_print.html",
         entries=selected,
         category_labels=SD_CATEGORIES,
+        detail_order=SD_DETAIL_ORDER,
         heading=label,
         count=len(selected),
         today=_today().isoformat(),
@@ -773,23 +788,106 @@ def system_design_pdf():
     heading = label or "System Design Bank"
     subtitle = (f"{len(selected)} entr{'y' if len(selected) == 1 else 'ies'} "
                 f"| DailyPlanner Interview Prep | {_today().isoformat()}")
-    sections = [{
-        "title": it["title"],
-        "cat": SD_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
-        "fields": [("Problem it solves", it.get("problem")),
-                   ("Approach", it.get("answer")),
-                   ("Example", it.get("example")),
-                   ("Use cases", it.get("use_cases")),
-                   ("Disadvantages", it.get("disadvantages")),
-                   ("Competing technologies", it.get("competing"))],
-        "arch": it.get("arch"), "tags": it.get("tags"),
-    } for it in selected]
+    sections = []
+    for it in selected:
+        fields = [("Problem it solves", it.get("problem")),
+                  ("Approach", it.get("answer")),
+                  ("Example", it.get("example")),
+                  ("Use cases", it.get("use_cases")),
+                  ("Disadvantages", it.get("disadvantages")),
+                  ("Competing technologies", it.get("competing"))]
+        mono_blocks = []
+        detail = it.get("detail")
+        if detail:
+            for key, label, is_mono in SD_DETAIL_ORDER:
+                val = detail.get(key)
+                if not val:
+                    continue
+                if is_mono:
+                    mono_blocks.append((label, val))
+                else:
+                    fields.append((label, val))
+        sections.append({
+            "title": it["title"],
+            "cat": SD_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
+            "fields": fields, "arch": it.get("arch"),
+            "mono_blocks": mono_blocks, "tags": it.get("tags"),
+        })
     try:
         pdf = _pdf_bytes(heading, subtitle, sections)
     except ImportError:
         return redirect(url_for("interview_prep.system_design_print", **request.args.to_dict()))
     fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "system-design-bank.pdf"
     return _pdf_response(pdf, fname)
+
+
+# ─────────── integration: pull related material from the user's library ──
+
+_KW_STOP = {"design", "system", "service", "distributed", "scale", "real",
+            "time", "with", "and", "the", "for", "your", "using", "based"}
+
+
+def _entry_keywords(title, tags):
+    kws = {t.lower() for t in (tags or []) if isinstance(t, str)}
+    for w in re.split(r"[^a-z0-9+]+", (title or "").lower()):
+        if len(w) > 3 and w not in _KW_STOP:
+            kws.add(w)
+    return kws
+
+
+@interview_prep_bp.route("/api/interview-prep/system-design/<eid>/related", methods=["GET"])
+@login_required
+def system_design_related(eid):
+    """Pull items from the user's own References and Travel Reads that
+    relate to this design (by tag overlap / keyword), so the bank is
+    seamlessly connected to their saved knowledge."""
+    user_id = session["user_id"]
+    if not _valid_sid(eid):
+        return jsonify({"references": [], "travel_reads": []})
+    entry = SD_ENTRIES[int(eid[2:])]
+    kws = _entry_keywords(entry["title"], entry.get("tags"))
+    long_kws = {k for k in kws if len(k) > 4}
+
+    references = []
+    try:
+        rows = get("reference_links", {
+            "user_id": f"eq.{user_id}",
+            "select": "id,title,description,url,tags,category", "limit": "1000",
+        }) or []
+        scored = []
+        for r in rows:
+            rtags = {t.lower() for t in (r.get("tags") or []) if isinstance(t, str)}
+            text = f"{r.get('title') or ''} {r.get('description') or ''}".lower()
+            score = 2 * len(rtags & kws) + sum(1 for k in long_kws if k in text)
+            if score:
+                scored.append((score, r))
+        scored.sort(key=lambda x: -x[0])
+        references = [{"title": r.get("title") or r.get("url"), "url": r.get("url"),
+                       "category": r.get("category"), "tags": r.get("tags") or []}
+                      for _, r in scored[:6]]
+    except Exception as e:
+        logger.warning("related references lookup failed: %s", e)
+
+    travel_reads = []
+    try:
+        rows = get("travel_reads", {
+            "user_id": f"eq.{user_id}", "archived_at": "is.null",
+            "select": "id,title,description,url,source,kind,status", "limit": "500",
+        }) or []
+        scored = []
+        for t in rows:
+            text = f"{t.get('title') or ''} {t.get('description') or ''} {t.get('source') or ''}".lower()
+            score = sum(1 for k in long_kws if k in text)
+            if score:
+                scored.append((score, t))
+        scored.sort(key=lambda x: -x[0])
+        travel_reads = [{"title": t.get("title") or t.get("url"), "url": t.get("url"),
+                         "source": t.get("source"), "kind": t.get("kind")}
+                        for _, t in scored[:5]]
+    except Exception as e:
+        logger.warning("related travel_reads lookup failed: %s", e)
+
+    return jsonify({"references": references, "travel_reads": travel_reads})
 
 
 @interview_prep_bp.route("/api/interview-prep/system-design/<eid>", methods=["POST"])

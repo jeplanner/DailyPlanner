@@ -41,12 +41,68 @@ _TAG_STOP = {"the", "a", "an", "and", "or", "vs", "of", "to", "for", "in", "on",
              "at", "with", "avoid", "real", "time", "amp"}
 
 
-def E(cat, title, problem, answer, example, use_cases, arch, disadv, competing, tags=None):
+# The full interview-framework walkthrough (Alex-Xu style). Entries may
+# carry a `detail` dict keyed by these; rendered in order. is_mono marks
+# ASCII-diagram sections (monospace).
+DETAIL_ORDER = [
+    ("scope", "1 · Understand the problem & scope", False),
+    ("functional", "2 · Functional requirements", False),
+    ("nonfunctional", "3 · Non-functional requirements", False),
+    ("estimation", "4 · Back-of-the-envelope estimation", False),
+    ("api", "5 · API design", False),
+    ("data_model", "6 · Data model", False),
+    ("hld", "7 · High-level design", False),
+    ("hld_diagram", "High-level diagram", True),
+    ("algorithms", "8 · Algorithms used", False),
+    ("deep_dive", "9 · Design deep dive", False),
+    ("follow_ups", "10 · Follow-up questions", False),
+    ("final_diagram", "11 · Final design diagram", True),
+    ("wrap_up", "12 · Wrap up", False),
+]
+
+
+def E(cat, title, problem, answer, example, use_cases, arch, disadv, competing, tags=None, detail=None):
     return {
         "cat": cat, "title": title, "problem": problem, "answer": answer,
         "example": example, "use_cases": use_cases, "arch": arch,
         "disadvantages": disadv, "competing": competing, "tags": tags,
+        "detail": detail,
     }
+
+
+# ─────────── Full framework walkthroughs (worked examples) ───────────
+
+_DETAIL_URL = {
+    "scope": "Shorten long URLs to short aliases and redirect back. Clarifying questions: traffic volume? alias length? custom aliases? link expiry? click analytics? read/write ratio? Assumptions: 100M new URLs/day, 100:1 read:write, 7-char alias, links live ~10 years, analytics optional.",
+    "functional": "1) Given a long URL, return a shorter unique URL. 2) Given the short URL, redirect (HTTP 3xx) to the original. 3) Optional: custom alias, expiry date, click analytics.",
+    "nonfunctional": "High availability (a broken redirect breaks every link ever shared). Low-latency redirects (<100 ms). Horizontally scalable to billions of URLs. Short keys should not be easily guessable/enumerable. Durable — no lost mappings.",
+    "estimation": "Writes: 100M/day ÷ 86,400 ≈ 1,160 writes/s. Reads (100:1) ≈ 116,000 reads/s. Storage: 100M/day × 365 × 10y ≈ 365B records; ~500 B each ≈ ~180 TB. Key space: 62^7 ≈ 3.5 trillion — enough for 7 chars. Cache the hot 20% of links to absorb the read QPS.",
+    "api": "POST /api/v1/data/shorten  body {longUrl}  ->  {shortUrl}.  GET /{shortKey}  ->  301/302 redirect to the long URL.  Optional body fields: customAlias, expireAt.",
+    "data_model": "urls(short_key PK, long_url, user_id, created_at, expire_at). Access is a pure key lookup by short_key -> use a KV store (DynamoDB/Cassandra) or sharded SQL. Click events go to a separate analytics store (append-only), never the hot path.",
+    "hld": "Write: client -> API -> unique-ID/key generator -> persist (short_key -> long_url) -> return short URL. Read: client -> API -> cache lookup -> DB on miss -> HTTP redirect. A CDN/edge can cache redirects for very hot links.",
+    "hld_diagram": "Write:  Client -> API -> [ID gen -> base62] -> KV store\nRead:   Client -> API -> [Cache] --miss--> KV store -> 301 redirect",
+    "algorithms": "Key generation: (A) Base62-encode a globally-unique ID (DB ticket-server ranges or Snowflake) — collision-free and short; add per-value salt/scramble so keys aren't sequentially guessable. (B) Hash the URL (MD5/SHA) and take the first 7 base62 chars — simple but needs collision handling (rehash/append). Prefer (A): no collisions, scales without coordination on the hot path.",
+    "deep_dive": "Unique IDs at scale: a single auto-increment DB is a bottleneck — use a distributed ticket server (Zookeeper-assigned ranges) or Snowflake so each node mints IDs locally. 301 (permanent) is cached by browsers → fewer origin hits but no per-click analytics; 302 (temporary) hits the origin every time → enables analytics at higher load. Read path is cache-first (LRU) + CDN; shard the KV store by hash(short_key). Rate-limit creation to prevent abuse; scan new URLs against a safe-browsing list. Expiry via TTL + a lazy/batch cleanup job. Custom alias = conditional insert (unique constraint) to avoid races.",
+    "follow_ups": "How do you add click analytics without slowing redirects? (emit an async event -> Kafka -> aggregation). How to block malicious URLs? (rate limit + URL reputation check). A single link goes viral — how to serve it? (CDN/edge cache + request coalescing). Support link deletion/expiry? (TTL). Custom domains and multi-region? (geo-DNS + regional replicas).",
+    "final_diagram": "                         +-----------+\n Client --> API GW --> LB --> App nodes --> ID/key gen (Snowflake)\n                                  |             \n                    read: [Redis cache] --miss--> [KV store (sharded)]\n                                  |                       ^\n                          301/302 redirect               | write\n   click events -> [Kafka] -> [Aggregator] -> [Analytics store]",
+    "wrap_up": "Core: base62 of a distributed unique ID for collision-free short keys; a sharded KV store as the system of record; a read-dominant path served by cache + CDN; the 301-vs-302 analytics trade-off; async click analytics off the hot path. Main bottlenecks — ID generation and read hotspots — are solved by a distributed ID scheme and aggressive caching.",
+}
+
+_DETAIL_CHAT = {
+    "scope": "Design a 1:1 + group chat app (WhatsApp/Messenger). Clarifying questions: 1:1 only or groups? group size cap? text only or media? online presence? read receipts? end-to-end encryption? scale? Assumptions: 1:1 and small groups (≤100), text + media, presence + delivery/read receipts, 50M DAU, mobile-first.",
+    "functional": "1) Send/receive messages in near real time (1:1 and group). 2) Message history & sync across devices. 3) Online/last-seen presence. 4) Delivery + read receipts. 5) Push notifications when offline. 6) Media attachments.",
+    "nonfunctional": "Low latency delivery (<1 s). Highly available. Reliable delivery + correct ordering (no lost/duplicated/reordered messages). Scale to millions of concurrent connections. Consistency of message history; security (ideally E2E).",
+    "estimation": "50M DAU, ~40 msgs/user/day = 2B msgs/day ≈ 23,000 msgs/s (peak higher). Concurrent connections: tens of millions of open WebSockets → many stateful chat servers behind a connection layer. Storage: 2B msgs/day × ~300 B ≈ 600 GB/day → sharded, time-partitioned message store.",
+    "api": "WebSocket: connect (auth), sendMessage {chatId, content}, receive events. REST: GET /chats, GET /chats/{id}/messages?before=cursor (history, paginated), POST /chats (create), presence heartbeat. Push via APNs/FCM when the socket is closed.",
+    "data_model": "messages(chat_id, message_id (Snowflake, time-sortable), sender_id, content, created_at) — partitioned by chat_id, ordered by message_id. chats/members(chat_id, user_id). A per-user 'sync/inbox' cursor for multi-device sync. Wide-column store (Cassandra) fits the write-heavy, per-chat, time-ordered access.",
+    "hld": "Clients hold a persistent WebSocket to a chat server via a connection/load balancer. A session service maps user_id -> which chat server holds the socket. A message flows: sender -> chat server -> persist -> look up recipient's server -> push over their socket; if offline -> push notification + sync on reconnect. Presence via heartbeats in a fast store.",
+    "hld_diagram": "Client A <=WS=> [Chat server 1] --+--> [Message store (Cassandra)]\n                                 |\n [Session/Presence (Redis)] <----+----> [Chat server 2] <=WS=> Client B\n                                 +--> offline? -> [Push (APNs/FCM)]",
+    "algorithms": "Ordering: Snowflake/sequence IDs per chat give a total, time-sortable order (client sorts by id). Delivery: at-least-once + client-side dedup by message_id (exactly-once is impractical). Fan-out for groups: write the message once, fan out delivery to each online member's server; large groups use a pull/read-time model. Presence: heartbeat + TTL; publish changes via pub/sub.",
+    "deep_dive": "Connection layer: millions of long-lived WebSockets are stateful — use many chat servers + a service-discovery/session store (user->server) so senders can route to a recipient's server; a message queue between servers decouples them. Offline delivery: persist first, then push; on reconnect the client syncs from its last cursor. Group scale: small groups fan-out-on-write; huge groups fan-out-on-read. Read receipts/typing: lightweight ephemeral events over pub/sub, not persisted as messages. E2E encryption (Signal protocol): server only routes ciphertext. Multi-device: per-device sync cursors + message copies.",
+    "follow_ups": "How to guarantee ordering across devices? (per-chat sequence IDs). Handle a 100k-member group? (fan-out-on-read + rate limits). Media? (upload to object storage, send a reference, not bytes over the socket). Presence at scale without hammering the DB? (heartbeat + pub/sub, sampled). Exactly-once? (at-least-once + idempotent client dedup). End-to-end encryption trade-offs? (no server-side search/history).",
+    "final_diagram": "  Clients <===WebSocket===> [ Load Balancer / Connection layer ]\n                                     |\n            +------------------------+------------------------+\n            v                        v                        v\n     [Chat server]            [Chat server]             [Chat server]\n            |   \\____ inter-server queue (route to recipient) ____/\n            v\n   [Message store: Cassandra]   [Presence/Session: Redis]   [Push: APNs/FCM]\n            ^\n   history/sync (cursor)  <--  REST API",
+    "wrap_up": "Core: persistent WebSocket connection layer + stateful chat servers, a session store mapping user->server for routing, a time-partitioned wide-column message store, Snowflake IDs for ordering, at-least-once delivery with client dedup, offline push + cursor-based sync, and fan-out-on-write for small groups / read for large. Bottlenecks — connection state and group fan-out — are handled by horizontal chat servers, inter-server queues, and the hybrid fan-out model.",
+}
 
 
 def _title_tags(title):
@@ -801,7 +857,8 @@ ENTRIES = [
       "Create: long URL -> ID gen -> base62 -> store(KV) ; Read: short -> cache -> DB -> 301 redirect",
       "Key exhaustion planning; custom aliases; analytics write load; cache stampede on viral links.",
       "Base62 vs hash(MD5)+dedupe; KV (DynamoDB/Redis) vs SQL; 301 (cached) vs 302 (trackable).",
-      ["url-shortener", "base62", "tinyurl", "kv-store", "redirect", "interview"]),
+      ["url-shortener", "base62", "tinyurl", "kv-store", "redirect", "interview"],
+      detail=_DETAIL_URL),
     E("classic", "Design a Unique ID Generator (Snowflake)",
       "Generate globally-unique, roughly time-sortable 64-bit IDs across many servers without a central bottleneck.",
       "Twitter Snowflake: a 64-bit ID = timestamp (41 bits, ms) + machine/datacenter id (10 bits) + per-ms sequence (12 bits). Each node generates locally (no coordination), IDs are k-sortable by time, and 4096 IDs/ms/node. Clock skew handled by waiting.",
@@ -846,7 +903,8 @@ ENTRIES = [
       "Client <-WebSocket-> Chat server <-> Message store (sharded) ; offline -> push ; presence via heartbeat",
       "Connection state at scale; ordering & exactly-once delivery; group fan-out; presence cost; E2E encryption.",
       "WebSocket vs long-polling; message queue per user; Snowflake sequence IDs; Signal protocol (E2EE).",
-      ["chat", "websocket", "messaging", "presence", "real-time", "push-notification"]),
+      ["chat", "websocket", "messaging", "presence", "real-time", "push-notification"],
+      detail=_DETAIL_CHAT),
     E("classic", "Design Search Autocomplete (Typeahead)",
       "Suggest top completions as the user types, within tens of milliseconds, over a huge query corpus.",
       "Build a Trie of popular queries annotated with frequencies; precompute top-k completions per prefix node (or cache them) so a lookup is O(prefix length). Update frequencies from query logs via a batch/stream pipeline. Serve from an in-memory/Redis structure; debounce client requests.",

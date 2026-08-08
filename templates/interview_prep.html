@@ -138,6 +138,24 @@
   .sd-field.disadv .lbl { color: #b91c1c; } .sd-field.compete .lbl { color: #047857; }
   .sd-arch { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 9px 11px; margin: 7px 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; overflow-x: auto; }
   .q-edit textarea.arch { font-family: ui-monospace, monospace; font-size: 12px; }
+  /* Full framework walkthrough */
+  .sd-detail { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 8px; }
+  .sd-detail > summary { cursor: pointer; font-size: 12.5px; font-weight: 800; color: var(--color-primary); list-style: none; padding: 4px 0; }
+  .sd-detail > summary::-webkit-details-marker { display: none; }
+  .sd-detail > summary::before { content: "▸ "; }
+  .sd-detail[open] > summary::before { content: "▾ "; }
+  .sd-sec { margin: 8px 0; }
+  .sd-sec .h { font-size: 11px; font-weight: 800; letter-spacing: .02em; color: var(--color-text); display: block; margin-bottom: 2px; }
+  .sd-sec .b { font-size: 13px; line-height: 1.45; color: var(--color-text); }
+  /* Related from the user's library */
+  .sd-related { margin-top: 10px; }
+  .sd-related h5 { font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 8px 0 4px; }
+  .sd-rel-item { display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 4px 0; }
+  .sd-rel-item a { color: var(--color-primary); text-decoration: none; font-weight: 600; }
+  .sd-rel-item a:hover { text-decoration: underline; }
+  .sd-rel-item .src { font-size: 11px; color: var(--color-text-secondary); white-space: nowrap; }
+  .sd-rel-empty { font-size: 12px; color: var(--color-text-secondary); font-style: italic; }
+
   .sd-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
   .sd-tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; cursor: pointer; }
   .sd-tag:hover { background: #e0e7ff; }
@@ -636,6 +654,32 @@
   const sdProg = () => { if(SDBANK) $("sdbank-prog").textContent = `${sdPracticed.size} / ${SDBANK.total} studied`; };
   const SD_LABELS = { problem:"Problem it solves", answer:"Approach", example:"Example",
                       use_cases:"Use cases", arch:"Architecture", disadvantages:"Disadvantages", competing:"Competing tech" };
+  // Mirrors DETAIL_ORDER in system_design_bank.py. [key, label, isMono]
+  const SD_DETAIL_ORDER = [
+    ["scope","1 · Understand the problem & scope",false],
+    ["functional","2 · Functional requirements",false],
+    ["nonfunctional","3 · Non-functional requirements",false],
+    ["estimation","4 · Back-of-the-envelope estimation",false],
+    ["api","5 · API design",false],
+    ["data_model","6 · Data model",false],
+    ["hld","7 · High-level design",false],
+    ["hld_diagram","High-level diagram",true],
+    ["algorithms","8 · Algorithms used",false],
+    ["deep_dive","9 · Design deep dive",false],
+    ["follow_ups","10 · Follow-up questions",false],
+    ["final_diagram","11 · Final design diagram",true],
+    ["wrap_up","12 · Wrap up",false],
+  ];
+  function sdDetailHtml(e){
+    if(!e.detail) return "";
+    const secs = SD_DETAIL_ORDER.map(([k,label,mono]) => {
+      const v = e.detail[k]; if(!v) return "";
+      return mono
+        ? `<div class="sd-sec"><span class="h">${esc(label)}</span><div class="sd-arch">${esc(v)}</div></div>`
+        : `<div class="sd-sec"><span class="h">${esc(label)}</span><div class="b">${esc(v)}</div></div>`;
+    }).join("");
+    return `<details class="sd-detail"><summary>📐 Full design walkthrough (interview framework)</summary>${secs}</details>`;
+  }
 
   function renderSDBank(){
     if(!SDBANK) return;
@@ -659,8 +703,11 @@
         if (!e[f]) return "";
         if (f === "arch") return `<div class="sd-field"><span class="lbl">Architecture</span></div><div class="sd-arch">${esc(e.arch)}</div>`;
         return `<div class="sd-field ${clsFor[f]||''}"><span class="lbl">${SD_LABELS[f]}</span>${esc(e[f])}</div>`;
-      }).join("") + (e.tags && e.tags.length
-        ? `<div class="sd-tags">${e.tags.map(t=>`<button class="sd-tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : "");
+      }).join("")
+        + sdDetailHtml(e)
+        + (e.tags && e.tags.length
+          ? `<div class="sd-tags">${e.tags.map(t=>`<button class="sd-tag" data-tag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : "")
+        + `<div class="sd-related" data-related="pending"></div>`;
       const body = isEd ? `
         <div class="q-edit">
           <label>Title<textarea class="q" data-e="title">${esc(e.title)}</textarea></label>
@@ -705,6 +752,23 @@
           (SDBANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       renderSDBank();
     } catch(e){ /* best-effort */ }
+  }
+
+  async function loadSDRelated(card, id){
+    const box = card.querySelector(".sd-related");
+    if(!box || box.dataset.related !== "pending") return;
+    box.dataset.related = "loading";
+    try {
+      const d = await api(`/api/interview-prep/system-design/${id}/related`);
+      const refs = d.references||[], trs = d.travel_reads||[];
+      if(!refs.length && !trs.length){ box.dataset.related = "done"; return; }
+      let html = "";
+      if(refs.length) html += `<h5>📎 From your References</h5>` + refs.map(r=>
+        `<div class="sd-rel-item"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>${r.category?`<span class="src">${esc(r.category)}</span>`:""}</div>`).join("");
+      if(trs.length) html += `<h5>🧳 From your Travel Reads</h5>` + trs.map(t=>
+        `<div class="sd-rel-item"><a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)}</a>${t.source?`<span class="src">${esc(t.source)}</span>`:""}</div>`).join("");
+      box.innerHTML = html; box.dataset.related = "done";
+    } catch(err){ box.dataset.related = "pending"; }
   }
 
   $("sdbank-cat").addEventListener("change", renderSDBank);
@@ -757,7 +821,10 @@
       } catch(err){ toast(err.message,"error"); }
       return;
     }
-    if (e.target.closest(".q-head")) card.classList.toggle("open");
+    if (e.target.closest(".q-head")) {
+      card.classList.toggle("open");
+      if (card.classList.contains("open")) loadSDRelated(card, id);
+    }
   });
 
   reload();
