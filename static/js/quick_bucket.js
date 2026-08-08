@@ -256,7 +256,14 @@
 
   // ─────────── Daily effort summary (planned vs actual) ──────
 
-  const fmtMins = (m) => `${Math.round(Number(m) || 0)}m`;
+  // Display minutes as hours + minutes, e.g. 90 → "1h 30m", 60 → "1h",
+  // 45 → "45m". Storage stays in whole minutes.
+  const fmtMins = (m) => {
+    const n = Math.max(0, Math.round(Number(m) || 0));
+    if (n < 60) return `${n}m`;
+    const h = Math.floor(n / 60), r = n % 60;
+    return r ? `${h}h ${r}m` : `${h}h`;
+  };
 
   const renderEffortSummary = (r) => {
     const planned = Number(r.planned) || 0;
@@ -268,6 +275,10 @@
     const pVal = $("#qb-eff-planned-val"), aVal = $("#qb-eff-actual-val");
     if (pVal) pVal.textContent = fmtMins(planned);
     if (aVal) aVal.textContent = fmtMins(actual);
+
+    // Peek shown next to the title when the card is collapsed.
+    const peek = $("#qb-eff-peek");
+    if (peek) peek.textContent = (r.count || 0) ? `${fmtMins(actual)} / ${fmtMins(planned)} planned` : "";
 
     const note = $("#qb-eff-note");
     if (note) {
@@ -1318,6 +1329,25 @@
     $("#qb-move-save").addEventListener("click", submitEdit);
     // Re-fetch the daily summary when the user picks a different day.
     $("#qb-eff-date")?.addEventListener("change", loadEffortSummary);
+
+    // Collapsible "Productive time" card — state persists across loads.
+    const effCard = $("#qb-effort-summary");
+    const effToggle = $("#qb-eff-toggle");
+    if (effCard && effToggle) {
+      const KEY = "qb_eff_collapsed";
+      const setCollapsed = (on) => {
+        effCard.classList.toggle("is-collapsed", on);
+        effToggle.setAttribute("aria-expanded", on ? "false" : "true");
+      };
+      let stored = false;
+      try { stored = localStorage.getItem(KEY) === "1"; } catch (_) {}
+      setCollapsed(stored);
+      effToggle.addEventListener("click", () => {
+        const on = !effCard.classList.contains("is-collapsed");
+        setCollapsed(on);
+        try { localStorage.setItem(KEY, on ? "1" : "0"); } catch (_) {}
+      });
+    }
     $("#qb-move-modal").addEventListener("click", (e) => {
       if (e.target.id === "qb-move-modal") closeEditModal();
     });

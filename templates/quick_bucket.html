@@ -512,6 +512,12 @@
   }
   .qb-eff-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .qb-eff-head h2 { font-size: 15px; font-weight: 800; margin: 0; }
+  .qb-eff-toggle { flex: 1; display: flex; align-items: center; gap: 8px; background: none; border: none; padding: 0; margin: 0; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+  .qb-eff-chevron { width: 18px; height: 18px; flex: none; transition: transform .2s ease; }
+  .qb-eff-peek { font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); }
+  .qb-effort-summary.is-collapsed .qb-eff-chevron { transform: rotate(-90deg); }
+  .qb-effort-summary.is-collapsed .qb-eff-head { margin-bottom: 0; }
+  .qb-effort-summary.is-collapsed .qb-eff-body { display: none; }
   .qb-eff-date {
     margin-left: auto; font: inherit; font-size: 13px; padding: 6px 9px;
     border: 1px solid var(--color-border); border-radius: 9px;
@@ -904,23 +910,29 @@
        day (defaults to today). Populated from /api/quick-bucket/effort-summary. -->
   <section class="qb-effort-summary" id="qb-effort-summary" aria-label="Daily effort summary">
     <div class="qb-eff-head">
-      <h2>⏱ Productive time</h2>
+      <button type="button" class="qb-eff-toggle" id="qb-eff-toggle" aria-expanded="true" aria-controls="qb-eff-body">
+        <i data-feather="chevron-down" class="qb-eff-chevron" aria-hidden="true"></i>
+        <h2>⏱ Productive time</h2>
+        <span class="qb-eff-peek" id="qb-eff-peek"></span>
+      </button>
       <input type="date" id="qb-eff-date" class="qb-eff-date" aria-label="Summary date">
     </div>
-    <div class="qb-eff-bars">
-      <div class="qb-eff-bar-row">
-        <span class="qb-eff-bar-lbl">Planned</span>
-        <div class="qb-eff-bar"><i class="qb-eff-fill qb-eff-fill--planned" id="qb-eff-planned-bar"></i></div>
-        <span class="qb-eff-bar-val" id="qb-eff-planned-val">0m</span>
+    <div class="qb-eff-body" id="qb-eff-body">
+      <div class="qb-eff-bars">
+        <div class="qb-eff-bar-row">
+          <span class="qb-eff-bar-lbl">Planned</span>
+          <div class="qb-eff-bar"><i class="qb-eff-fill qb-eff-fill--planned" id="qb-eff-planned-bar"></i></div>
+          <span class="qb-eff-bar-val" id="qb-eff-planned-val">0m</span>
+        </div>
+        <div class="qb-eff-bar-row">
+          <span class="qb-eff-bar-lbl">Actual</span>
+          <div class="qb-eff-bar"><i class="qb-eff-fill qb-eff-fill--actual" id="qb-eff-actual-bar"></i></div>
+          <span class="qb-eff-bar-val" id="qb-eff-actual-val">0m</span>
+        </div>
       </div>
-      <div class="qb-eff-bar-row">
-        <span class="qb-eff-bar-lbl">Actual</span>
-        <div class="qb-eff-bar"><i class="qb-eff-fill qb-eff-fill--actual" id="qb-eff-actual-bar"></i></div>
-        <span class="qb-eff-bar-val" id="qb-eff-actual-val">0m</span>
-      </div>
+      <p class="qb-eff-note" id="qb-eff-note">No effort logged for this day yet.</p>
+      <ul class="qb-eff-tasks" id="qb-eff-tasks"></ul>
     </div>
-    <p class="qb-eff-note" id="qb-eff-note">No effort logged for this day yet.</p>
-    <ul class="qb-eff-tasks" id="qb-eff-tasks"></ul>
   </section>
 
   <div id="qb-handsfree-status" class="qb-handsfree-status" hidden>
