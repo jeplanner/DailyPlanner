@@ -16,140 +16,169 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Hamming Distance",
-         answer="The Hamming distance between two integers is the number of bit positions where they differ. XOR the two numbers (bits are 1 exactly where they differ), then count the set bits in the result.",
-         tags=["hamming-distance","bit-manipulation","xor","dsa"],
-         code='''# Number of positions where the bits of two integers differ.
-def hamming_distance(x, y):
-    xor = x ^ y                 # bits set exactly where x and y differ
-    count = 0
-    while xor:
-        count += xor & 1        # add the lowest bit
-        xor >>= 1
-    return count''',
-         complexity="Time O(number of bits), space O(1).",
-         pitfalls="Comparing digits instead of bits; forgetting to XOR first.",
-         example="hamming_distance(1, 4) -> 2  (0001 vs 0100)."),
-    dict(cat="dsa", title="Number of 1 Bits (popcount)",
-         answer="Count the set bits (population count) of an integer. The elegant trick n &= n-1 clears the LOWEST set bit each iteration, so the loop runs exactly as many times as there are 1-bits — faster than checking all 32 bits.",
-         tags=["number-of-1-bits","popcount","bit-manipulation","dsa"],
-         code='''# Count the set bits (population count) of an integer.
-def hamming_weight(n):
-    count = 0
-    while n:
-        n &= n - 1              # clears the lowest set bit each step
-        count += 1
-    return count''',
-         complexity="Time O(number of set bits), space O(1).",
-         pitfalls="Looping all 32 bits unnecessarily; forgetting n & (n-1) clears the lowest 1.",
-         example="hamming_weight(11) -> 3  (binary 1011)."),
-    dict(cat="dsa", title="Power of Two",
-         answer="Check whether n is a power of two. A power of two has EXACTLY ONE set bit, and n & (n-1) clears the lowest set bit — so for a power of two that yields 0. Guard n>0 (zero and negatives aren't powers of two).",
-         tags=["power-of-two","bit-manipulation","math","dsa"],
-         code='''# Is n a power of two? A power of two has exactly one set bit.
-def is_power_of_two(n):
-    return n > 0 and (n & (n - 1)) == 0   # n & (n-1) clears the lone bit -> 0''',
-         complexity="Time O(1), space O(1).",
-         pitfalls="Not guarding n>0 (0 and negatives); using a loop of divisions when a bit trick is O(1).",
-         example="is_power_of_two(16) -> True; is_power_of_two(18) -> False."),
-    dict(cat="dsa", title="Plus One",
-         answer="Add one to a non-negative integer represented as an array of digits (most significant first). Walk from the last digit: if it's < 9, increment and return; if it's 9 it becomes 0 and the carry continues left. If every digit was 9, prepend a leading 1.",
-         tags=["plus-one","array","math","carry","dsa"],
-         code='''# Add one to a number represented as an array of digits.
-def plus_one(digits):
-    for i in range(len(digits) - 1, -1, -1):
-        if digits[i] < 9:
-            digits[i] += 1          # no carry -> done
-            return digits
-        digits[i] = 0               # 9 becomes 0, carry continues left
-    return [1] + digits             # all nines -> prepend a leading 1''',
-         complexity="Time O(n), space O(1) (or O(n) for the all-nines case).",
-         pitfalls="Forgetting the all-nines carry-out (99 -> 100); iterating left-to-right.",
-         example="plus_one([1,2,9]) -> [1,3,0]; plus_one([9,9]) -> [1,0,0]."),
-    dict(cat="dsa", title="Add Binary",
-         answer="Add two binary strings and return their sum as a binary string. Walk both from the least significant bit, summing digit + digit + carry; the current output bit is total%2 and the new carry is total//2. Continue while either string has digits or a carry remains, then reverse.",
-         tags=["add-binary","string","bit-manipulation","carry","dsa"],
-         code='''# Add two binary strings and return the binary sum as a string.
-def add_binary(a, b):
-    i, j = len(a) - 1, len(b) - 1
-    carry = 0
+    dict(cat="dsa", title="Isomorphic Strings",
+         answer="Two strings are isomorphic if there's a consistent ONE-TO-ONE mapping between their characters preserving order. Track two maps (s->t and t->s); a mismatch in either — a char already mapped to something else — means not isomorphic. Both directions are needed so two chars can't map to the same target.",
+         tags=["isomorphic-strings","hash-map","string","dsa"],
+         code='''# Are s and t isomorphic (a consistent one-to-one char mapping)?
+def is_isomorphic(s, t):
+    if len(s) != len(t):
+        return False
+    map_st, map_ts = {}, {}
+    for a, b in zip(s, t):
+        if a in map_st and map_st[a] != b:
+            return False        # a already maps to a different char
+        if b in map_ts and map_ts[b] != a:
+            return False        # b already mapped from a different char
+        map_st[a] = b
+        map_ts[b] = a
+    return True''',
+         complexity="Time O(n), space O(1) (bounded alphabet).",
+         pitfalls="Checking only one direction (lets two chars map to the same target); ignoring unequal lengths.",
+         example="is_isomorphic('egg','add') -> True; is_isomorphic('foo','bar') -> False."),
+    dict(cat="dsa", title="Word Pattern",
+         answer="Check whether a string of words follows a pattern with a BIJECTION between pattern letters and words. Split into words, verify equal length, then maintain char->word and word->char maps — a conflict in either direction breaks the pattern (same idea as isomorphic strings but with words).",
+         tags=["word-pattern","hash-map","string","bijection","dsa"],
+         code='''# Does s follow the given pattern (bijection pattern-char <-> word)?
+def word_pattern(pattern, s):
+    words = s.split()
+    if len(pattern) != len(words):
+        return False
+    char_to_word, word_to_char = {}, {}
+    for c, w in zip(pattern, words):
+        if c in char_to_word and char_to_word[c] != w:
+            return False
+        if w in word_to_char and word_to_char[w] != c:
+            return False
+        char_to_word[c] = w
+        word_to_char[w] = c
+    return True''',
+         complexity="Time O(n), space O(unique words).",
+         pitfalls="Not checking both directions (two letters -> same word); mismatched counts of letters vs words.",
+         example="word_pattern('abba', 'dog cat cat dog') -> True; word_pattern('abba', 'dog cat cat fish') -> False."),
+    dict(cat="dsa", title="Ransom Note",
+         answer="Determine if a ransom note can be built from the letters of a magazine, each magazine letter usable once. Count the magazine's letters, then consume one per note character; if a needed letter runs out, it's impossible.",
+         tags=["ransom-note","hash-map","counting","string","dsa"],
+         code='''# Can ransom_note be built from the letters in magazine (each used once)?
+from collections import Counter
+def can_construct(ransom_note, magazine):
+    available = Counter(magazine)
+    for ch in ransom_note:
+        if available[ch] <= 0:
+            return False        # not enough of this letter
+        available[ch] -= 1
+    return True''',
+         complexity="Time O(n + m), space O(alphabet).",
+         pitfalls="Reusing a magazine letter more than once; comparing sets instead of counts.",
+         example="can_construct('aa','aab') -> True; can_construct('aa','ab') -> False."),
+    dict(cat="dsa", title="First Unique Character in a String",
+         answer="Return the index of the first non-repeating character, or -1 if none. Two passes: count every character's frequency, then scan left to right for the first character whose count is 1.",
+         tags=["first-unique-char","hash-map","counting","string","dsa"],
+         code='''# Index of the first non-repeating character, or -1 if none.
+from collections import Counter
+def first_uniq_char(s):
+    counts = Counter(s)
+    for i, ch in enumerate(s):
+        if counts[ch] == 1:
+            return i            # first char that appears exactly once
+    return -1''',
+         complexity="Time O(n), space O(alphabet).",
+         pitfalls="Returning the character instead of its index; a single pass can't know future repeats.",
+         example="first_uniq_char('leetcode') -> 0; first_uniq_char('aabb') -> -1."),
+    dict(cat="dsa", title="Intersection of Two Arrays II",
+         answer="Return the intersection of two arrays INCLUDING duplicates — each element appears min(count in A, count in B) times. Count one array, then walk the other consuming matches from the counts.",
+         tags=["intersection-arrays","hash-map","counting","array","dsa"],
+         code='''# Intersection of two arrays including duplicates (min of the counts).
+from collections import Counter
+def intersect(nums1, nums2):
+    counts = Counter(nums1)
     result = []
-    while i >= 0 or j >= 0 or carry:
-        total = carry
-        if i >= 0:
-            total += int(a[i]); i -= 1
-        if j >= 0:
-            total += int(b[j]); j -= 1
-        result.append(str(total % 2))   # current output bit
-        carry = total // 2              # carry to the next position
-    return "".join(reversed(result))''',
-         complexity="Time O(max(len a, len b)), space O(that).",
-         pitfalls="Dropping the final carry; not reversing the accumulated bits.",
-         example="add_binary('11', '1') -> '100'."),
-    dict(cat="dsa", title="Excel Sheet Column Number",
-         answer="Convert an Excel column title (A, B, ..., Z, AA, AB, ...) to its 1-based number. It's base-26 but with digits 1..26 (A=1, not 0): for each character, result = result*26 + (value of the letter).",
-         tags=["excel-column","base-conversion","string","math","dsa"],
-         code='''# Convert an Excel column title (A, B, ..., Z, AA, ...) to its number.
-def title_to_number(s):
-    result = 0
-    for ch in s:
-        # base-26 where A=1..Z=26 (no zero digit)
-        result = result * 26 + (ord(ch) - ord('A') + 1)
+    for n in nums2:
+        if counts[n] > 0:
+            result.append(n)
+            counts[n] -= 1      # consume one occurrence
     return result''',
-         complexity="Time O(len(s)), space O(1).",
-         pitfalls="Treating A as 0 (it's 1); not accumulating in base 26.",
-         example="title_to_number('AB') -> 28; title_to_number('ZY') -> 701."),
-    dict(cat="dsa", title="Perfect Squares (DP)",
-         answer="Find the FEWEST perfect-square numbers (1,4,9,16,...) that sum to n. DP where dp[i] = min squares summing to i: for each i, try every square j*j <= i and take 1 + dp[i - j*j]. Bottom-up fill gives dp[n].",
-         tags=["perfect-squares","dynamic-programming","math","dp","dsa"],
-         code='''# Fewest perfect-square numbers that sum to n (DP).
-def num_squares(n):
-    dp = [0] + [float('inf')] * n     # dp[i] = fewest squares summing to i
-    for i in range(1, n + 1):
-        j = 1
-        while j * j <= i:
-            dp[i] = min(dp[i], dp[i - j * j] + 1)
-            j += 1
-    return dp[n]''',
-         complexity="Time O(n * sqrt(n)), space O(n).",
-         pitfalls="Iterating all numbers instead of just squares; off-by-one on dp size.",
-         example="num_squares(12) -> 3  (4+4+4); num_squares(13) -> 2  (4+9)."),
-    dict(cat="dsa", title="Min Cost Climbing Stairs (DP)",
-         answer="Each stair i costs cost[i] to step on; from a stair you climb 1 or 2 steps, and you may start at stair 0 or 1. Find the min cost to go PAST the top. DP: the cheapest way onto stair i is cost[i] + min(cost to reach i-1, i-2); the answer is the min of reaching the last two stairs (the top is one step beyond).",
-         tags=["min-cost-climbing-stairs","dynamic-programming","dp","dsa"],
-         code='''# Min cost to reach the top, paying cost[i] to step on stair i (climb 1 or 2).
-def min_cost_climbing_stairs(cost):
-    prev, curr = 0, 0                 # min cost to reach the two stairs below
-    for c in cost:
-        prev, curr = curr, c + min(prev, curr)   # cheapest way onto this stair
-    return min(prev, curr)            # top is just past the last stair''',
+         complexity="Time O(n + m), space O(min(n, m)).",
+         pitfalls="Deduping (this variant keeps duplicates); not decrementing the count after a match.",
+         example="intersect([1,2,2,1],[2,2]) -> [2,2]."),
+    dict(cat="dsa", title="Is Subsequence",
+         answer="Check whether s is a subsequence of t — s's characters appear in t in the same order (not necessarily contiguous). Two pointers: sweep t and advance the s-pointer on each match; s is a subsequence iff the pointer reaches the end of s.",
+         tags=["is-subsequence","two-pointers","string","dsa"],
+         code='''# Is s a subsequence of t? (chars of s appear in order within t)
+def is_subsequence(s, t):
+    i = 0
+    for ch in t:
+        if i < len(s) and s[i] == ch:
+            i += 1              # matched the next char of s
+    return i == len(s)          # matched all of s''',
+         complexity="Time O(len(t)), space O(1).",
+         pitfalls="Requiring contiguity (that's substring); advancing the s-pointer without a match.",
+         example="is_subsequence('abc','ahbgdc') -> True; is_subsequence('axc','ahbgdc') -> False."),
+    dict(cat="dsa", title="Valid Palindrome II (delete at most one)",
+         answer="Determine if a string can become a palindrome by deleting AT MOST ONE character. Use two pointers inward; on the first mismatch, try skipping EITHER the left or the right character and check if the remainder is a palindrome. If no mismatch ever occurs, it already is one.",
+         tags=["valid-palindrome","two-pointers","greedy","string","dsa"],
+         code='''# Can s become a palindrome by deleting at most ONE character?
+def valid_palindrome(s):
+    def is_pal(lo, hi):
+        while lo < hi:
+            if s[lo] != s[hi]:
+                return False
+            lo += 1; hi -= 1
+        return True
+    left, right = 0, len(s) - 1
+    while left < right:
+        if s[left] != s[right]:
+            # try skipping either the left or the right mismatched char
+            return is_pal(left + 1, right) or is_pal(left, right - 1)
+        left += 1; right -= 1
+    return True''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Paying to step off the top (you don't); mixing up which neighbour is i-1 vs i-2.",
-         example="min_cost_climbing_stairs([10,15,20]) -> 15; min_cost_climbing_stairs([1,100,1,1,1,100,1,1,100,1]) -> 6."),
-    dict(cat="glossary", title="Consistent hashing",
-         answer="A hashing scheme that maps both KEYS and NODES onto a ring; a key is owned by the next node clockwise. When a node is added or removed, only the keys between it and its predecessor move — about 1/N of keys — instead of nearly everything remapping as with modulo hashing. VIRTUAL NODES spread load evenly. It underpins distributed caches, sharded databases, and CDNs.",
-         tags=["consistent-hashing","sharding","distributed-systems","load-balancing"],
-         example="Adding a 5th cache node to a 4-node cluster remaps only ~1/5 of keys (those now landing on the new node) instead of rehashing everything and causing a cache-wide miss storm."),
-    dict(cat="glossary", title="PACELC theorem",
-         answer="An extension of CAP: if there's a network Partition (P), a system trades between Availability and Consistency (A/C); but Else (E), even with NO partition, it trades between Latency and Consistency (L/C). It captures that consistency costs latency even in normal operation — not just during failures.",
-         tags=["pacelc","cap-theorem","consistency","latency","distributed-systems"],
-         example="Dynamo-style stores are PA/EL (favor availability under partition, low latency otherwise); Spanner is PC/EC (consistency always, paying latency)."),
-    dict(cat="glossary", title="Circuit breaker",
-         answer="A resilience pattern that STOPS calling a failing dependency to prevent cascading failure. Like an electrical breaker it 'trips' OPEN after a failure threshold — failing fast instead of hammering the dead service — then periodically goes HALF-OPEN to test recovery, closing again when calls succeed. It keeps a slow/broken downstream from exhausting the caller's threads/resources.",
-         tags=["circuit-breaker","resilience","microservices","fault-tolerance"],
-         example="If the payment service starts timing out, the breaker trips open so checkout fails fast (with a fallback) instead of every request hanging 30s and exhausting the gateway's thread pool."),
-    dict(cat="glossary", title="Idempotency key",
-         answer="A unique client-supplied token attached to a request so the server can DEDUPLICATE retries — processing the operation once even if the request arrives multiple times (network retry, timeout). The server records the key + result; a repeat with the same key returns the stored result instead of re-executing. Essential for safely retrying non-idempotent operations like payments.",
-         tags=["idempotency-key","retries","exactly-once","api","reliability"],
-         example="A payment API takes an Idempotency-Key header; a client retry after a timeout sends the same key, so the server returns the original charge result rather than charging twice."),
-    dict(cat="glossary", title="Exactly-once semantics",
-         answer="The (hard) guarantee that a message/operation takes effect exactly once despite failures and retries. True exactly-once DELIVERY is impossible over an asynchronous network, so systems achieve exactly-once EFFECT via at-least-once delivery + IDEMPOTENT processing (dedupe by id) or an atomic/transactional commit. 'Exactly-once' in practice means 'at-least-once + dedup'.",
-         tags=["exactly-once","idempotency","messaging","delivery-semantics"],
-         example="Kafka's 'exactly-once' combines idempotent producers with transactional writes so a consumer's output reflects each input once, even though messages may be delivered more than once underneath."),
-    dict(cat="conceptual", title="Why is exactly-once delivery essentially impossible, and how do systems fake it?",
-         answer="Over an asynchronous network a sender can't distinguish 'the message was lost' from 'it arrived but the ack was lost', so it must either retry (risking DUPLICATES) or not (risking LOSS) — giving at-most-once or at-least-once, but never a guaranteed single delivery (the two-generals problem: no finite protocol makes both sides certain). Systems therefore target exactly-once EFFECT, not delivery: at-least-once delivery + IDEMPOTENT processing (dedupe by a unique id) or an atomic/transactional commit so duplicates are harmless. The delivery may repeat; the effect happens once.",
-         tags=["exactly-once","two-generals","idempotency","distributed-systems","why"],
-         example="A payment webhook is delivered at-least-once; the receiver dedupes on the event id, so a re-delivered 'charge $10' is ignored — money moves exactly once even though the message arrived twice."),
+         pitfalls="Trying only one side of the mismatch; attempting more than one deletion.",
+         example="valid_palindrome('abca') -> True (delete 'c' or 'b'); valid_palindrome('abc') -> False."),
+    dict(cat="dsa", title="String Compression (in place)",
+         answer="Compress runs of repeated characters IN PLACE: a run of a character followed by its count when >1 (e.g. 'aaabb' -> 'a3b2'), returning the new length. Use a read pointer to count each run and a write pointer to emit the char and, for runs longer than 1, each digit of the count.",
+         tags=["string-compression","two-pointers","in-place","string","dsa"],
+         code='''# Compress runs of repeated chars in place: 'aaabb' -> 'a3b2'; return length.
+def compress(chars):
+    write = 0
+    read = 0
+    n = len(chars)
+    while read < n:
+        ch = chars[read]
+        count = 0
+        while read < n and chars[read] == ch:
+            read += 1; count += 1     # count the current run
+        chars[write] = ch; write += 1
+        if count > 1:
+            for digit in str(count):  # write each digit of the run length
+                chars[write] = digit; write += 1
+    return write''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Writing '1' for single characters (only counts >1); multi-digit counts need each digit.",
+         example="chars=['a','a','b','b','c','c','c'] -> compress -> 6, with chars starting ['a','2','b','2','c','3']."),
+    dict(cat="glossary", title="Vector clocks",
+         answer="A mechanism to track CAUSALITY across distributed nodes without synchronized clocks. Each node keeps a vector of counters (one per node), increments its own on each event, and merges (element-wise max) on message receipt. Comparing two vectors tells you whether one event happened-before another or whether they're CONCURRENT (conflicting). Used to detect conflicting replica writes (Dynamo).",
+         tags=["vector-clocks","causality","distributed-systems","conflict-detection"],
+         example="Two replicas update the same key concurrently; their vector clocks are incomparable (neither dominates), so the system flags a conflict and keeps both versions for the client to resolve."),
+    dict(cat="glossary", title="Snapshot isolation",
+         answer="A transaction isolation level where each transaction reads from a consistent SNAPSHOT of the database as of its start, and writes are conflict-checked at commit. It prevents dirty and non-repeatable reads and gives high concurrency (readers don't block writers, via MVCC), but permits the WRITE SKEW anomaly — so it's weaker than serializable.",
+         tags=["snapshot-isolation","mvcc","transactions","isolation-levels","database"],
+         example="Two on-call doctors each see '2 on call' in their snapshot and each removes themselves — snapshot isolation allows this write skew, leaving zero on call; serializable would forbid it."),
+    dict(cat="glossary", title="Backpressure",
+         answer="A flow-control mechanism where a slow CONSUMER signals upstream producers to slow down, preventing unbounded queue growth and memory blowup when demand exceeds capacity. Rather than buffering forever (and crashing), the system pushes back — blocking, dropping, or rate-limiting the producer. It's core to reactive streams and stable pipelines.",
+         tags=["backpressure","flow-control","streaming","reliability"],
+         example="A stream processor can't keep up with Kafka; backpressure pauses its fetch (letting lag grow) instead of buffering unbounded records in memory and running out of memory."),
+    dict(cat="glossary", title="Dead-letter queue (DLQ)",
+         answer="A separate queue where messages that repeatedly FAIL processing (after max retries) or can't be delivered are set aside — instead of blocking the main queue or being silently lost. Engineers inspect, fix, and replay them. It isolates 'poison' messages so one bad message doesn't stall the whole pipeline.",
+         tags=["dead-letter-queue","dlq","messaging","reliability","retries"],
+         example="A malformed order event that throws on every attempt is moved to the DLQ after 5 retries, so the worker keeps processing good messages while the team investigates the poison one."),
+    dict(cat="glossary", title="SLI / SLO / SLA (+ error budget)",
+         answer="The reliability vocabulary. An SLI (indicator) is a measured metric like success rate or p99 latency. An SLO (objective) is your internal target for it (e.g. 99.9% success). An SLA (agreement) is a contractual promise to customers with penalties, usually looser than the SLO. The ERROR BUDGET = 1 - SLO — the unreliability you're allowed to 'spend' on risk/releases before you must freeze changes.",
+         tags=["slo","sla","sli","error-budget","reliability","sre"],
+         example="A 99.9% availability SLO gives a ~43-minute monthly error budget; if a botched deploy burns it, the team halts feature launches and focuses on reliability until it recovers."),
+    dict(cat="conceptual", title="Why report p99/tail latency instead of average latency?",
+         answer="Averages HIDE the bad experiences. A 50ms mean can coexist with 1% of requests taking 2 seconds — and those slow requests hit real users, often the most active ones (more requests = higher chance of hitting the tail). Latency distributions are right-skewed, so the mean doesn't reflect the worst-case user. PERCENTILES (p99, p99.9) directly answer 'how bad is it for the unluckiest 1%?' — the SLO-relevant question. Tail latency also COMPOUNDS: a page making 100 backend calls almost certainly hits at least one p99-slow call, so the tail becomes the common case at the page level. That's why SLOs target p99, not the average.",
+         tags=["tail-latency","p99","percentiles","latency","why"],
+         example="Two services both average 50ms, but one has p99=60ms and the other p99=2s; the average calls them equal while users of the second see frequent multi-second stalls — only the percentile exposes it."),
 ]
 
 
