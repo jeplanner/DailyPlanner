@@ -16,192 +16,292 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Single Number II (appears once among triples)",
-         answer="Every element appears three times except one that appears once — find it in O(n) time, O(1) space. Count set bits at each bit position across all numbers; a position's count mod 3 is nonzero only where the lone number has a 1. Reassemble those bits (and fix sign for 32-bit two's-complement).",
-         tags=["single-number","bit-manipulation","counting","array","dsa"],
-         code='''# The element appearing once when every other appears three times.
-def single_number_ii(nums):
-    result = 0
-    for bit in range(32):
-        count = 0
-        for n in nums:
-            if (n >> bit) & 1:
-                count += 1            # count set bits at this position
-        if count % 3:                 # the lone number owns this bit
-            result |= (1 << bit)
-    if result >= 2 ** 31:             # interpret as signed 32-bit
-        result -= 2 ** 32
-    return result''',
-         complexity="Time O(32n), space O(1).",
-         pitfalls="Ignoring negative numbers (Python ints are unbounded — fix the sign); using XOR (that only works for pairs).",
-         example="single_number_ii([2,2,3,2]) -> 3."),
-    dict(cat="dsa", title="Longest Repeating Character Replacement",
-         answer="Find the longest substring that becomes all one character after replacing at most k characters. Sliding window tracking the count of the MOST frequent char in the window: the window is valid while (window size - max frequency) <= k (those are the chars to replace); shrink from the left when it isn't.",
-         tags=["character-replacement","sliding-window","string","dsa"],
-         code='''# Longest substring of one repeated char after replacing at most k chars.
-from collections import defaultdict
-def character_replacement(s, k):
-    counts = defaultdict(int)
-    left = 0
-    max_freq = 0
-    best = 0
-    for right in range(len(s)):
-        counts[s[right]] += 1
-        max_freq = max(max_freq, counts[s[right]])   # commonest char in window
-        while (right - left + 1) - max_freq > k:      # too many to replace
-            counts[s[left]] -= 1
-            left += 1
-        best = max(best, right - left + 1)
-    return best''',
-         complexity="Time O(n), space O(1) (at most 26 keys).",
-         pitfalls="Recomputing max_freq exactly (not needed — a stale max still gives the right answer); off-by-one on window size.",
-         example="character_replacement('AABABBA', 1) -> 4."),
-    dict(cat="dsa", title="Permutation in String",
-         answer="Determine whether s2 contains any PERMUTATION of s1 as a contiguous substring. Slide a fixed window of length len(s1) over s2, maintaining a character-count map; the window is a permutation exactly when its counts match s1's counts. Update counts incrementally as the window moves.",
-         tags=["permutation-in-string","sliding-window","anagram","string","dsa"],
-         code='''# Does s2 contain any permutation of s1 as a substring? (sliding window)
-from collections import Counter
-def check_inclusion(s1, s2):
-    if len(s1) > len(s2):
-        return False
-    need = Counter(s1)
-    window = Counter(s2[:len(s1)])           # the first window
-    if window == need:
-        return True
-    for i in range(len(s1), len(s2)):
-        window[s2[i]] += 1                    # add the entering char
-        left = s2[i - len(s1)]
-        window[left] -= 1                     # remove the leaving char
-        if window[left] == 0:
-            del window[left]                 # keep the counters comparable
-        if window == need:
-            return True
-    return False''',
-         complexity="Time O(len(s2)), space O(1) (fixed alphabet).",
-         pitfalls="Not deleting zero counts (Counter equality then fails); mis-indexing the leaving character.",
-         example="check_inclusion('ab', 'eidbaooo') -> True  ('ba')."),
-    dict(cat="dsa", title="Find Peak Element (binary search)",
-         answer="Return the index of ANY peak (an element strictly greater than its neighbours) in O(log n). Binary search on the slope: if nums[mid] < nums[mid+1] you're on an ascending slope so a peak lies to the right; otherwise a peak is at mid or to the left. Treat out-of-bounds as -infinity.",
-         tags=["find-peak","binary-search","array","dsa"],
-         code='''# Find any peak (greater than its neighbours) index via binary search.
-def find_peak_element(nums):
-    lo, hi = 0, len(nums) - 1
+    dict(cat="dsa", title="Climbing Stairs",
+         answer="Count the distinct ways to climb n stairs taking 1 or 2 steps at a time. The count follows Fibonacci: ways(n) = ways(n-1) + ways(n-2), because the last move is either a 1-step (from n-1) or a 2-step (from n-2). Track two rolling values for O(1) space.",
+         tags=["climbing-stairs","dynamic-programming","fibonacci","dp","dsa"],
+         code='''# Number of distinct ways to climb n stairs taking 1 or 2 steps.
+def climb_stairs(n):
+    if n <= 2:
+        return n
+    prev, curr = 1, 2                 # ways to reach step 1 and step 2
+    for _ in range(3, n + 1):
+        prev, curr = curr, prev + curr   # ways(i) = ways(i-1) + ways(i-2)
+    return curr''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Off-by-one in the base cases; recomputing recursively without memoization (exponential).",
+         example="climb_stairs(5) -> 8."),
+    dict(cat="dsa", title="Coin Change (fewest coins)",
+         answer="Find the minimum number of coins that make a target amount, or -1 if impossible. Unbounded-knapsack DP: dp[a] is the fewest coins to make amount a; for each amount try each coin and take 1 + dp[a-coin]. Initialize dp[0]=0 and the rest to infinity.",
+         tags=["coin-change","dynamic-programming","unbounded-knapsack","dp","dsa"],
+         code='''# Fewest coins to make 'amount', or -1 if impossible.
+def coin_change(coins, amount):
+    dp = [0] + [float('inf')] * amount   # dp[a] = min coins to make a
+    for a in range(1, amount + 1):
+        for c in coins:
+            if c <= a:
+                dp[a] = min(dp[a], dp[a - c] + 1)
+    return dp[amount] if dp[amount] != float('inf') else -1''',
+         complexity="Time O(amount * len(coins)), space O(amount).",
+         pitfalls="Confusing with counting the NUMBER of ways (different DP); forgetting the -1 impossible case.",
+         example="coin_change([1,2,5], 11) -> 3  (5+5+1)."),
+    dict(cat="dsa", title="Unique Paths",
+         answer="Count the paths from the top-left to bottom-right of an m×n grid moving only right or down. DP where each cell's count is the sum of the cell above and the cell to the left; a single rolling row gives O(n) space. (It's also the binomial coefficient C(m+n-2, m-1).)",
+         tags=["unique-paths","dynamic-programming","grid","combinatorics","dp","dsa"],
+         code='''# Number of paths from top-left to bottom-right moving only right or down.
+def unique_paths(m, n):
+    dp = [1] * n                      # dp[j] = paths to the current row's cell j
+    for _ in range(1, m):
+        for j in range(1, n):
+            dp[j] += dp[j - 1]        # from top (dp[j]) + from left (dp[j-1])
+    return dp[-1]''',
+         complexity="Time O(m*n), space O(n).",
+         pitfalls="Wrong base row/column initialization; off-by-one on grid dimensions.",
+         example="unique_paths(3, 7) -> 28."),
+    dict(cat="dsa", title="Minimum Path Sum",
+         answer="Find the minimum sum along a path from the top-left to bottom-right of a grid, moving only right or down. DP where each cell holds the cheapest cost to reach it: the cell value plus the min of the cost from above and from the left. A rolling row keeps space O(cols).",
+         tags=["minimum-path-sum","dynamic-programming","grid","dp","dsa"],
+         code='''# Minimum sum path from top-left to bottom-right moving right/down.
+def min_path_sum(grid):
+    rows, cols = len(grid), len(grid[0])
+    dp = [0] * cols
+    dp[0] = grid[0][0]
+    for j in range(1, cols):
+        dp[j] = dp[j - 1] + grid[0][j]   # first row: only from the left
+    for i in range(1, rows):
+        dp[0] += grid[i][0]              # first column: only from above
+        for j in range(1, cols):
+            dp[j] = min(dp[j], dp[j - 1]) + grid[i][j]
+    return dp[-1]''',
+         complexity="Time O(rows*cols), space O(cols).",
+         pitfalls="Forgetting to seed the first row/column; mixing up which neighbour is 'above' vs 'left'.",
+         example="min_path_sum([[1,3,1],[1,5,1],[4,2,1]]) -> 7  (1->3->1->1->1)."),
+    dict(cat="dsa", title="Search Insert Position",
+         answer="In a sorted array of distinct integers, return the index of a target, or the index where it would be inserted to keep the array sorted. It's exactly a lower-bound binary search (bisect_left): move hi=mid when nums[mid] >= target so you converge on the first position not less than target.",
+         tags=["search-insert","binary-search","lower-bound","array","dsa"],
+         code='''# Index where target is, or where it would be inserted to stay sorted.
+def search_insert(nums, target):
+    lo, hi = 0, len(nums)
     while lo < hi:
         mid = (lo + hi) // 2
-        if nums[mid] < nums[mid + 1]:
-            lo = mid + 1              # ascending -> a peak is to the right
-        else:
-            hi = mid                  # descending -> peak at mid or left
-    return lo''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Comparing to mid-1 without a bounds guard; using lo <= hi (can overshoot — use lo < hi).",
-         example="find_peak_element([1,2,3,1]) -> 2  (value 3)."),
-    dict(cat="dsa", title="Search in Rotated Sorted Array",
-         answer="Find a target's index in a sorted array that's been rotated at an unknown pivot, in O(log n). At each step one half (left or right of mid) is still sorted — determine which, check if the target falls in that sorted half's range, and recurse into the correct side.",
-         tags=["search-rotated","binary-search","array","dsa"],
-         code='''# Search for target in a rotated sorted array in O(log n).
-def search_rotated(nums, target):
-    lo, hi = 0, len(nums) - 1
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        if nums[mid] == target:
-            return mid
-        if nums[lo] <= nums[mid]:         # the left half is sorted
-            if nums[lo] <= target < nums[mid]:
-                hi = mid - 1
-            else:
-                lo = mid + 1
-        else:                              # the right half is sorted
-            if nums[mid] < target <= nums[hi]:
-                lo = mid + 1
-            else:
-                hi = mid - 1
-    return -1''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Wrong boundary comparisons (use <= carefully); forgetting which half is guaranteed sorted.",
-         example="search_rotated([4,5,6,7,0,1,2], 0) -> 4."),
-    dict(cat="dsa", title="Find Minimum in Rotated Sorted Array",
-         answer="Find the minimum element of a rotated sorted array in O(log n). Compare nums[mid] to nums[hi]: if nums[mid] > nums[hi] the rotation point (and minimum) is to the RIGHT of mid; otherwise the minimum is at mid or to its left. Converges to the single smallest element.",
-         tags=["find-minimum-rotated","binary-search","array","dsa"],
-         code='''# Find the minimum in a rotated sorted array (binary search on rotation).
-def find_min_rotated(nums):
-    lo, hi = 0, len(nums) - 1
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if nums[mid] > nums[hi]:
-            lo = mid + 1              # minimum is in the right half
-        else:
-            hi = mid                  # minimum is at mid or to the left
-    return nums[lo]''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Comparing to nums[lo] instead of nums[hi] (breaks on some rotations); using lo <= hi.",
-         example="find_min_rotated([3,4,5,1,2]) -> 1."),
-    dict(cat="dsa", title="Koko Eating Bananas (binary search on the answer)",
-         answer="Find the minimum integer eating speed so Koko finishes all banana piles within h hours. The answer is monotonic (faster speed never needs more hours), so BINARY SEARCH on the speed in [1, max pile]: for a candidate speed, sum ceil(pile/speed) hours; if it fits within h, try slower, else faster.",
-         tags=["koko-bananas","binary-search-on-answer","array","dsa"],
-         code='''# Min eating speed to finish all piles within h hours (binary search on answer).
-import math
-def min_eating_speed(piles, h):
-    lo, hi = 1, max(piles)
-    while lo < hi:
-        speed = (lo + hi) // 2
-        hours = sum(math.ceil(p / speed) for p in piles)   # hours at this speed
-        if hours <= h:
-            hi = speed                # feasible -> try a slower speed
-        else:
-            lo = speed + 1            # too slow -> speed up
-    return lo''',
-         complexity="Time O(n log(max pile)), space O(1).",
-         pitfalls="Searching over the wrong range; using floor instead of ceil for per-pile hours.",
-         example="min_eating_speed([3,6,7,11], 8) -> 4."),
-    dict(cat="dsa", title="Capacity to Ship Packages Within D Days",
-         answer="Find the least ship capacity to ship packages (in given order) within 'days' days. Feasibility is monotonic in capacity, so binary search on capacity in [max weight, total weight]: greedily simulate days needed for a candidate capacity; if it fits within the day limit, try smaller, else larger.",
-         tags=["ship-packages","binary-search-on-answer","greedy","array","dsa"],
-         code='''# Least ship capacity to ship all packages in order within 'days' days.
-def ship_within_days(weights, days):
-    lo, hi = max(weights), sum(weights)   # capacity must fit the biggest package
-    def needed(cap):
-        d, load = 1, 0
-        for w in weights:
-            if load + w > cap:
-                d += 1                # start a new day
-                load = 0
-            load += w
-        return d
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if needed(mid) <= days:
-            hi = mid                  # feasible -> try smaller capacity
-        else:
+        if nums[mid] < target:
             lo = mid + 1
+        else:
+            hi = mid
     return lo''',
-         complexity="Time O(n log(sum)), space O(1).",
-         pitfalls="Lower bound must be max(weights), not 1; off-by-one in the day count.",
-         example="ship_within_days([1,2,3,4,5,6,7,8,9,10], 5) -> 15."),
-    dict(cat="glossary", title="UCB (Upper Confidence Bound)",
-         answer="A bandit strategy that picks the action with the highest OPTIMISTIC estimate: its mean reward plus an exploration bonus that shrinks as the action is tried more. 'Optimism in the face of uncertainty' — rarely-tried actions get a big bonus so they're explored, while well-known ones lean on their mean. It comes with strong (logarithmic) regret guarantees.",
-         tags=["ucb","bandits","exploration","optimism","reinforcement-learning"],
-         example="UCB1 scores each arm as mean + sqrt(2·ln(t)/n_arm); an arm pulled only twice gets a large bonus, so it's tried again before being written off."),
-    dict(cat="glossary", title="Regret (online learning)",
-         answer="In bandits/online learning, the cumulative difference between the reward you actually earned and the reward of the BEST fixed action in hindsight. Lower regret means closer to optimal. Good algorithms achieve SUBLINEAR regret (average regret -> 0), meaning they eventually learn the best action. It's the standard yardstick for exploration strategies.",
-         tags=["regret","bandits","online-learning","evaluation"],
-         example="If the best slot machine pays 1.0/pull and over 1000 pulls you averaged 0.9, total regret is ~100 — a good algorithm keeps regret growing slower than linearly."),
-    dict(cat="glossary", title="CUPED (variance reduction)",
-         answer="Controlled-experiment Using Pre-Experiment Data — a variance-reduction technique for A/B tests. It adjusts each user's metric using a pre-experiment covariate (e.g. their baseline activity), removing predictable variation unrelated to the treatment. This shrinks the metric's variance, so you detect the same effect with a MUCH smaller sample or shorter test.",
-         tags=["cuped","variance-reduction","ab-testing","experimentation"],
-         example="Using each user's pre-experiment spend to adjust their in-experiment spend can cut variance ~50%, roughly halving the users needed to reach significance."),
-    dict(cat="glossary", title="Sample ratio mismatch (SRM)",
-         answer="When the observed traffic split in an A/B test differs significantly from the intended split (e.g. you wanted 50/50 but got 52/48) — a red flag that the experiment is BROKEN (bad randomization, logging bugs, differential dropout). Any results are untrustworthy until fixed. Detected with a chi-square test on the assignment counts.",
-         tags=["sample-ratio-mismatch","srm","ab-testing","data-quality"],
-         example="A test meant to be 50/50 shows 51,000 vs 49,000 users; a chi-square test flags SRM (p<0.001), so you halt and debug before trusting any lift."),
-    dict(cat="ml_system_design", title="Design a Dynamic Pricing system",
-         answer="Set prices that change with demand, supply, and context to optimize revenue/utilization (surge pricing, hotels, e-commerce). (1) CLARIFY & SCALE: pick the objective (revenue, conversion, utilization) with fairness/rule constraints; real-time, per-item/region; avoid runaway prices. (2) DATA & LABELS: historical prices, demand, conversions, competitor prices, inventory — plus the COUNTERFACTUAL challenge that you only observe outcomes at prices you set. (3) FEATURES: demand/supply signals, time, location, inventory, seasonality, user segment, competitor prices. (4) MODEL: estimate a DEMAND CURVE (price -> conversion/quantity) via regression, then optimize expected revenue = price × predicted demand under constraints; contextual bandits to explore prices and learn elasticity. (5) EVAL: offline counterfactual/off-policy estimation; online A/B on revenue plus guardrails (conversion, complaints). (6) SERVING/MONITORING/AB: real-time pricing service with price caps/floors and smoothing, monitor elasticity drift and fairness, and explore carefully.",
-         tags=["dynamic-pricing","demand-curve","elasticity","bandits","ml-system-design"],
-         example="During a rain surge the model predicts higher ride demand, estimates riders' price sensitivity, and raises the multiplier to the revenue-maximizing point within a cap — validated by A/B against a fixed-price control."),
-    dict(cat="ml_system_design", title="Design a Real-Time Bidding (RTB) system",
-         answer="Bid in real time for ad impressions in an auction (tens of ms per request). (1) CLARIFY & SCALE: maximize advertiser value (conversions) within budget while bidding profitably; billions of auctions/day, <10-50ms, budget PACING. (2) DATA & LABELS: impression/click/conversion logs with win/loss and price; delayed conversions. (3) FEATURES: user, context (site, device, time), ad, and predicted pCTR/pCVR. (4) MODEL: predict CALIBRATED P(click) and P(conversion), compute expected value, then BID = value × pConversion adjusted by budget pacing and bid-shading for the auction type (first vs second price). (5) EVAL: calibration of pCTR/pCVR, ROI/CPA, win rate vs spend; offline replay + online. (6) SERVING/MONITORING/AB: ultra-low-latency serving with a feature store, a budget-pacing controller, monitoring of spend/CPA and calibration drift, and A/B on advertiser ROI.",
-         tags=["real-time-bidding","rtb","ads","auction","calibration","ml-system-design"],
-         example="For an incoming impression the system predicts a 2% conversion probability worth $50, bids ~$1.00 shaded for a first-price auction and paced against the remaining daily budget — all within 20ms."),
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Using hi=len-1 with the wrong loop condition; returning mid instead of the insertion point.",
+         example="search_insert([1,3,5,6], 5) -> 2; search_insert([1,3,5,6], 2) -> 1."),
+    dict(cat="dsa", title="Find First and Last Position (sorted array)",
+         answer="Find the first and last index of a target in a sorted array with duplicates, in O(log n). Two binary searches: bisect_left gives the first index; bisect_right - 1 gives the last. If the left index is out of range or doesn't hold the target, it isn't present.",
+         tags=["search-range","binary-search","bisect","array","dsa"],
+         code='''# First and last index of target in a sorted array (two binary searches).
+import bisect
+def search_range(nums, target):
+    left = bisect.bisect_left(nums, target)
+    if left == len(nums) or nums[left] != target:
+        return [-1, -1]                  # target not present
+    right = bisect.bisect_right(nums, target) - 1
+    return [left, right]''',
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Not checking presence after bisect_left; off-by-one converting bisect_right to the last index.",
+         example="search_range([5,7,7,8,8,10], 8) -> [3,4]."),
+    dict(cat="dsa", title="Summary Ranges",
+         answer="Given a sorted array of unique integers, collapse consecutive runs into range strings like 'a->b' (or a single number when the run has length 1). Sweep once, extending each run while the next value is exactly one more, then emit the appropriate string.",
+         tags=["summary-ranges","array","two-pointers","string","dsa"],
+         code='''# Summarize a sorted unique int array into range strings.
+def summary_ranges(nums):
+    result = []
+    i = 0
+    n = len(nums)
+    while i < n:
+        start = nums[i]
+        while i + 1 < n and nums[i + 1] == nums[i] + 1:
+            i += 1                       # extend the consecutive run
+        if start == nums[i]:
+            result.append(str(start))    # a single number
+        else:
+            result.append(str(start) + "->" + str(nums[i]))
+        i += 1
+    return result''',
+         complexity="Time O(n), space O(1) beyond the output.",
+         pitfalls="Off-by-one on run boundaries; emitting 'a->a' for singletons.",
+         example="summary_ranges([0,1,2,4,5,7]) -> ['0->2','4->5','7']."),
+    dict(cat="dsa", title="Set Mismatch",
+         answer="An array should hold 1..n but one number is duplicated and another is missing; find both. A set (or a count array) reveals the value seen twice; scanning 1..n for the absent value gives the missing one. (A math approach using sum and sum-of-squares does it in O(1) space.)",
+         tags=["set-mismatch","hash-set","array","dsa"],
+         code='''# Find the duplicated number and the missing number in [1..n].
+def find_error_nums(nums):
+    n = len(nums)
+    seen = set()
+    duplicate = -1
+    for x in nums:
+        if x in seen:
+            duplicate = x                # this value appears twice
+        seen.add(x)
+    missing = -1
+    for v in range(1, n + 1):
+        if v not in seen:
+            missing = v                  # this value never appears
+            break
+    return [duplicate, missing]''',
+         complexity="Time O(n), space O(n) (O(1) with the math trick).",
+         pitfalls="Assuming the duplicate and missing are related; off-by-one on the 1..n range.",
+         example="find_error_nums([1,2,2,4]) -> [2,3]."),
+    dict(cat="dsa", title="Single Number III (two uniques)",
+         answer="Every element appears twice except TWO that appear once — find both in O(n) time, O(1) space. XOR everything to get a^b (the two singles). A set bit in a^b marks a position where they differ; partition all numbers by that bit and XOR each group to isolate a and b.",
+         tags=["single-number","bit-manipulation","xor","array","dsa"],
+         code='''# Two elements appear once, all others twice; find both (XOR + bit split).
+def single_number_iii(nums):
+    xor_all = 0
+    for n in nums:
+        xor_all ^= n                     # becomes a ^ b (pairs cancel)
+    diff = xor_all & (-xor_all)          # lowest bit where a and b differ
+    a = b = 0
+    for n in nums:
+        if n & diff:
+            a ^= n                       # group with that bit set
+        else:
+            b ^= n                       # group without it
+    return [a, b]''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Not isolating a distinguishing bit; XOR-ing without partitioning (gives only a^b).",
+         example="single_number_iii([1,2,1,3,2,5]) -> [3,5]  (order may vary)."),
+    dict(cat="dsa", title="Majority Element II (> n/3)",
+         answer="Find all elements appearing more than n/3 times — there can be at most two. Extend Boyer-Moore voting to TWO candidates and two counters; a third distinct value decrements both. A final verification pass confirms each candidate actually exceeds n/3 (voting alone can produce false positives here).",
+         tags=["majority-element","boyer-moore","voting","array","dsa"],
+         code='''# All elements appearing more than n/3 times (at most 2).
+def majority_element_ii(nums):
+    count1 = count2 = 0
+    cand1, cand2 = None, None
+    for n in nums:
+        if cand1 == n:
+            count1 += 1
+        elif cand2 == n:
+            count2 += 1
+        elif count1 == 0:
+            cand1, count1 = n, 1
+        elif count2 == 0:
+            cand2, count2 = n, 1
+        else:
+            count1 -= 1
+            count2 -= 1
+    # verify: candidates must truly exceed n/3
+    return [c for c in (cand1, cand2) if c is not None and nums.count(c) > len(nums) // 3]''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Skipping the verification pass (false positives); mishandling the two-candidate bookkeeping.",
+         example="majority_element_ii([1,1,1,3,3,2,2,2]) -> [1,2]."),
+    dict(cat="dsa", title="Subsets (power set)",
+         answer="Generate every subset (the power set) of a list of distinct integers. Iterative doubling: start with the empty subset, and for each new number append it to copies of all existing subsets — doubling the count each time until all 2^n subsets exist. (Backtracking gives the same result.)",
+         tags=["subsets","power-set","backtracking","bit-manipulation","dsa"],
+         code='''# All subsets (the power set) of a list of distinct integers.
+def subsets(nums):
+    result = [[]]
+    for num in nums:
+        # each existing subset spawns a new one with 'num' added
+        result += [subset + [num] for subset in result]
+    return result''',
+         complexity="Time O(n * 2^n), space O(n * 2^n).",
+         pitfalls="Mutating subsets in place instead of copying; expecting a specific ordering.",
+         example="subsets([1,2,3]) -> 8 subsets including [], [1], [1,2], [1,2,3]."),
+    dict(cat="dsa", title="Letter Combinations of a Phone Number",
+         answer="Given digits 2-9, return all letter strings they could spell on an old phone keypad. Build combinations iteratively: start with [''] and, for each digit, replace the running list with every existing prefix extended by each letter that digit maps to (a Cartesian product).",
+         tags=["letter-combinations","backtracking","cartesian-product","string","dsa"],
+         code='''# All letter combinations a phone-keypad digit string can spell.
+def letter_combinations(digits):
+    if not digits:
+        return []
+    mapping = {'2':'abc','3':'def','4':'ghi','5':'jkl',
+               '6':'mno','7':'pqrs','8':'tuv','9':'wxyz'}
+    result = ['']
+    for d in digits:
+        result = [prefix + ch for prefix in result for ch in mapping[d]]
+    return result''',
+         complexity="Time O(4^n) combinations, space O(4^n).",
+         pitfalls="Returning [''] for empty input (should be []); wrong keypad mapping for 7 and 9 (4 letters).",
+         example="letter_combinations('23') -> ['ad','ae','af','bd','be','bf','cd','ce','cf']."),
+    dict(cat="dsa", title="House Robber",
+         answer="Maximize the money robbed from a row of houses where you can't rob two ADJACENT houses. DP with two rolling values: at each house choose the max of skipping it (keep curr) or robbing it (prev + money). Classic linear-DP recurrence.",
+         tags=["house-robber","dynamic-programming","dp","dsa"],
+         code='''# Max money from non-adjacent houses in a row.
+def rob(nums):
+    prev, curr = 0, 0
+    for money in nums:
+        prev, curr = curr, max(curr, prev + money)   # skip vs rob this house
+    return curr''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Robbing adjacent houses (the recurrence prevents it); mishandling the empty list.",
+         example="rob([2,7,9,3,1]) -> 12  (2 + 9 + 1)."),
+    dict(cat="dsa", title="Maximum Product Subarray",
+         answer="Find the largest product of any contiguous subarray. Unlike max-sum, a NEGATIVE number can flip a small (very negative) product into a large one, so track BOTH the running max and running min at each step; a new element may pair best with either. Update both before taking the answer.",
+         tags=["max-product-subarray","dynamic-programming","array","dp","dsa"],
+         code='''# Largest product of a contiguous subarray (track min and max for negatives).
+def max_product(nums):
+    best = cur_max = cur_min = nums[0]
+    for n in nums[1:]:
+        # a negative n swaps the roles of max and min, so consider all three
+        candidates = (n, cur_max * n, cur_min * n)
+        cur_max = max(candidates)
+        cur_min = min(candidates)
+        best = max(best, cur_max)
+    return best''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Tracking only the max (negatives break it); forgetting to consider n alone (restart).",
+         example="max_product([2,3,-2,4]) -> 6  ([2,3])."),
+    dict(cat="glossary", title="Multicollinearity / VIF",
+         answer="Multicollinearity is when two or more features are highly CORRELATED, so a linear model can't separate their individual effects — coefficients become unstable and hard to interpret (though predictions may still be fine). The Variance Inflation Factor (VIF) quantifies it per feature; a VIF above ~5-10 flags trouble. Fix by dropping/combining features or using regularization.",
+         tags=["multicollinearity","vif","linear-regression","features","statistics"],
+         example="Height-in-cm and height-in-inches are perfectly collinear; a linear model's coefficients on them become arbitrary, VIF explodes — drop one."),
+    dict(cat="glossary", title="Cardinality (of a feature)",
+         answer="The number of DISTINCT values a feature can take. LOW cardinality (gender, country) one-hot encodes easily; HIGH cardinality (user ID, URL, zip code) blows up dimensionality and causes sparsity/overfitting, needing feature hashing, target encoding, or embeddings. Cardinality drives your encoding choice.",
+         tags=["cardinality","features","encoding","high-cardinality"],
+         example="A 'country' column (~200 values) one-hot encodes fine; a 'user_id' column (10M values) is high-cardinality and needs an embedding or hashing instead."),
+    dict(cat="glossary", title="Imputation strategies",
+         answer="Ways to fill MISSING values so models (which usually can't handle NaNs) can train. Simple: mean/median/mode or a constant sentinel. Better: model-based (KNN or regression imputation predicting the value from other features), plus adding a 'was-missing' INDICATOR feature since missingness itself can be informative. Fit imputation on train only.",
+         tags=["imputation","missing-data","preprocessing","features"],
+         example="For missing income, median-impute and add an 'income_was_missing' flag — the flag lets the model learn that missingness itself correlates with the target."),
+    dict(cat="glossary", title="Guardrail metric",
+         answer="A metric you monitor in an experiment NOT to improve but to PROTECT — it must not get worse even if your primary metric improves. Guardrails catch harmful side effects of a change (latency, crash rate, unsubscribes, revenue). A launch that boosts clicks but trips a guardrail is blocked.",
+         tags=["guardrail-metric","ab-testing","experimentation","metrics"],
+         example="A new ranking model raises engagement (primary) but you also watch latency and complaint rate as guardrails — if latency regresses past a threshold, you don't ship."),
+    dict(cat="glossary", title="Interleaving (online evaluation)",
+         answer="An efficient online evaluation for RANKING where, instead of splitting users into A/B groups, you MERGE two rankers' results into one list for the SAME user and see which ranker's items get more clicks. Because every user compares both systems, it's far more sensitive than A/B testing and needs much less traffic to detect a difference.",
+         tags=["interleaving","ranking","online-evaluation","ab-testing"],
+         example="To compare two search rankers, interleave their results into one page; whichever contributed more of the clicked results wins — with a fraction of the users an A/B test needs."),
+    dict(cat="ml_coding", title="TF-IDF (from scratch)",
+         answer="Turn documents into weighted term vectors. TERM FREQUENCY (tf) is how often a term appears in a document (normalized by length); INVERSE DOCUMENT FREQUENCY (idf) down-weights terms common across many documents (log(N / df)). The product tf·idf is high for terms frequent in one document but rare overall — the discriminative words.",
+         tags=["tfidf","nlp","text-vectorization","ml-coding"],
+         code='''# Compute TF-IDF vectors for a small corpus of tokenized documents.
+import math
+def tfidf(corpus):
+    # corpus: list of documents, each a list of tokens
+    n_docs = len(corpus)
+    df = {}                                       # document frequency per term
+    for doc in corpus:
+        for term in set(doc):
+            df[term] = df.get(term, 0) + 1
+    vectors = []
+    for doc in corpus:
+        counts = {}
+        for term in doc:
+            counts[term] = counts.get(term, 0) + 1
+        vec = {}
+        for term, cnt in counts.items():
+            tf = cnt / len(doc)                   # term frequency
+            idf = math.log(n_docs / df[term])     # inverse document frequency
+            vec[term] = tf * idf
+        vectors.append(vec)
+    return vectors''',
+         complexity="Time O(total tokens), space O(vocab * docs).",
+         pitfalls="Dividing by zero for out-of-corpus terms; idf=0 for terms in every document (log(1)).",
+         example="For [['the','cat'],['the','dog']], 'the' gets weight 0 (idf=log 1) while 'cat'/'dog' get positive weights."),
+    dict(cat="ml_system_design", title="Design a Lead Scoring system",
+         answer="Rank sales LEADS by likelihood to convert so reps focus on the best. (1) CLARIFY & SCALE: prioritize finite sales capacity with a probability/score per lead; the real goal is more closed deals per rep-hour. (2) DATA & LABELS: historical leads labeled converted/not over a window; mind label delay and that reps only worked SOME leads (selection bias). (3) FEATURES: firmographics (company size, industry), behavioural (site visits, email opens, demo requests), source/channel, engagement recency. (4) MODEL: gradient-boosted trees outputting a calibrated conversion probability. (5) EVAL: AUC/PR-AUC plus precision/recall at the top-k leads reps can actually call, and lift over random calling. (6) SERVING/MONITORING/AB: score leads as they arrive, route high scores to reps with an explanation, A/B TEST whether score-driven prioritization lifts conversions versus the old process, and monitor drift and feedback loops.",
+         tags=["lead-scoring","conversion","gradient-boosting","sales","ml-system-design"],
+         example="A lead that requested a demo, visited pricing 3x, and is from a 500-person company scores 0.72; it's routed to a rep immediately, and an A/B test confirms score-prioritized calling closes more deals than chronological order."),
+    dict(cat="conceptual", title="Why does more/better data often beat a fancier algorithm?",
+         answer="Because most real-world error comes from the DATA, not the model class. More representative data reduces variance and covers edge cases an algorithm can't invent; better labels and features fix systematic errors no tuning will. Simple models on large data often beat sophisticated models on small data ('the unreasonable effectiveness of data'). The caveats: this holds until you hit data-quality or irreducible-noise limits, and some structured problems truly need the right inductive bias. Practically: invest in data coverage, labels, features, and leakage-free splits before chasing exotic models.",
+         tags=["data-centric","more-data","generalization","why"],
+         example="A plain logistic regression on 10M clean, well-featured examples usually beats a deep net on 10k noisy ones — collecting representative data moved the needle more than swapping the model."),
 ]
 
 
