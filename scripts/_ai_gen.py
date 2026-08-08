@@ -16,199 +16,207 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Design HashMap",
-         answer="Build a hash map from scratch supporting put/get/remove. Use an array of BUCKETS and SEPARATE CHAINING: hash the key to a bucket index, and store (key, value) pairs in that bucket's list; on collision, scan the bucket. Update in place if the key exists, else append.",
-         tags=["design-hashmap","hash-table","separate-chaining","design","dsa"],
-         code='''# A simple hash map using separate chaining (buckets of key-value pairs).
-class MyHashMap:
-    def __init__(self):
-        self.size = 1000
-        self.buckets = [[] for _ in range(self.size)]
-
-    def _index(self, key):
-        return key % self.size
-
-    def put(self, key, value):
-        bucket = self.buckets[self._index(key)]
-        for i, (k, v) in enumerate(bucket):
-            if k == key:
-                bucket[i] = (key, value)   # update an existing key
-                return
-        bucket.append((key, value))         # otherwise insert a new key
-
-    def get(self, key):
-        for k, v in self.buckets[self._index(key)]:
-            if k == key:
-                return v
-        return -1                           # key not found
-
-    def remove(self, key):
-        bucket = self.buckets[self._index(key)]
-        for i, (k, v) in enumerate(bucket):
-            if k == key:
-                bucket.pop(i)
-                return''',
-         complexity="Average O(1) per op (O(n/buckets) with collisions); space O(n).",
-         pitfalls="Not updating an existing key (duplicate entries); a poor hash causing long chains.",
-         example="m=MyHashMap(); m.put(1,10); m.get(1)->10; m.get(2)->-1; m.remove(1); m.get(1)->-1."),
-    dict(cat="dsa", title="Implement Stack using Queues",
-         answer="Build a LIFO stack from a FIFO queue. Make push the expensive operation: after appending the new element, ROTATE the queue so the newest element sits at the FRONT — then pop/top are O(1) and read from the front like a stack top.",
-         tags=["stack-using-queues","queue","stack","design","dsa"],
-         code='''# LIFO stack built from a single FIFO queue (push O(n), pop/top O(1)).
+    dict(cat="dsa", title="Minimum Depth of Binary Tree",
+         answer="The minimum depth is the number of nodes on the SHORTEST root-to-LEAF path. BFS level-by-level and return the depth of the first LEAF you encounter — BFS reaches the shallowest leaf first, so it's optimal (and avoids the DFS pitfall of a node with one missing child).",
+         tags=["minimum-depth","bfs","binary-tree","dsa"],
+         code='''# Minimum depth: shortest root-to-LEAF path length (number of nodes).
 from collections import deque
-class MyStack:
-    def __init__(self):
-        self.q = deque()
-
-    def push(self, x):
-        self.q.append(x)
-        # rotate so the newest element becomes the front (the stack top)
-        for _ in range(len(self.q) - 1):
-            self.q.append(self.q.popleft())
-
-    def pop(self):
-        return self.q.popleft()
-
-    def top(self):
-        return self.q[0]
-
-    def empty(self):
-        return len(self.q) == 0''',
-         complexity="push O(n); pop/top/empty O(1); space O(n).",
-         pitfalls="Rotating the wrong number of times; reading from the back instead of the front.",
-         example="s=MyStack(); s.push(1); s.push(2): top()->2, pop()->2, pop()->1."),
-    dict(cat="dsa", title="Count and Say",
-         answer="The count-and-say sequence: each term describes the previous one by reading off runs of equal digits as 'count digit'. Start from '1' and, for each step, scan the current string counting consecutive equal digits and append count+digit. Return the n-th term.",
-         tags=["count-and-say","string","run-length","simulation","dsa"],
-         code='''# The n-th term of the count-and-say sequence.
-def count_and_say(n):
-    result = "1"
-    for _ in range(n - 1):
-        next_term = []
-        i = 0
-        while i < len(result):
-            count = 1
-            while i + 1 < len(result) and result[i] == result[i + 1]:
-                i += 1; count += 1        # count a run of the same digit
-            next_term.append(str(count) + result[i])   # 'say' count + digit
-            i += 1
-        result = "".join(next_term)
-    return result''',
-         complexity="Time grows with term length; space O(term length).",
-         pitfalls="Off-by-one on the number of iterations (start at '1'); mis-counting runs.",
-         example="count_and_say(4) -> '1211'  (1 -> 11 -> 21 -> 1211)."),
-    dict(cat="dsa", title="Transpose Matrix",
-         answer="Return the transpose of a matrix — flip it over its main diagonal so element [r][c] becomes [c][r], turning an m×n matrix into n×m. Allocate a cols×rows result and copy each element to its swapped position.",
-         tags=["transpose","matrix","dsa"],
-         code='''# Return the transpose of a matrix (swap rows and columns).
-def transpose(matrix):
-    rows, cols = len(matrix), len(matrix[0])
-    result = [[0] * rows for _ in range(cols)]
-    for r in range(rows):
-        for c in range(cols):
-            result[c][r] = matrix[r][c]   # element [r][c] moves to [c][r]
-    return result''',
-         complexity="Time O(rows*cols), space O(rows*cols).",
-         pitfalls="Sizing the result rows×cols instead of cols×rows; non-square in-place transpose is invalid.",
-         example="transpose([[1,2,3],[4,5,6]]) -> [[1,4],[2,5],[3,6]]."),
-    dict(cat="dsa", title="Matrix Diagonal Sum",
-         answer="Sum both diagonals of a square matrix, counting the shared center element only once when n is odd. Add mat[i][i] (primary) and mat[i][n-1-i] (secondary) for each row, then subtract the center if n is odd.",
-         tags=["diagonal-sum","matrix","dsa"],
-         code='''# Sum both diagonals of a square matrix (counting a shared center once).
-def diagonal_sum(mat):
-    n = len(mat)
-    total = 0
-    for i in range(n):
-        total += mat[i][i]                # primary diagonal
-        total += mat[i][n - 1 - i]        # secondary diagonal
-    if n % 2 == 1:
-        total -= mat[n // 2][n // 2]      # remove the double-counted center
-    return total''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Double-counting the center on odd n; wrong secondary-diagonal index.",
-         example="diagonal_sum([[1,2,3],[4,5,6],[7,8,9]]) -> 25  (1+5+9 + 3+7)."),
-    dict(cat="dsa", title="Convert Sorted Array to BST",
-         answer="Build a HEIGHT-BALANCED binary search tree from a sorted array. Pick the MIDDLE element as the root (so left and right halves are equal-sized), then recursively build the left subtree from the left half and the right subtree from the right half. The sorted order guarantees the BST property.",
-         tags=["sorted-array-to-bst","bst","divide-and-conquer","recursion","dsa"],
-         code='''# Build a height-balanced BST from a sorted array (middle element as root).
 class TreeNode:
     def __init__(self, val=0, left=None, right=None):
         self.val = val; self.left = left; self.right = right
 
-def sorted_array_to_bst(nums):
-    def build(lo, hi):
-        if lo > hi:
-            return None
-        mid = (lo + hi) // 2              # middle keeps the tree balanced
-        node = TreeNode(nums[mid])
-        node.left = build(lo, mid - 1)
-        node.right = build(mid + 1, hi)
-        return node
-    return build(0, len(nums) - 1)''',
-         complexity="Time O(n), space O(log n) recursion.",
-         pitfalls="Picking an end element as root (unbalanced); off-by-one on the half ranges.",
-         example="sorted_array_to_bst([-10,-3,0,5,9]) builds a balanced BST rooted at 0."),
-    dict(cat="dsa", title="Range Sum of BST",
-         answer="Sum the values of all nodes whose value lies in [low, high] within a BST. Exploit the ordering to PRUNE: if a node's value is below low, only its right subtree can contain in-range values; if above high, only its left subtree; otherwise count the node and recurse both ways.",
-         tags=["range-sum-bst","bst","pruning","recursion","dsa"],
-         code='''# Sum values of all nodes with low <= val <= high in a BST.
-class TreeNode:
-    def __init__(self, val=0, left=None, right=None):
-        self.val = val; self.left = left; self.right = right
-
-def range_sum_bst(root, low, high):
+def min_depth(root):
     if root is None:
         return 0
-    if root.val < low:
-        return range_sum_bst(root.right, low, high)   # prune the left subtree
-    if root.val > high:
-        return range_sum_bst(root.left, low, high)    # prune the right subtree
-    # in range: this node + both sides
-    return root.val + range_sum_bst(root.left, low, high) + range_sum_bst(root.right, low, high)''',
-         complexity="Time O(n) worst, better with pruning; space O(h).",
-         pitfalls="Not pruning (ignores BST order, slower); wrong prune direction relative to low/high.",
-         example="For BST 10 -> (5 -> (3,7), 15 -> (_,18)), range_sum_bst(root,7,15) -> 32 (7+10+15)."),
-    dict(cat="dsa", title="Third Maximum Number",
-         answer="Return the third distinct maximum in an array, or the maximum if there are fewer than three distinct values. Track the top three distinct values in one pass (using None as 'unset'), shifting them down when a larger distinct value appears.",
-         tags=["third-maximum","array","tracking","dsa"],
-         code='''# The third distinct maximum in an array, or the max if fewer than 3 distinct.
-def third_max(nums):
-    first = second = third = None
-    for n in set(nums):                   # distinct values only
-        if first is None or n > first:
-            first, second, third = n, first, second
-        elif second is None or n > second:
-            second, third = n, second
-        elif third is None or n > third:
-            third = n
-    return third if third is not None else first''',
-         complexity="Time O(n), space O(n) for the set (O(1) trackers).",
-         pitfalls="Counting duplicates as distinct (dedupe first); returning None instead of the max when <3 distinct.",
-         example="third_max([2,2,3,1]) -> 1; third_max([1,2]) -> 2."),
-    dict(cat="glossary", title="Split-brain",
-         answer="A dangerous failure where a network PARTITION splits a cluster into groups that lose contact and each believes it's the sole active/leader group — so both accept writes and DIVERGE the data. Prevented by requiring a QUORUM (a minority side steps down), fencing tokens, or a witness/tiebreaker node. It's why clusters use consensus and odd node counts.",
-         tags=["split-brain","partition","quorum","distributed-systems","consistency"],
-         example="A 2-node cluster is split by a network fault; without quorum both nodes promote themselves to primary and accept conflicting writes — a split-brain that corrupts data on rejoin."),
-    dict(cat="glossary", title="Blue-green vs canary deployment",
-         answer="Two safe-release strategies. BLUE-GREEN runs two full environments; you deploy to the idle one (green), test it, then switch ALL traffic at once — instant rollback by switching back, but doubles infra. CANARY sends the new version to a SMALL fraction of traffic first, watches metrics, then gradually ramps to 100% — limited blast radius but slower and reliant on good monitoring/routing.",
-         tags=["blue-green","canary","deployment","release","devops"],
-         example="Blue-green flips 100% of traffic from v1 to v2 in one switch (rollback = flip back); a canary sends 1% to v2, checks error rates, then 5% -> 25% -> 100%."),
-    dict(cat="glossary", title="Star vs snowflake schema",
-         answer="Data-warehouse modeling. A STAR schema has a central FACT table surrounded by DENORMALIZED dimension tables — simple, fast joins, some redundancy. A SNOWFLAKE schema NORMALIZES those dimensions into sub-dimension tables — less redundancy/storage but more joins and complexity. Star is usually preferred for BI query speed; snowflake when dimensions are large or must be normalized.",
-         tags=["star-schema","snowflake-schema","data-warehouse","dimensional-modeling"],
-         example="A sales star schema joins fact_sales directly to dim_product; snowflaking splits dim_product into product -> category -> department tables, adding joins to save space."),
-    dict(cat="glossary", title="Data lake vs warehouse vs lakehouse",
-         answer="Three analytical storage paradigms. A DATA WAREHOUSE stores structured, schema-on-WRITE data optimized for BI/SQL (Snowflake/Redshift) — governed but rigid. A DATA LAKE stores raw, any-format data cheaply with schema-on-READ (files on S3) — flexible but can become a 'swamp'. A LAKEHOUSE adds warehouse-like ACID tables and schema management ON TOP of a lake (Delta Lake/Iceberg) — one system for both BI and ML.",
-         tags=["data-lake","data-warehouse","lakehouse","delta-lake","analytics"],
-         example="Raw clickstream JSON lands in a data lake; a lakehouse table (Iceberg) over it adds ACID + SQL so analysts query it like a warehouse without copying the data out."),
-    dict(cat="glossary", title="Materialized view",
-         answer="A PRECOMPUTED, stored result of a query (unlike a regular view, which re-runs the query each time). It trades storage + refresh cost for fast reads of expensive aggregations/joins, and must be REFRESHED (fully or incrementally) as base data changes — so it's slightly stale between refreshes. Ideal for dashboards and repeated heavy queries.",
-         tags=["materialized-view","precomputation","database","aggregation","caching"],
-         example="A daily 'revenue by region' dashboard reads a materialized view refreshed each night instead of re-scanning the billion-row sales table on every page load."),
-    dict(cat="conceptual", title="Why denormalize a database if normalization is the 'correct' design?",
-         answer="Normalization (no redundant data) optimizes WRITE integrity and storage — updates touch one place, no anomalies — but it forces JOINS to reassemble data on reads, which get expensive at scale or under read-heavy load. Denormalization deliberately DUPLICATES data (precomputed aggregates, embedded copies, wide rows) to make reads fast and avoid joins — trading write complexity and a risk of inconsistency for read performance. Denormalize when reads vastly outnumber writes, join cost dominates, you're on a NoSQL/wide-column store lacking cheap joins, or you must precompute heavy rollups — accepting that you now keep duplicated copies in sync (app logic, triggers, CDC, or eventual consistency). Normalize for correctness by default; denormalize deliberately where read performance demands it.",
-         tags=["denormalization","normalization","database","read-performance","why"],
-         example="A product page needing product + reviews + seller joins 5 normalized tables per view, so you denormalize into one document or a materialized wide row for a single fast read — accepting that a seller-name change must update many copies."),
+    queue = deque([(root, 1)])
+    while queue:
+        node, depth = queue.popleft()
+        if node.left is None and node.right is None:
+            return depth              # first leaf reached (BFS) = min depth
+        if node.left: queue.append((node.left, depth + 1))
+        if node.right: queue.append((node.right, depth + 1))
+    return 0''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Using naive DFS min(left,right)+1 (a node with one child isn't a leaf); off-by-one on depth.",
+         example="For tree 3 -> (9, 20 -> (15, 7)), min_depth -> 2."),
+    dict(cat="dsa", title="Average of Levels in Binary Tree",
+         answer="Return the average value of the nodes on each level. Standard BFS by levels: process all nodes currently in the queue (one level), sum their values, divide by the level's node count, and enqueue their children for the next level.",
+         tags=["average-of-levels","bfs","binary-tree","level-order","dsa"],
+         code='''# Average value of the nodes on each level of a binary tree.
+from collections import deque
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def average_of_levels(root):
+    result = []
+    queue = deque([root])
+    while queue:
+        n = len(queue)
+        level_sum = 0
+        for _ in range(n):
+            node = queue.popleft()
+            level_sum += node.val
+            if node.left: queue.append(node.left)
+            if node.right: queue.append(node.right)
+        result.append(level_sum / n)     # mean of this level
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Fixing the level count after mutating the queue; integer instead of float division.",
+         example="For [3,9,20,null,null,15,7], average_of_levels -> [3.0, 14.5, 11.0]."),
+    dict(cat="dsa", title="Sum of Left Leaves",
+         answer="Sum the values of all LEFT leaves — leaves that are the LEFT child of their parent. Recurse: whenever a node's left child exists and is itself a leaf, add its value; then recurse into both subtrees.",
+         tags=["sum-left-leaves","binary-tree","recursion","dfs","dsa"],
+         code='''# Sum of all LEFT leaves (leaves that are a left child).
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def sum_of_left_leaves(root):
+    if root is None:
+        return 0
+    total = 0
+    if root.left and root.left.left is None and root.left.right is None:
+        total += root.left.val          # a left child that is a leaf
+    total += sum_of_left_leaves(root.left)
+    total += sum_of_left_leaves(root.right)
+    return total''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Counting any leaf (must be a LEFT child); missing the leaf check on the left child.",
+         example="For 3 -> (9, 20 -> (15, 7)), sum_of_left_leaves -> 24 (9 + 15)."),
+    dict(cat="dsa", title="Path Sum III (prefix sum)",
+         answer="Count the downward paths (any node to any descendant) whose values sum to a target. Use a running prefix sum with a hash map of prefix-sum counts: at each node the number of valid paths ending here is how many earlier prefix sums equal (running - target). Backtrack the map on the way up.",
+         tags=["path-sum","prefix-sum","binary-tree","hash-map","dfs","dsa"],
+         code='''# Count root-to-any downward paths summing to target (prefix-sum hashmap).
+from collections import defaultdict
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def path_sum_iii(root, target):
+    prefix = defaultdict(int)
+    prefix[0] = 1                        # the empty prefix
+    def dfs(node, running):
+        if node is None:
+            return 0
+        running += node.val
+        count = prefix[running - target] # paths ending here summing to target
+        prefix[running] += 1
+        count += dfs(node.left, running) + dfs(node.right, running)
+        prefix[running] -= 1             # backtrack: leave this path
+        return count
+    return dfs(root, 0)''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Not backtracking the prefix map (over-counts across branches); forgetting prefix[0]=1.",
+         example="For [10,5,-3,3,2,null,11,3,-2,null,1], path_sum_iii(root, 8) -> 3."),
+    dict(cat="dsa", title="Two Sum IV - Input is a BST",
+         answer="Determine if a BST contains two distinct elements summing to k. Traverse and keep a SET of seen values; at each node, if k minus the node's value is already in the set, return True. (You could also do a two-pointer walk over the in-order sorted values.)",
+         tags=["two-sum-bst","bst","hash-set","dfs","dsa"],
+         code='''# Does the BST contain two elements summing to k? (seen-set traversal)
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def find_target(root, k):
+    seen = set()
+    def dfs(node):
+        if node is None:
+            return False
+        if k - node.val in seen:
+            return True                  # complement already seen
+        seen.add(node.val)
+        return dfs(node.left) or dfs(node.right)
+    return dfs(root)''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Using the same node twice (the set holds only previously visited nodes); ignoring the BST order that enables a two-pointer variant.",
+         example="For a BST holding {2,3,4,5,6,7}, find_target(root, 9) -> True (2+7 or 3+6)."),
+    dict(cat="dsa", title="Minimum Absolute Difference in BST",
+         answer="Find the minimum absolute difference between any two node values in a BST. An IN-ORDER traversal visits values in sorted order, so the answer is the smallest gap between ADJACENT in-order values — track the previous value and update the best difference.",
+         tags=["min-abs-diff-bst","bst","in-order","dsa"],
+         code='''# Minimum absolute difference between any two node values in a BST.
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+def min_diff_in_bst(root):
+    prev = None
+    best = float('inf')
+    def inorder(node):
+        nonlocal prev, best
+        if node is None:
+            return
+        inorder(node.left)
+        if prev is not None:
+            best = min(best, node.val - prev)   # sorted -> adjacent gap
+        prev = node.val
+        inorder(node.right)
+    inorder(root)
+    return best''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Comparing all pairs (O(n^2)); not using in-order sorted order.",
+         example="For BST 4 -> (2 -> (1,3), 6), min_diff_in_bst -> 1."),
+    dict(cat="dsa", title="Middle of the Linked List",
+         answer="Return the middle node (the SECOND middle if the length is even). Fast/slow pointers: advance slow by one and fast by two; when fast reaches the end, slow is at the middle — a single pass with no length precomputation.",
+         tags=["middle-linked-list","fast-slow-pointers","linked-list","dsa"],
+         code='''# The middle node of a linked list (second middle if even length).
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+def middle_node(head):
+    slow = fast = head
+    while fast and fast.next:
+        slow = slow.next            # one step
+        fast = fast.next.next       # two steps
+    return slow                     # slow lands on the middle''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Off-by-one on even length (this returns the second middle); wrong loop condition.",
+         example="1->2->3->4->5 returns node 3; 1->2->3->4->5->6 returns node 4."),
+    dict(cat="dsa", title="Remove Nth Node From End of List",
+         answer="Remove the nth node from the end in ONE pass. Use a dummy head and two pointers: advance fast n steps ahead, then move both until fast hits the end — slow now sits just BEFORE the target, so relink to skip it. The dummy handles removing the head.",
+         tags=["remove-nth-from-end","two-pointers","linked-list","dummy-node","dsa"],
+         code='''# Remove the nth node from the END of a list in one pass (two pointers).
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+def remove_nth_from_end(head, n):
+    dummy = ListNode(0, head)
+    fast = slow = dummy
+    for _ in range(n):
+        fast = fast.next            # advance fast n steps ahead
+    while fast.next:
+        fast = fast.next
+        slow = slow.next            # slow stops just before the target
+    slow.next = slow.next.next      # unlink the nth-from-end node
+    return dummy.next''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Not using a dummy (removing the head breaks); off-by-one in the n-step advance.",
+         example="1->2->3->4->5 with n=2 -> 1->2->3->5."),
+    dict(cat="glossary", title="Chaos engineering",
+         answer="The practice of deliberately INJECTING failures into a production (or prod-like) system — killing servers, adding latency, dropping network — to proactively find weaknesses BEFORE they cause real outages. Pioneered by Netflix's Chaos Monkey: form a hypothesis ('the system stays up if a node dies'), run a controlled experiment, and fix what breaks. It builds real confidence in resilience.",
+         tags=["chaos-engineering","resilience","reliability","testing","sre"],
+         example="Chaos Monkey randomly terminates production instances during business hours; if a service can't survive losing one, the team finds and fixes the single point of failure before a real crash does."),
+    dict(cat="glossary", title="LSM internals (memtable, SSTable, compaction)",
+         answer="How a log-structured merge tree stores data. Writes go to an in-memory sorted MEMTABLE plus a WAL; when it fills, it's flushed to an immutable, sorted on-disk SSTABLE. Reads probe SSTables newest-first (with Bloom filters). Background COMPACTION merges SSTables, discarding overwritten/deleted entries — reclaiming space and keeping reads fast. Writes are sequential (fast) at the cost of read/space amplification.",
+         tags=["lsm","memtable","sstable","compaction","storage-engine"],
+         example="In RocksDB/Cassandra, a burst of writes fills the memtable, flushes to an SSTable, and later compaction merges many SSTables into fewer sorted files so reads needn't check dozens of them."),
+    dict(cat="glossary", title="Tombstone (deletes)",
+         answer="A marker that records a DELETE in append-only/LSM and distributed stores, instead of physically removing the data (impossible in immutable files, and it would resurrect on replica sync). Reads treat a tombstoned key as absent; compaction/GC purges the data and tombstone after a grace period longer than max replica downtime. Too many tombstones slow reads.",
+         tags=["tombstone","deletes","lsm","replication","compaction"],
+         example="Deleting a row in Cassandra writes a tombstone; a replica that missed the delete learns of it via the tombstone during repair, so the row can't resurrect — then compaction purges both after the grace period."),
+    dict(cat="glossary", title="Write / read / space amplification",
+         answer="Overhead ratios of a storage engine. WRITE amplification = bytes written to disk vs bytes of user data (LSM compaction rewrites data repeatedly -> high). READ amplification = disk reads per query (an LSM read may probe several SSTables -> higher than a B-tree). SPACE amplification = disk used vs live data (stale versions before compaction). Engines and compaction strategies trade these off.",
+         tags=["write-amplification","read-amplification","space-amplification","lsm","storage-engine"],
+         example="An LSM tree ingests fast but has high write amplification because compaction rewrites the same data across levels; a B-tree has lower read amplification but higher write amplification from in-place page updates."),
+    dict(cat="glossary", title="Hot partition",
+         answer="When one shard/partition receives a DISPROPORTIONATE share of traffic (a celebrity user, a popular key, a monotonically increasing timestamp key), overloading a single node while others idle — a scalability killer despite 'horizontal scaling'. Fix by choosing a high-cardinality, evenly-distributed partition key, salting hot keys with a hash/random suffix, or splitting the hot partition.",
+         tags=["hot-partition","sharding","skew","scalability","partition-key"],
+         example="Partitioning events by day makes today's partition a hot spot (all writes land there); partitioning by hash(user_id) or salting the key spreads writes evenly across nodes."),
+    dict(cat="conceptual", title="Why do LSM/append-only stores delete with tombstones instead of removing the data?",
+         answer="Because their on-disk files are IMMUTABLE (append-only) — you can't edit an SSTable in place to erase a key. And in a distributed, replicated store, physically deleting on one replica isn't enough: a replica that was down during the delete would, via anti-entropy/read-repair, see the key still present elsewhere and RESURRECT it. A tombstone is an explicit 'deleted as of time T' record that is itself an append (fits the immutable model), propagates to replicas so all agree it's gone, and shadows older values on reads. Compaction later physically drops the data AND the tombstone — but only after a grace period longer than max replica downtime, so a lagging replica still learns of the delete first. The cost: many tombstones slow reads until compaction cleans them.",
+         tags=["tombstone","lsm","deletes","replication","why"],
+         example="Delete a key in Cassandra: a tombstone is written and replicated; a replica that missed it learns of the delete via the tombstone during repair (so the row doesn't come back), then compaction purges both after gc_grace_seconds."),
 ]
 
 
