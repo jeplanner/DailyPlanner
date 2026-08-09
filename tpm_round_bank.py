@@ -994,6 +994,1190 @@ architecture reveal a lot.""",
     prep_minutes=35,
 ))
 
+# ── Batch 2 ───────────────────────────────────────────────────────────────
+
+_B2 = []
+
+_B2.append(E(
+    "program",
+    "What would you do in your first 90 days as Head of TPM here?",
+    "This is the closing question of most Head-of-function loops and it is "
+    "frequently the one the decision turns on. They are testing whether you "
+    "have a POINT OF VIEW about the function, whether you listen before you "
+    "act, and whether you can sequence change without destabilising delivery. "
+    "A generic 30-60-90 template is a wasted opportunity - this is where you "
+    "show them what hiring you actually buys.",
+    """THE STRUCTURE - three phases, and name the ONE thing you will change
+
+DAYS 1-30: LISTEN, AND BE SPECIFIC ABOUT WHAT YOU ARE LISTENING FOR
+  * Meet every TPM one to one, and ask two questions that get real answers:
+    "what do you spend time on that you think is worthless?" and "what would
+    you fix if you were me?"
+  * Meet the engineering, product and design leaders your function serves, and
+    ask a harder question: "what do TPMs do here that helps, and what do they
+    do that is overhead?" You need to hear the uncomfortable version early.
+  * Read the artefacts, not the org chart: the last three program post-mortems,
+    the current status reports, the planning docs. How bad news is written down
+    tells you more about the culture than any conversation.
+  * Sit in the existing forums before changing any of them. You want to know
+    what decision each one actually makes - many make none.
+  * Deliberately change nothing structural. You are buying information and
+    credibility, and both are cheap now and expensive later.
+
+DAYS 31-60: DIAGNOSE AND SHARE THE DIAGNOSIS IN WRITING
+  * Write the assessment down and circulate it. A written diagnosis is a
+    forcing function for your own clarity and it lets people correct you before
+    you act on a wrong read.
+  * The diagnosis should answer: where does delivery actually break here - is
+    it planning, dependencies, decision latency, quality, or capacity? Where is
+    the function adding value and where is it adding ceremony? What is the
+    single biggest structural problem?
+  * Pick ONE thing. Not five. Name the one change with the largest effect and
+    say what you are explicitly NOT doing this year.
+  * Get one visible early win that costs nobody anything - usually killing a
+    report or a meeting nobody values. Removing something is the fastest way to
+    earn permission to add something later.
+
+DAYS 61-90: CHANGE ONE THING, AND INSTRUMENT IT
+  * Implement the one change, with a named owner and a measure.
+  * Establish your own operating cadence: what you review weekly, what you
+    review monthly, and what you will personally never be in the room for.
+  * Set the standard for the function - what a good program plan looks like,
+    what "done" means, how risks get raised. Publish it as an example rather
+    than a policy.
+  * Start the talent read: who is operating a level above their title, who is
+    struggling, where the gaps are. Do not act on it yet, but know it.
+
+THE THING TO SAY OUT LOUD
+"I would not reorganise in the first 90 days unless something is on fire. New
+leaders reorganise early because it is the most visible thing they can do, and
+it usually costs more than it buys - you lose the information flow you just
+spent a month building, right when you understand the least." """,
+    """A WORKED ANSWER - the shape, compressed
+
+"First month I would deliberately change nothing structural. I'd spend it on
+two questions. To the TPMs: what do you do that you think is worthless. To the
+engineering and product leaders we serve: what do TPMs here do that is genuinely
+overhead. That second question is uncomfortable and it is the most valuable
+information I will get all quarter, because a TPM function that has drifted into
+ceremony rarely knows it.
+
+I'd also read the last three post-mortems and the current status reports rather
+than the org chart. How bad news is written down tells you what the culture
+really is - if every status is green until it is suddenly red, I know what my
+first problem is.
+
+Second month I'd write the diagnosis and circulate it. Writing it forces me to
+be clear and lets people correct me before I act on a wrong read. The diagnosis
+has to answer one question: where does delivery actually break here. In my
+experience it is one of four things - planning quality, cross-team dependencies,
+decision latency, or simply too much work in flight - and they need completely
+different fixes. Picking the wrong one costs you a quarter.
+
+Then I'd pick one thing. Just one. And I'd say publicly what I am not doing this
+year, because a new leader who announces five initiatives gets none of them.
+
+I'd also want an early win that costs nobody anything, and the easiest one is
+almost always killing a report or a meeting that everybody privately thinks is
+useless. Removing something buys you the permission to add something later.
+
+Third month I'd implement the one change with a named owner and a measure, and
+set my own cadence - including being explicit about what I will never be in the
+room for, because a Head of TPM who attends everything teaches the org to wait
+for them.
+
+The thing I would not do is reorganise in the first 90 days unless something is
+genuinely on fire. It is the most visible move available and it is usually the
+most expensive one, because you spend the credibility and the information you
+just acquired at the exact moment you understand the least.
+
+If I had to name the one change I'd expect to make - and I'd want to test this
+against what I find - it would be moving the function from reporting on delivery
+to de-risking it. Most TPM organisations spend their capacity describing the
+future rather than changing it." """,
+    """STRONG sounds like: a specific listening plan with the actual questions
+you would ask; a written diagnosis; ONE change, with an explicit not-doing list;
+an early win that removes rather than adds; and the deliberate restraint about
+reorganising. Naming your hypothesis about what you would probably change - while
+holding it loosely - shows you have a point of view without being arrogant about
+a company you have not joined yet.
+
+WEAK sounds like: the generic 30-60-90 - "learn, then plan, then execute" - with
+no content. Also weak: arriving with a fixed plan that ignores what you find,
+and its opposite, a pure listening tour with no hypothesis at all. They are
+hiring a point of view; bring one and say you will test it.
+
+THE DETAIL THAT IMPRESSES: asking the engineering leaders what TPMs do that is
+overhead. Very few candidates volunteer to hear that answer, and it signals you
+care about the function's value rather than its territory.""",
+    ["What if what you find contradicts your hypothesis?",
+     "You discover the function is genuinely not adding value. Then what?",
+     "How would you know at day 90 whether you had made things better?",
+     "Which of the four failure modes do you most often see, and why?",
+     "What if the CEO wants a reorg in month one?",
+     "Who would you want to keep, and how would you tell in 90 days?"],
+    """* A template with no content. Everyone says listen-diagnose-act; the value
+  is entirely in the specifics.
+* Too many initiatives. Announcing five means delivering none, and experienced
+  panels know it.
+* No point of view at all. Pure listening reads as someone with nothing to
+  bring.
+* Reorganising early, or promising to.
+* No measure. "I would improve delivery predictability" without saying how you
+  would know is exactly the vagueness you would criticise in your own TPMs.""",
+    ["leadership", "org-design", "first-90-days", "program"],
+    difficulty="Hard",
+    frequency="Very likely to close a Head-of-TPM loop, and often the question "
+              "the decision turns on.",
+    prep_minutes=45,
+))
+
+_B2.append(E(
+    "program",
+    "How do you estimate a program when the requirements are not fully known?",
+    "Whether you can commit responsibly under uncertainty. The two failure "
+    "modes are equally bad: refusing to give a number until everything is "
+    "known (which reads as unable to operate), and giving a single confident "
+    "date you cannot possibly justify (which reads as naive, and burns you "
+    "later).",
+    """THE STRUCTURE
+
+1. REFUSE THE SINGLE DATE, BUT NEVER REFUSE THE QUESTION
+   "I can give you a range with confidence levels today and a much tighter one
+   in three weeks" is the senior answer. Silence is not.
+
+2. DECOMPOSE UNTIL THE PIECES ARE COMPARABLE TO THINGS YOU HAVE DONE
+   Estimation is unreliable on novel work and reasonably reliable on analogies.
+   Break down until each piece resembles something the team has shipped before,
+   then estimate by reference rather than by imagination.
+
+3. SEPARATE THE KNOWN FROM THE UNKNOWN AND SIZE THEM DIFFERENTLY
+   Known work: bottom-up estimate from the teams.
+   Unknown work: do not estimate it - TIME-BOX a spike to resolve it. "We do
+   not know how hard the migration is; we will spend two weeks finding out and
+   re-estimate on [date]." That converts an unbounded risk into a scheduled
+   one.
+
+4. GIVE A RANGE WITH CONFIDENCE, NOT A POINT
+   "70% confident by March, 90% by May." This is more honest AND more useful,
+   and it changes the executive conversation from "will you hit it" to "how
+   much risk do you want to carry" - which is the conversation you want.
+
+5. STATE THE ASSUMPTIONS AS A VISIBLE LIST
+   "This assumes the platform team delivers the API by June, no more than one
+   person out at a time, and no change in scope." Assumptions are the mechanism
+   by which a date is allowed to move later without it being a failure - if an
+   assumption breaks, the date changes and everyone already agreed why.
+
+6. RE-FORECAST ON A SCHEDULE, NOT ON PANIC
+   Say when you will update: after the spike, at the end of design, at the
+   first integration. A date that is re-forecast on a known cadence is
+   trustworthy; one that changes only when someone asks is not.
+
+7. USE THE CONE OF UNCERTAINTY EXPLICITLY
+   Early estimates are routinely out by a factor of two to four in both
+   directions, and narrow as you learn. Saying that out loud, and showing the
+   range narrowing at each checkpoint, is how you make an early number safe to
+   give.""",
+    """A WORKED ANSWER
+
+"I would never refuse to give a number - that reads as someone who cannot
+operate under uncertainty, which is most of the job. But I would refuse to give
+a single date, because I cannot defend one.
+
+What I'd do is split the work into what we understand and what we do not.
+For the understood part I estimate bottom-up with the teams and by analogy to
+things we have actually shipped, because estimation is only reliable when it is
+anchored to something real.
+
+For the part we do not understand, I don't estimate it at all - I time-box it.
+'We don't know how hard the data migration is. We will spend two weeks finding
+out and re-estimate on the 14th.' That turns an unbounded unknown into a
+scheduled decision point, which is a far better thing to put in front of an
+executive than a made-up number.
+
+Then I'd give a range with confidence levels - 70% by March, 90% by May - and a
+visible list of the assumptions it rests on. The assumptions matter more than
+the date, because they are the agreed mechanism for the date to move later. If
+the platform API slips, the date moves, and nobody is surprised or blamed,
+because we wrote it down when it was uncontroversial.
+
+And I'd commit to a re-forecast cadence up front: after the spike, at the end of
+design, at first integration. A number that updates on a schedule earns trust.
+One that only changes when someone chases you destroys it.
+
+The thing I try to communicate to executives is the cone of uncertainty - early
+estimates are routinely out by two to four times, and the range narrows as we
+learn. If I show them the range getting tighter at each checkpoint, they get
+something more valuable than a date: they get to see the risk being retired." """,
+    """STRONG sounds like: never refusing the question; time-boxing unknowns
+rather than estimating them; a confidence range; a visible assumption list
+framed as the mechanism for change; and a committed re-forecast cadence.
+
+WEAK sounds like: "I'd work with the teams to get estimates and build a plan" -
+no handling of the unknown at all. Also weak: "I can't estimate until
+requirements are complete", which is true and useless; and padding a single date
+by 50% silently, which is dishonest and destroys the buffer's usefulness.
+
+THE DETAIL THAT IMPRESSES: assumptions as the pre-agreed mechanism for the date
+to move. It reframes estimation from prediction to risk management, which is the
+altitude they are hiring for.""",
+    ["The exec says a range is not good enough and wants one date. What do you "
+     "give them?",
+     "Your spike overruns. What now?",
+     "How do you stop teams padding their estimates?",
+     "How much buffer do you add, and where do you hold it?",
+     "What if the assumption you flagged breaks in week two?"],
+    """* Refusing to answer. Under-committing reads as badly as over-committing.
+* Estimating the unknown instead of time-boxing it.
+* Hidden padding. If the buffer is invisible it gets consumed invisibly, and
+  you lose the earliest warning signal you have.
+* No assumptions list, so every later change looks like a failure rather than a
+  known risk materialising.
+* Re-forecasting only when challenged.""",
+    ["estimation", "planning", "risk", "stakeholders", "program"],
+    difficulty="Medium",
+    frequency="Very common in the program round, and a frequent follow-up to "
+              "any planning question.",
+    prep_minutes=35,
+))
+
+_B2.append(E(
+    "program",
+    "A team has missed its committed dates three sprints in a row. What do you "
+    "do?",
+    "Diagnosis before intervention, and whether you distinguish a capability "
+    "problem from a system problem. The tempting answer - escalate to their "
+    "manager - is usually wrong and always premature.",
+    """THE STRUCTURE
+
+1. FIND OUT WHICH OF FIVE THINGS IS ACTUALLY HAPPENING
+   The intervention is completely different in each case, and getting this
+   wrong wastes weeks and damages the relationship:
+   * OVER-COMMITTING: they estimate optimistically or feel unable to say no.
+     Fix the planning process, not the people.
+   * INTERRUPTED: they are being pulled onto production support, escalations or
+     other teams' emergencies. Their committed capacity is fiction. Fix the
+     intake and protect the capacity.
+   * BLOCKED: waiting on dependencies, environments, reviews, approvals. Not
+     their problem to solve; it is yours.
+   * UNCLEAR REQUIREMENTS: they start, discover the ask is ambiguous, and
+     rework. Fix upstream, in product or design.
+   * GENUINE CAPABILITY GAP: skills, or a leadership gap on the team. The
+     least common cause and the one people jump to first.
+   The way to tell is to look at what actually happened to the work, not at the
+   burndown: how much unplanned work entered the sprint, how long items sat
+   blocked, how much was reworked.
+
+2. GO AND LOOK, PRIVATELY AND WITHOUT AN AUDIENCE
+   Talk to the team lead first, alone, framed as "help me understand what is
+   getting in the way", not "why do you keep missing". You get the truth in the
+   first conversation or you do not get it at all.
+
+3. FIX THE SYSTEM CAUSE FIRST
+   In my experience four of the five causes are system problems that belong to
+   me, not to them. Interrupted capacity is the most common by a distance -
+   teams commit to 100% of their time and then lose 30% to support.
+
+4. IF IT IS OVER-COMMITMENT: change what you ask for
+   Commit to a fraction of measured historical throughput rather than to
+   ambition. Make the unplanned work visible so the capacity conversation is
+   about data rather than willpower.
+
+5. ONLY THEN, IF IT IS CAPABILITY - and handle it properly
+   Be specific about the gap, agree a plan with their manager, and set a
+   review date. This is a manager conversation, not a program conversation,
+   and you own bringing the evidence rather than the verdict.
+
+6. IN ALL CASES, FIX THE PREDICTION PROBLEM SEPARATELY
+   Even a team that improves will miss sometimes. What is unacceptable is
+   finding out on the due date. Ask for the signal earlier - a mid-sprint
+   check on whether the commitment still holds - so a miss is a forecast rather
+   than a surprise.""",
+    """A WORKED ANSWER
+
+"I'd want to know which of five things is happening before I do anything,
+because they need opposite responses and the wrong one damages the relationship.
+
+Are they over-committing? Are they being interrupted - pulled into support and
+escalations so their committed capacity was never real? Are they blocked waiting
+on someone else? Are the requirements unclear so they are reworking? Or is there
+a genuine capability gap?
+
+The way I'd tell is by looking at what happened to the work rather than at the
+burndown chart: how much unplanned work entered the sprint, how long items sat
+in a blocked state, how much got reworked. Those three numbers usually
+distinguish the causes on their own.
+
+I'd have the conversation with the lead privately and frame it as 'help me
+understand what is getting in the way'. If I open with 'why do you keep missing',
+I get a defensive answer and I have burned my only chance at the truth.
+
+Four of those five causes are system problems that belong to me, not to them.
+Interrupted capacity is by far the most common - a team commits to a full sprint
+and then loses a third of it to production support that nobody counted. The fix
+is not motivational, it is to make the unplanned work visible and then either
+protect the capacity or plan for less of it.
+
+If it is genuine over-commitment, I'd change what we ask for: commit to a
+fraction of measured historical throughput instead of to ambition, and let the
+data do the arguing.
+
+If after all that it really is a capability gap, that is a conversation with
+their manager, and my job is to bring the evidence, not the verdict.
+
+But there's a second problem underneath the first, and I'd fix it either way:
+the issue is not only that they missed, it's that we found out on the due date.
+I'd want a mid-sprint signal on whether the commitment still holds, so a miss
+becomes a forecast rather than a surprise. A team that misses but tells me early
+is a manageable situation. A team that misses silently is not." """,
+    """STRONG sounds like: the five-way diagnosis; looking at unplanned work,
+blocked time and rework rather than at the burndown; owning four of the five
+causes yourself; and separating the missing problem from the SURPRISE problem.
+That last distinction is the senior move.
+
+WEAK sounds like: escalating to their manager as a first step, or adding more
+oversight - a daily check-in with the person who is already behind. Also weak:
+treating it as a motivation problem when a third of their capacity is being
+taken by someone else.
+
+THE DETAIL THAT IMPRESSES: "committed capacity was never real". Experienced
+operators know unplanned work is the usual culprit and that it is invisible by
+default.""",
+    ["You find they are losing 40% of capacity to support. What do you change?",
+     "The team lead insists everything is fine. What now?",
+     "How do you raise this with their manager without it becoming a "
+     "performance conversation?",
+     "What if it is genuinely a capability gap and you have no authority over "
+     "them?",
+     "How do you get an honest mid-sprint signal rather than a green one?"],
+    """* Escalating first. It is available, it is fast, and it usually diagnoses
+  nothing while costing you the relationship.
+* Adding oversight to a team that is already blocked or interrupted - it slows
+  them further and confirms their sense that nobody is listening.
+* Jumping to the capability explanation, which is the least common cause.
+* Fixing the miss and not the surprise.
+* Making it about accountability language rather than about capacity
+  arithmetic.""",
+    ["delivery", "diagnosis", "influence", "program"],
+    difficulty="Medium",
+    frequency="Very common - a standard probe in the program round.",
+    prep_minutes=35,
+))
+
+_B2.append(E(
+    "program",
+    "How do you run a launch? Take me through go / no-go.",
+    "Whether you have actually shipped something consequential. This question "
+    "is easy to answer plausibly and hard to answer credibly - the credible "
+    "version is full of specifics that only come from having been in the room "
+    "when it went wrong.",
+    """THE STRUCTURE
+
+1. LAUNCH CRITERIA AGREED IN ADVANCE, IN WRITING
+   Define what "ready" means weeks before the date, when the conversation is
+   unemotional. Functional completeness, performance targets, error budget,
+   security and privacy sign-off, support readiness, docs, legal, and the
+   rollback plan. The point of agreeing early is that on launch day you are
+   checking against a standard rather than negotiating one under pressure.
+
+2. NAMED OWNERS AND EXPLICIT SIGN-OFFS
+   Every criterion has one accountable name. "Engineering is ready" is not a
+   sign-off; a person saying "I am ready, here is my evidence" is.
+
+3. DRESS REHEARSAL BEFORE THE REAL THING
+   A game day or a dry run in production-like conditions. Test the rollback -
+   an untested rollback plan is a wish. This is the single item most teams skip
+   and most regret.
+
+4. THE GO / NO-GO MEETING ITSELF
+   * Held with enough time to actually stop - not two hours before.
+   * Each owner states ready or not-ready with evidence.
+   * ONE named decision-maker. Consensus go/no-go decisions do not converge.
+   * Any not-ready is a no-go by default, and going anyway is a conscious,
+     recorded exception with a named risk owner.
+   * Agree the rollback trigger BEFORE launching: the specific metric and
+     threshold at which you revert without reconvening. Deciding that during an
+     incident is how teams talk themselves out of rolling back.
+
+5. STAGED ROLLOUT RATHER THAN A BIG BANG
+   Internal, then 1%, then 10%, then 50%, then all - with a defined soak time
+   and pass criteria at each step. Big-bang launches exist for date-driven
+   reasons, not technical ones, and you should say so.
+
+6. THE WAR ROOM AND THE COMMS PLAN
+   Who is watching which dashboard, for how long. Who talks to customers, who
+   talks to executives, and how often - including when there is no news, which
+   is when people start inventing it.
+
+7. AFTER: MEASURE AND LEARN
+   Watch the success metric AND the guardrails for a defined period. Then a
+   blameless retro that produces owned actions, not observations.""",
+    """A WORKED ANSWER - the parts that show you have done it
+
+"The most important part happens weeks before the date: agreeing in writing what
+'ready' means. Functional scope, performance targets, error budget, security and
+privacy sign-off, support trained, docs done, rollback tested. Agreeing that
+early matters because on launch day you want to be checking against a standard,
+not negotiating one while everybody is tired and invested.
+
+Every criterion gets one name against it. 'Engineering is ready' is not a
+sign-off - a person saying 'I am ready and here is the evidence' is.
+
+Before the real thing I want a dress rehearsal, and specifically I want the
+rollback tested. An untested rollback plan is a wish, and the moment you need it
+is the worst possible time to discover it does not work.
+
+The go/no-go meeting itself: held early enough that stopping is genuinely still
+an option, each owner declaring ready or not with evidence, and one named
+decision-maker. Go/no-go by consensus does not converge - somebody has to own
+it. Any not-ready is a no-go by default; going anyway is allowed but it is a
+conscious recorded exception with a named risk owner, not a shrug.
+
+The thing I insist on before we launch is the rollback trigger: the specific
+metric and threshold at which we revert without reconvening. If you leave that
+to be decided during the incident, teams talk themselves out of rolling back
+every single time - there is always a reason to wait five more minutes.
+
+Then staged rollout rather than big bang: internal, 1%, 10%, 50%, 100%, with a
+soak time and pass criteria at each gate. If someone wants a big bang, that is a
+date-driven decision rather than a technical one, and I'd want that said out
+loud so the risk is owned.
+
+During, a war room with named dashboard owners and a comms cadence that includes
+updates when there is nothing to report - because when updates stop, people
+invent their own version.
+
+After, watch the guardrails as hard as the success metric for a defined period,
+then a blameless retro that produces owned actions with dates. A retro that
+produces observations is entertainment." """,
+    """STRONG sounds like: criteria agreed in writing early; named sign-offs;
+rollback TESTED; the rollback trigger agreed before launch; staged rollout with
+soak times; and one named decision-maker. Each of these is a specific that only
+comes from experience.
+
+WEAK sounds like: "we'd have a checklist and a go/no-go meeting and monitor
+after launch" - true, generic, and indistinguishable from someone who has read
+about it. Also weak: no rollback plan, or a rollback plan nobody has run.
+
+THE DETAIL THAT IMPRESSES: pre-agreeing the rollback trigger, with the reason -
+that teams reliably talk themselves out of rolling back in the moment. It is a
+statement about human behaviour under pressure, which is what launch management
+actually is.""",
+    ["One owner says not-ready two hours before a launch the CEO has announced "
+     "publicly. What do you do?",
+     "You are at 10% and the metric is ambiguous - not clearly bad. Continue or "
+     "roll back?",
+     "How long is the soak at each stage, and how did you choose?",
+     "What do you do when rollback is not possible - a database migration, "
+     "say?",
+     "How do you run the retro so it produces change rather than a document?"],
+    """* Treating go/no-go as a status meeting rather than a decision with an
+  owner.
+* An untested rollback.
+* Big bang because the date demands it, without naming that as a risk decision.
+* No pre-agreed rollback trigger - the single most consequential omission.
+* Stopping the comms cadence when there is no news.
+* A retro with no owned actions.""",
+    ["launch", "risk", "governance", "operations", "program"],
+    difficulty="Medium",
+    frequency="Very common, and a reliable place to demonstrate real shipping "
+              "experience.",
+    prep_minutes=40,
+))
+
+_B2.append(E(
+    "program",
+    "How do you set up portfolio governance without creating bureaucracy?",
+    "A Head-of-function question. They want to know whether you can build "
+    "process that people would keep if it were optional. Everyone can add "
+    "governance; the skill is adding the minimum that changes decisions.",
+    """THE STRUCTURE
+
+1. STATE THE TEST FIRST
+   "Every forum and every artefact has to answer one question: what DECISION
+   does this make, and who would notice if it stopped? If nobody would notice,
+   it is theatre and I would delete it." Leading with this frames everything
+   after it as deliberate rather than accumulated.
+
+2. GOVERN BY EXCEPTION, NOT BY REVIEW
+   Do not review everything monthly. Define thresholds - size, risk, cross-org
+   blast radius - and only escalate what breaches them. Most programs should
+   never reach a governance forum at all, and saying that out loud is the
+   difference between governance and bureaucracy.
+
+3. TIER THE PORTFOLIO EXPLICITLY
+   Tier 1 (company-level bets): reviewed monthly by executives, full TPM
+   coverage. Tier 2 (significant, cross-team): reviewed on exception, shared
+   TPM. Tier 3 (team-local): not governed centrally at all - trust the team.
+   Say the ratio you would expect: perhaps 5 / 20 / everything else.
+
+4. ONE SOURCE OF TRUTH, ENTERED ONCE
+   The fastest way to make governance hated is asking teams to report the same
+   status in three places. Data entered once, read by many. If a report cannot
+   be generated from where the work already lives, question whether it should
+   exist.
+
+5. DECISION LOG OVER STATUS ARCHIVE
+   Record decisions, their rationale and their owner. Six months later nobody
+   needs last April's RAG status; everybody needs to know why you chose the
+   vendor.
+
+6. TIME-BOX THE PROCESS ITSELF AND MEASURE IT
+   Put an expiry on new process - "we will run this for two quarters and then
+   justify it again". Track decision latency: how long from a decision being
+   needed to being made. If governance is working, that number falls; if it is
+   bureaucracy, it rises, and you now have the evidence to kill your own
+   process.
+
+7. BE WILLING TO DELETE YOUR OWN MECHANISMS
+   Say you would audit the forums annually and remove any that no longer make
+   decisions. Leaders who only add process are the reason people fear
+   governance.""",
+    """A WORKED ANSWER
+
+"My test for any forum or artefact is: what decision does this make, and who
+would notice if it stopped? If I cannot answer both, I delete it. I'd apply that
+to what already exists before I add anything of my own.
+
+Then I'd govern by exception rather than by review. The instinct is to review
+everything monthly, which scales linearly with the portfolio and eventually
+consumes the function. Instead I'd set thresholds - investment size, cross-org
+blast radius, regulatory exposure - and only what breaches them comes to a
+forum. Most programs should never appear in governance at all.
+
+Concretely I'd tier the portfolio. Maybe five company-level bets reviewed
+monthly with executives and full TPM coverage; twenty significant cross-team
+programs reviewed only on exception with shared coverage; and everything else
+governed by the teams themselves. I'd be explicit that tier three is not
+neglected, it is trusted - if I cannot trust a team to run its own work, that is
+a different problem and governance will not fix it.
+
+Data gets entered once. The quickest way to make people hate governance is to
+ask for the same status in three formats. If I cannot generate a report from
+where the work already lives, I question whether the report should exist.
+
+I'd keep a decision log rather than a status archive. In six months nobody needs
+April's RAG status; everybody needs to know why we picked that vendor and who
+owned it.
+
+And I'd put an expiry date on my own process - we run it for two quarters and
+then it has to justify itself again. The metric I'd watch is decision latency:
+how long from a decision being needed to it being made. Good governance drives
+that down. If it goes up, what I have built is bureaucracy and I should say so
+and remove it." """,
+    """STRONG sounds like: the what-decision-does-this-make test stated first;
+governing by exception with explicit tiers and rough numbers; enter-once data;
+a decision log; and - most of all - a measure of your own process and a
+willingness to delete it.
+
+WEAK sounds like: describing a governance structure - steering committees,
+monthly reviews, a PMO dashboard - with no test for whether any of it earns its
+place. That is precisely the bureaucracy the question is asking you to avoid.
+
+THE DETAIL THAT IMPRESSES: decision latency as the metric for governance
+quality, plus an expiry date on new process. It shows you hold your own
+mechanisms to the same standard you hold everyone else's.""",
+    ["An executive wants every program reviewed monthly. How do you push back?",
+     "How do you decide the tier thresholds?",
+     "What would you delete first in a typical PMO?",
+     "How do you stop tier 3 programs from failing invisibly?",
+     "What if decision latency rises after your changes?"],
+    """* Adding structure without a test for whether it earns its place.
+* Reviewing everything, which does not scale and trains people to prepare for
+  meetings rather than to deliver.
+* Multiple sources of truth and duplicate status entry.
+* Status archives instead of decision logs.
+* No measure of the process itself - which means you can never justify removing
+  it later.""",
+    ["governance", "org-design", "portfolio", "program"],
+    difficulty="Hard",
+    frequency="Expected at Head-of-function level; a strong differentiator.",
+    prep_minutes=40,
+))
+
+_B2.append(E(
+    "program",
+    "A Sev1 is happening right now. What do you do in the first hour?",
+    "Whether you know that incident command is a ROLE, not a title, and "
+    "whether you separate the people restoring service from the people "
+    "communicating. Under pressure most candidates conflate the two, which is "
+    "exactly what goes wrong in real incidents.",
+    """THE STRUCTURE - first hour, in order
+
+1. ESTABLISH COMMAND (first 5 minutes)
+   One incident commander, named out loud, and it is usually NOT the person
+   with the deepest technical knowledge - you want your best engineer debugging,
+   not coordinating. The commander runs the incident and makes calls; they do
+   not fix.
+
+2. SEPARATE THE THREE JOBS IMMEDIATELY
+   * Restore service (the responders)
+   * Communicate (a comms lead - internal, executive, customer)
+   * Run the incident (the commander)
+   Conflating these is the single most common failure: the person who knows the
+   system ends up explaining it to executives instead of fixing it.
+
+3. MITIGATE BEFORE YOU DIAGNOSE
+   The goal in the first hour is to stop the bleeding, not to understand it.
+   Roll back, fail over, disable the feature flag, shed load. Root cause is a
+   tomorrow problem. Say this explicitly - it is the instinct that separates
+   people who have run incidents from people who have read about them.
+
+4. ASK THE FASTEST DIAGNOSTIC QUESTION: WHAT CHANGED?
+   The overwhelming majority of incidents are caused by a change - a deploy, a
+   config edit, a certificate, a feature ramp, a traffic shift. Check the change
+   log before theorising.
+
+5. SET A COMMS CADENCE AND HOLD IT
+   Updates on a fixed interval - every 30 minutes - even when there is nothing
+   new, because the moment updates stop, executives start pulling responders out
+   of the incident to ask for them. Say what you know, what you do not, and when
+   the next update comes.
+
+6. PROTECT THE RESPONDERS
+   One channel in and out. The commander absorbs the executive pressure so the
+   engineers never feel it. "The single most useful thing a senior leader can do
+   in an incident is stand between the engineers and everyone else."
+
+7. TRACK A TIMELINE AS YOU GO
+   Someone records actions and times live. Reconstructing it afterwards from
+   memory is unreliable, and the timeline is what makes the post-mortem real.
+
+8. DECIDE THE STAND-DOWN CRITERIA
+   What does resolved mean - mitigated or fixed? Say which, because declaring
+   victory on mitigation and going home is how you get the same incident twice
+   in one night.""",
+    """A WORKED ANSWER
+
+"First thing, within five minutes: name an incident commander out loud, and it
+should not be the person with the deepest knowledge of the failing system - I
+want them debugging, not coordinating.
+
+Then I'd split three jobs that get conflated under stress: restoring service,
+communicating, and running the incident. The classic failure is that the one
+engineer who understands the system spends the first forty minutes explaining it
+to executives instead of fixing it.
+
+The priority in the first hour is mitigation, not diagnosis. Roll back, fail
+over, kill the feature flag, shed load - stop the bleeding. Root cause is a
+tomorrow problem, and I'd say that explicitly because engineers naturally want
+to understand before they act, and in an incident that instinct costs customers.
+
+The fastest diagnostic question is 'what changed' - deploys, config, certs,
+feature ramps, traffic shifts. Most incidents are a change, so I'd check the
+change log before anyone theorises.
+
+I'd set a comms cadence of every 30 minutes and hold it even when there is
+nothing new, because the moment updates stop, executives start pulling
+responders out to ask for one. Each update says what we know, what we do not,
+and when the next one lands.
+
+If I'm the senior person, my most useful contribution is to stand between the
+engineers and everyone else. One channel in, one channel out. Nobody messages a
+responder directly.
+
+Somebody records a live timeline, because reconstructing it from memory
+afterwards produces a fiction and the post-mortem depends on it.
+
+And I'd be explicit about stand-down criteria - are we mitigated or actually
+fixed? Declaring resolved on mitigation and standing everyone down is how you
+get the same incident again at 3am." """,
+    """STRONG sounds like: command established first; the three roles separated;
+mitigate-before-diagnose stated as a principle; "what changed" as the first
+diagnostic; a held comms cadence including no-news updates; and shielding the
+responders. The stand-down distinction between mitigated and fixed is a
+strong close.
+
+WEAK sounds like: "I'd get everyone on a call and start troubleshooting" -
+which is what actually happens in badly run incidents. Also weak: leading with
+root cause analysis, or having the most senior engineer run comms.
+
+THE DETAIL THAT IMPRESSES: "the most useful thing a senior leader can do is
+stand between the engineers and everyone else." It is a leadership answer to a
+technical question and it lands.""",
+    ["The CEO joins the call and starts asking questions. What do you do?",
+     "Mitigation would mean rolling back a release the business announced "
+     "today. Do you roll back?",
+     "Two hours in and you still do not know the cause. What changes?",
+     "How do you decide the severity level in the first place?",
+     "What does a good post-mortem look like the next day?"],
+    """* Diagnosing before mitigating.
+* No named commander, so decisions get made by whoever is loudest.
+* The best debugger doing comms.
+* Letting the comms cadence lapse during the hard part - precisely when people
+  most need it.
+* Standing down on mitigation without saying so.
+* No live timeline, which makes the post-mortem guesswork.""",
+    ["incident", "crisis", "communication", "operations", "program"],
+    difficulty="Medium",
+    frequency="Common, especially where the role owns operational readiness.",
+    prep_minutes=35,
+))
+
+_B2.append(E(
+    "product",
+    "You have 20 things on the roadmap and capacity for 6. How do you choose?",
+    "Whether you have a defensible prioritisation method and, more "
+    "importantly, whether you can hold the line on the things you cut. The "
+    "framework matters less than the fact that you have one and can explain "
+    "its failure modes.",
+    """THE STRUCTURE
+
+1. ESTABLISH THE OBJECTIVE FIRST
+   You cannot prioritise without knowing what you are optimising for this
+   period - revenue, retention, cost, risk reduction, strategic position. If
+   the objective is not agreed, the prioritisation argument is really a
+   disagreement about strategy wearing a spreadsheet.
+
+2. SIZE VALUE AND COST ROUGHLY, NOT PRECISELY
+   RICE, weighted scoring, whatever you like - but say out loud that the score
+   is a CONVERSATION STARTER, not a decision. Anyone who has used RICE knows the
+   reach and impact numbers are estimates with a factor-of-three error, and
+   pretending otherwise is how teams launder opinion as arithmetic.
+
+3. SEPARATE THE THINGS THAT ARE NOT NEGOTIABLE
+   Compliance, security, keeping the lights on, and paying down debt that is
+   actively slowing delivery. These come off the top as a fixed allocation -
+   typically 15-25% - rather than competing on ROI, because they always lose an
+   ROI contest and then you have an outage.
+
+4. CHECK THE PORTFOLIO SHAPE, NOT JUST THE RANKING
+   A ranked list optimises each item and can still produce a terrible portfolio:
+   six incremental improvements and no bet, or six bets and nothing that ships
+   this quarter. I'd want a deliberate mix of near-term wins, one or two real
+   bets, and the non-negotiables.
+
+5. APPLY THE CONSTRAINT HONESTLY
+   Six means six. The failure mode is starting fourteen at 40% staffing, which
+   delivers nothing and looks busy. Work in progress is the enemy: half-finished
+   work has delivered zero value and consumed real money.
+
+6. PUBLISH THE NOT-DOING LIST - the part that matters most
+   Explicitly name the fourteen you are not doing, and say when they will next
+   be considered. Ambiguity about the cut items is what generates back-channel
+   lobbying all quarter. A published, dated not-doing list converts an argument
+   into a scheduled decision.
+
+7. HAVE THE CONVERSATION WITH THE PEOPLE WHOSE ITEMS WERE CUT
+   In person, before the list is published. Cheap to do and it buys most of the
+   political cover you will need.""",
+    """A WORKED ANSWER
+
+"Before ranking anything I'd want to know what we are optimising for this
+period. Most prioritisation arguments are actually disagreements about strategy
+that nobody has surfaced, and a scoring spreadsheet will not settle them.
+
+Then I'd take the non-negotiables off the top - compliance, security, and the
+tech debt that is measurably slowing us down - as a fixed allocation of maybe
+20%. They have to be carved out rather than scored, because they always lose an
+ROI comparison and then you get an incident.
+
+For the rest I'd score value against effort - RICE is fine - but I'd say
+clearly that the score is a conversation starter, not a decision. The reach and
+impact numbers are estimates with a large error bar, and treating the output as
+arithmetic is how teams launder an opinion into a number.
+
+Then I'd look at the SHAPE of the six, not just the ranking. A pure top-six by
+score often gives you six incremental improvements and no bet at all, or the
+reverse. I'd want a deliberate mix: a few things that ship this quarter, one or
+two real bets, and the non-negotiables.
+
+And six means six. The most common failure I see is starting fourteen at partial
+staffing - it feels responsive, it delivers nothing, and half-finished work has
+consumed real money for zero value.
+
+The part I'd spend the most care on is publishing the not-doing list, with the
+date when each item will next be considered. If you leave the cut items
+ambiguous, you spend the whole quarter being lobbied. If they are explicitly out
+until the next planning cycle, the argument becomes a scheduled decision rather
+than a running one.
+
+And I'd tell the people whose items were cut myself, before the list goes out.
+It costs an hour and it buys most of the goodwill you need to hold the line." """,
+    """STRONG sounds like: objective before scoring; non-negotiables carved out
+rather than scored; scepticism about your own scoring method; portfolio shape as
+well as ranking; the WIP argument; and above all the published, dated not-doing
+list. That last one is what separates people who have actually held a roadmap.
+
+WEAK sounds like: "I'd use RICE and take the top six" - a method with no
+judgement. Also weak: no not-doing list, and any answer where the security and
+compliance work competes on ROI.
+
+THE DETAIL THAT IMPRESSES: telling the people who got cut personally, before
+publication. Interviewers hear the framework a hundred times and the political
+craft almost never.""",
+    ["An exec adds a 21st item mid-quarter and says it is critical. What "
+     "happens?",
+     "Two items score identically. How do you break the tie?",
+     "How do you defend the tech-debt allocation when revenue is under "
+     "pressure?",
+     "What would make you change the six mid-quarter?",
+     "The team believes item 12 is the most important thing. How do you handle "
+     "that?"],
+    """* A scoring framework presented as objective truth.
+* No explicit objective, so the ranking has no basis.
+* Starting more than capacity allows - the most common and most expensive
+  error.
+* No not-doing list, which guarantees a quarter of lobbying.
+* Letting non-negotiables compete on ROI.
+* Optimising each item and ignoring the shape of the portfolio.""",
+    ["prioritization", "roadmap", "stakeholders", "product"],
+    difficulty="Medium",
+    frequency="Very common - appears in the product round and again with "
+              "different framing in the program round.",
+    prep_minutes=35,
+))
+
+_B2.append(E(
+    "product",
+    "A competitor just launched a feature we do not have. How do you respond?",
+    "Whether you can resist reflexive feature-matching and reason about "
+    "whether the threat is real. The instinct to copy is strong and usually "
+    "wrong, and panels use this question specifically to see whether you have "
+    "it.",
+    """THE STRUCTURE
+
+1. RESIST THE REFLEX, OUT LOUD
+   "My default is not to match. Most competitor launches do not require a
+   response, and reflexive matching means your roadmap is set by someone else."
+   Saying this first frames everything after it.
+
+2. ESTABLISH WHETHER IT IS ACTUALLY A THREAT
+   Three questions, in order:
+   * Do OUR customers want it? Check support requests, sales-loss reasons,
+     churn interviews, usage data. Not "is it clever" but "is anyone asking".
+   * Does it change the BUYING DECISION? A feature that appears on a
+     procurement checklist is a real threat; a feature that demos well and
+     changes nobody's choice is not.
+   * Is it strategic for them or opportunistic? Something that reinforces their
+     core advantage matters far more than a side experiment.
+
+3. GET EVIDENCE FAST, ON A DEADLINE
+   Talk to sales about live deals, look at win/loss over the next few weeks,
+   ask customer success what customers are asking. Give it two to three weeks
+   with a decision date, so this does not become an open anxiety.
+
+4. CHOOSE FROM FOUR RESPONSES - and say which and why
+   * IGNORE: not our segment, not our strategy. The most common correct answer,
+     and the hardest one to hold.
+   * NEUTRALISE: build the minimum that removes it as a differentiator, and no
+     more. Right when it is a checklist item rather than a real need.
+   * DIFFERENTIATE: do not match; go harder where you are strong, so the
+     comparison happens on your ground rather than theirs.
+   * LEAPFROG: they have revealed a real unmet need and you can serve it better.
+     Genuine, and rarer than people claim.
+
+5. HANDLE THE INTERNAL PANIC, WHICH IS THE REAL PROBLEM
+   The hardest part is usually not the analysis - it is an executive who saw the
+   launch and wants a response by Friday. The move is to commit to a decision
+   DATE rather than to a build, and to bring evidence to that date. That
+   converts panic into a scheduled decision without dismissing the concern.
+
+6. SAY WHAT WOULD CHANGE YOUR MIND
+   "If we lose two deals in the next month with this named as the reason, I
+   would reprioritise." A trigger makes ignoring it a managed position rather
+   than a stubborn one.""",
+    """A WORKED ANSWER
+
+"My default is not to respond. Most competitor launches do not need one, and a
+team that matches every launch has handed its roadmap to a competitor - you are
+permanently one quarter behind, building their strategy with your engineers.
+
+So first I'd establish whether it is actually a threat, and I'd answer three
+questions. Do our customers want it - is it showing up in support requests,
+lost-deal reasons, churn conversations? Does it change the buying decision, or
+is it just impressive in a demo? And is it strategic for them or opportunistic -
+something that reinforces their core advantage is far more serious than a side
+experiment.
+
+I'd give that two or three weeks with a hard decision date. Sales will know
+within a fortnight whether it is coming up in live deals, and that is the
+highest-signal evidence available.
+
+Then one of four responses. Ignore, which is the most common correct answer and
+the hardest to hold. Neutralise - build the minimum that removes it as a
+differentiator and not one feature more, which is right when it is a
+procurement-checklist item rather than a real need. Differentiate - go harder
+where we are already strong so the comparison happens on our ground. Or leapfrog,
+if they have revealed a genuine unmet need we can serve better.
+
+Honestly, the hardest part of this question is rarely the analysis. It is the
+executive who saw the launch on Monday and wants a response by Friday. What I'd
+commit to is a decision DATE, not a build - 'you will have a recommendation with
+evidence in three weeks'. That takes the concern seriously without spending
+engineering capacity on an emotional reaction.
+
+And I'd name the trigger that would change my mind: if we lose two deals in the
+next month with this cited as the reason, I reprioritise. That makes ignoring it
+a managed position rather than a stubborn one, which is also what makes it
+survivable politically." """,
+    """STRONG sounds like: default-not-to-match stated up front; evidence
+gathering with a deadline; the four named responses with a reasoned choice;
+handling the internal panic by committing to a decision date; and a named
+trigger that would reverse the call.
+
+WEAK sounds like: "we'd assess and add it to the roadmap" - which is matching
+with extra steps. Also weak: dismissing it entirely with no evidence, which is
+just a different reflex.
+
+THE DETAIL THAT IMPRESSES: naming the internal panic as the real problem.
+Everybody analyses the competitor; very few candidates acknowledge that the
+actual work is managing an anxious executive, and that committing to a date
+rather than a build is how you do it.""",
+    ["Sales says they lost three deals this week because of it. Does that "
+     "change your answer?",
+     "Your CEO has already promised a customer you will build it. Now what?",
+     "How do you tell the difference between a checklist feature and a real "
+     "need?",
+     "What if the competitor is much better resourced than you?",
+     "When is fast-following actually the right strategy?"],
+    """* Reflexive matching - the failure mode this question exists to detect.
+* Analysis with no deadline, which becomes a permanent low-grade anxiety.
+* Ignoring it without evidence, which is equally unthinking.
+* No trigger to revisit, which turns a judgement into stubbornness.
+* Not addressing the internal politics, which is the part that actually
+  determines what happens.""",
+    ["strategy", "competitive", "prioritization", "product"],
+    difficulty="Medium",
+    frequency="Common in the product round, especially in competitive markets.",
+    prep_minutes=35,
+))
+
+_B2.append(E(
+    "product",
+    "How do you work with a PM when you disagree about priority or scope?",
+    "The TPM-specific relationship question, and it is asked in most loops "
+    "because the PM/TPM seam is where the role either works or does not. They "
+    "want to know you understand the boundary - the PM owns WHAT and WHY, you "
+    "own HOW and WHEN - and that you can disagree without either steamrolling "
+    "or capitulating.",
+    """THE STRUCTURE
+
+1. STATE THE BOUNDARY, BECAUSE IT RESOLVES MOST DISAGREEMENTS
+   The PM owns what we build and why. You own how and when it gets delivered,
+   and the honesty of the plan. If the disagreement is about VALUE, they decide
+   and you support it. If it is about FEASIBILITY, COST or RISK, that is your
+   ground and you should hold it. Saying this clearly shows you know the role.
+
+2. SEPARATE THE THREE KINDS OF DISAGREEMENT
+   * "I think this is worth less than you do" - their call. Make your case once,
+     then commit.
+   * "This will take three times what you think" - your call. Bring the
+     evidence, not the opinion.
+   * "This sequence creates avoidable risk" - your call, and the one where TPMs
+     add the most value and most often stay quiet.
+
+3. ARGUE IN THE CURRENCY OF TRADE-OFFS, NOT OBJECTIONS
+   Never "we can't do that by then". Always "we can have A by March, or A and B
+   by May, or A and a reduced B by April - here is what each costs and what I
+   recommend." You are handing them a decision rather than a wall, and it keeps
+   ownership where it belongs.
+
+4. MAKE THE DISAGREEMENT CHEAP TO RESOLVE
+   Propose the smallest experiment that would settle it - a spike, a prototype,
+   a week of data. Most PM/TPM disagreements are about an unknown that could be
+   resolved for less than the cost of the argument.
+
+5. DISAGREE AND COMMIT - VISIBLY
+   Once decided, support it publicly and completely. If you were overruled and
+   you believe it is genuinely risky, write the risk down once, with the
+   trigger, and then get behind it. The written record is not for
+   score-settling; it is so that if the risk lands, the conversation is about
+   the response rather than about who said what.
+
+6. IF IT KEEPS HAPPENING, FIX THE RELATIONSHIP, NOT THE INSTANCE
+   Repeated conflict usually means unclear decision rights or a missing shared
+   goal. Agree the boundary explicitly, and get on the same metric - a PM and
+   TPM measured on different things will disagree forever, and no amount of
+   good faith fixes it.""",
+    """A WORKED ANSWER
+
+"I start from a clear boundary: the PM owns what we build and why, I own how and
+when, and the honesty of the plan. Most disagreements resolve the moment you
+work out which side of that line you are on.
+
+If we disagree about VALUE - they think a feature matters more than I do - that
+is their call. I make my case once, properly, and then I commit. A TPM who
+relitigates product decisions becomes someone the PM routes around.
+
+If we disagree about FEASIBILITY or RISK, that is my ground and I hold it. But I
+hold it with evidence rather than assertion - here is the dependency, here is
+what the last three similar projects took, here is the specific thing I think
+breaks.
+
+And I try never to say 'we can't do that by then', because that is a wall. I say
+'we can have A by March, or A and B by May, or a reduced B by April, and here is
+what I recommend and why'. That hands them a decision rather than an obstacle,
+which keeps the ownership in the right place and usually produces a better
+outcome than either of our original positions.
+
+Where I can, I make the disagreement cheap to settle. Most of them are actually
+about an unknown, and a one-week spike often costs less than the argument.
+
+Once it is decided I get behind it visibly. If I was overruled on something I
+genuinely think is risky, I write the risk down once with a trigger, and then I
+support the decision fully. That record isn't for saying I told you so - it is
+so that if it happens, we spend the meeting on the response instead of on who
+said what.
+
+If it keeps happening with the same person, I'd stop treating the instances and
+look at the relationship. Usually it is either unclear decision rights or the
+two of us being measured on different things. A PM on feature delivery and a TPM
+on predictability will disagree permanently, and that is a management problem,
+not a personality one." """,
+    """STRONG sounds like: the WHAT/WHY versus HOW/WHEN boundary stated
+explicitly; different handling for value versus feasibility disagreements;
+options-with-a-recommendation instead of objections; the cheap experiment; and
+disagree-and-commit with a written risk rather than a grudge. The
+different-metrics insight at the end is a Director-level observation.
+
+WEAK sounds like: "I'd escalate to leadership" - which tells the panel you
+cannot resolve a peer relationship. Also weak: always deferring, which makes you
+a coordinator rather than a partner; or fighting on product ground, which makes
+you an obstacle.
+
+THE DETAIL THAT IMPRESSES: writing the risk down with a trigger and then
+genuinely committing. It shows you can lose an argument professionally, which is
+most of what senior collaboration actually is.""",
+    ["The PM goes around you to your engineers. How do you handle it?",
+     "You were overruled and the risk you flagged materialised. What do you do "
+     "the next day?",
+     "How do you disagree with a PM who is much more senior than you?",
+     "What if the PM keeps changing scope mid-sprint?",
+     "When is escalating actually the right call?"],
+    """* Escalating a peer disagreement early - it reads as an inability to
+  operate laterally.
+* Fighting on product ground rather than delivery ground.
+* Always deferring, which is the other failure and is just as visible.
+* Saying no without options.
+* Committing publicly while undermining privately - the most damaging pattern
+  and the one people notice.""",
+    ["collaboration", "influence", "product", "stakeholders"],
+    difficulty="Medium",
+    frequency="Asked in most TPM loops - the PM/TPM seam is a standard probe.",
+    prep_minutes=30,
+))
+
+_B2.append(E(
+    "product",
+    "How would you decide whether to sunset a feature or product?",
+    "Whether you can kill things. Organisations accumulate features because "
+    "nobody is rewarded for removal, and a leader who can retire things "
+    "cleanly is genuinely rare. The question is also testing whether you think "
+    "about the customers you would harm.",
+    """THE STRUCTURE
+
+1. ESTABLISH THE TRUE COST OF KEEPING IT
+   Not just maintenance engineering. The full cost is: on-call burden, security
+   patching, the constraint it places on every future change, the testing
+   surface, the support load, the documentation, and the cognitive cost to every
+   engineer who has to reason around it. Most sunset arguments fail because only
+   the first item is counted.
+
+2. ESTABLISH WHO ACTUALLY USES IT - carefully
+   Raw usage numbers mislead. Cut by: how many accounts, WHICH accounts (one
+   feature used only by your three largest customers is not a candidate), how
+   deeply, and whether it is load-bearing for a workflow that otherwise breaks.
+   Low usage plus strategic customers equals do not touch.
+
+3. ASK WHY IT FAILED - because it changes the decision
+   Was it never valuable, or was it valuable and badly executed, undiscovered,
+   or unsupported? Killing something that failed on execution rather than on
+   premise means you may rebuild it in two years having learned nothing.
+
+4. CONSIDER THE OPTIONS BETWEEN KEEP AND KILL
+   Freeze (no new investment, keep it running). Narrow (support only the core
+   use case). Migrate (build the replacement path first). Divest or open-source.
+   Deprecate-then-remove on a long timeline. Sunset is rarely binary and saying
+   so shows judgement.
+
+5. PLAN THE MIGRATION BEFORE ANNOUNCING ANYTHING
+   The order that goes wrong: announce, then work out the path. Have the
+   alternative ready, and for the affected accounts, a named person and a plan
+   before they hear about it publicly.
+
+6. THE COMMUNICATION, WHICH IS MOST OF THE RISK
+   Generous timelines - a year for anything enterprise. Direct contact for
+   affected customers, not a blog post. Be honest that it is a business decision
+   rather than pretending it is for their benefit. And never surprise sales or
+   support - they will hear it from a customer, and you will have destroyed
+   their credibility.
+
+7. THE TRUST COST IS THE REAL COST
+   Every sunset teaches customers something about whether to depend on you.
+   That is why the migration path and the timeline matter more than the
+   engineering saving.""",
+    """A WORKED ANSWER
+
+"I'd start with the true cost of keeping it, because that number is almost
+always understated. It is not just the maintenance engineer - it is the on-call
+burden, the security patching, the testing surface, and most importantly the
+constraint it puts on every future change. A feature that forces every migration
+to carry a special case is expensive in a way that never appears in a budget.
+
+Then who actually uses it, and I'd be careful here because raw usage misleads.
+I want to know which accounts, not how many. A feature used by 2% of users can
+be untouchable if that 2% is your three largest customers, and I have seen teams
+walk into that.
+
+I'd also ask why it failed, because it changes the decision. If it was never
+valuable, kill it. If it was valuable but undiscoverable or badly executed, then
+killing it means we may rebuild the same thing in two years having learned
+nothing.
+
+And I'd resist treating it as binary. There is freeze, narrow to the core use
+case, migrate people to a replacement, divest, or a long deprecation. Full
+removal is often the most expensive option in trust terms for a modest
+engineering saving.
+
+The sequencing matters enormously: build the migration path BEFORE announcing.
+The classic failure is announcing a sunset and then working out where people are
+supposed to go, which turns a routine decision into a crisis.
+
+On communication - generous timelines, a year for anything enterprise. Affected
+customers hear it from a person, not a blog post. I'd be honest that it is a
+business decision rather than dressing it up as being for their benefit, because
+customers see through that and it costs more than the truth would have. And I'd
+brief sales and support before anyone external hears it - if a customer tells
+their account manager about our own sunset, we have damaged that relationship
+for years.
+
+The thing I'd hold onto is that the real cost of a sunset is not engineering, it
+is what it teaches customers about depending on us. That is why the migration
+path and the timeline are worth more than the saving." """,
+    """STRONG sounds like: full cost including the constraint on future work;
+WHICH accounts rather than how many; asking why it failed; the options between
+keep and kill; migration path before announcement; and trust as the real cost.
+
+WEAK sounds like: "low usage, so we'd deprecate it" - usage alone is the
+shallowest possible read. Also weak: announcing before there is a migration
+path, and forgetting that sales and support need to know first.
+
+THE DETAIL THAT IMPRESSES: "a feature that failed on execution rather than on
+premise" - it is the distinction that stops organisations rebuilding the same
+mistake every three years.""",
+    ["Your biggest customer uses it and threatens to leave. What now?",
+     "Engineering wants it gone; sales wants it kept. Who wins?",
+     "How long a deprecation window, and how did you pick it?",
+     "How do you stop the org accumulating features like this in the first "
+     "place?",
+     "What if you sunset it and were wrong?"],
+    """* Judging on raw usage without segmenting by account value.
+* Announcing before the migration path exists.
+* Treating it as binary when freeze or narrow is usually cheaper.
+* Blindsiding sales and support.
+* Pretending the sunset benefits the customer.
+* Counting only the engineering saving and ignoring the trust cost.""",
+    ["strategy", "product-lifecycle", "stakeholders", "product"],
+    difficulty="Medium",
+    frequency="Common at Director+ - a good signal of whether you can remove "
+              "things, not just add them.",
+    prep_minutes=35,
+))
+
+ENTRIES.extend(_B2)
+
 
 # ══ Tags, rounds and the planning layer ═══════════════════════════════════
 # Same planning fields as the other banks so the whole prep has one currency:
@@ -1026,7 +2210,26 @@ def _freq_tier(e):
     return 1.4
 
 
-_ordered = sorted(ENTRIES, key=lambda e: (-_freq_tier(e), e["round"], e["title"]))
+# Cases where a weak answer costs you the loop outright, regardless of how
+# often they are asked. The frequency tiers alone put "first 90 days" mid-pack
+# on an alphabetical tie-break, which is wrong for a Head-of-function hire -
+# it is frequently the question the decision turns on.
+_MUST_REHEARSE = {
+    "What would you do in your first 90 days as Head of TPM here?",
+    "You inherit a critical program that is three months late. Walk me through "
+    "your first 30 days.",
+    "How would you improve [our product]?",
+    "How would you run a program with 12 teams and a hard external date?",
+    "How do you measure the health of a program? What is on your dashboard?",
+    "How do you set up portfolio governance without creating bureaucracy?",
+}
+
+
+def _rank_score(e):
+    return _freq_tier(e) + (1.5 if e["title"] in _MUST_REHEARSE else 0.0)
+
+
+_ordered = sorted(ENTRIES, key=lambda e: (-_rank_score(e), e["round"], e["title"]))
 _total = max(1, len(_ordered))
 for _i, _e in enumerate(_ordered, 1):
     _e["rank"] = _i
