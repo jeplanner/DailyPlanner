@@ -11866,6 +11866,515 @@ WHAT PEOPLE GET WRONG: advancing the child index when the cookie was too small,
 which silently skips a child who could have been served later.
 """.strip("\n")
 
+_PLAIN_ALGO["Average of Levels in Binary Tree"] = r"""
+IN ONE SENTENCE: level-order BFS, but instead of collecting each level's
+values, add them up and divide by how many there were.
+
+STEPS
+1. Put the root in a queue.
+2. While the queue is not empty, snapshot its current length - that is this
+   level's node count.
+3. Pop exactly that many nodes, adding each value to a running sum for the
+   level and pushing each node's children.
+4. Append the sum divided by the count to the result.
+5. Return the result.
+
+WHY THE SNAPSHOT IS THE ONLY TRICKY LINE: you push the next level into the same
+queue you are popping from, so its length changes as you work. Freezing it
+before the inner loop is what makes the division use the right denominator -
+and it is the same line that powers every other level-order variant.
+
+WHY NOT DFS: you could DFS carrying a depth and accumulate sums and counts per
+depth into two arrays. That works and is a fine answer. BFS is more direct
+because the problem is stated per level.
+
+WHAT PEOPLE GET WRONG: integer division in languages that have it, and dividing
+by the queue's CURRENT length after the inner loop has already changed it.
+""".strip("\n")
+
+_PLAIN_ALGO["Binary Tree Tilt"] = r"""
+IN ONE SENTENCE: one bottom-up pass where each node returns its subtree SUM to
+its parent, while quietly adding its own tilt to a running total.
+
+STEPS
+1. Keep a running total outside the recursion.
+2. Write a helper that returns a node's subtree sum.
+3. Empty node -> sum 0.
+4. Get the left subtree sum and the right subtree sum.
+5. Add the absolute difference of those two to the running total - that is this
+   node's tilt.
+6. Return this node's value plus both sums, which is what the parent needs.
+7. Run the helper on the root and return the total.
+
+THE PATTERN TO NOTICE: what you RETURN (the subtree sum) is not what you are
+ACCUMULATING (the tilt). That split - return one thing, record another - is the
+same shape as Diameter of a Binary Tree and Binary Tree Maximum Path Sum. Once
+you see it, all three become the same problem.
+
+WHY ONE PASS RATHER THAN TWO: computing each node's tilt independently would
+re-walk the same subtrees over and over, giving O(n^2). Letting the sum flow
+upward means every node is visited once - O(n).
+
+WHAT PEOPLE GET WRONG: returning the tilt instead of the sum, which starves the
+parent of the number it needs; and forgetting the absolute value.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Pairs Whose Sum is Less than Target"] = r"""
+IN ONE SENTENCE: sort, put a pointer at each end, and when a pair is small
+enough, count EVERY pair between them at once instead of one at a time.
+
+STEPS
+1. Sort the array.
+2. Put left at the start and right at the end; start a count at 0.
+3. If the two values sum to less than the target, then pairing left with
+   anything from left+1 up to right also works - because everything in between
+   is no bigger than the right value. Add (right minus left) to the count in
+   one go, then move left inward.
+4. Otherwise the sum is too big - move right inward.
+5. Return the count.
+
+WHY THE BULK COUNT IS THE WHOLE POINT: counting one pair per step would be
+O(n^2). Because the array is sorted, a single successful comparison certifies a
+whole block of pairs at once, which is what makes it O(n) after the sort.
+Recognising "I can count a range instead of an element" is a transferable move.
+
+WHY SORTING DOES NOT BREAK THE PROBLEM: it asks for the NUMBER of pairs, not
+their indices. If it wanted index pairs you could not sort, and the answer
+would be a different algorithm - always check which the problem wants.
+
+WHAT PEOPLE GET WRONG: adding (right - left + 1), which counts left paired with
+itself. The correct block size is right minus left.
+""".strip("\n")
+
+_PLAIN_ALGO["DI String Match"] = r"""
+IN ONE SENTENCE: whenever the pattern says increase, hand out the smallest
+number you have left; whenever it says decrease, hand out the largest.
+
+STEPS
+1. Keep a low counter at 0 and a high counter at the length of the pattern.
+2. Walk the pattern one character at a time.
+3. On 'I', append the current low and increase it - you have used the smallest
+   available, so whatever comes next is guaranteed to be bigger.
+4. On 'D', append the current high and decrease it - you have used the largest,
+   so whatever comes next must be smaller.
+5. After the loop, low and high are equal; append that last value.
+6. Return the list.
+
+WHY GREEDY CANNOT FAIL HERE: playing your smallest card when you must go up
+leaves you the maximum room to go up next time, and symmetrically for going
+down. There is never a reason to hold a card back, so no lookahead is needed.
+That is the argument to give when asked "why does the greedy work?".
+
+WHY THE LAST APPEND IS UNCONDITIONAL: a pattern of length n produces a
+permutation of length n+1, and after n moves exactly one number remains - which
+is why low and high have converged.
+
+WHAT PEOPLE GET WRONG: starting high at n-1 instead of n, which is off by one
+because the answer uses the numbers 0 through n inclusive.
+""".strip("\n")
+
+_PLAIN_ALGO["Meeting Rooms (can attend all)"] = r"""
+IN ONE SENTENCE: sort by start time and check whether any meeting begins before
+the one before it ended.
+
+STEPS
+1. Sort the intervals by start time.
+2. Walk from the second interval onward.
+3. If the current start is earlier than the previous end, they clash - return
+   false.
+4. If you finish the loop, return true.
+
+WHY COMPARING ONLY WITH THE IMMEDIATE PREDECESSOR IS ENOUGH: after sorting by
+start, if the current meeting does not clash with the previous one, it cannot
+clash with anything earlier either - those all started even sooner and, since
+none of them clashed with the previous meeting, they all ended before it. One
+comparison per meeting instead of comparing all pairs, so O(n log n) instead of
+O(n^2).
+
+THE FOLLOW-UP THIS ALWAYS LEADS TO: "how many rooms would you need?" That is
+Meeting Rooms II - a min-heap of end times, or a sweep line over +1/-1 events.
+Have that ready, because it is asked immediately afterwards almost every time.
+
+WHAT PEOPLE GET WRONG: using less-than-or-equal, which flags [1,5] and [5,8] as
+a clash. A meeting ending exactly when another begins is usually fine - but ask,
+because some interviewers define it the other way.
+""".strip("\n")
+
+_PLAIN_ALGO["Merge Similar Items"] = r"""
+IN ONE SENTENCE: throw both lists into one dictionary keyed by value, summing
+the weights, then read the dictionary out in sorted key order.
+
+STEPS
+1. Start an empty dictionary from value to total weight.
+2. Walk both input lists. For each pair, add the weight to whatever that value
+   already holds (defaulting to 0).
+3. Sort the dictionary's keys.
+4. Emit a pair of value and total weight for each key in that order.
+
+WHY A DICTIONARY RATHER THAN MERGING TWO SORTED LISTS: the two-pointer merge is
+also correct and avoids the final sort, giving O(n + m) if both inputs are
+already sorted by value. The dictionary version is O((n+m) log(n+m)) because of
+the sort, but it does not care whether the inputs are sorted and it is three
+lines. Say both, and say which assumption you are relying on.
+
+THE GENERAL PATTERN: "group by a key and aggregate" is one of the most common
+real-world shapes there is - it is a SQL GROUP BY. Recognising it saves you from
+inventing something more complicated.
+
+WHAT PEOPLE GET WRONG: overwriting rather than accumulating the weight, which
+silently drops every duplicate value.
+""".strip("\n")
+
+_PLAIN_ALGO["Merge Two Binary Trees"] = r"""
+IN ONE SENTENCE: walk both trees together - where both have a node, sum them;
+where only one does, take that whole subtree as it is.
+
+STEPS
+1. If the first tree's node is empty, return the second node - the entire
+   remaining subtree comes across unchanged.
+2. If the second is empty, return the first for the same reason.
+3. Otherwise make a new node holding the sum of the two values.
+4. Recurse on the two left children to build its left, and on the two right
+   children to build its right.
+5. Return the new node.
+
+WHY THE TWO BASE CASES DO ALL THE WORK: they cover "one side ran out" without
+any special handling further down - the surviving subtree is simply adopted
+wholesale. That is why this solution is five lines instead of a pile of null
+checks.
+
+BUILDING NEW VERSUS MUTATING: the version above creates new nodes, leaving both
+inputs untouched. You can also mutate the first tree in place and return it,
+which uses less memory. Mention the choice, because "does the caller still need
+the inputs?" is a real design question and interviewers like it being raised.
+
+WHAT PEOPLE GET WRONG: recursing before checking for empty, which crashes; and
+forgetting that adopting a subtree means the RESULT now shares nodes with the
+input - fine if nothing mutates it later, a bug if something does.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Depth of Binary Tree"] = r"""
+IN ONE SENTENCE: BFS level by level and return the depth of the FIRST leaf you
+meet, because BFS meets the shallowest one first.
+
+STEPS
+1. Empty tree -> 0.
+2. Queue the root paired with a depth of 1.
+3. Pop a node and its depth. If it has no children at all, it is a leaf - and
+   because BFS explores in ring order, it is the shallowest leaf. Return its
+   depth.
+4. Otherwise queue each existing child with the depth plus one.
+
+WHY BFS BEATS DFS HERE SPECIFICALLY: DFS also works but must explore every path
+to the bottom before it knows which was shortest. BFS stops the instant it
+finds any leaf, which on a lopsided tree - one short branch and one enormous
+one - is dramatically faster. This is the standard example of "shortest
+something -> BFS".
+
+THE TRAP THAT MAKES THIS HARDER THAN MAXIMUM DEPTH: a node with only ONE child
+is not a leaf, so its depth does not count. The naive mirror of max-depth -
+one plus the MINIMUM of the two child depths - returns 1 for a node whose left
+side is empty, which is wrong. Only a node with BOTH children empty terminates
+a root-to-leaf path.
+
+WHAT PEOPLE GET WRONG: exactly that trap. If you write the recursive version,
+you must special-case "one child missing" and take the other side's depth
+rather than the minimum.
+""".strip("\n")
+
+_PLAIN_ALGO["N-th Tribonacci Number"] = r"""
+IN ONE SENTENCE: like Fibonacci but each term adds the previous THREE, so slide
+a window of three numbers forward.
+
+STEPS
+1. Handle the seeds: n of 0 gives 0; n of 1 or 2 gives 1.
+2. Hold three variables set to 0, 1 and 1.
+3. Loop from 3 up to n. Each step, shift them along: the first becomes the
+   second, the second becomes the third, and the third becomes the sum of all
+   three old values.
+4. Return the third variable.
+
+WHY THE SHIFT MUST BE SIMULTANEOUS: the new third value needs all three OLD
+values. Assigning one at a time overwrites a value you still need, and the
+result is quietly wrong rather than an error. Do it as one tuple assignment, or
+compute the sum into a temp first.
+
+WHY THREE VARIABLES AND NOT AN ARRAY: each term only reaches back three places,
+so keeping the whole sequence wastes O(n) memory for nothing. This is the
+standard "rolling window" space optimisation and it applies to any DP whose
+transition looks back a fixed distance.
+
+WHAT PEOPLE GET WRONG: the seeds. Tribonacci starts 0, 1, 1 - not 0, 1, 2 and
+not 1, 1, 1. Getting the seeds wrong shifts the entire sequence.
+""".strip("\n")
+
+_PLAIN_ALGO["Sum of Left Leaves"] = r"""
+IN ONE SENTENCE: a node cannot tell whether IT is a left leaf, so let each
+parent look at its own left child and decide.
+
+STEPS
+1. Empty node -> 0.
+2. Look at this node's left child. If it exists AND has no children of its own,
+   it is a left leaf - add its value.
+3. Recurse into the left child and into the right child, adding whatever they
+   report.
+4. Return the total.
+
+WHY THE PARENT DOES THE CHECKING: "left" is a relationship, not a property. A
+node has no idea which side of its parent it hangs from unless you pass that
+information down. Checking from the parent avoids threading an extra "am I a
+left child?" flag through every call - and that reframing is the actual insight
+in this problem.
+
+THE ALTERNATIVE: pass a boolean down saying whether the current node arrived as
+a left child, and add the value when it is both a leaf and flagged. Equally
+correct, slightly more parameters. Either answer is fine as long as you can say
+why the naive "if this node is a leaf, add it" fails.
+
+WHAT PEOPLE GET WRONG: adding every leaf, or forgetting to recurse INTO the
+left child after handling it - left leaves can live deep inside a left subtree,
+not only one level down.
+""".strip("\n")
+
+_PLAIN_ALGO["Valid Palindrome II (delete at most one)"] = r"""
+IN ONE SENTENCE: walk two pointers inward as usual, and at the first mismatch
+try skipping the left character or the right one - if either remainder is a
+clean palindrome, you are done.
+
+STEPS
+1. Write a helper that checks whether a plain slice is a palindrome with two
+   pointers.
+2. In the main function, walk a left and a right pointer toward each other.
+3. While the characters match, keep moving both.
+4. At the first mismatch, you must spend your one deletion here. Check the
+   slice with the left character skipped, and the slice with the right one
+   skipped. Return true if either is a palindrome.
+5. If the pointers meet without a mismatch, it was already a palindrome.
+
+WHY YOU CAN COMMIT AT THE FIRST MISMATCH: everything outside the current
+pointers already matched, so it is fine. The deletion has to fix THIS pair -
+postponing it cannot help, because this pair will still be mismatched later.
+And there are only two ways to fix a mismatched pair by deleting one character.
+That argument is why the solution stays O(n) instead of trying every deletion.
+
+WHY YOU DO NOT NEED TO KEEP GOING AFTER THE SKIP: you have used your single
+allowance, so the rest must be a perfect palindrome - which is exactly what the
+plain helper checks.
+
+WHAT PEOPLE GET WRONG: trying every possible deletion (O(n^2)) instead of
+realising only two candidates matter; and returning the result of only one of
+the two skips.
+""".strip("\n")
+
+_PLAIN_ALGO["Symmetric Tree"] = r"""
+IN ONE SENTENCE: symmetry is about two trees mirroring each other, so compare
+the left subtree against the right subtree walking them in OPPOSITE directions.
+
+STEPS
+1. Write a helper taking TWO nodes.
+2. Both empty -> true.
+3. Exactly one empty, or the values differ -> false.
+4. Otherwise recurse twice: a's LEFT against b's RIGHT (the outer pair), and
+   a's RIGHT against b's LEFT (the inner pair). Both must hold.
+5. An empty tree is symmetric; otherwise call the helper on the root's two
+   children.
+
+WHY THE HELPER TAKES TWO NODES: the property is not about a single node, it is
+about a PAIR. Trying to write it as a one-node recursion is what makes people
+stuck - the moment you let the function take two arguments, the crossing
+recursion in step 4 writes itself.
+
+WHY THE CROSSED RECURSION: a mirror maps the leftmost node on one side to the
+rightmost on the other. Comparing left-to-left and right-to-right instead
+checks whether the two subtrees are IDENTICAL, which is a different (and
+wrong) question.
+
+THE ITERATIVE VERSION: push the pair (left, right) onto a queue, then pop pairs
+and push (a.left, b.right) and (a.right, b.left). Same logic, no recursion.
+
+WHAT PEOPLE GET WRONG: exactly the crossing - it is the one line that matters,
+and left-left/right-right passes some tests, which makes it worse.
+""".strip("\n")
+
+_PLAIN_ALGO["Best Time to Buy and Sell Stock with Cooldown"] = r"""
+IN ONE SENTENCE: track the best profit you could have in each of three
+situations - holding a stock, having just sold, and free to act - and update
+all three each day.
+
+STEPS
+1. Three numbers. HOLD starts at negative infinity (you cannot be holding
+   before day one). SOLD and REST both start at 0.
+2. For each day's price, compute the new values from the OLD ones:
+   - new SOLD = old HOLD plus today's price. Selling today requires you were
+     holding yesterday.
+   - new HOLD = the better of staying held, or buying today from REST. You
+     cannot buy out of SOLD, and that restriction IS the cooldown.
+   - new REST = the better of staying at rest, or coming off yesterday's SOLD.
+3. Save the old SOLD before you overwrite it, since REST needs it.
+4. The answer is the better of SOLD and REST at the end - never HOLD, because
+   ending while still holding a stock means unrealised money.
+
+WHY THREE STATES INSTEAD OF TWO: without a cooldown, "holding" and "not
+holding" would be enough. The cooldown means "not holding" splits into two
+genuinely different situations - just sold (must wait) and rested (free to
+buy) - because they permit different next moves. Whenever a rule restricts what
+you may do NEXT, that rule needs its own state. That is the transferable lesson.
+
+WHY HOLD STARTS AT NEGATIVE INFINITY: starting it at 0 would claim you can hold
+a stock having paid nothing, and the answer comes out too high.
+
+WHAT PEOPLE GET WRONG: using the freshly updated SOLD when computing REST,
+which quietly removes the cooldown by letting you rest and rebuy the same day.
+All three updates must read yesterday's values.
+""".strip("\n")
+
+_PLAIN_ALGO["Boats to Save People"] = r"""
+IN ONE SENTENCE: sort by weight, then always board the heaviest person left,
+and let the lightest ride along only if they both fit.
+
+STEPS
+1. Sort the weights.
+2. Point light at the lightest and heavy at the heaviest; start a boat count at
+   0.
+3. While light has not passed heavy: if the two together fit within the limit,
+   the lightest boards too - move light inward.
+4. Move heavy inward unconditionally and add one boat. The heaviest person
+   always boards this boat, with or without a companion.
+5. Return the boat count.
+
+WHY THE HEAVIEST ALWAYS GOES NOW: they need a boat eventually, and their best
+possible companion is the lightest person available. If even that person does
+not fit, no one does and they must ride alone. Delaying them cannot help
+anyone, so there is never a reason to wait. That is the exchange argument that
+proves the greedy.
+
+WHY THE CAPACITY OF TWO MATTERS: with a limit of two people per boat, pairing
+is a simple two-pointer sweep. If boats held three or more, this greedy breaks
+and the problem becomes bin packing, which is NP-hard - worth saying out loud,
+because it shows you know why the constraint is there.
+
+WHAT PEOPLE GET WRONG: the loop condition. It must allow light to equal heavy
+so the final lone person gets a boat; using strict less-than loses one boat on
+odd-sized inputs.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Good Nodes in a Binary Tree"] = r"""
+IN ONE SENTENCE: carry the largest value seen on the path from the root down
+with you, and a node is good when it is at least that big.
+
+STEPS
+1. Write a helper taking a node and the maximum seen so far on the path to it.
+2. Empty node -> 0.
+3. This node scores 1 if its value is greater than or equal to the running
+   maximum, otherwise 0.
+4. Work out the new maximum for the children - the larger of the old maximum
+   and this node's value.
+5. Return this node's score plus the counts from both children, passing the new
+   maximum down.
+6. Start at the root with a maximum of negative infinity, so the root always
+   counts as good.
+
+WHY THE MAXIMUM IS PASSED DOWN RATHER THAN RETURNED UP: the property depends on
+ANCESTORS, not descendants. Information about ancestors flows downward as a
+parameter; information about descendants flows upward as a return value.
+Deciding which direction a piece of state travels is the core skill in tree
+recursion, and this problem is the cleanest example of the downward case.
+
+WHY GREATER-THAN-OR-EQUAL: a node tying the path maximum still has nothing
+strictly greater above it, so it qualifies. Using strict greater-than
+undercounts on trees with repeated values.
+
+WHAT PEOPLE GET WRONG: mutating one shared maximum variable across the whole
+traversal instead of passing a fresh value per branch, which leaks the left
+subtree's maximum into the right subtree.
+""".strip("\n")
+
+_PLAIN_ALGO["Divide Players Into Teams of Equal Skill"] = r"""
+IN ONE SENTENCE: sort, then pair the weakest with the strongest - if every such
+pair does not hit the same total, no arrangement can.
+
+STEPS
+1. Sort the skills.
+2. The required team total is fixed the moment you sort: it must be the first
+   plus the last, because those two have no other partner that could work.
+3. Walk a left and a right pointer inward. For each pair, if their sum is not
+   the target, return -1 immediately.
+4. Otherwise add their product to a running total.
+5. Return the total.
+
+WHY THE TARGET IS FORCED: the weakest player must be paired with someone, and
+whoever it is, their sum has to equal every other team's sum. Pairing them with
+anyone other than the strongest leaves the strongest needing an even bigger
+partner who does not exist. So the first-plus-last sum is not a guess - it is
+the only possible value.
+
+WHY THE PRODUCT AND NOT THE SUM: the problem asks for the sum of each team's
+CHEMISTRY, defined as the product of the two skills. Read that carefully - it
+is easy to compute the wrong aggregate and pass nothing.
+
+WHAT PEOPLE GET WRONG: continuing after a mismatched pair and returning a
+partial total, and forgetting that an odd-length input cannot be paired at all.
+""".strip("\n")
+
+_PLAIN_ALGO["Find Right Interval"] = r"""
+IN ONE SENTENCE: collect all the start points with their original indices, sort
+them, then binary-search each interval's end to find the first start at or
+after it.
+
+STEPS
+1. Build a list of (start value, original index) pairs and sort it by start.
+2. Pull out just the sorted start values into their own list, so you can binary
+   search it.
+3. For each interval, binary-search for the leftmost position whose start is at
+   or equal to this interval's end.
+4. If that position is inside the list, report the original index stored there;
+   otherwise report -1.
+5. Return the results in the ORIGINAL interval order.
+
+WHY YOU CARRY THE ORIGINAL INDEX THROUGH THE SORT: the answer is an index into
+the input, but sorting destroys that order. Pairing each start with where it
+came from before sorting is what lets you translate back. This "sort a
+decorated copy" move comes up any time the answer is positional but the
+algorithm needs order.
+
+WHY bisect_left AND NOT bisect_right: the problem allows the right interval's
+start to EQUAL this interval's end, so an exact match is a valid answer and you
+want the leftmost one. bisect_right would skip past it.
+
+WHAT PEOPLE GET WRONG: sorting the intervals themselves and then emitting the
+answers in sorted order, so the output rows do not line up with the input.
+""".strip("\n")
+
+_PLAIN_ALGO["House Robber II (circular street)"] = r"""
+IN ONE SENTENCE: the houses form a circle, so the first and last are
+neighbours - solve the straight-line problem twice, once without the first
+house and once without the last, and take the better.
+
+STEPS
+1. If there is only one house, rob it - a circle of one has no conflict.
+2. Write the straight-line House Robber as a helper: walk the houses holding
+   two numbers, "best up to two houses back" and "best up to one house back",
+   and at each house take the better of skipping it or taking it plus the
+   two-back value.
+3. Run that helper on everything EXCEPT the last house.
+4. Run it again on everything EXCEPT the first house.
+5. Return the larger of the two.
+
+WHY TWO RUNS SOLVE THE CIRCLE: the only thing the circle adds is that the first
+and last houses cannot both be robbed. So every valid plan either leaves out
+the first or leaves out the last - and each of those is an ordinary straight
+line. You are not approximating; the two cases genuinely cover everything.
+
+WHY YOU DO NOT NEED A THIRD CASE FOR "NEITHER END": a plan that robs neither
+end is already included in both runs, so it is never missed - counting it twice
+is harmless since you take a maximum.
+
+WHAT PEOPLE GET WRONG: trying to patch the linear solution with a flag for
+"did I take the first house?", which balloons into a state machine. Also
+forgetting the single-house base case, where both slices are empty and the
+answer would come out 0.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
