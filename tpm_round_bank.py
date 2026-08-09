@@ -26,6 +26,7 @@ Served read-only by routes/interview_prep.py.
 ROUNDS = {
     "product": "Product Thinking Round",
     "program": "Program Management Round",
+    "close": "Questions You Ask Them",
 }
 
 #: What each round is actually assessing, shown at the top of the page. Being
@@ -41,6 +42,13 @@ ROUND_BRIEF = {
         "Lead with the user, the value and the metric; only then talk about "
         "how you would sequence it. Say 'I would build X and not Y, because Z' "
         "out loud at least once per answer."
+    ),
+    "close": (
+        "Not a round of its own - it is the last five minutes of every round, "
+        "and at Director+ it is scored. Your questions reveal what you think "
+        "the job is and whether you are evaluating them back. Prepare eight to "
+        "ten, ask two or three per interviewer, and follow up on the answer "
+        "rather than moving to the next item on your list."
     ),
     "program": (
         "This is your home round and the bar is correspondingly higher - "
@@ -2178,6 +2186,487 @@ mistake every three years.""",
 
 ENTRIES.extend(_B2)
 
+# ── Batch 3: org-design cases, product sizing, and the questions YOU ask ───
+
+_B3 = []
+
+_B3.append(E(
+    "program",
+    "Centralised, embedded, or hybrid - how would you structure the TPM "
+    "function here?",
+    "The defining org-design question for a Head of TPM. They are testing "
+    "whether you have a considered position rather than a preference, whether "
+    "you can name what each model costs, and whether you would let the "
+    "company's actual situation decide rather than your last job's answer.",
+    """THE STRUCTURE
+
+1. REFUSE THE FALSE CHOICE, THEN COMMIT ANYWAY
+   "There is no universally right answer - the model should follow where
+   delivery actually breaks here. But if you want my default, it is hybrid, and
+   here is what would make me choose differently." Say this first: it shows
+   judgement without dodging, which is exactly the balance being tested.
+
+2. NAME WHAT EACH MODEL BUYS AND WHAT IT COSTS
+   CENTRALISED (TPMs report into a TPM org, deployed onto programs)
+     Buys: consistent standards, real career paths, the ability to move people
+     to where the risk is, an independent view of status that has not been
+     filtered by the delivering org.
+     Costs: distance from the teams, "process police" perception, and TPMs who
+     know the method but not the domain.
+   EMBEDDED (TPMs report into engineering or product)
+     Buys: deep domain knowledge, trust, presence in the real conversations.
+     Costs: no consistency, no career path, TPMs quietly absorbed into
+     scrum-master or chief-of-staff work, and - the one that matters most -
+     status that reports up through the same person whose delivery it describes.
+   HYBRID (solid line to TPM function, dotted to the org they serve)
+     Buys: most of both.
+     Costs: real matrix tension, and it needs an actual arbitration mechanism,
+     not goodwill.
+
+3. STATE THE DECIDING QUESTION
+   "Where does delivery break here?" If it breaks ACROSS teams - dependencies,
+   integration, portfolio decisions - you need central weight. If it breaks
+   INSIDE teams - poor planning, unclear requirements - you need embedded
+   depth. That single question does more work than any framework.
+
+4. SAY WHAT ELSE WOULD MOVE YOU
+   Company size and stage; how many programs genuinely cross org boundaries;
+   whether engineering leadership already plans well; whether there is an
+   existing TPM career ladder; and how much trust the function currently has -
+   a distrusted function cannot be centralised into relevance.
+
+5. NAME THE INDEPENDENCE PROBLEM OUT LOUD
+   The strongest single argument against pure embedding: if a TPM's performance
+   review is written by the person whose program they report on, the status
+   will be optimistic and nobody will be lying. Structure decides what gets
+   reported, and saying this shows you understand incentives, not just boxes.
+
+6. SAY HOW YOU WOULD DECIDE, NOT JUST WHAT YOU PREFER
+   "I'd spend my first month finding out which of those failure modes is
+   actually present before proposing a structure" - and then say what you
+   would expect to find at their size.""",
+    """A WORKED ANSWER
+
+"I don't think there's a universally right answer, but I'll give you my default
+and what would change it.
+
+My default is hybrid - solid line into the TPM function, dotted line into the
+org served. The reason is that the two pure models each fail in a predictable
+way, and hybrid buys most of both if you are honest about the tension.
+
+Pure centralised gives you consistent standards, real career paths, and the
+ability to move your strongest person to wherever the risk currently is - which
+is genuinely valuable and hard to replicate. What it costs you is distance.
+Centralised TPMs know the method and not the domain, and they get perceived as
+process police, which is fatal to influence.
+
+Pure embedded gives you domain depth and trust, and TPMs who are actually in the
+conversations that matter. What it costs is consistency and career path - and
+the thing I'd flag hardest, independence. If a TPM's performance review is
+written by the leader whose program they report on, status will be optimistic
+and nobody will be lying. That's not a character issue, it's an incentive one,
+and structure is how you fix incentives.
+
+So the question I'd actually want answered before proposing anything is: where
+does delivery break here? If it breaks across teams - dependencies, integration,
+portfolio-level choices - I need central weight. If it breaks inside teams -
+weak planning, unclear requirements - then embedded depth is what buys the
+improvement and centralising would just add a layer.
+
+At most companies past a few hundred engineers, both are true to some degree,
+which is why I land on hybrid - but with the arbitration mechanism written down.
+Matrix models fail when nobody has said in advance who decides when the two
+lines disagree, and that is a governance detail people skip and then suffer.
+
+Concretely I'd expect to embed TPMs day to day with the orgs they serve, hold
+standards, calibration, hiring and promotion in the function, and keep a small
+central group for the cross-cutting programs that belong to nobody." """,
+    """STRONG sounds like: a stated default with explicit conditions that would
+change it; the costs of each model named as precisely as the benefits; "where
+does delivery break here" as the deciding question; and the independence /
+incentive argument, which is the point most candidates miss entirely.
+
+WEAK sounds like: "it depends" with no position - the panel reads that as no
+experience. The opposite failure is equally bad: "centralised, because that is
+how we did it at my last company", with no reference to their situation.
+
+THE DETAIL THAT IMPRESSES: naming the arbitration mechanism for the matrix.
+Everyone says hybrid; almost nobody says who decides when the solid and dotted
+lines disagree, which is precisely why hybrids fail in practice.""",
+    ["We are 300 engineers and everything is embedded today. What would you "
+     "change first?",
+     "Engineering leaders will resist losing their TPMs. How do you handle "
+     "that?",
+     "How do you keep centralised TPMs from becoming process police?",
+     "Who wins when the solid line and the dotted line disagree?",
+     "What ratio of TPMs to engineers do you aim for, and why?",
+     "How would you know in six months whether the model was working?"],
+    """* No position. "It depends" without a default reads as inexperience.
+* Importing your last company's structure without reference to theirs.
+* Listing benefits of each model without the costs - the costs are what show
+  you have lived with them.
+* Missing the independence problem, which is the strongest structural argument
+  available to you.
+* Proposing a matrix without saying who arbitrates.""",
+    ["org-design", "operating-model", "leadership", "program"],
+    difficulty="Hard",
+    frequency="Very likely for a Head-of-TPM role - often an entire round.",
+    prep_minutes=45,
+))
+
+_B3.append(E(
+    "program",
+    "How do you decide which programs get a dedicated TPM, and what is your "
+    "TPM-to-engineer ratio?",
+    "A capacity and judgement question. They want to hear that you allocate "
+    "your scarcest resource against RISK rather than spreading it evenly or "
+    "assigning by org chart - and that you can say no to a request for "
+    "coverage.",
+    """THE STRUCTURE
+
+1. START FROM WHAT A TPM IS FOR
+   A TPM earns their place where COORDINATION COST is high - many teams, hard
+   dependencies, external commitments, regulatory exposure, or a decision that
+   nobody owns. A single team building a well-understood feature does not need
+   one, and saying that out loud is what makes the rest credible.
+
+2. GIVE THE ALLOCATION TEST, NOT A FORMULA
+   Dedicated coverage when at least two of these hold:
+   * Four or more teams must coordinate to deliver it
+   * There is an external or immovable commitment (customer, regulator, event)
+   * Cross-org dependencies with no single owning leader
+   * High blast radius if it goes wrong
+   * Significant investment - the size where the company would want to know
+   Shared or light coverage otherwise. No coverage at all for team-local work,
+   and be explicit that this is trust, not neglect.
+
+3. GIVE A RATIO, WITH THE CAVEAT
+   Rough industry range is one TPM per 30-60 engineers, but say why the range
+   is so wide: it depends entirely on coordination complexity. Platform work
+   with heavy interdependence might be 1:25; a set of independent product teams
+   might be 1:80. A ratio is an outcome of the allocation test, not an input to
+   it - offering the number without that caveat suggests you manage by
+   headcount formula.
+
+4. SAY HOW YOU FLEX IT
+   Keep a small amount of the function uncommitted - maybe 15% - so you can
+   surge onto whatever is on fire. A fully allocated function has no capacity
+   to respond, and the things that need a TPM most are rarely predicted at
+   planning time.
+
+5. SAY HOW YOU SAY NO
+   "A leader asks for a dedicated TPM because their peer has one. I'd take them
+   through the allocation test rather than the queue - and if it does not meet
+   the bar, I'd offer the mechanism instead of the person: help them set up the
+   planning and dependency practice so they do not need one."
+
+6. NAME THE FAILURE MODE YOU ARE AVOIDING
+   Spreading thin. A TPM across five programs is a status aggregator on all
+   five and is changing the outcome of none. Concentrated coverage on the
+   things that matter beats thin coverage everywhere, and that is the choice
+   you are actually making.""",
+    """A WORKED ANSWER
+
+"I'd allocate against coordination cost and risk, not against the org chart.
+A TPM adds value where coordination is expensive - many teams, hard
+dependencies, an external commitment, regulatory exposure. A single team
+building something well understood does not need one, and I'd say that plainly,
+because a function that claims everything needs coverage loses credibility fast.
+
+My test for dedicated coverage is at least two of: four or more teams have to
+coordinate; there is an immovable external commitment; there are cross-org
+dependencies with no single owning leader; the blast radius is high; or the
+investment is large enough that the company would want to know how it is going.
+
+On ratio - the honest answer is somewhere between one per thirty and one per
+sixty engineers, and the range is that wide because it is entirely driven by
+coordination complexity. Deeply interdependent platform work might be one to
+twenty-five; a set of genuinely independent product teams might be one to
+eighty. I'd treat the ratio as an output of the allocation test rather than an
+input, because managing to a headcount formula is how you end up with TPMs
+assigned to work that does not need them.
+
+I'd also hold back around fifteen percent of the function unallocated, so I can
+surge onto whatever is actually on fire. A fully committed function cannot
+respond, and the programs that most need help are rarely the ones you predicted
+at planning time.
+
+The failure mode I'm most trying to avoid is spreading thin. A TPM covering five
+programs becomes a status aggregator on all five and changes the outcome of
+none. I would rather cover three things properly and tell the truth about the
+rest than claim coverage everywhere.
+
+And when a leader asks for a dedicated TPM mainly because their peer has one,
+I'd walk them through the allocation test rather than the queue - and if it does
+not meet the bar, offer the mechanism instead of the person. Often what they
+actually need is a better planning and dependency practice, and helping them set
+that up is cheaper for both of us." """,
+    """STRONG sounds like: allocation against risk and coordination cost; a
+concrete test with named criteria; a ratio offered WITH the reason the range is
+wide; reserved surge capacity; and a clear answer for how you decline a request.
+
+WEAK sounds like: a flat ratio quoted as a standard, or "every program should
+have a TPM", which is both unaffordable and untrue. Also weak: no answer for the
+political request, which is the part of this job that actually consumes time.
+
+THE DETAIL THAT IMPRESSES: offering the mechanism instead of the person. It
+reframes the function from supplying bodies to raising the delivery capability
+of the org, which is the Head-of-function altitude.""",
+    ["Your best TPM is on a program that no longer needs them. What do you do?",
+     "A VP escalates to the CTO because you declined coverage. How does that "
+     "go?",
+     "How do you justify the size of your function at budget time?",
+     "What does a TPM actually do that an engineering manager cannot?",
+     "How do you avoid TPMs becoming status reporters?"],
+    """* A fixed ratio with no reasoning behind it.
+* Claiming every program needs coverage - unaffordable and it devalues the
+  function.
+* Full allocation with no surge capacity.
+* No mechanism for declining, which means allocation gets decided by whoever
+  escalates hardest.
+* Not naming the thin-coverage failure mode, which is the most common way TPM
+  functions become irrelevant.""",
+    ["org-design", "capacity", "operating-model", "program"],
+    difficulty="Hard",
+    frequency="Very likely at Head-of-function level, usually alongside the "
+              "operating-model question.",
+    prep_minutes=40,
+))
+
+_B3.append(E(
+    "product",
+    "Design a product (or feature) for [a specific user segment].",
+    "Open-ended product sense. The panel wants to see structure imposed on a "
+    "vague prompt, a real user need identified, and a solution that is chosen "
+    "rather than listed. The single biggest differentiator is whether you "
+    "narrow before you broaden.",
+    """THE STRUCTURE - about 25 minutes
+
+1. CLARIFY AND SCOPE, BRIEFLY (2 min)
+   Ask two or three questions, not ten: what is the business goal, is there a
+   platform constraint, are we assuming a new product or an addition. Then
+   state your scope and move - long clarification reads as stalling.
+
+2. PICK A SPECIFIC USER AND A SPECIFIC MOMENT (3 min)
+   Not "commuters" but "a commuter who has just missed a connection and needs to
+   re-plan while walking". The narrower the moment, the better every subsequent
+   idea gets. Say why you chose this segment: size, pain, strategic value.
+
+3. LIST THEIR JOBS AND PAIN POINTS (5 min)
+   Three to five real needs, in their words rather than in feature language.
+   Then pick ONE to solve and say explicitly why the others lose. This is where
+   most candidates fail by trying to solve everything.
+
+4. SOLUTIONS - THREE, AT DIFFERENT AMBITIONS (6 min)
+   A minimal version, a fuller version, and a differentiated bet. Sketch the
+   core flow of your recommendation in four or five steps so it becomes
+   concrete rather than conceptual.
+
+5. RECOMMEND AND JUSTIFY THE TRADE-OFF (3 min)
+   Commit to one. Name what it costs, what you deliberately left out, and who
+   would object.
+
+6. METRICS AND VALIDATION (3 min)
+   The success metric, a guardrail, and the cheapest way to test the core
+   assumption before building - a concierge test, a fake door, ten user
+   interviews.
+
+7. RISKS AND WHAT WOULD KILL IT (2 min)
+   The assumption most likely to be wrong, and what you would do if it is.
+
+FOR A TPM SPECIFICALLY: after the product answer, add thirty seconds on how you
+would SEQUENCE it - what ships first, what the riskiest technical unknown is,
+what you would spike. That is your edge in this round and most candidates never
+use it.""",
+    """A WORKED ANSWER - a feature for enterprise admins, compressed
+
+CLARIFY: "I'll assume this is an addition to our existing product, the goal is
+retention rather than acquisition, and web is fine as a starting surface."
+
+SEGMENT AND MOMENT: "I'll take the IT admin at a 2,000-person customer, in the
+specific moment where someone has left the company and they need to remove
+their access everywhere. I pick that moment because it is frequent, it is
+security-sensitive so it has executive attention, and it is where admin tools
+usually feel worst."
+
+JOBS AND PAIN: "Their jobs are: know who has access to what; grant and revoke
+quickly; prove compliance at audit; and not become the bottleneck for every
+routine request. The pain: revoking access means visiting several systems and
+they can never be certain they got everything, which is a real anxiety, not just
+an inconvenience."
+
+PICK ONE: "I'd solve certainty of revocation. Audit reporting matters but it is
+periodic; self-service delegation is valuable but larger. Revocation is frequent,
+anxious and security-critical - that combination is where a small amount of
+product effort buys disproportionate trust."
+
+SOLUTIONS: "Minimal - a single view of one person's access with a one-click
+revoke-all and a receipt showing what was revoked. Fuller - integrate with the
+HR system so departures trigger it automatically, with the admin approving.
+The bet - continuous access intelligence: flag over-permissioned accounts and
+unused access proactively, which turns the product from a tool into a posture."
+
+RECOMMEND: "Start with the single view and revoke-all with a receipt. The
+receipt is the actual product - the anxiety is not the clicking, it is the not
+knowing. It is small, it is testable, and it earns the right to do the HR
+integration next."
+
+METRICS: "Time from departure to full revocation, and the share of revocations
+completed in one action. Guardrail: accidental over-revocation, which would be
+far worse than the original problem, so I'd want an undo window and I'd watch
+support tickets."
+
+VALIDATION: "Before building, I'd sit with five admins and watch them do a real
+revocation. If the pain is elsewhere - say they cannot even get the list of
+leavers - my whole solution is aimed at the wrong step."
+
+TPM ADDENDUM: "On sequencing - the riskiest unknown is whether we can enumerate
+access consistently across all our integrations. I'd spike that for two weeks
+before committing to a date, because if enumeration is unreliable the receipt is
+worthless and the feature is not worth shipping." """,
+    """STRONG sounds like: a narrow user AND moment; one problem chosen with the
+others explicitly declined; a concrete flow rather than a concept; a
+recommendation with its cost; a cheap validation before building; and - for a
+TPM - the sequencing and technical-risk addendum.
+
+WEAK sounds like: designing for "users" in general; five features of equal
+weight; no metric; and no commitment. Also weak: spending eight minutes on
+clarifying questions, which panels read as avoidance.
+
+THE DETAIL THAT IMPRESSES: identifying that the receipt, not the revoke, is the
+product. Finding the emotional core of a workflow - the anxiety, not the
+click - is what product sense actually is.""",
+    ["Why that segment rather than a bigger one?",
+     "Your five admin interviews say the real pain is elsewhere. What do you "
+     "do?",
+     "How would you price this, or does it change the price at all?",
+     "What is the riskiest assumption in your recommendation?",
+     "How would you sequence this across two quarters?",
+     "What would you cut if you had half the time?"],
+    """* Designing for a broad, unspecified user.
+* Listing features rather than choosing one and defending it.
+* No moment - a segment without a situation produces generic ideas.
+* Over-clarifying at the start.
+* No validation step, so the whole design rests on unexamined assumptions.
+* Missing the TPM edge: sequencing and technical risk are yours to add and
+  almost nobody does.""",
+    ["product-sense", "design", "user-research", "product"],
+    difficulty="Hard",
+    frequency="Common as the main exercise in a product round.",
+    prep_minutes=45,
+))
+
+_B3.append(E(
+    "close",
+    "What questions should YOU ask them - and what do they signal?",
+    "At Director+ the questions you ask are graded as heavily as the answers "
+    "you give. They reveal what you think the job is, whether you have "
+    "diagnosed the organisation, and whether you are evaluating them back - "
+    "which is what a genuine senior candidate does. Weak questions ('what does "
+    "a typical day look like?') actively cost you.",
+    """HOW TO USE THIS
+Prepare eight to ten and pick per interviewer. Ask two or three per round -
+enough to show engagement, not so many that you run the clock. The best ones
+are specific to what that person just told you, so listen for the thread and
+pull it.
+
+FOR THE HIRING MANAGER - diagnose the actual job
+* "What made you decide to hire for this now rather than a year ago?" -
+  reveals whether this is growth, a gap, or a rescue.
+* "What does this function need to be true in twelve months that is not true
+  today?" - gets you the real mandate rather than the job description.
+* "Where does delivery break most often here today - across teams or inside
+  them?" - the single most useful diagnostic question available, and it signals
+  that you already think in those terms.
+* "What has been tried already that did not work?" - saves you proposing it in
+  month two, and people are surprisingly candid.
+* "Who are the two or three people whose support I would most need, and what
+  would win them over?" - reads as someone planning to succeed rather than
+  planning to arrive.
+
+FOR ENGINEERING / PRODUCT PEERS - find out whether the function is valued
+* "What do TPMs here do that genuinely helps, and what feels like overhead?" -
+  the highest-signal question you can ask a peer, and it signals you care about
+  value over territory.
+* "When something slips, how do you usually find out?" - tells you everything
+  about the reporting culture in one answer.
+* "What is the last decision that took too long, and why?" - decision latency
+  is the best single proxy for organisational health.
+
+FOR THE SKIP-LEVEL OR EXEC PANEL - test the altitude
+* "What is the biggest bet the company is making that most people here do not
+  yet feel?" - invites a strategy conversation and shows you operate there.
+* "How do you want to hear bad news, and how quickly?" - reveals whether the
+  culture is honest, and demonstrates that you plan to deliver it.
+* "What would make you regret this hire in a year?" - direct, slightly
+  disarming, and the answer is genuinely useful. Use it once, with someone
+  senior enough to enjoy it.
+
+ABOUT THE ROLE'S REALITY - the ones that protect you
+* "What is the decision-making authority of this role - what can I decide alone,
+  what do I recommend?" - the most important question about the job and very
+  few people ask it.
+* "How is this function measured, and by whom?"
+* "What does the first 90 days look like from your side?"
+
+QUESTIONS TO AVOID
+* Anything answerable from the website or the job description.
+* "What does a typical day look like?" - reads as junior at this level.
+* Compensation and benefits in a technical or panel round; that is a recruiter
+  conversation.
+* Anything that implies you have not researched the company.
+* More than three per round - you are being timed too.""",
+    """HOW TO DELIVER THEM
+
+Ask them as though you are still deciding - because you should be. A senior
+candidate evaluating the role is more attractive than one auditioning for it,
+and the difference is audible.
+
+Follow up on the answer rather than moving to the next question on your list.
+"You said decisions take too long - where does the delay usually sit?" That
+turns your questions into a conversation, which is what they will remember.
+
+Write down what you hear about the same question from different people. If the
+hiring manager says the function is valued and the engineering director
+describes it as overhead, you have learned the single most important thing about
+the job - and you can raise it, carefully, at offer stage.
+
+THE ONE TO CLOSE ON
+"Is there anything about my background that gives you hesitation, that I could
+address now?" It takes nerve, it is occasionally uncomfortable, and it is the
+only chance you will ever get to answer an objection instead of losing to it
+silently. Use it at the end of the round with the hiring manager.""",
+    """STRONG questions are diagnostic - they show you are already forming a
+model of the organisation. "Where does delivery break, across teams or inside
+them?" tells them how you think in nine words.
+
+WEAK questions are informational - things you could have read, or things that
+signal you are thinking about your comfort rather than about the job. At this
+level, asking nothing at all is worse than asking something imperfect: it reads
+as either disinterest or as having already decided.
+
+THE ONE THAT MOST CHANGES THE ROOM: asking peers what TPMs do that feels like
+overhead. It signals a leader who cares whether the function earns its cost,
+which is exactly what a company hiring a Head of TPM is worried about.""",
+    ["(Prepare an answer for) Why are you leaving your current role?",
+     "(Prepare for) What are you looking for that you do not have today?",
+     "(Prepare for) What other processes are you in?",
+     "(Prepare for) What would you need to say yes?",
+     "(Prepare for) Do you have any concerns about us?"],
+    """* Having no questions. It is read as disinterest and it is the most common
+  self-inflicted wound at this level.
+* Asking only about the role and never about the business.
+* Reading from a list without listening - the follow-up is what lands.
+* Raising compensation in a panel round.
+* Asking so many that you consume the interviewer's remaining time.""",
+    ["closing", "positioning", "interview-craft"],
+    difficulty="Medium",
+    frequency="Every round ends here - guaranteed, and frequently scored.",
+    prep_minutes=30,
+))
+
+ENTRIES.extend(_B3)
+
 
 # ══ Tags, rounds and the planning layer ═══════════════════════════════════
 # Same planning fields as the other banks so the whole prep has one currency:
@@ -2222,6 +2711,12 @@ _MUST_REHEARSE = {
     "How would you run a program with 12 teams and a hard external date?",
     "How do you measure the health of a program? What is on your dashboard?",
     "How do you set up portfolio governance without creating bureaucracy?",
+    "Design a product (or feature) for [a specific user segment].",
+    "Centralised, embedded, or hybrid - how would you structure the TPM "
+    "function here?",
+    # Guaranteed in every round and frequently scored, so it cannot sit in the
+    # long tail no matter what the frequency wording says.
+    "What questions should YOU ask them - and what do they signal?",
 }
 
 
