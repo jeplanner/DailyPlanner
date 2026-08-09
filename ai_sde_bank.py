@@ -25678,6 +25678,624 @@ for _e in ENTRIES:
 
 
 
+_EX_P0G = {}
+
+_EX_P0G["Search in Rotated Sorted Array"] = [
+    """The textbook case, traced.
+nums = [4,5,6,7,0,1,2], target = 0. lo=0, hi=6.
+mid=3, nums[3]=7 != 0. Is the left half sorted? nums[0]=4 <= 7 -> yes.
+Is 0 inside [4,7)? No -> the target must be in the right half: lo=4.
+mid=5, nums[5]=1 != 0. Left half of the CURRENT range: nums[4]=0 <= 1 -> sorted.
+Is 0 in [0,1)? Yes -> hi=4.
+mid=4, nums[4]=0 -> return 4.""",
+
+    """The same array, a target in the other half.
+target = 6. lo=0,hi=6, mid=3 -> 7 != 6. Left sorted (4 <= 7); is 6 in [4,7)?
+Yes -> hi=2.
+mid=1, nums[1]=5 != 6. Left sorted (4 <= 5); is 6 in [4,5)? No -> lo=2.
+mid=2, nums[2]=6 -> return 2.
+Two traces in opposite directions is the check that convinces you the four
+branches are right - most bugs here only show up on one side.""",
+
+    """A target that is absent.
+nums = [4,5,6,7,0,1,2], target = 3. Every step eliminates a half; eventually
+lo > hi and the loop exits, returning -1.
+Walk it: mid=3 (7), left sorted, 3 not in [4,7) -> lo=4. mid=5 (1), left sorted
+[0,1), 3 not in it -> lo=6. mid=6 (2), left "half" is nums[6..6], sorted; 3 not
+in [2,2) -> lo=7 > hi. Return -1.""",
+
+    """The non-rotated case, and why `nums[lo] <= nums[mid]` uses <=.
+nums = [1,2,3,4,5], target = 5. mid=2, nums[0]=1 <= 3 -> left sorted; 5 not in
+[1,3) -> lo=3. mid=3, nums[3]=4 <= 4 (single-element half) -> sorted; 5 not in
+[4,4) -> lo=4. mid=4 -> found.
+The <= matters when lo == mid, which happens on a two-element range: with a
+strict < the code would take the 'right half is sorted' branch on a range that
+is actually sorted left-to-right and search the wrong side. One character, and
+it fails only on ranges of size 2 - the classic hidden-test bug.""",
+
+    """Duplicates break it (LeetCode 81).
+nums = [1,0,1,1,1], target = 0. mid=2, nums[0]=1 <= nums[2]=1 suggests the LEFT
+half is sorted - but it is not; the rotation is hiding inside a run of equal
+values. The search goes right and misses the 0.
+Fix: when nums[lo] == nums[mid] == nums[hi] you cannot tell, so shrink both ends
+by one (lo += 1; hi -= 1). The worst case degrades to O(n) - on all-equal values
+there is no information to bisect on, which is provable, not a weakness of the
+implementation.""",
+
+    """The two-search alternative, and which to write.
+Alternative: find the rotation index with the Find-Minimum binary search, then
+run an ordinary binary search on the half that must contain the target (or on
+the whole array using rotated index arithmetic: (i + pivot) % n).
+Same O(log n), two simple loops instead of one loop with four branches.
+Under time pressure the two-search version is easier to get right and to
+explain; the single-pass version is what the interviewer usually has in mind.
+Say both, then write the one you can produce bug-free - and trace a size-2 range
+before you claim it works.""",
+]
+
+_EX_P0G["Sliding Window — recognize & apply"] = [
+    """The textbook case, traced.
+s = "abcabcbb". seen = {}, left = 0, best = 0.
+r=0 'a': not in window -> seen[a]=0, best=1.
+r=1 'b': best=2. r=2 'c': best=3.
+r=3 'a': seen[a]=0 >= left=0, so 'a' IS in the window -> left = 0+1 = 1.
+  seen[a]=3, window "bca", best stays 3.
+r=4 'b': seen[b]=1 >= 1 -> left=2. seen[b]=4, window "cab", best 3.
+r=5 'c': seen[c]=2 >= 2 -> left=3. window "abc", best 3.
+r=6 'b': seen[b]=4 >= 3 -> left=5. window "cb", best 3.
+r=7 'b': seen[b]=6 >= 5 -> left=7. window "b".
+Answer 3.""",
+
+    """Why the check is `seen[ch] >= left` and not just `ch in seen`.
+s = "abba".
+r=0 'a' -> seen[a]=0. r=1 'b' -> seen[b]=1. r=2 'b': seen[b]=1 >= left 0 ->
+left=2, seen[b]=2, best=2 so far.
+r=3 'a': 'a' IS in seen, at index 0 - but 0 < left=2, so it is OUTSIDE the
+current window and must be ignored. The window stays "ba", best=2.
+Drop the `>= left` guard and left would jump BACKWARDS to 1, silently corrupting
+the window. Answer would be wrong on this exact four-character string, which is
+why "abba" is the test everyone uses.""",
+
+    """Edge cases: empty, all identical, all distinct.
+"" -> the loop never runs, best=0.
+"bbbb" -> every step moves left up to right, window size stays 1, best=1.
+"abcdef" -> left never moves, best=6.
+Single char "a" -> 1. Those four confirm the window formula
+right - left + 1 is right; an off-by-one here shows up immediately as an answer
+that is one too small or one too large everywhere.""",
+
+    """The two flavours of shrinking, and how to tell them apart.
+Shrink while INVALID, record on every step -> LONGEST valid window:
+this problem, Longest Repeating Character Replacement, Max Consecutive Ones III,
+Fruit Into Baskets, Longest Subarray with at most K distinct.
+Grow until VALID, then shrink as far as possible, record while valid ->
+SHORTEST valid window: Minimum Window Substring, Minimum Size Subarray Sum.
+FIXED size k -> Maximum Average Subarray, Permutation in String: add the
+incoming element, remove the outgoing one, no while loop at all.
+Naming which of the three you are in, out loud, before you code is the entire
+recognition skill.""",
+
+    """Why it is O(n) even though there is a loop inside a loop.
+Right advances exactly n times. Left only ever advances, never rewinds, so
+across the whole run it also moves at most n times. Total pointer movement <= 2n,
+so O(n) - the inner `while` does not multiply the cost.
+Compare with the brute force: check every substring for uniqueness is O(n^2)
+substrings times O(n) to check = O(n^3), or O(n^2) with incremental sets.
+On n = 10^5 that is the difference between 0.1 seconds and an hour. This
+amortised argument is the answer to 'what is the complexity?' - say 'each
+element enters and leaves the window at most once'.""",
+
+    """A real-world flavour: rate limiting.
+'Allow at most 100 requests per user per 60 seconds.' Keep a queue of request
+timestamps; on each new request, pop from the front everything older than
+now - 60s (shrink the window), then check the size (the condition), then push.
+That is literally the sliding-window pattern with time as the axis - and it is
+the standard sliding-window-log rate limiter you would draw in a system-design
+round.
+Other sightings: rolling averages over the last N samples, detecting a burst of
+errors in a log stream, and computing a moving max with a monotonic deque.""",
+]
+
+_EX_P0G["Subsets (power set)"] = [
+    """The doubling, traced.
+nums = [1,2,3]. result = [[]].
+num=1: append 1 to every existing subset -> [[], [1]]. Count 2.
+num=2: -> [[], [1], [2], [1,2]]. Count 4.
+num=3: -> [[], [1], [2], [1,2], [3], [1,3], [2,3], [1,2,3]]. Count 8.
+Each number DOUBLES the answer because every existing subset gives rise to two:
+one without the new number and one with it. That is why the total is 2^n.""",
+
+    """The bit-mask view - the same answer, counted in binary.
+For n=3 the integers 0..7 in binary are 000,001,010,011,100,101,110,111. Read
+bit i as 'is nums[i] in this subset?':
+  000 -> []      001 -> [1]     010 -> [2]     011 -> [1,2]
+  100 -> [3]     101 -> [1,3]   110 -> [2,3]   111 -> [1,2,3]
+    for mask in range(1 << n):
+        result.append([nums[i] for i in range(n) if mask & (1 << i)])
+Identical output, no recursion, and it makes the 2^n immediately obvious. Worth
+knowing because the mask idea reappears in bitmask DP (travelling salesman,
+assignment problems).""",
+
+    """Edge cases: empty input, one element.
+[] -> result stays [[]]. The power set of the empty set contains exactly one
+member, the empty set itself - NOT zero members. Returning [] here is a genuine
+mistake, and interviewers ask about it.
+[1] -> [[], [1]], two subsets.
+n=20 -> 1,048,576 subsets. Say that out loud: the output is exponential, so this
+approach is only viable for n up to about 20.""",
+
+    """The aliasing bug in the backtracking version.
+    def backtrack(start):
+        result.append(path)      # WRONG - appends a reference
+        ...
+Every entry ends up pointing at the same list, which the recursion empties, so
+you get eight copies of []. Writing path[:] (or list(path)) fixes it.
+The iterative version in the code above is immune, because
+`subset + [num]` builds a NEW list every time. That immunity is a real reason to
+prefer it when you are typing fast under pressure.""",
+
+    """Duplicates - Subsets II, and the sort-then-skip rule.
+nums = [1,2,2] with the plain doubling gives [], [1], [2], [1,2], [2], [1,2],
+[2,2], [1,2,2] - [2] and [1,2] each appear twice.
+Fix: sort, then use backtracking with
+    if i > start and nums[i] == nums[i-1]: continue
+so a repeated value can only extend a subset that already ends in that value.
+Result: [], [1], [1,2], [1,2,2], [2], [2,2] - six distinct subsets.
+The iterative doubling can also be fixed (only double the subsets ADDED in the
+previous round when the value repeats), but the backtracking form is easier to
+justify.""",
+
+    """Complexity, and where power sets actually get used.
+O(n x 2^n): 2^n subsets, each costing O(n) to build and copy. Space is the same,
+since you keep them all.
+Real uses: enumerating feature-flag combinations for a test matrix, choosing
+which indexes to build in a query optimiser, bitmask DP over a small set of
+cities or tasks, generating all coalitions in a game-theory calculation, and
+brute-forcing small instances to validate a smarter algorithm.
+That last one is the practical one: writing a 2^n reference implementation and
+diffing it against your clever O(n log n) solution on random small inputs is the
+fastest way to find the bug.""",
+]
+
+_EX_P0G["Top K Frequent Elements"] = [
+    """The textbook case, traced.
+nums = [1,1,1,2,2,3], k = 2.
+Counter -> {1:3, 2:2, 3:1}.
+nlargest(2, keys, key=counts.get) compares 3, 2, 1 and keeps the two keys with
+the highest counts: [1, 2].
+Answer [1,2]. Order within the answer is not specified by the problem, which is
+worth confirming with the interviewer before you sort anything unnecessarily.""",
+
+    """A tie on frequency.
+nums = [1,1,2,2,3], k = 2 -> counts {1:2, 2:2, 3:1}. Both 1 and 2 have count 2,
+so [1,2] and [2,1] are both correct, and if k were 1 either single answer would
+be accepted only if the problem says ties are arbitrary - LeetCode guarantees
+the answer is unique, so this input would not appear there.
+In a real system you would break ties deterministically (by value, or by most
+recent occurrence) so the output is stable across runs. Say that; it is the
+difference between a LeetCode answer and a production answer.""",
+
+    """Edge cases: k = 1, k = number of distinct values, all identical.
+[1,2,3], k=1 -> every count is 1; any single element is valid.
+[1,1,2], k=2 -> [1,2], the whole distinct set.
+[7,7,7], k=1 -> [7].
+[], k=0 -> []. Counter of an empty list is empty and nlargest returns [].
+Note k > number of distinct values is undefined by the problem; nlargest would
+simply return everything rather than raising, which may or may not be what the
+caller wants.""",
+
+    """The bucket-sort solution - O(n), and the reason this problem is asked.
+A frequency can never exceed n, so make n+1 buckets and put each value into the
+bucket for its count:
+    buckets = [[] for _ in range(len(nums)+1)]
+    for val, c in counts.items(): buckets[c].append(val)
+    out = []
+    for c in range(len(buckets)-1, 0, -1):
+        for v in buckets[c]:
+            out.append(v)
+            if len(out) == k: return out
+On [1,1,1,2,2,3]: bucket[3]=[1], bucket[2]=[2], bucket[1]=[3]. Reading from the
+top gives [1,2].
+O(n) time and space, beating the heap's O(n log k). The follow-up on LeetCode
+347 explicitly asks for better than O(n log n), and this is the answer.""",
+
+    """The heap version written out, and why nlargest is the same thing.
+    heap = []
+    for val, c in counts.items():
+        heapq.heappush(heap, (c, val))
+        if len(heap) > k: heapq.heappop(heap)
+    return [v for c, v in heap]
+A size-k MIN-heap on (count, value): the root is the weakest survivor, evicted
+in O(log k). heapq.nlargest does exactly this internally.
+Cost O(m log k) where m is the number of distinct values, plus O(n) to count.
+Prefer this when k is small relative to m and you want O(k) memory.""",
+
+    """Where 'top K frequent' shows up at scale.
+- Trending searches / hashtags in the last hour.
+- Most-requested URLs for cache warming.
+- Heavy hitters in network traffic (DDoS detection).
+- Most frequent error signatures in a log pipeline.
+At real scale you cannot hold every count in memory, so the production answer is
+a SKETCH: Count-Min Sketch or the Space-Saving algorithm gives approximate
+top-K in fixed memory with bounded error. Naming that when the interviewer says
+'now do it for a billion events a day' is what separates the DSA answer from the
+system-design answer.""",
+]
+
+_EX_P0G["Two Pointers — recognize & apply"] = [
+    """The textbook case, traced.
+a = [2,7,11,15], target = 9. i=0, j=3.
+2+15 = 17 > 9 -> the sum is too big, and since the array is sorted the only way
+to shrink it is to move j left: j=2.
+2+11 = 13 > 9 -> j=1.
+2+7 = 9 -> return [0,1].
+Three probes instead of the six pairs a double loop would check - and the gap
+widens fast: for n=1000 it is 1000 steps versus 500,000.""",
+
+    """No pair exists - the pointers cross.
+a = [1,2,3,9], target = 100. 1+9=10 < 100 -> i=1. 2+9=11 -> i=2. 3+9=12 -> i=3.
+Now i == j, the loop condition i < j fails, return [].
+The condition is i < j, not i <= j: an element may not pair with itself. If the
+problem DOES allow reusing an element, the condition changes - another reason to
+ask before coding.""",
+
+    """Why moving the pointer is safe - the discard argument.
+When a[i] + a[j] < target, every pair (i, k) for k < j is even smaller, because
+the array is sorted. So no pair involving i and anything left of j can work: i
+can be discarded entirely, and i += 1 does that.
+That is a PROOF, not a hunch, and it is exactly what the interviewer wants to
+hear. It also tells you the precondition: without sortedness the argument
+collapses and you must use a hash map instead.""",
+
+    """The unsorted case - a different tool.
+For unsorted input, two pointers do not apply; use a hash map in one pass:
+    seen = {}
+    for i, x in enumerate(a):
+        if target - x in seen: return [seen[target-x], i]
+        seen[x] = i
+O(n) time, O(n) space, and it returns the ORIGINAL indices - which matters,
+because sorting first would scramble them. LeetCode 1 (Two Sum) is the unsorted
+version and LeetCode 167 is the sorted one; using the wrong technique on either
+is the standard trap.""",
+
+    """The three shapes of 'two pointers'.
+1. Converging from both ends (this problem, Container With Most Water, valid
+   palindrome, Trapping Rain Water): needs sorted or symmetric structure.
+2. Fast and slow in the same direction (cycle detection, middle of a linked
+   list, Find the Duplicate Number): the RATIO of speeds is the trick.
+3. Slow write pointer, fast read pointer (Move Zeroes, Remove Duplicates, Sort
+   Colors): in-place compaction.
+They share a name and nothing else. Saying which of the three you mean is the
+recognition step; the code follows in four lines.""",
+
+    """Extending it - 3Sum, and why the sort is worth it.
+3Sum: sort the array, fix each index i, then run the two-pointer scan on the
+subarray to its right looking for -nums[i].
+Cost: O(n log n) for the sort plus O(n) inner scan per i -> O(n^2), against
+O(n^3) for three nested loops. On n=1000 that is a million operations instead of
+a billion.
+The sort also makes duplicate-skipping easy (`if i > 0 and nums[i] == nums[i-1]:
+continue`), which is the part most candidates get wrong - the algorithm is
+right, but the same triplet comes out three times.""",
+]
+
+_EX_P0G["Union-Find / Disjoint Set Union (DSU)"] = [
+    """Building components step by step.
+n=5, so parent = [0,1,2,3,4] - five singleton sets.
+union(0,1): roots 0 and 1 differ, ranks equal (0,0) -> parent[1]=0, rank[0]=1.
+union(2,3): parent[3]=2, rank[2]=1.
+union(1,3): find(1)=0, find(3)=2. Ranks equal (1,1) -> parent[2]=0, rank[0]=2.
+Now {0,1,2,3} is one set with root 0, and {4} is alone.
+union(0,1) again: both find to 0 -> returns False, no change. That False return
+is what makes DSU a cycle detector.""",
+
+    """Path compression, watched in action.
+Build a chain by unioning carefully so that 3 -> 2 -> 1 -> 0.
+find(3) walks 3, 2, 1 to root 0. On the way, the line
+`self.parent[x] = self.parent[self.parent[x]]` re-points each node to its
+GRANDPARENT, halving the path.
+After one find(3), the chain is roughly 3 -> 0 and 2 -> 0.
+The next find(3) is a single hop. This is why the amortised cost is
+alpha(n) - the inverse Ackermann function, which is below 5 for any n you can
+store on Earth. In practice: constant.""",
+
+    """Union by rank - what goes wrong without it.
+Union 1 into 0, then 2 into 1, then 3 into 2, always attaching the bigger tree
+under the smaller root, and you build a linked list of depth n; every find is
+O(n).
+Union by rank always attaches the SHORTER tree under the taller root, so depth
+grows only when two trees of equal height merge - which can happen at most
+log n times.
+Rank vs size: union by SIZE (attach the smaller count under the larger) gives the
+same guarantee and is easier to reason about; either is accepted, but say which
+you are using.""",
+
+    """Cycle detection in an undirected graph - the classic use.
+edges = [[0,1],[1,2],[2,0]].
+union(0,1) -> True. union(1,2) -> True. union(2,0) -> find(2) and find(0) are
+both root 0 -> returns False, meaning 2 and 0 were ALREADY connected, so this
+edge closes a cycle.
+Same test drives 'Graph Valid Tree': a graph on n nodes is a tree iff every
+union returns True (no cycle) and you performed exactly n-1 of them
+(connected).""",
+
+    """Counting components as you go.
+Start count = n and decrement on every successful union:
+    count = n
+    for a, b in edges:
+        if uf.union(a, b): count -= 1
+On n=5 with edges [[0,1],[1,2],[3,4]]: three unions all succeed, count = 2.
+This is the streaming advantage over DFS: with DFS you must re-run the whole
+traversal after each new edge, O(V+E) each time; with DSU each edge costs
+near-constant time and the count is always current.""",
+
+    """Where DSU is the right answer.
+- Kruskal's minimum spanning tree: sort edges, add one if union succeeds.
+- Number of Islands II (islands added one cell at a time - the streaming case).
+- Accounts Merge / friend circles / 'is A related to B?' queries.
+- Redundant Connection: return the first edge whose union fails.
+- Detecting cycles while building a dependency graph incrementally.
+The recognition cue is 'connected?' or 'merge these groups' arriving OVER TIME.
+For a one-shot connectivity question on a static graph, plain DFS is simpler -
+do not reach for DSU just because you know it.""",
+]
+
+_EX_P0G["Design an LRU Cache"] = [
+    """The textbook sequence, traced.
+LRUCache(2).
+put(1,1) -> cache {1:1}. put(2,2) -> {1:1, 2:2} (1 is the oldest).
+get(1) -> hit; move_to_end(1) makes the order {2:2, 1:1}; returns 1.
+put(3,3) -> size becomes 3 > 2, so popitem(last=False) evicts the FRONT, which
+is key 2 - the least recently used. Cache {1:1, 3:3}.
+get(2) -> -1, it was evicted.
+get(3) -> 3. get(1) -> 1.
+Note that the get(1) is what saved key 1: without it, 1 would have been the
+victim.""",
+
+    """Why put() must also refresh recency.
+put(1,1); put(2,2); put(1,10); put(3,3) with capacity 2.
+If put did NOT call move_to_end on an existing key, the order would still think
+1 is oldest and evict it - even though it was just written.
+With the refresh, the order after put(1,10) is {2:2, 1:10}, so put(3,3) evicts
+2. Final cache {1:10, 3:3}.
+A WRITE is a use. Interviewers check this specific case because it is the most
+common omission.""",
+
+    """The hash-map + doubly-linked-list design, spelled out.
+OrderedDict hides the mechanism, and the interviewer usually wants it explained:
+- dict: key -> node, giving O(1) lookup.
+- doubly linked list ordered by recency, with sentinel head and tail nodes.
+  get: find the node via the dict, unlink it, re-insert just after head.
+  put: same, plus if size > capacity, unlink the node before tail and delete its
+  key from the dict.
+It must be DOUBLY linked: unlinking a node in O(1) needs its predecessor, and a
+singly linked list would force an O(n) scan to find it. Sentinels remove every
+null check at the two ends - that is the entire reason they exist.""",
+
+    """Capacity edge cases.
+capacity = 1: put(1,1); put(2,2) evicts 1 immediately; get(1) -> -1.
+capacity = 0: every put immediately exceeds the limit and evicts the key it just
+inserted, so every get returns -1. Ask whether 0 is legal; LeetCode says
+capacity >= 1.
+Updating an existing key never grows the size, so it can never trigger an
+eviction - trace put(1,1); put(1,2) on capacity 1 to confirm the size check
+happens after the assignment.""",
+
+    """Why -1 for a miss, and what production would do instead.
+LeetCode's API returns -1 for a miss, which silently collides with a legitimately
+cached value of -1. Real caches return a (value, found) pair, raise KeyError, or
+use a sentinel object.
+Mentioning this unprompted is a small, cheap signal that you think about API
+design and not just the data structure. Then implement -1 as specified, because
+that is the contract you were given.""",
+
+    """LRU in the wild, and its cousins.
+Used by: CPU and page caches, database buffer pools, CDN edge caches, browser
+caches, and `functools.lru_cache` in Python.
+The variants worth naming:
+- LFU (least FREQUENTLY used): keeps a count per key; better when a few items are
+  permanently hot, worse when popularity shifts.
+- TTL caches: evict by age, not by use - the right choice when staleness, not
+  memory, is the concern.
+- ARC / 2Q / SLRU: adaptive policies that resist a single large scan flushing the
+  whole cache, which is precisely LRU's weakness (a one-off scan of cold data
+  evicts everything hot).
+That last sentence is the follow-up question on this problem more often than
+not.""",
+]
+
+_EX_P0G["Find Median from Data Stream (two heaps)"] = [
+    """Adding 1, then 2, then 3 - traced.
+add(1): push -1 onto low -> low=[-1]. Move low's top to high: high=[1], low=[].
+high is bigger -> move back: low=[-1], high=[].
+  median: low is bigger -> 1. Correct.
+add(2): push -2 -> low=[-2,-1]; move top (2) to high -> low=[-1], high=[2].
+Sizes equal.
+  median: (1 + 2)/2 = 1.5. Correct.
+add(3): push -3 -> low=[-3,-1]; move top (3) to high -> low=[-1], high=[2,3].
+high bigger -> move 2 back -> low=[-2,-1], high=[3].
+  median: low bigger -> 2. Correct.""",
+
+    """Why the push-then-pop-then-rebalance dance.
+The naive 'put small numbers in low, big ones in high' needs a comparison and
+two branches, and it is easy to get wrong at the boundary.
+The trick used here is unconditional: ALWAYS push onto low, then immediately
+move low's maximum into high. That guarantees every element of low is <= every
+element of high, no comparison required. The only thing left is to keep the
+sizes within one, which is the single `if`.
+Three lines, no branching on values - that is why this version is the one to
+memorise.""",
+
+    """Out-of-order and duplicate input.
+add(5), add(1), add(5), add(1):
+after 5 -> median 5. after 1 -> (1+5)/2 = 3. after 5 -> median 5. after 1 ->
+(1+5)/2 = 3.
+Duplicates are handled naturally: the heaps do not care about uniqueness, only
+about order. The invariant is a PARTITION by value, not a set.""",
+
+    """Why not just keep a sorted list?
+Insertion into a sorted Python list via bisect.insort is O(log n) to find the
+spot but O(n) to shift the elements. On 10^5 additions that is about 5 x 10^9
+element moves.
+Two heaps make every add O(log n) and every median query O(1). That is the whole
+point of the structure, and it is what the interviewer is testing.
+For completeness: a balanced BST with subtree sizes (an order-statistic tree)
+also gives O(log n) and additionally answers 'what is the kth smallest?' - but
+Python has no such structure in the standard library, so heaps are the practical
+answer.""",
+
+    """The follow-ups from LeetCode 295, and their answers.
+'What if all numbers are in [0,100]?' - keep a 101-slot counting array; the
+median is found by scanning cumulative counts. O(1) add, O(100) query, tiny
+memory.
+'What if 99% are in [0,100]?' - counting array for the common range plus two
+small heaps (or sorted lists) for the outliers below and above.
+'Sliding-window median?' - two heaps plus LAZY DELETION: mark removed elements
+in a dict and pop them off a heap top when they surface. That is the standard
+answer, and it is much harder than the base problem.""",
+
+    """Where a streaming median is actually needed.
+- p50 latency on a live service dashboard (and the same structure generalises to
+  arbitrary percentiles).
+- Sensor readings where the median rejects outliers that would wreck a mean.
+- Real-time fraud thresholds set at the median transaction size.
+At production scale you would usually switch to an approximate sketch - t-digest
+or HdrHistogram - which gives any percentile in fixed memory. Two heaps are the
+exact, single-machine answer; sketches are the distributed one. Knowing when to
+switch is the senior-level distinction.""",
+]
+
+_EX_P0G["Merge k Sorted Lists (min-heap)"] = [
+    """The textbook case, traced.
+lists = [[1,4,5],[1,3,4],[2,6]].
+Seed the heap with each list's head: (1,0,0), (1,1,0), (2,2,0).
+Pop (1,0,0) -> out [1], push (4,0,1).
+Pop (1,1,0) -> out [1,1], push (3,1,1).
+Pop (2,2,0) -> out [1,1,2], push (6,2,1).
+Pop (3,1,1) -> [1,1,2,3], push (4,1,2).
+Pop (4,0,1) -> ... continuing gives [1,1,2,3,4,4,5,6].
+The heap never holds more than k=3 entries, which is the whole point.""",
+
+    """Why the tuple carries the list index.
+Push only the value and Python compares equal values fine - but tie-breaking on
+a tuple falls through to the NEXT element, and if that were a list or a node
+object Python would raise TypeError ('<' not supported between instances of
+ListNode).
+Including the list index i as the second field guarantees the comparison always
+terminates on an int. On the two 1s above, (1,0,0) < (1,1,0) because 0 < 1 - a
+deterministic, safe tie-break.
+This exact TypeError is the most common runtime failure on this problem when the
+inputs are linked-list nodes rather than arrays.""",
+
+    """Edge cases: empty lists mixed in, all empty, k = 1.
+[[], [1,2], []] -> only non-empty lists are seeded (the `if lst` guard), so the
+heap starts with one entry and the answer is [1,2].
+[[], []] -> the heap is never seeded, the loop never runs, result [].
+[[1,2,3]] -> degenerates to copying the single list.
+Forgetting the `if lst` guard would raise IndexError on lst[0] for an empty
+list - a one-word guard that a hidden test will find.""",
+
+    """Cost, and the divide-and-conquer alternative.
+N total elements across k lists. Each element is pushed and popped exactly once
+from a heap of size <= k: O(N log k). Space O(k).
+Alternative: merge lists pairwise, like a tournament - merge 1 with 2, 3 with 4,
+then merge the results, and so on. log k rounds, each touching all N elements:
+also O(N log k), and it needs no heap.
+Naive alternative: merge them one at a time into an accumulator - the accumulator
+is re-walked every round, giving O(N x k). On k=100 that is 100x worse; it is the
+answer to avoid.""",
+
+    """The linked-list version, which is what is usually asked.
+Same algorithm, but push (node.val, i, node) and rebuild pointers as you pop:
+    dummy = tail = ListNode(0)
+    while heap:
+        val, i, node = heapq.heappop(heap)
+        tail.next = node; tail = node
+        if node.next: heapq.heappush(heap, (node.next.val, i, node.next))
+    return dummy.next
+The dummy head removes the 'is this the first node?' branch - the same trick as
+in Remove Nth Node From End. Note the nodes are RELINKED, not copied, so the
+space is O(k) for the heap and nothing else.""",
+
+    """Where k-way merge is the real workload.
+- External sort: sort chunks that each fit in memory, write them to disk, then
+  k-way merge the sorted runs. This is how sort(1) and every database's external
+  sort operator work.
+- LSM-tree compaction (RocksDB, Cassandra): merge k sorted SSTables.
+- Merging per-shard sorted results at a query coordinator.
+- Combining time-ordered log streams from many servers into one timeline.
+When an interviewer asks 'how would you sort 100GB with 8GB of RAM?', the answer
+is chunked sort plus this exact k-way merge.""",
+]
+
+_EX_P0G["Minimum Window Substring (sliding window)"] = [
+    """The textbook case, traced at the key moments.
+s = "ADOBECODEBANC", t = "ABC". need = {A:1, B:1, C:1}, missing = 3.
+r=0 'A': need[A] was 1 > 0 -> missing 2, need[A] = 0.
+r=3 'B': missing 1. r=5 'C': missing 0 -> the window "ADOBEC" (0..5) covers t.
+  Shrink: record (0,5), length 6. Drop s[0]='A' -> need[A] back to 1 > 0 ->
+  missing 1, left=1. Loop exits.
+r=10 'B' brings missing to 0 again with window (1..10) "DOBECODEBA"? Shrinking
+  moves left forward to 9, giving "BA"... not yet covering C, so it stops as soon
+  as a required char is dropped.
+r=12 'C': missing 0, window (9..12) = "BANC", length 4 < 6 -> new best.
+Answer "BANC".""",
+
+    """Why need[] is allowed to go negative.
+For every character, need[ch] -= 1 runs unconditionally - even for characters
+not in t, and even for extra copies of characters already covered.
+A negative count means 'we have surplus of this character'. When shrinking, the
+test `if need[s[left]] > 0` fires only when removing that character makes us
+genuinely short again - a surplus copy can be dropped for free.
+That is what lets the window shrink past redundant characters without
+recomputing anything. It looks like a bug and it is the core of the
+algorithm.""",
+
+    """Duplicates in t - the multiplicity case.
+s = "aa", t = "aa". need = {a:2}, missing = 2.
+r=0 'a': need[a]=2 > 0 -> missing 1, need[a]=1.
+r=1 'a': need[a]=1 > 0 -> missing 0, need[a]=0. Window (0,1) recorded.
+Shrink: need[a] back to 1 > 0 -> missing 1, left=1. Done.
+Answer "aa", not "a". A set-based implementation would wrongly return "a" -
+which is exactly why the counts are a Counter and not a set.""",
+
+    """No valid window, and empty inputs.
+s = "a", t = "b": missing never reaches 0, end stays infinity, return "".
+s = "", t = "a" or t = "": the guard returns "" up front.
+s = "a", t = "aa": only one 'a' exists, missing stops at 1, return "".
+The `end = float('inf')` sentinel doubles as the 'never found' flag, which is why
+the return line tests it rather than keeping a separate boolean.""",
+
+    """Why it is O(|s| + |t|) and not quadratic.
+The inner `while` looks nested, but left only ever moves forward. Across the
+whole run, right advances |s| times and left advances at most |s| times, so the
+total work is linear. Counting t costs O(|t|).
+Brute force - check every substring for coverage - is O(|s|^2 x |t|). On a
+10^5-character string that is astronomically worse.
+The phrase to say: 'each character enters the window once and leaves once, so
+the amortised cost is O(1) per character'.""",
+
+    """The template this belongs to, and its siblings.
+This is the SHRINK-WHILE-VALID flavour: grow until the window satisfies the
+condition, then shrink as far as possible while it still does, recording the
+MINIMUM.
+Siblings: Minimum Size Subarray Sum (sum >= target), Smallest window containing
+all distinct characters of s itself.
+Contrast with shrink-while-INVALID, which finds the LONGEST window (Longest
+Substring Without Repeating Characters, Longest Repeating Character
+Replacement).
+Same two pointers; the difference is whether you record inside the while loop or
+after it. Getting that backwards is the single most common way this problem is
+failed.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0G:
+        _e["examples"] = _EX_P0G[_e["title"]]
+
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
