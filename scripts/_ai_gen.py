@@ -16,128 +16,116 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Find the Highest Altitude",
-         answer="A trip's net altitude gains per step are given; the starting altitude is 0. Return the HIGHEST altitude reached. Keep a running altitude (a prefix sum of the gains) and track its maximum.",
-         tags=["highest-altitude","prefix-sum","array","dsa"],
-         code='''# Highest altitude on a trip given net gain per step (prefix max of prefix sum).
-def largest_altitude(gain):
-    altitude = 0
-    highest = 0
-    for g in gain:
-        altitude += g          # running altitude
-        highest = max(highest, altitude)
-    return highest''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Forgetting the starting altitude 0 is a candidate; summing without tracking the max.",
-         example="largest_altitude([-5,1,5,0,-7]) -> 1."),
-    dict(cat="dsa", title="Water Bottles",
-         answer="You start with numBottles full bottles; you can EXCHANGE numExchange empty bottles for one full bottle. Count the total bottles you can drink. Greedily drink all, then keep exchanging empties for new fulls (whose empties add back) until you can't exchange anymore.",
-         tags=["water-bottles","greedy","simulation","math","dsa"],
-         code='''# Total bottles drunk: exchange num_exchange empties for a full one.
-def num_water_bottles(num_bottles, num_exchange):
-    total = num_bottles
-    empty = num_bottles
-    while empty >= num_exchange:
-        new_full = empty // num_exchange           # fulls bought with empties
-        total += new_full
-        empty = empty % num_exchange + new_full    # leftover + newly emptied
-    return total''',
-         complexity="Time O(log num_bottles), space O(1).",
-         pitfalls="Forgetting the leftover empties carry over; not adding the new empties after drinking.",
-         example="num_water_bottles(9, 3) -> 13."),
-    dict(cat="dsa", title="Find Target Indices After Sorting Array",
-         answer="Sort the array ascending, then return all indices where the target appears (a 'target index' is a position holding the target in the sorted order). Sort and collect matching indices.",
-         tags=["target-indices","sorting","array","dsa"],
-         code='''# Indices where the target sits after sorting the array ascending.
-def target_indices(nums, target):
-    nums.sort()
-    return [i for i, n in enumerate(nums) if n == target]''',
-         complexity="Time O(n log n), space O(n).",
-         pitfalls="Returning indices before sorting; using the original positions.",
-         example="target_indices([1,2,5,2,3], 2) -> [1,2]."),
-    dict(cat="dsa", title="Number of Arithmetic Triplets",
-         answer="Count triplets (i<j<k) with nums[j]-nums[i] == diff and nums[k]-nums[j] == diff (the array is strictly increasing). Put the values in a set; for each value v, if v+diff and v+2*diff both exist, it anchors one triplet. O(n).",
-         tags=["arithmetic-triplets","hash-set","array","dsa"],
-         code='''# Count triplets with nums[j]-nums[i]==diff and nums[k]-nums[j]==diff.
-def arithmetic_triplets(nums, diff):
-    present = set(nums)
-    # each value that has value+diff and value+2*diff present anchors a triplet
-    return sum(1 for n in nums if (n + diff) in present and (n + 2 * diff) in present)''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Triple-nested loops (O(n^3)); the set lookup relies on strictly-increasing distinct values.",
-         example="arithmetic_triplets([0,1,4,6,7,10], 3) -> 2  (0,4,7? no; 1,4,7 and 4,7,10)."),
-    dict(cat="dsa", title="Kth Distinct String in an Array",
-         answer="A 'distinct' string appears exactly once in the array; return the kth distinct string in ORIGINAL order, or '' if fewer than k exist. Count frequencies, then walk in order counting down k at each once-only string.",
-         tags=["kth-distinct-string","counting","hash-map","string","dsa"],
-         code='''# The kth string that appears exactly once (in original order), or ''.
-from collections import Counter
-def kth_distinct(arr, k):
-    counts = Counter(arr)
-    for s in arr:
-        if counts[s] == 1:
-            k -= 1
-            if k == 0:
-                return s
+    dict(cat="dsa", title="Find Words Containing Character",
+         answer="Return the indices of all words that CONTAIN a given character x. A single filter over the words checking membership.",
+         tags=["find-words-char","string","filtering","array","dsa"],
+         code='''# Indices of words that contain the given character x.
+def find_words_containing(words, x):
+    return [i for i, w in enumerate(words) if x in w]''',
+         complexity="Time O(total characters), space O(n).",
+         pitfalls="Returning the words instead of their indices; case sensitivity.",
+         example="find_words_containing(['leet','code'], 'e') -> [0,1]."),
+    dict(cat="dsa", title="Largest Odd Number in String",
+         answer="Given a numeric string, return the largest-valued ODD number that is a (non-empty) PREFIX of it, or '' if none. An odd number ends in an odd digit, so scan from the RIGHT for the last odd digit — the prefix up to and including it is the largest odd substring starting at index 0.",
+         tags=["largest-odd-number","string","greedy","math","dsa"],
+         code='''# Longest prefix of the digit string that forms an odd number (or '').
+def largest_odd_number(num):
+    for i in range(len(num) - 1, -1, -1):
+        if int(num[i]) % 2 == 1:      # last odd digit from the right
+            return num[:i + 1]         # that prefix is the largest odd number
     return ""''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Iterating the counter (loses order); returning None instead of '' when k exceeds the count.",
-         example="kth_distinct(['d','b','c','b','c','a'], 2) -> 'a'."),
-    dict(cat="dsa", title="Maximum Product Difference Between Two Pairs",
-         answer="Choose two pairs to maximize (a*b) - (c*d). The best product uses the two LARGEST values; the smallest product uses the two SMALLEST. Sort and compute largest*second-largest minus smallest*second-smallest.",
-         tags=["max-product-difference","sorting","greedy","array","dsa"],
-         code='''# (largest * 2nd-largest) - (smallest * 2nd-smallest).
-def max_product_difference(nums):
-    nums.sort()
-    return nums[-1] * nums[-2] - nums[0] * nums[1]''',
-         complexity="Time O(n log n) (O(n) with a scan for extremes), space O(1).",
-         pitfalls="Assuming positive numbers only (this pairing still works for the stated problem); wrong index pairing.",
-         example="max_product_difference([5,6,2,7,4]) -> 34  (7*6 - 2*4)."),
-    dict(cat="dsa", title="Sort Array by Increasing Frequency",
-         answer="Sort by ASCENDING frequency; when two values have the same frequency, order them by DECREASING value. Count frequencies, then sort with a composite key (frequency ascending, value descending).",
-         tags=["frequency-sort","counting","sorting","array","dsa"],
-         code='''# Sort by ascending frequency; ties broken by decreasing value.
-from collections import Counter
-def frequency_sort(nums):
-    counts = Counter(nums)
-    # frequency ascending, then value descending within the same frequency
-    return sorted(nums, key=lambda x: (counts[x], -x))''',
-         complexity="Time O(n log n), space O(n).",
-         pitfalls="Wrong tie-break direction (value must be descending); sorting by value alone.",
-         example="frequency_sort([1,1,2,2,2,3]) -> [3,1,1,2,2,2]."),
-    dict(cat="dsa", title="Count Elements With Strictly Smaller and Greater Elements",
-         answer="Count elements that have BOTH a strictly smaller AND a strictly greater element in the array — i.e. every value that isn't the global minimum or maximum. Find the min and max, then count values strictly between them.",
-         tags=["count-elements-between","array","min-max","dsa"],
-         code='''# Count elements with both a strictly smaller and a strictly greater element.
-def count_elements(nums):
-    lo, hi = min(nums), max(nums)
-    return sum(1 for n in nums if lo < n < hi)   # exclude the extremes''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Using <= (would wrongly include ties with min/max); edge case where all values are equal (answer 0).",
-         example="count_elements([11,7,2,15]) -> 2  (11 and 7)."),
-    dict(cat="glossary", title="Observability: the three pillars",
-         answer="The three data types used to understand a system from the outside. LOGS: discrete, timestamped event records (detailed 'what happened') — best for debugging specifics. METRICS: numeric time-series aggregates (rate, errors, latency, CPU) — cheap, best for dashboards/alerts and trends. TRACES: the end-to-end path of one request across services (spans) — best for latency/dependency analysis. Together: detect with metrics, diagnose with traces, drill in with logs.",
-         tags=["observability","logs","metrics","traces","monitoring"],
-         example="A latency alert (metric) fires; you open a trace to see the payment call took 800ms, then read that service's logs to find the slow query — metrics -> traces -> logs."),
-    dict(cat="glossary", title="RED vs USE metrics",
-         answer="Two complementary monitoring methodologies. RED (for request-driven SERVICES): Rate (requests/sec), Errors (failed requests), Duration (latency) — the user-facing health of a service. USE (for RESOURCES): Utilization (% busy), Saturation (queue/wait depth), Errors — the health of a resource (CPU, disk, queue). RED tells you IF users are hurting; USE helps find WHICH resource is the bottleneck.",
-         tags=["red-metrics","use-metrics","monitoring","sre","observability"],
-         example="RED shows the API's error rate spiking and latency climbing (users hurting); USE reveals the database CPU is saturated with a full run queue — the resource bottleneck behind it."),
-    dict(cat="glossary", title="Metric cardinality",
-         answer="The number of unique time-series a metric produces, driven by the combinations of its LABEL/tag values — each distinct combination (endpoint × status × region × ...) is a separate stored series. HIGH cardinality (especially unbounded labels like user_id, request_id, or full URLs) explodes storage/query cost and can crash a metrics system. Keep labels low-cardinality and bounded; put high-cardinality detail in logs/traces instead.",
-         tags=["cardinality","metrics","labels","prometheus","observability"],
-         example="Adding a 'user_id' label to a request-count metric creates one series per user (millions), blowing up the metrics DB; keep labels low-cardinality (endpoint, status) and log the user_id instead."),
-    dict(cat="glossary", title="Structured logging & log levels",
-         answer="STRUCTURED logging emits logs as machine-parseable key/value records (usually JSON) so they can be filtered/searched/aggregated by field (user_id, request_id, latency) — essential at scale. LOG LEVELS (DEBUG < INFO < WARN < ERROR < FATAL) categorize severity to filter noise and set alert thresholds; prod usually runs at INFO/WARN with DEBUG enabled temporarily. Include a correlation/trace id to tie logs to a request.",
-         tags=["structured-logging","log-levels","json-logs","observability"],
-         example="Logging {level:'error', trace_id:'abc', user:'123', msg:'payment failed'} as JSON lets you query all errors for trace abc across services — impossible with a plain-text line."),
-    dict(cat="glossary", title="Sampling in observability",
-         answer="Keeping only a SUBSET of telemetry (traces/verbose logs) to control cost/volume, since storing 100% at scale is prohibitive. HEAD sampling decides at the start (e.g. keep 1%) — cheap but may drop the rare slow/errored trace. TAIL sampling buffers a trace and keeps it based on outcome (always keep errors and slow requests) — better signal, more memory. Metrics are usually NOT sampled (they're already aggregates).",
-         tags=["sampling","tracing","head-sampling","tail-sampling","observability"],
-         example="A service keeps 1% of normal traces (head) but 100% of any trace with an error or >1s latency (tail), capturing the interesting ones without storing billions of boring ones."),
-    dict(cat="conceptual", title="Why sample traces/logs instead of collecting everything?",
-         answer="At scale, telemetry volume rivals the application traffic itself: a service at 100k rps, each request emitting a multi-span trace and several log lines, produces terabytes/hour — the COST (storage, ingestion, indexing) and operational load of keeping it all would dwarf running the service, and emitting/exporting telemetry isn't free (it can slow the app). Most of that data is REDUNDANT too: the 99.9% of fast successes look alike, so keeping every one buys little. Sampling keeps a representative or INTERESTING subset. HEAD sampling (decide up front, keep 1%) is cheap and gives valid rates/trends but blindly drops the rare error/slow trace you need in an incident. TAIL sampling defers the keep/drop decision until the request finishes, so you ALWAYS retain errors and high-latency traces (the signal) while sampling the boring majority — at the cost of buffering traces in memory. The nuance: METRICS shouldn't be sampled (they're aggregates; sampling would distort counts), so keep 100% of metrics for exact alerting and sample the expensive per-request detail (traces, verbose logs), often combining always-keep-errors with a low baseline rate. It's a cost/signal trade-off: you can't afford everything and don't need everything — you need the anomalies plus enough baseline to stay statistically sound.",
-         tags=["sampling","observability","tracing","cost","why"],
-         example="Keeping 100% of traces at 100k rps is unaffordable and mostly duplicate 'fast success' traces; sampling 1% of successes but 100% of errors/slow requests captures every problem for a fraction of the storage, while metrics stay unsampled so error-rate alerts remain exact."),
+         pitfalls="Searching from the left (you want the longest valid prefix); returning a substring not anchored at index 0.",
+         example="largest_odd_number('52') -> '5'; largest_odd_number('4206') -> ''."),
+    dict(cat="dsa", title="Sum of Squares of Special Elements",
+         answer="An element at 1-based index i is 'special' if i divides the array length n. Return the sum of the squares of the special elements. Iterate; include nums[i]^2 whenever (i+1) divides n.",
+         tags=["sum-of-squares","math","divisors","array","dsa"],
+         code='''# Sum of squares of elements at 1-based indices that divide n.
+def sum_of_squares(nums):
+    n = len(nums)
+    return sum(nums[i] ** 2 for i in range(n) if n % (i + 1) == 0)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Using 0-based index for divisibility (it's 1-based); squaring the index instead of the value.",
+         example="sum_of_squares([1,2,3,4]) -> 21  (indices 1,2,4 divide 4: 1 + 4 + 16)."),
+    dict(cat="dsa", title="Count Tested Devices After Test Operations",
+         answer="Devices are tested in order; testing a device with positive battery decrements every LATER device's battery by 1. Count how many get tested. Track how many have been tested so far (= the accumulated decrement); a device is testable if its battery minus that count is still positive.",
+         tags=["count-tested-devices","greedy","simulation","array","dsa"],
+         code='''# Count devices tested: each test decrements all later devices' battery by 1.
+def count_tested_devices(battery_percentages):
+    tested = 0
+    for b in battery_percentages:
+        if b - tested > 0:      # battery after prior decrements is still > 0
+            tested += 1
+    return tested''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Actually mutating the array (O(n^2)); the running 'tested' count IS the accumulated decrement.",
+         example="count_tested_devices([1,1,2,1,3]) -> 3."),
+    dict(cat="dsa", title="Find First Palindromic String in the Array",
+         answer="Return the FIRST string that reads the same forwards and backwards, or '' if none. Check each string against its reverse in order.",
+         tags=["first-palindrome","string","palindrome","array","dsa"],
+         code='''# First string that reads the same forwards and backwards, or ''.
+def first_palindrome(words):
+    for w in words:
+        if w == w[::-1]:
+            return w
+    return ""''',
+         complexity="Time O(total characters), space O(1).",
+         pitfalls="Returning any palindrome instead of the first; forgetting the empty-result case.",
+         example="first_palindrome(['abc','car','ada','racecar']) -> 'ada'."),
+    dict(cat="dsa", title="Separate the Digits in an Array",
+         answer="Replace each integer with its individual DIGITS (in the same order), flattening the result. Convert each number to a string and expand its characters into single digits.",
+         tags=["separate-digits","array","digits","dsa"],
+         code='''# Flatten each integer into its individual digits, preserving order.
+def separate_digits(nums):
+    result = []
+    for n in nums:
+        result.extend(int(d) for d in str(n))   # split each number into digits
+    return result''',
+         complexity="Time O(total digits), space O(total digits).",
+         pitfalls="Reversing digits accidentally; keeping numbers as strings when ints are expected.",
+         example="separate_digits([13,25,83,77]) -> [1,3,2,5,8,3,7,7]."),
+    dict(cat="dsa", title="Smallest Even Multiple",
+         answer="Return the smallest positive integer that is a multiple of BOTH 2 and n — i.e. lcm(2, n). If n is already even it's n itself; otherwise it's 2*n.",
+         tags=["smallest-even-multiple","math","lcm","dsa"],
+         code='''# Smallest positive integer that is a multiple of both 2 and n.
+def smallest_even_multiple(n):
+    return n if n % 2 == 0 else n * 2   # lcm(2, n)''',
+         complexity="Time O(1), space O(1).",
+         pitfalls="Always returning 2*n (wrong when n is even); computing a full LCM when the parity check suffices.",
+         example="smallest_even_multiple(5) -> 10; smallest_even_multiple(6) -> 6."),
+    dict(cat="dsa", title="Remove Trailing Zeros From a String",
+         answer="Given a numeric string, remove any TRAILING zeros. A single right-strip of '0' characters does it.",
+         tags=["remove-trailing-zeros","string","dsa"],
+         code='''# Remove trailing zeros from a numeric string.
+def remove_trailing_zeros(num):
+    return num.rstrip("0")   # strip '0' characters from the right end''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Stripping leading zeros too (only trailing); using strip() which trims both ends.",
+         example="remove_trailing_zeros('51230100') -> '512301'."),
+    dict(cat="glossary", title="mmap (memory-mapped files)",
+         answer="Mapping a file (or device) directly into a process's virtual ADDRESS SPACE so it can be read/written like an in-memory array, with the OS paging data in/out on demand. Benefits: no explicit read/write syscall per access, lazy loading (only touched pages load), and a shared page cache (multiple processes map the same file cheaply). Great for large files, databases, and shared memory. Downside: I/O errors surface as page faults, and you need msync to control when writes hit disk.",
+         tags=["mmap","memory-mapped","io","page-cache","operating-systems"],
+         example="A database like LMDB or SQLite mmaps its data file so it reads pages straight from the OS page cache as memory, avoiding a read() syscall per access."),
+    dict(cat="glossary", title="Buffered vs direct I/O",
+         answer="Two ways an app does disk I/O. BUFFERED (default) goes through the OS PAGE CACHE — reads are cached (fast repeats) and writes are buffered and flushed later; convenient but uses OS memory and adds a copy. DIRECT I/O (O_DIRECT) bypasses the page cache, transferring straight between the app buffer and disk — used by databases that manage their OWN cache (avoiding double-caching, gaining predictable I/O), at the cost of alignment rules and losing OS read-ahead.",
+         tags=["direct-io","buffered-io","page-cache","o-direct","operating-systems"],
+         example="Postgres uses buffered I/O (relying on the OS cache) while some databases use O_DIRECT to avoid double-buffering data they already cache in their own buffer pool."),
+    dict(cat="glossary", title="TCP slow start",
+         answer="A congestion-control phase where a new TCP connection starts by sending only a SMALL amount of data (a small congestion window) and DOUBLES it each round trip (exponential) until it hits a threshold or detects loss. It probes the available bandwidth cautiously instead of flooding an unknown-capacity path, preventing a new flow from overwhelming it. After the threshold it switches to slower linear congestion-avoidance growth.",
+         tags=["tcp-slow-start","congestion-control","tcp","networking"],
+         example="A fresh connection ramps the window 2->4->8->16 packets per RTT, which is why the first few round trips of a download are slower than steady state — and why keep-alive matters."),
+    dict(cat="glossary", title="Nagle's algorithm",
+         answer="A TCP optimization that reduces the overhead of many TINY packets by BUFFERING small writes until either a full-size segment accumulates OR the previously sent data is acknowledged. It improves efficiency for bulk small writes but adds LATENCY for interactive/real-time traffic (a small message may wait for an ACK). Latency-sensitive apps disable it with TCP_NODELAY; it can interact badly with delayed ACKs, causing stalls.",
+         tags=["nagle","tcp-nodelay","tcp","latency","networking"],
+         example="A chat or game protocol sets TCP_NODELAY to disable Nagle so each tiny message sends immediately instead of waiting to batch — trading efficiency for low latency."),
+    dict(cat="glossary", title="TTL index",
+         answer="A database feature that automatically EXPIRES and deletes records after a set time-to-live, based on a timestamp field — you declare 'delete rows older than N seconds' and the DB reclaims them in the background, no cleanup cron needed. Ideal for ephemeral data: sessions, caches, OTPs, logs, rate-limit counters. MongoDB TTL indexes and Redis key TTLs are common examples.",
+         tags=["ttl-index","expiry","mongodb","redis","database"],
+         example="A MongoDB TTL index on a sessions collection's createdAt with expireAfterSeconds=3600 auto-deletes each session an hour after creation — no cron job."),
+    dict(cat="conceptual", title="Why does TCP start slow (slow start) instead of sending at full speed immediately?",
+         answer="A new connection has NO IDEA how much bandwidth the path can handle or how congested the network is — the capacity across many links/routers is unknown and shifting. If every new flow blasted at full line rate immediately, they'd collectively overwhelm router buffers, cause mass packet loss, and trigger CONGESTION COLLAPSE (the network gets busier but throughput plummets as everyone retransmits). Slow start solves this by PROBING: begin with a tiny congestion window (a few packets), and since each successful round trip proves the path handled that much, DOUBLE the window each RTT — exponential growth reaching high throughput within a handful of RTTs while backing off instantly if loss appears. It's 'exponential but cautious': fast enough to ramp quickly, safe enough not to swamp an unknown path. Near the estimated capacity (a threshold or after a loss) it shifts to congestion AVOIDANCE (slow linear growth) to push the limit gently. The cost: short connections may finish while still in slow start and never reach full bandwidth — which is exactly why keep-alive, connection pooling, and 0-RTT resumption matter (they skip the ramp). Slow start is what lets millions of independent flows share the internet fairly and stably with no central coordinator.",
+         tags=["tcp-slow-start","congestion-control","congestion-collapse","tcp","why"],
+         example="Downloading a large file, the first ~50ms feels slower as the window ramps 2->4->8->16 packets/RTT, then hits full speed; a tiny API call may finish entirely during slow start — so reusing the warmed-up connection for the next call is much faster."),
 ]
 
 
