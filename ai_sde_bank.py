@@ -7187,3 +7187,136 @@ like base conversion: result = result*26 + value(char)
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ── More DSA diagrams (batch 7) ────────────────────────────────────────────
+_DIAGRAM.update({
+    "Majority Element (Boyer-Moore voting)": r"""
+[2,2,1,1,1,2,2]   candidate + count; +1 if match, -1 if not, adopt on 0:
+ 2(c=2,1) 2(2,2) 1(2,1) 1(2,0) 1(1,1) 2(1,0) 2(2,1)
+candidate = 2   the true majority survives all the cancellations.
+""".strip("\n"),
+    "Trapping Rain Water (two pointers)": r"""
+       #           water[i] = min(maxLeft, maxRight) - height[i]
+   #~~~# #         move the pointer on the SHORTER wall inward
+ # #~#~####        (that side's max is the true bound)
+ 0 1 2 3 4 5
+""".strip("\n"),
+    "Generate Parentheses (backtracking)": r"""
+n=2   grow a string; rule: open<=n, close<=open
+              ""
+              (           ()... only add ) when close<open
+            /   \
+         ((      ()
+          |        \
+        (()       ()(
+          |          |
+       (())        ()()   -> two valid strings
+""".strip("\n"),
+    "Same Tree": r"""
+   1       1        recurse in lockstep:
+  / \     / \        both null -> equal; one null / values differ -> not
+ 2   3   2   3       else compare (left,left) and (right,right)
+-> identical structure AND values -> True
+""".strip("\n"),
+    "Subtree of Another Tree": r"""
+big:  3          sub: 4
+     / \             / \
+    4   5           1   2
+   / \
+  1   2      at each node of big, run a 'same tree' check vs sub
+             match found at node 4 -> True
+""".strip("\n"),
+    "Container With Most Water (two pointers)": r"""
+[1,8,6,2,5,4,8,3,7]   area = min(hL,hR) * width
+ L                R    start widest; move the SHORTER wall inward
+    L          R       (only a taller wall can beat the current area)
+track the max area seen.
+""".strip("\n"),
+    "Find the Duplicate Number (Floyd's cycle)": r"""
+treat values as 'next' pointers -> a cycle exists at the duplicate:
+ slow = nums[slow];  fast = nums[nums[fast]]   (they meet in the loop)
+ then reset one to start, move both by 1 -> meet at the DUPLICATE
+O(1) space, no modifying the array.
+""".strip("\n"),
+    "First Missing Positive": r"""
+[3,4,-1,1]   place each value v at index v-1 (cyclic sort), then scan:
+ -> [1,-1,3,4]   first index i where nums[i] != i+1 is the answer
+ index 1 holds -1 (not 2) -> answer 2
+O(n) time, O(1) space.
+""".strip("\n"),
+    "Subsets (power set)": r"""
+[1,2,3]   for each element: include OR skip (2^n subsets):
+              []
+        /            \
+      [1]             []
+     /  \            / \
+  [1,2] [1]       [2]  []   ... -> [],[1],[1,2],[1,2,3],[1,3],[2],[2,3],[3]
+""".strip("\n"),
+    "Letter Combinations of a Phone Number": r"""
+"23"   2->abc, 3->def   cartesian product via backtracking:
+        a        b        c
+      /|\      /|\      /|\
+     d e f    d e f    d e f
+ -> ad ae af bd be bf cd ce cf   (9 combos)
+""".strip("\n"),
+    "Maximum Product Subarray": r"""
+[2,3,-2,4]   track BOTH max and min so far (a negative can flip them):
+ x=2: mx=2 mn=2   x=3: mx=6 mn=3   x=-2: mx=-2 mn=-6   x=4: mx=4 mn=-24
+answer = 6   (swap max/min when x is negative)
+""".strip("\n"),
+    "Perfect Squares (DP)": r"""
+n=12   dp[i] = fewest squares summing to i:
+ dp[12] = min(dp[12-1], dp[12-4], dp[12-9]) + 1
+ 12 = 4 + 4 + 4 -> 3     (squares: 1,4,9)
+""".strip("\n"),
+    "Isomorphic Strings": r"""
+"egg" vs "add"   consistent one-to-one char map BOTH ways:
+ e->a  g->d  g->d      (g maps to d consistently)
+ check no two chars map to the same target -> ISOMORPHIC
+""".strip("\n"),
+    "Word Pattern": r"""
+pattern "abba", s "dog cat cat dog"   bijection pattern<->word:
+ a->dog  b->cat  b->cat  a->dog   consistent both directions -> True
+("abba","dog cat cat fish") -> a should map dog, but last is fish -> False
+""".strip("\n"),
+    "Ransom Note": r"""
+note="aa", magazine="aab"   count magazine letters, subtract note:
+ magazine {a:2, b:1}   note needs a:2 -> 2<=2 OK -> True
+each letter used at most as many times as it appears.
+""".strip("\n"),
+    "Is Subsequence": r"""
+s="abc", t="ahbgdc"   two pointers; advance s only on a match:
+ a . b . . c            matched a, b, c in order -> True
+walk t; every char of s found in sequence.
+""".strip("\n"),
+    "Backspace String Compare": r"""
+"ab#c" vs "ad#c"   '#' = backspace; compare from the RIGHT:
+ ab#c -> a c = "ac"       ad#c -> a c = "ac"    equal -> True
+process right-to-left, skipping chars for each pending '#'.
+""".strip("\n"),
+    "Convert Sorted Array to BST": r"""
+[-10,-3,0,5,9]   pick MIDDLE as root for a balanced BST, recurse halves:
+             0
+           /   \
+        -10*     5      (* rebalanced: -3 becomes -10's child side)
+          \       \
+          -3       9
+""".strip("\n"),
+    "Minimum Depth of Binary Tree": r"""
+     1            min depth = fewest nodes to the NEAREST leaf
+      \           a node with ONE child is NOT a leaf -> take that child
+       2          1 -> 2 -> 3, no branching, nearest leaf is 3
+        \         answer = 3  (do NOT count the missing child as depth 0)
+         3
+""".strip("\n"),
+    "Path Sum III (prefix sum)": r"""
+count paths (any node->down) summing to target:
+ carry a running prefix sum; number of paths ending here
+ = count of earlier prefixSum == (current - target)   (hash map)
+same trick as 'subarray sum equals k', applied down tree paths.
+""".strip("\n"),
+})
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
