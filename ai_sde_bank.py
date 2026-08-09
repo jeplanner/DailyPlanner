@@ -15372,6 +15372,629 @@ WHAT PEOPLE GET WRONG: forgetting to append the leftover tail after the main
 merge loop, which silently drops the largest elements.
 """.strip("\n")
 
+_PLAIN_ALGO["Quick Sort"] = r"""
+IN ONE SENTENCE: pick a pivot, shuffle everything smaller to its left and
+everything bigger to its right, then sort each side the same way.
+
+STEPS (Lomuto partition, the easiest to write correctly)
+1. Write a partition helper over a range lo to hi. Take the LAST element as the
+   pivot.
+2. Keep a boundary index p starting at lo - it marks where the "smaller than
+   pivot" region ends.
+3. Walk i from lo to hi-1. Whenever the element is smaller than the pivot, swap
+   it into position p and advance p.
+4. After the walk, swap the pivot into position p. The pivot is now in its
+   final sorted place forever.
+5. Return p, then recursively sort lo..p-1 and p+1..hi.
+
+WHY THE PIVOT IS DONE AFTER ONE PASS: everything left of it is smaller and
+everything right is bigger, which is exactly the definition of its sorted
+position. That is why quicksort needs no merge step - the work happens on the
+way DOWN, unlike merge sort where it happens on the way back up.
+
+WHY IT IS O(n log n) ON AVERAGE AND O(n^2) AT WORST: a good pivot halves the
+array, giving log n levels. A terrible pivot - the largest or smallest element
+every time - peels off one element per level, giving n levels. An already-sorted
+array with last-element pivots is exactly that worst case, which is why real
+implementations pick a random pivot or a median of three. Say that; interviewers
+ask specifically.
+
+QUICKSORT VERSUS MERGE SORT: quicksort is in-place and usually faster in
+practice thanks to cache behaviour, but it is unstable and has a bad worst case.
+Merge sort is stable and guaranteed O(n log n) but needs O(n) extra space. Know
+which you would pick and why.
+
+WHAT PEOPLE GET WRONG: the boundary index. p is the position where the NEXT
+small element goes, so you swap into p and then advance - doing it in the other
+order corrupts the partition.
+""".strip("\n")
+
+_PLAIN_ALGO["Task Scheduler (cooldown)"] = r"""
+IN ONE SENTENCE: the most frequent task dictates the schedule - lay it out with
+its mandatory gaps, then everything else slots into those gaps for free.
+
+STEPS
+1. Count how often each task appears.
+2. Find the highest count, call it max_count, and how many tasks tie for it.
+3. The most frequent task forms (max_count - 1) complete blocks, each of size
+   (n + 1) - one slot for the task plus n cooldown slots.
+4. Add the final group: the tied-for-most-frequent tasks all run once at the
+   end, so add the number of tasks that tie.
+5. That is your answer - UNLESS there are so many distinct tasks that the gaps
+   are already full, in which case no idling is needed and the answer is simply
+   the total number of tasks. So return the larger of the two.
+
+WHY THE FORMULA WORKS - the picture to hold: write the most frequent task in a
+row with n gaps after each occurrence:
+    A _ _ A _ _ A
+That skeleton is forced by the cooldown rule and its length is fixed. Every
+other task just fills the underscores. So the only question is whether the
+underscores are big enough to hold everything else.
+
+WHY THE MAX WITH len(tasks): if you have many different tasks, the gaps are all
+occupied and there is no idle time at all - the schedule is just as long as the
+number of tasks. Without this guard the formula under-reports on task-rich
+inputs, and that is the case interviewers test.
+
+WHY THE TIE COUNT MATTERS: if A and B both appear the maximum number of times,
+the final block contains both, so the schedule is one slot longer per tie.
+
+WHAT PEOPLE GET WRONG: simulating the schedule with a heap. It works and is a
+fine fallback, but the closed form is O(n) and shows you found the structure.
+Also: forgetting the max, and miscounting the ties.
+""".strip("\n")
+
+_PLAIN_ALGO["Unique Paths (grid DP)"] = r"""
+IN ONE SENTENCE: the number of ways to reach a cell is the ways from above plus
+the ways from the left, because those are the only two ways in.
+
+STEPS
+1. Make a grid of counts and fill the first row and first column with 1 - there
+   is exactly one path along an edge, since you can only ever go straight.
+2. For every other cell, add the cell above to the cell to the left.
+3. Return the bottom-right cell.
+
+WHY THE FIRST ROW AND COLUMN ARE ALL ONES: from the start, to reach any cell in
+the top row you can only move right, repeatedly. There is one such path. Same
+for the left column going down.
+
+THE SPACE OPTIMISATION: each row only reads the row above and the cell to its
+left, so a single array of width n works - sweep left to right, adding the value
+to the left into the current slot. The slot already holds the row above's value
+because you have not overwritten it yet. O(n) instead of O(mn).
+
+THE MATHS ANSWER WORTH MENTIONING: every path is a sequence of exactly (m-1)
+downs and (n-1) rights in some order, so the answer is the binomial coefficient
+C(m+n-2, m-1) - computable in O(min(m,n)). Offer it after the DP; it shows you
+looked for structure rather than reaching straight for a table.
+
+WHAT PEOPLE GET WRONG: initialising the whole grid to 0 and forgetting that the
+edges must be 1, which returns 0 for everything.
+""".strip("\n")
+
+_PLAIN_ALGO["Validate Binary Search Tree"] = r"""
+IN ONE SENTENCE: every node must fall inside a RANGE inherited from its
+ancestors, not merely be bigger than its parent.
+
+STEPS
+1. Write a helper taking a node plus a low and a high bound. Start with minus
+   and plus infinity.
+2. An empty node is valid.
+3. The node's value must be strictly between low and high. If not, return false.
+4. Recurse left with the same low but an upper bound of THIS node's value.
+5. Recurse right with a lower bound of this node's value and the same high.
+6. Both sides must be valid.
+
+WHY COMPARING WITH THE PARENT IS NOT ENOUGH - the case this problem exists for:
+      10
+     /  \
+    5    15
+        /  \
+       6    20
+Every node satisfies its immediate parent: 6 is less than 15, 15 is greater than
+10. But 6 sits in the RIGHT subtree of 10 and is smaller than 10, so the tree is
+not a BST. The constraint comes from every ancestor, not just the nearest one,
+and that is why the bounds must be passed down.
+
+WHY THE BOUNDS FLOW DOWNWARD: this is the same shape as Count Good Nodes -
+information about ancestors travels down as parameters, information about
+descendants travels up as return values. Naming which direction you need is how
+you decide the recursion's signature.
+
+THE ALTERNATIVE SOLUTION: an in-order traversal of a BST must produce strictly
+increasing values, so walk in-order and check each value against the previous
+one. Equally correct, and a nice thing to offer as a second approach.
+
+WHAT PEOPLE GET WRONG: using less-than-or-equal, which allows duplicates -
+check what the problem says about them; and forgetting that the bounds are
+strict on both sides.
+""".strip("\n")
+
+_PLAIN_ALGO["Kruskal's Minimum Spanning Tree"] = r"""
+IN ONE SENTENCE: sort every edge cheapest first, and take each one only if it
+joins two pieces that are not already connected.
+
+STEPS
+1. Set up Union-Find: every node its own parent, with path compression in find.
+2. Sort all edges by weight, ascending.
+3. Walk them in order. Find the roots of both endpoints.
+4. If the roots differ, the edge joins two separate components - take it, add
+   its weight to the total, and union them.
+5. If the roots match, taking it would create a cycle - skip it.
+6. Stop when you have taken n-1 edges; that is a spanning tree.
+
+WHY UNION-FIND IS THE NATURAL PARTNER: the only question you ask of each edge is
+"are these two already connected?", which is exactly what find answers in
+near-constant time. Without it you would run a search per edge and the algorithm
+would be far slower.
+
+WHY GREEDY IS CORRECT - the cut property: for any way of splitting the nodes
+into two groups, the cheapest edge crossing that split belongs to some minimum
+spanning tree. Kruskal takes edges in cheapest-first order and never creates a
+cycle, so every edge it takes is the cheapest crossing of some split. Say "cut
+property" out loud.
+
+KRUSKAL VERSUS PRIM: Kruskal sorts all edges globally and builds up a forest
+that merges - good for SPARSE graphs and for edge lists. Prim grows one
+connected tree from a start node using a heap - better for DENSE graphs and
+adjacency lists. Same answer, different data structures, and knowing which suits
+which input is the follow-up.
+
+WHAT PEOPLE GET WRONG: comparing the nodes rather than their roots, and
+forgetting that a disconnected graph has no spanning tree - you finish with
+fewer than n-1 edges and should report that rather than returning a partial
+total.
+""".strip("\n")
+
+_PLAIN_ALGO["Hashing — the 'have I seen this?' pattern"] = r"""
+IN ONE SENTENCE: remember what you have already passed in a dictionary, so the
+question "have I seen the thing that completes this?" is answered instantly
+instead of by re-scanning.
+
+THE SKELETON (classic Two Sum)
+1. Keep a dictionary mapping each value you have passed to its index.
+2. Walk the array once. For each value, compute what would complete the pair -
+   target minus this value.
+3. If that complement is already in the dictionary, you have your answer: its
+   stored index and the current one.
+4. Otherwise record the current value and index, and continue.
+
+WHY IT TURNS O(n^2) INTO O(n): the brute force asks "is there a partner for
+this?" by scanning the rest of the array - n work, n times. The dictionary
+answers the same question in one step, because you have been building the answer
+as you go. Trading memory for repeated scanning is the single highest-yield move
+in interview coding.
+
+WHY YOU LOOK UP BEFORE INSERTING: insert first and an element can pair with
+itself, which is nearly always disallowed. This ordering detail appears in Two
+Sum, Subarray Sum Equals K, Pairs With Difference K and many more - it is the
+same bug every time.
+
+HOW TO SPOT THE PATTERN: the problem says "find a pair / has this appeared
+before / count occurrences of / is there a duplicate / group these by
+something", and the brute force is a nested loop comparing every element with
+every other. That nested loop is the signal.
+
+THE FAMILY IT UNLOCKS: Two Sum, Group Anagrams (key = sorted letters), Contains
+Duplicate, Longest Consecutive Sequence, Subarray Sum Equals K (key = prefix
+sum), First Unique Character, and every frequency-counting problem.
+
+WHAT PEOPLE GET WRONG: sorting the array first out of habit. Sorting destroys
+the original indices, which is precisely what Two Sum asks for - and it is why
+Two Sum uses a hash map while 3Sum sorts.
+""".strip("\n")
+
+_PLAIN_ALGO["Linked List Cycle"] = r"""
+IN ONE SENTENCE: run one pointer at double speed - if there is a loop, the fast
+one laps the slow one and they collide; if there is not, the fast one runs off
+the end.
+
+STEPS
+1. Point both slow and fast at the head.
+2. While fast exists and fast's next exists: move slow one node and fast two.
+3. If they are ever the same node, there is a cycle.
+4. If the loop exits, fast reached the end - no cycle.
+
+WHY THEY ARE GUARANTEED TO MEET INSIDE A LOOP: once both pointers are in the
+cycle, the fast one closes the gap by exactly one node per step. A gap that
+shrinks by one every step must reach zero - it can never jump over, which is
+exactly why the step sizes are 1 and 2 rather than 1 and 3.
+
+WHY THE LOOP CONDITION TESTS BOTH fast AND fast.next: the fast pointer moves two
+at a time and can therefore step past the end. Checking both before moving is
+what stops you dereferencing nothing.
+
+WHY COMPARE THE NODES, NOT THE VALUES: two different nodes can hold the same
+value. Identity is the question, so compare identity.
+
+THE FOLLOW-UPS, WHICH ALWAYS COME
+* "Where does the cycle start?" Reset slow to the head, leave fast at the
+  meeting point, and advance both one step at a time - they meet at the
+  entrance. That is Find the Duplicate Number's phase two.
+* "How long is the cycle?" From the meeting point, walk one pointer round until
+  it returns, counting.
+
+WHY NOT A HASH SET: storing visited nodes is correct and easier to write, but it
+is O(n) space. The two-pointer version is O(1), which is the entire point of the
+question - offer the set as a baseline, then improve it.
+
+WHAT PEOPLE GET WRONG: writing the condition as "while fast.next and fast",
+which dereferences before checking and crashes on an empty list.
+""".strip("\n")
+
+_PLAIN_ALGO["Missing Number"] = r"""
+IN ONE SENTENCE: work out what the numbers 0 through n SHOULD add up to, then
+subtract what they actually add up to - the difference is the missing one.
+
+STEPS
+1. Let n be the length of the array. The full set is 0 through n, which is n+1
+   numbers with exactly one absent.
+2. The expected total is n times (n+1) divided by 2 - Gauss's formula.
+3. Subtract the actual sum of the array.
+4. Return the difference.
+
+WHY THE FORMULA IS n(n+1)/2 AND NOT (n-1)n/2: the array has length n but the
+range runs to n inclusive, so you are summing 0 through n. Getting this
+boundary wrong is the only real trap here - derive it on a tiny case like
+[0,1,3] where n is 3, expected is 6, actual is 4, answer 2.
+
+THE XOR ALTERNATIVE, AND WHY IT IS BETTER IN ONE RESPECT: XOR every index from
+0 to n together with every value in the array. Every present number appears
+twice and cancels; the missing one survives. It gives the same answer with no
+risk of integer overflow on very large n, which is the reason to prefer it in a
+fixed-width language. Mention both.
+
+WHY NOT SORT OR USE A SET: sorting is O(n log n) and a set is O(n) extra space.
+Both work; both throw away the arithmetic structure that makes this O(n) time
+and O(1) space.
+
+WHAT PEOPLE GET WRONG: the off-by-one in the formula, and overflow when n is
+large in languages with fixed-width integers.
+""".strip("\n")
+
+_PLAIN_ALGO["Number of 1 Bits (popcount)"] = r"""
+IN ONE SENTENCE: repeatedly clear the lowest set bit and count how many times
+you could do it.
+
+STEPS
+1. Start a counter at 0.
+2. While the number is not zero: replace it with itself ANDed with itself minus
+   one, and add one to the counter.
+3. Return the counter.
+
+WHY n & (n-1) CLEARS EXACTLY THE LOWEST SET BIT: subtracting 1 flips the lowest
+set bit to 0 and turns every zero below it into a 1. ANDing with the original
+therefore keeps every higher bit unchanged and wipes out the lowest set bit and
+everything under it. Work it through once on 12: 1100 AND 1011 = 1000. One bit
+gone.
+
+WHY IT BEATS THE OBVIOUS LOOP: checking every bit position runs 32 or 64 times
+regardless of the input. This runs once per SET bit, so a number with three bits
+set takes three iterations. Same worst case, much better typical case.
+
+THE OTHER TRICKS WORTH KNOWING - this family comes up constantly
+* n & (n-1) == 0 tests whether n is a power of two (at most one bit set).
+* n & -n isolates the lowest set bit rather than clearing it.
+* n & 1 tests oddness; n >> 1 halves; n << 1 doubles.
+* XOR cancels pairs, which is why it finds the lonely element.
+
+WHAT PEOPLE GET WRONG: using this on negative numbers in a language with signed
+integers and infinite sign extension - the loop never terminates. In Python,
+guard for negatives or mask to 32 bits first.
+""".strip("\n")
+
+_PLAIN_ALGO["Single Number (XOR)"] = r"""
+IN ONE SENTENCE: XOR everything together - identical pairs cancel to zero and
+the one unpaired value is left standing.
+
+STEPS
+1. Start a result at 0.
+2. XOR every element of the array into it.
+3. Return the result.
+
+WHY IT WORKS - three facts, and that is the whole proof:
+  a XOR a = 0        (a value cancels itself)
+  a XOR 0 = a        (zero is the identity)
+  XOR is commutative and associative, so the ORDER does not matter
+Because order is irrelevant, you can imagine the array rearranged so every pair
+sits together. Each pair collapses to 0, all the zeros collapse to 0, and the
+lone element XORed with 0 is itself.
+
+WHY THIS IS THE ANSWER RATHER THAN A HASH SET: a set is correct and O(n) space.
+XOR is O(1) space, which is what the problem is testing. Offer the set as the
+obvious solution and then improve it - that sequence reads better than jumping
+straight to the trick.
+
+THE VARIANTS AND HOW THEY DIFFER
+* Every other element appears THREE times: XOR no longer cancels, so count bits
+  at each position modulo 3 instead.
+* TWO unique elements: XOR everything to get a XOR b, take any set bit of that
+  result - it is a position where a and b differ - and split the array on that
+  bit, XORing each half separately.
+Knowing that the trick BREAKS for triples, and why, is the follow-up.
+
+WHAT PEOPLE GET WRONG: initialising the result to the first element and then
+XORing the whole array again, which cancels that element back out.
+""".strip("\n")
+
+_PLAIN_ALGO["Valid Parentheses"] = r"""
+IN ONE SENTENCE: push every opening bracket, and when a closing one arrives it
+must match the most recent unclosed opener - which is exactly what a stack's top
+is.
+
+STEPS
+1. Make a map from each closing bracket to its matching opener.
+2. Walk the string with an empty stack.
+3. An opening bracket gets pushed.
+4. A closing bracket must find a non-empty stack whose top is its partner. If
+   the stack is empty, or the top is the wrong opener, return false.
+5. At the end the stack must be EMPTY - anything left is an unclosed opener.
+
+WHY A STACK IS THE RIGHT STRUCTURE: nesting means the most recently opened
+bracket must be the first to close. "Most recent first" is the definition of a
+stack, so the data structure encodes the rule and you do not have to.
+
+THE THREE WAYS IT CAN FAIL, and you must handle all three:
+  "(]"   - wrong type of match
+  "())"  - a closer with nothing open, so the stack is empty when you pop
+  "(()"  - leftovers on the stack at the end
+Forgetting the third is the single most common bug - the loop completes happily
+and you return true.
+
+WHY A COUNTER IS NOT ENOUGH: with only one bracket type, counting up and down
+works. With three types, a counter cannot tell "([)]" from "([])" - it needs to
+know WHICH bracket is waiting, and only a stack carries that.
+
+WHAT PEOPLE GET WRONG: returning true at the end of the loop instead of
+returning whether the stack is empty; and popping without first checking that
+the stack is non-empty.
+""".strip("\n")
+
+_PLAIN_ALGO["Product of Array Except Self"] = r"""
+IN ONE SENTENCE: each answer is the product of everything to its LEFT times the
+product of everything to its RIGHT - so make two passes, one in each direction.
+
+STEPS
+1. Make an output array of the same length.
+2. First pass, left to right: carry a running product starting at 1. Before
+   updating it, write it into the output slot - so the slot receives the product
+   of everything strictly before it. Then multiply the current value in.
+3. Second pass, right to left: carry another running product starting at 1.
+   Multiply it INTO the output slot - which already holds the left product - then
+   multiply the current value in.
+4. Return the output.
+
+WHY WRITING BEFORE UPDATING IS THE WHOLE TRICK: it is what excludes the element
+itself. If you multiply the current value in first and then write, the slot
+includes its own value and the answer is wrong everywhere.
+
+WHY NO DIVISION: the obvious solution is total product divided by each element,
+and it breaks on zeros - one zero makes every other answer a division by
+zero-free but wrong, and two zeros make everything zero. The problem forbids
+division precisely to force this two-pass structure. Say that out loud.
+
+WHY IT IS O(1) EXTRA SPACE: the output array does not count as extra space by
+convention, and the two running products are single variables. Reusing the
+output to carry the left products between passes is what avoids a second array.
+
+WHAT PEOPLE GET WRONG: allocating separate left and right arrays - correct, but
+it misses the space optimisation the question is aimed at. And the ordering
+inside each pass, which is the actual difficulty.
+""".strip("\n")
+
+_PLAIN_ALGO["Sort Colors (Dutch National Flag)"] = r"""
+IN ONE SENTENCE: keep three regions - settled 0s at the front, settled 2s at the
+back, and 1s in the middle - and walk one pointer through the unknown region
+placing each value where it belongs.
+
+STEPS
+1. Three pointers: low at the start, mid at the start, high at the end.
+   Everything before low is 0, everything between low and mid is 1, everything
+   after high is 2, and low..mid..high is the unexamined middle.
+2. While mid has not passed high, look at the value at mid.
+3. A 0: swap it with the value at low, then advance BOTH low and mid.
+4. A 1: it is already in the right region - just advance mid.
+5. A 2: swap it with the value at high and decrease high - but do NOT advance
+   mid.
+6. Return the array.
+
+WHY mid ADVANCES ON A 0 BUT NOT ON A 2 - the single most important line: when
+you swap with low, the value you receive came from the region between low and
+mid, which you have already examined and know is a 1. It is safe, so you move
+on. When you swap with high, the value you receive came from the UNEXAMINED
+region at the end - you have never looked at it, so you must inspect it on the
+next iteration. Getting this wrong leaves 2s stranded in the middle.
+
+WHY THE LOOP IS "mid <= high" AND NOT "<": the element at high has not been
+examined yet, so stopping early leaves one value unsorted.
+
+WHY NOT JUST COUNT: counting the 0s, 1s and 2s and rewriting the array is two
+passes and perfectly correct - offer it. This is the one-pass, in-place version,
+which is what the follow-up asks for.
+
+WHAT PEOPLE GET WRONG: advancing mid after the 2-swap. It is the classic bug and
+it produces an almost-sorted array, which makes it hard to spot.
+""".strip("\n")
+
+_PLAIN_ALGO["First Missing Positive"] = r"""
+IN ONE SENTENCE: use the array itself as a lookup table - put every value v that
+lies in 1..n at index v-1, then the first index whose value is wrong reveals the
+answer.
+
+STEPS
+1. Walk the array. For each position, while the value there is in the range 1
+   to n AND it is not already sitting at its home index, swap it to where it
+   belongs.
+2. Use a WHILE, not an if - after a swap you have received a new value at this
+   position and it may also need placing.
+3. Second pass: find the first index i where the value is not i+1. Return i+1.
+4. If every slot is correct, the answer is n+1.
+
+WHY THE ANSWER MUST LIE IN 1..n+1: with n slots, the smallest missing positive
+cannot exceed n+1 - if all of 1 through n are present, the answer is n+1, and
+otherwise it is one of them. Any value outside that range is irrelevant and can
+be ignored entirely. State this early; it is the observation the whole solution
+rests on.
+
+WHY THIS IS O(n) DESPITE THE NESTED WHILE: every swap puts one value in its
+final home permanently, and there are only n values, so the total number of
+swaps across the whole run is at most n. Complexity comes from counting total
+work, not from loop nesting - the same argument as the monotonic stack.
+
+WHY THE "NOT ALREADY HOME" CHECK IS ESSENTIAL: without it, duplicates swap back
+and forth forever. Comparing the value at the target index rather than the
+index itself is what handles repeats.
+
+WHY IT MUST BE IN PLACE: the problem demands O(1) extra space, which rules out
+the obvious hash set. The array is the only storage you have, so you encode
+information in the POSITIONS.
+
+WHAT PEOPLE GET WRONG: using an if instead of a while; and forgetting the n+1
+case when the array is already a perfect 1..n.
+""".strip("\n")
+
+_PLAIN_ALGO["Largest Rectangle in Histogram (monotonic stack)"] = r"""
+IN ONE SENTENCE: every rectangle is capped by its shortest bar, so for each bar
+find how far it can extend left and right before hitting something shorter - a
+stack kept in increasing order gives you both boundaries for free.
+
+STEPS
+1. Append a sentinel bar of height 0 to the end of the array. This forces
+   everything remaining on the stack to be processed at the end without a
+   separate flush loop.
+2. Keep a stack of INDICES whose heights are increasing.
+3. Walk the bars. While the stack is non-empty and the height at its top is
+   greater than the current height, that bar can extend no further right - pop
+   it.
+4. For the popped bar, its height is known. Its right boundary is the current
+   index; its left boundary is whatever is now on top of the stack (the previous
+   shorter bar), exclusive. So the width is current index minus the new top
+   minus one - or the current index if the stack is empty, meaning it extended
+   all the way to the start.
+5. Compute the area and keep the maximum. Then push the current index.
+
+WHY THE STACK IS KEPT INCREASING: while heights are rising, no bar's extent is
+settled yet - a taller bar to the right does not stop a shorter one. Only when a
+SHORTER bar arrives is the taller bar's right edge finally known, which is
+exactly the moment you pop it and compute its area.
+
+WHY THE WIDTH FORMULA HAS A MINUS ONE: the boundaries are exclusive on both
+sides - the previous shorter bar and the current shorter bar both sit OUTSIDE
+the rectangle. Trace one small example by hand; this is the only genuinely
+fiddly part.
+
+WHY IT IS O(n): each index is pushed exactly once and popped at most once, so
+the total inner-loop work across the whole run is bounded by n. Do not judge
+complexity by nesting - count total pushes and pops.
+
+WHAT PEOPLE GET WRONG: storing heights instead of indices, which loses the
+width; forgetting the sentinel and leaving bars unprocessed; and the off-by-one
+in the width.
+""".strip("\n")
+
+_PLAIN_ALGO["Asteroid Collision (stack)"] = r"""
+IN ONE SENTENCE: a stack holds the surviving asteroids; a new left-moving one
+fights the stack top repeatedly until it wins, dies, or meets something it
+cannot collide with.
+
+STEPS
+1. Keep a stack of survivors and walk the asteroids in order.
+2. A collision only happens when the incoming asteroid is NEGATIVE (moving left)
+   and the stack top is POSITIVE (moving right). Any other combination means
+   they are moving apart or in the same direction - no collision.
+3. While that collision condition holds, compare sizes:
+   * the top is smaller: it explodes, pop it, and keep fighting.
+   * they are equal: both explode - pop the top and the incoming one is gone
+     too, so stop.
+   * the top is bigger: the incoming one explodes, so stop.
+4. If the incoming asteroid survived all its fights, push it.
+
+WHY THE COLLISION CONDITION IS EXACTLY "incoming negative AND top positive":
+positive means moving right, negative moving left. Two positives are both
+travelling right and never meet. Two negatives likewise. A positive incoming
+after a negative top means they are moving apart. Only right-then-left converges.
+Writing that condition down carefully is most of the problem.
+
+WHY A WHILE LOOP AND NOT AN IF: one big left-moving asteroid can destroy several
+right-moving ones in sequence, and each destruction exposes a new top to fight.
+
+WHY THE EQUAL CASE NEEDS CARE: both are destroyed, so you pop AND you must not
+push the incoming one. Handling only one of those is the usual bug.
+
+WHY A STACK AT ALL: only the most recently surviving right-moving asteroid can
+be hit next, and that is precisely what the top of a stack means.
+
+WHAT PEOPLE GET WRONG: pushing the incoming asteroid after it has already
+exploded, and comparing raw values rather than magnitudes - use the absolute
+value when comparing sizes.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Primes (Sieve of Eratosthenes)"] = r"""
+IN ONE SENTENCE: assume everything is prime, then walk upward crossing off every
+multiple of each prime you find - whatever survives is prime.
+
+STEPS
+1. Make a boolean array of length n, all true, then mark 0 and 1 as not prime.
+2. Walk p upward while p times p is less than n.
+3. If p is still marked prime, cross off its multiples - starting at p squared,
+   stepping by p.
+4. Count the remaining true entries.
+
+WHY YOU STOP AT THE SQUARE ROOT: if a number has a factor larger than its square
+root, it must also have one smaller, and that smaller factor would already have
+crossed it off. So beyond the square root there is nothing left to do.
+
+WHY THE INNER LOOP STARTS AT p SQUARED AND NOT AT 2p: every multiple of p below
+p squared has a smaller prime factor and was therefore already crossed off when
+that smaller prime was processed. Starting at 2p is correct but does redundant
+work, and knowing why is a good signal.
+
+WHY IT BEATS TESTING EACH NUMBER: checking every number for primality
+individually is roughly O(n sqrt n). The sieve is O(n log log n), which is
+almost linear - it wins because it shares work between numbers rather than
+starting fresh for each.
+
+MEMORY IS THE TRADE: the sieve needs an array of size n. For very large n you
+would use a segmented sieve, processing a window at a time - worth naming as the
+follow-up.
+
+WHAT PEOPLE GET WRONG: counting primes up to and including n when the problem
+asks for strictly less than n, and forgetting to mark 0 and 1 as non-prime.
+""".strip("\n")
+
+_PLAIN_ALGO["Evaluate Reverse Polish Notation"] = r"""
+IN ONE SENTENCE: push numbers onto a stack; when an operator arrives, pop the
+two most recent numbers, apply it, and push the result back.
+
+STEPS
+1. Keep a stack and walk the tokens.
+2. A number gets pushed.
+3. An operator pops TWO values. The FIRST one popped is the RIGHT operand and
+   the second is the LEFT - the stack gives them back in reverse order.
+4. Apply the operator, push the result.
+5. At the end exactly one value remains - that is the answer.
+
+WHY THE OPERAND ORDER MATTERS SO MUCH: addition and multiplication are
+commutative so they hide the bug, but subtraction and division are not. For the
+tokens "5 3 -" the answer is 2, and popping in the wrong order gives -2. Write
+the pop order down before you code it; this is the single most common mistake in
+this problem.
+
+WHY POSTFIX NEEDS NO PARENTHESES AND NO PRECEDENCE RULES: the order of the
+tokens already encodes the structure completely. That is why compilers and
+calculators convert infix to postfix before evaluating - all the ambiguity is
+resolved by the conversion, and evaluation becomes this ten-line loop.
+
+THE DIVISION DETAIL TO ASK ABOUT: most versions of this problem want truncation
+TOWARD ZERO, whereas Python's integer division floors toward negative infinity.
+So -7 divided by 2 should be -3, not -4. Handle it explicitly and mention that
+you noticed.
+
+WHAT PEOPLE GET WRONG: the operand order, the division rounding, and treating a
+negative number token like "-4" as an operator because it starts with a minus -
+check membership in the operator set rather than checking the first character.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
