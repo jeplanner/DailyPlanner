@@ -32,10 +32,16 @@ _CATEGORY_TAGS = {
 }
 
 
-def Q(cat, title, answer, tags, code="", example="", complexity="", pitfalls="", followups=""):
+def Q(cat, title, answer, tags, code="", example="", complexity="", pitfalls="",
+      followups="", difficulty="", frequency="", mnemonic=""):
+    # difficulty: "Easy" | "Medium" | "Hard" (backfilled heuristically below if "")
+    # frequency: how often it shows up in interviews at leading product companies
+    #            (Amazon, Google, Meta, NVIDIA, Microsoft, Apple, ...) — backfilled if ""
+    # mnemonic: a short "how to remember this" hook for the student
     return {"cat": cat, "title": title, "answer": answer, "code": code,
             "example": example, "complexity": complexity, "pitfalls": pitfalls,
-            "followups": followups, "tags": tags}
+            "followups": followups, "tags": tags,
+            "difficulty": difficulty, "frequency": frequency, "mnemonic": mnemonic}
 
 
 ENTRIES = [
@@ -5520,3 +5526,78 @@ _EXAMPLES = {
 for _e in ENTRIES:
     if not _e.get('example') and _e['title'] in _EXAMPLES:
         _e['example'] = _EXAMPLES[_e['title']]
+
+
+# ── Difficulty & interview-frequency backfill ──────────────────────────────
+# Every entry gets a Difficulty (Easy/Medium/Hard) and a Frequency label so the
+# student can see, at a glance, how hard a topic is and how often it actually
+# shows up in interviews at leading product companies (Amazon, Google, Meta,
+# NVIDIA, Microsoft, Apple, ...). Explicit difficulty=/frequency= on a Q(...)
+# always wins; otherwise we derive a sensible default from tags + title. These
+# are good defaults, refined per-topic over time — edit any Q(...) to override.
+
+# Tag/keyword -> difficulty hints. Later (harder) matches win over earlier ones.
+_HARD_HINTS = {
+    "dynamic-programming", "dp", "backtracking", "dijkstra", "bellman-ford",
+    "topological-sort", "union-find", "dsu", "trie", "segment-tree",
+    "binary-indexed-tree", "edit-distance", "min-heap", "two-heaps",
+    "monotonic-stack", "monotonic-deque", "word-ladder", "minimum-window",
+    "median", "lru-cache", "lfu-cache", "kmp", "manacher", "n-queens",
+    "matrix-exponentiation", "suffix-array", "max-flow", "sccs", "bitmask-dp",
+}
+_MEDIUM_HINTS = {
+    "sliding-window", "two-pointers", "binary-search", "heap", "priority-queue",
+    "graph", "bfs", "dfs", "greedy", "intervals", "prefix-sum", "hash-map",
+    "linked-list", "bst", "recursion", "divide-and-conquer", "sorting",
+    "bit-manipulation", "design", "stack", "queue", "matrix",
+}
+
+
+def _dsa_difficulty(entry):
+    tagset = set(entry.get("tags", []))
+    if tagset & _HARD_HINTS:
+        return "Hard"
+    if tagset & _MEDIUM_HINTS:
+        return "Medium"
+    return "Easy"
+
+
+# Per-category default difficulty for non-DSA content.
+_CAT_DIFFICULTY = {
+    "glossary": "Easy", "mindset": "Easy", "conceptual": "Medium",
+    "ml_concepts": "Medium", "ml_coding": "Medium", "cs_fundamentals": "Medium",
+    "behavioral": "Easy", "company": "Easy", "ml_system_design": "Hard",
+}
+
+# Per-category default interview-frequency phrasing.
+_CAT_FREQUENCY = {
+    "dsa": "Commonly asked - core coding-round material at Amazon, Google, Meta, NVIDIA and most product companies.",
+    "glossary": "Frequently comes up - these terms surface in system-design, ML, and rapid-fire screening rounds.",
+    "conceptual": "Often asked as follow-up 'why' probes to test real understanding, not memorization.",
+    "ml_concepts": "Very commonly asked in ML/AI and applied-scientist interviews across product companies.",
+    "ml_coding": "Commonly asked in ML-engineer / applied-scientist coding rounds (implement-from-scratch).",
+    "ml_system_design": "Very commonly asked in senior ML / applied-scientist design rounds at Google, Meta, Amazon, NVIDIA.",
+    "cs_fundamentals": "Frequently asked - OS/DB/networking basics are staple screening questions everywhere.",
+    "behavioral": "Always asked - every loop has behavioral rounds (Amazon's are Leadership-Principle driven).",
+    "company": "Process context - not a question itself, but shapes how every round is scored.",
+    "mindset": "Meta-skill - not asked directly, but drives how well every other answer lands.",
+}
+
+# A few very-high-frequency DSA patterns worth calling out explicitly.
+_DSA_VERY_COMMON = {
+    "two-pointers", "sliding-window", "hash-map", "binary-search", "bfs", "dfs",
+    "dynamic-programming", "heap", "linked-list", "intervals", "backtracking",
+    "prefix-sum", "graph", "trie", "union-find",
+}
+
+for _e in ENTRIES:
+    if not _e.get("difficulty"):
+        _e["difficulty"] = (_dsa_difficulty(_e) if _e["cat"] == "dsa"
+                            else _CAT_DIFFICULTY.get(_e["cat"], "Medium"))
+    if not _e.get("frequency"):
+        if _e["cat"] == "dsa" and set(_e.get("tags", [])) & _DSA_VERY_COMMON:
+            _e["frequency"] = ("Very commonly asked - this is a bread-and-butter "
+                               "pattern in coding rounds at Amazon, Google, Meta, "
+                               "NVIDIA, Microsoft and Apple.")
+        else:
+            _e["frequency"] = _CAT_FREQUENCY.get(_e["cat"], "Commonly asked at leading product companies.")

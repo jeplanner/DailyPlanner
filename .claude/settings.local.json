@@ -93,7 +93,8 @@
       "Bash(cp /mnt/c/Users/vengh/Downloads/vedantadesikar.jpg static/icons/acharyas/vedantadesikar.jpg)",
       "Bash(.venv/bin/pip list *)",
       "Bash(.venv/bin/python *)",
-      "Skill(loop)"
+      "Skill(loop)",
+      "Bash(SUPABASE_URL=https://x.supabase.co SUPABASE_KEY=dummy python3 *)"
     ]
   }
 }

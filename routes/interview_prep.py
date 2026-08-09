@@ -264,8 +264,13 @@ def ai_sde_pdf():
                 f"| DailyPlanner Interview Prep | {_today().isoformat()}")
     sections = []
     for it in selected:
-        fields = [("Answer / reasoning", it.get("answer")),
+        _diff_freq = " | ".join(x for x in [
+            (f"Difficulty: {it['difficulty']}" if it.get("difficulty") else ""),
+            (it.get("frequency") or "")] if x)
+        fields = [("Difficulty & interview frequency", _diff_freq or None),
+                  ("Answer / reasoning", it.get("answer")),
                   ("Example", it.get("example")),
+                  ("How to remember", it.get("mnemonic")),
                   ("Complexity", it.get("complexity")),
                   ("Pitfalls", it.get("pitfalls")),
                   ("Follow-ups", it.get("followups"))]
@@ -281,6 +286,110 @@ def ai_sde_pdf():
         return redirect(url_for("interview_prep.ai_sde_page"))
     fname = (selected[0]["id"] + ".pdf") if len(selected) == 1 else "ai-sde-bank.pdf"
     return _pdf_response(pdf, fname)
+
+
+# ── AI SDE daily quiz (HackerRank-style multiple choice) ───────────────────
+import hashlib as _hashlib
+import random as _random
+
+# Only these categories make good "identify the concept from its description"
+# multiple-choice questions (they have a crisp term + explanation).
+_QUIZ_CATS = ("glossary", "ml_concepts", "conceptual", "dsa", "ml_coding",
+              "ml_system_design", "cs_fundamentals")
+
+
+def _first_sentences(text, n=2, limit=460):
+    """First n sentences of a field, capped, for a quiz prompt."""
+    if not text:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    out = " ".join(parts[:n]).strip()
+    return (out[:limit] + "...") if len(out) > limit else out
+
+
+def _mask_title(prompt, title):
+    """Hide the answer's name (and its longer words) inside the prompt so the
+    question isn't a giveaway."""
+    masked = re.sub(re.escape(title), "____", prompt, flags=re.IGNORECASE)
+    for word in re.findall(r"[A-Za-z][A-Za-z0-9\-]{4,}", title):
+        masked = re.sub(r"\b" + re.escape(word) + r"\b", "____", masked,
+                        flags=re.IGNORECASE)
+    return masked
+
+
+def _build_quiz(entries, mode, cat, n, seed):
+    """Deterministic multiple-choice quiz. Each question shows a masked
+    description and asks which topic it describes; distractors come from the
+    same category. Same seed -> same quiz (so a 'daily set' is stable)."""
+    rng = _random.Random(seed)
+    pool = [e for e in entries if e.get("answer") and e["cat"] in _QUIZ_CATS]
+    if mode == "topic" and cat:
+        pool = [e for e in pool if e["cat"] == cat]
+    by_cat = defaultdict(list)
+    for e in pool:
+        by_cat[e["cat"]].append(e)
+    if len(pool) < 4:
+        return []
+    rng.shuffle(pool)
+    chosen = pool[:min(n, len(pool))]
+    questions = []
+    for e in chosen:
+        siblings = [s["title"] for s in by_cat[e["cat"]] if s["title"] != e["title"]]
+        if len(siblings) < 3:
+            siblings = [s["title"] for s in pool if s["title"] != e["title"]]
+        distractors = rng.sample(siblings, 3) if len(siblings) >= 3 else siblings[:3]
+        options = distractors + [e["title"]]
+        rng.shuffle(options)
+        prompt = _mask_title(_first_sentences(e.get("answer", "")), e["title"])
+        questions.append({
+            "id": e["id"],
+            "prompt": prompt,
+            "options": options,
+            "answer": e["title"],
+            "correct_index": options.index(e["title"]),
+            "difficulty": e.get("difficulty", ""),
+            "frequency": e.get("frequency", ""),
+            "cat": e["cat"],
+            "cat_label": AI_SDE_CATEGORIES.get(e["cat"], e["cat"]),
+            "explain": e.get("answer", ""),
+            "mnemonic": e.get("mnemonic", ""),
+            "example": e.get("example", ""),
+        })
+    return questions
+
+
+@interview_prep_bp.route("/ai-sde/quiz", methods=["GET"])
+@login_required
+def ai_sde_quiz_page():
+    return render_template("ai_sde_quiz.html")
+
+
+@interview_prep_bp.route("/api/ai-sde/quiz", methods=["GET"])
+@login_required
+def ai_sde_quiz():
+    """Generate a multiple-choice quiz from the AI SDE bank.
+
+    mode=mixed (default) -> a stable DAILY set of 25 across all areas, seeded by
+    today's date. mode=topic&cat=<key> -> fresh practice from one area."""
+    items = [{"id": f"ai{i}", **e} for i, e in enumerate(AI_SDE_ENTRIES)]
+    mode = (request.args.get("mode") or "mixed").strip()
+    cat = (request.args.get("cat") or "").strip()
+    try:
+        n = max(5, min(25, int(request.args.get("n", 25))))
+    except (TypeError, ValueError):
+        n = 25
+    if mode == "mixed":
+        seed = f"mixed-{_today().isoformat()}"          # stable for the day
+    else:
+        # topic practice: fresh each load
+        seed = f"topic-{cat}-{request.args.get('nonce', '')}-{_today().isoformat()}"
+    quiz = _build_quiz(items, mode, cat, n, seed)
+    return jsonify({
+        "mode": mode, "cat": cat, "date": _today().isoformat(),
+        "count": len(quiz), "questions": quiz,
+        "categories": [{"key": k, "label": v} for k, v in AI_SDE_CATEGORIES.items()
+                       if k in _QUIZ_CATS],
+    })
 
 
 @interview_prep_bp.route("/interview-prep/guides", methods=["GET"])

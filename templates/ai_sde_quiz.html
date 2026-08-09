@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>AI SDE Daily Quiz — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 12px 14px 60px; }
+  h1 { font-size: 20px; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 12px; }
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  select, .btn { font-size: 14px; padding: 8px 12px; border-radius: 9px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); cursor: pointer; }
+  .btn.primary { background: #4338ca; color: #fff; border-color: #4338ca; font-weight: 700; }
+  .btn.sm { font-size: 12.5px; padding: 6px 10px; }
+  .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; margin-bottom: 10px; }
+  .stat b { font-size: 18px; display: block; }
+  .stat { text-align: center; min-width: 62px; }
+  .bar { height: 8px; background: var(--color-bg); border-radius: 999px; overflow: hidden; margin: 6px 0 14px; }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg,#4338ca,#7c3aed); width: 0; transition: width .3s; }
+  .qnum { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); }
+  .qprompt { font-size: 16px; line-height: 1.5; margin: 6px 0 14px; font-weight: 500; }
+  .opts { display: flex; flex-direction: column; gap: 9px; }
+  .opt { text-align: left; padding: 12px 14px; border-radius: 10px; border: 1.5px solid var(--color-border); background: var(--color-surface); color: var(--color-text); font-size: 14.5px; cursor: pointer; transition: background .15s, border-color .15s; }
+  .opt:hover:not(:disabled) { border-color: #a5b4fc; background: #eef2ff; }
+  html.dark .opt:hover:not(:disabled) { background: #1e1b4b; }
+  .opt.correct { border-color: #059669; background: #d1fae5; color: #065f46; font-weight: 700; }
+  .opt.wrong { border-color: #dc2626; background: #fee2e2; color: #991b1b; }
+  html.dark .opt.correct { background: #064e3b; color: #6ee7b7; } html.dark .opt.wrong { background: #7f1d1d; color: #fca5a5; }
+  .opt:disabled { cursor: default; }
+  .diffbadge { font-size: 10px; font-weight: 800; text-transform: uppercase; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+  .d-easy { color: #047857; background: #d1fae5; } .d-medium { color: #b45309; background: #fef3c7; } .d-hard { color: #b91c1c; background: #fee2e2; }
+  .explain { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: 13.5px; line-height: 1.55; display: none; }
+  .explain.show { display: block; }
+  .explain .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #4338ca; display: block; margin: 8px 0 2px; }
+  .explain .mnem { background: #fff7ed; border-left: 3px solid #fb923c; padding: 6px 10px; border-radius: 6px; }
+  html.dark .explain .mnem { background: #2a1a0f; }
+  .explain .freq { color: #9333ea; }
+  .rowbtns { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; gap: 10px; }
+  .summary { text-align: center; padding: 20px 10px; }
+  .summary .big { font-size: 44px; font-weight: 800; margin: 6px 0; }
+  .muted { color: var(--color-text-secondary); font-size: 12.5px; }
+  .hide { display: none; }
+</style>
+{% include "_pwa_head.html" ignore missing %}
+</head>
+<body>
+<div class="nav-icons">{% include "_top_nav.html" ignore missing %}</div>
+<div class="wrap">
+  <h1>🎯 AI SDE Daily Quiz</h1>
+  <p class="sub">25 questions a day keeps the rust away. Read the description, pick the concept, learn the memory hook. <a href="/ai-sde">← Back to the study bank</a></p>
+
+  <div class="stats">
+    <div class="stat"><b id="s-streak">0</b><span class="muted">day streak</span></div>
+    <div class="stat"><b id="s-best">0</b><span class="muted">best %</span></div>
+    <div class="stat"><b id="s-done">0</b><span class="muted">quizzes done</span></div>
+  </div>
+
+  <div class="card" id="setup">
+    <div class="controls">
+      <select id="mode">
+        <option value="mixed">Daily mixed (25 across all areas)</option>
+        <option value="topic">Pick a topic</option>
+      </select>
+      <select id="qcat" class="hide"></select>
+      <button class="btn primary" id="start" type="button">Start quiz →</button>
+    </div>
+    <p class="muted" id="setup-note" style="margin:10px 0 0;">The daily mixed set is the same all day — come back tomorrow for a fresh 25 and keep your streak alive.</p>
+  </div>
+
+  <div class="card hide" id="game">
+    <div class="qnum" id="qnum">Question 1 / 25</div>
+    <div class="bar"><span id="pbar"></span></div>
+    <div class="qprompt" id="qprompt"></div>
+    <div class="opts" id="opts"></div>
+    <div class="explain" id="explain"></div>
+    <div class="rowbtns">
+      <span class="muted" id="score">Score: 0</span>
+      <button class="btn primary hide" id="next" type="button">Next →</button>
+    </div>
+  </div>
+
+  <div class="card hide" id="done">
+    <div class="summary">
+      <div class="muted">You scored</div>
+      <div class="big" id="finalpct">0%</div>
+      <div id="finalline" class="muted"></div>
+      <div style="margin-top:16px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+        <button class="btn primary" id="again" type="button">New quiz</button>
+        <a class="btn" href="/ai-sde">Study weak spots</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
+
+  // --- persisted stats (streak / best / count) ---
+  const SKEY = "ai_sde_quiz_stats";
+  let stats = { streak:0, lastDay:"", best:0, done:0 };
+  try { stats = Object.assign(stats, JSON.parse(localStorage.getItem(SKEY)||"{}")); } catch(_){}
+  const saveStats = () => { try { localStorage.setItem(SKEY, JSON.stringify(stats)); } catch(_){} };
+  const todayStr = () => new Date().toISOString().slice(0,10);
+  function renderStats(){ $("s-streak").textContent=stats.streak; $("s-best").textContent=stats.best+"%"; $("s-done").textContent=stats.done; }
+  function recordCompletion(pct){
+    const t = todayStr();
+    const y = new Date(Date.now()-86400000).toISOString().slice(0,10);
+    if (stats.lastDay !== t) {                       // first completion today
+      stats.streak = (stats.lastDay === y) ? stats.streak+1 : 1;
+      stats.lastDay = t;
+    }
+    stats.best = Math.max(stats.best, pct);
+    stats.done += 1; saveStats(); renderStats();
+  }
+  renderStats();
+
+  let quiz = [], idx = 0, score = 0, answered = false;
+
+  async function loadCats(){
+    try { const d = await api("/api/ai-sde/quiz?mode=topic&n=5");
+      (d.categories||[]).forEach(c => { const o=document.createElement("option"); o.value=c.key; o.textContent=c.label; $("qcat").appendChild(o); });
+    } catch(_){}
+  }
+  loadCats();
+
+  $("mode").addEventListener("change", () => {
+    const topic = $("mode").value==="topic";
+    $("qcat").classList.toggle("hide", !topic);
+    $("setup-note").textContent = topic
+      ? "Topic practice is fresh every time — drill a weak area until it sticks."
+      : "The daily mixed set is the same all day — come back tomorrow for a fresh 25 and keep your streak alive.";
+  });
+
+  async function start(){
+    const mode = $("mode").value;
+    let url = "/api/ai-sde/quiz?mode="+mode+"&n=25";
+    if (mode==="topic") url += "&cat="+encodeURIComponent($("qcat").value)+"&nonce="+Date.now();
+    let d;
+    try { d = await api(url); } catch(_) { alert("Could not load the quiz. Try again."); return; }
+    quiz = d.questions||[];
+    if (!quiz.length) { alert("Not enough questions for that topic yet."); return; }
+    idx = 0; score = 0;
+    $("setup").classList.add("hide"); $("done").classList.add("hide"); $("game").classList.remove("hide");
+    showQ();
+  }
+
+  function showQ(){
+    answered = false;
+    const q = quiz[idx];
+    $("qnum").textContent = `Question ${idx+1} / ${quiz.length}`;
+    $("pbar").style.width = ((idx)/quiz.length*100)+"%";
+    const dcls = "d-"+(q.difficulty||"").toLowerCase();
+    $("qprompt").innerHTML = `Which concept does this describe? <span class="diffbadge ${dcls}">${esc(q.difficulty||"")}</span><br><br>${esc(q.prompt)}`;
+    $("opts").innerHTML = q.options.map((o,i)=>`<button class="opt" data-i="${i}" type="button">${esc(o)}</button>`).join("");
+    $("explain").classList.remove("show"); $("explain").innerHTML="";
+    $("next").classList.add("hide");
+    $("score").textContent = "Score: "+score;
+  }
+
+  $("opts").addEventListener("click", (ev) => {
+    const b = ev.target.closest(".opt"); if(!b || answered) return;
+    answered = true;
+    const q = quiz[idx];
+    const pick = parseInt(b.dataset.i,10);
+    const btns = [...$("opts").querySelectorAll(".opt")];
+    btns.forEach((btn,i)=>{ btn.disabled=true;
+      if (i===q.correct_index) btn.classList.add("correct");
+      else if (i===pick) btn.classList.add("wrong");
+    });
+    if (pick===q.correct_index) score++;
+    $("score").textContent = "Score: "+score;
+    const ex = $("explain");
+    ex.innerHTML =
+      `<span class="lbl">Answer: ${esc(q.answer)}</span>${esc(q.explain)}`
+      + (q.mnemonic ? `<span class="lbl">How to remember</span><div class="mnem">${esc(q.mnemonic)}</div>` : "")
+      + (q.example ? `<span class="lbl">Example</span>${esc(q.example)}` : "")
+      + (q.frequency ? `<span class="lbl">Asked in interviews?</span><span class="freq">${esc(q.frequency)}</span>` : "");
+    ex.classList.add("show");
+    $("next").classList.remove("hide");
+    $("next").textContent = (idx+1<quiz.length) ? "Next →" : "See results →";
+  });
+
+  $("next").addEventListener("click", () => {
+    idx++;
+    if (idx>=quiz.length){ finish(); return; }
+    showQ();
+  });
+
+  function finish(){
+    const pct = Math.round(score/quiz.length*100);
+    recordCompletion(pct);
+    $("game").classList.add("hide"); $("done").classList.remove("hide");
+    $("finalpct").textContent = pct+"%";
+    let line = `${score} / ${quiz.length} correct.`;
+    if (pct>=90) line += " 🔥 Outstanding — you know this cold.";
+    else if (pct>=70) line += " 💪 Solid. Review the misses and go again.";
+    else if (pct>=50) line += " 📚 Getting there — study the weak spots and retake.";
+    else line += " 🌱 Early days. Open the study bank, then come back.";
+    $("finalline").textContent = line;
+  }
+
+  $("start").addEventListener("click", start);
+  $("again").addEventListener("click", () => { $("done").classList.add("hide"); $("setup").classList.remove("hide"); });
+})();
+</script>
+</body>
+</html>
