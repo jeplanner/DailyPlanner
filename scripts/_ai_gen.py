@@ -16,116 +16,148 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Find Words Containing Character",
-         answer="Return the indices of all words that CONTAIN a given character x. A single filter over the words checking membership.",
-         tags=["find-words-char","string","filtering","array","dsa"],
-         code='''# Indices of words that contain the given character x.
-def find_words_containing(words, x):
-    return [i for i, w in enumerate(words) if x in w]''',
-         complexity="Time O(total characters), space O(n).",
-         pitfalls="Returning the words instead of their indices; case sensitivity.",
-         example="find_words_containing(['leet','code'], 'e') -> [0,1]."),
-    dict(cat="dsa", title="Largest Odd Number in String",
-         answer="Given a numeric string, return the largest-valued ODD number that is a (non-empty) PREFIX of it, or '' if none. An odd number ends in an odd digit, so scan from the RIGHT for the last odd digit — the prefix up to and including it is the largest odd substring starting at index 0.",
-         tags=["largest-odd-number","string","greedy","math","dsa"],
-         code='''# Longest prefix of the digit string that forms an odd number (or '').
-def largest_odd_number(num):
-    for i in range(len(num) - 1, -1, -1):
-        if int(num[i]) % 2 == 1:      # last odd digit from the right
-            return num[:i + 1]         # that prefix is the largest odd number
-    return ""''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Searching from the left (you want the longest valid prefix); returning a substring not anchored at index 0.",
-         example="largest_odd_number('52') -> '5'; largest_odd_number('4206') -> ''."),
-    dict(cat="dsa", title="Sum of Squares of Special Elements",
-         answer="An element at 1-based index i is 'special' if i divides the array length n. Return the sum of the squares of the special elements. Iterate; include nums[i]^2 whenever (i+1) divides n.",
-         tags=["sum-of-squares","math","divisors","array","dsa"],
-         code='''# Sum of squares of elements at 1-based indices that divide n.
-def sum_of_squares(nums):
-    n = len(nums)
-    return sum(nums[i] ** 2 for i in range(n) if n % (i + 1) == 0)''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Using 0-based index for divisibility (it's 1-based); squaring the index instead of the value.",
-         example="sum_of_squares([1,2,3,4]) -> 21  (indices 1,2,4 divide 4: 1 + 4 + 16)."),
-    dict(cat="dsa", title="Count Tested Devices After Test Operations",
-         answer="Devices are tested in order; testing a device with positive battery decrements every LATER device's battery by 1. Count how many get tested. Track how many have been tested so far (= the accumulated decrement); a device is testable if its battery minus that count is still positive.",
-         tags=["count-tested-devices","greedy","simulation","array","dsa"],
-         code='''# Count devices tested: each test decrements all later devices' battery by 1.
-def count_tested_devices(battery_percentages):
-    tested = 0
-    for b in battery_percentages:
-        if b - tested > 0:      # battery after prior decrements is still > 0
-            tested += 1
-    return tested''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Actually mutating the array (O(n^2)); the running 'tested' count IS the accumulated decrement.",
-         example="count_tested_devices([1,1,2,1,3]) -> 3."),
-    dict(cat="dsa", title="Find First Palindromic String in the Array",
-         answer="Return the FIRST string that reads the same forwards and backwards, or '' if none. Check each string against its reverse in order.",
-         tags=["first-palindrome","string","palindrome","array","dsa"],
-         code='''# First string that reads the same forwards and backwards, or ''.
-def first_palindrome(words):
-    for w in words:
-        if w == w[::-1]:
-            return w
-    return ""''',
-         complexity="Time O(total characters), space O(1).",
-         pitfalls="Returning any palindrome instead of the first; forgetting the empty-result case.",
-         example="first_palindrome(['abc','car','ada','racecar']) -> 'ada'."),
-    dict(cat="dsa", title="Separate the Digits in an Array",
-         answer="Replace each integer with its individual DIGITS (in the same order), flattening the result. Convert each number to a string and expand its characters into single digits.",
-         tags=["separate-digits","array","digits","dsa"],
-         code='''# Flatten each integer into its individual digits, preserving order.
-def separate_digits(nums):
-    result = []
-    for n in nums:
-        result.extend(int(d) for d in str(n))   # split each number into digits
-    return result''',
-         complexity="Time O(total digits), space O(total digits).",
-         pitfalls="Reversing digits accidentally; keeping numbers as strings when ints are expected.",
-         example="separate_digits([13,25,83,77]) -> [1,3,2,5,8,3,7,7]."),
-    dict(cat="dsa", title="Smallest Even Multiple",
-         answer="Return the smallest positive integer that is a multiple of BOTH 2 and n — i.e. lcm(2, n). If n is already even it's n itself; otherwise it's 2*n.",
-         tags=["smallest-even-multiple","math","lcm","dsa"],
-         code='''# Smallest positive integer that is a multiple of both 2 and n.
-def smallest_even_multiple(n):
-    return n if n % 2 == 0 else n * 2   # lcm(2, n)''',
+    dict(cat="dsa", title="Day of the Year",
+         answer="Given a 'YYYY-MM-DD' date, return its ordinal day number within the year (1-366). Sum the days of the months before it plus the day, adjusting February to 29 in leap years (divisible by 4, except centuries not divisible by 400).",
+         tags=["day-of-year","date","math","dsa"],
+         code='''# Ordinal day-of-year for a 'YYYY-MM-DD' date (handles leap years).
+def day_of_year(date):
+    year, month, day = map(int, date.split('-'))
+    days_in_month = [31,28,31,30,31,30,31,31,30,31,30,31]
+    # leap year: divisible by 4, except centuries not divisible by 400
+    if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0):
+        days_in_month[1] = 29
+    return sum(days_in_month[:month - 1]) + day''',
          complexity="Time O(1), space O(1).",
-         pitfalls="Always returning 2*n (wrong when n is even); computing a full LCM when the parity check suffices.",
-         example="smallest_even_multiple(5) -> 10; smallest_even_multiple(6) -> 6."),
-    dict(cat="dsa", title="Remove Trailing Zeros From a String",
-         answer="Given a numeric string, remove any TRAILING zeros. A single right-strip of '0' characters does it.",
-         tags=["remove-trailing-zeros","string","dsa"],
-         code='''# Remove trailing zeros from a numeric string.
-def remove_trailing_zeros(num):
-    return num.rstrip("0")   # strip '0' characters from the right end''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Stripping leading zeros too (only trailing); using strip() which trims both ends.",
-         example="remove_trailing_zeros('51230100') -> '512301'."),
-    dict(cat="glossary", title="mmap (memory-mapped files)",
-         answer="Mapping a file (or device) directly into a process's virtual ADDRESS SPACE so it can be read/written like an in-memory array, with the OS paging data in/out on demand. Benefits: no explicit read/write syscall per access, lazy loading (only touched pages load), and a shared page cache (multiple processes map the same file cheaply). Great for large files, databases, and shared memory. Downside: I/O errors surface as page faults, and you need msync to control when writes hit disk.",
-         tags=["mmap","memory-mapped","io","page-cache","operating-systems"],
-         example="A database like LMDB or SQLite mmaps its data file so it reads pages straight from the OS page cache as memory, avoiding a read() syscall per access."),
-    dict(cat="glossary", title="Buffered vs direct I/O",
-         answer="Two ways an app does disk I/O. BUFFERED (default) goes through the OS PAGE CACHE — reads are cached (fast repeats) and writes are buffered and flushed later; convenient but uses OS memory and adds a copy. DIRECT I/O (O_DIRECT) bypasses the page cache, transferring straight between the app buffer and disk — used by databases that manage their OWN cache (avoiding double-caching, gaining predictable I/O), at the cost of alignment rules and losing OS read-ahead.",
-         tags=["direct-io","buffered-io","page-cache","o-direct","operating-systems"],
-         example="Postgres uses buffered I/O (relying on the OS cache) while some databases use O_DIRECT to avoid double-buffering data they already cache in their own buffer pool."),
-    dict(cat="glossary", title="TCP slow start",
-         answer="A congestion-control phase where a new TCP connection starts by sending only a SMALL amount of data (a small congestion window) and DOUBLES it each round trip (exponential) until it hits a threshold or detects loss. It probes the available bandwidth cautiously instead of flooding an unknown-capacity path, preventing a new flow from overwhelming it. After the threshold it switches to slower linear congestion-avoidance growth.",
-         tags=["tcp-slow-start","congestion-control","tcp","networking"],
-         example="A fresh connection ramps the window 2->4->8->16 packets per RTT, which is why the first few round trips of a download are slower than steady state — and why keep-alive matters."),
-    dict(cat="glossary", title="Nagle's algorithm",
-         answer="A TCP optimization that reduces the overhead of many TINY packets by BUFFERING small writes until either a full-size segment accumulates OR the previously sent data is acknowledged. It improves efficiency for bulk small writes but adds LATENCY for interactive/real-time traffic (a small message may wait for an ACK). Latency-sensitive apps disable it with TCP_NODELAY; it can interact badly with delayed ACKs, causing stalls.",
-         tags=["nagle","tcp-nodelay","tcp","latency","networking"],
-         example="A chat or game protocol sets TCP_NODELAY to disable Nagle so each tiny message sends immediately instead of waiting to batch — trading efficiency for low latency."),
-    dict(cat="glossary", title="TTL index",
-         answer="A database feature that automatically EXPIRES and deletes records after a set time-to-live, based on a timestamp field — you declare 'delete rows older than N seconds' and the DB reclaims them in the background, no cleanup cron needed. Ideal for ephemeral data: sessions, caches, OTPs, logs, rate-limit counters. MongoDB TTL indexes and Redis key TTLs are common examples.",
-         tags=["ttl-index","expiry","mongodb","redis","database"],
-         example="A MongoDB TTL index on a sessions collection's createdAt with expireAfterSeconds=3600 auto-deletes each session an hour after creation — no cron job."),
-    dict(cat="conceptual", title="Why does TCP start slow (slow start) instead of sending at full speed immediately?",
-         answer="A new connection has NO IDEA how much bandwidth the path can handle or how congested the network is — the capacity across many links/routers is unknown and shifting. If every new flow blasted at full line rate immediately, they'd collectively overwhelm router buffers, cause mass packet loss, and trigger CONGESTION COLLAPSE (the network gets busier but throughput plummets as everyone retransmits). Slow start solves this by PROBING: begin with a tiny congestion window (a few packets), and since each successful round trip proves the path handled that much, DOUBLE the window each RTT — exponential growth reaching high throughput within a handful of RTTs while backing off instantly if loss appears. It's 'exponential but cautious': fast enough to ramp quickly, safe enough not to swamp an unknown path. Near the estimated capacity (a threshold or after a loss) it shifts to congestion AVOIDANCE (slow linear growth) to push the limit gently. The cost: short connections may finish while still in slow start and never reach full bandwidth — which is exactly why keep-alive, connection pooling, and 0-RTT resumption matter (they skip the ramp). Slow start is what lets millions of independent flows share the internet fairly and stably with no central coordinator.",
-         tags=["tcp-slow-start","congestion-control","congestion-collapse","tcp","why"],
-         example="Downloading a large file, the first ~50ms feels slower as the window ramps 2->4->8->16 packets/RTT, then hits full speed; a tiny API call may finish entirely during slow start — so reusing the warmed-up connection for the next call is much faster."),
+         pitfalls="Wrong leap-year rule (the century exception); off-by-one summing months before the current one.",
+         example="day_of_year('2019-01-09') -> 9; day_of_year('2019-02-10') -> 41."),
+    dict(cat="dsa", title="Minimum Recolors to Get K Consecutive Black Blocks",
+         answer="A string of 'B'/'W' blocks; find the fewest recolors (W->B) so some window of k consecutive blocks is all black. Sliding window: the recolors for a window equal its number of W's; slide the window of size k and track the minimum W count.",
+         tags=["min-recolors","sliding-window","string","dsa"],
+         code='''# Fewest recolors so some window of k blocks is all black ('B'); 'W'=white.
+def minimum_recolors(blocks, k):
+    whites = blocks[:k].count('W')     # recolors needed for the first window
+    best = whites
+    for i in range(k, len(blocks)):
+        whites += (blocks[i] == 'W') - (blocks[i - k] == 'W')   # slide window
+        best = min(best, whites)
+    return best''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Recounting the whole window each step (O(n*k)); off-by-one on the window slide.",
+         example="minimum_recolors('WBBWWBBWBW', 7) -> 3."),
+    dict(cat="dsa", title="Number of Senior Citizens",
+         answer="Each passenger detail is a fixed-format string (10-digit phone, 1 gender char, 2-digit age, 2-digit seat). Count passengers strictly OLDER than 60 by parsing the age substring at positions 11-12.",
+         tags=["senior-citizens","string","parsing","array","dsa"],
+         code='''# Count passengers strictly older than 60, reading age from the ticket string.
+def count_seniors(details):
+    # each detail: 10 digits phone + 1 gender char + 2 digit age + 2 digit seat
+    return sum(1 for d in details if int(d[11:13]) > 60)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Wrong substring offsets for the age; using >= instead of > (strictly older).",
+         example="count_seniors(['7868190130M7522','5303914400F9211','9273338290F4010']) -> 2."),
+    dict(cat="dsa", title="Sum of Values at Indices With K Set Bits",
+         answer="Sum the elements whose INDEX has exactly k set bits (1s) in binary. Iterate indices, count each index's popcount, and add the value when it equals k.",
+         tags=["sum-k-set-bits","bit-manipulation","array","dsa"],
+         code='''# Sum of nums[i] where the index i has exactly k set bits in binary.
+def sum_indices_with_k_set_bits(nums, k):
+    return sum(nums[i] for i in range(len(nums)) if bin(i).count('1') == k)''',
+         complexity="Time O(n log n) for the bit counts, space O(1).",
+         pitfalls="Counting set bits of the VALUE instead of the index; miscounting popcount.",
+         example="sum_indices_with_k_set_bits([5,10,1,5,2], 1) -> 13  (indices 1,2,4)."),
+    dict(cat="dsa", title="Triangle (Minimum Path Sum)",
+         answer="Find the minimum top-to-bottom path sum in a triangle where each step moves to an adjacent number in the row below. BOTTOM-UP DP: start from the last row and, for each cell above, add it to the smaller of its two children — the top cell ends with the answer. O(n) extra space.",
+         tags=["triangle","minimum-path-sum","dynamic-programming","dp","dsa"],
+         code='''# Minimum top-to-bottom path sum in a triangle (bottom-up DP).
+def minimum_total(triangle):
+    dp = triangle[-1][:]              # start from the bottom row
+    for row in range(len(triangle) - 2, -1, -1):
+        for col in range(len(triangle[row])):
+            # each cell + the smaller of its two children below
+            dp[col] = triangle[row][col] + min(dp[col], dp[col + 1])
+    return dp[0]''',
+         complexity="Time O(n^2) over the triangle cells, space O(n).",
+         pitfalls="Top-down without memoization (exponential); wrong adjacency (col and col+1 below).",
+         example="minimum_total([[2],[3,4],[6,5,7],[4,1,8,3]]) -> 11  (2+3+5+1)."),
+    dict(cat="dsa", title="Longest Palindromic Subsequence",
+         answer="Find the length of the longest subsequence of a string that is a palindrome. Interval DP: dp[i][j] is the answer for s[i..j]; if the ends match, dp[i][j] = dp[i+1][j-1] + 2, else the max of dropping either end. Fill by increasing interval length.",
+         tags=["longest-palindromic-subsequence","dynamic-programming","interval-dp","string","dp","dsa"],
+         code='''# Length of the longest palindromic subsequence (interval DP).
+def longest_palindrome_subseq(s):
+    n = len(s)
+    dp = [[0] * n for _ in range(n)]
+    for i in range(n - 1, -1, -1):
+        dp[i][i] = 1                 # a single char is a palindrome of length 1
+        for j in range(i + 1, n):
+            if s[i] == s[j]:
+                dp[i][j] = dp[i + 1][j - 1] + 2   # extend the inner palindrome
+            else:
+                dp[i][j] = max(dp[i + 1][j], dp[i][j - 1])
+    return dp[0][n - 1]''',
+         complexity="Time O(n^2), space O(n^2).",
+         pitfalls="Confusing subsequence (gaps allowed) with substring (contiguous); wrong fill order for intervals.",
+         example="longest_palindrome_subseq('bbbab') -> 4  ('bbbb')."),
+    dict(cat="dsa", title="Best Time to Buy and Sell Stock with Cooldown",
+         answer="Maximize profit with unlimited transactions but a 1-day COOLDOWN after each sale (can't buy the day after selling). Track three rolling states: HOLD (own a stock), SOLD (just sold today), REST (idle, free to buy). Each day update them from the previous day's states.",
+         tags=["stock-cooldown","dynamic-programming","state-machine","dp","dsa"],
+         code='''# Max profit with unlimited transactions and a 1-day cooldown after selling.
+def max_profit_cooldown(prices):
+    if not prices:
+        return 0
+    hold = float('-inf')     # best profit while holding a stock
+    sold = 0                 # best profit having just sold (cooldown next)
+    rest = 0                 # best profit resting (free to buy)
+    for price in prices:
+        prev_sold = sold
+        sold = hold + price              # sell today
+        hold = max(hold, rest - price)   # keep holding, or buy today
+        rest = max(rest, prev_sold)      # rest, or come off cooldown
+    return max(sold, rest)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Buying the day right after selling (the cooldown forbids it); mixing up state transitions.",
+         example="max_profit_cooldown([1,2,3,0,2]) -> 3  (buy1 sell3, cooldown, buy0 sell2)."),
+    dict(cat="dsa", title="Minimum Right Shifts to Sort the Array",
+         answer="Find the minimum number of right-shifts (rotate the whole array right by one) to sort a distinct array, or -1 if impossible. A right-shift-sortable array has at most ONE 'break' (an index where the value exceeds its circular successor); if there's exactly one at index i, the answer is n-1-i; zero breaks means already sorted; more than one means -1.",
+         tags=["min-right-shifts","rotation","array","dsa"],
+         code='''# Min number of right-shifts (rotate right) to sort the array, or -1.
+def minimum_right_shifts(nums):
+    n = len(nums)
+    breaks = 0
+    break_index = 0
+    for i in range(n):
+        if nums[i] > nums[(i + 1) % n]:   # a descent (circularly)
+            breaks += 1
+            break_index = i
+    if breaks == 0:
+        return 0                     # already sorted
+    if breaks == 1:
+        return n - 1 - break_index   # shifts to bring the tail to the front
+    return -1                        # can't be sorted by right shifts''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Not checking circularly (wrap-around break); wrong shift count formula.",
+         example="minimum_right_shifts([3,4,5,1,2]) -> 2; minimum_right_shifts([2,1,4]) -> -1."),
+    dict(cat="glossary", title="Bulkhead pattern",
+         answer="A resilience pattern (named after a ship's watertight compartments) that ISOLATES resources into separate pools so a failure or overload in one part can't sink the whole system. Give each downstream dependency its own thread/connection pool and concurrency limit — a hung dependency exhausts only ITS bulkhead, leaving other requests unaffected. It prevents one slow service from consuming all threads and cascading into total failure.",
+         tags=["bulkhead","resilience","isolation","microservices","fault-tolerance"],
+         example="An API calls services A, B, C; with bulkheads a hung C exhausts only C's 10-thread pool, so calls to A and B keep working — without them, all threads block on C and the whole API goes down."),
+    dict(cat="glossary", title="Geospatial index",
+         answer="A database index optimized for LOCATION queries — 'points within a radius/box/polygon' or 'nearest N'. It maps 2-D coordinates to a locality-preserving 1-D key (geohash, S2/H3 cells) or uses a spatial tree (R-tree/quadtree), so nearby points cluster and radius/range queries scan few candidates. Used by PostGIS, MongoDB 2dsphere, Redis GEO, and Elasticsearch geo.",
+         tags=["geospatial-index","geohash","r-tree","spatial","database"],
+         example="A 'restaurants near me' query uses a geospatial index to fetch only candidates in nearby cells, then filters by exact distance — instead of scanning every restaurant."),
+    dict(cat="glossary", title="Full-text index",
+         answer="An index built for searching WORDS inside text (not exact-match on a whole value). It tokenizes documents, normalizes (lowercase, stemming, stop-word removal), and builds an INVERTED INDEX mapping each term to the documents/positions containing it — enabling fast keyword and phrase search with relevance ranking (BM25/TF-IDF). Used by Elasticsearch/Lucene, Postgres tsvector, MySQL FULLTEXT.",
+         tags=["full-text-index","inverted-index","search","tokenization","database"],
+         example="A product search for 'wireless earbuds' uses a full-text index's inverted lists to instantly find and rank documents with those (stemmed) terms, rather than a LIKE '%...%' scan of every row."),
+    dict(cat="glossary", title="Thundering herd problem",
+         answer="When MANY clients/threads all wait on the same event and are ALL released at once, they stampede a shared resource simultaneously and overwhelm it. Classic case: a popular cache key expires and thousands of requests hit the DB at the same instant to recompute it (cache stampede). Mitigations: request coalescing / single-flight (one recomputes, others wait for it), jittered/staggered expiry, and a lock so exactly one does the expensive work.",
+         tags=["thundering-herd","cache-stampede","single-flight","concurrency","caching"],
+         example="A homepage's cached feed expires and 10,000 concurrent requests all miss and query the DB at once; single-flight lets one rebuild the cache while the rest wait for its result."),
+    dict(cat="glossary", title="Negative caching",
+         answer="Caching the fact that something DOESN'T exist or that a request FAILED (a 404, an empty lookup, a DNS NXDOMAIN) for a short time, so repeated queries for the missing thing don't keep hitting the expensive backend. It protects against 'cache penetration' — where requests for non-existent keys always miss the cache and hammer the DB (sometimes maliciously). Use a SHORT TTL since the missing thing might soon exist.",
+         tags=["negative-caching","cache-penetration","caching","ttl","performance"],
+         example="Repeated lookups for a non-existent user id would miss the cache and hit the DB every time; caching the 'not found' for 30 seconds absorbs the load, and a short TTL lets a newly-created user appear quickly."),
+    dict(cat="conceptual", title="Why use the bulkhead pattern to isolate resources instead of a shared pool?",
+         answer="With a SHARED resource pool (one thread/connection pool serving all downstream calls), one slow or hung dependency creates hidden coupling: requests to it pile up holding their threads while waiting, and since the pool is shared those blocked resources are NO LONGER available for calls to the HEALTHY dependencies. Eventually every thread is stuck on the one sick service, so requests that don't even touch it start failing too — a localized problem CASCADES into a total outage. The BULKHEAD pattern gives each dependency its OWN isolated pool with its own concurrency limit, so a hung dependency can exhaust only ITS compartment (say 10 threads) while the other pools stay full and responsive — containing the blast radius to just the calls that need the failing service. It also gives natural backpressure/load-shedding: once a bulkhead is full, new calls to that dependency fail FAST (reject rather than queue forever), which beats blocking. Combined with timeouts and circuit breakers, bulkheads keep one bad dependency from taking down the whole service. The cost is resource fragmentation (you can't share spare capacity across compartments, so you size each pool and may need more total threads) — but that isolation is the point: trade a little efficiency for the guarantee that a single failure stays contained.",
+         tags=["bulkhead","isolation","cascading-failure","resilience","why"],
+         example="Without bulkheads a hung recommendation service consumes all 200 API worker threads and the whole site goes down; with a 20-thread bulkhead per dependency, recommendation calls exhaust only their 20 threads (and fail fast), so checkout and search keep serving."),
 ]
 
 
