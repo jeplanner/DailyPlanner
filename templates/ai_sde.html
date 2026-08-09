@@ -58,6 +58,22 @@
            font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
   .ex .body { white-space: pre-wrap; font-size: 13px; line-height: 1.6; min-width: 0; }
   html.dark .ex { background: #0e2119; border-left-color: #10b981; }
+  /* Planning chips: study priority, stack rank and how long the topic takes. */
+  .q-pri { font-size: 10px; font-weight: 900; letter-spacing: .03em; border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; }
+  .pri-P0 { color: #fff; background: #dc2626; } .pri-P1 { color: #fff; background: #ea580c; }
+  .pri-P2 { color: #fff; background: #0891b2; } .pri-P3 { color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); }
+  .q-time { font-size: 10.5px; font-weight: 800; color: #4338ca; background: #eef2ff; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
+  html.dark .q-time { color: #c7d2fe; background: #1e1b4b; }
+  .q-rank { font-size: 10.5px; font-weight: 700; color: var(--color-text-secondary); white-space: nowrap; flex: none; }
+  /* The effort readout under the title: total time, and how much is left. */
+  .effort { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; font-weight: 700;
+            color: var(--color-text-secondary); margin: 0 0 10px; }
+  .effort b { color: var(--color-text); font-weight: 900; }
+  .effort .bar { flex: 1 0 100%; height: 6px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
+  .effort .bar > i { display: block; height: 100%; background: #10b981; }
+  .fld.plan { background: #f5f3ff; border-left: 3px solid #8b5cf6; border-radius: 6px; padding: 6px 10px; }
+  .fld.plan .lbl { color: #6d28d9; }
+  html.dark .fld.plan { background: #1e1b33; }
   .q-diff { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
   .diff-easy { color: #047857; background: #d1fae5; } .diff-medium { color: #b45309; background: #fef3c7; } .diff-hard { color: #b91c1c; background: #fee2e2; }
   html.dark .diff-easy { color: #6ee7b7; background: #064e3b; } html.dark .diff-medium { color: #fcd34d; background: #78350f; } html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
@@ -93,10 +109,24 @@
 <div class="wrap">
   <h1>🚀 AI SDE Prep <span class="prog" id="prog"></span></h1>
   <p class="sub">Interactive study bank for AI/ML SDE interviews (Amazon/Google) — DSA, ML concepts, coding, system design &amp; behavioral, each explained in depth. &nbsp;<a href="/interview-prep/guides/ai-sde">📖 Read the full 16-week plan →</a></p>
+  <div class="effort" id="effort"></div>
 
   <div class="card" style="margin-bottom:10px;">
     <div class="controls">
       <select id="cat"><option value="">All topics</option></select>
+      <select id="pri" title="Study priority band">
+        <option value="">Any priority</option>
+        <option value="P0">P0 — do first</option>
+        <option value="P1">P1 — core</option>
+        <option value="P2">P2 — depth</option>
+        <option value="P3">P3 — long tail</option>
+      </select>
+      <select id="sort" title="Order the list">
+        <option value="rank">Recommended order</option>
+        <option value="quick">Quickest first</option>
+        <option value="long">Longest first</option>
+        <option value="cat">Category order</option>
+      </select>
       <select id="diff"><option value="">Any difficulty</option><option value="Easy">Easy</option><option value="Medium">Medium</option><option value="Hard">Hard</option></select>
       <input type="text" class="search" id="search" placeholder="Search e.g. sliding window, attention, recall, STAR…">
       <label class="only"><input type="checkbox" id="unstudied"> Unstudied only</label>
@@ -112,31 +142,59 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
-  let BANK = null; const catLabel = {};
+  let BANK = null, shown = []; const catLabel = {};
   const PKEY = "ai_sde_studied"; const studied = new Set();
   try { (JSON.parse(localStorage.getItem(PKEY)||"[]")||[]).forEach(x=>studied.add(x)); } catch(_){}
   const saveP = () => { try { localStorage.setItem(PKEY, JSON.stringify([...studied])); } catch(_){} };
   const prog = () => { if(BANK) $("prog").textContent = `${studied.size} / ${BANK.total} studied`; };
+  // Minutes -> "3h 20m", the unit a study plan is actually made of.
+  const hrs = (m) => m < 60 ? `${m}m` : (m%60 ? `${Math.floor(m/60)}h ${m%60}m` : `${Math.floor(m/60)}h`);
+
+  // How much work the current filter represents, and how much of it is left.
+  // This is the whole point of prep_minutes: "am I 4 hours from ready, or 40?"
+  function effort(list){
+    const tot  = list.reduce((s,e)=>s+(e.prep_minutes||0),0);
+    const left = list.reduce((s,e)=>s+(studied.has(e.id)?0:(e.prep_minutes||0)),0);
+    const pct  = tot ? Math.round((tot-left)/tot*100) : 0;
+    $("effort").innerHTML =
+      `<span>⏱ <b>${hrs(left)}</b> of prep left</span>` +
+      `<span>${list.length} topic${list.length===1?"":"s"} shown · <b>${hrs(tot)}</b> total</span>` +
+      `<span><b>${pct}%</b> done</span>` +
+      `<span>≈ <b>${(left/60/2).toFixed(0)}</b> days at 2 h/day</span>` +
+      `<span class="bar"><i style="width:${pct}%"></i></span>`;
+  }
 
   function render(){
     if(!BANK) return;
     const cat = $("cat").value, term = ($("search").value||"").trim().toLowerCase(), onlyUn = $("unstudied").checked;
     const diff = $("diff") ? $("diff").value : "";
+    const pri = $("pri") ? $("pri").value : "", sort = $("sort") ? $("sort").value : "rank";
     const list = BANK.entries.filter(e =>
       (!cat || e.cat===cat) && (!onlyUn || !studied.has(e.id)) && (!diff || e.difficulty===diff) &&
+      (!pri || e.priority===pri) &&
       (!term || e.title.toLowerCase().includes(term) || (e.answer||"").toLowerCase().includes(term) || (e.tags||[]).some(t=>t.includes(term)))
     );
-    prog();
+    // "Recommended" is the bank's own stack rank: highest-yield topic first.
+    if (sort === "rank")       list.sort((a,b)=>(a.rank||0)-(b.rank||0));
+    else if (sort === "quick") list.sort((a,b)=>(a.prep_minutes||0)-(b.prep_minutes||0) || (a.rank||0)-(b.rank||0));
+    else if (sort === "long")  list.sort((a,b)=>(b.prep_minutes||0)-(a.prep_minutes||0) || (a.rank||0)-(b.rank||0));
+    prog(); shown = list; effort(list);
     const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
     $("list").innerHTML = list.map(e => `
       <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
+          ${e.priority ? `<span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>` : ""}
+          ${e.prep_label ? `<span class="q-time" title="Time to work this topic properly, once">⏱ ${esc(e.prep_label)}</span>` : ""}
           ${e.difficulty ? `<span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>` : ""}
           <span class="q-badge">${esc(catLabel[e.cat]||e.cat)}</span>
         </div>
         <div class="q-body">
+          ${fld("plan","Prep time & priority",
+                `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
+                + (e.cat_rank ? ` (#${e.cat_rank} within ${catLabel[e.cat]||e.cat})` : "")
+                + (e.priority_note ? ` · ${e.priority_note}` : ""))}
           ${fld("freq","Asked in interviews?",e.frequency)}
           ${fld("answer","Answer / reasoning",e.answer)}
           ${fld("deep","Explained step by step",e.walkthrough)}
@@ -162,7 +220,8 @@
     const id = card.dataset.id;
     if (e.target.classList.contains("q-prac")) {
       if (e.target.checked) studied.add(id); else studied.delete(id);
-      saveP(); card.classList.toggle("done", e.target.checked); prog(); return;
+      // Re-read the effort line so "prep left" drops the moment you tick a box.
+      saveP(); card.classList.toggle("done", e.target.checked); prog(); effort(shown); return;
     }
     const tag = e.target.closest("[data-tag]");
     if (tag) { $("search").value = tag.dataset.tag; $("cat").value=""; render(); window.scrollTo({top:0,behavior:"smooth"}); return; }
@@ -171,12 +230,15 @@
   });
 
   $("cat").addEventListener("change", render);
+  if ($("pri")) $("pri").addEventListener("change", render);
+  if ($("sort")) $("sort").addEventListener("change", render);
   if ($("diff")) $("diff").addEventListener("change", render);
   $("search").addEventListener("input", render);
   $("unstudied").addEventListener("change", render);
   $("pdf").addEventListener("click", () => {
     const p = new URLSearchParams();
     if ($("cat").value) p.set("cat", $("cat").value);
+    if ($("pri") && $("pri").value) p.set("pri", $("pri").value);
     const term = ($("search").value||"").trim(); if (term) p.set("q", term);
     window.open("/ai-sde/pdf" + (p.toString()?"?"+p.toString():""), "_blank", "noopener");
   });

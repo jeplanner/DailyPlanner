@@ -9020,3 +9020,721 @@ _TRUE_DIFFICULTY = {
 for _e in ENTRIES:
     if _e["title"] in _TRUE_DIFFICULTY:
         _e["difficulty"] = _TRUE_DIFFICULTY[_e["title"]]
+
+
+# ══ ML / LLM core: walkthroughs + worked examples (batch 1) ═══════════════
+# Same house style as the DSA walkthroughs above: restate the idea in
+# everyday words, show the naive view first, DERIVE the insight, then trace
+# it with real numbers. Examples deliberately vary the domain: a product
+# scenario, a numeric calculation, a failure case, a contrast against a
+# sibling concept, and an interview-style application.
+_WALKTHROUGH_ML = {}
+_EXAMPLES_ML = {}
+
+
+_WALKTHROUGH_ML["Bias-Variance trade-off (explained simply)"] = r"""
+WHAT WE ARE ACTUALLY TALKING ABOUT
+You train a model on 1000 house sales and it predicts prices on houses it has never
+seen. It gets them wrong. The question this topic answers is: WHY was it wrong? There
+are only three possible reasons, and knowing which one you have tells you what to fix.
+
+THE EXPERIMENT THAT DEFINES IT
+Imagine you could collect the training set again and again - 1000 fresh house sales
+each time - and retrain from scratch on every one. You now have, say, 50 models. Point
+all 50 at the SAME unseen house and look at the 50 predictions.
+
+  * If all 50 predictions cluster tightly at 42 lakh but the true price is 60 lakh,
+    the model is consistently wrong. That gap is BIAS. Every version of the model made
+    the same mistake, so more data will not help - the model is too simple to express
+    the truth. This is underfitting.
+
+  * If the 50 predictions are scattered from 30 to 90 lakh and average out near 60,
+    the model is right on average but wildly unstable. That scatter is VARIANCE. The
+    model is memorising the noise peculiar to whichever 1000 houses it happened to see.
+    This is overfitting.
+
+  * Even a perfect model cannot predict the buyer's mood on the day. That leftover is
+    IRREDUCIBLE NOISE. No algorithm removes it.
+
+WHY IT IS A TRADE-OFF AND NOT A FREE LUNCH
+Expected squared error on a new point decomposes exactly as
+
+    error  =  bias^2  +  variance  +  noise
+
+Model complexity moves the first two in OPPOSITE directions. A straight line through
+the houses has almost no freedom: retrain it on different samples and you get nearly
+the same line (low variance), but it can never bend to match reality (high bias). A
+degree-20 polynomial has enough freedom to pass through every training point exactly
+(zero bias on the training set) but it whips around violently between them, and a
+different sample of 1000 houses gives a completely different curve (huge variance).
+Somewhere in between sits the complexity that minimises the SUM. That is the trade-off.
+
+HOW YOU TELL WHICH ONE YOU HAVE - THE ONLY DIAGNOSTIC YOU NEED
+Compare training error with validation error.
+
+    train 18%, validation 20%   -> both bad, gap small     -> HIGH BIAS
+    train  1%, validation 19%   -> train great, gap huge   -> HIGH VARIANCE
+    train  2%, validation  3%   -> both good, gap small    -> you are done
+
+The gap is variance. The height of the training error is bias. That is the whole test.
+
+WHAT TO DO ABOUT EACH - AND WHY THE FIXES ARE MIRROR IMAGES
+High bias means the model cannot express the truth, so give it more expressive power:
+a bigger network, more layers, better features (add area*rooms if price depends on the
+interaction), train longer, reduce regularization. More DATA does nothing for bias -
+a straight line fitted on ten million points is still a straight line.
+
+High variance means the model is fitting noise, so take freedom away or give it more
+signal to average over: more training data (the single most reliable cure), stronger
+L1/L2 regularization, dropout, early stopping, a smaller model, or bagging - which
+literally averages many high-variance models so their random errors cancel.
+
+Notice more data cures variance but not bias, and a bigger model cures bias but worsens
+variance. That is why you must diagnose before you act; the wrong fix makes it worse.
+
+A HAND-TRACE WITH NUMBERS
+True relationship: y = 3x, and you observe y = 3x + noise. Training points at x = 1, 2, 3
+came out as 3.2, 5.7, 9.4.
+  Constant model (predict the mean, 6.1): at x=5 it predicts 6.1 but truth is 15. It
+  predicts 6.1 for every sample you could have drawn - variance near zero, bias 8.9.
+  Degree-2 polynomial: passes exactly through 3.2, 5.7, 9.4 including the noise. Redraw
+  the three points with fresh noise and the curve's shape changes completely; at x=5 it
+  might say 11 or 19. Bias near zero, variance enormous.
+  Straight line through the origin: fits slope about 3.05. Slightly off (small bias),
+  barely moves when the noise changes (small variance). It wins - and it wins because it
+  matches the true form of the data, which is the real lesson.
+
+THE ONE-LINE TAKEAWAY
+Bias is being consistently wrong, variance is being inconsistently wrong. Read the gap
+between training and validation error: a small gap with high error means add capacity,
+a large gap means add data or constraints.
+""".strip("\n")
+
+_EXAMPLES_ML["Bias-Variance trade-off (explained simply)"] = [
+    """The textbook case, traced.
+Fit polynomials of increasing degree to 30 noisy points from a sine curve and
+watch train/validation RMSE:
+  degree 1:  train 0.42, val 0.44   <- both bad -> underfit, high bias
+  degree 3:  train 0.11, val 0.13   <- sweet spot
+  degree 9:  train 0.02, val 0.38   <- train great, val bad -> overfit, high variance
+  degree 20: train 0.00, val 1.90   <- passes through every point, useless between them
+Training error falls FOREVER as you add complexity; validation error is U-shaped.
+The bottom of that U is the model you ship. If you only ever look at training
+error you will always pick degree 20 and always be wrong.""",
+
+    """A second ordinary case with a different shape - a real product.
+Fraud detection on card transactions, 2 million rows.
+  Logistic regression on 8 features: train recall 61%, val recall 60%.
+  Both numbers are low and equal -> high bias. The team's instinct was to buy
+  more data. They bought 4 million more rows and got 61% / 60% again - exactly
+  what the theory predicts, because more data never fixes bias.
+  Switching to gradient-boosted trees with feature crosses (amount x merchant
+  category x hour) gave train 89% / val 84%. Capacity was the missing thing.""",
+
+    """The edge case: zero training error that means nothing.
+A 1-nearest-neighbour classifier has ZERO training error by construction - every
+training point's nearest neighbour is itself. Train accuracy 100%, always, for
+any dataset, even one with random labels. Its validation accuracy on the same
+random-label data is 50%. This is the purest demonstration that training error
+measures how well you memorised, not how well you learned. Raising k to 15
+averages over 15 neighbours: train accuracy drops to 93%, validation rises to
+91%. You traded a little bias for a large reduction in variance and won.""",
+
+    """The case that breaks the naive fix.
+A team sees val loss above train loss and concludes overfitting, so they crank
+L2 regularization from 0.01 to 10. Result: train loss rises from 0.08 to 0.55
+and val loss from 0.31 to 0.57. They converted a variance problem into a bias
+problem and ended up worse. The correct reading was: gap = 0.23 (variance) but
+train = 0.08 (bias already tiny), so the cheap wins were more data and dropout,
+not a 1000x regularization increase. Always move ONE knob and re-read both
+numbers - the gap and the height - before moving the next.""",
+
+    """A numeric decomposition you can do by hand.
+True function f(x)=2 at x=5. You train 5 models on 5 different samples and they
+predict at x=5: 1.8, 2.4, 1.6, 2.6, 1.6.
+  mean prediction = 2.0  ->  bias = 2.0 - 2.0 = 0
+  variance = average of (p - 2.0)^2 = (0.04+0.16+0.16+0.36+0.16)/5 = 0.176
+So this model is unbiased but noisy: expected error 0.176 comes entirely from
+variance. Bagging - averaging all 5 predictions into one - gives exactly 2.0 and
+error 0. That is the whole reason Random Forests work: many unbiased,
+high-variance trees averaged together keep the zero bias and cancel the variance.""",
+
+    """Contrast against the sibling concept, and the interview answer.
+Interviewers love: 'Your model has 99% train and 70% test accuracy. What now?'
+The answer is NOT a list of every technique you know. It is:
+  1. Name the diagnosis: 29-point gap = high variance, and train is near
+     perfect so bias is not the problem.
+  2. Order the fixes by cost: more/better data first (free lunch, reduces
+     variance without adding bias), then augmentation, then regularization and
+     dropout, then a smaller model LAST because it re-introduces bias.
+  3. Say what would change your mind: if train had been 72% and test 70%, the
+     same gap-free numbers mean high bias and the fix reverses completely.
+Compare with underfitting's sibling framing: bias-variance is the WHY,
+overfitting/underfitting is the SYMPTOM you observe. Interviewers check whether
+you can go from symptom to cause to fix without guessing.""",
+]
+
+
+_WALKTHROUGH_ML["Overfitting — what it is and how to prevent it"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+A model that has overfit has learned the training set instead of learning the task.
+The distinction sounds philosophical until you see it cost money: a model with 99.8%
+accuracy in the notebook that gets 71% in production has not learned fraud, it has
+learned which 40,000 specific transactions were labelled fraud.
+
+WHY IT HAPPENS AT ALL - THE PART MOST EXPLANATIONS SKIP
+Every training set is signal plus noise. Signal is the part that repeats on new data
+(expensive electronics bought at 3am are riskier). Noise is the part that does not
+(transaction #88213 happened to be fraud and happened to be Rs 4,317). A model with
+enough free parameters cannot tell the two apart - both reduce the training loss
+identically, so gradient descent happily fits both. Nothing in the loss function
+says 'this pattern will not generalise'. That is the entire mechanism: optimisation
+is indifferent between learning the rule and memorising the exception.
+
+It follows immediately that overfitting gets worse when parameters are many relative
+to examples. 50,000 parameters and 500 rows is memorisation waiting to happen; the
+same 50,000 parameters with 5 million rows have no spare capacity to waste on noise.
+
+HOW YOU DETECT IT
+Hold out data the model never trains on. Train error keeps falling; validation error
+falls, bottoms out, then climbs. The moment it starts climbing is the moment the model
+switched from learning signal to memorising noise. Plot both curves on one chart -
+this single plot answers more questions than any metric table.
+
+THE PREVENTIONS, AND WHY EACH ONE WORKS
+Each cure attacks the same mechanism from a different side.
+  More data - noise is random, so it does not repeat across examples, while signal
+  does. Add examples and the noise averages out while the signal accumulates. Most
+  reliable cure, most expensive.
+  Data augmentation - manufacture new examples by transformations that keep the label
+  (flip an image, crop it, paraphrase a sentence). Teaches the model which variations
+  are irrelevant, which is exactly the knowledge that stops memorisation.
+  L1 / L2 regularization - add a penalty on weight size to the loss, so a pattern must
+  now EARN its weight by reducing loss more than the penalty costs. Noise patterns
+  are weak, so they no longer pay for themselves.
+  Dropout - randomly switch off neurons each step, so no single neuron can be relied
+  upon and the network cannot build a fragile chain that memorises one example.
+  Early stopping - just stop at the bottom of the validation U. Simplest and free.
+  Cross-validation - do not prevent overfitting, but stops you FOOLING YOURSELF about
+  how much you have.
+  Simpler model - fewer parameters, less room to memorise.
+
+THE MISTAKE EVEN GOOD ENGINEERS MAKE
+Tuning hyperparameters against the test set. You try 60 configurations, pick the one
+with the best test score, and report it. That number is now optimistic - you have
+overfit to the test set through your own choices. Hence three splits: train to fit,
+validation to choose, test touched ONCE at the very end.
+
+A HAND-TRACE
+Spam classifier, 300 emails, 20,000 bag-of-words features.
+  epoch 1: train 71%, val 70%
+  epoch 5: train 88%, val 84%
+  epoch 12: train 97%, val 86%   <- validation stops improving here
+  epoch 30: train 100%, val 79%  <- validation is now going BACKWARDS
+Inspecting the weights at epoch 30, the highest-weighted token is a customer's
+surname that appeared in three spam emails by coincidence. That is memorised noise,
+visible in the weights. Early stopping at epoch 12 keeps the 86%.
+
+THE ONE-LINE TAKEAWAY
+Overfitting is learning noise because the loss function cannot distinguish it from
+signal. Give the model more real examples or less freedom - those are the only two
+levers, and everything on the technique list is one of them in disguise.
+""".strip("\n")
+
+_EXAMPLES_ML["Overfitting — what it is and how to prevent it"] = [
+    """The textbook case, traced epoch by epoch.
+Small CNN on 2,000 cat/dog images:
+  epoch  2: train 68%, val 66%
+  epoch 10: train 86%, val 82%
+  epoch 18: train 96%, val 83%   <- val flat, train still climbing: it starts here
+  epoch 40: train 100%, val 74%  <- val actively worse than at epoch 18
+The model reached 100% train accuracy, which on 2,000 images with millions of
+parameters simply means it memorised them. Adding random flips and crops
+(augmentation) changed the curve to train 91% / val 89% at epoch 40 - the model
+could no longer memorise because it never saw the same pixels twice.""",
+
+    """A second case in a different domain - tabular, no neural net in sight.
+A decision tree with no depth limit on 5,000 loan applications grows to depth 34
+and 4,100 leaves. Train accuracy 100%, test 68%. Many leaves hold ONE training
+row - literally a lookup table with an if-else spelling. Setting
+max_depth=6, min_samples_leaf=50 gives train 82% / test 79%. You gave up 18
+points of training accuracy that were fake and gained 11 points of real accuracy.""",
+
+    """The edge case: overfitting with NO gap, hidden by a leak.
+A churn model shows train 94% and validation 93% - textbook healthy - but
+collapses to 61% live. The cause was not classic overfitting but leakage: the
+feature `days_since_last_login` was computed AFTER the churn date, so it encoded
+the answer. Validation shared the leak, so it could not catch it. The lesson:
+a healthy train/val gap proves nothing if the split itself is wrong. For
+time-based problems always split by TIME, never randomly.""",
+
+    """The case that breaks the obvious fix.
+Team sees overfitting and adds dropout 0.5 to every layer INCLUDING the input,
+plus L2 = 0.1, plus reduces the model to 2 layers, all in one commit. Result:
+train 64%, val 63%. They over-corrected into underfitting and cannot tell which
+of the three changes was responsible. Correct method: change ONE knob, re-read
+train AND val, keep it only if val improved. Dropout 0.3 alone got val to 88%.""",
+
+    """A numeric look at WHY regularization works.
+Two candidate weights for a noisy feature that reduces training loss by 0.001:
+  without L2 the optimiser sets w = 4.0 because it reduces loss, full stop.
+  with L2 (lambda = 0.01) the cost of that weight is 0.01 * 4.0^2 = 0.16,
+  which is 160x more than the 0.001 it saves, so the optimiser drives w to ~0.
+Meanwhile a genuine feature that cuts loss by 0.8 easily pays its 0.16 penalty
+and keeps its weight. Regularization is a price list: weak patterns cannot
+afford to exist, strong ones can. That is the whole mechanism in one line.""",
+
+    """The interview version - and the trap inside it.
+'You get 99% on training and 99% on validation but 70% in production. Overfit?'
+The answer is no - or at least, not to the training set. Equal train and
+validation means the model generalises fine WITHIN the data you have. A 29-point
+production drop points at distribution shift: production traffic differs from the
+data you collected (new user segment, new season, a UI change altering behaviour),
+or your validation set is not representative (random split on time-ordered data).
+The fix is monitoring input distributions and re-splitting by time, not dropout.
+Being able to say 'that is not overfitting, that is drift' is what separates a
+memorised answer from an understood one.""",
+]
+
+
+_WALKTHROUGH_ML["Precision vs Recall (and the 95%-accuracy trap)"] = r"""
+THE TRAP, FIRST, BECAUSE IT MOTIVATES EVERYTHING
+1000 transactions, 50 are fraud. A model that predicts 'not fraud' for every single
+one is 95% accurate. It has caught zero fraud. Accuracy is a weighted average across
+classes, so when one class is rare, the majority class drowns it out and the number
+becomes meaningless. Any time classes are imbalanced - fraud, disease, spam, defects,
+click-through - accuracy is the wrong metric and precision/recall are the right ones.
+
+THE FOUR BOXES EVERYTHING IS BUILT FROM
+For a yes/no prediction there are exactly four outcomes:
+                    actually fraud     actually clean
+  flagged fraud     TP (caught)        FP (false alarm)
+  said clean        FN (missed)        TN (correct pass)
+
+  PRECISION = TP / (TP + FP)  - of everything I FLAGGED, how much was really fraud?
+  RECALL    = TP / (TP + FN)  - of everything that WAS fraud, how much did I catch?
+
+The denominators are the whole trick. Precision divides by what the model claimed,
+recall divides by what reality contained. Say them in words every time and you will
+never mix them up: precision is about the alarm's trustworthiness, recall is about
+the net's coverage.
+
+WHY THEY PULL AGAINST EACH OTHER
+A classifier outputs a probability; you choose a threshold. Lower the threshold and
+you flag more transactions: you catch more real fraud (recall up) but you also sweep
+in more innocents (precision down). Raise it and only the most blatant cases get
+flagged: nearly everything you flag is real (precision up) but plenty slips through
+(recall down). The model is fixed; the threshold slides you along the trade-off. This
+is why 'improve precision AND recall' usually means change the model or the features,
+while 'we need higher recall' usually means just move the threshold.
+
+The two degenerate ends make it concrete: flag everything -> recall 100%, precision
+equals the base rate (5%). Flag only the single most confident case and be right ->
+precision 100%, recall 2%. Neither is useful, which is why one number alone is never
+a complete claim. Always quote precision AT a given recall, or vice versa.
+
+WHICH ONE TO OPTIMISE - DECIDE FROM THE COST OF EACH MISTAKE
+Ask: what does a false positive cost, and what does a false negative cost?
+  Cancer screening: a missed tumour can be fatal; a false alarm costs one more scan.
+  FN is catastrophic -> maximise RECALL.
+  Spam filter: a missed spam is mildly annoying; a legitimate job offer in the spam
+  folder is a disaster. FP is catastrophic -> maximise PRECISION.
+  Search / recommendations: users look at the top 10, so junk at the top is what hurts
+  -> precision (at k).
+  Legal discovery, safety recalls, security triage: missing one is unacceptable and a
+  human reviews the flags anyway -> recall.
+The correct answer in an interview is never 'both'. It is 'depends on which error is
+more expensive here, and here is why'.
+
+F1 AND WHEN IT LIES
+F1 = 2PR/(P+R), the harmonic mean, which is dragged down by whichever number is small
+(P=1.0, R=0.02 gives F1=0.039, not 0.51). Useful as a single sortable number when the
+two errors cost roughly the same. It is the WRONG summary when they do not - a
+medical screen with F1 optimal at precision 0.6/recall 0.6 may be far worse in
+practice than precision 0.2/recall 0.95. Use F-beta (beta>1 weights recall) or just
+state both.
+
+A HAND-TRACE
+1000 transactions, 50 fraud. Model flags 60, of which 40 are truly fraud.
+  TP=40, FP=20, FN=10, TN=930
+  precision = 40/60 = 0.67  - two thirds of alerts are real, one third annoy a customer
+  recall    = 40/50 = 0.80  - four of every five frauds caught, ten got away
+  accuracy  = 970/1000 = 0.97 - and the do-nothing model scores 0.95, so this number
+  tells you almost nothing about whether the model is any good.
+Now drop the threshold: flags 200, TP=48, FP=152. Recall jumps to 0.96 (excellent) but
+precision collapses to 0.24 - three of every four flagged customers get their card
+blocked wrongly. Whether that is a good trade depends entirely on your business, and
+saying so out loud is the answer the interviewer wants.
+
+THE ONE-LINE TAKEAWAY
+Precision = of what I flagged, how much was right. Recall = of what was there, how
+much did I find. Accuracy hides both when a class is rare; the threshold slides you
+between them; the costs of FP and FN decide where to stand.
+""".strip("\n")
+
+_EXAMPLES_ML["Precision vs Recall (and the 95%-accuracy trap)"] = [
+    """The textbook confusion matrix, computed end to end.
+Disease screening, 10,000 patients, 100 actually sick. Model flags 180:
+  TP = 90, FP = 90, FN = 10, TN = 9,810
+  precision = 90/180 = 0.50   half the alarms are false
+  recall    = 90/100 = 0.90   nine out of ten sick people caught
+  accuracy  = 9900/10000 = 0.99 - and predicting 'healthy' for everyone scores
+              0.99 too, while catching nobody. The two models are equally
+              'accurate' and wildly different in value.
+For a screening test 0.50 precision is fine - flagged patients get a cheap
+confirmatory test - while the 10 missed patients are the real cost. Right metric,
+right decision.""",
+
+    """A second case where the answer flips - same maths, opposite conclusion.
+Email spam filter, 10,000 emails, 2,000 spam. Aggressive model:
+  TP = 1,960, FP = 300, FN = 40  ->  precision 0.87, recall 0.98
+That looks great until you ask what the 300 FPs were: 300 real emails in the spam
+folder, and one of them was a job offer. Users forgive spam in the inbox; they
+never forgive losing real mail. Raising the threshold gives TP 1,500, FP 15 ->
+precision 0.99, recall 0.75. You now let 500 spam through and users are happier.
+Identical trade-off structure to the screening example, opposite optimum, purely
+because the cost of a false positive changed.""",
+
+    """The edge case that exposes a broken metric.
+A model predicts the majority class for everything on a 99.9%/0.1% imbalance
+(rare-defect detection, 1 defect per 1000 parts).
+  accuracy = 0.999   -> looks near-perfect
+  precision = 0/0    -> undefined, it flagged nothing
+  recall = 0/1 = 0   -> caught nothing
+  F1 = 0
+This is why you always print the confusion matrix, never one number. Also note
+precision is undefined (not zero) when nothing is flagged - libraries silently
+return 0.0 with a warning, and teams have shipped models after mistaking that
+for a real score.""",
+
+    """The case that breaks threshold-tuning done naively.
+A team tunes the threshold to maximise F1 and lands at 0.42, giving precision
+0.71 / recall 0.68. In production, each false positive costs Rs 200 (manual
+review) and each false negative costs Rs 9,000 (chargeback). Plugging the real
+costs in, the loss-minimising threshold is 0.18, giving precision 0.31 / recall
+0.94 - a far worse F1 and roughly a third of the money lost. F1 implicitly
+assumes FP and FN cost the same; when they do not, optimise expected cost
+directly. Expected cost = FP_count*200 + FN_count*9000, evaluated at every
+threshold - it is five lines of code and it is the correct objective.""",
+
+    """A numeric look at precision@k, the version search and recsys actually use.
+A retrieval system returns 10 documents for a query; 4 are relevant, and there
+are 20 relevant documents in the whole corpus.
+  precision@10 = 4/10 = 0.40   - what the user sees on page one
+  recall@10    = 4/20 = 0.20   - how much of what exists you surfaced
+Users only look at the first page, so precision@10 is the metric that maps to
+satisfaction. But a RAG pipeline feeding an LLM cares about recall@10 - if the
+answer-bearing chunk is not in the 10 you retrieved, the LLM cannot possibly
+answer, no matter how good the model is. Same system, same numbers, different
+metric because the CONSUMER of the results changed from a human to a model.""",
+
+    """The interview version, with the follow-up they always ask.
+'Our fraud model is 99.5% accurate. Is it good?' Correct response: ask for the
+base rate. If 0.5% of transactions are fraud, a model that flags nothing is
+99.5% accurate, so the number carries zero information. Ask for the confusion
+matrix, then precision and recall, then the cost of each error type.
+The follow-up: 'We need to catch more fraud. What do you do?' Answer in order of
+cost: (1) lower the threshold - free, immediate, and quantify the precision you
+lose; (2) if the resulting false-alarm rate is unacceptable, that is a MODEL
+problem, not a threshold problem, so improve features/model; (3) consider a
+two-stage system - a high-recall cheap model to filter, then a high-precision
+expensive model or a human on the survivors. That staging is how real fraud
+systems get both, and saying it out loud is what lands the answer.""",
+]
+
+
+# The glossary carries a short "Overfitting" term as well as the ml_concepts
+# entry; both deserve the same teaching material.
+_WALKTHROUGH_ML["Overfitting"] = _WALKTHROUGH_ML["Overfitting — what it is and how to prevent it"]
+_EXAMPLES_ML["Overfitting"] = _EXAMPLES_ML["Overfitting — what it is and how to prevent it"]
+
+
+for _e in ENTRIES:
+    if not _e.get("walkthrough") and _e["title"] in _WALKTHROUGH_ML:
+        _e["walkthrough"] = _WALKTHROUGH_ML[_e["title"]]
+    if not _e.get("examples") and _e["title"] in _EXAMPLES_ML:
+        _e["examples"] = _EXAMPLES_ML[_e["title"]]
+
+
+# ══ Prep time & stack rank ════════════════════════════════════════════════
+# Two planning fields on every entry so you can answer "how much effort is
+# this, and how much is left?" without guessing:
+#
+#   prep_minutes - realistic minutes for a final-year student to work the
+#                  topic properly ONCE: read the answer, follow the
+#                  walkthrough, work the examples, type the code out, and
+#                  commit the mnemonic to memory. Not skim time.
+#   rank         - a single global stack rank (1 = study this first) across
+#                  the whole bank, so "what next?" always has one answer.
+#   priority     - the P0/P1/P2/P3 band that rank falls into.
+#   cat_rank     - the same ordering restricted to the entry's category.
+#
+# Both are computed, not hand-written, so they stay consistent as the bank
+# grows. An explicit prep_minutes= or rank= on a Q(...) always wins.
+
+# Baseline minutes per category, before difficulty and content adjustments.
+# A glossary term is a definition plus an example; a system design is a
+# 45-minute whiteboard you have to be able to drive end to end.
+_CAT_BASE_MIN = {
+    "glossary": 12,
+    "mindset": 5,
+    "company": 10,
+    "conceptual": 12,
+    "cs_fundamentals": 13,
+    "ai_llm": 13,
+    "behavioral": 15,
+    "ml_concepts": 16,
+    "ai_applied": 20,
+    "dsa": 25,
+    "ml_coding": 35,
+    "ml_system_design": 50,
+}
+# Hard topics genuinely take longer than easy ones - not a token adjustment.
+_DIFF_MIN_MULT = {"Easy": 0.7, "Medium": 1.0, "Hard": 1.55}
+
+
+def _prep_minutes(entry):
+    """Minutes to actually learn this entry, from its category, difficulty and
+    how much material it carries."""
+    mins = _CAT_BASE_MIN.get(entry["cat"], 15)
+    mins *= _DIFF_MIN_MULT.get(entry.get("difficulty"), 1.0)
+
+    # Typing out and understanding code is the slowest part of a DSA topic,
+    # and longer solutions really do take longer - charge by the line.
+    code = entry.get("code") or ""
+    if code:
+        _lines = len([l for l in code.splitlines() if l.strip()])
+        mins += min(14, 4 + _lines / 5.0)
+
+    # Reading time for the long-form walkthrough at ~180 words/min, which is
+    # slow-for-comprehension rather than skim speed.
+    _walk = entry.get("walkthrough") or ""
+    if _walk:
+        mins += len(_walk.split()) / 180.0
+
+    # Each worked example is read, then re-derived on paper.
+    mins += 2.0 * len(entry.get("examples") or [])
+    if entry.get("diagram"):
+        mins += 2.0
+    if entry.get("followups"):
+        mins += 2.0
+
+    mins = max(5, min(120, mins))
+    return int(round(mins / 5.0) * 5)          # round to a tidy 5-minute block
+
+
+for _e in ENTRIES:
+    if not _e.get("prep_minutes"):
+        _e["prep_minutes"] = _prep_minutes(_e)
+
+
+# ── Stack rank ────────────────────────────────────────────────────────────
+# Study order is not the same as difficulty order. What earns a topic a place
+# near the top is: (1) how often it is actually asked, (2) how central it is
+# to an AI SDE loop, (3) whether it is a foundation other topics build on,
+# and (4) how cheap it is - a 10-minute topic asked in every interview beats
+# a 60-minute one asked occasionally, so quick wins break ties upward.
+
+# Weight per category: the coding round is the gate you must clear first, and
+# for an AI-flavoured SDE role the LLM/ML core is what the rest of the loop
+# probes.
+_CAT_RANK_WEIGHT = {
+    "dsa": 3.0,
+    "ai_llm": 2.9,
+    "ml_concepts": 2.7,
+    "ml_coding": 2.4,
+    "conceptual": 2.3,
+    "ai_applied": 2.2,
+    "glossary": 2.1,
+    "cs_fundamentals": 2.4,
+    "ml_system_design": 1.9,
+    "behavioral": 1.9,
+    "company": 1.3,
+    "mindset": 1.1,
+}
+
+# Tags that mark a foundation - the patterns and ideas that unlock many other
+# entries, so learning them early pays compound interest.
+_FOUNDATION_TAGS = {
+    "two-pointers", "sliding-window", "hash-map", "binary-search", "bfs", "dfs",
+    "dynamic-programming", "dp", "recursion", "sorting", "heap", "prefix-sum",
+    "linked-list", "binary-tree", "backtracking", "greedy", "graph",
+    "attention", "transformer", "embeddings", "overfitting", "regularization",
+    "gradient-descent", "backpropagation", "metrics", "evaluation",
+    "rag", "llm", "tokenization", "prompting",
+    "complexity", "big-o", "star", "amazon-lp",
+}
+
+
+def _freq_tier(entry):
+    """3 = asked in almost every loop, 2 = common, 1 = occasional."""
+    f = (entry.get("frequency") or "").lower()
+    if f.startswith("very commonly") or "almost every" in f or "extremely" in f:
+        return 3.0
+    if "commonly asked" in f or "frequently" in f:
+        return 2.0
+    if "occasionally" in f or "rarely" in f or "less common" in f:
+        return 1.0
+    return 1.6
+
+
+# The canonical list. These are the topics that come up again and again in
+# real loops - the Blind-75 spine of the DSA set plus the concepts an AI SDE
+# is expected to be able to explain cold. Without this the tag heuristic rates
+# "Assign Cookies" and "Two Sum" identically, which is nonsense in practice.
+_MARQUEE = {
+    # patterns first - learning the pattern unlocks a dozen problems
+    "Two Pointers — recognize & apply", "Sliding Window — recognize & apply",
+    "Hashing — the 'have I seen this?' pattern", "Binary Search — including 'search on the answer'",
+    "Graphs — BFS, DFS, and when to use each", "Trees — BFS vs DFS",
+    "Dynamic Programming — the 4-question method", "Backtracking — subsets, permutations, combinations",
+    "Heap / Top-K — when 'K largest/most frequent' appears",
+    "Intervals — merge, insert, overlap", "Linked Lists — reversal & fast/slow pointers",
+    # arrays & strings
+    "Maximum Subarray (Kadane's algorithm)", "Product of Array Except Self",
+    "Container With Most Water", "Trapping Rain Water", "3Sum", "Move Zeroes",
+    "Merge Intervals", "Insert Interval", "Non-overlapping Intervals (min removals)",
+    "Longest Substring Without Repeating Characters", "Longest Repeating Character Replacement",
+    "Minimum Window Substring (sliding window)", "Group Anagrams", "Valid Parentheses",
+    "Longest Consecutive Sequence", "Subarray Sum Equals K", "Sort Colors (Dutch National Flag)",
+    "Longest Palindromic Substring (expand around center)", "Rotate Image (90 degrees, in place)",
+    "Set Matrix Zeroes (O(1) space)", "Spiral Matrix", "Best Time to Buy and Sell Stock II (greedy)",
+    "Majority Element (Boyer-Moore voting)", "First Missing Positive",
+    "Squares of a Sorted Array", "Valid Sudoku", "String to Integer (atoi)",
+    # binary search
+    "Search in Rotated Sorted Array", "Find Minimum in Rotated Sorted Array",
+    "Koko Eating Bananas (binary search on the answer)", "Find First and Last Position (sorted array)",
+    "Search a 2D Matrix", "Capacity to Ship Packages Within D Days", "Find Peak Element (binary search)",
+    # linked list
+    "Reverse Linked List", "Merge Two Sorted Lists", "Linked List Cycle",
+    "Remove Nth Node From End of List", "Merge k Sorted Lists (min-heap)",
+    "Find the Duplicate Number (Floyd's cycle)", "Middle of the Linked List",
+    "Palindrome Linked List",
+    # stack
+    "Design a Min Stack", "Daily Temperatures (monotonic stack)",
+    "Next Greater Element (monotonic stack)", "Largest Rectangle in Histogram (monotonic stack)",
+    "Evaluate Reverse Polish Notation", "Decode String (stack)", "Asteroid Collision (stack)",
+    # trees
+    "Binary Tree Level Order Traversal", "Invert a Binary Tree", "Maximum Depth of Binary Tree",
+    "Validate Binary Search Tree", "Lowest Common Ancestor of a Binary Tree",
+    "Diameter of a Binary Tree", "Binary Tree Maximum Path Sum",
+    "Kth Smallest Element in a BST", "Construct Binary Tree from Preorder and Inorder",
+    "Path Sum (root-to-leaf boolean)", "Symmetric Tree",
+    "Binary Tree Right Side View", "Subtree of Another Tree", "Balanced Binary Tree",
+    # graphs
+    "Number of Islands (DFS flood-fill)", "Course Schedule (topological sort)",
+    "Clone Graph (DFS)", "Rotting Oranges (multi-source BFS)", "Word Ladder (shortest transformation, BFS)",
+    "Dijkstra's Shortest Path (min-heap)", "Topological Sort (Kahn's algorithm)",
+    "Union-Find (Disjoint Set Union)", "Union-Find / Disjoint Set Union (DSU)",
+    "Pacific Atlantic Water Flow", "Number of Connected Components", "Flood Fill",
+    # heap / design
+    "Top K Frequent Elements", "Kth Largest Element", "Find Median from Data Stream (two heaps)",
+    "K Closest Points to Origin (heap)", "Design an LRU Cache", "Trie (Prefix Tree)",
+    "Task Scheduler (cooldown)", "Meeting Rooms II (minimum rooms)", "Quickselect (kth largest)",
+    # dp
+    "Climbing Stairs", "House Robber", "Coin Change (fewest coins)", "Word Break (DP)",
+    "Longest Increasing Subsequence (patience + binary search)", "Unique Paths (grid DP)",
+    "Longest Common Subsequence", "Edit Distance (Levenshtein)", "Partition Equal Subset Sum",
+    "Maximum Product Subarray", "Jump Game", "Min Cost Climbing Stairs (DP)", "Decode Ways (DP)",
+    # backtracking
+    "Subsets (power set)", "Permutations (backtracking)", "Combination Sum (reusable candidates)",
+    "Word Search (backtracking)", "Generate Parentheses (backtracking)",
+    "Letter Combinations of a Phone Number",
+    # bit / math
+    "Single Number (XOR)", "Number of 1 Bits (popcount)", "Missing Number",
+    "Pow(x, n) — fast exponentiation", "Count Primes (Sieve of Eratosthenes)",
+    "Merge Sort", "Quick Sort",
+    # ML / AI must-explain
+    "Bias-Variance trade-off (explained simply)", "Overfitting — what it is and how to prevent it",
+    "Precision vs Recall (and the 95%-accuracy trap)", "What is an embedding?",
+    "How gradient descent works (batch vs SGD vs mini-batch)", "L1 vs L2 regularization",
+    "The Transformer & self-attention (the big one)", "Class Imbalance Strategies",
+    "ROC curve, AUC & choosing a threshold", "Cross-validation — what and why",
+    "Ensembles — Bagging vs Boosting", "CNN vs RNN vs Transformer — when to use which",
+    "What is a Large Language Model (LLM)?", "What is RAG (Retrieval-Augmented Generation)?",
+    "How does self-attention work (the Transformer core)?",
+    "Why do LLMs hallucinate, and how do you reduce it?",
+    "Pretraining vs Fine-tuning vs Prompting (how to adapt an LLM)",
+    "What is the context window, and why does it matter?",
+    "Tokenization and Byte-Pair Encoding (BPE)", "Vector database & semantic search",
+    "Temperature, top-k and top-p (controlling LLM output)",
+    "What is fine-tuning with LoRA (parameter-efficient tuning)?",
+    "What is an AI agent (tool use & the ReAct loop)?",
+    "How do you evaluate an LLM / GenAI system?", "Function calling / tool use in LLMs",
+    "RAG chunking strategies (how to split documents)",
+    "Design a RAG-powered document Q&A chatbot",
+    "Prompt injection and how to defend against it",
+    # CS fundamentals that get asked in every loop
+    "Big-O notation", "Hash table (hash map)", "Process vs Thread (and why it matters)",
+    "Deadlock and its four necessary conditions", "TCP vs UDP", "ACID transactions",
+    "SQL vs NoSQL — how to choose", "Database index (B-tree)", "Database normalization",
+    "CAP theorem", "gRPC vs REST", "Context switch", "Race condition",
+    "Mutex vs semaphore (and the other lock types)", "Stack memory vs heap memory",
+    "Why does a database index speed up reads but slow down writes?",
+    "Recursion", "Dynamic programming", "Garbage collection vs manual memory management",
+    "IEEE 754 floating point (and why 0.1 + 0.2 != 0.3)",
+    "CPU cache, cache lines and locality of reference",
+}
+
+
+def _rank_score(entry):
+    score = 3.0 * _freq_tier(entry)
+    score += 2.0 * _CAT_RANK_WEIGHT.get(entry["cat"], 1.5)
+    # Count the foundation tags rather than checking for any, so a problem that
+    # is BOTH a hash-map and a sliding-window drill outranks one that is neither.
+    _found = len(set(entry.get("tags", [])) & _FOUNDATION_TAGS)
+    score += 0.9 * min(2, _found)
+    if entry["title"] in _MARQUEE:
+        score += 2.6
+    elif (entry["cat"] == "dsa" and entry.get("difficulty") == "Easy" and not _found):
+        # Filler easies: real problems, but nobody's offer turned on them.
+        score -= 1.4
+    # Easy-and-common topics are the cheapest marks in the interview, so they
+    # go first; Hard ones are worth doing but not worth doing FIRST.
+    score += {"Easy": 0.5, "Medium": 0.2, "Hard": 0.0}.get(entry.get("difficulty"), 0.2)
+    # Return on time: a 10-minute topic outranks a 60-minute one, all else
+    # equal. Capped, or the 5-minute glossary terms would sweep the top of the
+    # list purely for being short.
+    score += min(1.5, 25.0 / max(5, entry.get("prep_minutes", 15)))
+    # Entries that already carry a full walkthrough + worked examples are the
+    # ones that will actually teach you something in that time.
+    if entry.get("walkthrough"):
+        score += 0.4
+    if len(entry.get("examples") or []) >= 5:
+        score += 0.4
+    return score
+
+
+# Sort by score, then by title, so the ordering is fully deterministic and a
+# rebuild never reshuffles equal-scoring entries.
+_ordered = sorted(ENTRIES, key=lambda e: (-_rank_score(e), e["cat"], e["title"]))
+_total = len(_ordered)
+for _i, _e in enumerate(_ordered, 1):
+    _e["rank"] = _i
+    _pct = _i / _total
+    _e["priority"] = ("P0" if _pct <= 0.10 else
+                      "P1" if _pct <= 0.35 else
+                      "P2" if _pct <= 0.70 else "P3")
+
+# Rank inside the entry's own category, for "what next in DSA?"
+_percat = {}
+for _e in _ordered:
+    _percat[_e["cat"]] = _percat.get(_e["cat"], 0) + 1
+    _e["cat_rank"] = _percat[_e["cat"]]
+
+# Human-readable planning labels used by the UI and the PDF export.
+_PRIORITY_NOTE = {
+    "P0": "P0 - do these first: highest-yield topics, asked in almost every loop.",
+    "P1": "P1 - core: expected knowledge, do these once P0 is done.",
+    "P2": "P2 - depth: sets you apart once P0/P1 are solid.",
+    "P3": "P3 - long tail: only if you have time after everything above.",
+}
+for _e in ENTRIES:
+    _m = _e["prep_minutes"]
+    _e["prep_label"] = (f"{_m} min" if _m < 60 else
+                        f"{_m // 60}h" if _m % 60 == 0 else f"{_m // 60}h {_m % 60}m")
+    _e["priority_note"] = _PRIORITY_NOTE[_e["priority"]]
+
+#: Total study time for the whole bank, in minutes - the denominator for the
+#: "effort left" readout on the study page.
+TOTAL_PREP_MINUTES = sum(e["prep_minutes"] for e in ENTRIES)

@@ -259,15 +259,31 @@ def ai_sde_pdf():
     items = [{"id": f"ai{i}", **e} for i, e in enumerate(AI_SDE_ENTRIES)]
     selected, label = _bank_select(items, ("title", "answer", "pitfalls"),
                                    AI_SDE_CATEGORIES, "title")
+    # ?pri=P0 narrows the export to one priority band, and the export always
+    # comes out in stack-rank order so the PDF reads as a study plan.
+    pri = (request.args.get("pri") or "").strip().upper()
+    if pri:
+        selected = [it for it in selected if it.get("priority") == pri]
+        label = f"{label} — {pri}" if label else f"Priority {pri}"
+    selected.sort(key=lambda it: it.get("rank") or 0)
     heading = label or "AI SDE Prep Bank"
-    subtitle = (f"{len(selected)} topic{'' if len(selected) == 1 else 's'} "
-                f"| DailyPlanner Interview Prep | {_today().isoformat()}")
+    _mins = sum(it.get("prep_minutes") or 0 for it in selected)
+    _effort = f"{_mins // 60}h {_mins % 60}m of prep" if _mins else ""
+    subtitle = " | ".join(x for x in [
+        f"{len(selected)} topic{'' if len(selected) == 1 else 's'}", _effort,
+        "DailyPlanner Interview Prep", _today().isoformat()] if x)
     sections = []
     for it in selected:
         _diff_freq = " | ".join(x for x in [
             (f"Difficulty: {it['difficulty']}" if it.get("difficulty") else ""),
             (it.get("frequency") or "")] if x)
-        fields = [("Difficulty & interview frequency", _diff_freq or None),
+        # Planning line: how long this takes and where it sits in the study order.
+        _plan = " | ".join(x for x in [
+            (f"Prep time: {it['prep_label']}" if it.get("prep_label") else ""),
+            (f"Stack rank #{it['rank']} of {len(items)}" if it.get("rank") else ""),
+            (it.get("priority_note") or "")] if x)
+        fields = [("Prep time & priority", _plan or None),
+                  ("Difficulty & interview frequency", _diff_freq or None),
                   ("Answer / reasoning", it.get("answer")),
                   ("Explained step by step", it.get("walkthrough")),
                   # Several worked examples when the topic has them, else the
