@@ -19216,6 +19216,918 @@ WHAT PEOPLE GET WRONG: comparing against the ORIGINAL array while modifying a
 copy; and shifting zeros during the merge pass rather than after it.
 """.strip("\n")
 
+_PLAIN_ALGO["Base 7 Conversion"] = r"""
+IN ONE SENTENCE: repeatedly take the remainder on division by 7 to get the next
+digit, and the digits come out backwards so reverse at the end.
+
+STEPS
+1. Handle 0 separately - the loop never runs and would return an empty string.
+2. Record the sign and work with the absolute value.
+3. While the number is non-zero: append the remainder modulo 7 as a digit, then
+   integer-divide by 7.
+4. Reverse the collected digits, prepend a minus if needed, and join.
+
+WHY MOD-THEN-DIVIDE GIVES THE DIGITS: the remainder on division by the base IS
+the last digit in that base, and dividing removes it. That is true for any base -
+the identical loop with 2 gives binary, with 16 gives hex.
+
+WHY THE DIGITS COME OUT REVERSED: you extract the least significant digit first.
+Appending and reversing once is O(n); inserting at the front each time is
+quadratic.
+
+WHY THE ZERO CASE IS SEPARATE: with the input at zero the while loop body never
+executes, so you would return "" instead of "0". This same guard is needed in
+every base-conversion routine.
+
+WHY THE SIGN IS STRIPPED FIRST: negative modulo behaves differently across
+languages, so taking the absolute value up front avoids a whole class of
+platform-specific bugs.
+
+WHAT PEOPLE GET WRONG: the zero case; and forgetting to reverse.
+""".strip("\n")
+
+_PLAIN_ALGO["Check If It Is a Straight Line"] = r"""
+IN ONE SENTENCE: fix the first two points as the reference direction, then check
+every other point has the same direction using CROSS-MULTIPLICATION rather than
+slope.
+
+STEPS
+1. Take the first two points and compute the change in x and the change in y
+   between them.
+2. For each remaining point, compute its change in x and y from the first point.
+3. The points are collinear when dx1 times dy2 equals dx2 times dy1.
+4. If any point fails, return false.
+
+WHY CROSS-MULTIPLICATION INSTEAD OF COMPARING SLOPES: slope is dy divided by dx,
+which divides by zero on a vertical line and introduces floating-point error
+everywhere else. Multiplying both sides out gives the identical test using only
+integer multiplication - exact, and with no special case for vertical lines. This
+is the entire point of the problem.
+
+WHAT THE EXPRESSION ACTUALLY IS: it is the 2-D cross product of the two direction
+vectors. Zero cross product means parallel, and since both vectors start from the
+same point, parallel means collinear.
+
+WHY YOU COMPARE EVERY POINT TO THE SAME REFERENCE: comparing consecutive pairs
+also works, but anchoring on one point makes the reasoning uniform and avoids
+accumulating a stale direction.
+
+WHAT PEOPLE GET WRONG: using floating-point slopes; and not handling the case
+where the first two points are identical, which makes the reference direction
+zero - worth asking whether duplicate points can appear.
+""".strip("\n")
+
+_PLAIN_ALGO["Check if Array Is Sorted and Rotated"] = r"""
+IN ONE SENTENCE: a rotated sorted array has at most ONE place where a value drops
+below its predecessor, counting the wrap from the last element back to the first.
+
+STEPS
+1. Count the positions where an element is greater than the element after it,
+   treating the array as circular so the last element is compared with the first.
+2. Return whether that count is at most 1.
+
+WHY AT MOST ONE DROP: a fully sorted array has zero drops. Rotating it moves the
+break to exactly one place - the seam where the end wraps to the beginning. Two
+or more drops means no rotation of any sorted array could produce it.
+
+WHY THE CIRCULAR COMPARISON IS ESSENTIAL: without wrapping, a genuinely rotated
+array like [3,4,5,1,2] shows one drop and passes, but so does [2,1,3,4,5] which is
+NOT a rotated sorted array - its wrap from 5 back to 2 is a second drop. Including
+the wrap is what distinguishes them.
+
+WHY DUPLICATES ARE FINE: the test uses strictly-greater, so equal neighbours are
+not drops - which correctly accepts [3,3,3] and [1,1,2].
+
+THE RELATED PROBLEM: Find Minimum in Rotated Sorted Array locates that single
+seam by binary search. Same structural fact, different question.
+
+WHAT PEOPLE GET WRONG: omitting the wrap-around comparison, which is the only
+thing this problem is testing.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Good Pairs"] = r"""
+IN ONE SENTENCE: count how many times each value appears, then a value appearing
+c times contributes c choose 2 pairs.
+
+STEPS
+1. Build a frequency map.
+2. For each count c, add c times (c-1) divided by 2.
+3. Return the total.
+
+WHY THE FORMULA: any two of the c identical elements form a good pair, and the
+number of ways to choose 2 from c is c(c-1)/2. You never need to enumerate the
+pairs, only count them.
+
+WHY DIVIDE BY TWO: choosing element A then B is the same pair as B then A, and
+the problem counts unordered pairs with i < j.
+
+THE ONE-PASS ALTERNATIVE WORTH KNOWING: walk the array keeping a running count
+map, and for each element add the number of times you have ALREADY seen it before
+recording it. That accumulates the same total without a second loop, and it is the
+same look-before-insert idiom as Two Sum.
+
+WHY IT BEATS THE NESTED LOOP: comparing every pair is O(n^2). Counting is O(n),
+and the difference is the whole reason the question exists.
+
+WHAT PEOPLE GET WRONG: forgetting the division by two; and using c squared, which
+counts an element paired with itself.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Negative Numbers in a Sorted Matrix"] = r"""
+IN ONE SENTENCE: start at the bottom-left corner and walk a staircase - move
+right when the value is negative-free, move up when you hit a negative - counting
+whole tails at a time.
+
+STEPS
+1. Start at the bottom-left cell.
+2. If the current value is negative, then everything to its RIGHT in that row is
+   also negative (rows are non-increasing), so add the whole remaining row width
+   to the count and move UP one row.
+3. Otherwise move RIGHT one column.
+4. Stop when you leave the grid.
+
+WHY THE BOTTOM-LEFT CORNER IS THE RIGHT START: it is the only corner where the
+two moves are unambiguous - moving right increases the value, moving up increases
+it too, so each comparison eliminates a whole row or column. Starting at a
+different corner leaves you with a choice that does not narrow the search.
+
+WHY YOU CAN COUNT A WHOLE TAIL AT ONCE: rows are sorted non-increasing, so the
+moment you meet a negative, every cell to the right of it in that row is negative.
+That converts a per-cell scan into one addition per row.
+
+WHY IT IS O(m + n): every step moves either up or right and never back, so you
+take at most m + n steps regardless of grid size. The naive scan is O(m x n).
+
+THE SAME STAIRCASE ELSEWHERE: Search a 2D Matrix II uses the identical walk from
+the top-right corner. Recognising the corner-walk pattern is the transferable
+part.
+
+WHAT PEOPLE GET WRONG: starting at the top-left, where both moves decrease the
+value and neither prunes; and adding one instead of the whole tail.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Negatives in a Sorted Matrix"] = r"""
+IN ONE SENTENCE: the same bottom-left staircase walk - move right while values
+stay non-negative, and when you hit a negative, count the rest of the row and
+step up.
+
+STEPS
+1. Begin at the bottom-left cell with a count of 0.
+2. Negative value: every cell to its right in this row is negative too, so add
+   the remaining width and move up a row.
+3. Non-negative: move one column right.
+4. Stop when you run off the top or the right edge.
+
+WHY THE CORNER MATTERS: at the bottom-left, moving right and moving up both lead
+to larger values, so a single comparison tells you decisively which direction
+prunes. Any other starting corner leaves the decision ambiguous.
+
+WHY THE ROW TAIL CAN BE COUNTED IN ONE STEP: the row is sorted descending, so the
+first negative you meet marks the boundary - everything after it is negative by
+definition of sorted order.
+
+WHY O(m + n) RATHER THAN O(m x n): each iteration permanently eliminates a row or
+a column, and there are only m + n of them.
+
+THE ALTERNATIVE: binary search the boundary in each row, giving O(m log n). Also
+good, and worth mentioning - the staircase is simpler and slightly better.
+
+WHAT PEOPLE GET WRONG: counting one cell at a time after finding a negative,
+which throws away the sortedness the problem gave you.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Symmetric Integers"] = r"""
+IN ONE SENTENCE: for each number in the range, skip it unless it has an even digit
+count, then compare the sum of the first half of the digits against the second.
+
+STEPS
+1. Walk every integer from low to high.
+2. Convert to a string; if the length is odd, it cannot be symmetric - skip.
+3. Split the digits into two equal halves.
+4. Compare the sum of each half; count the matches.
+
+WHY ODD LENGTHS ARE EXCLUDED BY DEFINITION: symmetry here means the two halves
+have equal digit sums, and an odd number of digits cannot be split into two equal
+halves. That check comes first because it is cheap and eliminates roughly half the
+candidates.
+
+WHY BRUTE FORCE IS ACCEPTABLE HERE: the constraints cap the range at around
+10,000, so a direct scan is a few tens of thousands of cheap operations. Reaching
+for digit dynamic programming would be correct and enormous overkill - recognising
+when the constraints permit the simple answer is itself judgement, and worth
+saying out loud.
+
+HOW YOU WOULD SCALE IT: if the bounds were up to 10^18, this becomes a digit-DP
+problem - count numbers with a given half-sum difference, position by position.
+Naming that as the scaling path is a good closing note.
+
+WHAT PEOPLE GET WRONG: comparing the digit STRINGS rather than their sums; and
+splitting at the wrong midpoint for lengths like 4 versus 6.
+""".strip("\n")
+
+_PLAIN_ALGO["Count the Number of Consistent Strings"] = r"""
+IN ONE SENTENCE: put the allowed characters in a set, then count the words whose
+own character set is entirely contained in it.
+
+STEPS
+1. Build a set of the allowed characters.
+2. For each word, build its set of characters and test whether it is a subset of
+   the allowed set.
+3. Count the words that pass.
+
+WHY A SUBSET TEST RATHER THAN CHECKING EVERY CHARACTER: it says exactly what you
+mean in one expression, and it short-circuits internally. Checking each character
+with an all() is equally correct and equally fast.
+
+WHY YOU BUILD THE ALLOWED SET ONCE: it never changes between words. Rebuilding it
+inside the loop is the common inefficiency.
+
+WHY DUPLICATE CHARACTERS IN A WORD ARE IRRELEVANT: the rule is about which
+characters appear, not how often, so collapsing the word to a set loses nothing.
+Contrast with Ransom Note, where multiplicities matter - noticing which problems
+need counts and which only need membership is the transferable distinction.
+
+WHAT PEOPLE GET WRONG: testing the subset relation backwards - allowed inside the
+word rather than the word inside allowed.
+""".strip("\n")
+
+_PLAIN_ALGO["Day of the Year"] = r"""
+IN ONE SENTENCE: add up the full months before this one, add the day, and add one
+more if it is a leap year and the date is past February.
+
+STEPS
+1. Split the date string on hyphens into year, month and day.
+2. Keep a table of the days in each month for a non-leap year.
+3. Sum the entries for every month strictly before the given one, then add the
+   day.
+4. If the year is a leap year AND the month is March or later, add one.
+
+WHY THE LEAP RULE IS THREE CONDITIONS, NOT ONE: a year is a leap year if it is
+divisible by 4, EXCEPT centuries, UNLESS divisible by 400. So 2000 is a leap year
+and 1900 is not. Writing only the divisible-by-4 test is the classic bug and it
+is silently wrong once a century.
+
+WHY THE MONTH CHECK ON THE LEAP DAY: the extra day is 29 February, so it only
+affects dates in March onward. Adding it for a January date shifts the answer by
+one.
+
+WHY A LOOKUP TABLE RATHER THAN A CHAIN OF IFS: twelve constants belong in a list,
+not in branches - shorter, and there is nowhere for a typo to hide behind a
+condition.
+
+WHAT PEOPLE GET WRONG: the century rule; adding the leap day unconditionally; and
+including the current month's full length rather than only the months before it.
+""".strip("\n")
+
+_PLAIN_ALGO["Decode XORed Array"] = r"""
+IN ONE SENTENCE: XOR is its own inverse, so each original value is the previous
+one XORed with the corresponding encoded value.
+
+STEPS
+1. Start the result with the given first element.
+2. For each encoded value, XOR it with the last value you produced and append the
+   result.
+3. Return the list.
+
+WHY IT INVERTS SO CLEANLY: the encoding is encoded[i] = arr[i] XOR arr[i+1]. XOR
+both sides by arr[i] and, since a XOR a is 0, you get arr[i+1] = arr[i] XOR
+encoded[i]. The decode is the same operation as the encode - which is exactly why
+XOR is used for this kind of thing.
+
+WHY THE FIRST ELEMENT MUST BE GIVEN: the encoding only records DIFFERENCES between
+neighbours, so infinitely many arrays produce the same encoding. One anchor value
+pins it down. That is the same reason a difference array needs a starting value.
+
+WHY THE OUTPUT IS ONE LONGER THAN THE INPUT: n-1 differences describe n values.
+
+WHAT PEOPLE GET WRONG: XORing against the original encoded array rather than the
+running decoded value; and forgetting to seed the result with the first element.
+""".strip("\n")
+
+_PLAIN_ALGO["Decompress Run-Length Encoded List"] = r"""
+IN ONE SENTENCE: read the array two at a time - a frequency then a value - and
+emit the value that many times.
+
+STEPS
+1. Step an index through the array in increments of 2.
+2. The element at the index is the frequency; the next one is the value.
+3. Append the value repeated that many times.
+4. Return the collected list.
+
+WHY STEPPING BY TWO: the encoding is a flat list of pairs, so the pair boundary is
+positional. Iterating one at a time and tracking a parity flag also works but is
+more state for no benefit.
+
+WHY THE ORDER IS FREQUENCY-THEN-VALUE: it is defined by the problem, and swapping
+them silently produces a plausible wrong answer. Read it once and write the
+assignment carefully - this is the only real risk here.
+
+WHY A ZERO FREQUENCY IS SAFE: repeating a value zero times contributes nothing,
+which the list multiplication handles naturally with no special case.
+
+WHY extend AND NOT append: you are adding several elements, not one nested list.
+Using append produces a list of lists.
+
+WHAT PEOPLE GET WRONG: the pair order; and appending a sublist instead of
+extending.
+""".strip("\n")
+
+_PLAIN_ALGO["Design HashMap"] = r"""
+IN ONE SENTENCE: an array of buckets, a hash function to pick one, and a small
+list inside each bucket to handle collisions.
+
+STEPS
+1. Choose a bucket count and create that many empty lists.
+2. To find a key's bucket, take the key modulo the bucket count.
+3. PUT: scan that bucket for the key. If present, update its value in place;
+   otherwise append the pair.
+4. GET: scan the bucket for the key, return the value or -1.
+5. REMOVE: scan and delete the matching pair.
+
+WHY BUCKETS PLUS LISTS - the technique is called separate chaining: two different
+keys can hash to the same index, and the list is where those collisions live.
+Without a collision strategy, storing one key would silently overwrite another.
+
+WHY A SCAN INSIDE THE BUCKET IS ACCEPTABLE: with a reasonable bucket count each
+list stays very short, so the scan is effectively constant. The average O(1)
+claim for hash maps depends entirely on the load factor staying low.
+
+WHAT A REAL IMPLEMENTATION ADDS - worth naming: resizing when the load factor
+passes a threshold (roughly 0.75), and rehashing every entry into the larger
+table. Without it, performance degrades to a linear scan as entries accumulate.
+The alternative collision strategy is open addressing, which probes for the next
+free slot instead of chaining - better cache behaviour, more complex deletion.
+
+WHY THE BUCKET COUNT IS OFTEN PRIME: it spreads poorly-distributed keys more
+evenly across buckets.
+
+WHAT PEOPLE GET WRONG: appending on PUT without first checking whether the key
+already exists, which creates duplicate entries that GET then resolves
+inconsistently.
+""".strip("\n")
+
+_PLAIN_ALGO["Excel Sheet Column Number"] = r"""
+IN ONE SENTENCE: it is base-26 arithmetic where A is 1 rather than 0 - so for
+each letter, multiply the running total by 26 and add the letter's value.
+
+STEPS
+1. Start the result at 0.
+2. For each character left to right: multiply the result by 26, then add the
+   letter's position in the alphabet (A being 1, Z being 26).
+3. Return the result.
+
+WHY IT IS "BIJECTIVE BASE 26" AND NOT ORDINARY BASE 26: there is no zero digit.
+Ordinary base 26 would count A, B, ... Z, BA - because after the last single digit
+you would carry a 1 and reset to the zero digit. Here Z is followed by AA, which
+means A plays the role of both 1 and the carry digit. That asymmetry is the whole
+subtlety.
+
+WHY MULTIPLY-THEN-ADD WORKS LEFT TO RIGHT: it is Horner's method - each existing
+digit is shifted one place up as a new one arrives, which is the same loop you
+would write for parsing a decimal string.
+
+THE REVERSE PROBLEM: converting a number back to a title requires subtracting 1
+before each modulo, precisely because there is no zero digit. If you can explain
+why that subtraction is there, you understand this problem.
+
+WHAT PEOPLE GET WRONG: using A = 0, which shifts every answer; and processing the
+string right to left with explicit powers, which works but invites off-by-one
+errors.
+""".strip("\n")
+
+_PLAIN_ALGO["Excel Sheet Column Title"] = r"""
+IN ONE SENTENCE: repeatedly take the remainder modulo 26 to get a letter - but
+subtract 1 first each time, because this base has no zero digit.
+
+STEPS
+1. While the number is greater than 0: subtract 1, then take the remainder modulo
+   26 and convert it to a letter with A as 0.
+2. Divide the number by 26 and repeat.
+3. Reverse the collected letters.
+
+WHY THE SUBTRACT-ONE IS THE ENTIRE PROBLEM: in normal base 26 the digits are 0-25.
+Here they are 1-26 with no zero, so 26 must map to Z rather than carrying to "A0".
+Subtracting 1 shifts the range down to 0-25 for the modulo, and the matching
+division then carries correctly. Without it, every multiple of 26 comes out wrong -
+26 gives "AZ" or "A@" instead of "Z".
+
+WHERE TO PUT THE SUBTRACTION: immediately at the top of each loop iteration,
+before both the modulo and the division. Doing it in only one of the two places
+produces answers that are right for small inputs and wrong past 26.
+
+WHY THE DIGITS COME OUT REVERSED: you extract the least significant letter first,
+so collect and reverse rather than prepending.
+
+THE SANITY CHECKS TO RUN: 1 gives A, 26 gives Z, 27 gives AA, 52 gives AZ, 53
+gives BA. If all five pass, the implementation is right.
+
+WHAT PEOPLE GET WRONG: omitting the subtraction; and forgetting to reverse.
+""".strip("\n")
+
+_PLAIN_ALGO["Find All Numbers Disappeared in an Array"] = r"""
+IN ONE SENTENCE: use the SIGN of each slot as a visited marker - for every value
+seen, negate the entry at that value's home index; whatever stays positive was
+never seen.
+
+STEPS
+1. For each value in the array, take its absolute value (it may already have been
+   negated) and subtract 1 to get its home index.
+2. If the entry at that index is still positive, negate it.
+3. Second pass: every index whose entry is still positive corresponds to a
+   missing number - report index + 1.
+
+WHY THE ABSOLUTE VALUE IN STEP 1: entries get negated as you go, so by the time
+you read a slot it may already carry a minus sign. Reading it raw would compute a
+negative index. This one detail is where the bug lives.
+
+WHY SIGNS RATHER THAN A SET: the problem asks for O(1) extra space, which rules
+out a set or a boolean array. The values are guaranteed to lie in 1..n, so each
+one has a natural home index, and the sign bit is a free per-slot boolean you
+already own.
+
+WHY THIS IS THE SAME FAMILY AS FIRST MISSING POSITIVE: both encode information in
+POSITION rather than in extra storage. That problem swaps values into place; this
+one marks with signs. Both rest on the values being bounded by the array length.
+
+THE CAVEAT WORTH RAISING: it mutates the input. If the caller needs it intact, do
+a restoring pass making everything positive again, and say that you would.
+
+WHAT PEOPLE GET WRONG: forgetting the absolute value; and negating unconditionally
+rather than only when still positive, which double-negates duplicates back to
+positive.
+""".strip("\n")
+
+_PLAIN_ALGO["Find First Palindromic String in the Array"] = r"""
+IN ONE SENTENCE: walk the list in order and return the first word that equals its
+own reverse.
+
+STEPS
+1. For each word, compare it with its reverse.
+2. Return the first match, or an empty string if none.
+
+WHY YOU RETURN IMMEDIATELY: the question asks for the FIRST one, so you stop as
+soon as you find it. Collecting all palindromes and taking the first is correct
+but does unnecessary work.
+
+THE TWO-POINTER ALTERNATIVE: compare characters from both ends inward, which uses
+O(1) extra space instead of building a reversed copy. Same complexity in time;
+worth naming if the interviewer asks about memory, especially for long strings.
+
+WHY THE EMPTY-RESULT CASE MATTERS: the problem specifies an empty string when
+nothing qualifies. Returning None or raising would fail the contract.
+
+WHAT PEOPLE GET WRONG: continuing the loop after finding a match; and
+case-normalising, which the problem does not ask for.
+""".strip("\n")
+
+_PLAIN_ALGO["Find the Difference (XOR)"] = r"""
+IN ONE SENTENCE: XOR the character codes of BOTH strings together - every
+character in the original cancels its copy in the shuffled string, leaving the
+added one.
+
+STEPS
+1. Start a result at 0.
+2. XOR in the code of every character of the first string and of the second.
+3. Convert the surviving code back to a character.
+
+WHY EVERY MATCHED CHARACTER CANCELS: t is s shuffled with one extra character. So
+each character of s appears an even number of times across the concatenation of s
+and t, and a XOR a is 0. Order is irrelevant because XOR is commutative - which is
+why the shuffling does not matter at all.
+
+WHY YOU WORK ON CHARACTER CODES: XOR is an integer operation, so you convert each
+character to its numeric code and convert back at the end.
+
+THE ALTERNATIVE THAT IS ALSO FINE: sum the codes of t and subtract the sum of s -
+the difference is the added character's code. Same idea, arithmetic instead of
+bitwise. Or count characters with a frequency map, which is more general but uses
+O(k) space.
+
+WHY XOR IS PREFERRED: O(1) space and no risk of overflow, whereas summing can
+overflow in fixed-width languages on long inputs.
+
+WHAT PEOPLE GET WRONG: XORing only one string; and forgetting to convert the
+final code back to a character.
+""".strip("\n")
+
+_PLAIN_ALGO["Find the Difference of Two Arrays"] = r"""
+IN ONE SENTENCE: convert both to sets and take the two set differences.
+
+STEPS
+1. Build a set from each array.
+2. The first output is the first set minus the second; the second output is the
+   reverse.
+3. Return them as two lists.
+
+WHY SETS ARE EXACTLY RIGHT HERE: the answer must be DISTINCT values, which is what
+a set gives you for free, and set difference expresses "in this one but not that
+one" directly. Doing it with loops and membership checks would be O(n x m) unless
+you built a set anyway.
+
+WHY THE ORDER OF THE OUTPUT DOES NOT MATTER: the problem accepts any order, which
+is why a set is acceptable despite losing the original ordering. Confirm that in
+the statement - if order were required, you would iterate the original array and
+filter.
+
+WHY YOU BUILD BOTH SETS: each difference needs the other side as a membership
+structure, so you need both regardless.
+
+WHAT PEOPLE GET WRONG: returning duplicates by filtering the raw lists; and
+computing the symmetric difference, which merges the two answers into one.
+""".strip("\n")
+
+_PLAIN_ALGO["Fizz Buzz"] = r"""
+IN ONE SENTENCE: loop 1 to n and test divisibility by 15 FIRST, then 3, then 5.
+
+STEPS
+1. For each i from 1 to n:
+   - divisible by 15 -> "FizzBuzz"
+   - else divisible by 3 -> "Fizz"
+   - else divisible by 5 -> "Buzz"
+   - else the number as a string.
+
+WHY THE 15 CHECK MUST COME FIRST: 15 is divisible by both 3 and 5, so testing 3
+first would catch it and emit "Fizz". Ordering the conditions from most specific
+to least specific is the entire content of this problem, and it is why FizzBuzz
+survives as a screening question - it catches people who do not think about the
+overlap.
+
+THE ALTERNATIVE WITHOUT THE MAGIC 15: build the string by appending "Fizz" if
+divisible by 3 and "Buzz" if divisible by 5, then fall back to the number if the
+string is still empty. It scales cleanly if a third rule is added, and it is the
+version to write if the interviewer says "now add 7 -> Bazz".
+
+WHY IT IS ASKED: it is a filter, not a puzzle. Write it cleanly, get the ordering
+right, and stop. Over-engineering it is a worse signal than the naive version.
+
+WHAT PEOPLE GET WRONG: the condition order; and looping from 0, which emits an
+extra entry.
+""".strip("\n")
+
+_PLAIN_ALGO["Greatest Common Divisor of Strings"] = r"""
+IN ONE SENTENCE: if the two strings commute under concatenation, a common divisor
+exists, and its length is the numeric GCD of the two lengths.
+
+STEPS
+1. If s + t is not equal to t + s, return the empty string - no common divisor
+   exists.
+2. Otherwise compute the GCD of the two lengths.
+3. Return the prefix of s of that length.
+
+WHY THE COMMUTATIVITY TEST WORKS: if both strings are made of repetitions of the
+same base block, then concatenating them in either order produces the same
+sequence of blocks. Conversely, if s+t equals t+s, they must share a common base.
+It is a surprising and clean equivalence, and quoting it confidently is the point
+of the question.
+
+WHY THE ANSWER'S LENGTH IS THE GCD OF THE LENGTHS: a common divisor string of
+length L must divide both lengths evenly, so L divides gcd(len(s), len(t)) - and
+the greatest such L is the gcd itself.
+
+WHY YOU CAN TAKE ANY PREFIX OF THAT LENGTH: once you know a common divisor
+exists, every candidate block of that length is the same block, so the first one
+is as good as any.
+
+THE BRUTE-FORCE FALLBACK: try every prefix length that divides both lengths, from
+largest down, checking whether repeating it rebuilds both strings. Slower, more
+obviously correct, and worth offering if you cannot justify the commutativity
+trick.
+
+WHAT PEOPLE GET WRONG: skipping the commutativity check and returning a prefix
+that does not actually divide either string.
+""".strip("\n")
+
+_PLAIN_ALGO["Hamming Distance"] = r"""
+IN ONE SENTENCE: XOR the two numbers so the differing positions become 1s, then
+count those 1s.
+
+STEPS
+1. XOR the two integers.
+2. Count the set bits in the result - either by testing the lowest bit and
+   shifting, or with the x & (x-1) clear-lowest-bit loop.
+
+WHY XOR ISOLATES THE DIFFERENCES: XOR produces 1 exactly where the two inputs
+disagree and 0 where they match. So the problem reduces immediately to a popcount,
+and the whole question is whether you spot that reduction.
+
+WHY THE x & (x-1) LOOP IS BETTER THAN SHIFTING: it runs once per SET bit rather
+than once per bit position, so a result with two differing bits takes two
+iterations instead of thirty-two.
+
+THE IDENTICAL PROBLEM UNDER ANOTHER NAME: Minimum Bit Flips to Convert Number is
+this exact question - each differing bit needs one flip. Recognising the
+duplicate is worth saying.
+
+WHERE IT MATTERS FOR REAL: error-detecting codes, similarity of hashes, and
+locality-sensitive hashing all measure distance this way.
+
+WHAT PEOPLE GET WRONG: comparing bits with a manual loop over both numbers, which
+works but misses the reduction; and mishandling negative inputs in languages with
+sign extension.
+""".strip("\n")
+
+_PLAIN_ALGO["Happy Number"] = r"""
+IN ONE SENTENCE: repeatedly replace the number with the sum of the squares of its
+digits, and keep a set of what you have seen - reaching 1 means happy, revisiting
+a number means an endless loop.
+
+STEPS
+1. Keep a set of numbers already seen.
+2. While the number is not 1 and has not been seen before: record it, then
+   replace it with the sum of the squares of its digits.
+3. Return whether you ended at 1.
+
+WHY A CYCLE IS GUARANTEED IF IT IS NOT HAPPY: the digit-square sum of any number
+below 1000 is at most 243, so the sequence is trapped in a small range forever.
+A sequence confined to finitely many values must eventually repeat - so it either
+reaches 1 or cycles. That is why checking for a repeat is a complete termination
+condition and you never need an iteration cap.
+
+WHY A SET RATHER THAN A FIXED ITERATION LIMIT: the set is exact and needs no magic
+constant. Capping at, say, 1000 iterations happens to work but you cannot defend
+the number.
+
+THE O(1)-SPACE ALTERNATIVE: Floyd's cycle detection - a slow pointer taking one
+step and a fast pointer taking two through the same transformation. If they meet
+at 1 it is happy, otherwise there is a cycle. Same trick as Linked List Cycle
+applied to a numeric sequence, and it is the follow-up they ask for.
+
+WHAT PEOPLE GET WRONG: summing the digits instead of their squares; and looping
+forever with no repeat detection.
+""".strip("\n")
+
+_PLAIN_ALGO["Implement Stack using Queues"] = r"""
+IN ONE SENTENCE: push into the queue, then rotate every earlier element around
+behind it - so the newest item ends up at the front where a queue pops from.
+
+STEPS
+1. Keep one queue.
+2. PUSH: append the new value, then move each of the OTHER elements from the
+   front to the back, one at a time - that is, rotate (size - 1) times.
+3. POP and TOP: take from the front of the queue, which is now the most recently
+   pushed element.
+
+WHY THE ROTATION INVERTS THE ORDER: a queue serves oldest-first. Rotating
+everything that was already there around behind the newcomer makes the newcomer
+the oldest from the queue's point of view - which is exactly LIFO behaviour.
+
+WHY THIS MAKES PUSH THE EXPENSIVE OPERATION: push becomes O(n) while pop and top
+are O(1). The alternative design does the rotation during pop instead, giving O(1)
+push and O(n) pop. Which to choose depends on which operation dominates - say that
+out loud, it is the real question being asked.
+
+WHY ONE QUEUE IS ENOUGH: the classic version uses two and shuffles between them.
+The single-queue rotation achieves the same thing with less code, and noticing
+that is a small bonus.
+
+WHAT PEOPLE GET WRONG: rotating the wrong number of times - it is size minus one,
+because the new element must not be rotated past; and forgetting that the queue's
+size has already grown by one when you compute it.
+""".strip("\n")
+
+_PLAIN_ALGO["Implement a Queue using two Stacks"] = r"""
+IN ONE SENTENCE: push onto an inbound stack; when you need to pop, tip the whole
+inbound stack into an outbound one - reversing it - and serve from there.
+
+STEPS
+1. Keep two stacks, in and out.
+2. PUSH: append to the in stack.
+3. POP or PEEK: if the out stack is empty, pour every element from in to out by
+   repeated pop-and-push. Then pop or peek the out stack.
+
+WHY POURING REVERSES THE ORDER: popping the in stack yields newest-first, and
+pushing those onto out puts the oldest on top. One reversal converts LIFO into
+FIFO.
+
+WHY YOU ONLY POUR WHEN out IS EMPTY - the critical condition: if you poured while
+out still had elements, you would place newer items on top of older ones and break
+the ordering. Elements already in out are older and must be served first.
+
+WHY IT IS AMORTISED O(1) DESPITE THE O(n) POUR: each element is moved from in to
+out exactly once in its lifetime. Across n operations the total movement is O(n),
+so the average per operation is constant even though one individual pop can be
+expensive. That amortised argument is the actual thing being tested here, so state
+it explicitly.
+
+WHAT PEOPLE GET WRONG: pouring on every pop, which is O(n) per operation and
+destroys the amortisation; and pouring when out is non-empty, which corrupts the
+order.
+""".strip("\n")
+
+_PLAIN_ALGO["Implement strStr() (indexOf)"] = r"""
+IN ONE SENTENCE: try every starting position in the haystack and check whether the
+needle matches from there.
+
+STEPS
+1. An empty needle returns 0 by convention.
+2. For each start position from 0 to (haystack length minus needle length), check
+   whether the slice of that length equals the needle.
+3. Return the first matching index, or -1.
+
+WHY THE LOOP BOUND IS n - m + 1: beyond that point there are not enough characters
+left for the needle to fit. Getting this bound wrong either misses a match at the
+very end or reads past the string.
+
+WHY THE EMPTY-NEEDLE CASE IS A CONVENTION, NOT LOGIC: it is defined to be 0 by the
+problem and by most standard libraries. Just handle it and move on.
+
+THE COMPLEXITY, STATED HONESTLY: O(n x m) in the worst case - a haystack of
+"aaaaaa..." with needle "aaab" re-compares almost the whole needle at every
+position. That is fine for interview inputs.
+
+THE PROPER ALGORITHM TO NAME: KMP achieves O(n + m) by precomputing, for each
+prefix of the needle, the longest proper prefix that is also a suffix - so on a
+mismatch you skip ahead instead of restarting. Rabin-Karp uses a rolling hash for
+the same asymptotic result. Naming one of them, and saying in a sentence what it
+avoids, is what lifts this above a two-line answer.
+
+WHAT PEOPLE GET WRONG: the loop bound; and returning the needle rather than the
+index.
+""".strip("\n")
+
+_PLAIN_ALGO["Longest Common Prefix"] = r"""
+IN ONE SENTENCE: take the first string as a candidate prefix and keep chopping
+characters off its end until every other string starts with it.
+
+STEPS
+1. Empty input returns an empty string.
+2. Set the candidate to the first string.
+3. For each remaining string, while it does not start with the candidate, drop the
+   candidate's last character.
+4. If the candidate ever becomes empty, return empty immediately.
+5. Return the candidate.
+
+WHY SHRINKING RATHER THAN GROWING: the answer can never be longer than the first
+string, so starting there and shrinking converges quickly. The alternative -
+comparing character positions across all strings simultaneously and stopping at
+the first mismatch - is equally valid and often clearer.
+
+WHY THE EARLY EXIT ON EMPTY: once the common prefix is gone, no later string can
+bring it back, so continuing is wasted work.
+
+THE VERTICAL-SCAN ALTERNATIVE: walk position 0, 1, 2... and at each position check
+that every string has the same character there, stopping at the first
+disagreement or when the shortest string ends. It is O(total characters) and
+easier to reason about the bounds.
+
+THE DIVIDE-AND-CONQUER OR TRIE VERSIONS: worth naming if asked to handle very many
+strings or repeated queries against a fixed set.
+
+WHAT PEOPLE GET WRONG: indexing past the end of the shortest string in the
+vertical scan; and forgetting the empty-input case.
+""".strip("\n")
+
+_PLAIN_ALGO["Matrix Diagonal Sum"] = r"""
+IN ONE SENTENCE: add both diagonals in a single pass, then subtract the centre
+once if the matrix has an odd size, because it belongs to both.
+
+STEPS
+1. For each index i from 0 to n-1, add the element at (i, i) - the primary
+   diagonal - and the element at (i, n-1-i) - the secondary diagonal.
+2. If n is odd, subtract the centre element at (n//2, n//2) once, since it was
+   counted twice.
+
+WHY THE SECONDARY DIAGONAL IS (i, n-1-i): as the row index increases, the column
+index must decrease symmetrically. Check it at the corners: row 0 gives the last
+column, row n-1 gives column 0.
+
+WHY THE ODD-SIZE CORRECTION: on an odd n the two diagonals cross at the exact
+centre cell, so one pass adds it twice. On an even n they never intersect and no
+correction is needed. Forgetting this is the only bug in the problem, and it
+passes every even-sized test case.
+
+WHY ONE LOOP RATHER THAN TWO: both diagonals are indexed by the same counter, so
+a single pass reads both. It is O(n) rather than O(n^2) - you never touch the
+interior cells.
+
+WHAT PEOPLE GET WRONG: the correction; and iterating the whole matrix and testing
+whether each cell is on a diagonal, which is quadratic for no reason.
+""".strip("\n")
+
+_PLAIN_ALGO["Matrix Reshape"] = r"""
+IN ONE SENTENCE: check the element counts match, then read the original in
+row-major order and write into the new shape, converting between flat index and
+(row, column).
+
+STEPS
+1. If rows times columns does not equal r times c, the reshape is impossible -
+   return the original matrix unchanged.
+2. Otherwise walk a flat index from 0 to the element count.
+3. Read from the original at (index divided by original columns, index modulo
+   original columns).
+4. Write into the new matrix at (index divided by c, index modulo c).
+
+WHY THE FLAT-INDEX CONVERSION IS THE WHOLE PROBLEM: both matrices hold the same
+sequence of elements; only the row width differs. Flattening to a single index and
+re-splitting with the NEW width is the cleanest way to express that, and it
+avoids nested loops with two sets of counters.
+
+WHY YOU DIVIDE BY THE COLUMN COUNT, NOT THE ROW COUNT: the flat index advances
+across a row first, so the number of columns is what determines when you wrap.
+Using rows works only on square matrices, which is exactly why the bug survives
+the first test.
+
+WHY RETURN THE ORIGINAL ON A MISMATCH: it is what the problem specifies. Raising
+or returning empty fails the contract.
+
+WHAT PEOPLE GET WRONG: dividing by the wrong dimension; and mutating the original
+instead of building a new matrix.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Population Year"] = r"""
+IN ONE SENTENCE: record a +1 at each birth year and a -1 at each death year, then
+sweep the years accumulating - the year with the highest running total is the
+answer.
+
+STEPS
+1. Make an array of changes indexed by year, covering the possible range.
+2. For each person, add 1 at their birth year and subtract 1 at their death year.
+3. Sweep the years in order, keeping a running total, and track the year where
+   that total is highest.
+4. Return the earliest year achieving the maximum.
+
+WHY THE DEATH DECREMENT GOES AT THE DEATH YEAR ITSELF: the problem defines a
+person as alive in the half-open interval [birth, death) - they are not counted in
+the year they die. So the decrement lands on that year, not the one after. This is
+the opposite convention from an inclusive interval, and getting it wrong shifts
+every count by one year.
+
+WHY THE DIFFERENCE ARRAY BEATS THE OBVIOUS LOOP: incrementing every year of every
+person's life is O(people x lifespan). Two writes per person plus one sweep is
+O(people + years).
+
+WHY YOU TRACK THE EARLIEST MAXIMUM: ties are broken by the smallest year, so
+update the best only on a STRICT improvement.
+
+THE FAMILY: this is the same difference-array sweep as Car Pooling, Corporate
+Flight Bookings and Points That Intersect With Cars. One technique, four problems.
+
+WHAT PEOPLE GET WRONG: the half-open interval; and using greater-than-or-equal
+when tracking the maximum, which returns the latest tied year instead of the
+earliest.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Absolute Difference in BST"] = r"""
+IN ONE SENTENCE: an in-order walk of a BST produces sorted values, and in sorted
+order the closest pair is always adjacent - so compare each value with the
+previous one.
+
+STEPS
+1. Keep the previously visited value and a running best difference.
+2. Traverse in-order: left subtree, node, right subtree.
+3. At each node, if there is a previous value, compare the difference against the
+   best.
+4. Set the previous value to this node and continue.
+
+WHY IN-ORDER IS THE ENTIRE INSIGHT: the minimum difference is between two values
+that are adjacent in sorted order. A BST hands you sorted order for free via
+in-order traversal, so the problem reduces to a single pass with one remembered
+value - no sorting, no pairwise comparison.
+
+WHY YOU DO NOT NEED TO COMPARE NON-ADJACENT VALUES: if two values have another
+value between them, that middle value is closer to each of them than they are to
+each other. Same argument as the array version of this problem.
+
+WHY THE PREVIOUS VALUE MUST LIVE OUTSIDE THE RECURSION: it carries across the
+whole traversal, not down one branch. A local variable resets and the comparisons
+become meaningless.
+
+WHY THE ORDER OF THE THREE STEPS IS FIXED: the comparison must happen between
+visiting the left subtree and the right one, or the values are not consulted in
+sorted order.
+
+WHAT PEOPLE GET WRONG: collecting every value into a list and sorting it - correct
+but throws away the BST property; and using a local previous variable.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Bit Flips to Convert Number"] = r"""
+IN ONE SENTENCE: XOR the two numbers and count the 1s - each differing bit needs
+exactly one flip.
+
+STEPS
+1. XOR start and goal.
+2. Count the set bits in the result, ideally with the x & (x-1) loop that clears
+   one set bit per iteration.
+
+WHY XOR GIVES THE ANSWER DIRECTLY: XOR is 1 precisely where the two numbers
+disagree, and every disagreement costs exactly one flip. So the answer is the
+popcount of the XOR - there is no search or simulation.
+
+WHY x & (x-1) IS THE RIGHT COUNTING LOOP: subtracting one flips the lowest set bit
+to zero and sets everything below it, so ANDing clears exactly that bit. The loop
+therefore runs once per set bit rather than once per bit position.
+
+THIS IS HAMMING DISTANCE: the same problem under a different name. Say so - it
+signals you recognise the underlying quantity rather than the phrasing.
+
+WHY NO SIMULATION IS NEEDED: flips are independent and order-free, so there is
+nothing to optimise. Any attempt to plan a sequence of flips is wasted effort.
+
+WHAT PEOPLE GET WRONG: comparing decimal digits rather than bits; and counting
+bits by shifting thirty-two times when the clear-lowest-bit loop is both shorter
+and faster.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
