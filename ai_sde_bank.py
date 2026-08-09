@@ -5601,3 +5601,162 @@ for _e in ENTRIES:
                                "NVIDIA, Microsoft and Apple.")
         else:
             _e["frequency"] = _CAT_FREQUENCY.get(_e["cat"], "Commonly asked at leading product companies.")
+
+
+# ── "How to remember" mnemonics ────────────────────────────────────────────
+# Memory hooks written for a final-year student: plain, concrete, and sticky.
+# Most attach by PATTERN/TAG (so one good hook covers many problems); a few
+# marquee topics get a bespoke hook. Priority-ordered: the first matching tag
+# wins, so specific patterns beat generic ones. Explicit mnemonic= on a Q(...)
+# always wins over both.
+
+# Bespoke, per-title hooks (checked first).
+_MNEMONICS = {
+    "Gradient": "Think of a GPS arrow on a hill: it always points straight UP the steepest slope. To get DOWN to the valley (low error) you walk the exact OPPOSITE way. 'Gradient points up, so I go against it.'",
+    "Gradient Descent": "A ball rolling downhill in the fog: it can't see the bottom, so it just feels which way is down and takes one careful step, again and again, until it stops in a dip. Small steps = small learning rate.",
+    "Learning rate": "It's your STEP SIZE downhill. Big steps = you leap over the valley and bounce around; tiny steps = you crawl and take forever. Goldilocks: not too big, not too small.",
+    "Backpropagation": "'Blame flowing backward.' The network guessed wrong, so the error walks back through the layers handing each weight its share of the blame, and every weight nudges to do better next time. Forward = guess, backward = blame.",
+    "Overfitting": "Memorizing the answers to last year's exam. Perfect on those exact questions (training), lost on the reworded real exam (new data). Memorize vs understand.",
+    "Underfitting": "A model that's too lazy/simple - like guessing everyone's height is 'average.' Wrong on the practice set AND the real test.",
+    "Regularization": "A leash on the weights so no single feature runs wild. It keeps the model humble and simple, which helps it handle new data.",
+    "Attention": "At a noisy party you tune in to the ONE voice that matters and tune out the rest. Attention lets each word decide which other words to 'listen to.' Query asks, Keys answer, Values are what you take.",
+    "Transformer": "Reads ALL the words at once (not one-by-one) and lets them talk to each other via attention. 'Attention is all you need' - the engine behind GPT.",
+    "Embedding": "Turning things into arrows (vectors) so 'similar' means 'close together.' king - man + woman lands near queen. Meaning becomes geometry.",
+    "Softmax": "Turns raw scores into percentages that add to 100%. The biggest score gets the biggest slice of confidence. 'Scores in, probabilities out.'",
+    "Sigmoid": "An S-shaped squash that maps anything to a 0-1 'probability.' Big positive -> ~1 (yes), big negative -> ~0 (no), zero -> 0.5 (shrug).",
+    "ReLU (Rectified Linear Unit)": "A one-way valve: negatives become 0, positives pass through unchanged. 'If it's negative, forget it.' Cheap and it fixes vanishing gradients.",
+    "Precision": "Of the things I FLAGGED, how many were right? 'When I shout spam, am I correct?' Precision punishes false alarms.",
+    "Recall (sensitivity)": "Of the things I SHOULD have caught, how many did I? 'Did any spam sneak past me?' Recall punishes misses.",
+    "F1 score": "The 'you're only as strong as your weakest link' score - a balance of precision AND recall that stays low if either one is bad.",
+    "Big-O notation": "How the work GROWS as input grows, ignoring constants. O(n) doubles when input doubles; O(log n) barely moves; O(n^2) explodes. It's about the shape, not the stopwatch.",
+    "Recursion": "A function that calls itself, like standing between two mirrors. Always ask: what's the tiny base case that stops it, and does each call shrink toward it?",
+    "Dynamic programming": "'Don't solve the same sub-problem twice - write the answer on a sticky note.' Overlapping sub-problems + reuse = DP.",
+    "Hash table (hash map)": "A magic coat-check: hand over a key, instantly get the item's slot. No scanning the whole rack. O(1) - until everyone collides on one hook.",
+}
+
+# Pattern/tag hooks (checked in this order; first match wins).
+_TAG_MNEMONIC_ORDER = [
+    "two-pointers", "sliding-window", "monotonic-stack", "monotonic-deque",
+    "binary-search", "prefix-sum", "backtracking", "dynamic-programming", "dp",
+    "union-find", "dsu", "trie", "dijkstra", "bellman-ford", "topological-sort",
+    "bfs", "dfs", "heap", "priority-queue", "greedy", "intervals",
+    "bit-manipulation", "xor", "linked-list", "fast-slow-pointers", "bst",
+    "binary-tree", "tree", "hash-map", "hash-set", "counting", "sorting",
+    "in-place", "matrix", "grid", "recursion", "divide-and-conquer", "math",
+    "digits", "simulation", "design",
+    # ML / AI
+    "attention", "transformer", "embeddings", "overfitting", "regularization",
+    "normalization", "backpropagation", "gradient-descent", "imbalance",
+    "class-imbalance", "metrics", "evaluation", "ranking", "classification",
+    "regression", "unsupervised", "clustering", "nlp", "cnn", "rnn",
+    # systems
+    "distributed-systems", "caching", "consistency", "rate-limiting",
+    "messaging", "networking", "security", "reliability", "database",
+    # behavioral
+    "star", "amazon-lp",
+]
+_TAG_MNEMONICS = {
+    "two-pointers": "Two fingers on a SORTED line: move the one that helps. Sum too big? pull the right finger in. Too small? push the left out. Squeeze toward the answer.",
+    "sliding-window": "A window gliding over the array: GROW it from the right, and SHRINK from the left when a rule breaks. Great for 'longest/shortest contiguous...'.",
+    "monotonic-stack": "A stack kept in strict order - kick out anyone who breaks the order before pushing. Screams 'next greater/smaller element.'",
+    "monotonic-deque": "A double-ended queue kept sorted so the max/min is always at the front - the trick behind sliding-window maximum.",
+    "binary-search": "Phone-book halving: check the middle, throw away half, repeat. See 'sorted' or 'smallest value that works?' -> binary search. ~20 steps for a million items.",
+    "prefix-sum": "Carry a running total so any range sum is just 'total here minus total there' - like mile-markers on a highway.",
+    "backtracking": "Explore a maze: walk a path, and if it dead-ends, back up and undo your last step. Pattern: choose -> recurse -> UN-choose.",
+    "dynamic-programming": "Solve tiny pieces once, jot each answer on a sticky note, and build up. If sub-problems repeat, it's DP.",
+    "dp": "Break it into overlapping sub-problems and remember each answer so you never recompute. Build from the base case up.",
+    "union-find": "Friend groups: 'union' merges two circles, 'find' asks 'same circle?' Perfect for connected-components and cycle checks.",
+    "dsu": "Disjoint-Set Union = the friend-groups tool: merge sets, ask who's connected, in almost O(1).",
+    "trie": "A shared-prefix tree - all words starting 'ca...' share one path. The engine behind autocomplete.",
+    "dijkstra": "Cheapest-first explorer with a min-heap: always expand the closest unfinished node. Shortest path with NON-negative weights.",
+    "topological-sort": "Course prerequisites: you can only take a class after its requirements. Order tasks so every arrow points forward; a cycle means impossible.",
+    "bfs": "Ripple in a pond, level by level - nearest first. That's why BFS finds the SHORTEST path in an unweighted graph. Use a queue.",
+    "dfs": "Go deep down one path until you're stuck, then back up and try another. Use recursion or a stack. Great for 'explore everything / flood fill.'",
+    "heap": "A tournament bracket where the champion (max or min) is always on top, ready in O(log n). Reach for it on 'top-K' or 'K largest/smallest.'",
+    "priority-queue": "A to-do list that always hands you the most urgent item next - that's a heap underneath.",
+    "greedy": "Grab the best-looking option right now and never look back. Works when local-best leads to global-best (prove it, or it'll bite you).",
+    "intervals": "Meetings on a calendar: SORT by start (or end), then walk left-to-right merging or counting overlaps. Almost every interval problem starts with a sort.",
+    "bit-manipulation": "Think in 1s and 0s. AND masks, OR sets, XOR toggles/finds-the-odd-one-out, shift multiplies/divides by 2.",
+    "xor": "XOR is the 'cancel twins' trick: a^a=0, so pairs vanish and the lonely element is left standing.",
+    "linked-list": "A chain of boxes, each pointing to the next. Draw the arrows before you code, and use a DUMMY head so the first node isn't a special case.",
+    "fast-slow-pointers": "A tortoise and a hare on the list: if there's a loop they collide; when the hare hits the end, the tortoise is at the middle.",
+    "bst": "A sorted tree: smaller-left, bigger-right. So search/insert just keep going left or right - and an in-order walk prints it sorted.",
+    "binary-tree": "Every node splits into left/right. Most solutions are 'solve left, solve right, combine' - natural recursion.",
+    "hash-map": "The 'have I seen this before?' pad. Store what you've seen with its info; check membership in O(1). Kills many O(n^2) scans.",
+    "hash-set": "A guest list for 'seen it?' checks in O(1) - no values, just membership.",
+    "counting": "Tally how many of each (a Counter/array of counts), then read the tallies. Turns many problems linear.",
+    "sorting": "When order unlocks the trick (two-pointers, greedy, dedup), spend the O(n log n) to sort first - it often makes the rest easy.",
+    "matrix": "A grid of (row, col). Watch your bounds, and remember the 4 neighbor moves (up/down/left/right).",
+    "grid": "Treat each cell as a graph node with up-to-4 neighbors; BFS/DFS from cells is the usual move (islands, flood-fill).",
+    "recursion": "Trust the recursion: define the base case, assume the smaller call works, and combine. Don't trace every level in your head.",
+    "math": "Look for the closed-form or number pattern before brute force - a formula can turn O(n) into O(1).",
+    "simulation": "Just carefully DO what the problem says, step by step - the challenge is clean bookkeeping, not cleverness.",
+    "design": "They're testing data-structure choice: pick the right combo (hash map + linked list, two stacks, a heap) so each operation hits its target Big-O.",
+    "attention": "Each word decides who else to 'listen to.' Query asks, Keys answer, Values are what you take away.",
+    "transformer": "Reads all tokens at once and lets them attend to each other - the engine behind modern LLMs.",
+    "embeddings": "Meaning as arrows: similar things point the same way, so 'close vectors = similar.'",
+    "overfitting": "Memorizing the practice exam - great on it, lost on the real one. Fix with more data, dropout, regularization.",
+    "regularization": "A penalty that keeps weights small and the model humble, so it generalizes instead of memorizing.",
+    "normalization": "Put features on the same scale (mean 0, spread 1) so no big-numbered feature bullies the rest.",
+    "imbalance": "When 99% is one class, 'always guess the majority' looks great but is useless. Weight the rare class and judge by PR/recall, not accuracy.",
+    "class-imbalance": "Rare-event trap: accuracy lies. Reweight or resample the minority class and measure recall/PR-AUC.",
+    "metrics": "Accuracy hides errors when classes are lopsided. Precision = 'am I right when I say yes?', Recall = 'did I catch them all?'",
+    "evaluation": "Always test on data the model never trained on - and, for anything time-based, test on the FUTURE, never a random shuffle.",
+    "ranking": "You don't need exact scores, just the right ORDER. That's why nDCG/MAP (order-based) matter more than raw accuracy.",
+    "classification": "Predicting a LABEL (spam/not). Output a probability, pick a threshold based on which mistake costs more.",
+    "regression": "Predicting a NUMBER (price). Judge by how far off you are (RMSE/MAE), not right/wrong.",
+    "clustering": "Grouping with NO labels - let similar points fall together (k-means finds K centers).",
+    "distributed-systems": "Assume everything fails and messages arrive late/twice/out-of-order. Design for it: retries + idempotency + quorums.",
+    "caching": "Keep the hot stuff close and fast. The hard parts are staleness ('is it still fresh?') and eviction ('who to kick out?').",
+    "rate-limiting": "A bouncer counting entries per time window - token bucket allows bursts, leaky bucket forces a steady drip.",
+    "messaging": "Mailboxes between services so a slow/broken consumer doesn't take the sender down. Expect at-least-once, so make consumers idempotent.",
+    "networking": "Follow the packet: DNS -> TCP/TLS handshake -> request -> response. Latency is distance/round-trips; throughput is pipe width.",
+    "security": "Never trust input. Validate, escape, least-privilege, and defense-in-depth (layers, so one hole isn't fatal).",
+    "reliability": "Design so one failure can't cascade: timeouts, retries-with-jitter, circuit breakers, bulkheads, graceful degradation.",
+    "star": "Tell the story as S-T-A-R: Situation, Task, Action (YOU, not 'we'), Result (with a number). Quantify the win.",
+    "amazon-lp": "Map the story to the Leadership Principle they're probing, lead with the principle, and prove it with a metric.",
+}
+
+# ML-coding gets a shared reminder too (from-scratch implementations).
+_TAG_MNEMONICS["ml-coding"] = ("Know the FORMULA, then translate it line-by-line to numpy. "
+                               "Vectorize (no Python loops), keep shapes straight, and add a tiny eps to avoid divide-by-zero.")
+_TAG_MNEMONIC_ORDER.append("ml-coding")
+
+for _e in ENTRIES:
+    if _e.get("mnemonic"):
+        continue
+    if _e["title"] in _MNEMONICS:
+        _e["mnemonic"] = _MNEMONICS[_e["title"]]
+        continue
+    _tagset = set(_e.get("tags", []))
+    for _tag in _TAG_MNEMONIC_ORDER:
+        if _tag in _tagset and _tag in _TAG_MNEMONICS:
+            _e["mnemonic"] = _TAG_MNEMONICS[_tag]
+            break
+
+# Category-level fallback hooks so nothing is left without a memory aid.
+_CAT_MNEMONIC = {
+    "ml_system_design": ("Walk the SAME 6 steps every time: (1) Problem & metric, (2) Data & "
+                         "labels, (3) Model, (4) Training, (5) Evaluation (offline + online A/B), "
+                         "(6) Serving & monitoring. Memorize the skeleton and hang details on it."),
+    "conceptual": ("It's a 'why' question - don't recite facts, anchor on the ONE core trade-off "
+                   "at its heart and one concrete example. Name the tension, then resolve it."),
+    "glossary": ("Chain the term to its ONE main job + the real-world example above. Recall the "
+                 "example first and the definition follows - stories stick better than definitions."),
+    "cs_fundamentals": ("Tie it to something physical you already know (a queue at a shop, a locked "
+                        "door, a mailbox). The everyday picture is the anchor for the technical detail."),
+    "ml_concepts": ("Pair the idea with its ONE-LINE 'why it matters' and a tiny example. If you can "
+                    "explain it to a friend with the example, you own it."),
+    "behavioral": ("S-T-A-R: Situation, Task, Action (say 'I', not 'we'), Result with a NUMBER. "
+                   "Have 5-6 stories ready and map each to several principles."),
+    "company": ("Remember the room: WHO is scoring you and on WHAT. Match your answers to how that "
+                "company actually evaluates (e.g. Amazon = Leadership Principles + data)."),
+    "mindset": ("Turn it into a repeatable checklist you run every time - habits beat willpower "
+                "under interview pressure."),
+    "dsa": ("Name the PATTERN before you code (hashing, two-pointers, BFS/DFS, DP, greedy, heap...). "
+            "The prompt's shape is the clue - 'contiguous+longest' -> window, 'sorted' -> binary search, "
+            "'shortest path' -> BFS. Recognize, then apply."),
+}
+for _e in ENTRIES:
+    if not _e.get("mnemonic"):
+        _e["mnemonic"] = _CAT_MNEMONIC.get(_e["cat"], "")
