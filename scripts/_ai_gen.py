@@ -16,133 +16,142 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Minimum Cost to Move Chips",
-         answer="Chips sit at positions; moving a chip by 2 is FREE, moving it by 1 costs 1. Aligning them all costs nothing among same-parity positions (all evens can meet for free, all odds too), so the answer is the SMALLER of the even-position count and the odd-position count — bring the smaller group across the single unit gap.",
-         tags=["min-cost-chips","greedy","parity","math","dsa"],
-         code='''# Min cost to align all chips: moving 2 is free, moving 1 costs 1.
-def min_cost_to_move_chips(position):
-    even = sum(1 for p in position if p % 2 == 0)
-    odd = len(position) - even
-    return min(even, odd)   # move the smaller parity group (each move costs 1)''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Overthinking the distances (only parity matters); returning the larger count.",
-         example="min_cost_to_move_chips([1,2,3]) -> 1."),
-    dict(cat="dsa", title="Minimum Moves to Equal Array Elements II",
-         answer="Each move increments or decrements one element by 1; find the minimum total moves to make all elements equal. The optimal target is the MEDIAN (it minimizes the sum of absolute deviations). Sort, take the median, and sum the distances.",
-         tags=["min-moves-median","median","sorting","greedy","dsa"],
-         code='''# Min total moves (+-1) to make all elements equal: converge to the MEDIAN.
-def min_moves2(nums):
-    nums.sort()
-    median = nums[len(nums) // 2]
-    return sum(abs(n - median) for n in nums)   # sum of distances to the median''',
-         complexity="Time O(n log n) (O(n) with quickselect), space O(1).",
-         pitfalls="Using the mean (minimizes squared, not absolute, distance); off-by-one median index.",
-         example="min_moves2([1,2,3]) -> 2."),
-    dict(cat="dsa", title="Check if Array Is Sorted and Rotated",
-         answer="Decide whether a non-decreasing sorted array could have been ROTATED to produce this one. Such an array has at most ONE 'drop' where an element is greater than the next (checking circularly). Count the drops; valid iff there's 0 or 1.",
-         tags=["sorted-and-rotated","array","dsa"],
-         code='''# Could a non-decreasing sorted array be rotated into this array?
-def check_sorted_rotated(nums):
-    n = len(nums)
-    # a rotated sorted array has at most one 'drop' (nums[i] > next), circularly
-    breaks = sum(1 for i in range(n) if nums[i] > nums[(i + 1) % n])
-    return breaks <= 1''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Not checking circularly (the wrap-around from last to first); allowing more than one drop.",
-         example="check_sorted_rotated([3,4,5,1,2]) -> True; check_sorted_rotated([2,1,3,4]) -> False."),
-    dict(cat="dsa", title="Pairs of Songs Divisible by 60",
-         answer="Count index pairs (i<j) whose durations sum to a multiple of 60. Work with remainders mod 60: for each song's remainder r, the complementary remainder is (60-r)%60 — add how many previous songs had that complement, then record r. One pass, O(n).",
-         tags=["pairs-divisible-60","modular-arithmetic","hash-map","array","dsa"],
-         code='''# Count pairs (i<j) with (time[i]+time[j]) % 60 == 0.
-def num_pairs_divisible_by_60(time):
-    remainders = [0] * 60
+    dict(cat="dsa", title="Maximum Population Year",
+         answer="Given birth/death year ranges, find the earliest year with the most people alive. Use a DIFFERENCE ARRAY over years: +1 at each birth year, -1 at each death year (exclusive), then take a running prefix sum and track the year of the maximum. O(years) rather than checking every person per year.",
+         tags=["maximum-population","difference-array","sweep-line","array","dsa"],
+         code='''# Year with the most people alive, using a difference array over years.
+def maximum_population(logs):
+    delta = [0] * 2101              # years span roughly 1950..2050
+    for birth, death in logs:
+        delta[birth] += 1           # +1 alive from the birth year
+        delta[death] -= 1           # -1 at the death year (exclusive)
+    best_year = 0
+    best_pop = 0
+    running = 0
+    for year in range(1950, 2051):
+        running += delta[year]                  # prefix sum of alive counts
+        if running > best_pop:
+            best_pop = running
+            best_year = year
+    return best_year''',
+         complexity="Time O(n + years), space O(years).",
+         pitfalls="Counting death year as still-alive (it's exclusive); returning a later tie instead of the earliest.",
+         example="maximum_population([[1993,1999],[2000,2010]]) -> 1993."),
+    dict(cat="dsa", title="Count Number of Pairs With Absolute Difference K",
+         answer="Count index pairs (i<j) with |nums[i] - nums[j]| == k. Sweep once with a frequency map: for each number, add how many earlier numbers equal n-k or n+k (its two possible partners), then record n. O(n) instead of the O(n^2) double loop.",
+         tags=["pairs-abs-difference-k","hash-map","counting","array","dsa"],
+         code='''# Count pairs (i<j) with |nums[i] - nums[j]| == k, using a frequency map.
+from collections import Counter
+def count_k_difference(nums, k):
+    counts = Counter()
+    result = 0
+    for n in nums:
+        result += counts[n - k] + counts[n + k]   # earlier complements
+        counts[n] += 1
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Double counting both directions; brute-force O(n^2).",
+         example="count_k_difference([1,2,2,1], 1) -> 4."),
+    dict(cat="dsa", title="Three Divisors",
+         answer="Determine whether n has EXACTLY three positive divisors. This happens only when n is a prime SQUARED (divisors 1, p, p^2). Count divisors up to sqrt(n), adding both i and n//i per factor (once if they coincide), and check the count equals 3.",
+         tags=["three-divisors","math","divisors","dsa"],
+         code='''# Does n have exactly THREE positive divisors? (true iff n = prime squared)
+def is_three(n):
     count = 0
-    for t in time:
-        r = t % 60
-        complement = (60 - r) % 60     # the remainder that pairs with r
-        count += remainders[complement]
-        remainders[r] += 1
-    return count''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Mishandling r=0 (complement must be 0 via the modulo); brute-force O(n^2).",
-         example="num_pairs_divisible_by_60([30,20,150,100,40]) -> 3."),
-    dict(cat="dsa", title="Minimum Time Visiting All Points",
-         answer="Visit points in the given order; each second you can move one step horizontally, vertically, or DIAGONALLY. The time between two points is the CHEBYSHEV distance max(|dx|, |dy|) — diagonal moves cover both axes at once. Sum it over consecutive points.",
-         tags=["min-time-points","chebyshev-distance","geometry","array","dsa"],
-         code='''# Min seconds to visit points in order (diagonal moves = Chebyshev distance).
-def min_time_to_visit_all_points(points):
-    total = 0
-    for i in range(1, len(points)):
-        dx = abs(points[i][0] - points[i - 1][0])
-        dy = abs(points[i][1] - points[i - 1][1])
-        total += max(dx, dy)          # Chebyshev distance (diagonals count as 1)
-    return total''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Using Manhattan (dx+dy) instead of Chebyshev; forgetting diagonals are free on both axes.",
-         example="min_time_to_visit_all_points([[1,1],[3,4],[-1,0]]) -> 7."),
-    dict(cat="dsa", title="Greatest Common Divisor of Strings",
-         answer="Find the largest string x such that both s and t are made by repeating x. It exists ONLY if s+t == t+s (they 'commute'); when it does, the answer's length is gcd(len(s), len(t)), so return that prefix of s.",
-         tags=["gcd-of-strings","string","gcd","math","dsa"],
-         code='''# Largest string that divides both s and t (concatenation-based GCD).
-import math
-def gcd_of_strings(s, t):
-    if s + t != t + s:
-        return ""                     # no common divisor if they don't commute
-    g = math.gcd(len(s), len(t))      # the GCD length is the answer's length
-    return s[:g]''',
-         complexity="Time O(len(s) + len(t)), space O(len(s)+len(t)).",
-         pitfalls="Assuming a divisor always exists; not checking the commute condition s+t==t+s.",
-         example="gcd_of_strings('ABCABC','ABC') -> 'ABC'; gcd_of_strings('ABABAB','ABAB') -> 'AB'."),
-    dict(cat="dsa", title="Sort Integers by Number of 1 Bits",
-         answer="Sort the integers ascending by their POPCOUNT (number of set bits), breaking ties by the value itself. A single sort with a composite key (popcount, value) does it.",
-         tags=["sort-by-bits","bit-manipulation","sorting","dsa"],
-         code='''# Sort ascending by popcount (number of set bits), ties by value.
-def sort_by_bits(arr):
-    return sorted(arr, key=lambda x: (bin(x).count('1'), x))''',
+    i = 1
+    while i * i <= n:
+        if n % i == 0:
+            count += 1 if i * i == n else 2   # count i and n//i (once if equal)
+        i += 1
+    return count == 3''',
+         complexity="Time O(sqrt(n)), space O(1).",
+         pitfalls="Double-counting the square root factor; enumerating all divisors up to n (slow).",
+         example="is_three(4) -> True (1,2,4); is_three(2) -> False."),
+    dict(cat="dsa", title="Sort the People",
+         answer="Given names and their heights, return the names sorted by height in DESCENDING order. Zip the two lists, sort the pairs by height descending, and extract the names.",
+         tags=["sort-people","sorting","zip","array","dsa"],
+         code='''# Sort names by their corresponding heights, descending.
+def sort_people(names, heights):
+    # pair heights with names, sort by height desc, keep the names
+    return [name for _, name in sorted(zip(heights, names), reverse=True)]''',
          complexity="Time O(n log n), space O(n).",
-         pitfalls="Forgetting the value tie-breaker; counting bits inefficiently in a hot loop.",
-         example="sort_by_bits([0,1,2,3,4,5,6,7,8]) -> [0,1,2,4,8,3,5,6,7]."),
-    dict(cat="dsa", title="Minimum Operations to Make the Array Increasing",
-         answer="Each operation adds 1 to an element; find the fewest operations to make the array STRICTLY increasing. Greedily walk left to right, forcing each element to be at least prev+1: if it's not, bump it up and count the difference.",
-         tags=["min-operations-increasing","greedy","array","dsa"],
-         code='''# Min +1 operations to make the array strictly increasing.
-def min_operations(nums):
-    operations = 0
-    prev = nums[0]
-    for i in range(1, len(nums)):
-        if nums[i] <= prev:
-            operations += prev + 1 - nums[i]   # bump up to prev+1
-            prev = prev + 1
-        else:
-            prev = nums[i]
-    return operations''',
+         pitfalls="Sorting ascending; losing the name<->height association.",
+         example="sort_people(['Mary','John','Emma'], [180,165,170]) -> ['Mary','Emma','John']."),
+    dict(cat="dsa", title="Minimum Number of Moves to Seat Everyone",
+         answer="Students must each sit in a seat; a move shifts one student by 1 position. Minimize total moves. Sort both the seat positions and the student positions and pair them up in order — the sum of absolute differences of the matched pairs is optimal (matching sorted-to-sorted never crosses beneficially).",
+         tags=["min-moves-seat","greedy","sorting","array","dsa"],
+         code='''# Min total moves to seat students in seats: sort both, pair up, sum distances.
+def min_moves_seat(seats, students):
+    seats.sort(); students.sort()
+    return sum(abs(s - t) for s, t in zip(seats, students))''',
+         complexity="Time O(n log n), space O(1).",
+         pitfalls="Pairing without sorting both (suboptimal); mismatched list lengths.",
+         example="min_moves_seat([3,1,5], [2,7,4]) -> 4."),
+    dict(cat="dsa", title="Apply Operations to an Array",
+         answer="Process the array left to right: if nums[i] equals nums[i+1], DOUBLE nums[i] and set nums[i+1] to 0 (each element merges at most once). Afterward, shift all non-zero values to the FRONT keeping order, padding zeros at the end.",
+         tags=["apply-operations","array","simulation","dsa"],
+         code='''# Merge equal adjacent pairs (double first, zero second), then shift zeros right.
+def apply_operations(nums):
+    n = len(nums)
+    for i in range(n - 1):
+        if nums[i] == nums[i + 1]:
+            nums[i] *= 2
+            nums[i + 1] = 0
+    result = [x for x in nums if x != 0]     # non-zeros, order preserved
+    result += [0] * (n - len(result))         # pad zeros at the end
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Merging a value twice in one pass (only adjacent original pairs); not preserving order when shifting zeros.",
+         example="apply_operations([1,2,2,1,1,0]) -> [1,4,2,0,0,0]."),
+    dict(cat="dsa", title="Left and Right Sum Difference",
+         answer="For each index, compute the absolute difference between the sum of all elements to its LEFT and the sum to its RIGHT. Keep a running left sum; the right sum is total - left - current. One pass with a precomputed total.",
+         tags=["left-right-difference","prefix-sum","array","dsa"],
+         code='''# For each index, |sum of elements to the left - sum to the right|.
+def left_right_difference(nums):
+    total = sum(nums)
+    left = 0
+    result = []
+    for n in nums:
+        right = total - left - n
+        result.append(abs(left - right))
+        left += n
+    return result''',
+         complexity="Time O(n), space O(1) beyond the output.",
+         pitfalls="Including the current element in either side; recomputing sums per index (O(n^2)).",
+         example="left_right_difference([10,4,8,3]) -> [15,1,11,22]."),
+    dict(cat="dsa", title="Number of Employees Who Met the Target",
+         answer="Given each employee's worked hours and a target, count how many worked at LEAST the target. A simple filter-and-count.",
+         tags=["employees-met-target","array","counting","dsa"],
+         code='''# Count employees whose worked hours meet or exceed the target.
+def number_of_employees_who_met_target(hours, target):
+    return sum(1 for h in hours if h >= target)''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Allowing equal neighbours (must be strictly increasing); not updating prev after a bump.",
-         example="min_operations([1,1,1]) -> 3."),
-    dict(cat="glossary", title="Reverse proxy vs forward proxy",
-         answer="Both sit between clients and servers but serve OPPOSITE sides. A FORWARD proxy sits in front of CLIENTS and represents them outward (corporate egress proxy, VPN, content filter) — the server sees the proxy, not the user. A REVERSE proxy sits in front of SERVERS and represents them to the world (Nginx, a CDN edge, an API gateway) — the client sees the proxy, not the backend. Reverse proxies do load balancing, TLS termination, caching, and hide/protect the origin.",
-         tags=["reverse-proxy","forward-proxy","networking","nginx"],
-         example="A company's forward proxy filters employees' outbound traffic; a website's reverse proxy (Nginx) terminates TLS, caches, and load-balances across backends the client never sees."),
-    dict(cat="glossary", title="WAF (Web Application Firewall)",
-         answer="A security layer that inspects HTTP traffic and BLOCKS malicious requests targeting web-app vulnerabilities — SQL injection, XSS, path traversal — using rule sets (e.g. the OWASP Core Rule Set) and increasingly ML. It sits in front of the app (often at the CDN/reverse-proxy edge) as defense-in-depth, catching attacks before they reach the application. It complements, not replaces, secure coding.",
-         tags=["waf","web-application-firewall","owasp","security","defense-in-depth"],
-         example="A WAF at the CDN edge blocks a request containing ' UNION SELECT ...' before it reaches the app, mitigating SQL injection even if a code path was vulnerable."),
-    dict(cat="glossary", title="DDoS mitigation",
-         answer="Defending against Distributed Denial-of-Service attacks that flood a target from many sources to exhaust its capacity. Techniques: absorb/scale with a large distributed network (CDN/anycast spreads load across PoPs), RATE LIMITING and traffic scrubbing (drop malicious patterns), SYN-flood protection, blackholing or challenges (CAPTCHA) for suspicious clients, and over-provisioning. Volumetric L3/4 floods go to scrubbing centers; L7 (application) floods need smarter request analysis.",
-         tags=["ddos","mitigation","anycast","rate-limiting","security"],
-         example="A volumetric UDP flood is scrubbed across a CDN's global anycast network before reaching the origin; an L7 HTTP flood is throttled with rate limits and CAPTCHAs for suspicious IPs."),
-    dict(cat="glossary", title="DNSSEC",
-         answer="DNS Security Extensions — adds cryptographic SIGNATURES to DNS records so resolvers can VERIFY a response genuinely came from the authoritative zone and wasn't forged (defending against DNS spoofing / cache poisoning). A chain of trust runs from the root zone down. It provides AUTHENTICITY and integrity but NOT confidentiality — queries/answers stay plaintext (that's what DoH/DoT add).",
-         tags=["dnssec","dns","spoofing","cache-poisoning","security"],
-         example="With DNSSEC a resolver rejects a poisoned 'bank.com -> attacker IP' response because the record's signature doesn't validate against the zone's key — stopping the redirect."),
-    dict(cat="glossary", title="gzip vs brotli",
-         answer="Two HTTP compression algorithms that shrink text responses (HTML/CSS/JS/JSON) to save bandwidth and speed loads; the client advertises support via Accept-Encoding and the server picks one. GZIP (DEFLATE) is universal, fast, and good. BROTLI (Google) compresses ~15-25% SMALLER at high quality (ideal for static assets precompressed at build time) but is slower at max levels, so it's often used at a lower level for dynamic content. Both are lossless.",
-         tags=["gzip","brotli","compression","http","performance"],
-         example="A CDN serves a pre-brotli-compressed app.js (smaller than gzip) to browsers sending 'Accept-Encoding: br', falling back to gzip for older clients."),
-    dict(cat="conceptual", title="Why does the median minimize total absolute distance while the mean minimizes squared distance?",
-         answer="It's about which error you penalize. To pick one point c minimizing the sum of ABSOLUTE distances Σ|x_i - c|, consider nudging c up slightly: it decreases the distance to every point above c and increases it to every point below, for a net change of (points below) - (points above). That's zero exactly when equal numbers lie on each side — the MEDIAN. So the median balances COUNTS and is robust (a far outlier is still just 'one point above'). If instead you minimize the sum of SQUARED distances Σ(x_i - c)², the derivative is 2Σ(c - x_i), zero when c equals the average — the MEAN. Squaring weights each point by its distance, so far points pull c strongly (the mean is outlier-sensitive). This is exactly why 'min ±1 moves to equalize an array' (a linear/L1 cost) converges to the MEDIAN, while least-squares regression and variance use the MEAN. The cost's shape — L1 (absolute) vs L2 (squared) — dictates the optimal center: L1 -> median, L2 -> mean.",
-         tags=["median","mean","l1","l2","optimization","why"],
-         example="For [1, 2, 100], equalizing with ±1 moves is cheapest at the median 2 (cost 99), not the mean ~34 (cost ~132) — absolute cost cares how many points move, not how far the outlier is."),
+         pitfalls="Using > instead of >= (target should count); off-by-one on the comparison.",
+         example="number_of_employees_who_met_target([0,1,2,3,4], 2) -> 3."),
+    dict(cat="glossary", title="Infrastructure as Code (IaC)",
+         answer="Managing and provisioning infrastructure (servers, networks, DBs, load balancers) through DECLARATIVE code/config instead of manual clicks. Tools like Terraform, CloudFormation, and Pulumi let you version, review, and REPRODUCE environments exactly. Benefits: consistency (no config drift), auditability (git history), fast disaster recovery (re-apply the code), and reviewable changes before they're applied.",
+         tags=["iac","terraform","infrastructure","devops","automation"],
+         example="A Terraform file declaring '3 web servers + a load balancer + Postgres' creates them identically in staging and prod, and the git diff shows exactly what a change will do before you apply."),
+    dict(cat="glossary", title="Immutable infrastructure",
+         answer="A model where servers/instances are NEVER modified after creation — to change something, you build a NEW image and REPLACE the old instances rather than patching in place. It eliminates configuration drift and 'snowflake' servers, makes deployments repeatable and rollbacks trivial (redeploy the old image), and pairs naturally with IaC + containers. The opposite is mutable infra (SSH in and patch), which accumulates untracked changes.",
+         tags=["immutable-infrastructure","containers","deployment","devops"],
+         example="To deploy a new version you bake a fresh container image and roll out new pods, terminating the old — never SSHing in to update a running server, so every instance is identical."),
+    dict(cat="glossary", title="GitOps",
+         answer="An operational model where GIT is the single source of truth for application AND infrastructure state; the desired state is declared in a repo and an agent (Argo CD, Flux) continuously RECONCILES the live system to match it. You change infra via a pull request; merging triggers the deploy. Benefits: auditability (every change is a PR), easy rollback (git revert), and automatic drift correction.",
+         tags=["gitops","argocd","flux","reconciliation","devops"],
+         example="To scale a service you edit its replica count in git and open a PR; once merged, Argo CD applies it — and if someone changes the cluster manually, Argo reverts it to match git."),
+    dict(cat="glossary", title="Subresource Integrity (SRI)",
+         answer="A browser feature that verifies a fetched resource (a script/stylesheet, often from a CDN) hasn't been TAMPERED with. You add an integrity attribute holding the resource's cryptographic hash; the browser hashes what it downloaded and REFUSES to execute it if the hashes don't match — protecting against a compromised CDN or MITM injecting malicious code into a third-party asset.",
+         tags=["sri","subresource-integrity","cdn","web-security","integrity"],
+         example="<script src='https://cdn/lib.js' integrity='sha384-...'> makes the browser reject the script if the CDN was hacked and served a modified lib.js whose hash doesn't match."),
+    dict(cat="glossary", title="Service discovery (client-side vs server-side)",
+         answer="How services find each other's network locations in a dynamic environment (instances come and go, IPs change). A SERVICE REGISTRY (Consul, etcd, Eureka) tracks healthy instances. CLIENT-SIDE discovery: the client queries the registry and load-balances itself (fewer hops, but every client needs the logic). SERVER-SIDE discovery: the client calls a load balancer/router that consults the registry (simpler clients, one extra hop). Kubernetes does server-side via Services + DNS.",
+         tags=["service-discovery","service-registry","consul","kubernetes","microservices"],
+         example="In Kubernetes a service calls 'http://orders' — DNS resolves a stable virtual IP and kube-proxy load-balances to a healthy pod (server-side); a Eureka client instead fetches the instance list and picks one itself (client-side)."),
+    dict(cat="conceptual", title="Why prefer immutable infrastructure over patching servers in place?",
+         answer="Mutable infrastructure — SSHing into running servers to apply updates, patches, and tweaks — accumulates untracked, divergent changes, producing 'SNOWFLAKE' servers subtly different from each other and from any documented state. So a bug reproduces on one box but not another, a failed patch leaves a box half-configured, and you can't confidently rebuild from scratch (CONFIGURATION DRIFT). Immutable infrastructure flips this: bake a versioned IMAGE (AMI/container) once, deploy identical copies, and to change anything build a NEW image and REPLACE instances. The wins: REPRODUCIBILITY (every instance is byte-identical and rebuildable), trivial reliable ROLLBACK (redeploy the previous good image), safer deploys (new runs beside old via blue-green/canary), NO DRIFT (nothing is edited live, so running state matches declared state), and clean composition with IaC/CI-CD/autoscaling. Trade-offs: you rebuild+redeploy even for small changes (slower than a hot patch), you need image-baking pipelines, and state must be externalized off the ephemeral instance. But the determinism is worth it — 'cattle, not pets.'",
+         tags=["immutable-infrastructure","configuration-drift","devops","reproducibility","why"],
+         example="A security patch on mutable infra means SSHing into 50 servers (some fail, drift ensues); on immutable infra you rebuild one image with the patch and roll out 50 identical fresh instances — and if it misbehaves, redeploy the previous image in seconds."),
 ]
 
 
