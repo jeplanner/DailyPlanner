@@ -16,142 +16,128 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Maximum Population Year",
-         answer="Given birth/death year ranges, find the earliest year with the most people alive. Use a DIFFERENCE ARRAY over years: +1 at each birth year, -1 at each death year (exclusive), then take a running prefix sum and track the year of the maximum. O(years) rather than checking every person per year.",
-         tags=["maximum-population","difference-array","sweep-line","array","dsa"],
-         code='''# Year with the most people alive, using a difference array over years.
-def maximum_population(logs):
-    delta = [0] * 2101              # years span roughly 1950..2050
-    for birth, death in logs:
-        delta[birth] += 1           # +1 alive from the birth year
-        delta[death] -= 1           # -1 at the death year (exclusive)
-    best_year = 0
-    best_pop = 0
-    running = 0
-    for year in range(1950, 2051):
-        running += delta[year]                  # prefix sum of alive counts
-        if running > best_pop:
-            best_pop = running
-            best_year = year
-    return best_year''',
-         complexity="Time O(n + years), space O(years).",
-         pitfalls="Counting death year as still-alive (it's exclusive); returning a later tie instead of the earliest.",
-         example="maximum_population([[1993,1999],[2000,2010]]) -> 1993."),
-    dict(cat="dsa", title="Count Number of Pairs With Absolute Difference K",
-         answer="Count index pairs (i<j) with |nums[i] - nums[j]| == k. Sweep once with a frequency map: for each number, add how many earlier numbers equal n-k or n+k (its two possible partners), then record n. O(n) instead of the O(n^2) double loop.",
-         tags=["pairs-abs-difference-k","hash-map","counting","array","dsa"],
-         code='''# Count pairs (i<j) with |nums[i] - nums[j]| == k, using a frequency map.
-from collections import Counter
-def count_k_difference(nums, k):
-    counts = Counter()
-    result = 0
-    for n in nums:
-        result += counts[n - k] + counts[n + k]   # earlier complements
-        counts[n] += 1
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Double counting both directions; brute-force O(n^2).",
-         example="count_k_difference([1,2,2,1], 1) -> 4."),
-    dict(cat="dsa", title="Three Divisors",
-         answer="Determine whether n has EXACTLY three positive divisors. This happens only when n is a prime SQUARED (divisors 1, p, p^2). Count divisors up to sqrt(n), adding both i and n//i per factor (once if they coincide), and check the count equals 3.",
-         tags=["three-divisors","math","divisors","dsa"],
-         code='''# Does n have exactly THREE positive divisors? (true iff n = prime squared)
-def is_three(n):
-    count = 0
-    i = 1
-    while i * i <= n:
-        if n % i == 0:
-            count += 1 if i * i == n else 2   # count i and n//i (once if equal)
-        i += 1
-    return count == 3''',
-         complexity="Time O(sqrt(n)), space O(1).",
-         pitfalls="Double-counting the square root factor; enumerating all divisors up to n (slow).",
-         example="is_three(4) -> True (1,2,4); is_three(2) -> False."),
-    dict(cat="dsa", title="Sort the People",
-         answer="Given names and their heights, return the names sorted by height in DESCENDING order. Zip the two lists, sort the pairs by height descending, and extract the names.",
-         tags=["sort-people","sorting","zip","array","dsa"],
-         code='''# Sort names by their corresponding heights, descending.
-def sort_people(names, heights):
-    # pair heights with names, sort by height desc, keep the names
-    return [name for _, name in sorted(zip(heights, names), reverse=True)]''',
-         complexity="Time O(n log n), space O(n).",
-         pitfalls="Sorting ascending; losing the name<->height association.",
-         example="sort_people(['Mary','John','Emma'], [180,165,170]) -> ['Mary','Emma','John']."),
-    dict(cat="dsa", title="Minimum Number of Moves to Seat Everyone",
-         answer="Students must each sit in a seat; a move shifts one student by 1 position. Minimize total moves. Sort both the seat positions and the student positions and pair them up in order — the sum of absolute differences of the matched pairs is optimal (matching sorted-to-sorted never crosses beneficially).",
-         tags=["min-moves-seat","greedy","sorting","array","dsa"],
-         code='''# Min total moves to seat students in seats: sort both, pair up, sum distances.
-def min_moves_seat(seats, students):
-    seats.sort(); students.sort()
-    return sum(abs(s - t) for s, t in zip(seats, students))''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Pairing without sorting both (suboptimal); mismatched list lengths.",
-         example="min_moves_seat([3,1,5], [2,7,4]) -> 4."),
-    dict(cat="dsa", title="Apply Operations to an Array",
-         answer="Process the array left to right: if nums[i] equals nums[i+1], DOUBLE nums[i] and set nums[i+1] to 0 (each element merges at most once). Afterward, shift all non-zero values to the FRONT keeping order, padding zeros at the end.",
-         tags=["apply-operations","array","simulation","dsa"],
-         code='''# Merge equal adjacent pairs (double first, zero second), then shift zeros right.
-def apply_operations(nums):
-    n = len(nums)
-    for i in range(n - 1):
-        if nums[i] == nums[i + 1]:
-            nums[i] *= 2
-            nums[i + 1] = 0
-    result = [x for x in nums if x != 0]     # non-zeros, order preserved
-    result += [0] * (n - len(result))         # pad zeros at the end
-    return result''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Merging a value twice in one pass (only adjacent original pairs); not preserving order when shifting zeros.",
-         example="apply_operations([1,2,2,1,1,0]) -> [1,4,2,0,0,0]."),
-    dict(cat="dsa", title="Left and Right Sum Difference",
-         answer="For each index, compute the absolute difference between the sum of all elements to its LEFT and the sum to its RIGHT. Keep a running left sum; the right sum is total - left - current. One pass with a precomputed total.",
-         tags=["left-right-difference","prefix-sum","array","dsa"],
-         code='''# For each index, |sum of elements to the left - sum to the right|.
-def left_right_difference(nums):
-    total = sum(nums)
-    left = 0
-    result = []
-    for n in nums:
-        right = total - left - n
-        result.append(abs(left - right))
-        left += n
-    return result''',
-         complexity="Time O(n), space O(1) beyond the output.",
-         pitfalls="Including the current element in either side; recomputing sums per index (O(n^2)).",
-         example="left_right_difference([10,4,8,3]) -> [15,1,11,22]."),
-    dict(cat="dsa", title="Number of Employees Who Met the Target",
-         answer="Given each employee's worked hours and a target, count how many worked at LEAST the target. A simple filter-and-count.",
-         tags=["employees-met-target","array","counting","dsa"],
-         code='''# Count employees whose worked hours meet or exceed the target.
-def number_of_employees_who_met_target(hours, target):
-    return sum(1 for h in hours if h >= target)''',
+    dict(cat="dsa", title="Find the Highest Altitude",
+         answer="A trip's net altitude gains per step are given; the starting altitude is 0. Return the HIGHEST altitude reached. Keep a running altitude (a prefix sum of the gains) and track its maximum.",
+         tags=["highest-altitude","prefix-sum","array","dsa"],
+         code='''# Highest altitude on a trip given net gain per step (prefix max of prefix sum).
+def largest_altitude(gain):
+    altitude = 0
+    highest = 0
+    for g in gain:
+        altitude += g          # running altitude
+        highest = max(highest, altitude)
+    return highest''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Using > instead of >= (target should count); off-by-one on the comparison.",
-         example="number_of_employees_who_met_target([0,1,2,3,4], 2) -> 3."),
-    dict(cat="glossary", title="Infrastructure as Code (IaC)",
-         answer="Managing and provisioning infrastructure (servers, networks, DBs, load balancers) through DECLARATIVE code/config instead of manual clicks. Tools like Terraform, CloudFormation, and Pulumi let you version, review, and REPRODUCE environments exactly. Benefits: consistency (no config drift), auditability (git history), fast disaster recovery (re-apply the code), and reviewable changes before they're applied.",
-         tags=["iac","terraform","infrastructure","devops","automation"],
-         example="A Terraform file declaring '3 web servers + a load balancer + Postgres' creates them identically in staging and prod, and the git diff shows exactly what a change will do before you apply."),
-    dict(cat="glossary", title="Immutable infrastructure",
-         answer="A model where servers/instances are NEVER modified after creation — to change something, you build a NEW image and REPLACE the old instances rather than patching in place. It eliminates configuration drift and 'snowflake' servers, makes deployments repeatable and rollbacks trivial (redeploy the old image), and pairs naturally with IaC + containers. The opposite is mutable infra (SSH in and patch), which accumulates untracked changes.",
-         tags=["immutable-infrastructure","containers","deployment","devops"],
-         example="To deploy a new version you bake a fresh container image and roll out new pods, terminating the old — never SSHing in to update a running server, so every instance is identical."),
-    dict(cat="glossary", title="GitOps",
-         answer="An operational model where GIT is the single source of truth for application AND infrastructure state; the desired state is declared in a repo and an agent (Argo CD, Flux) continuously RECONCILES the live system to match it. You change infra via a pull request; merging triggers the deploy. Benefits: auditability (every change is a PR), easy rollback (git revert), and automatic drift correction.",
-         tags=["gitops","argocd","flux","reconciliation","devops"],
-         example="To scale a service you edit its replica count in git and open a PR; once merged, Argo CD applies it — and if someone changes the cluster manually, Argo reverts it to match git."),
-    dict(cat="glossary", title="Subresource Integrity (SRI)",
-         answer="A browser feature that verifies a fetched resource (a script/stylesheet, often from a CDN) hasn't been TAMPERED with. You add an integrity attribute holding the resource's cryptographic hash; the browser hashes what it downloaded and REFUSES to execute it if the hashes don't match — protecting against a compromised CDN or MITM injecting malicious code into a third-party asset.",
-         tags=["sri","subresource-integrity","cdn","web-security","integrity"],
-         example="<script src='https://cdn/lib.js' integrity='sha384-...'> makes the browser reject the script if the CDN was hacked and served a modified lib.js whose hash doesn't match."),
-    dict(cat="glossary", title="Service discovery (client-side vs server-side)",
-         answer="How services find each other's network locations in a dynamic environment (instances come and go, IPs change). A SERVICE REGISTRY (Consul, etcd, Eureka) tracks healthy instances. CLIENT-SIDE discovery: the client queries the registry and load-balances itself (fewer hops, but every client needs the logic). SERVER-SIDE discovery: the client calls a load balancer/router that consults the registry (simpler clients, one extra hop). Kubernetes does server-side via Services + DNS.",
-         tags=["service-discovery","service-registry","consul","kubernetes","microservices"],
-         example="In Kubernetes a service calls 'http://orders' — DNS resolves a stable virtual IP and kube-proxy load-balances to a healthy pod (server-side); a Eureka client instead fetches the instance list and picks one itself (client-side)."),
-    dict(cat="conceptual", title="Why prefer immutable infrastructure over patching servers in place?",
-         answer="Mutable infrastructure — SSHing into running servers to apply updates, patches, and tweaks — accumulates untracked, divergent changes, producing 'SNOWFLAKE' servers subtly different from each other and from any documented state. So a bug reproduces on one box but not another, a failed patch leaves a box half-configured, and you can't confidently rebuild from scratch (CONFIGURATION DRIFT). Immutable infrastructure flips this: bake a versioned IMAGE (AMI/container) once, deploy identical copies, and to change anything build a NEW image and REPLACE instances. The wins: REPRODUCIBILITY (every instance is byte-identical and rebuildable), trivial reliable ROLLBACK (redeploy the previous good image), safer deploys (new runs beside old via blue-green/canary), NO DRIFT (nothing is edited live, so running state matches declared state), and clean composition with IaC/CI-CD/autoscaling. Trade-offs: you rebuild+redeploy even for small changes (slower than a hot patch), you need image-baking pipelines, and state must be externalized off the ephemeral instance. But the determinism is worth it — 'cattle, not pets.'",
-         tags=["immutable-infrastructure","configuration-drift","devops","reproducibility","why"],
-         example="A security patch on mutable infra means SSHing into 50 servers (some fail, drift ensues); on immutable infra you rebuild one image with the patch and roll out 50 identical fresh instances — and if it misbehaves, redeploy the previous image in seconds."),
+         pitfalls="Forgetting the starting altitude 0 is a candidate; summing without tracking the max.",
+         example="largest_altitude([-5,1,5,0,-7]) -> 1."),
+    dict(cat="dsa", title="Water Bottles",
+         answer="You start with numBottles full bottles; you can EXCHANGE numExchange empty bottles for one full bottle. Count the total bottles you can drink. Greedily drink all, then keep exchanging empties for new fulls (whose empties add back) until you can't exchange anymore.",
+         tags=["water-bottles","greedy","simulation","math","dsa"],
+         code='''# Total bottles drunk: exchange num_exchange empties for a full one.
+def num_water_bottles(num_bottles, num_exchange):
+    total = num_bottles
+    empty = num_bottles
+    while empty >= num_exchange:
+        new_full = empty // num_exchange           # fulls bought with empties
+        total += new_full
+        empty = empty % num_exchange + new_full    # leftover + newly emptied
+    return total''',
+         complexity="Time O(log num_bottles), space O(1).",
+         pitfalls="Forgetting the leftover empties carry over; not adding the new empties after drinking.",
+         example="num_water_bottles(9, 3) -> 13."),
+    dict(cat="dsa", title="Find Target Indices After Sorting Array",
+         answer="Sort the array ascending, then return all indices where the target appears (a 'target index' is a position holding the target in the sorted order). Sort and collect matching indices.",
+         tags=["target-indices","sorting","array","dsa"],
+         code='''# Indices where the target sits after sorting the array ascending.
+def target_indices(nums, target):
+    nums.sort()
+    return [i for i, n in enumerate(nums) if n == target]''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Returning indices before sorting; using the original positions.",
+         example="target_indices([1,2,5,2,3], 2) -> [1,2]."),
+    dict(cat="dsa", title="Number of Arithmetic Triplets",
+         answer="Count triplets (i<j<k) with nums[j]-nums[i] == diff and nums[k]-nums[j] == diff (the array is strictly increasing). Put the values in a set; for each value v, if v+diff and v+2*diff both exist, it anchors one triplet. O(n).",
+         tags=["arithmetic-triplets","hash-set","array","dsa"],
+         code='''# Count triplets with nums[j]-nums[i]==diff and nums[k]-nums[j]==diff.
+def arithmetic_triplets(nums, diff):
+    present = set(nums)
+    # each value that has value+diff and value+2*diff present anchors a triplet
+    return sum(1 for n in nums if (n + diff) in present and (n + 2 * diff) in present)''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Triple-nested loops (O(n^3)); the set lookup relies on strictly-increasing distinct values.",
+         example="arithmetic_triplets([0,1,4,6,7,10], 3) -> 2  (0,4,7? no; 1,4,7 and 4,7,10)."),
+    dict(cat="dsa", title="Kth Distinct String in an Array",
+         answer="A 'distinct' string appears exactly once in the array; return the kth distinct string in ORIGINAL order, or '' if fewer than k exist. Count frequencies, then walk in order counting down k at each once-only string.",
+         tags=["kth-distinct-string","counting","hash-map","string","dsa"],
+         code='''# The kth string that appears exactly once (in original order), or ''.
+from collections import Counter
+def kth_distinct(arr, k):
+    counts = Counter(arr)
+    for s in arr:
+        if counts[s] == 1:
+            k -= 1
+            if k == 0:
+                return s
+    return ""''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Iterating the counter (loses order); returning None instead of '' when k exceeds the count.",
+         example="kth_distinct(['d','b','c','b','c','a'], 2) -> 'a'."),
+    dict(cat="dsa", title="Maximum Product Difference Between Two Pairs",
+         answer="Choose two pairs to maximize (a*b) - (c*d). The best product uses the two LARGEST values; the smallest product uses the two SMALLEST. Sort and compute largest*second-largest minus smallest*second-smallest.",
+         tags=["max-product-difference","sorting","greedy","array","dsa"],
+         code='''# (largest * 2nd-largest) - (smallest * 2nd-smallest).
+def max_product_difference(nums):
+    nums.sort()
+    return nums[-1] * nums[-2] - nums[0] * nums[1]''',
+         complexity="Time O(n log n) (O(n) with a scan for extremes), space O(1).",
+         pitfalls="Assuming positive numbers only (this pairing still works for the stated problem); wrong index pairing.",
+         example="max_product_difference([5,6,2,7,4]) -> 34  (7*6 - 2*4)."),
+    dict(cat="dsa", title="Sort Array by Increasing Frequency",
+         answer="Sort by ASCENDING frequency; when two values have the same frequency, order them by DECREASING value. Count frequencies, then sort with a composite key (frequency ascending, value descending).",
+         tags=["frequency-sort","counting","sorting","array","dsa"],
+         code='''# Sort by ascending frequency; ties broken by decreasing value.
+from collections import Counter
+def frequency_sort(nums):
+    counts = Counter(nums)
+    # frequency ascending, then value descending within the same frequency
+    return sorted(nums, key=lambda x: (counts[x], -x))''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Wrong tie-break direction (value must be descending); sorting by value alone.",
+         example="frequency_sort([1,1,2,2,2,3]) -> [3,1,1,2,2,2]."),
+    dict(cat="dsa", title="Count Elements With Strictly Smaller and Greater Elements",
+         answer="Count elements that have BOTH a strictly smaller AND a strictly greater element in the array — i.e. every value that isn't the global minimum or maximum. Find the min and max, then count values strictly between them.",
+         tags=["count-elements-between","array","min-max","dsa"],
+         code='''# Count elements with both a strictly smaller and a strictly greater element.
+def count_elements(nums):
+    lo, hi = min(nums), max(nums)
+    return sum(1 for n in nums if lo < n < hi)   # exclude the extremes''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Using <= (would wrongly include ties with min/max); edge case where all values are equal (answer 0).",
+         example="count_elements([11,7,2,15]) -> 2  (11 and 7)."),
+    dict(cat="glossary", title="Observability: the three pillars",
+         answer="The three data types used to understand a system from the outside. LOGS: discrete, timestamped event records (detailed 'what happened') — best for debugging specifics. METRICS: numeric time-series aggregates (rate, errors, latency, CPU) — cheap, best for dashboards/alerts and trends. TRACES: the end-to-end path of one request across services (spans) — best for latency/dependency analysis. Together: detect with metrics, diagnose with traces, drill in with logs.",
+         tags=["observability","logs","metrics","traces","monitoring"],
+         example="A latency alert (metric) fires; you open a trace to see the payment call took 800ms, then read that service's logs to find the slow query — metrics -> traces -> logs."),
+    dict(cat="glossary", title="RED vs USE metrics",
+         answer="Two complementary monitoring methodologies. RED (for request-driven SERVICES): Rate (requests/sec), Errors (failed requests), Duration (latency) — the user-facing health of a service. USE (for RESOURCES): Utilization (% busy), Saturation (queue/wait depth), Errors — the health of a resource (CPU, disk, queue). RED tells you IF users are hurting; USE helps find WHICH resource is the bottleneck.",
+         tags=["red-metrics","use-metrics","monitoring","sre","observability"],
+         example="RED shows the API's error rate spiking and latency climbing (users hurting); USE reveals the database CPU is saturated with a full run queue — the resource bottleneck behind it."),
+    dict(cat="glossary", title="Metric cardinality",
+         answer="The number of unique time-series a metric produces, driven by the combinations of its LABEL/tag values — each distinct combination (endpoint × status × region × ...) is a separate stored series. HIGH cardinality (especially unbounded labels like user_id, request_id, or full URLs) explodes storage/query cost and can crash a metrics system. Keep labels low-cardinality and bounded; put high-cardinality detail in logs/traces instead.",
+         tags=["cardinality","metrics","labels","prometheus","observability"],
+         example="Adding a 'user_id' label to a request-count metric creates one series per user (millions), blowing up the metrics DB; keep labels low-cardinality (endpoint, status) and log the user_id instead."),
+    dict(cat="glossary", title="Structured logging & log levels",
+         answer="STRUCTURED logging emits logs as machine-parseable key/value records (usually JSON) so they can be filtered/searched/aggregated by field (user_id, request_id, latency) — essential at scale. LOG LEVELS (DEBUG < INFO < WARN < ERROR < FATAL) categorize severity to filter noise and set alert thresholds; prod usually runs at INFO/WARN with DEBUG enabled temporarily. Include a correlation/trace id to tie logs to a request.",
+         tags=["structured-logging","log-levels","json-logs","observability"],
+         example="Logging {level:'error', trace_id:'abc', user:'123', msg:'payment failed'} as JSON lets you query all errors for trace abc across services — impossible with a plain-text line."),
+    dict(cat="glossary", title="Sampling in observability",
+         answer="Keeping only a SUBSET of telemetry (traces/verbose logs) to control cost/volume, since storing 100% at scale is prohibitive. HEAD sampling decides at the start (e.g. keep 1%) — cheap but may drop the rare slow/errored trace. TAIL sampling buffers a trace and keeps it based on outcome (always keep errors and slow requests) — better signal, more memory. Metrics are usually NOT sampled (they're already aggregates).",
+         tags=["sampling","tracing","head-sampling","tail-sampling","observability"],
+         example="A service keeps 1% of normal traces (head) but 100% of any trace with an error or >1s latency (tail), capturing the interesting ones without storing billions of boring ones."),
+    dict(cat="conceptual", title="Why sample traces/logs instead of collecting everything?",
+         answer="At scale, telemetry volume rivals the application traffic itself: a service at 100k rps, each request emitting a multi-span trace and several log lines, produces terabytes/hour — the COST (storage, ingestion, indexing) and operational load of keeping it all would dwarf running the service, and emitting/exporting telemetry isn't free (it can slow the app). Most of that data is REDUNDANT too: the 99.9% of fast successes look alike, so keeping every one buys little. Sampling keeps a representative or INTERESTING subset. HEAD sampling (decide up front, keep 1%) is cheap and gives valid rates/trends but blindly drops the rare error/slow trace you need in an incident. TAIL sampling defers the keep/drop decision until the request finishes, so you ALWAYS retain errors and high-latency traces (the signal) while sampling the boring majority — at the cost of buffering traces in memory. The nuance: METRICS shouldn't be sampled (they're aggregates; sampling would distort counts), so keep 100% of metrics for exact alerting and sample the expensive per-request detail (traces, verbose logs), often combining always-keep-errors with a low baseline rate. It's a cost/signal trade-off: you can't afford everything and don't need everything — you need the anomalies plus enough baseline to stay statistically sound.",
+         tags=["sampling","observability","tracing","cost","why"],
+         example="Keeping 100% of traces at 100k rps is unaffordable and mostly duplicate 'fast success' traces; sampling 1% of successes but 100% of errors/slow requests captures every problem for a fraction of the storage, while metrics stay unsampled so error-rate alerts remain exact."),
 ]
 
 
