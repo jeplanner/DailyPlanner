@@ -15995,6 +15995,1262 @@ negative number token like "-4" as an operator because it starts with a minus -
 check membership in the operator set rather than checking the first character.
 """.strip("\n")
 
+_PLAIN_ALGO["Koko Eating Bananas (binary search on the answer)"] = r"""
+IN ONE SENTENCE: you are not searching an array, you are searching the possible
+SPEEDS - and since a faster speed is always at least as feasible, the yes/no
+test flips exactly once, which is all binary search needs.
+
+STEPS
+1. The slowest possible speed is 1; the fastest worth considering is the largest
+   pile, because eating faster than that finishes any pile in one hour anyway.
+2. Write a feasibility helper: at a given speed, the hours needed are the sum
+   over piles of ceil(pile / speed). Each pile takes whole hours - you never
+   move on to another pile within the same hour, which is what the ceiling
+   captures.
+3. Binary search between the bounds. If the middle speed finishes within the
+   allowed hours, it is feasible - record it and try SLOWER by moving hi to mid.
+   Otherwise move lo to mid plus one.
+4. When lo and hi meet, that is the slowest workable speed.
+
+WHY IT IS MONOTONIC, WHICH IS THE WHOLE JUSTIFICATION: if speed s finishes in
+time, so does every speed above s. So feasibility is false, false, false, then
+true forever - one switch point, which binary search finds in log time. Say that
+sentence out loud; it is the answer to "why can you binary search this?".
+
+WHY THE CEILING AND NOT PLAIN DIVISION: Koko eats from one pile per hour and
+does not carry leftover capacity to the next pile. A pile of 3 at speed 2 takes
+two hours, not 1.5. Using plain division silently allows a speed that cannot
+actually work.
+
+THE FAMILY THIS BELONGS TO: Capacity to Ship Packages, Split Array Largest Sum,
+Minimum Number of Days to Make Bouquets, Arranging Coins. All the same shape -
+"minimum X such that a cheap simulation succeeds".
+
+WHAT PEOPLE GET WRONG: setting hi to the SUM of the piles rather than the max -
+correct but wasteful; and mixing the two binary-search templates. Here "lo < hi"
+pairs with mid+1 / mid.
+""".strip("\n")
+
+_PLAIN_ALGO["Longest Consecutive Sequence"] = r"""
+IN ONE SENTENCE: put everything in a set, and only start counting a run from a
+number that has no predecessor - so each run is walked exactly once.
+
+STEPS
+1. Put all the numbers into a set for instant membership tests.
+2. For each number in the set, first ask: is (number - 1) also present? If it
+   is, this number is in the MIDDLE of a run - skip it entirely.
+3. If it is not present, this is the START of a run. Walk upward - number+1,
+   number+2 - counting while each is in the set.
+4. Keep the longest run found.
+
+WHY THE PREDECESSOR CHECK IS WHAT MAKES IT O(n): without it, a run of length k
+gets walked from every one of its k members, giving O(n^2) on a single long run.
+With it, only the true starting element ever walks, so across the whole input
+each element is visited at most twice - once in the outer loop, once during the
+single walk of its run. That is the entire trick, and it is worth stating as a
+counting argument because the nested loop looks quadratic.
+
+WHY A SET AND NOT SORTING: sorting is O(n log n) and gives an easy solution -
+offer it as the baseline. The set version is O(n), and the question exists to see
+whether you can get there.
+
+WHY DUPLICATES DO NOT MATTER: the set collapses them automatically, and a
+duplicate cannot extend a run of consecutive integers.
+
+WHAT PEOPLE GET WRONG: omitting the predecessor check, which is correct but
+quadratic; and iterating the original list rather than the set, which redoes work
+for every duplicate.
+""".strip("\n")
+
+_PLAIN_ALGO["String to Integer (atoi)"] = r"""
+IN ONE SENTENCE: this is not an algorithm question, it is a specification
+question - the whole difficulty is handling the four stages in exactly the right
+order and clamping at the end.
+
+STEPS
+1. Skip leading whitespace only. Not trailing, not internal.
+2. Read an optional single sign character.
+3. Consume digits until a non-digit or the end. Build the number as you go.
+4. Stop at the first non-digit - do not error, just stop. "42abc" is 42.
+5. Apply the sign, then CLAMP into the 32-bit signed range: -2147483648 to
+   2147483647. Anything beyond becomes the nearest bound.
+
+WHY THE ORDER IS THE ENTIRE PROBLEM: whitespace before sign before digits, and
+each stage happens at most once. "  +-12" is 0, because after the '+' the next
+character is not a digit. " 4 2" is 4, because the space ends the digits.
+Talking through these cases out loud is what the interviewer is scoring.
+
+WHY YOU CLAMP RATHER THAN OVERFLOW: the specification says so, and it is the
+detail most candidates forget. In a fixed-width language you must also check
+BEFORE multiplying, or you overflow while computing - compare the running value
+against the limit divided by ten.
+
+THE CASES TO ENUMERATE UNPROMPTED - saying these unasked is the whole signal:
+empty string; only whitespace; sign with no digits; two signs; leading zeros;
+digits then letters; letters then digits (returns 0); a value far beyond the
+range in both directions.
+
+WHY IT IS ASKED AT ALL: it tests whether you read a specification carefully and
+handle edge cases without being told. There is no clever insight to find - the
+grade is entirely on rigour.
+
+WHAT PEOPLE GET WRONG: stripping all whitespace instead of only leading;
+allowing multiple signs; forgetting the clamp; and treating a trailing non-digit
+as an error rather than a stopping point.
+""".strip("\n")
+
+_PLAIN_ALGO["Valid Sudoku"] = r"""
+IN ONE SENTENCE: one pass over the grid, recording three facts per filled cell -
+this digit in this row, in this column, in this box - and a repeat of any fact
+means invalid.
+
+STEPS
+1. Keep one set of seen "facts".
+2. Walk every cell. Skip empty ones.
+3. Build three keys for the value: (value, 'row', r), (value, 'col', c), and
+   (value, 'box', r//3, c//3).
+4. If any key is already in the set, there is a duplicate - return false.
+   Otherwise add all three.
+5. If the walk completes, the board is valid.
+
+WHY r//3 AND c//3 IDENTIFY THE BOX: integer-dividing the coordinates by 3 maps
+rows 0-2 to box row 0, rows 3-5 to box row 1, and so on. The pair (r//3, c//3)
+therefore names one of the nine 3x3 boxes uniquely. That one line is the only
+piece of real thinking in the problem.
+
+WHY TAGGED KEYS IN A SINGLE SET: without the tag, the digit 5 in row 0 and the
+digit 5 in column 0 would collide as the same entry. Tagging turns three separate
+bookkeeping structures into one, which is less code and fewer places to be
+wrong. Three separate sets-of-sets is equally correct if you prefer it.
+
+WHAT THIS PROBLEM IS NOT: it does not ask whether the board is SOLVABLE, only
+whether the currently filled cells break a rule. A board with no contradictions
+but no solution still counts as valid. Say that - misreading it is common.
+
+WHAT PEOPLE GET WRONG: the box index (using r/3 and c/3 without integer
+division, or swapping them); and treating empty cells as a value.
+""".strip("\n")
+
+_PLAIN_ALGO["Array Partition I"] = r"""
+IN ONE SENTENCE: sort, then pair each number with its immediate neighbour and
+take every element at an even index - those are the minimums, and they are as
+large as they can possibly be.
+
+STEPS
+1. Sort the array.
+2. Sum every element at index 0, 2, 4, and so on.
+
+WHY PAIRING ADJACENT SORTED VALUES IS OPTIMAL: in any pair, the larger number is
+wasted - only the minimum counts. So you want the "waste" to be as small as
+possible, which means pairing each number with the closest number above it.
+Sorting puts closest neighbours next to each other, so adjacent pairing minimises
+the total waste and therefore maximises the sum of minimums.
+
+WHY IT IS THE EVEN INDICES: after sorting, the pairs are (0,1), (2,3), (4,5)...
+and in each pair the first element is the smaller. So the minimums live at the
+even positions.
+
+THE ARGUMENT IF PUSHED: suppose an optimal pairing puts two non-adjacent numbers
+together. Swapping to make the pairs adjacent never lowers the total - the
+standard exchange argument. You do not need to prove it formally, but you should
+be able to gesture at it.
+
+WHAT PEOPLE GET WRONG: taking the odd indices, which sums the maximums; and
+overcomplicating a problem whose entire answer is "sort, then step by two".
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Product Difference Between Two Pairs"] = r"""
+IN ONE SENTENCE: to maximise (big pair product) minus (small pair product), take
+the two largest numbers and the two smallest - which sorting hands you directly.
+
+STEPS
+1. Sort the array.
+2. Multiply the last two elements; multiply the first two.
+3. Return the difference.
+
+WHY THE EXTREMES ARE OPTIMAL: the expression is maximised by making the first
+product as large as possible and the second as small as possible, and those two
+choices are independent - they use different elements. The largest product of two
+comes from the two largest values, and the smallest from the two smallest. There
+is nothing to trade off, which is why no search is needed.
+
+THE ASSUMPTION TO CHECK: this holds because the problem guarantees positive
+integers. With negatives allowed, two large negative numbers multiply to a large
+POSITIVE, and the reasoning collapses. Ask about the value range - noticing that
+the guarantee is doing work is the whole signal in an otherwise trivial problem.
+
+THE O(n) VERSION IF ASKED: one pass tracking the two largest and two smallest
+values. Same answer without the sort.
+
+WHAT PEOPLE GET WRONG: assuming negatives are allowed and adding unnecessary
+cases, or assuming they are not when they are.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Number of Moves to Seat Everyone"] = r"""
+IN ONE SENTENCE: sort both lists and pair them up in order - the closest student
+to each seat is the one at the same rank.
+
+STEPS
+1. Sort the seats and sort the students.
+2. Pair them by position: first with first, second with second.
+3. Sum the absolute differences.
+
+WHY SORTED PAIRING MINIMISES THE TOTAL: suppose two pairs cross - a student
+further along assigned to an earlier seat and vice versa. Uncrossing them never
+increases the total distance and usually decreases it. Since any assignment can
+be uncrossed step by step into the sorted one without ever getting worse, the
+sorted pairing is optimal. That exchange argument is the answer to "prove it",
+and it generalises to a whole family of matching problems.
+
+WHY ABSOLUTE VALUE: students can move in either direction, so the cost is the
+distance, not the signed difference.
+
+WHERE ELSE THIS EXACT ARGUMENT APPLIES: minimum moves to make an array equal
+(pair with the median), matching workers to jobs on a line, and assigning any two
+sets of positions on a number line.
+
+WHAT PEOPLE GET WRONG: sorting only one of the two lists; and trying to
+greedily assign each student to their nearest free seat, which is more code and
+is not actually optimal.
+""".strip("\n")
+
+_PLAIN_ALGO["Daily Temperatures (monotonic stack)"] = r"""
+IN ONE SENTENCE: keep a stack of days still waiting for a warmer day - when a
+warmer temperature arrives, it settles every waiting day it beats.
+
+STEPS
+1. Make a result array of zeros - zero means "no warmer day ever came".
+2. Keep a stack of INDICES whose temperatures are decreasing.
+3. Walk the days. While the stack is non-empty and today's temperature is
+   greater than the temperature at the stack's top, pop that index and record
+   the answer: today's index minus the popped index.
+4. Push today's index and continue.
+
+WHY THE STACK IS KEPT DECREASING: a day is still "waiting" only while every day
+since has been colder. As soon as a warmer day arrives, that day's answer is
+known and it leaves. So the stack naturally holds a decreasing run, and the
+structure does the bookkeeping for you.
+
+WHY YOU STORE INDICES RATHER THAN TEMPERATURES: the answer is a DISTANCE in
+days, so you need positions. Storing temperatures loses exactly the information
+the question asks for.
+
+WHY IT IS O(n) DESPITE THE INNER WHILE: each index is pushed once and popped at
+most once, so total inner-loop work across the entire run is bounded by n. Judge
+complexity by counting pushes and pops, not by loop nesting - this is the single
+most useful thing to say about monotonic stacks.
+
+HOW TO RECOGNISE THE PATTERN: any question phrased as "the next greater / next
+smaller / previous greater element", or "how far until something bigger". If you
+find yourself about to write a nested scan looking rightward, reach for a stack.
+
+WHAT PEOPLE GET WRONG: initialising the result to -1 when this problem wants 0
+for days with no warmer future; and pushing before resolving, which strands the
+current day.
+""".strip("\n")
+
+_PLAIN_ALGO["Decode String (stack)"] = r"""
+IN ONE SENTENCE: when you meet an opening bracket, push the work-so-far and the
+repeat count aside; when you meet the closing one, pop them back and glue the
+repeated piece on.
+
+STEPS
+1. Keep a stack, a current string, and a running number.
+2. A digit extends the number - multiply by 10 and add, because counts can have
+   several digits.
+3. An opening bracket: push the pair (current string, current number) onto the
+   stack, then RESET both. You are starting a fresh inner context.
+4. A closing bracket: pop the saved string and count, and set current to
+   savedString + current repeated count times.
+5. Any letter appends to current.
+6. At the end, current is the answer.
+
+WHY YOU PUSH THE STRING TOO, NOT JUST THE NUMBER: when you finish an inner
+group you must reattach it to whatever came BEFORE the bracket. "ab3[c]" needs
+"ab" preserved while "c" is being built. Pushing only the count loses the prefix
+and is the most common bug here.
+
+WHY RESETTING AFTER PUSHING IS ESSENTIAL: the inner group must start from an
+empty string and a zero count, or the outer context leaks into it.
+
+WHY THE MULTI-DIGIT HANDLING MATTERS: "12[a]" is twelve a's, not one then two.
+Building the number across consecutive digit characters is a one-line detail
+that is easy to skip.
+
+WHY A STACK: brackets nest, and nesting means the most recently opened context
+is the first to close - the definition of a stack.
+
+WHAT PEOPLE GET WRONG: forgetting to reset current and num after pushing, and
+concatenating in the wrong order on the pop (it is saved + repeated, not
+repeated + saved).
+""".strip("\n")
+
+_PLAIN_ALGO["Design a Min Stack"] = r"""
+IN ONE SENTENCE: keep a second stack that records, at every level, the minimum
+of everything at or below it - so the current minimum is always just its top.
+
+STEPS
+1. Two stacks: the values, and a parallel stack of running minimums.
+2. Push: append the value to the main stack, and append min(value, current
+   minimum) to the min stack. If the min stack is empty, the new minimum is the
+   value itself.
+3. Pop: pop both stacks together.
+4. Top: the top of the main stack.
+5. Get minimum: the top of the min stack.
+
+WHY A SINGLE "current minimum" VARIABLE DOES NOT WORK: if the minimum is popped
+off, you have no way to recover the previous one without scanning. The parallel
+stack stores the answer for EVERY prefix, so popping restores the previous
+minimum for free. That is the insight the question is testing.
+
+WHY BOTH STACKS STAY THE SAME HEIGHT: pushing and popping in lockstep means
+index i of the min stack always describes the state after i pushes. Keeping them
+aligned is what makes pop trivial.
+
+THE SPACE OPTIMISATION IF ASKED: only push to the min stack when the new value
+is less than or equal to the current minimum, and only pop it when the value
+being removed equals the current minimum. Use less-than-or-EQUAL in both places,
+or duplicates of the minimum break it - that equality is the trap in the
+optimised version.
+
+WHAT PEOPLE GET WRONG: forgetting to pop the min stack, which leaves a stale
+minimum; and using strict inequality in the optimised variant.
+""".strip("\n")
+
+_PLAIN_ALGO["Group Anagrams"] = r"""
+IN ONE SENTENCE: give every word a canonical form that all its anagrams share,
+then use that form as a dictionary key.
+
+STEPS
+1. Make a dictionary from key to list of words.
+2. For each word, build the key by sorting its letters.
+3. Append the word to the list under that key.
+4. Return the dictionary's values.
+
+WHY SORTED LETTERS ARE A VALID KEY: two words are anagrams exactly when they
+contain the same letters with the same multiplicities, and sorting is a
+canonical representation of that multiset. "eat" and "tea" both become "aet", so
+they land in the same bucket without ever being compared to each other.
+
+THE FASTER KEY WORTH MENTIONING: a 26-length tuple of letter counts. Sorting each
+word is O(L log L); counting is O(L). With many long words that matters, and
+offering it shows you thought about the cost of the key rather than just its
+correctness.
+
+WHY NOT COMPARE EVERY PAIR: the obvious approach compares each word with every
+other, which is O(n^2 x L). Canonicalising means each word is processed once and
+grouped by lookup - the same trade as every hashing problem, memory for repeated
+comparison.
+
+WHAT PEOPLE GET WRONG: using a list as a dictionary key (unhashable - use a
+string or tuple); and forgetting that the key must be built from the word's
+letters, not from the word itself.
+""".strip("\n")
+
+_PLAIN_ALGO["Next Greater Element (monotonic stack)"] = r"""
+IN ONE SENTENCE: keep a stack of positions still waiting for something bigger -
+each new value settles every waiting position it exceeds.
+
+STEPS
+1. Make a result array filled with -1, meaning "nothing greater ever came".
+2. Keep a stack of indices whose values are decreasing.
+3. Walk the array. While the stack is non-empty and the current value is greater
+   than the value at the stack's top, pop that index and write the current value
+   into its result slot.
+4. Push the current index.
+5. Return the result.
+
+WHY THE STACK STAYS DECREASING: an index remains unresolved only while
+everything after it has been smaller. The moment a larger value appears, that
+index is answered and leaves. So the stack is always a decreasing run - you never
+have to enforce it, it is a consequence.
+
+WHY -1 IS THE DEFAULT: whatever is still on the stack at the end never found a
+greater element. Pre-filling the result means you need no cleanup loop.
+
+WHY IT IS O(n): each index enters and leaves the stack at most once, so the
+total work is linear no matter how deep the nesting looks. This is the same
+counting argument as Daily Temperatures and Largest Rectangle - learn it once.
+
+THE CIRCULAR VARIANT: if the array wraps around, walk it twice (using index
+modulo n) and only push during the first pass. That covers every wrap without
+building a doubled array.
+
+WHAT PEOPLE GET WRONG: storing values instead of indices, so you cannot write
+the answer to the right slot; and resolving after pushing rather than before.
+""".strip("\n")
+
+_PLAIN_ALGO["Pow(x, n) — fast exponentiation"] = r"""
+IN ONE SENTENCE: read the exponent in binary - square the base at every step,
+and multiply it into the answer only where the bit is set.
+
+STEPS
+1. If the exponent is negative, invert the base and make the exponent positive.
+2. Start the result at 1.
+3. While the exponent is greater than zero: if its lowest bit is set, multiply
+   the current base into the result. Then square the base and shift the exponent
+   right by one.
+4. Return the result.
+
+WHY IT WORKS: x^13 with 13 as binary 1101 is x^8 times x^4 times x^1. Squaring
+the base each round produces x, x^2, x^4, x^8 in turn, and the bits of the
+exponent tell you exactly which of those to include. So you do about log n
+multiplications instead of n.
+
+WHY THE SPEED MATTERS: computing x^1000000 by repeated multiplication is a
+million operations; this is twenty. The same technique underlies modular
+exponentiation in RSA and matrix exponentiation for linear recurrences - worth
+naming, because it shows the idea generalises.
+
+THE EDGE CASES TO RAISE UNPROMPTED: a negative exponent (invert the base);
+an exponent of zero (result 1, including 0^0 by convention); and in fixed-width
+languages, that negating the most negative integer overflows - convert to a
+wider type first.
+
+WHY NOT RECURSION: the recursive halving version is equally valid and slightly
+more elegant, but it uses O(log n) stack. The loop is O(1) space.
+
+WHAT PEOPLE GET WRONG: squaring the base before checking the bit rather than
+after, which shifts every term by one power.
+""".strip("\n")
+
+_PLAIN_ALGO["Quickselect (kth largest)"] = r"""
+IN ONE SENTENCE: partition like quicksort, but only recurse into the side that
+contains the position you are looking for - so you throw away half the work
+instead of sorting it.
+
+STEPS
+1. The kth largest sits at index (length - k) once sorted. Call that the target
+   index.
+2. Partition the current range around a pivot: everything smaller moves left,
+   the pivot lands at its final index p.
+3. If p equals the target, the value there is the answer.
+4. If p is less than the target, the answer is to the RIGHT - search lo = p+1.
+5. If p is greater, search the left side - hi = p-1.
+6. Repeat until found.
+
+WHY IT IS O(n) ON AVERAGE RATHER THAN O(n log n): quicksort recurses into both
+halves, so the work is n + n + n... across log n levels. Quickselect recurses
+into ONE half, so the work is n + n/2 + n/4 + ... which sums to 2n. Being able
+to give that series is the answer to "why is it linear?".
+
+WHY THE WORST CASE IS O(n^2), AND THE FIX: a consistently terrible pivot peels
+off one element at a time. A randomised pivot makes that vanishingly unlikely;
+median-of-medians makes it impossible at the cost of a bigger constant. Mention
+the random pivot at minimum.
+
+WHY THE INDEX IS length - k: sorted ascending, the largest is at the last index,
+so the kth largest is k positions from the end. Deriving that out loud avoids the
+most common off-by-one.
+
+WHEN TO PREFER THE HEAP INSTEAD: quickselect mutates the input and has a bad
+worst case. A size-k heap is O(n log k), does not mutate, and streams. Say which
+you would ship and why - usually the heap unless n is huge and k is near n/2.
+
+WHAT PEOPLE GET WRONG: the target index; and forgetting that this reorders the
+caller's array.
+""".strip("\n")
+
+_PLAIN_ALGO["Rotate Image (90 degrees, in place)"] = r"""
+IN ONE SENTENCE: transpose the matrix, then reverse each row - two simple
+operations that compose into a clockwise rotation.
+
+STEPS
+1. Transpose: for every i, swap element (i, j) with (j, i) for all j greater
+   than i. Only the upper triangle, or you swap everything back.
+2. Reverse each row in place.
+3. Return the matrix.
+
+WHY THOSE TWO STEPS EQUAL A ROTATION: transposing reflects the matrix across its
+main diagonal; reversing each row reflects it left-to-right. Two reflections
+about different axes compose into a rotation. Do it on a 3x3 by hand once and it
+becomes permanent knowledge rather than a memorised recipe.
+
+WHY j STARTS AT i+1: swapping is symmetric, so visiting both (i,j) and (j,i)
+performs the swap twice and returns the matrix to where it started. Restricting
+to the upper triangle visits each pair once. Skipping this is the classic bug and
+it produces an unchanged matrix, which is confusing to debug.
+
+FOR ANTI-CLOCKWISE: transpose then reverse the COLUMNS (equivalently, reverse
+the rows' order rather than each row's contents). Interviewers ask for the other
+direction immediately after, so have it ready.
+
+WHY IT IS O(1) SPACE: every operation is a swap between existing cells. The
+alternative - building a new rotated matrix - is easier but the problem
+explicitly asks for in-place.
+
+WHAT PEOPLE GET WRONG: the triangle bound, and reversing the order of the rows
+instead of the contents of each row - which gives a rotation the wrong way.
+""".strip("\n")
+
+_PLAIN_ALGO["Set Matrix Zeroes (O(1) space)"] = r"""
+IN ONE SENTENCE: use the matrix's own first row and first column as the notepad
+recording which rows and columns must be zeroed.
+
+STEPS
+1. Before anything else, record separately whether the first row contains a zero
+   and whether the first column does. Two booleans.
+2. Sweep the rest of the matrix, from row 1 and column 1. When you find a zero at
+   (r, c), mark it by writing a zero into (r, 0) and (0, c).
+3. Sweep the interior again. Zero any cell whose row marker or column marker is
+   zero.
+4. Finally, if the first-row flag was set, zero the whole first row; same for the
+   first column.
+
+WHY THE FIRST ROW AND COLUMN NEED SEPARATE FLAGS: they are doing double duty -
+they are both markers and real data. Cell (0,0) in particular would have to
+represent both "row 0 must be zeroed" and "column 0 must be zeroed", which it
+cannot. Capturing them as booleans up front resolves the collision, and that
+collision is the entire difficulty of the problem.
+
+WHY YOU MUST DO THE FIRST ROW AND COLUMN LAST: if you zeroed them early, you
+would destroy the markers the interior sweep depends on.
+
+WHY NOT JUST ZERO AS YOU GO: writing zeros during the first sweep creates new
+zeros that the same sweep then reads, cascading until the whole matrix is zero.
+The mark-then-apply separation exists to prevent exactly that.
+
+THE EASIER SOLUTIONS TO OFFER FIRST: two sets of row and column indices, which
+is O(m + n) space and trivially correct. Say it, then present the O(1) version -
+that ordering reads far better than opening with the trick.
+
+WHAT PEOPLE GET WRONG: forgetting the two flags; applying the first row and
+column before the interior; and reading markers that the current sweep has
+already overwritten.
+""".strip("\n")
+
+_PLAIN_ALGO["Spiral Matrix"] = r"""
+IN ONE SENTENCE: keep four walls - top, bottom, left, right - walk one edge at a
+time, and pull the corresponding wall inward after each edge.
+
+STEPS
+1. Set top and left to 0, bottom and right to the last row and column.
+2. While top has not passed bottom and left has not passed right:
+   a. Walk the top row left to right, then move top down by one.
+   b. Walk the right column top to bottom, then move right in by one.
+   c. If top has not passed bottom, walk the bottom row right to left, then move
+      bottom up.
+   d. If left has not passed right, walk the left column bottom to top, then move
+      left in.
+3. Return the collected values.
+
+WHY STEPS c AND d NEED THE EXTRA CHECK: on a single-row matrix, after walking the
+top row and moving top down, top is now past bottom - and walking the bottom row
+would re-emit the same row backwards. The same happens on a single column. Those
+two guards are the only real difficulty in this problem, and they are what the
+interviewer is checking.
+
+WHY THE WALLS APPROACH BEATS DIRECTION-VECTOR SIMULATION: you can also track a
+direction and turn when you hit a visited cell, which needs a visited grid and is
+more state. The four walls encode the spiral shape directly with four integers.
+
+THE VARIANTS: generating a spiral (Spiral Matrix II) is the same loop writing
+instead of reading; a spiral over a non-square matrix is already handled by
+tracking rows and columns separately.
+
+WHAT PEOPLE GET WRONG: omitting the two guards, which duplicates a row or column
+on odd-shaped matrices; and updating a wall before finishing the edge that uses
+it.
+""".strip("\n")
+
+_PLAIN_ALGO["Largest Perimeter Triangle"] = r"""
+IN ONE SENTENCE: sort descending and take the first three consecutive lengths
+that can actually form a triangle - the first such triple is the largest
+perimeter.
+
+STEPS
+1. Sort the lengths in descending order.
+2. Walk consecutive triples. For each, check the triangle inequality: the
+   largest must be strictly less than the sum of the other two.
+3. Return the sum of the first triple that passes.
+4. If none passes, return 0.
+
+WHY ONLY CONSECUTIVE TRIPLES NEED CHECKING: with a sorted array, if a[i] fails
+against a[i+1] and a[i+2] - its two largest available partners - then it fails
+against every smaller pair too, so a[i] can never be the longest side of any
+valid triangle and you move on. Skipping non-consecutive combinations is
+therefore safe, not an approximation.
+
+WHY DESCENDING ORDER GIVES THE ANSWER IMMEDIATELY: you are testing the largest
+possible perimeters first, so the first valid triple is automatically the maximum.
+No comparison of candidates is needed.
+
+WHY ONLY ONE INEQUALITY: for three sorted sides, the other two triangle
+inequalities are automatically satisfied - a smaller side plus the largest always
+exceeds the remaining one. Checking all three is harmless but reveals you have
+not thought it through.
+
+WHAT PEOPLE GET WRONG: using less-than-or-equal, which admits degenerate
+"triangles" with zero area; and checking every combination, which is O(n^3) for
+no benefit.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Units on a Truck (greedy)"] = r"""
+IN ONE SENTENCE: load the densest boxes first - sort by units per box descending
+and fill until the truck is full.
+
+STEPS
+1. Sort the box types by units per box, highest first.
+2. Walk them, taking as many boxes as you can: the smaller of how many exist and
+   how much space is left.
+3. Add taken times units-per-box to the total, and reduce the remaining space.
+4. Stop when the truck is full.
+
+WHY GREEDY IS PROVABLY OPTIMAL HERE: every box occupies exactly one unit of
+truck space regardless of type. So the space is a fixed number of identical
+slots, and you simply want the most valuable item in each slot. Whenever the cost
+is uniform, greedy by value is correct with no exchange argument needed.
+
+WHY IT WOULD NOT BE OPTIMAL IF BOX SIZES DIFFERED: that becomes the knapsack
+problem, where greedy by value-per-unit-space is only an approximation. Saying
+"this is greedy-safe because every box costs one slot, otherwise it would be
+knapsack" is exactly the kind of remark that separates a memorised answer from an
+understood one.
+
+THE PARTIAL-TAKE DETAIL: you can take some but not all boxes of a type, which is
+what the min() handles. That is what makes it fractional-friendly and therefore
+greedy-safe.
+
+WHAT PEOPLE GET WRONG: sorting by the number of boxes rather than by units per
+box; and forgetting to stop when the truck fills, which overcounts.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Sum of Four Digit Number After Splitting Digits"] = r"""
+IN ONE SENTENCE: sort the four digits, put the two smallest in the tens places
+and the two largest in the units places.
+
+STEPS
+1. Sort the four digit characters ascending.
+2. Build the first number as digits[0] in the tens place and digits[2] in the
+   units.
+3. Build the second as digits[1] in the tens and digits[3] in the units.
+4. Return their sum.
+
+WHY THE TENS PLACES MATTER TEN TIMES MORE: the sum is 10 times (the two tens
+digits) plus (the two units digits). So minimising means putting the two smallest
+digits where they are multiplied by ten, and the two largest where they are
+multiplied by one. That single observation is the entire problem.
+
+WHY THE PAIRING WITHIN THAT IS FREE: once you have decided which two digits go
+in the tens places, the sum is the same regardless of which of the two large
+digits joins which small one - the total is fixed. So digits[0]+digits[2] and
+digits[1]+digits[3] is one valid arrangement among several equally good ones.
+
+WHY LEADING ZEROS ARE ACCEPTABLE HERE: the problem allows the resulting numbers
+to have fewer digits, so a zero in a tens place simply produces a single-digit
+number. Check this in the statement - some variants forbid it.
+
+WHAT PEOPLE GET WRONG: pairing smallest with largest and second-smallest with
+second-largest as complete two-digit numbers in the wrong positions, which puts a
+large digit in a tens place.
+""".strip("\n")
+
+_PLAIN_ALGO["Same Tree"] = r"""
+IN ONE SENTENCE: compare the two nodes, then ask the same question of their left
+pairs and their right pairs.
+
+STEPS
+1. Both empty -> identical, return true. This is the base case that terminates
+   everything.
+2. Exactly one empty, or the values differ -> not identical.
+3. Otherwise both left subtrees must match AND both right subtrees must match.
+
+WHY THE HELPER TAKES TWO NODES: the property is about a PAIR, not about a single
+node. Any tree question phrased as "are these two..." needs a two-argument
+recursion, and recognising that immediately is most of the work.
+
+WHY THE BOTH-EMPTY CASE MUST COME FIRST: it is what makes matching leaves
+succeed. Check "exactly one empty" first and two empty children fall through into
+a value comparison on nothing.
+
+THE FAMILY THIS BELONGS TO: Symmetric Tree is this with the recursion CROSSED
+(a.left against b.right). Subtree of Another Tree calls this helper from every
+node of the bigger tree. Merge Two Binary Trees walks the same pair-wise
+structure and combines instead of comparing. One shape, four problems.
+
+WHAT PEOPLE GET WRONG: comparing values before checking for empties, which
+crashes; and using == on the nodes rather than on their values in languages where
+that compares identity.
+""".strip("\n")
+
+_PLAIN_ALGO["Split a Number into Two Parts with Minimum Sum"] = r"""
+IN ONE SENTENCE: sort the digits and DEAL them alternately into two numbers -
+like dealing cards - so the small digits land in the high-value places of both.
+
+STEPS
+1. Sort the digit characters ascending.
+2. Deal alternately: even positions to the first number, odd positions to the
+   second, appending as you go.
+3. Convert both to integers and add.
+
+WHY DEALING ALTERNATELY IS OPTIMAL: both numbers are built left to right, so the
+earliest digits dealt land in the highest place values. Alternating means the two
+smallest digits become the leading digits of the two numbers, the next two become
+the second digits, and so on - which minimises the weighted total. Giving all the
+small digits to one number would leave the other with a huge leading digit.
+
+WHY THE TWO NUMBERS COME OUT BALANCED IN LENGTH: alternating splits the digits
+evenly, and two numbers of similar length always beat one long and one short -
+a longer number multiplies its leading digit by a bigger power of ten.
+
+WHY THE `or '0'` GUARD: with an odd digit count one side can end up empty in some
+variants, and converting an empty string throws.
+
+WHY THIS DIFFERS FROM THE FOUR-DIGIT VERSION: with exactly four digits you can
+name the positions explicitly. The general version needs the dealing rule, and
+saying that you would generalise it this way is the point.
+
+WHAT PEOPLE GET WRONG: sorting descending; and splitting the sorted digits into
+two contiguous halves rather than dealing alternately.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Number of Coins You Can Get"] = r"""
+IN ONE SENTENCE: sort, throw away the n smallest piles entirely (Bob always gets
+those), then take every SECOND pile counting down from the top.
+
+STEPS
+1. Sort the piles ascending. Let n be the number of triples, so one third of the
+   pile count.
+2. The n smallest piles will always go to Bob, so ignore them.
+3. From the largest end, Alice takes the biggest of each triple and you take the
+   second biggest. So starting at the second-from-last index, take every second
+   pile, n times.
+
+WHY THE n SMALLEST ARE ALWAYS BOB'S: Bob receives the smallest of each of the n
+triples. Whatever grouping you choose, n piles must end up as smallest-of-triple,
+and you can always arrange for those to be the n globally smallest - which is
+optimal because it wastes the least value on him.
+
+WHY YOU STEP BY TWO FROM THE TOP: after discarding Bob's share, the remaining
+piles pair up as (Alice's, yours) from the largest downward. Alice takes the very
+largest, you take the next, Alice takes the third, you take the fourth. Stepping
+by two lands you exactly on your share.
+
+THE PROOF INSTINCT WORTH SHOWING: in any triple you get the middle value, so you
+want the middle values to be as large as possible - which means pairing each of
+your piles with the largest available pile above it and the smallest available
+below it. Sorting makes that arrangement readable off the array.
+
+WHAT PEOPLE GET WRONG: starting at the last index rather than the
+second-from-last, which takes Alice's piles; and forgetting that exactly one
+third of the piles are discarded.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Product of Three Numbers"] = r"""
+IN ONE SENTENCE: it is either the three largest numbers, or the two most
+negative multiplied by the single largest - so compute both and take the bigger.
+
+STEPS
+1. Sort the array.
+2. Candidate one: the product of the last three.
+3. Candidate two: the product of the first two and the last one.
+4. Return the larger.
+
+WHY THE SECOND CANDIDATE EXISTS: two negatives multiply to a positive, and two
+LARGE negatives multiply to a large positive. On [-10, -9, 1, 2, 3] the three
+largest give 6, while -10 times -9 times 3 gives 270. Missing this case is the
+entire point of the problem, and it is why the answer is not simply "sort and
+take three".
+
+WHY ONLY TWO CANDIDATES: any product of three uses either zero negatives (so the
+three largest positives) or exactly two negatives (so the two most negative plus
+the largest positive). One or three negatives gives a negative product, which
+cannot beat either candidate when a non-negative one is available. So there is
+nothing else to check.
+
+THE O(n) VERSION IF ASKED: one pass tracking the three largest and the two
+smallest values, then the same two candidates. Same answer without sorting.
+
+WHAT PEOPLE GET WRONG: assuming all-positive input; and considering the first
+three (which would be the most negative product, not the largest).
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Moves to Equal Array Elements II"] = r"""
+IN ONE SENTENCE: everyone should converge on the MEDIAN, not the mean - and then
+the answer is the sum of distances to it.
+
+STEPS
+1. Sort the array.
+2. Take the middle element as the median.
+3. Sum the absolute difference between every element and the median.
+
+WHY THE MEDIAN AND NOT THE MEAN: you are minimising the sum of ABSOLUTE
+distances, and that is minimised at the median. The mean minimises the sum of
+SQUARED distances, which is a different problem. Using the mean gives a wrong
+answer on skewed inputs like [1, 2, 100].
+
+THE INTUITION THAT MAKES IT OBVIOUS: stand anywhere on a line of points. Take one
+step toward the side that has more points - your total distance drops by the
+difference in counts. You keep improving until both sides are balanced, and the
+balance point is exactly the median. That argument is short enough to give out
+loud and it is what the interviewer wants.
+
+WHY EITHER MIDDLE VALUE WORKS FOR AN EVEN COUNT: any point between the two middle
+elements gives the same total, so picking either is fine.
+
+THE FASTER VERSION: quickselect finds the median in O(n) average without a full
+sort, giving O(n) overall. Worth naming, though the sort is usually accepted.
+
+WHAT PEOPLE GET WRONG: using the mean; and rounding the mean to an integer and
+hoping, which is right often enough to pass small tests and wrong on the ones
+that matter.
+""".strip("\n")
+
+_PLAIN_ALGO["Queue Reconstruction by Height"] = r"""
+IN ONE SENTENCE: place the tallest people first, then insert each shorter person
+at exactly the index their count demands - shorter people do not disturb the
+counts of taller ones already placed.
+
+STEPS
+1. Sort by height DESCENDING; among equal heights, by the count ascending.
+2. Start with an empty queue.
+3. For each person in that order, insert them at the index equal to their count
+   value.
+4. Return the queue.
+
+WHY INSERTING AT THE COUNT INDEX IS CORRECT: when you place a person, everyone
+already in the queue is at least as tall as them. So the number of taller-or-equal
+people in front of them is simply their index - which means putting them at index
+k gives them exactly k taller people in front. Their own presence cannot disturb
+anyone already placed, because they are shorter and do not count toward those
+people's totals.
+
+WHY EQUAL HEIGHTS SORT BY COUNT ASCENDING: among people of the same height, the
+one with the smaller count must go first, or inserting them later would shift the
+other's position and break their count.
+
+WHY IT LOOKS WRONG AND IS NOT: inserting into the middle of a list shifts
+everyone after it, which feels like it should corrupt earlier placements. It does
+not, because shifting a person right does not change how many TALLER people are
+in front of them - only shorter people were added, and shorter people are not
+counted.
+
+COST: each insert is O(n), so O(n^2) overall. Accepted, and mentioning that a
+balanced BST or Fenwick tree gets it to O(n log n) is a good closing note.
+
+WHAT PEOPLE GET WRONG: sorting ascending by height, which breaks the invariant
+entirely; and the tie-break direction on equal heights.
+""".strip("\n")
+
+_PLAIN_ALGO["Two City Scheduling (greedy)"] = r"""
+IN ONE SENTENCE: sort by how much cheaper city A is than city B, then send the
+first half to A and the rest to B.
+
+STEPS
+1. For each person compute the difference costA minus costB - how much you save
+   by sending them to A.
+2. Sort ascending by that difference. The most negative values are the people for
+   whom A is dramatically cheaper.
+3. Send the first n to city A and the remaining n to city B.
+4. Sum the corresponding costs.
+
+WHY SORTING BY THE DIFFERENCE IS THE WHOLE IDEA: you must send exactly n to each
+city, so the question is not "who is cheap" but "who benefits MOST from going to
+A rather than B". Someone costing 1000 to A and 2000 to B saves you 1000 by going
+to A - far more valuable than someone costing 100 to A and 150 to B, even though
+the second person is cheaper in absolute terms. Absolute cost is a distraction;
+the differential is the signal.
+
+THE ALGEBRA IF YOU WANT IT: the total is sum of all costB, plus the sum of
+(costA - costB) for whoever you send to A. Since the first term is fixed, you
+minimise by choosing the n most negative differences. That reformulation makes
+the greedy obviously correct rather than merely plausible.
+
+WHY THE CONSTRAINT MATTERS: without the exactly-n-each rule you would just send
+everyone to their cheaper city. The constraint is what turns it into an
+interesting problem.
+
+WHAT PEOPLE GET WRONG: sorting by costA alone; and trying dynamic programming,
+which works but is far more machinery than the problem needs.
+""".strip("\n")
+
+_PLAIN_ALGO["Distribute Candies"] = r"""
+IN ONE SENTENCE: you eat exactly half the candies, so the answer is the number of
+distinct flavours - capped by how many candies you actually get to eat.
+
+STEPS
+1. Count the distinct flavours with a set.
+2. Compute half the total candy count.
+3. Return the smaller of the two.
+
+WHY THE MINIMUM: if there are more flavours than you can eat, you can pick a
+different flavour every time and the limit is how many candies you eat. If there
+are fewer flavours than that, you can taste them all and the limit is the number
+of flavours. Neither cap can be exceeded, so the answer is whichever binds.
+
+WHY YOU CAN ALWAYS ACHIEVE THE CAP: with n/2 picks and k flavours available, you
+can always choose one of each distinct flavour first - no arrangement of
+duplicates prevents it. So the bound is achievable, not just an upper limit,
+which is what makes the one-line answer correct.
+
+WHY A SET RATHER THAN COUNTING: you only need distinctness, not multiplicities.
+The counts of each flavour never enter the answer.
+
+WHAT PEOPLE GET WRONG: returning the flavour count without the cap, which
+over-reports when there are many flavours and few candies.
+""".strip("\n")
+
+_PLAIN_ALGO["Find Target Indices After Sorting Array"] = r"""
+IN ONE SENTENCE: sort, then collect the positions where the target appears.
+
+STEPS
+1. Sort the array ascending.
+2. Walk it with the index, collecting every index whose value equals the target.
+3. Return the collected indices, which are already ascending.
+
+WHY THE INDICES COME OUT SORTED FOR FREE: you walk left to right, so they are
+appended in increasing order. No extra sort is needed on the result.
+
+THE O(n) VERSION WORTH OFFERING: you never actually need the array sorted - only
+the target's positions in the sorted order. Count how many elements are strictly
+LESS than the target (call it smaller) and how many EQUAL it (call it count).
+Then the answer is the run of indices from smaller to smaller + count - 1. One
+pass, no sort, O(n) time and O(1) space beyond the output. Offering this after
+the obvious answer is the whole opportunity in an otherwise trivial problem.
+
+WHY THAT COUNTING TRICK WORKS: in sorted order, every element smaller than the
+target sits before it, so the first occurrence of the target lands at index
+`smaller`, and the copies occupy the next `count` positions.
+
+WHAT PEOPLE GET WRONG: sorting a copy and returning indices into the ORIGINAL
+array, which is a different question; and giving only the sort-based answer when
+the counting version is what elevates it.
+""".strip("\n")
+
+_PLAIN_ALGO["Kids With the Greatest Number of Candies"] = r"""
+IN ONE SENTENCE: find the current maximum once, then each kid qualifies if their
+candies plus the extras reach it.
+
+STEPS
+1. Find the maximum of the array in one pass.
+2. For each kid, produce whether their count plus the extra candies is greater
+   than or equal to that maximum.
+3. Return the list of booleans.
+
+WHY THE MAXIMUM IS COMPUTED ONCE, OUTSIDE THE LOOP: the comparison is against the
+maximum BEFORE any extras are given, and it is the same reference for every kid.
+Recomputing it inside the loop is O(n^2) for no reason; recomputing it AFTER
+giving a kid the extras is a different and wrong question.
+
+WHY GREATER-THAN-OR-EQUAL: the question asks whether they would have the
+greatest number, and tying for the most counts. Using strict greater-than returns
+false for the kid who already holds the maximum, which is the trap.
+
+WHY THE EXTRAS DO NOT DEPLETE: each kid is evaluated independently as if they
+received all the extra candies - it is a hypothetical per kid, not a
+distribution. Misreading this as a shared pool is more common than any coding
+error.
+
+WHAT PEOPLE GET WRONG: strict inequality, and treating the extras as a resource
+to be divided.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimize String Length (keep distinct characters)"] = r"""
+IN ONE SENTENCE: the operation lets you delete duplicates until one of each
+character remains, so the answer is simply the number of distinct characters.
+
+STEPS
+1. Put the string's characters into a set.
+2. Return its size.
+
+WHY IT COLLAPSES TO THAT: the allowed operation removes a character that has a
+matching copy to its left or right. Any duplicate can therefore eventually be
+removed, and no operation can ever remove the LAST copy of a character - there
+would be nothing to match it against. So the reachable minimum is exactly one of
+each distinct character, always.
+
+WHY NO SIMULATION IS NEEDED: the order of deletions does not matter, and the end
+state is forced. Recognising that a process has a unique reachable minimum - and
+therefore needs no search - is the actual skill being tested. Problems that look
+like simulations often have a closed form; ask "what is invariant here?" before
+writing a loop.
+
+WHAT PEOPLE GET WRONG: implementing the deletion process literally, which is
+correct but far more code and invites off-by-one bugs; and assuming the answer
+depends on the arrangement of the characters, which it does not.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Cost to Move Chips"] = r"""
+IN ONE SENTENCE: moving two positions is free, so only a chip's PARITY matters -
+count the odd and even chips and move whichever group is smaller.
+
+STEPS
+1. Count how many chips sit at even positions and how many at odd.
+2. Return the smaller count.
+
+WHY POSITION COLLAPSES TO PARITY: a chip can move by 2 for free, as often as it
+likes. So any chip at an even position can reach any other even position at zero
+cost, and likewise for odd. Every chip is therefore effectively at position 0 or
+position 1, and the only expense is the single one-cost step to cross between
+them.
+
+WHY THE ANSWER IS THE SMALLER GROUP: you gather everyone at either an even or an
+odd position. Choosing even costs one per odd chip; choosing odd costs one per
+even chip. Take the cheaper.
+
+THE LESSON THAT TRANSFERS: when an operation has zero cost, look for the
+invariant it preserves - here, parity. The problem is then only about that
+invariant, and a seemingly geometric question becomes a two-way count. Ask "what
+does the free move NOT change?" whenever you see one.
+
+WHAT PEOPLE GET WRONG: simulating movements or computing distances to a target
+position, which is a great deal of work for a two-line answer; and summing the
+groups rather than taking the minimum.
+""".strip("\n")
+
+_PLAIN_ALGO["Sort Integers by Number of 1 Bits"] = r"""
+IN ONE SENTENCE: sort with a compound key - popcount first, then the value
+itself to break ties.
+
+STEPS
+1. For each number compute its number of set bits.
+2. Sort using the pair (popcount, value) as the key.
+3. Return the sorted list.
+
+WHY A TUPLE KEY: sorting compares tuples element by element, so it orders by
+popcount and only consults the value when popcounts are equal. This is the
+cleanest way to express a multi-level sort and it generalises to any number of
+criteria - reach for it instead of writing a comparator.
+
+HOW TO COUNT THE BITS: converting to a binary string and counting '1' characters
+is fine and readable. The arithmetic alternative is the n & (n-1) loop, which
+runs once per set bit rather than once per bit position. Either is accepted;
+knowing both is better.
+
+WHY STABILITY IS NOT ENOUGH ON ITS OWN: Python's sort is stable, so you could
+sort by value first and then by popcount and get the same result. That works, but
+the tuple key states the intent in one line and does not depend on the reader
+knowing the sort is stable.
+
+WHAT PEOPLE GET WRONG: sorting by popcount alone and relying on incoming order
+for ties, which is only correct if the input happens to be sorted; and writing a
+custom comparator where a key function is simpler.
+""".strip("\n")
+
+_PLAIN_ALGO["Sort the People"] = r"""
+IN ONE SENTENCE: zip the two lists so each name travels with its height, sort by
+height descending, then pull the names back out.
+
+STEPS
+1. Pair each height with its name, position by position.
+2. Sort those pairs by height, descending.
+3. Extract the names in that order.
+
+WHY YOU MUST PAIR BEFORE SORTING: sorting the heights alone destroys the
+correspondence with the names - after the sort you have no way to know which name
+belonged to which height. Decorating the data with what you need before sorting
+is the general technique; it appears again in Find Right Interval and anywhere
+the answer is positional.
+
+WHY ZIPPING PUTS HEIGHT FIRST: the sort compares the first element of each pair,
+so the sort key must lead. Putting the name first would sort alphabetically.
+
+THE NAME FOR THIS: decorate-sort-undecorate. Attach the key, sort, strip the key.
+Saying it by name is a small signal that you know the pattern rather than the
+trick.
+
+WHAT PEOPLE GET WRONG: sorting the heights and the names as two independent
+lists, which produces names in alphabetical order paired with sorted heights -
+plausible-looking and completely wrong.
+""".strip("\n")
+
+_PLAIN_ALGO["Can Make Arithmetic Progression"] = r"""
+IN ONE SENTENCE: sort the numbers, then check that every consecutive gap equals
+the first one.
+
+STEPS
+1. Sort the array.
+2. Compute the difference between the first two elements - that is the required
+   common difference.
+3. Walk from the third element, checking each gap against it. Any mismatch means
+   no.
+4. If all match, yes.
+
+WHY SORTING IS LEGITIMATE HERE: the question asks whether the numbers can be
+REORDERED into a progression, not whether they already are one. An arithmetic
+progression is monotonic, so if any valid ordering exists, the sorted order is
+one of them. That single observation is what makes the problem two lines.
+
+WHY YOU TAKE THE DIFFERENCE FROM THE FIRST PAIR: in a genuine progression every
+gap is identical, so the first one defines the requirement. There is nothing to
+search for.
+
+THE EDGE CASE: arrays of length two are trivially a progression - any two numbers
+form one - and the loop simply never runs, which handles it correctly without a
+special case.
+
+WHAT PEOPLE GET WRONG: checking the unsorted array; and computing the difference
+as (last - first) / (n - 1) and comparing to the gaps, which introduces
+floating-point error where integer subtraction has none.
+""".strip("\n")
+
+_PLAIN_ALGO["Can Place Flowers (greedy)"] = r"""
+IN ONE SENTENCE: walk left to right and plant in the first legal spot every time -
+planting as early as possible never blocks a plot you could otherwise have used.
+
+STEPS
+1. Pad the bed with a zero at each end. Those sentinels mean the first and last
+   real plots need no special-casing.
+2. Walk the interior. A plot is plantable when it is empty AND both neighbours
+   are empty.
+3. Plant there - set it to 1 - and increase the count. Mutating the bed is what
+   stops the next plot being considered legal.
+4. Return whether the count reached n.
+
+WHY GREEDY LEFT-TO-RIGHT IS OPTIMAL: planting at the earliest legal plot blocks
+only the plot immediately to its right, whereas delaying to plant later would
+block one to the left as well. So planting early never costs you a future
+opportunity, and it may gain one. That exchange argument is the answer to "prove
+the greedy".
+
+WHY THE SENTINELS EARN THEIR PLACE: without them, the first and last plots need
+their own boundary checks, which is where the bugs in this problem live. Adding a
+virtual empty plot at each end makes every position identical.
+
+WHY YOU MUST MUTATE AS YOU GO: if you only count without planting, two adjacent
+empty plots both look legal and you double-count. The mutation is the mechanism
+that enforces the adjacency rule.
+
+WHY NOT COUNT ALL THE GAPS AT ONCE: you can - a run of k consecutive empty plots
+between two planted ones holds (k-1)/2 flowers - but the arithmetic differs at
+the ends and it is easier to get wrong than the sweep.
+
+WHAT PEOPLE GET WRONG: no sentinels and a broken boundary case; and not mutating,
+which overcounts.
+""".strip("\n")
+
+_PLAIN_ALGO["Convert Sorted Array to BST"] = r"""
+IN ONE SENTENCE: take the middle element as the root, and build the left and
+right subtrees the same way from the two halves.
+
+STEPS
+1. Write a builder over an index range lo to hi. If lo is past hi, return
+   nothing.
+2. Take the midpoint as the root value.
+3. Recursively build the left subtree from lo to mid-1 and the right from mid+1
+   to hi.
+4. Return the assembled node.
+
+WHY THE MIDDLE GIVES A BALANCED TREE: choosing the median splits the remaining
+elements evenly, so both subtrees receive the same number of nodes and their
+depths differ by at most one at every level. Choosing the first element instead
+would produce a right-leaning chain - a linked list with extra pointers.
+
+WHY THE RESULT IS A VALID BST WITHOUT CHECKING: the input is sorted, so
+everything left of the midpoint is smaller and everything right is larger, at
+every level of the recursion. The BST property is inherited from the sortedness
+rather than enforced.
+
+WHY THE ANSWER IS NOT UNIQUE: with an even number of elements, either middle
+works and produces a differently-shaped but equally valid balanced tree. Say so -
+it shows you understand why the problem says "a" height-balanced BST rather than
+"the".
+
+THE REVERSE PROBLEM WORTH NAMING: an in-order traversal of the result gives you
+the original sorted array back, which is a good self-check.
+
+WHAT PEOPLE GET WRONG: slicing the array at each level rather than passing
+indices, which turns O(n) into O(n log n) and allocates constantly.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Tested Devices After Test Operations"] = r"""
+IN ONE SENTENCE: carry a running count of tests done so far - that count IS the
+amount every later battery has been decremented by, so no array updates are
+needed.
+
+STEPS
+1. Keep a counter of devices tested, starting at 0.
+2. Walk the devices in order. The device's effective battery is its value minus
+   the counter.
+3. If that is still above zero, test it - increase the counter.
+4. Return the counter.
+
+WHY YOU NEVER MODIFY THE ARRAY: every test decrements ALL later devices by
+exactly one. So after t tests, every remaining device has lost exactly t. That
+means the decrements are perfectly uniform and can be represented by a single
+number rather than applied individually - which turns an O(n^2) simulation into
+one pass.
+
+THE GENERAL LESSON: when an operation applies uniformly to everything after the
+current position, carry it as a running offset instead of writing it into the
+data. The same idea underlies difference arrays and lazy propagation.
+
+WHY THE CHECK IS STRICTLY GREATER THAN ZERO: a device with zero effective
+battery cannot be tested, and it does not increase the counter, so subsequent
+devices are unaffected by it.
+
+WHAT PEOPLE GET WRONG: literally decrementing every later element, which is
+correct and quadratic; and using greater-than-or-equal, which tests dead devices.
+""".strip("\n")
+
+_PLAIN_ALGO["Counting Sort"] = r"""
+IN ONE SENTENCE: instead of comparing elements, tally how many times each value
+occurs, then walk the tally emitting each value that many times.
+
+STEPS
+1. Find the maximum value to size the count array.
+2. Make an array of zeros with one slot per possible value, and tally every
+   element.
+3. Walk the slots in ascending order, emitting each value as many times as its
+   count.
+
+WHY IT BEATS THE O(n log n) BARRIER: that lower bound applies only to
+COMPARISON-based sorts. Counting sort never compares two elements - it uses the
+values as array indices, which is a fundamentally different mechanism. Being able
+to say that is the point of the question; it is not a faster quicksort, it is a
+different category.
+
+THE COST: O(n + k) time and O(k) space, where k is the range of values. That is
+brilliant when k is small - sorting exam scores 0-100, or bytes - and terrible
+when k is huge, since sorting three numbers spanning a billion allocates a
+billion slots. The range, not the count, decides whether it is appropriate.
+
+WHY IT MATTERS BEYOND SORTING: it is the engine inside radix sort, and the
+prefix-sum variant is how you answer "how many elements are smaller than this"
+in constant time - which is exactly the Smaller Numbers Than Current problem.
+
+MAKING IT STABLE: take prefix sums of the counts and place elements from the end
+of the input backwards. The naive emit-by-value version loses the original order
+of equal elements, which matters when sorting records by a key.
+
+WHAT PEOPLE GET WRONG: applying it to negative values without offsetting the
+index; and proposing it for unbounded input ranges.
+""".strip("\n")
+
+_PLAIN_ALGO["Distribute Money to Maximum Children"] = r"""
+IN ONE SENTENCE: give everyone one dollar first, then work out how many can be
+topped up to exactly eight - and fix up the two forbidden end states.
+
+STEPS
+1. If there is less money than children, you cannot give everyone at least one
+   dollar - return -1.
+2. Give one dollar to each and subtract that from the pot.
+3. Each child needs seven more to reach eight, so the number of eights is the
+   smaller of (money divided by seven) and the child count.
+4. Subtract what those cost, and see how many children and dollars remain.
+5. Two corrections:
+   * If nobody is left to receive the leftover money, that leftover has to be
+     dumped on one of the eights - so reduce the count by one.
+   * If exactly one child remains and they would be left holding exactly four
+     dollars, that is forbidden - reduce the count by one so money can be
+     shuffled.
+
+WHY THE TWO CORRECTIONS ARE THE ENTIRE PROBLEM: the arithmetic in steps 1-4 is
+easy and almost everyone gets it. The problem exists for the leftover cases, and
+missing either is the difference between passing and failing. Enumerate them out
+loud before coding.
+
+WHY THE MONEY MUST ALL BE DISTRIBUTED: this is what makes leftovers a problem
+rather than something to ignore. Read the constraint carefully - if you could
+keep the change, the answer would just be step 3.
+
+WHY THE FOUR-DOLLAR RULE EXISTS: it is an arbitrary constraint designed purely to
+create a second edge case. Treat it as a specification detail, not a puzzle.
+
+WHAT PEOPLE GET WRONG: both corrections; and forgetting that every child must
+receive at least one dollar, which is what the initial -1 check enforces.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
