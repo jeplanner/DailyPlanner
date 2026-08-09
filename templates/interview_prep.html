@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/gamify.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pomodoro.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
@@ -234,6 +235,7 @@
 <div class="wrap">
   <h1>🎯 Interview Prep Coach</h1>
   <p class="sub">Build readiness, keep your streak, and let the coach keep you honest.</p>
+  <div id="gamebar"></div>
 
   <!-- HERO -->
   <div class="card">
@@ -635,6 +637,11 @@
       renderBank();
       // Per-question Pomodoro timers + actual-effort log.
       if (window.Pomodoro) Pomodoro.init({ ns: "ip_behavioral", container: $("qbank-list") });
+      if (window.Gamify) {
+        Gamify.mount($("gamebar"));
+        Gamify.studiedBulk([...practiced].map(x => ({ id: "ipb:"+x, minutes: 12 })));
+        if (window.Pomodoro) Gamify.syncMinutes("ip_behavioral", Pomodoro.total("ip_behavioral")/60);
+      }
     } catch(e){ /* bank is best-effort */ }
   }
 
@@ -655,6 +662,7 @@
     const q = QBANK && QBANK.questions.find(x=>x.id===id); if(!q) return;
     if (e.target.classList.contains("q-prac")) {
       if (e.target.checked) practiced.add(id); else practiced.delete(id);
+      if (e.target.checked && window.Gamify) Gamify.studied("ipb:"+id, 12, {});
       savePracticed(); card.classList.toggle("done", e.target.checked); bankProg();
       return;
     }
@@ -815,6 +823,11 @@
           (SDBANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       renderSDBank();
       if (window.Pomodoro) Pomodoro.init({ ns: "ip_sysdesign", container: $("sdbank-list") });
+      if (window.Gamify) {
+        Gamify.mount($("gamebar"));
+        Gamify.studiedBulk([...sdPracticed].map(x => ({ id: "ipsd:"+x, minutes: 30 })));
+        if (window.Pomodoro) Gamify.syncMinutes("ip_sysdesign", Pomodoro.total("ip_sysdesign")/60);
+      }
     } catch(e){ /* best-effort */ }
   }
 
@@ -854,6 +867,7 @@
     const it = SDBANK && SDBANK.entries.find(x=>x.id===id); if(!it) return;
     if (e.target.classList.contains("q-prac")) {
       if (e.target.checked) sdPracticed.add(id); else sdPracticed.delete(id);
+      if (e.target.checked && window.Gamify) Gamify.studied("ipsd:"+id, 30, {});
       saveSdPrac(); card.classList.toggle("done", e.target.checked); sdProg();
       return;
     }

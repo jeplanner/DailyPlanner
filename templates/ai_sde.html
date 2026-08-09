@@ -154,6 +154,7 @@
 <div class="wrap">
   <h1>🚀 AI SDE Prep <span class="prog" id="prog"></span></h1>
   <p class="sub">Interactive study bank for AI/ML SDE interviews (Amazon/Google) — DSA, ML concepts, coding, system design &amp; behavioral, each explained in depth. &nbsp;<a href="/interview-prep/guides/ai-sde">📖 Read the full 16-week plan →</a></p>
+  <div id="gamebar"></div>
   <div class="effort" id="effort"></div>
 
   <div class="card" style="margin-bottom:10px;">
@@ -182,6 +183,7 @@
   <div id="list"></div>
 </div>
 
+<script src="/static/js/gamify.js"></script>
 <script src="/static/js/pomodoro.js"></script>
 <script>
 (function(){
@@ -281,6 +283,11 @@
     const id = card.dataset.id;
     if (e.target.classList.contains("q-prac")) {
       if (e.target.checked) studied.add(id); else studied.delete(id);
+      // Ticking a topic earns notes worth its prep time (once per topic).
+      if (e.target.checked && window.Gamify) {
+        const ent = BANK.entries.find(x => x.id === id) || {};
+        Gamify.studied(id, ent.prep_minutes, {difficulty: ent.difficulty, priority: ent.priority});
+      }
       // Re-read the effort line so "prep left" drops the moment you tick a box.
       saveP(); card.classList.toggle("done", e.target.checked); prog(); effort(shown); return;
     }
@@ -313,7 +320,21 @@
       // Per-question Pomodoro timers + actual-effort log.
       if (window.Pomodoro) {
         Pomodoro.init({ ns: "ai_sde", container: $("list") });
-        document.addEventListener("pomodoro:change", () => effort(shown));
+        document.addEventListener("pomodoro:change", () => {
+          effort(shown);
+          // Focus minutes are notes too - syncMinutes only counts the increase.
+          if (window.Gamify) Gamify.syncMinutes("ai_sde", Pomodoro.total("ai_sde")/60);
+        });
+      }
+      // Riyaaz: the singing-themed progression bar.
+      if (window.Gamify) {
+        Gamify.mount($("gamebar"));
+        // Credit topics ticked before the game existed, and time already
+        // clocked - silently, so there is no cascade of level-up chimes.
+        Gamify.studiedBulk(BANK.entries.filter(x => studied.has(x.id)).map(x => ({
+          id: x.id, minutes: x.prep_minutes, difficulty: x.difficulty, priority: x.priority
+        })));
+        if (window.Pomodoro) Gamify.syncMinutes("ai_sde", Pomodoro.total("ai_sde")/60);
       }
     } catch(e){ if(window.toast) toast("Couldn't load","error"); }
     if (window.feather) feather.replace();

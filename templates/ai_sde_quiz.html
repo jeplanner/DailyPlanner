@@ -10,6 +10,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/gamify.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .wrap { max-width: 760px; margin: 0 auto; padding: 12px 14px 60px; }
@@ -56,6 +58,8 @@
 <div class="wrap">
   <h1>🎯 AI SDE Daily Quiz</h1>
   <p class="sub">25 questions a day keeps the rust away. Read the description, pick the concept, learn the memory hook. <a href="/ai-sde">← Back to the study bank</a></p>
+
+  <div id="gamebar"></div>
 
   <div class="stats">
     <div class="stat"><b id="s-streak">0</b><span class="muted">day streak</span></div>
@@ -201,6 +205,8 @@
   function finish(){
     const pct = Math.round(score/quiz.length*100);
     recordCompletion(pct);
+    // Riyaaz: 10 notes per correct answer, 25 for finishing, 150 for a clean sheet.
+    if (window.Gamify) Gamify.quiz({ correct: score, total: quiz.length, mode: $("mode").value });
     $("game").classList.add("hide"); $("done").classList.remove("hide");
     $("finalpct").textContent = pct+"%";
     let line = `${score} / ${quiz.length} correct.`;
@@ -210,6 +216,8 @@
     else line += " 🌱 Early days. Open the study bank, then come back.";
     $("finalline").textContent = line;
   }
+
+  if (window.Gamify) Gamify.mount($("gamebar"));
 
   $("start").addEventListener("click", start);
   $("again").addEventListener("click", () => { $("done").classList.add("hide"); $("setup").classList.remove("hide"); });
