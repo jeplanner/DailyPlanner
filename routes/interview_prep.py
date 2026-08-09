@@ -295,7 +295,7 @@ import random as _random
 # Only these categories make good "identify the concept from its description"
 # multiple-choice questions (they have a crisp term + explanation).
 _QUIZ_CATS = ("glossary", "ml_concepts", "conceptual", "dsa", "ml_coding",
-              "ml_system_design", "cs_fundamentals")
+              "ml_system_design", "cs_fundamentals", "ai_llm", "ai_applied")
 
 
 def _first_sentences(text, n=2, limit=460):

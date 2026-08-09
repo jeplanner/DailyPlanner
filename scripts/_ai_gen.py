@@ -16,321 +16,120 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Pacific Atlantic Water Flow",
-         answer="Cells with heights; water flows to a lower-or-equal neighbor. Find cells from which water can reach BOTH oceans (top/left = Pacific, bottom/right = Atlantic). Reverse the flow: DFS/BFS INWARD from each ocean's border cells (going to higher-or-equal neighbors); answer is the intersection of the two reachable sets.",
-         tags=["pacific-atlantic","dfs","bfs","grid","multi-source","dsa"],
-         code='''# Cells that can drain to both oceans (reverse flow from borders).
-def pacific_atlantic(heights):
-    if not heights:
-        return []
-    rows, cols = len(heights), len(heights[0])
-    pacific, atlantic = set(), set()
-    def dfs(r, c, visited, prev):
-        if (r < 0 or r >= rows or c < 0 or c >= cols or
-                (r, c) in visited or heights[r][c] < prev):
-            return
-        visited.add((r, c))              # water can climb from here to the ocean
-        for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
-            dfs(r + dr, c + dc, visited, heights[r][c])
-    for c in range(cols):
-        dfs(0, c, pacific, heights[0][c])            # top row -> Pacific
-        dfs(rows - 1, c, atlantic, heights[rows-1][c])  # bottom -> Atlantic
-    for r in range(rows):
-        dfs(r, 0, pacific, heights[r][0])            # left col -> Pacific
-        dfs(r, cols - 1, atlantic, heights[r][cols-1])  # right -> Atlantic
-    return sorted(pacific & atlantic)''',
-         complexity="Time O(rows*cols), space O(rows*cols).",
-         pitfalls="Simulating forward flow from every cell (too slow); using < instead of >= for the reverse climb.",
-         example="pacific_atlantic([[1,2,2,3,5],[3,2,3,4,4],[2,4,5,3,1],[6,7,1,4,5],[5,1,1,2,4]]) includes (0,4),(1,3),(2,2),(3,0),(3,1),(4,0)."),
-    dict(cat="dsa", title="Surrounded Regions",
-         answer="Flip all 'O's fully surrounded by 'X' to 'X'; 'O's connected to a BORDER survive. Mark border-connected 'O's (DFS from edges), then flip everything else.",
-         tags=["surrounded-regions","dfs","grid","flood-fill","dsa"],
-         code='''# Capture regions of 'O' not connected to any border.
-def solve(board):
-    if not board:
-        return board
-    rows, cols = len(board), len(board[0])
-    def mark(r, c):
-        if r < 0 or r >= rows or c < 0 or c >= cols or board[r][c] != 'O':
-            return
-        board[r][c] = 'S'                # survives (border-connected)
-        mark(r+1, c); mark(r-1, c); mark(r, c+1); mark(r, c-1)
-    for r in range(rows):
-        mark(r, 0); mark(r, cols - 1)    # left/right borders
-    for c in range(cols):
-        mark(0, c); mark(rows - 1, c)    # top/bottom borders
-    for r in range(rows):
-        for c in range(cols):
-            if board[r][c] == 'O':
-                board[r][c] = 'X'        # surrounded -> capture
-            elif board[r][c] == 'S':
-                board[r][c] = 'O'        # restore survivor
-    return board''',
-         complexity="Time O(rows*cols), space O(rows*cols).",
-         pitfalls="Flipping border-connected regions; not restoring the survivor marker.",
-         example="solve([['X','X','X'],['X','O','X'],['X','X','X']]) -> the inner O becomes X (surrounded)."),
-    dict(cat="dsa", title="01 Matrix",
-         answer="For each cell, the distance to the nearest 0. MULTI-SOURCE BFS from all 0-cells at once, filling distances outward.",
-         tags=["01-matrix","bfs","multi-source","grid","dsa"],
-         code='''# Distance from each cell to the nearest 0 (multi-source BFS).
-from collections import deque
+    dict(cat="ai_llm", title="What is a Large Language Model (LLM)?",
+         answer="In plain words: an LLM is a giant next-word predictor. Trained on enormous text, it learns to guess the next token given everything so far - and doing that well turns out to require real 'understanding' of grammar, facts, and reasoning. A Large Language Model is a transformer neural network with billions of parameters, PRETRAINED on huge text corpora with a simple self-supervised objective (predict the next token), then usually FINE-TUNED / aligned (instruction tuning + RLHF) to follow instructions helpfully and safely. At inference it generates text one token at a time, each token conditioned on the prompt plus what it has produced so far (autoregressive). Its knowledge is frozen at training time (the 'knowledge cutoff'), it has a finite CONTEXT WINDOW, and it can HALLUCINATE (state false things confidently).",
+         tags=["llm", "language-model", "transformer", "genai", "ai"],
+         example="GPT-4, Claude, Llama and Gemini are LLMs. Given 'The capital of France is', the model assigns the highest next-token probability to ' Paris' and emits it; feed the result back and it keeps going to write a whole paragraph.",
+         difficulty="Easy",
+         frequency="Very commonly asked (2024+) - a baseline concept in any AI/ML interview and increasingly in general SDE loops at Google, Meta, NVIDIA, OpenAI, Anthropic.",
+         mnemonic="An LLM is 'autocomplete on steroids': a next-word guesser so good it looks like it thinks. Pretrain (learn language) -> fine-tune (follow instructions) -> generate one token at a time."),
+    dict(cat="ai_llm", title="What is RAG (Retrieval-Augmented Generation)?",
+         answer="In plain words: instead of hoping the model memorized a fact, you FETCH the relevant documents first and paste them into the prompt, so the model answers FROM them. RAG combines a RETRIEVER with a GENERATOR. Offline you chunk your documents, embed each chunk into a vector, and store them in a vector database. At query time you embed the user's question, retrieve the most similar chunks (semantic search), stuff those chunks into the LLM's context as grounding, and ask it to answer USING them (often 'cite your sources'). This gives the model fresh, private, or domain-specific knowledge WITHOUT retraining, cuts hallucinations (answers are grounded in retrieved text), and lets you update knowledge by just updating the index.",
+         tags=["rag", "retrieval-augmented-generation", "vector-database", "embeddings", "genai", "ai"],
+         example="A company support bot: the user asks 'what's our refund window?'; RAG embeds the question, retrieves the 3 most relevant policy chunks from the vector DB, and prompts the LLM: 'Using these policy excerpts, answer the question.' The bot answers '30 days' and cites the policy - no model retraining needed when the policy changes, just re-index.",
+         difficulty="Medium",
+         frequency="Very commonly asked - RAG is THE dominant pattern for grounding LLMs; expect it in GenAI, ML and applied-scientist interviews across product companies.",
+         mnemonic="R-A-G literally: Retrieve the relevant chunks, Augment the prompt with them, Generate the grounded answer. 'Open-book exam' for the LLM."),
+    dict(cat="ai_llm", title="What is MCP (Model Context Protocol)?",
+         answer="In plain words: MCP is a standard 'USB port' for AI apps - one common way to plug an LLM into tools, data, and services, so you don't hand-code a custom integration for each. The Model Context Protocol (introduced by Anthropic, 2024) is an open standard that defines how an AI application (the HOST/CLIENT, e.g. Claude Desktop or an IDE) connects to external capabilities exposed by MCP SERVERS. A server can expose TOOLS (functions the model can call, like 'search_tickets'), RESOURCES (readable data/context, like files or DB rows), and PROMPTS (reusable templates). The client and server speak JSON-RPC over a transport (stdio or HTTP). Because the interface is standardized, any MCP-compatible model can use any MCP server - decoupling models from integrations the way a common protocol (USB, LSP) decouples devices from hosts.",
+         tags=["mcp", "model-context-protocol", "tools", "agents", "genai", "ai"],
+         example="An MCP server wraps your GitHub: it exposes tools like list_prs and create_issue. Claude (the MCP client) can then call those tools during a chat to open an issue - and the same server works with any other MCP-compatible AI app, no bespoke glue per model.",
+         difficulty="Medium",
+         frequency="Newer but rising fast (2024+) - increasingly asked as agent/tool-use and AI-integration questions appear; strong signal you follow current AI engineering.",
+         mnemonic="MCP = a 'USB-C port for AI': one standard plug so any model connects to any tool/data source. Servers expose Tools (do things), Resources (read things), Prompts (templates)."),
+    dict(cat="ai_llm", title="How does self-attention work (the Transformer core)?",
+         answer="In plain words: each word looks at every other word and decides who to 'pay attention' to, then mixes in their meaning. That's how the model figures out that 'it' refers to 'the animal' and not 'the street'. Mechanically, every token is projected into three vectors: a QUERY (what I'm looking for), a KEY (what I offer), and a VALUE (what I'll pass on). For each token, you dot its query with every token's key to get relevance SCORES, scale by 1/sqrt(d_k) for stability, softmax the scores into weights that sum to 1, and take the weighted sum of VALUES - that weighted sum is the token's new, context-aware representation. MULTI-HEAD attention runs several of these in parallel (each head learns a different kind of relationship) and concatenates them. Self-attention lets every token directly reach every other token in one step (unlike RNNs), which is why Transformers capture long-range dependencies and parallelize well.",
+         tags=["attention", "self-attention", "transformer", "query-key-value", "ai"],
+         code='''# Single-head self-attention, numpy. ast.parse-only (illustrative).
+import numpy as np
 
-def update_matrix(mat):
-    rows, cols = len(mat), len(mat[0])
-    dist = [[-1] * cols for _ in range(rows)]
-    queue = deque()
-    for r in range(rows):
-        for c in range(cols):
-            if mat[r][c] == 0:
-                dist[r][c] = 0
-                queue.append((r, c))     # all zeros are sources
-    while queue:
-        r, c = queue.popleft()
-        for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols and dist[nr][nc] == -1:
-                dist[nr][nc] = dist[r][c] + 1
-                queue.append((nr, nc))
-    return dist''',
-         complexity="Time O(rows*cols), space O(rows*cols).",
-         pitfalls="BFS from each 1 separately (too slow); not seeding ALL zeros before expanding.",
-         example="update_matrix([[0,0,0],[0,1,0],[1,1,1]]) -> [[0,0,0],[0,1,0],[1,2,1]]."),
-    dict(cat="dsa", title="Unique Paths II (with obstacles)",
-         answer="Count paths from top-left to bottom-right moving only right/down, where some cells are blocked (1). DP grid: a blocked cell contributes 0 paths; otherwise dp[i][j] = dp[i-1][j] + dp[i][j-1].",
-         tags=["unique-paths","dynamic-programming","grid","obstacles","dp","dsa"],
-         code='''# Count right/down paths avoiding obstacles, DP.
-def unique_paths_with_obstacles(grid):
-    if not grid or grid[0][0] == 1:
-        return 0
-    rows, cols = len(grid), len(grid[0])
-    dp = [[0] * cols for _ in range(rows)]
-    dp[0][0] = 1
-    for i in range(rows):
-        for j in range(cols):
-            if grid[i][j] == 1:
-                dp[i][j] = 0             # blocked: no paths through here
-                continue
-            if i > 0:
-                dp[i][j] += dp[i-1][j]   # from above
-            if j > 0:
-                dp[i][j] += dp[i][j-1]   # from the left
-    return dp[rows-1][cols-1]''',
-         complexity="Time O(rows*cols), space O(rows*cols).",
-         pitfalls="Not zeroing the start when it's blocked; adding neighbors through an obstacle cell.",
-         example="unique_paths_with_obstacles([[0,0,0],[0,1,0],[0,0,0]]) -> 2."),
-    dict(cat="dsa", title="Decode Ways",
-         answer="Count ways to decode a digit string where 1->A ... 26->Z. DP: dp[i] = dp[i-1] if the single digit is valid (1-9) + dp[i-2] if the two-digit number is 10-26.",
-         tags=["decode-ways","dynamic-programming","string","dp","dsa"],
-         code='''# Count decodings of a digit string (1..26 -> A..Z), DP.
-def num_decodings(s):
-    if not s or s[0] == '0':
-        return 0
-    n = len(s)
-    prev2, prev1 = 1, 1                  # dp[-1]=1, dp[0]=1
-    for i in range(1, n):
-        curr = 0
-        if s[i] != '0':
-            curr += prev1                # single digit 1-9
-        two = int(s[i-1:i+1])
-        if 10 <= two <= 26:
-            curr += prev2                # valid two-digit
-        prev2, prev1 = prev1, curr
-    return prev1''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Mishandling '0' (only valid as part of 10/20); not rejecting leading zero.",
-         example="num_decodings('226') -> 3  ('2 2 6','22 6','2 26'); num_decodings('06') -> 0."),
-    dict(cat="dsa", title="Partition Equal Subset Sum",
-         answer="Can the array be split into two subsets with equal sum? Equivalent to a subset summing to total/2 (0/1 knapsack). DP boolean set of reachable sums.",
-         tags=["partition-equal-subset","dynamic-programming","knapsack","subset-sum","dp","dsa"],
-         code='''# True if the array splits into two equal-sum subsets (subset-sum DP).
-def can_partition(nums):
-    total = sum(nums)
-    if total % 2 == 1:
-        return False                     # odd total can't split evenly
-    target = total // 2
-    reachable = {0}
-    for x in nums:
-        reachable |= {s + x for s in reachable if s + x <= target}
-        if target in reachable:
-            return True
-    return target in reachable''',
-         complexity="Time O(n * target), space O(target).",
-         pitfalls="Forgetting the odd-total early exit; growing the set without the <= target cap (slow).",
-         example="can_partition([1,5,11,5]) -> True  ([1,5,5] and [11]); can_partition([1,2,3,5]) -> False."),
-    dict(cat="dsa", title="Word Search (grid DFS backtracking)",
-         answer="Determine if a word exists in a grid by moving to 4-adjacent cells without reusing a cell. DFS/backtracking from each cell matching the first letter, marking cells visited and restoring on backtrack.",
-         tags=["word-search","backtracking","dfs","grid","dsa"],
-         code='''# True if word can be traced in the grid (DFS backtracking).
-def exist(board, word):
-    rows, cols = len(board), len(board[0])
-    def dfs(r, c, i):
-        if i == len(word):
-            return True                  # matched all letters
-        if (r < 0 or r >= rows or c < 0 or c >= cols or board[r][c] != word[i]):
-            return False
-        tmp, board[r][c] = board[r][c], '#'   # mark visited
-        found = (dfs(r+1, c, i+1) or dfs(r-1, c, i+1) or
-                 dfs(r, c+1, i+1) or dfs(r, c-1, i+1))
-        board[r][c] = tmp                # restore
-        return found
-    for r in range(rows):
-        for c in range(cols):
-            if dfs(r, c, 0):
-                return True
-    return False''',
-         complexity="Time O(rows*cols*4^L), space O(L) recursion.",
-         pitfalls="Not restoring the cell on backtrack (blocks other paths); reusing a cell within one path.",
-         example="exist([['A','B','C','E'],['S','F','C','S'],['A','D','E','E']], 'ABCCED') -> True."),
-    dict(cat="dsa", title="Longest Consecutive Sequence",
-         answer="Length of the longest run of consecutive integers, in O(n). Put nums in a set; for each value that is a SEQUENCE START (no value-1 present), count upward -- each element is visited at most twice.",
-         tags=["longest-consecutive","hash-set","array","dsa"],
-         code='''# Longest run of consecutive integers in O(n) using a set.
-def longest_consecutive(nums):
-    num_set = set(nums)
-    best = 0
-    for x in num_set:
-        if x - 1 not in num_set:         # x starts a new sequence
-            length = 1
-            while x + length in num_set:
-                length += 1
-            best = max(best, length)
-    return best''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Sorting (O(n log n)) when a set gives O(n); counting from non-start values (O(n^2)).",
-         example="longest_consecutive([100,4,200,1,3,2]) -> 4  ([1,2,3,4])."),
-    dict(cat="dsa", title="Min Stack",
-         answer="Design a stack with push/pop/top and getMin all O(1). Keep an auxiliary stack of running minimums (or store pairs), so the current min is always the top of the min stack.",
-         tags=["min-stack","stack","design","dsa"],
-         code='''# Stack supporting O(1) getMin via a parallel min stack.
-class MinStack:
-    def __init__(self):
-        self.stack = []
-        self.mins = []                   # running minimums
-
-    def push(self, x):
-        self.stack.append(x)
-        # track the min so far (duplicate the current min if x is larger)
-        self.mins.append(x if not self.mins else min(x, self.mins[-1]))
-
-    def pop(self):
-        self.mins.pop()
-        return self.stack.pop()
-
-    def top(self):
-        return self.stack[-1]
-
-    def get_min(self):
-        return self.mins[-1]''',
-         complexity="Time O(1) per op, space O(n).",
-         pitfalls="Recomputing min on each call (O(n)); forgetting to pop the min stack in lockstep.",
-         example="push 3, push 1, push 2; get_min -> 1; pop; get_min -> 1; pop; get_min -> 3."),
-    dict(cat="dsa", title="Implement Trie (Prefix Tree)",
-         answer="Design a trie supporting insert, search (full word), and startsWith (prefix). Each node holds a children map and an end-of-word flag; walk/create nodes char by char.",
-         tags=["trie","prefix-tree","design","string","dsa"],
-         code='''# Trie with insert / search / startsWith.
-class Trie:
-    def __init__(self):
-        self.children = {}
-        self.is_end = False
-
-    def insert(self, word):
-        node = self
-        for ch in word:
-            node = node.children.setdefault(ch, Trie())  # create if missing
-            node = node
-        node.is_end = True
-
-    def _find(self, prefix):
-        node = self
-        for ch in prefix:
-            if ch not in node.children:
-                return None
-            node = node.children[ch]
-        return node
-
-    def search(self, word):
-        node = self._find(word)
-        return node is not None and node.is_end
-
-    def starts_with(self, prefix):
-        return self._find(prefix) is not None''',
-         complexity="Time O(L) per op, space O(total chars).",
-         pitfalls="Not marking end-of-word (search would match prefixes); mutating during traversal incorrectly.",
-         example="insert 'apple'; search 'apple' -> True; search 'app' -> False; starts_with 'app' -> True."),
-    dict(cat="dsa", title="LRU Cache (design)",
-         answer="Design a cache with O(1) get and put that evicts the LEAST-RECENTLY-USED key at capacity. Hash map for O(1) lookup + doubly linked list for O(1) recency reordering (or an ordered dict).",
-         tags=["lru-cache","design","hash-map","ordered-dict","dsa"],
-         code='''# LRU cache with O(1) get/put via an ordered dict.
-from collections import OrderedDict
-
-class LRUCache:
-    def __init__(self, capacity):
-        self.cache = OrderedDict()
-        self.capacity = capacity
-
-    def get(self, key):
-        if key not in self.cache:
-            return -1
-        self.cache.move_to_end(key)      # mark most-recently-used
-        return self.cache[key]
-
-    def put(self, key, value):
-        if key in self.cache:
-            self.cache.move_to_end(key)
-        self.cache[key] = value
-        if len(self.cache) > self.capacity:
-            self.cache.popitem(last=False)   # evict least-recently-used''',
-         complexity="Time O(1) per op, space O(capacity).",
-         pitfalls="Not updating recency on get; evicting the wrong end (last=False is the oldest).",
-         example="cap 2: put(1,1),put(2,2),get(1)->1,put(3,3) evicts 2, get(2)->-1."),
-    dict(cat="dsa", title="Kth Largest Element in a Stream",
-         answer="Design a class that returns the k-th largest element after each add, over a growing stream. Maintain a MIN-HEAP of size k: the root is always the k-th largest; on add, push and pop when size exceeds k.",
-         tags=["kth-largest-stream","heap","design","streaming","dsa"],
-         code='''# Kth largest in a stream via a size-k min-heap.
-import heapq
-
-class KthLargest:
-    def __init__(self, k, nums):
-        self.k = k
-        self.heap = nums[:]
-        heapq.heapify(self.heap)
-        while len(self.heap) > k:
-            heapq.heappop(self.heap)     # keep only the k largest
-
-    def add(self, val):
-        heapq.heappush(self.heap, val)
-        if len(self.heap) > self.k:
-            heapq.heappop(self.heap)     # drop the smallest
-        return self.heap[0]              # root = kth largest''',
-         complexity="Time O(log k) per add, space O(k).",
-         pitfalls="Keeping all elements (O(n log n)); returning the max instead of the heap root.",
-         example="k=3, nums=[4,5,8,2]; add(3)->4, add(5)->5, add(10)->5, add(9)->8, add(4)->8."),
-    dict(cat="ml_system_design", title="Design a Fraud Detection System",
-         answer="Flag fraudulent transactions in real time to block/deny or send for review, minimizing losses while limiting false positives (customer friction). Six-step frame below.",
-         tags=["ml-system-design","fraud-detection","anomaly-detection","imbalanced","classification"],
-         example="1) PROBLEM: binary classification (fraud vs legit) with an asymmetric cost -- a missed fraud (FN) costs the chargeback, a false positive (FP) blocks a good customer; optimize expected COST, not accuracy. Constraints: <100ms decision at auth time, extreme imbalance (<0.1% fraud), adversarial (fraudsters adapt), and label DELAY (chargebacks arrive weeks later). 2) DATA & LABELS: transaction (amount, merchant, time), account history, device/IP, velocity/aggregate features (spend in last hour/day), graph features (shared cards/devices). Labels from chargebacks/confirmed fraud -- noisy and delayed; use provisional labels + rules for cold start. 3) MODEL: gradient-boosted trees (XGBoost) are a strong tabular baseline; add graph-based features or a GNN for ring detection; anomaly detection (isolation forest/autoencoder) for novel patterns unseen in labels. Class weighting/focal loss for imbalance. 4) TRAINING & EVAL: time-based splits (never shuffle -- avoid leakage from future), evaluate with PR-AUC, precision@recall for the operating point, and dollar-weighted loss; monitor for concept drift and retrain frequently. 5) SERVING: real-time feature store with streaming aggregates (velocity), low-latency model, plus a RULES layer (hard blocks) and human-review queue for medium-risk. Decisions feed a case-management system. 6) MONITORING: track approval/decline rates, fraud loss, FP complaints, feature drift, and adversarial shifts; use champion/challenger and delayed-label backtesting. Follow-ups: feedback loops (blocked frauds never get labels), explainability for declines (regulatory), and threshold tuning per segment/cost."),
-    dict(cat="ml_concepts", title="Why Residual (Skip) Connections Enable Very Deep Networks",
-         answer="A residual connection adds a layer's INPUT to its output: y = F(x) + x, so the block learns a RESIDUAL F(x) = y - x rather than the full mapping. This solves the DEGRADATION problem where naively stacking many layers made training error WORSE (not just overfitting). Two mechanisms: (1) GRADIENT FLOW -- the +x identity path gives backprop a direct route, so gradients reach early layers without vanishing through many multiplications, enabling 100+ layer nets; (2) EASIER OPTIMIZATION -- if the optimal transform is near-identity, F just needs to learn ~0, which is easy, so extra layers never hurt. ResNets rely on this; it also underpins Transformer blocks (each sublayer is x + Sublayer(x)).",
-         tags=["residual-connections","resnet","vanishing-gradients","deep-networks","ml-concepts"],
-         example="A 56-layer plain net had HIGHER training error than a 20-layer one (degradation); adding skip connections (ResNet-56) fixed it -- the identity path let gradients flow and let redundant layers learn the identity (F=0) instead of corrupting the signal."),
-    dict(cat="glossary", title="HyperLogLog",
-         answer="A probabilistic algorithm for approximate CARDINALITY (count of DISTINCT elements) in a stream using tiny, fixed memory (~KBs for billions of items). It hashes each element and tracks the maximum number of leading zeros seen across buckets; long runs of leading zeros are rare, so they imply many distinct values (harmonic-mean averaging across buckets reduces variance). Gives ~2% error for a few KB, versus storing every unique id. Used for unique-visitor counts, distinct queries, and analytics at scale (Redis PFCOUNT).",
-         tags=["hyperloglog","cardinality","probabilistic","streaming","approximation"],
-         example="Counting unique visitors to a site with billions of hits: HyperLogLog estimates the distinct count within ~2% using ~12KB, instead of a set holding every visitor id (gigabytes)."),
-    dict(cat="conceptual", title="Why must you use time-based splits (not random shuffling) when evaluating models on temporal data like fraud or forecasting?",
-         answer="The core principle of honest model evaluation is that your test set must simulate how the model will actually be used: predicting the FUTURE from the PAST. Standard k-fold cross-validation SHUFFLES all data and randomly assigns rows to folds, which implicitly assumes examples are independent and identically distributed with no time ordering. For temporal data -- fraud, demand forecasting, click prediction, anything where the world evolves -- that assumption is false and shuffling introduces LOOKAHEAD LEAKAGE: the model gets trained on examples that occurred AFTER the ones it's tested on, effectively letting it 'see the future.' Concretely, several leaks happen. (1) DIRECT temporal leakage: if a fraud ring operated on a single day and you shuffle, some of that day's transactions land in train and some in test; the model memorizes the ring's fingerprint from the training half and trivially 'predicts' the test half -- inflating metrics for a pattern it could never have known in real deployment (the ring didn't exist yet when the model was trained). (2) FEATURE leakage via aggregates: many features are rolling statistics (spend in last 7 days, account's historical fraud rate). Computed over a shuffled dataset, a 'past' aggregate can incorporate future transactions, encoding the answer. (3) DISTRIBUTION drift masking: shuffling mixes old and new regimes so the test set looks like the train set, hiding the fact that the real future distribution has drifted (new fraud tactics, seasonality) -- so your offline metric is optimistic and collapses in production. The FIX is time-based (a.k.a. forward-chaining / walk-forward) splitting: train on data up to time T, validate on (T, T+delta], and slide the window forward, so every evaluation only uses information available at prediction time -- exactly the deployment condition. For cross-validation you use expanding or rolling time windows rather than random folds. You must also compute all features with a strict as-of cutoff (point-in-time correctness) so no feature peeks past its timestamp, and account for LABEL delay (in fraud, chargeback labels arrive weeks later, so a fair backtest must respect when the label would actually have been known, not when the event occurred). The consequence of getting this wrong is the most dangerous kind of error: a model that looks excellent offline (because leakage handed it the answers) and fails silently in production, which is worse than a model that looks mediocre but is honestly evaluated. The general rule: your validation protocol must reproduce the information boundary of real use -- for temporal problems that boundary is time, so the split must respect time.",
-         tags=["time-based-split","data-leakage","cross-validation","temporal-data","why"],
-         example="A fraud model random-shuffled scored 0.95 PR-AUC offline but ~0.60 in production; a fraud ring's transactions had been split across train/test so the model 'recognized' test frauds it had trained on. Re-evaluated with a walk-forward split (train on weeks 1-8, test week 9), the honest offline score matched production and revealed the real gap to fix."),
-    dict(cat="behavioral", title="STAR: Acting decisively with incomplete information (Bias for Action)",
-         answer="Amazon LP: BIAS FOR ACTION -- speed matters in business; many decisions are reversible and don't need extensive study; calculated risk-taking is valued. Show you moved fast with imperfect information on a REVERSIBLE (two-way-door) decision, de-risked it cheaply, and got a result -- distinguishing it from the few one-way doors that do warrant caution.",
-         tags=["behavioral","star","bias-for-action","two-way-door","amazon-lp"],
-         example="SITUATION: Mid-incident, our API latency spiked and we suspected a recently-deployed caching change, but we didn't have conclusive data and full root-causing would take hours while customers suffered. TASK: As on-call I had to decide whether to wait for certainty or act. ACTION: I classified the decision: rolling back the caching change was a REVERSIBLE two-way door (we could redeploy it in minutes if it wasn't the cause), so it didn't warrant the delay of full analysis. I rolled it back immediately behind a feature flag while simultaneously keeping the investigation running, and I set a clear success signal (latency returns to baseline within 10 minutes) and a revert-the-revert plan if it didn't help. Latency recovered within minutes, confirming the hypothesis. I explicitly noted that had the action been a one-way door -- say, a schema migration or deleting data -- I would NOT have rushed it and would have taken the time to be sure. RESULT: We cut the customer impact from a potential multi-hour outage to about 15 minutes, then did the thorough root cause calmly afterward and shipped a proper fix with a regression test. The judgment that mattered was recognizing a cheap, reversible action and taking it fast instead of over-indexing on certainty -- while still respecting that irreversible decisions deserve more caution."),
+def self_attention(X, Wq, Wk, Wv):
+    # X: (seq_len, d_model) token embeddings for one sequence
+    Q = X @ Wq                                    # queries: what each token seeks
+    K = X @ Wk                                    # keys: what each token offers
+    V = X @ Wv                                    # values: what each token passes on
+    d_k = Q.shape[1]
+    scores = Q @ K.T / np.sqrt(d_k)               # (seq, seq) relevance, scaled
+    scores = scores - scores.max(axis=1, keepdims=True)   # numerical stability
+    weights = np.exp(scores)
+    weights = weights / weights.sum(axis=1, keepdims=True) # softmax over keys
+    return weights @ V                            # context-aware output per token''',
+         complexity="Time O(seq_len^2 * d) - the quadratic cost in sequence length is why long contexts are expensive.",
+         pitfalls="Forgetting the 1/sqrt(d_k) scaling (softmax saturates, gradients vanish); attending over the wrong axis; ignoring the causal mask in decoders (a token must not see the future).",
+         example="For 'The animal didn't cross the street because it was tired', when encoding 'it' the attention weights put most mass on 'animal', so 'it' inherits the animal's meaning and the model resolves the pronoun correctly.",
+         difficulty="Hard",
+         frequency="Very commonly asked in ML/AI and applied-scientist interviews - 'explain attention' and 'why sqrt(d_k)' are classics at Google, Meta, NVIDIA, OpenAI, Anthropic.",
+         mnemonic="Query asks, Key answers, Value is what you take. Score = Q.K, softmax, weighted-sum of Values. 'Each word decides who to listen to.'"),
+    dict(cat="ai_llm", title="Pretraining vs Fine-tuning vs Prompting (how to adapt an LLM)",
+         answer="In plain words: three ways to get an LLM to do YOUR task, from most to least effort. PRETRAINING builds the base model from scratch on trillions of tokens (self-supervised next-token prediction) - enormously expensive, done by a few labs. FINE-TUNING takes a pretrained model and trains it further on your smaller labelled/task data to specialize it (full fine-tuning updates all weights; PARAMETER-EFFICIENT methods like LoRA update a tiny fraction) - moderate cost, changes the weights, good when you need consistent behavior or new skills. PROMPTING (in-context learning) changes NOTHING in the weights - you just craft the input: zero-shot (instructions only), few-shot (show examples), or add retrieved context (RAG). Rule of thumb: try PROMPTING first (cheapest, instant), reach for RAG when the model lacks knowledge, and FINE-TUNE when you need a specific style/format/skill that prompting can't reliably produce.",
+         tags=["fine-tuning", "prompting", "in-context-learning", "lora", "llm", "ai"],
+         example="Customer-service bot: start with a good PROMPT ('You are a support agent...'); add RAG for product facts; only FINE-TUNE (e.g. LoRA on past transcripts) if you need it to consistently match your brand's exact tone and JSON format.",
+         difficulty="Medium",
+         frequency="Very commonly asked - 'when would you fine-tune vs use RAG vs just prompt?' is a staple GenAI design question.",
+         mnemonic="Ladder of effort: Prompt (free, instant) -> RAG (add knowledge) -> Fine-tune (change the weights). Climb only as high as you must."),
+    dict(cat="ai_llm", title="What is the context window, and why does it matter?",
+         answer="In plain words: the context window is the model's short-term memory - the maximum amount of text (prompt + conversation + retrieved docs + its own answer) it can consider at once, measured in TOKENS. Anything beyond it is simply not seen. Because self-attention costs grow quadratically with sequence length, bigger windows are expensive in compute and memory. A finite window drives many design choices: you must FIT the system prompt, chat history, and any RAG context inside it (so you chunk/summarize/truncate); very long inputs suffer 'lost in the middle' (models attend best to the start and end); and long chats need memory strategies (summarize old turns, retrieve only relevant history). Modern models range from a few thousand to hundreds of thousands (even 1M+) tokens.",
+         tags=["context-window", "tokens", "llm", "long-context", "ai"],
+         example="With an 8k-token window, a 20-page document (~15k tokens) will not fit - so RAG retrieves only the few relevant chunks instead of pasting the whole doc. In a long chat, once history exceeds the window you summarize older turns to make room.",
+         difficulty="Easy",
+         frequency="Commonly asked - context-window limits underlie RAG, chunking and long-conversation design questions.",
+         mnemonic="It's the model's desk space, measured in tokens: only what's ON the desk gets used. Too big to fit -> chunk, summarize, or retrieve just the relevant part."),
+    dict(cat="ai_llm", title="Vector database & semantic search",
+         answer="In plain words: a vector database finds things by MEANING, not exact keywords. You convert text (or images) into embeddings - lists of numbers where similar meanings are near each other - and the DB quickly finds the nearest vectors to your query vector. Because exact nearest-neighbor search is slow at scale, vector DBs use APPROXIMATE nearest-neighbor (ANN) indexes (HNSW graphs, IVF, product quantization) that trade a tiny bit of accuracy for huge speed. This powers semantic search, RAG retrieval, recommendations, and deduplication. Key knobs: the embedding model (quality of 'meaning'), the distance metric (cosine/dot/Euclidean), and the ANN index parameters (recall vs latency).",
+         tags=["vector-database", "semantic-search", "embeddings", "ann", "rag", "ai"],
+         example="Search 'how do I return an item?' and semantic search also surfaces a doc titled 'Refund & exchange policy' - no shared keywords, but their embeddings are close. Pinecone, Weaviate, Milvus, FAISS and pgvector are common vector stores.",
+         difficulty="Medium",
+         frequency="Commonly asked alongside RAG - expect 'how does semantic search / ANN work?' in GenAI and search interviews.",
+         mnemonic="Turn meaning into arrows; find the nearest arrows fast. Exact NN is too slow at scale, so use Approximate NN (HNSW/IVF). 'Search by meaning, not by matching letters.'"),
+    dict(cat="ai_llm", title="Why do LLMs hallucinate, and how do you reduce it?",
+         answer="In plain words: an LLM is trained to produce PLAUSIBLE next words, not verified true ones - so when it doesn't know, it still generates a confident, fluent guess. A hallucination is fluent output that is factually wrong or unsupported. Causes: the model has no notion of truth (only likelihood), its knowledge is frozen and incomplete, it fills gaps to stay fluent, and it can't reliably say 'I don't know.' Reductions: GROUNDING with RAG (give it the facts and tell it to answer only from them + cite), lower the temperature for factual tasks, ask for citations and verify them, add guardrails/validators (check claims against a source), use tool-calling for exact operations (calculator, DB, code), fine-tune for honesty/refusal, and design the UX to show sources so users can check. You reduce hallucination; you don't fully eliminate it.",
+         tags=["hallucination", "grounding", "rag", "reliability", "llm", "ai"],
+         example="Ask an ungrounded model for a citation and it may invent a real-looking but fake paper title and DOI. With RAG ('answer only from these retrieved sources and quote them'), it instead answers from real documents or says the info isn't in the sources.",
+         difficulty="Medium",
+         frequency="Very commonly asked - 'why do LLMs hallucinate and how would you mitigate it?' is a flagship GenAI reliability question.",
+         mnemonic="It's a fluent guesser, not a fact-checker - it says something plausible when it doesn't know. Fix by GROUNDING it (RAG + cite), lowering temperature, and verifying with tools."),
+    dict(cat="ai_applied", title="Design a RAG-powered document Q&A chatbot",
+         answer="In plain words: build a bot that answers questions about YOUR documents by retrieving the relevant parts and letting an LLM answer from them. Pipeline. INGEST (offline): load docs, CHUNK them (e.g. 300-800 tokens with overlap so context isn't cut mid-idea), embed each chunk, store vectors + metadata in a vector DB. QUERY (online): embed the user's question, retrieve top-k similar chunks (optionally re-rank them), build a prompt = system instructions + retrieved chunks + question, call the LLM asking it to answer ONLY from the chunks and cite them, then return the answer with sources. Concerns: chunking strategy, retrieval quality (recall), the context-window budget, prompt-injection from documents, latency (cache embeddings + answers), cost (smaller model + fewer chunks), evaluation (faithfulness + answer relevance), and freshness (re-index on document changes).",
+         tags=["rag", "chatbot", "vector-database", "genai", "applied", "ai", "system-design"],
+         example="An internal 'ask the handbook' bot: 500 HR PDFs are chunked and embedded once; an employee asks 'how many sick days do I get?', the bot retrieves the 3 most relevant handbook chunks, and the LLM answers '10 days per year' with a link to the exact policy section.",
+         difficulty="Medium",
+         frequency="Very commonly asked - the canonical GenAI system-design question at product companies building AI features.",
+         mnemonic="Two phases: INGEST (chunk -> embed -> store) offline, QUERY (embed -> retrieve -> augment -> generate -> cite) online. Ground it, cite it, cache it."),
+    dict(cat="ai_applied", title="What is an AI agent (tool use & the ReAct loop)?",
+         answer="In plain words: an agent is an LLM that can DO things, not just talk - it decides which tool to use, uses it, looks at the result, and repeats until the task is done. Instead of answering in one shot, the model runs a loop: REASON about the goal, choose an ACTION (call a tool like web-search, a calculator, code execution, or an API), OBSERVE the tool's result, and continue - the 'ReAct' (Reason+Act) pattern. Tools are exposed to the model (increasingly via standards like MCP) with descriptions the model reads to decide when to call them. Agents can plan multi-step tasks, use memory, and self-correct. Risks to design for: getting stuck in loops, calling the wrong tool, cost/latency of many LLM calls, and safety (a tool that can act in the real world needs guardrails and approvals).",
+         tags=["agents", "tool-use", "react", "mcp", "genai", "applied", "ai"],
+         example="'Book me a table for 4 tomorrow': the agent reasons it needs availability -> calls a restaurant API (action) -> sees 7pm is open (observation) -> reasons that fits -> calls the booking tool -> confirms. Each step is an LLM decision plus a tool call.",
+         difficulty="Medium",
+         frequency="Rising fast - agent/tool-use design and 'how would you build an agent?' are increasingly common as AI products adopt agents.",
+         mnemonic="Agent = LLM + tools + a loop. ReAct: Reason -> Act (call a tool) -> Observe -> repeat until done. 'A model with hands, not just a mouth.'"),
+    dict(cat="ai_applied", title="How do you evaluate an LLM / GenAI system?",
+         answer="In plain words: unlike a classifier, there's often no single 'correct' output, so you measure quality along several axes with a mix of automatic and human checks. For RAG: FAITHFULNESS (is the answer supported by the retrieved context, i.e. not hallucinated?), ANSWER RELEVANCE (does it address the question?), and CONTEXT/RETRIEVAL quality (did we retrieve the right chunks - recall/precision@k?). For generation quality: reference-based metrics (BLEU/ROUGE for summarization/translation, exact-match/F1 for QA), and increasingly LLM-AS-A-JUDGE (a strong model scores outputs against a rubric) plus human eval for nuanced tasks. Also track task success rate, latency, cost per query, and safety/toxicity. Best practice: build a fixed EVALUATION SET of representative queries with expected behavior, run it on every change (like unit tests), and watch for regressions.",
+         tags=["evaluation", "llm-eval", "rag", "llm-as-judge", "genai", "ai"],
+         example="A support bot's eval set has 200 real questions with ideal answers/sources; each release you auto-score faithfulness and relevance (LLM-as-judge), measure retrieval recall@5, and spot-check 20 by hand - if faithfulness drops from 0.92 to 0.85, you block the release.",
+         difficulty="Medium",
+         frequency="Commonly asked - 'how would you evaluate this LLM feature?' is a favorite because naive candidates forget it entirely.",
+         mnemonic="No single right answer, so score multiple axes: Faithful (grounded?), Relevant (on-topic?), Retrieved-right (recall@k?), plus cost/latency/safety. Build an eval SET and treat it like unit tests."),
+    dict(cat="ai_llm", title="What is fine-tuning with LoRA (parameter-efficient tuning)?",
+         answer="In plain words: instead of retraining all of an LLM's billions of weights (expensive, storage-heavy), LoRA freezes the original model and trains only a tiny pair of small matrices per layer - getting most of the benefit for a fraction of the cost. LoRA (Low-Rank Adaptation) is based on the observation that the WEIGHT UPDATE needed to adapt a model is low-RANK, so it can be approximated by the product of two skinny matrices A (d x r) and B (r x d) with a small rank r (e.g. 8-64). You freeze the pretrained weights W and learn only A and B; the effective weight becomes W + BA. This slashes trainable parameters by ~100-1000x, needs far less memory, trains fast, and produces tiny 'adapter' files you can swap per task (many adapters over one base model). QLoRA adds 4-bit quantization of the base to shrink memory further.",
+         tags=["lora", "fine-tuning", "peft", "quantization", "llm", "ai"],
+         example="Adapting a 7B model to your company's writing style: full fine-tuning updates 7B weights (huge GPU + a 14GB copy per task); LoRA trains ~10M adapter weights (a few MB file) on one GPU in hours, and you keep one base model with many swappable adapters.",
+         difficulty="Hard",
+         frequency="Commonly asked in ML-engineer/applied-scientist interviews as LLM fine-tuning became routine - 'how would you fine-tune cheaply?' -> LoRA/QLoRA.",
+         mnemonic="Freeze the giant model; learn a small 'diff' as two skinny matrices (low rank). Big adaptation, tiny cost. QLoRA = LoRA + a 4-bit-quantized base to fit on one GPU."),
+    dict(cat="ai_llm", title="Temperature, top-k and top-p (controlling LLM output)",
+         answer="In plain words: these knobs control how RANDOM vs SAFE the model's word choices are. At each step the model has a probability over next tokens; sampling settings reshape that choice. TEMPERATURE scales the sharpness: low (~0) makes it nearly deterministic and picks the most likely token (good for facts/code); high (>1) flattens the distribution for more varied, creative (and riskier) output. TOP-K sampling restricts choices to the k most likely tokens. TOP-P (nucleus) sampling keeps the smallest set of tokens whose probabilities sum to p (e.g. 0.9), adapting how many options are considered to the context. You typically combine them: low temperature + modest top-p for factual/deterministic tasks; higher temperature for brainstorming.",
+         tags=["temperature", "sampling", "top-p", "top-k", "llm", "ai"],
+         example="Generating code or a factual answer: temperature 0 (or ~0.2) so it reliably picks the best token. Writing marketing taglines: temperature 0.9 + top-p 0.95 so it explores creative wordings instead of the safest, blandest one.",
+         difficulty="Easy",
+         frequency="Commonly asked - a practical 'do you actually use LLMs?' check in GenAI interviews.",
+         mnemonic="Temperature = creativity dial (0 = safe/factual, high = wild/creative). Top-k = 'pick from the k best'; Top-p = 'pick from the smallest set covering p% probability.' Facts -> low; brainstorming -> high."),
 ]
 
 
 def qsrc(e):
     s = f"    Q({e['cat']!r}, {e['title']!r},\n      {e['answer']!r},\n      {e['tags']!r}"
-    for f in ("code", "example", "complexity", "pitfalls", "followups"):
+    for f in ("code", "example", "complexity", "pitfalls", "followups",
+              "difficulty", "frequency", "mnemonic"):
         if e.get(f):
             s += f",\n      {f}={e[f]!r}"
     return s + "),\n"
