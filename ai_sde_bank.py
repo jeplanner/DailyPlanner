@@ -24360,6 +24360,627 @@ for _e in ENTRIES:
 
 
 
+_EX_P0E = {}
+
+_EX_P0E["Dynamic Programming — the 4-question method"] = [
+    """The four questions answered out loud on Coin Change.
+coins = [1,2,5], amount = 11.
+1) STATE: dp[a] = fewest coins that make exactly amount a.
+2) TRANSITION: dp[a] = min over coins c <= a of dp[a-c] + 1.
+3) BASE: dp[0] = 0; everything else starts at INF (impossible).
+4) ANSWER: dp[11], or -1 if it is still INF.
+Filling it: dp[1]=1, dp[2]=1 (one 2), dp[3]=2, dp[4]=2 (2+2), dp[5]=1 (one 5),
+dp[6]=2, dp[7]=2 (5+2), dp[8]=3, dp[9]=3, dp[10]=2 (5+5), dp[11]=3 (5+5+1).
+Answer 3. Say those four sentences BEFORE writing code and the code writes
+itself.""",
+
+    """The same four questions on Climbing Stairs - proof the method transfers.
+1) STATE: dp[i] = number of distinct ways to reach step i.
+2) TRANSITION: dp[i] = dp[i-1] + dp[i-2] (you arrive by a 1-step or a 2-step).
+3) BASE: dp[0]=1 (one way to stand at the bottom - do nothing), dp[1]=1.
+4) ANSWER: dp[n].
+n=5: 1,1,2,3,5,8 -> 8 ways.
+Notice the transition is an ADDITION here and a MIN in coin change. 'Count the
+ways' -> sum; 'best cost' -> min/max; 'is it reachable' -> OR of booleans. That
+one word in the problem statement tells you which operator to use.""",
+
+    """Why DP and not plain recursion - the overlapping-subproblems count.
+Naive recursion for Fibonacci(40) makes about 2^40 calls because fib(38) is
+recomputed by both fib(39) and fib(40), and so on all the way down. On a laptop
+that is minutes.
+Memoise it - one dict lookup - and it is 40 calls, microseconds.
+That is the whole justification for DP: the recursion tree revisits the SAME
+subproblem exponentially often, so you compute each one once and store it. If
+the subproblems never repeat (like merge sort's halves) DP buys you nothing and
+plain divide-and-conquer is the right tool.""",
+
+    """Top-down vs bottom-up on the same problem.
+Top-down (memoised recursion) for coin change:
+    @lru_cache(None)
+    def best(a):
+        if a == 0: return 0
+        if a < 0:  return INF
+        return min(best(a - c) + 1 for c in coins)
+Bottom-up is the loop in the code above.
+Same complexity, O(amount x len(coins)). Top-down only touches the states it
+actually needs and is easier to derive from the recursion; bottom-up has no
+recursion-depth limit and lets you drop the table to O(1) rows.
+In an interview: derive it top-down (easier to explain), then say 'this converts
+to a bottom-up table' and write that if there is time.""",
+
+    """The impossible case, and the INF sentinel that makes it work.
+coins = [5], amount = 3. dp[1], dp[2], dp[3] all stay at INF because no coin
+fits or the sub-answer is itself INF. dp[3] != INF is false -> return -1.
+Why INF = amount + 1 rather than float('inf')? Because dp[a-c] + 1 stays a plain
+int, no float arithmetic, and amount+1 is provably larger than any real answer
+(you can never need more coins than the amount itself, since the smallest coin
+is at least 1). Small detail, but it is the kind of thing an interviewer will
+ask you to justify.""",
+
+    """Space optimisation, and the loop-order trap that comes with it.
+Many 2-D DPs only ever read the previous row, so you can keep one row:
+knapsack's dp[w] = max(dp[w], dp[w - wt] + val).
+BUT the loop direction now encodes a rule. Iterating w DOWNWARD means each item
+is used at most once (0/1 knapsack); iterating UPWARD lets the same item be
+reused (unbounded knapsack - which is exactly coin change).
+Same three lines, opposite problems, decided by `range(W, wt-1, -1)` versus
+`range(wt, W+1)`. When you compress the table, state which of the two you need
+and why - that is the actual test.""",
+]
+
+_EX_P0E["Word Ladder (shortest transformation, BFS)"] = [
+    """The textbook case, traced level by level.
+begin='hit', end='cog', words={hot,dot,dog,lot,log,cog}.
+Level 1: 'hit'. Its neighbours in the dictionary: change 'h'->? nothing; 'i'->o
+gives 'hot' (in the set) -> remove it, push (hot,2).
+Level 2: 'hot' -> 'dot' and 'lot'; push both with steps 3.
+Level 3: 'dot' -> 'dog'; 'lot' -> 'log'; steps 4.
+Level 4: 'dog' -> 'cog' (also 'log' already removed); push (cog,5).
+Pop 'cog' -> equals end -> return 5.
+The answer counts WORDS, not edits: hit,hot,dot,dog,cog is five words and four
+letter changes. Getting that off by one is the most common wrong answer.""",
+
+    """No path exists - and why the early check matters.
+begin='hit', end='cog', words={hot,dot,dog,lot,log} (no 'cog').
+The very first line `if end not in words: return 0` fires and we never traverse
+at all.
+Without that check the BFS would explore every reachable word, exhaust the
+queue, and fall through to `return 0` anyway - correct but wasteful. On a
+5000-word dictionary that is the difference between instant and a full sweep.""",
+
+    """begin == end, and a one-step ladder.
+begin='hot', end='hot', words={hot}: the first pop matches, return 1. One word,
+zero changes.
+begin='hit', end='hot', words={hot}: level 1 generates 'hot', level 2 pops it,
+returns 2.
+These two pin down the counting convention. If your solution returns 0 or 1 for
+the second case, you are counting edges instead of nodes.""",
+
+    """Why removing the word at PUSH time is essential.
+Suppose 'hot' is reachable from two different level-2 words. If you only mark it
+visited when you POP it, both parents push it and it is expanded twice - and in
+a dense dictionary that duplication compounds level by level until the queue
+explodes.
+Removing it from `words` the moment you push it means each word enters the queue
+exactly once. That single line is what keeps the algorithm O(N x L x 26) rather
+than exponential.
+It also doubles as the visited set - no second data structure needed - at the
+cost of destroying the caller's word list, which is worth saying out loud.""",
+
+    """Cost, and the neighbour-generation choice.
+N words, each of length L. The code tries L positions x 26 letters per word:
+O(N x L x 26) string builds, each costing O(L) -> about O(N x L^2).
+The alternative is a precomputed bucket map: 'h*t' -> [hit, hot], built once in
+O(N x L). Then neighbours are a dict lookup instead of 26 tries.
+Which wins depends on the alphabet: for 26 lowercase letters the brute-force
+generation is usually fine and much shorter to write; for a large alphabet
+(Unicode, or long words) the bucket map is decisively better. Name both.""",
+
+    """Bidirectional BFS - the follow-up worth knowing.
+Search from BOTH ends at once, always expanding the smaller frontier, and stop
+when the two sets touch.
+If the branching factor is b and the answer depth is d, one-directional BFS
+visits about b^d nodes; bidirectional visits 2 x b^(d/2). For b=10, d=6 that is
+1,000,000 versus 2,000 - a 500x cut.
+It is the standard optimisation for Word Ladder and for shortest-path queries in
+social graphs ('degrees of separation'). Mentioning it, even without coding it,
+is usually enough to clear the bar on this Hard problem.""",
+]
+
+_EX_P0E["Reverse Linked List"] = [
+    """The textbook case, traced pointer by pointer.
+1->2->3, prev=None, curr=1.
+Iter 1: nxt=2; 1.next=None; prev=1; curr=2.   List so far: 1 (prev), 2->3.
+Iter 2: nxt=3; 2.next=1; prev=2; curr=3.      2->1, and 3 remains.
+Iter 3: nxt=None; 3.next=2; prev=3; curr=None. 3->2->1.
+Loop ends because curr is None. Return prev = 3.
+The invariant: prev always points at the head of the already-reversed prefix,
+curr at the head of the untouched suffix.""",
+
+    """Why `nxt` exists - the one-line version that loses the list.
+Write `curr.next = prev` FIRST without saving curr.next and you have just
+destroyed the only pointer to the rest of the list. On 1->2->3 you would flip
+1's pointer to None and then have no way to reach 2 or 3 - the nodes are
+garbage-collected and you return a one-element list.
+Python lets you avoid the temp with simultaneous assignment
+(`curr.next, prev, curr = prev, curr, curr.next`), because the right-hand side is
+evaluated fully before any assignment happens - but write the explicit
+three-pointer version in an interview; it is what you will be asked to trace.""",
+
+    """Empty list and single node.
+head=None: curr=None, the loop never runs, return prev=None. An empty list
+reversed is an empty list.
+head=1: iter 1 sets 1.next=None (it already was), prev=1, curr=None. Return 1.
+Both fall out with no special-casing, which is the sign the three-pointer setup
+is right. Every linked-list answer should be checked against these two before
+you say 'done'.""",
+
+    """The recursive version, and what it costs.
+    def reverse(head):
+        if not head or not head.next: return head
+        new_head = reverse(head.next)
+        head.next.next = head      # the node ahead now points BACK at me
+        head.next = None           # and I become the tail
+        return new_head
+Elegant, and the line `head.next.next = head` is worth staring at until it
+clicks: at 1->2, head.next is 2, so 2.next = 1.
+Cost: O(n) stack frames. On a 10^5-node list Python raises RecursionError. The
+iterative version is O(1) space and never fails - so lead with iterative, offer
+recursive as the variant.""",
+
+    """Reverse only part of the list - the real interview follow-up.
+'Reverse nodes from position m to n' (LeetCode 92) uses the identical three-
+pointer loop, but you first walk to position m-1 and keep that node as an
+anchor, run the loop exactly n-m+1 times, then reattach both ends.
+Same for 'Reverse Nodes in k-Group': run the loop k times per group.
+Practise attaching the reversed chunk back - the reversal itself is the easy
+part; the two reattachment pointers are where people lose the problem.""",
+
+    """Where reversal is the hidden subroutine.
+- Palindrome Linked List: reverse the second half, then compare.
+- Reorder List (1->n->2->n-1->...): split at the middle, reverse the tail,
+  interleave.
+- Add Two Numbers II (digits stored most-significant first): reverse both lists,
+  add with carry, reverse the result.
+- Swap Nodes in Pairs: a two-node reversal repeated.
+Whenever a linked-list problem needs to walk BACKWARDS and you are not allowed
+O(n) extra space, the answer is almost always 'reverse a portion in place'.""",
+]
+
+_EX_P0E["Find First and Last Position (sorted array)"] = [
+    """The textbook case, traced.
+nums = [5,7,7,8,8,10], target = 8.
+bisect_left finds the first index where 8 could be inserted keeping the array
+sorted, WITHOUT going past an existing 8 -> index 3.
+nums[3] == 8, so the target is present.
+bisect_right finds the insertion point AFTER all the 8s -> index 5. Minus one
+gives 4, the last 8.
+Answer [3,4]. Two binary searches, O(log n) total.""",
+
+    """Target absent - and why the guard is two conditions.
+nums = [5,7,7,8,8,10], target = 6.
+bisect_left returns 1 (6 belongs between 5 and 7), but nums[1] is 7, not 6 ->
+return [-1,-1].
+Now target = 11: bisect_left returns 6, which is len(nums) - indexing nums[6]
+would raise IndexError. That is why the check reads
+`if left == len(nums) or nums[left] != target`, in that order: Python
+short-circuits, so the bounds test runs before the value test.
+Swap the two and the empty/too-large case crashes.""",
+
+    """Every element is the target.
+nums = [8,8,8,8], target = 8. bisect_left -> 0, bisect_right -> 4, minus one is
+3. Answer [0,3], the full array.
+Contrast with the single occurrence [8], which gives left=0, right=1-1=0 ->
+[0,0]. First and last are the same index, which is correct and needs no special
+case.""",
+
+    """The empty array, and a single non-matching element.
+nums = [], target = 1: bisect_left returns 0, which equals len(nums)=0, so the
+first half of the guard fires -> [-1,-1]. No crash.
+nums = [2], target = 1: left=0, nums[0]=2 != 1 -> [-1,-1].
+nums = [2], target = 3: left=1 == len -> [-1,-1].
+Three one-element shapes, all handled by the same two-condition guard - worth
+naming them in an interview because they are exactly what a hidden test suite
+checks.""",
+
+    """The naive approach and why it fails the constraint.
+Finding the target with one binary search and then walking left and right to the
+boundaries is correct - but on [8,8,8,...,8] with 10^5 elements that walk is
+O(n), and the problem explicitly asks for O(log n).
+This is the point of the exercise: the array has DUPLICATES, so 'find the
+target' is not enough - you must find a BOUNDARY. Boundary-finding is what
+bisect_left/bisect_right do, and writing them by hand is the real skill:
+    # bisect_left by hand
+    lo, hi = 0, len(nums)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if nums[mid] < target: lo = mid + 1
+        else:                  hi = mid
+    return lo
+Note `hi = len(nums)` (not len-1), `while lo < hi` (not <=), and `hi = mid` (not
+mid-1). All three differ from plain binary search.""",
+
+    """Where boundary binary search shows up again.
+- Search Insert Position: bisect_left is literally the answer.
+- Count occurrences of x: bisect_right(x) - bisect_left(x), in O(log n).
+- First bad version / first true in a monotone predicate: same template with
+  `is_bad(mid)` in place of the comparison.
+- Longest Increasing Subsequence (patience method): bisect_left into the tails
+  array.
+- 'Search on the answer' problems: binary-search the smallest feasible value.
+Once you see it as 'find the boundary of a monotone true/false array' rather
+than 'find a value', all of these become one template.""",
+]
+
+_EX_P0E["K Closest Points to Origin (heap)"] = [
+    """The textbook case, traced.
+points = [[1,3],[-2,2]], k = 1.
+(1,3): d = 1 + 9 = 10, push (-10,1,3). Heap size 1, not > k.
+(-2,2): d = 4 + 4 = 8, push (-8,-2,2). Heap size 2 > 1, so pop the SMALLEST
+tuple - and because distances are negated, the smallest is -10, i.e. the
+FARTHEST point (1,3). Gone.
+Heap holds (-8,-2,2). Answer [[-2,2]].
+The negation is the whole trick: Python only has a min-heap, so store -d to make
+`heappop` remove the largest distance.""",
+
+    """A larger case where the heap churns.
+points = [[3,3],[5,-1],[-2,4]], k = 2. Distances 18, 26, 20.
+Push (-18): heap [(-18,..)].
+Push (-26): heap size 2, still <= k.
+Push (-20): size 3 > 2 -> pop the smallest key, which is -26 (distance 26, the
+point [5,-1]). Correct - it is the farthest of the three.
+Remaining: distances 18 and 20 -> [[3,3],[-2,4]].
+Note the OUTPUT ORDER is heap order, not sorted-by-distance order. If the
+problem wants them sorted you must sort the k survivors afterward - cheap, since
+k is small.""",
+
+    """Edge cases: k equals n, and duplicate distances.
+k = len(points): the heap never exceeds k, nothing is ever popped, and you
+return every point. Correct, though you did n pushes for nothing - a real
+implementation might short-circuit.
+Duplicates: [[1,0],[0,1],[-1,0]] with k=2 all have distance 1. The heap keeps
+whichever two survive the pops; ANY two are valid answers, and LeetCode accepts
+them in any order. Say that out loud - a candidate who asks 'are ties broken
+arbitrarily?' looks careful, not pedantic.""",
+
+    """Why no square root.
+The true distance is sqrt(x^2 + y^2), but sqrt is monotonically increasing, so
+comparing sqrt(a) with sqrt(b) always gives the same answer as comparing a with
+b.
+Dropping it removes n floating-point operations AND removes floating-point
+error, which matters when two points are nearly equidistant - with sqrt, two
+mathematically equal distances can compare unequal.
+Generalise the habit: whenever you only need the ORDER, strip any monotone
+transformation (sqrt, log, division by a positive constant). Interviewers look
+for exactly this observation on this problem.""",
+
+    """Heap vs sort vs quickselect - the real trade-off.
+Sort everything by distance and take k: O(n log n), two lines, perfectly
+acceptable if k is close to n.
+Size-k heap (this code): O(n log k). With n = 10^6 and k = 10, log k is ~3
+instead of ~20 - about 6x fewer comparisons. It also uses only O(k) memory,
+which is what makes it the STREAMING answer: points can arrive one at a time and
+you never hold them all.
+Quickselect (nth_element): O(n) average, O(n^2) worst case, and it needs the
+whole array in memory. Fastest on a fixed in-memory array; useless on a stream.
+Name all three and say which the constraints favour.""",
+
+    """The Top-K family, all the same skeleton.
+- Kth Largest Element: a size-k MIN-heap; the root is the answer.
+- Top K Frequent Elements: count with a dict, then size-k heap on the counts.
+- Merge k Sorted Lists: size-k heap of list heads.
+- Find Median from Data Stream: two heaps facing each other.
+- 'Top 10 trending searches this hour' in a real system: a size-k heap per
+  shard, then merge the shard heaps.
+The rule: k SMALLEST -> max-heap of size k; k LARGEST -> min-heap of size k. It
+feels backwards, and it is worth writing on a card: you keep the heap whose root
+is the WORST survivor, so you can evict it in O(log k).""",
+]
+
+_EX_P0E["Binary Search — including 'search on the answer'"] = [
+    """The textbook search, traced.
+a = [1,3,5,7,9,11], target = 7. lo=0, hi=5.
+mid=2, a[2]=5 < 7 -> lo=3.
+mid=4, a[4]=9 > 7 -> hi=3.
+mid=3, a[3]=7 -> return 3.
+Three comparisons for six elements; for a million elements it is twenty. That
+halving is the entire value proposition - and it is why the array must be sorted
+in the first place.""",
+
+    """The absent target - where the loop must terminate.
+a = [1,3,5], target = 4. lo=0,hi=2.
+mid=1, a[1]=3 < 4 -> lo=2.
+mid=2, a[2]=5 > 4 -> hi=1.
+Now lo=2 > hi=1, the `while lo <= hi` condition fails, return -1.
+The pairing that matters: `lo <= hi` with `hi = len-1` and `mid +/- 1` on both
+sides. Mixing conventions - say `lo < hi` with `hi = mid - 1` - either loops
+forever or skips the last element. Pick ONE template and always write it the
+same way.""",
+
+    """Empty array and single element.
+a = []: lo=0, hi=-1, the condition 0 <= -1 is false immediately, return -1.
+a = [5], target=5: mid=0, hit, return 0.
+a = [5], target=3: mid=0, 5 > 3 -> hi=-1, loop ends, -1.
+Trace these three every time you write binary search; they catch nearly every
+off-by-one.""",
+
+    """The overflow detail that is real outside Python.
+`mid = (lo + hi) // 2` can overflow a 32-bit int in Java or C++ when lo and hi
+are both near 2^31 - this was a genuine bug in the JDK's binary search for nine
+years. The fix is `mid = lo + (hi - lo) // 2`.
+Python's ints are arbitrary precision so it cannot happen here, but saying 'in
+Java I would write lo + (hi-lo)//2' is a strong signal, especially at Amazon
+where the interview may well be in Java.""",
+
+    """Search on the ANSWER - Koko eating bananas, worked.
+piles = [3,6,7,11], h = 8 hours. Find the smallest eating speed k.
+The array is not what you search; you search the SPEED, from 1 to max(piles)=11.
+feasible(k) = sum(ceil(p/k) for p in piles) <= h.
+feasible(4): 1+2+2+3 = 8 <= 8 -> True.
+feasible(3): 1+2+3+4 = 10 > 8 -> False.
+Feasibility is MONOTONE - once a speed works, every larger speed works - so the
+true/false array looks like F,F,F,T,T,T and you binary-search the first T.
+lo=1,hi=11: mid=6 T -> hi=6; mid=3 F -> lo=4; mid=5 T -> hi=5; mid=4 T -> hi=4;
+lo==hi=4. Answer 4.""",
+
+    """Recognising 'search on the answer' in the wild.
+The tell is a question phrased as 'minimize the maximum' or 'maximize the
+minimum' or 'the smallest X such that it still fits', where checking a CANDIDATE
+is easy but constructing the optimum is not.
+- Koko Eating Bananas: min speed within h hours.
+- Split Array Largest Sum / Capacity to Ship Packages in D Days: minimise the
+  largest chunk.
+- Minimum days to make m bouquets.
+- Median of Two Sorted Arrays (the O(log(m+n)) version): binary-search the
+  partition point.
+Template: define feasible(x), prove it is monotone, binary-search the boundary.
+Total cost O(log(range) x cost_of_feasible) - and the range can be huge, since
+log(10^9) is only 30.""",
+]
+
+_EX_P0E["Binary Tree Level Order Traversal"] = [
+    """The textbook tree, traced.
+        3
+      /   \\
+     9     20
+          /  \\
+        15     7
+queue=[3]. Outer pass 1: len=1, pop 3 -> level [3], push 9, 20.
+Outer pass 2: len=2 (snapshot BEFORE pushing), pop 9 (no children), pop 20 (push
+15, 7) -> level [9,20].
+Outer pass 3: len=2, pop 15, pop 7 -> level [15,7].
+Result [[3],[9,20],[15,7]].""",
+
+    """Why `for _ in range(len(queue))` and not `while queue`.
+Take the snapshot away and you get a flat traversal - every node in one list -
+because children pushed during the pass would be consumed by the same pass.
+Freezing len(queue) at the top of each pass is what draws the line between
+levels. It works because BFS keeps the queue in strict level order: at that
+moment the queue contains EXACTLY the current level, nothing more.
+Alternative: push (node, depth) tuples and group by depth. Same result, more
+bookkeeping - but it is the version you want when levels interleave, as in a
+vertical-order traversal.""",
+
+    """A skewed tree - one node per level.
+1 -> 2 -> 3 (each has only a right child).
+Pass 1: [1]; pass 2: [2]; pass 3: [3]. Result [[1],[2],[3]].
+The queue never holds more than one node, so BFS costs O(1) space here - the
+opposite of the balanced case, where the last level alone holds n/2 nodes.
+Good example to have ready when asked 'what is the space complexity?': the
+honest answer is O(max width), which is O(n) worst case and O(1) best case.""",
+
+    """Empty tree, single node.
+root=None: the guard returns [] - not [[]], which is what you get if you forget
+the guard and the queue starts as [None].
+root=[1]: one pass, result [[1]].
+The None guard is doing real work here; without it `deque([None])` is truthy and
+you crash on node.val.""",
+
+    """The four variants built on this exact loop.
+- Zigzag / spiral order: append the level, then reverse it on odd levels.
+- Right side view: take level[-1] each pass.
+- Average of levels: sum(level)/len(level).
+- Maximum width / largest value per level: max(level).
+- Level order BOTTOM-up: build normally then reverse the result list.
+All five are the same fifteen lines with one line changed after `level` is
+built. Learn the skeleton, not five problems.""",
+
+    """Cost, and the DFS alternative.
+O(n) time - each node is pushed once and popped once. O(width) space.
+You can also do it with DFS by passing a depth and appending into
+result[depth] (creating the sublist the first time you reach a new depth). That
+version is O(height) space and produces the same output, which surprises people
+who think 'levels' forces BFS.
+Use it when the tree is very wide but shallow - or when the interviewer asks
+'can you do it without a queue?' The answer is yes, and knowing why is the
+point: level membership is just depth, and DFS knows the depth too.""",
+]
+
+_EX_P0E["Combination Sum (reusable candidates)"] = [
+    """The textbook case, traced.
+candidates = [2,3,6,7], target = 7.
+Start at i=0 with 2: remaining 5 -> take 2 again (i stays 0): remaining 3 -> take
+2 again: remaining 1 -> every candidate overshoots, prune. Back up, from
+remaining 3 take 3 (i=1): remaining 0 -> record [2,2,3].
+Back up to the top level, take 3 first: 3+3=6, remaining 1, prune; 3+6 and 3+7
+overshoot.
+Take 6: remaining 1, prune. Take 7: remaining 0 -> record [7].
+Answer [[2,2,3],[7]].""",
+
+    """The one-character difference from Combination Sum II.
+Here the recursive call is backtrack(i, ...) - SAME index - so a candidate can
+be reused: [2,2,3] is legal.
+Change it to backtrack(i+1, ...) and each candidate is used at most once, which
+is Combination Sum II (LeetCode 40), where the answer for the same input would
+be just [[7]] since 2 cannot repeat.
+That single character is the entire difference between two separate LeetCode
+problems. When you read the statement, find the sentence about reuse before you
+write a line.""",
+
+    """Why `start` prevents duplicates but does not prevent reuse.
+Without `start` - looping from 0 every level - target 7 with [2,3] would produce
+[2,2,3], [2,3,2] and [3,2,2], three orderings of the same multiset.
+`start` forbids ever going BACKWARD in the candidate list, so every combination
+is generated in non-decreasing order exactly once. Reuse is still allowed
+because you may STAY at the same index.
+Forward-only = no duplicate combinations. Same-index-allowed = reuse. Two
+independent knobs on one loop.""",
+
+    """Edge cases: target 0, and no solution.
+target = 0: the first call hits `remaining == 0` immediately and records the
+empty combination [[]]. Whether that is the desired answer depends on the
+problem statement - LeetCode's constraints say target >= 1, so ask.
+candidates = [4,5], target = 3: every branch overshoots on the first pick,
+remaining goes negative, prune. Answer [] - an empty list of combinations, not
+None, not [[]]. Returning the wrong empty shape is a classic silent failure.""",
+
+    """The pruning that makes it fast - sorting first.
+As written, a candidate that overshoots still costs a recursive call that
+immediately returns.
+Sort the candidates, then break out of the loop the moment
+candidates[i] > remaining:
+    for i in range(start, len(candidates)):
+        if candidates[i] > remaining: break
+        ...
+Because the list is sorted, every LATER candidate also overshoots, so `break`
+skips them all. On [2,3,6,7] with remaining 1 that turns four wasted calls into
+zero. On larger inputs it is the difference between passing and timing out.""",
+
+    """Complexity, and where reuse-style combinations show up.
+Roughly O(n^(target/min_candidate)) states - exponential, which is expected for
+'enumerate all solutions': the OUTPUT itself can be exponential, so no algorithm
+can be polynomial.
+Real-world cousins: making change with unlimited coins of each denomination,
+choosing a set of resource sizes that exactly fill a quota, unbounded knapsack.
+Note the contrast: if the question asks HOW MANY combinations (not which ones),
+switch to DP - counting is polynomial even though listing is not. Recognising
+'count' versus 'enumerate' picks the algorithm for you.""",
+]
+
+_EX_P0E["Course Schedule (topological sort)"] = [
+    """The textbook case, traced.
+num_courses = 2, prerequisites = [[1,0]] (course 1 needs course 0).
+graph: 0 -> [1]. indegree: [0, 1].
+Queue starts with courses of indegree 0 -> [0].
+Pop 0, done=1. Its dependent 1 drops to indegree 0 -> push.
+Pop 1, done=2. Queue empty.
+done == num_courses -> True, the schedule is feasible. A valid order is [0,1].""",
+
+    """The cycle case - what failure looks like.
+num_courses = 2, prerequisites = [[1,0],[0,1]]. Course 1 needs 0 AND 0 needs 1.
+indegree = [1,1]. NO course has indegree 0, so the queue starts EMPTY, the loop
+body never runs, done stays 0.
+0 != 2 -> False.
+That is the whole cycle detection: a cycle's nodes can never reach indegree 0,
+because each is waiting on another member of the cycle. Nothing in the code says
+the word 'cycle' - it falls out of the counting.""",
+
+    """A partial cycle - the case that catches a sloppy implementation.
+num_courses = 4, prerequisites = [[1,0],[2,1],[3,2],[1,3]].
+indegree: 0->0, 1->2 (needs 0 and 3), 2->1, 3->1.
+Queue starts [0]. Pop 0, done=1, indegree[1] drops to 1 - still not zero.
+Queue is now empty. done=1 != 4 -> False.
+Courses 1,2,3 form a cycle even though course 0 is perfectly schedulable. This
+is why the test is `done == num_courses` and not 'did we schedule anything' -
+partial progress is still failure.""",
+
+    """No prerequisites at all, and duplicate edges.
+num_courses = 3, prerequisites = []: all three start at indegree 0, the queue
+holds all of them, done=3 -> True. Any order works.
+Duplicate pairs [[1,0],[1,0]] push indegree[1] to 2 while course 0 only
+decrements it once - result False, incorrectly. LeetCode guarantees distinct
+pairs, so this does not bite there, but in a real dependency graph you would
+dedupe the edges first. Worth one sentence in an interview; it is exactly the
+kind of input-validation question a senior interviewer probes.""",
+
+    """Returning the ORDER, not just the boolean (Course Schedule II).
+Change two lines: keep an `order` list and append each course as you pop it;
+return order if len(order) == num_courses else [].
+On [[1,0],[2,0],[3,1],[3,2]] one valid output is [0,1,2,3]; [0,2,1,3] is equally
+valid, since 1 and 2 are independent. Topological order is not unique, so tests
+either accept any valid order or check it programmatically.
+If you need a DETERMINISTIC order (say, lexicographically smallest), swap the
+deque for a min-heap - that is 'Alien Dictionary' and build-system territory.""",
+
+    """The DFS alternative, and where this shows up for real.
+DFS version: three colours - white (unvisited), grey (on the current path),
+black (done). Hitting a GREY node means you looped back onto your own path, so
+there is a cycle. The reverse of the post-order finish times is a topological
+order.
+Kahn's BFS is usually easier to get right under pressure and gives the order
+directly, so lead with it.
+Real uses: build systems (make, bazel) ordering compilation units, package
+managers resolving dependencies, spreadsheet formula recalculation, task
+schedulers with 'runs after' constraints, and database migration ordering. In a
+system-design round, 'topological sort with cycle detection' is the correct
+answer to 'how do you order these dependent jobs?'""",
+]
+
+_EX_P0E["Find Minimum in Rotated Sorted Array"] = [
+    """The textbook case, traced.
+nums = [4,5,6,7,0,1,2]. lo=0, hi=6.
+mid=3, nums[3]=7 > nums[6]=2 -> the array must 'wrap' somewhere to the right of
+mid, so lo=4.
+mid=5, nums[5]=1 <= nums[6]=2 -> the right part is already sorted, so the
+minimum is at mid or to its left: hi=5.
+mid=4, nums[4]=0 <= nums[5]=1 -> hi=4.
+lo==hi==4, return nums[4]=0.""",
+
+    """A NON-rotated array - the case that breaks a nums[mid] vs nums[lo] test.
+nums = [1,2,3,4,5]. lo=0, hi=4.
+mid=2, nums[2]=3 <= nums[4]=5 -> hi=2.
+mid=1, 2 <= 3 -> hi=1. mid=0, 1 <= 2 -> hi=0. Return nums[0]=1. Correct.
+Now imagine comparing against nums[lo] instead: nums[mid]=3 > nums[lo]=1 would
+suggest 'left half is sorted, go right' and you would walk away from the true
+minimum. Comparing to nums[hi] is what makes the non-rotated case fall out for
+free - which is why the code is written that way.""",
+
+    """Two elements, and a rotation by exactly one.
+nums = [2,1]: lo=0,hi=1, mid=0, nums[0]=2 > nums[1]=1 -> lo=1, loop ends, return
+1.
+nums = [1,2]: mid=0, 1 <= 2 -> hi=0, return 1.
+nums = [3,4,5,1,2]: mid=2, 5 > 2 -> lo=3; mid=3, 1 <= 2 -> hi=3; return 1.
+Single element [7]: lo==hi from the start, the loop never runs, return 7.
+Four shapes, one loop, no special cases.""",
+
+    """Why `while lo < hi` and `hi = mid` (not mid - 1).
+The loop is searching for a POSITION, not a value, so it must never discard the
+candidate it is standing on. nums[mid] <= nums[hi] means mid could BE the
+minimum, so hi = mid keeps it in range.
+Using `hi = mid - 1` can step past the answer; using `while lo <= hi` with
+`hi = mid` loops forever once lo == hi == mid.
+The three choices - `lo < hi`, `hi = mid`, `lo = mid + 1` - only work as a set.
+This is the boundary-search template, the same one behind bisect_left.""",
+
+    """Duplicates break the O(log n) guarantee.
+nums = [2,2,2,0,2]. mid=2, nums[2]=2 which is NOT > nums[4]=2, so hi=2 - and you
+have just discarded the 0. Wrong answer.
+The fix (LeetCode 154) is a third branch: when nums[mid] == nums[hi], you cannot
+tell which side holds the minimum, so shrink by one with hi -= 1.
+That makes the worst case O(n) - on [2,2,2,2,2] you peel one element at a time -
+and it is provably unavoidable: with all-equal values there is no information to
+binary-search on. Being able to state that lower bound is the whole point of the
+follow-up.""",
+
+    """The related problem: SEARCH in a rotated sorted array.
+Same setup, but you want the index of a target. Two ways:
+1. Find the rotation point with this exact code, then binary-search the correct
+   half. Two clean searches.
+2. One modified search: at each step exactly one half is sorted (check
+   nums[lo] <= nums[mid]); test whether the target lies inside that sorted half
+   and go there, otherwise go the other way.
+Method 2 is what most interviewers want, but method 1 is easier to get right and
+you can build it directly on top of this function. Say both, implement whichever
+you can write bug-free under pressure.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0E:
+        _e["examples"] = _EX_P0E[_e["title"]]
+
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
