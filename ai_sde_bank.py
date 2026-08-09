@@ -7955,3 +7955,690 @@ _BETTER_MNEMONIC["Container With Most Water (two pointers)"] = _BETTER_MNEMONIC[
 for _e in ENTRIES:
     if _e["title"] in _BETTER_MNEMONIC:
         _e["mnemonic"] = _BETTER_MNEMONIC[_e["title"]]
+
+
+# ══ Worked examples ═══════════════════════════════════════════════════════
+# One example only ever shows the happy path. Each topic gets FIVE or more,
+# deliberately varied so the pattern generalises for someone seeing it for
+# the first time:
+#   1. the textbook case, traced
+#   2. a second ordinary case with a different shape
+#   3. an edge case (empty / single / all-same / all-negative)
+#   4. the case that BREAKS the naive approach - why the trick exists
+#   5. a contrast, a failure mode, or an alternative method on the same input
+# Rendered as numbered "Worked examples" cards; also in the PDF export.
+_EXAMPLES = {}
+
+_EXAMPLES["Gas Station (greedy circuit)"] = [
+    """The textbook case.
+gas = [1,2,3,4,5], cost = [3,4,5,1,2]  ->  answer 3
+diff = gas - cost = [-2,-2,-2,3,3], and the total is 0, so an answer exists.
+Scanning: i=0 tank -2 (negative, start=1, reset), i=1 tank -2 (start=2, reset),
+i=2 tank -2 (start=3, reset), i=3 tank 3, i=4 tank 6. Never negative after 3.
+Driving it by hand from pump 3 with an empty tank:
+  pump 3: +4 = 4, drive costs 1 -> 3 left
+  pump 4: +5 = 8, drive costs 2 -> 6 left
+  pump 0: +1 = 7, drive costs 3 -> 4 left
+  pump 1: +2 = 6, drive costs 4 -> 2 left
+  pump 2: +3 = 5, drive costs 5 -> 0 left, and we are back at pump 3.""",
+
+    """When it is impossible - the total decides.
+gas = [2,3,4], cost = [3,4,3]  ->  answer -1
+Total gas = 9, total cost = 10. The circle burns one more litre than exists
+anywhere in it, so no starting pump can survive, no matter how clever the
+order. You return -1 without simulating anything. This is why the algorithm
+checks the sum FIRST: it is a one-line answer to 'is this even possible'.""",
+
+    """The naive heuristic breaks here - this is the important one.
+gas = [2,9,1], cost = [1,9,2]  ->  answer 0
+Most people's first instinct is 'start where the tank fills the most', which
+is pump 1 with 9 litres. Try it: +9 gas, drive costs 9 -> 0 left. Then +1 gas
+= 1, drive costs 2 -> -1. Stranded.
+Now start at pump 0: +2 gas = 2, costs 1 -> 1 left. +9 = 10, costs 9 -> 1 left.
++1 = 2, costs 2 -> 0 left, home. It works.
+The lesson: what matters is the NET (gas - cost) and the ORDER you meet the
+deficits in - not the size of any single pump.""",
+
+    """All the pain up front, all the reward at the end.
+gas = [1,1,1,10], cost = [2,2,2,1]  ->  answer 3
+diff = [-1,-1,-1,9], total = 6, so an answer exists.
+The scan fails at every one of the first three stations and keeps pushing the
+candidate forward: start becomes 1, then 2, then 3. From 3 the tank runs
+10-1=9, then 9+1-2=8, then 7, then 6. Comfortable.
+This shows the restart rule doing real work - it skipped three dead starting
+points without ever simulating a full lap from any of them.""",
+
+    """Zero margin - proof that 'not negative' is the real test.
+gas = [1,2], cost = [2,1]  ->  answer 1
+diff = [-1, 1], total = 0 - the tightest case that still has an answer.
+From pump 1: +2 gas, drive costs 1 -> 1 left. Then +1 gas = 2, costs 2 -> 0.
+You arrive back with a completely empty tank, and that is still valid. The
+condition is tank >= 0, never tank > 0. A single litre less anywhere in the
+circle and the answer would be -1.""",
+
+    """The smallest possible inputs.
+gas = [5], cost = [4]  ->  answer 0. One pump: collect 5, spend 4 driving the
+loop back to yourself, 1 left over. Valid.
+gas = [3], cost = [4]  ->  answer -1. Total 3 < 4, so you cannot even complete
+a single leg. Worth testing in an interview because a wrong loop bound or a
+missing total check usually blows up on a one-element array first.""",
+]
+
+_EXAMPLES["Trapping Rain Water"] = [
+    """The textbook case, column by column.
+height = [0,1,0,2,1,0,1,3,2,1,2,1]  ->  answer 6
+Apply water[i] = min(tallest left, tallest right) - height[i] at each index:
+  i=2 : left max 1, right max 3 -> min 1, minus height 0 = 1
+  i=4 : left max 2, right max 3 -> min 2, minus height 1 = 1
+  i=5 : left max 2, right max 3 -> min 2, minus height 0 = 2
+  i=6 : left max 2, right max 3 -> min 2, minus height 1 = 1
+  i=9 : left max 3, right max 2 -> min 2, minus height 1 = 1
+  every other column comes out 0 or negative (clamped to 0)
+  total = 1+1+2+1+1 = 6""",
+
+    """A second ordinary case with a deeper basin.
+height = [4,2,0,3,2,5]  ->  answer 9
+  i=1 : min(4,5) - 2 = 2
+  i=2 : min(4,5) - 0 = 4
+  i=3 : min(4,5) - 3 = 1
+  i=4 : min(4,5) - 2 = 2
+  i=0 and i=5 are the walls themselves and hold nothing.
+  total = 2+4+1+2 = 9
+Notice the bar of height 3 at index 3 sits INSIDE the basin and still has 1
+unit on top of it. Water does not care about the bars in between; only the
+two tallest walls on either side matter.""",
+
+    """Nothing is trapped - the two monotonic cases.
+height = [1,2,3,4,5]  ->  answer 0
+height = [5,4,3,2,1]  ->  answer 0
+A staircase has no dip, so there is no place for water to pool. Check it with
+the formula on the ascending case at i=2: the tallest bar to its left is 2,
+so min(2, 5) - 3 = -1, which clamps to 0. Every column does the same.
+Any correct solution must return 0 here; a common bug is forgetting the clamp
+and accumulating negative water.""",
+
+    """The simplest possible basin, and the flat case.
+height = [3,0,3]  ->  answer 3.  min(3,3) - 0 = 3 units sitting in the gap.
+height = [2,2,2]  ->  answer 0.  min(2,2) - 2 = 0 everywhere, no dip at all.
+height = [3,0,2]  ->  answer 2.  The SHORTER wall (2) caps the level, not the
+taller one, so only 2 units are held and the rest spills over the right side.
+That last one is the whole reason the formula uses min() and not max().""",
+
+    """Several separate puddles, not one big pool.
+height = [2,1,2,1,2]  ->  answer 2
+  i=1 : min(2,2) - 1 = 1
+  i=3 : min(2,2) - 1 = 1
+  total 2
+Two independent one-unit puddles. This is why thinking column by column beats
+trying to identify basins: you never have to detect where one puddle ends and
+the next begins - the formula handles it automatically.""",
+
+    """Do not confuse this with Container With Most Water.
+height = [5,1,1,1,5]
+  Trapping Rain Water  -> 12. Each of the three middle bars holds
+  min(5,5) - 1 = 4 units, and 4 x 3 = 12. The bars in between are real and
+  displace water.
+  Container With Most Water -> 20. It picks the two walls of height 5, treats
+  everything between them as if it were glass, and computes 5 x 4 = 20.
+Same input, different answers, because one problem fills around the bars and
+the other ignores them entirely. Interviewers use this pair deliberately.""",
+]
+
+_EXAMPLES["Maximum Subarray (Kadane's algorithm)"] = [
+    """The textbook case, fully traced.
+nums = [-2,1,-3,4,-1,2,1,-5,4]  ->  answer 6
+  i=0: cur = -2                      best = -2
+  i=1: max(1, -2+1 = -1)  -> cur 1   best 1   (dropped the negative history)
+  i=2: max(-3, 1-3 = -2)  -> cur -2  best 1
+  i=3: max(4, -2+4 = 2)   -> cur 4   best 4   (dropped it again)
+  i=4: max(-1, 4-1 = 3)   -> cur 3   best 4   (kept it - 4 was worth carrying)
+  i=5: max(2, 3+2 = 5)    -> cur 5   best 5
+  i=6: max(1, 5+1 = 6)    -> cur 6   best 6
+  i=7: max(-5, 6-5 = 1)   -> cur 1   best 6
+  i=8: max(4, 1+4 = 5)    -> cur 5   best 6
+The winning stretch is [4,-1,2,1].""",
+
+    """Every number is negative - the edge case that catches everyone.
+nums = [-3,-1,-4]  ->  answer -1
+  cur = -3, best = -3
+  x=-1: max(-1, -3-1 = -4) -> cur -1, best -1
+  x=-4: max(-4, -1-4 = -5) -> cur -4, best -1
+The answer is the least-negative single element. If you initialise best = 0
+instead of nums[0], you get 0 - which corresponds to picking the EMPTY
+subarray, and that is normally not allowed. This single test case is the one
+interviewers use to check your initialisation.""",
+
+    """Everything is positive - the whole array wins.
+nums = [1,2,3,4]  ->  answer 10
+cur never resets because cur + x always beats x on its own when cur is
+positive. cur goes 1, 3, 6, 10 and best tracks it exactly. Good sanity check:
+if your implementation returns anything less than the total here, your max()
+arguments are the wrong way round.""",
+
+    """When carrying a negative IS worth it.
+nums = [5,-2,3]  ->  answer 6
+  cur = 5, best = 5
+  x=-2: max(-2, 5-2 = 3) -> cur 3, best 5. The running total dipped but stayed
+        POSITIVE, so we keep it rather than restarting.
+  x=3 : max(3, 3+3 = 6)  -> cur 6, best 6
+Answer is the whole array [5,-2,3]. Compare with nums = [1,-9,3]: there the
+running total after -9 is -8, which is negative dead weight, so we restart and
+the answer is just 3. The rule is not 'restart on a negative NUMBER', it is
+'restart when the running TOTAL goes negative'.""",
+
+    """A longer mixed case where the best stretch is in the middle.
+nums = [-1,4,-2,5,-10,3]  ->  answer 7
+  cur = -1, best = -1
+  x=4  : max(4, -1+4 = 3)    -> cur 4,  best 4
+  x=-2 : max(-2, 4-2 = 2)    -> cur 2,  best 4
+  x=5  : max(5, 2+5 = 7)     -> cur 7,  best 7
+  x=-10: max(-10, 7-10 = -3) -> cur -3, best 7
+  x=3  : max(3, -3+3 = 0)    -> cur 3,  best 7
+The winner is [4,-2,5]. Note best held on to 7 even though cur later collapsed
+- that is exactly why you track the two variables separately.""",
+
+    """The single-element array.
+nums = [7]  ->  answer 7.  The loop body never runs; the answer comes entirely
+from the initialisation. nums = [-7] -> answer -7 for the same reason.
+Any solution that starts the loop at index 0 instead of index 1, or that
+initialises cur to 0, gets one of these two wrong.""",
+]
+
+_EXAMPLES["Majority Element (Boyer-Moore voting)"] = [
+    """The textbook case, fully traced.
+nums = [2,2,1,1,1,2,2]  ->  answer 2  (2 appears 4 times out of 7)
+  x=2: count is 0 -> candidate 2, count 1
+  x=2: matches      -> count 2
+  x=1: differs      -> count 1
+  x=1: differs      -> count 0   (candidate 2 now has no backing)
+  x=1: count is 0 -> candidate 1, count 1
+  x=2: differs      -> count 0
+  x=2: count is 0 -> candidate 2, count 1
+The candidate flipped to 1 in the middle and it did not matter - the true
+majority had enough votes left to take the lead back before the end.""",
+
+    """The simplest case.
+nums = [3,3,4]  ->  answer 3
+  x=3: candidate 3, count 1
+  x=3: count 2
+  x=4: count 1
+3 appears twice out of three, which is more than 1.5. The counter ends at 1,
+not 2 - a reminder that the counter is a SURPLUS of unmatched votes, not a
+frequency. If you need the actual count, you have to do a second pass.""",
+
+    """The candidate flips repeatedly and still lands correctly.
+nums = [1,2,1,2,1]  ->  answer 1  (1 appears 3 times out of 5)
+  x=1: candidate 1, count 1
+  x=2: differs, count 0
+  x=1: count is 0 -> candidate 1, count 1
+  x=2: differs, count 0
+  x=1: count is 0 -> candidate 1, count 1
+Every 2 was paired off against a 1 and both were discarded. The 2s ran out of
+ammunition first, exactly as the cancellation argument predicts.""",
+
+    """The recovery-at-the-last-moment case.
+nums = [5,5,1,1,2,2,5,5,5]  ->  answer 5  (5 appears 5 times out of 9)
+  5 -> cand 5 c1;  5 -> c2;  1 -> c1;  1 -> c0;  2 -> cand 2 c1;
+  2 -> c2;  5 -> c1;  5 -> c0;  5 -> cand 5 c1
+The candidate was 2 with a surplus of two votes at one point. It still ends on
+5. This is the case to run mentally when you are tempted to believe the
+algorithm 'locks in' early - it does not, and it does not need to.""",
+
+    """When there is NO majority - the failure mode you must know about.
+nums = [1,2,3]  ->  the algorithm returns 3, which is WRONG.
+  x=1: candidate 1, count 1
+  x=2: differs, count 0
+  x=3: count is 0 -> candidate 3, count 1
+No element appears more than 1.5 times, so there is no valid answer at all,
+but the algorithm hands back whatever survived. Boyer-Moore is only correct
+when a majority is GUARANTEED to exist. If it is not guaranteed, add a second
+pass that counts the candidate and confirm it exceeds n/2.""",
+
+    """Uniform input, and the extension to n/3.
+nums = [7,7,7]  ->  answer 7. The count only ever increases; no cancellation
+happens at all.
+For the harder variant 'find all elements appearing more than n/3 times', the
+same idea needs TWO candidates and two counters, because at most two values
+can clear the n/3 bar. On nums = [1,1,1,3,3,2,2,2] the two survivors are 1 and
+2, and you must still verify both with a counting pass, since the n/3 version
+does not guarantee any element qualifies.""",
+]
+
+_EXAMPLES["Container With Most Water"] = [
+    """The textbook case, fully traced.
+height = [1,8,6,2,5,4,8,3,7]  ->  answer 49
+  l=0(h1), r=8(h7): min(1,7) x 8 = 8    best 8   left is shorter  -> l=1
+  l=1(h8), r=8(h7): min(8,7) x 7 = 49   best 49  right is shorter -> r=7
+  l=1(h8), r=7(h3): min(8,3) x 6 = 18   best 49  right is shorter -> r=6
+  l=1(h8), r=6(h8): min(8,8) x 5 = 40   best 49  tie, move either -> r=5
+  nothing after this beats 49 and the pointers close.
+The winning pair is the wall of height 8 at index 1 and the wall of height 7
+at index 8 - not the two tallest walls, and not the widest pair.""",
+
+    """The smallest case, and equal heights.
+height = [1,1]  ->  answer 1.  min(1,1) x 1 = 1. Two walls, one unit apart.
+height = [3,3,3,3] -> answer 9. The outermost pair wins: min(3,3) x 3 = 9.
+When all walls are equal, width is the only thing that varies, so the widest
+pair always wins - which is why the algorithm starting at the two ends already
+has the answer on its very first measurement.""",
+
+    """A staircase, where the answer is NOT the outermost pair.
+height = [1,2,3,4,5]  ->  answer 6
+  l=0(h1), r=4(h5): min(1,5) x 4 = 4   -> left shorter, l=1
+  l=1(h2), r=4(h5): min(2,5) x 3 = 6   -> left shorter, l=2
+  l=2(h3), r=4(h5): min(3,5) x 2 = 6   -> left shorter, l=3
+  l=3(h4), r=4(h5): min(4,5) x 1 = 4   -> pointers meet
+Best is 6. Here the widest container is one of the WORST, because its left
+wall is only 1 tall. Depth beat width.""",
+
+    """Why you must move the SHORTER wall - a case that breaks the wrong rule.
+height = [1,2,4,3]  ->  answer 4
+Correct rule (move the shorter): l=0(h1),r=3(h3) area 3, move l. l=1(h2),
+r=3(h3) area min(2,3)x2 = 4, move l. l=2(h4),r=3(h3) area 3, move r. Best 4.
+Now suppose you moved the TALLER wall instead. From l=0(h1), r=3(h3) you would
+move r to 2, then to 1, dragging the useless wall of height 1 along the whole
+way and never measuring the pair (1,3) that actually wins. Moving the taller
+wall loses width while keeping the same depth cap, so it can destroy the
+answer. Moving the shorter one never can.""",
+
+    """The contrast with Trapping Rain Water - same input, different answers.
+height = [5,1,1,1,5]
+  Container With Most Water -> 20. Pick the two walls of height 5. The bars
+  between them are treated as glass and ignored: min(5,5) x 4 = 20.
+  Trapping Rain Water -> 12. Now the middle bars are solid and displace water:
+  each holds min(5,5) - 1 = 4 units, and 4 x 3 = 12.
+If you find yourself computing 12 for this problem, you have solved the wrong
+one. Read the question for whether the bars in between matter.""",
+
+    """A tall wall that is useless because of where it sits.
+height = [2,10,2]  ->  answer 4
+  l=0(h2), r=2(h2): min(2,2) x 2 = 4. Both equal, move either, and the
+  pointers meet immediately. Best 4.
+The wall of height 10 is never part of the answer - it can only ever pair with
+a neighbour one unit away, giving min(2,10) x 1 = 2. A very tall wall stuck
+between short ones contributes nothing, because the SHORTER wall always sets
+the depth.""",
+]
+
+_EXAMPLES["Find the Duplicate Number (Floyd's cycle)"] = [
+    """The textbook case, with the linked list drawn out.
+nums = [1,3,4,2,2]  ->  answer 2
+Follow index -> value as a pointer starting at index 0:
+  0 -> 1 -> 3 -> 2 -> 4 -> 2 -> 4 -> 2 -> ...
+So the tail is 0 -> 1 -> 3 and the loop is 2 -> 4 -> 2. The entrance is 2.
+Why 2 is the entrance: two different slots hold the value 2 (index 3 and
+index 4), so node 2 has two arrows pointing into it - which is exactly what
+being a duplicate means.
+Phase 1: slow and fast meet somewhere inside the loop. Phase 2: reset one
+pointer to index 0, step both one at a time, and they meet at 2.""",
+
+    """A second case where the tail is shorter.
+nums = [3,1,3,4,2]  ->  answer 3
+  0 -> 3 -> 4 -> 2 -> 3 -> 4 -> 2 -> ...
+Tail is just 0 -> 3, loop is 3 -> 4 -> 2 -> 3, entrance is 3. And indeed the
+value 3 sits at both index 0 and index 2.
+Notice the loop does not have to be short and the tail does not have to be
+long - the algorithm never needs to know either length.""",
+
+    """The smallest possible input.
+nums = [1,1]  ->  answer 1
+n = 1, so there are 2 slots holding values in the range 1..1.
+  0 -> 1 -> 1 -> 1 -> ...
+The tail is 0 -> 1 and the loop is the self-referencing node 1. Entrance is 1.
+This also shows why starting at index 0 is safe: every value is at least 1, so
+nothing ever points AT index 0, which guarantees index 0 sits on the tail and
+never inside the loop.""",
+
+    """The duplicate repeated many times.
+nums = [2,2,2,2,2]  ->  answer 2
+  0 -> 2 -> 2 -> 2 -> ...
+The tail is 0 -> 2 and node 2 loops to itself. The answer is 2 even though it
+appears five times rather than twice. The problem only promises AT LEAST one
+repeat; the algorithm does not care how many copies there are and it will not
+tell you the count, only the value.""",
+
+    """A longer, messier case.
+nums = [2,5,9,6,9,3,8,9,7,1]  ->  answer 9
+The walk: 0 -> 2 -> 9 -> 1 -> 5 -> 3 -> 6 -> 8 -> 7 -> 9 -> 1 -> 5 -> ...
+The tail is 0 -> 2, and the loop is 9 -> 1 -> 5 -> 3 -> 6 -> 8 -> 7 -> 9.
+The entrance is 9, and sure enough the value 9 appears at indices 2, 4 and 7.
+This is the case to trace when the short ones feel like coincidence - the
+structure is genuinely a rho shape and the entrance is genuinely the answer.""",
+
+    """The alternative solution worth mentioning in an interview.
+Binary search on the ANSWER rather than the array - same constraints, much
+easier to derive under pressure.
+On nums = [1,3,4,2,2], search the value range 1..4:
+  mid = 2: count how many values are <= 2. That is 1, 2, 2 -> three of them.
+  Three values are <= 2 but only two values (1 and 2) exist in that range, so
+  the duplicate must be at 2 or below.
+  mid = 1: count of values <= 1 is just 1. Not more than 1, so the low half is
+  clean; move up. Answer 2.
+O(n log n) time, O(1) space, and it never modifies the array. Slower than
+Floyd's O(n) but far easier to explain and get right.""",
+]
+
+_EXAMPLES["First Missing Positive"] = [
+    """The textbook case, fully traced.
+nums = [3,4,-1,1]  ->  answer 2   (n = 4, so the answer lies in 1..5)
+Placement pass, putting value v at index v-1:
+  i=0: 3 belongs at index 2, which holds -1 -> swap -> [-1,4,3,1]
+       index 0 now holds -1, out of range, stop
+  i=1: 4 belongs at index 3, which holds 1 -> swap -> [-1,1,3,4]
+       index 1 now holds 1, which belongs at index 0 -> swap -> [1,-1,3,4]
+       index 1 now holds -1, out of range, stop
+  i=2: 3 is already home.  i=3: 4 is already home.
+Scan pass: index 0 holds 1 (correct), index 1 holds -1 but should hold 2.
+First mismatch -> answer 2.""",
+
+    """No gaps at all - the n+1 case.
+nums = [1,2,3]  ->  answer 4
+Every value is already in its home slot, so the placement pass does zero
+swaps. The scan finds index 0 holding 1, index 1 holding 2, index 2 holding 3
+- all correct - and falls off the end, returning n+1 = 4.
+This is the ONLY situation where the answer exceeds n, and forgetting the
+final return statement is the most common bug in this problem.""",
+
+    """Everything is out of range - the answer is 1.
+nums = [7,8,9,11,12]  ->  answer 1
+n = 5, so only values 1..5 could ever matter, and none of these qualify. The
+placement pass does nothing at all (every value fails the 1 <= v <= n guard).
+The scan immediately finds index 0 holding 7 instead of 1 -> answer 1.
+This is why the range check exists: without it you would try to write to index
+6 of a 5-element array and crash.""",
+
+    """Duplicates - the case that would loop forever without the guard.
+nums = [1,1]  ->  answer 2
+  i=0: value 1 belongs at index 0 and is already there -> nothing to do.
+  i=1: value 1 belongs at index 0, but index 0 ALREADY holds a 1. The guard
+       nums[v-1] != v is false, so we stop instead of swapping.
+Without that guard you would swap index 1 with index 0 forever, since both
+hold a 1 and each swap changes nothing. Scan: index 0 holds 1 (correct),
+index 1 holds 1 but should hold 2 -> answer 2.""",
+
+    """Negatives, zero, and a huge value all mixed together.
+nums = [-5, 0, 100]  ->  answer 1
+n = 3, so the answer is in 1..4. None of -5, 0 or 100 is in 1..3, so nothing
+moves. The scan sees index 0 holding -5 instead of 1 -> answer 1.
+Worth noticing: the problem allows any integers at all, but the moment you
+realise only 1..n can matter, three quarters of the input becomes noise you
+are allowed to ignore.""",
+
+    """Why the nested while loop is still O(n), on a worst-ish case.
+nums = [4,3,2,1]  ->  answer 5
+  i=0: 4 belongs at index 3 -> swap -> [1,3,2,4]; index 0 now holds 1, which
+       belongs at index 0 -> already home, stop.
+  i=1: 3 belongs at index 2 -> swap -> [1,2,3,4]; index 1 now holds 2, home.
+  i=2, i=3: already correct.
+Four swaps at most, and each one placed a value in its permanent home. Since
+there are only n slots and a value never has to be re-placed once home, the
+inner loop can run at most n times across the WHOLE algorithm - not n times
+per iteration. That is the answer to 'isn't that O(n^2)?'.""",
+]
+
+_EXAMPLES["Sort Colors (Dutch National Flag)"] = [
+    """The textbook case, fully traced.
+nums = [2,0,2,1,1,0]  ->  [0,0,1,1,2,2]     low=0, mid=0, high=5
+  mid=0 sees 2 -> swap with index 5, high=4, mid STAYS -> [0,0,2,1,1,2]
+  mid=0 sees 0 -> swap with index 0 (itself), low=1, mid=1
+  mid=1 sees 0 -> swap with index 1 (itself), low=2, mid=2
+  mid=2 sees 2 -> swap with index 4, high=3, mid STAYS -> [0,0,1,1,2,2]
+  mid=2 sees 1 -> just advance, mid=3
+  mid=3 sees 1 -> just advance, mid=4. Now mid > high, so stop.
+One pass, no counting, no second write-out.""",
+
+    """Already sorted - no wasted work.
+nums = [0,0,1,1,2,2]  ->  unchanged
+  The two 0s each swap with themselves and push low and mid forward together.
+  The two 1s just advance mid.
+  mid then reaches index 4, sees a 2, swaps it with index 5 (a 2, so nothing
+  really changes) and pulls high in; one more step and mid passes high.
+The algorithm never detects that the input was sorted and does not need to -
+it just runs its invariant to completion.""",
+
+    """Fully reversed.
+nums = [2,2,1,1,0,0]  ->  [0,0,1,1,2,2]
+  mid=0 sees 2 -> swap with index 5 -> [0,2,1,1,0,2], high=4
+  mid=0 sees 0 -> swap with index 0, low=1, mid=1
+  mid=1 sees 2 -> swap with index 4 -> [0,0,1,1,2,2], high=3
+  mid=1 sees 0 -> swap with index 1, low=2, mid=2
+  mid=2 sees 1 -> advance, mid=3
+  mid=3 sees 1 -> advance, mid=4 > high=3, stop.
+Six elements, five iterations, four swaps. Compare with counting sort, which
+would need two full passes over the array.""",
+
+    """Why you must NOT advance mid after swapping a 2 - the breaking case.
+nums = [1,2,0]  ->  correct answer [0,1,2]
+  Correct run: mid=0 sees 1 -> advance, mid=1. mid=1 sees 2 -> swap with
+  index 2 -> [1,0,2], high=0... (high was 2, now 1), and mid STAYS at 1.
+  mid=1 now sees the 0 that just arrived -> swap with low=0 -> [0,1,2].
+  Result [0,1,2]. Correct.
+  Buggy run (advancing mid after the 2-swap): after the swap the array is
+  [1,0,2] and mid moves to 2, which is already past high. The loop stops and
+  returns [1,0,2]. WRONG - the 0 that was swapped in from the right end was
+  never examined.
+This single test case is what the rule exists for.""",
+
+    """Uniform inputs and a single element.
+nums = [1,1,1]  ->  unchanged. mid just walks to the end; low never moves,
+high never moves, zero swaps.
+nums = [0,0,0]  ->  unchanged, but low and mid advance together every step.
+nums = [2,2,2]  ->  unchanged, though every element gets swapped with itself
+as high walks backwards to meet mid.
+nums = [0] and nums = [2] -> unchanged. Useful for checking your loop
+condition is mid <= high and not mid < high, which would drop the last
+element.""",
+
+    """Where you have actually seen this before.
+This is the three-way partition at the heart of quicksort. Standard
+two-way-partition quicksort degrades to O(n^2) on an array full of equal keys,
+for example [5,5,5,5,5,5,5,5], because each partition peels off one element.
+Partitioning into less-than / EQUAL / greater-than instead sends the whole
+equal block straight to its final place and recursion stops there, so the same
+input becomes O(n). Recognising Sort Colors as a partition rather than a sort
+is what makes the technique reusable.""",
+]
+
+_EXAMPLES["Product of Array Except Self"] = [
+    """The textbook case, both sweeps traced.
+nums = [1,2,3,4]  ->  [24,12,8,6]
+  Left sweep (running product `left` starts at 1, WRITE before multiplying):
+    i=0: out[0] = 1   then left = 1x1 = 1
+    i=1: out[1] = 1   then left = 1x2 = 2
+    i=2: out[2] = 2   then left = 2x3 = 6
+    i=3: out[3] = 6   then left = 6x4 = 24
+    out is now [1,1,2,6] - each slot holds the product of everything BEFORE it
+  Right sweep (`right` starts at 1, multiply into what is already there):
+    i=3: out[3] = 6 x 1 = 6     then right = 1x4 = 4
+    i=2: out[2] = 2 x 4 = 8     then right = 4x3 = 12
+    i=1: out[1] = 1 x 12 = 12   then right = 12x2 = 24
+    i=0: out[0] = 1 x 24 = 24   then right = 24x1 = 24
+Check out[1]: everything except nums[1] is 1 x 3 x 4 = 12. Correct.""",
+
+    """One zero - handled with no special case at all.
+nums = [0,2,3]  ->  [6,0,0]
+  Left sweep:  out = [1, 0, 0]   (left becomes 0 immediately and stays 0)
+  Right sweep: i=2: out[2] = 0x1 = 0, right = 3
+               i=1: out[1] = 0x3 = 0, right = 6
+               i=0: out[0] = 1x6 = 6, right = 0
+Only the position holding the zero gets a non-zero answer, which is exactly
+right: the product of everything except the zero is 2 x 3 = 6, and every other
+position has the zero inside its product. No if-statements were needed.""",
+
+    """Two zeros - everything collapses, still no special case.
+nums = [0,0,5]  ->  [0,0,0]
+  Left sweep:  out = [1,0,0]
+  Right sweep: i=2: out[2] = 0x1 = 0, right = 5
+               i=1: out[1] = 0x5 = 0, right = 0
+               i=0: out[0] = 1x0 = 0, right = 0
+With two zeros, every position still has at least one zero in its product, so
+every answer is 0. A division-based solution would need explicit counting of
+zeros here (0 zeros, exactly 1 zero, 2+ zeros - three separate branches). The
+two-sweep method needs none.""",
+
+    """Why division is banned - the crash case.
+nums = [1,2,0,4]
+  The tempting shortcut: total = 1x2x0x4 = 0, then out[i] = total / nums[i].
+  For i=2 that is 0 / 0 -> ZeroDivisionError. The program dies.
+  And the correct answer at i=2 is 1 x 2 x 4 = 8, which is not even close to
+  anything the shortcut could produce.
+  Correct output for the whole array: [0, 0, 8, 0].
+Even ignoring the crash, division needs a zero-count branch to be correct.
+Banning it is what forces the cleaner prefix/suffix idea.""",
+
+    """Negatives, and the two-element case.
+nums = [-1,2,-3]  ->  [-6,3,-2]
+  Left sweep:  out = [1,-1,-2]        (left goes 1, -1, -2, 6)
+  Right sweep: i=2: out[2] = -2x1 = -2, right = -3
+               i=1: out[1] = -1x-3 = 3, right = -6
+               i=0: out[0] = 1x-6 = -6
+Check out[1]: -1 x -3 = 3. Correct - signs take care of themselves.
+nums = [3,7] -> [7,3]. The smallest meaningful input, and a good check that
+your sweeps write before they multiply.""",
+
+    """The off-by-one that breaks it, shown side by side.
+nums = [1,2,3,4], looking only at the left sweep.
+  CORRECT (write, then multiply):
+    i=0: out[0] = left(1); left becomes 1
+    i=1: out[1] = left(1); left becomes 2
+    -> out[1] holds 1, the product of everything strictly before index 1.
+  WRONG (multiply, then write):
+    i=0: left becomes 1; out[0] = 1
+    i=1: left becomes 2; out[1] = 2
+    -> out[1] holds 2, which INCLUDES nums[1] itself. The final answer at that
+       position comes out as 24 instead of 12.
+The whole problem is 'except self', so the ordering of those two lines is the
+problem.""",
+]
+
+_EXAMPLES["Subarray Sum Equals K"] = [
+    """The textbook case, fully traced.
+nums = [1,2,3], k = 3  ->  answer 2
+  start: seen = {0:1}, prefix = 0, count = 0
+  x=1: prefix 1. need seen[1-3] = seen[-2] = 0. count 0. seen {0:1, 1:1}
+  x=2: prefix 3. need seen[3-3] = seen[0]  = 1. count 1. seen {0:1, 1:1, 3:1}
+       -> this found the stretch [1,2]
+  x=3: prefix 6. need seen[6-3] = seen[3]  = 1. count 2. seen {..., 6:1}
+       -> this found the stretch [3]
+The two stretches are [1,2] and [3].""",
+
+    """Overlapping stretches are counted separately.
+nums = [1,1,1], k = 2  ->  answer 2
+  x=1: prefix 1, need seen[-1] = 0, count 0
+  x=1: prefix 2, need seen[0]  = 1, count 1   -> stretch [1,1] at indices 0-1
+  x=1: prefix 3, need seen[1]  = 1, count 2   -> stretch [1,1] at indices 1-2
+They share the middle element, and that is fine - the question asks HOW MANY
+subarrays, not how many disjoint ones. Any solution that greedily consumes
+elements after a match will report 1 here and be wrong.""",
+
+    """Negative numbers - why sliding window cannot be used.
+nums = [1,-1,0], k = 0  ->  answer 3
+  seen {0:1}, prefix 0
+  x=1 : prefix 1, need seen[1] = 0, count 0, seen {0:1, 1:1}
+  x=-1: prefix 0, need seen[0] = 1, count 1, seen {0:2, 1:1}
+  x=0 : prefix 0, need seen[0] = 2, count 3, seen {0:3, 1:1}
+The three stretches are [1,-1], [0] and [1,-1,0].
+A sliding window relies on the sum rising when you extend and falling when you
+shrink. Here extending by -1 makes the sum FALL, so the window has no idea
+which edge to move. Prefix sums do not care about sign at all.
+Notice too that seen[0] reached 2 and the lookup added BOTH occurrences at
+once - storing a boolean instead of a count would have reported fewer.""",
+
+    """Why seen[0] = 1 must be there before the loop starts.
+nums = [3], k = 3  ->  answer 1
+  x=3: prefix 3. need seen[3-3] = seen[0].
+If seen was initialised empty, that lookup returns 0 and the answer comes out
+as 0 - wrong, because the whole array [3] obviously sums to 3.
+seen[0] = 1 represents the EMPTY prefix: the state before any element was
+added, where the running total was 0. It is what allows a stretch that starts
+at index 0 to be found. This one line is the most commonly forgotten part of
+the whole solution.""",
+
+    """No match at all, and a bigger count than you expect.
+nums = [1,2,3], k = 100  ->  answer 0. Every lookup misses; count stays 0.
+nums = [1,0,1], k = 1    ->  answer 4
+  x=1: prefix 1, need seen[0] = 1, count 1        -> [1] at index 0
+  x=0: prefix 1, need seen[0] = 1, count 2        -> [1,0]
+  x=1: prefix 2, need seen[1] = 2, count 4        -> [1] at index 2 and [0,1]
+Four stretches from a three-element array. Zeros multiply the count because
+they create repeated prefix sums, and each repeat is a separate valid start.""",
+
+    """The same machinery, three other problems.
+Once you see 'subarray sum = difference of two prefix sums', these all fall:
+  - Subarray sums divisible by K: store prefix % k in the map instead of the
+    raw prefix. On nums = [4,5,0,-2,-3,1], k = 5 the answer is 7.
+  - Longest subarray summing to k: store the FIRST index each prefix appeared
+    at instead of a count, then track the biggest index gap.
+  - Path Sum III on a binary tree: carry the same prefix map down each
+    root-to-node path, adding on the way down and removing on the way back up.
+Learn the pattern once, recognise it four times.""",
+]
+
+_EXAMPLES["Largest Rectangle in Histogram (monotonic stack)"] = [
+    """The textbook case, fully traced with the sentinel.
+heights = [2,1,5,6,2,3], plus a sentinel 0 -> [2,1,5,6,2,3,0]  ->  answer 10
+  i=0 h=2: stack empty, push 0.                       stack [0]
+  i=1 h=1: 2 > 1 -> pop 0. height 2, stack now empty so width = i = 1.
+           area 2. best 2. push 1.                    stack [1]
+  i=2 h=5: 1 < 5 -> push 2.                           stack [1,2]
+  i=3 h=6: 5 < 6 -> push 3.                           stack [1,2,3]
+  i=4 h=2: 6 > 2 -> pop 3. height 6, width = 4-2-1 = 1. area 6.  best 6
+           5 > 2 -> pop 2. height 5, width = 4-1-1 = 2. area 10. best 10
+           1 < 2 -> stop. push 4.                     stack [1,4]
+  i=5 h=3: 2 < 3 -> push 5.                           stack [1,4,5]
+  i=6 h=0: pop 5 -> height 3, width = 6-4-1 = 1, area 3
+           pop 4 -> height 2, width = 6-1-1 = 4, area 8
+           pop 1 -> height 1, stack empty, width = 6, area 6
+The winner is the bars of height 5 and 6, taken at height 5 and two wide.""",
+
+    """A staircase up, and a staircase down.
+heights = [1,2,3,4,5]  ->  answer 9
+  Candidates: height 5 x width 1 = 5, height 4 x width 2 = 8, height 3 x
+  width 3 = 9, height 2 x width 4 = 8, height 1 x width 5 = 5. Best is 9.
+  Nothing gets popped until the sentinel arrives, so the entire stack drains at
+  the end - a good test that your sentinel or drain loop actually works.
+heights = [5,4,3,2,1]  ->  answer 9 as well, by mirror symmetry. Here every
+step pops, so the stack never grows past one element.""",
+
+    """Every bar the same height.
+heights = [3,3,3]  ->  answer 9
+Nothing is ever strictly taller than the incoming bar, so with a strict
+comparison (heights[stack[-1]] > h) nothing pops until the sentinel, and then
+all three settle with widths 3, 2 and 1 giving areas 9, 6 and 3. Best 9.
+This case is worth running to check your comparison operator: using >= instead
+of > still produces the right final answer here, but it changes which bar
+settles first, so make sure your width formula agrees with your operator.""",
+
+    """One tall bar versus a wide flat run - the trade-off made visible.
+heights = [1,1,1,1,10]  ->  answer 10
+  The flat run of four 1s plus the tall bar gives height 1 x width 5 = 5.
+  The tall bar alone gives height 10 x width 1 = 10.
+  Best is 10 - a single bar can be the answer.
+heights = [10,1,1,1,1] -> also 10, mirrored.
+If your code assumes the answer must span more than one bar, or initialises
+best to something other than 0, these are the cases that catch it.""",
+
+    """The shortest bar in a span caps the whole rectangle.
+heights = [6,2,5,4,5,1,6]  ->  answer 12
+  The three bars 5, 4, 5 (indices 2 to 4) are all at least 4 tall, so they
+  support a rectangle of height 4 and width 3 = 12.
+  Tempting alternatives: the two 6s cannot combine, because the 1 at index 5
+  sits between them and caps any span containing it at height 1. The best a 6
+  can do alone is 6 x 1 = 6.
+This is the clearest demonstration of the core rule - a rectangle's height is
+set by the SHORTEST bar it spans, not by the tallest.""",
+
+    """The complexity question interviewers actually ask.
+heights = [5,4,3,2,1] with the sentinel -> 6 bars processed.
+  Pushes: index 0, then 1, 2, 3, 4, 5 - six pushes total.
+  Pops: each index is popped exactly once, six pops total.
+The inner while loop looks like it could make this O(n^2), but it cannot:
+every index enters the stack once and leaves once, so the TOTAL number of
+inner-loop iterations across the whole run is bounded by n. The work is O(n)
+however deeply nested the loops look. Never judge complexity by nesting -
+count total pushes and pops.""",
+]
+
+for _e in ENTRIES:
+    if not _e.get("examples") and _e["title"] in _EXAMPLES:
+        _e["examples"] = _EXAMPLES[_e["title"]]

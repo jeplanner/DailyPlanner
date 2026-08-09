@@ -49,6 +49,15 @@
               border-radius: 6px; padding: 8px 11px; font-size: 13px; line-height: 1.62; }
   .fld.deep .lbl { color: #4338ca; }
   html.dark .fld.deep { background: #131a33; border-left-color: #818cf8; }
+  /* Several worked examples per topic, each numbered and independently read. */
+  .exs { margin: 8px 0; }
+  .exs > .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; display: block; margin-bottom: 4px; }
+  .ex { display: flex; gap: 9px; padding: 7px 10px; margin-bottom: 5px; background: #f0fdf4;
+        border-left: 3px solid #34d399; border-radius: 6px; }
+  .ex .n { flex: none; width: 19px; height: 19px; border-radius: 50%; background: #059669; color: #fff;
+           font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .ex .body { white-space: pre-wrap; font-size: 13px; line-height: 1.6; min-width: 0; }
+  html.dark .ex { background: #0e2119; border-left-color: #10b981; }
   .q-diff { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
   .diff-easy { color: #047857; background: #d1fae5; } .diff-medium { color: #b45309; background: #fef3c7; } .diff-hard { color: #b91c1c; background: #fee2e2; }
   html.dark .diff-easy { color: #6ee7b7; background: #064e3b; } html.dark .diff-medium { color: #fcd34d; background: #78350f; } html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
@@ -133,7 +142,11 @@
           ${fld("deep","Explained step by step",e.walkthrough)}
           ${e.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(e.code)}</div>` : ""}
           ${e.diagram ? `<div class="fld"><span class="lbl">Diagram</span></div><div class="code diagram">${esc(e.diagram)}</div>` : ""}
-          ${fld("","Example",e.example)}
+          ${(e.examples&&e.examples.length)
+              ? `<div class="exs"><span class="lbl">Worked examples (${e.examples.length})</span>${
+                  e.examples.map((x,i)=>`<div class="ex"><span class="n">${i+1}</span><span class="body">${esc(x)}</span></div>`).join("")
+                }</div>`
+              : fld("","Example",e.example)}
           ${fld("mnem","How to remember",e.mnemonic)}
           ${fld("cx","Complexity",e.complexity)}
           ${fld("pitfall","Common pitfalls",e.pitfalls)}

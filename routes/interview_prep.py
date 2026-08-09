@@ -270,7 +270,11 @@ def ai_sde_pdf():
         fields = [("Difficulty & interview frequency", _diff_freq or None),
                   ("Answer / reasoning", it.get("answer")),
                   ("Explained step by step", it.get("walkthrough")),
-                  ("Example", it.get("example")),
+                  # Several worked examples when the topic has them, else the
+                  # original single-line example.
+                  (f"Worked examples ({len(it['examples'])})" if it.get("examples") else "Example",
+                   "\n\n".join(f"{n}. {x}" for n, x in enumerate(it["examples"], 1))
+                   if it.get("examples") else it.get("example")),
                   ("How to remember", it.get("mnemonic")),
                   ("Complexity", it.get("complexity")),
                   ("Pitfalls", it.get("pitfalls")),
