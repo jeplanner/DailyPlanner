@@ -286,6 +286,10 @@ def ai_sde_pdf():
                   ("Difficulty & interview frequency", _diff_freq or None),
                   ("Answer / reasoning", it.get("answer")),
                   ("Explained step by step", it.get("walkthrough")),
+                  # The plain-English recipe comes before the code in the PDF
+                  # too — read the steps, then read the implementation.
+                  ("How to code it — plain English, step by step",
+                   it.get("plain_algo")),
                   # Several worked examples when the topic has them, else the
                   # original single-line example.
                   (f"Worked examples ({len(it['examples'])})" if it.get("examples") else "Example",
