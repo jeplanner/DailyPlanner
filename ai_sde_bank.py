@@ -11293,6 +11293,579 @@ mapping - they have no letters and should be treated as invalid or absent
 depending on what the interviewer says.
 """.strip("\n")
 
+_PLAIN_ALGO["Longest Palindromic Substring (expand around center)"] = r"""
+IN ONE SENTENCE: a palindrome is symmetric around a centre, so try every
+possible centre and push outwards while the characters match.
+
+STEPS
+1. Write a helper that takes a left and a right index and walks them apart
+   while both are in range and the characters match. When it stops, the last
+   valid palindrome ran from left+1 to right-1 - return those.
+2. Walk an index through the string. At each position run the helper twice:
+   once from (i, i) for odd-length palindromes centred on a character, and
+   once from (i, i+1) for even-length ones centred between two characters.
+3. Keep whichever result is longest.
+4. Return that slice of the string.
+
+WHY THERE ARE TWO CENTRES PER POSITION: "aba" is centred on a character, "abba"
+is centred on a gap. Test only the odd case and every even-length palindrome
+is invisible - and it is a silent wrong answer, not a crash.
+
+WHY THIS BEATS THE OBVIOUS APPROACH: checking every substring for
+palindrome-ness is O(n^3). Expanding from centres is O(n^2) with O(1) extra
+space, because each centre does at most n work and there are 2n-1 centres.
+
+WHAT PEOPLE GET WRONG: the plus-one/minus-one when returning from the helper.
+The loop exits one step PAST the valid palindrome on both sides, so the bounds
+you return must be pulled back in. Off by one here silently returns a
+non-palindrome.
+""".strip("\n")
+
+_PLAIN_ALGO["Longest Repeating Character Replacement"] = r"""
+IN ONE SENTENCE: a window is valid if the number of characters that are NOT
+the most common one is at most k - grow the window, and shrink it whenever
+that stops being true.
+
+STEPS
+1. Keep a count per character in the window, a left edge at 0, the highest
+   count seen, and a best answer.
+2. Walk a right edge through the string, adding each character to the counts.
+3. Update the highest count with this character's new count.
+4. While the window's width minus that highest count exceeds k, the window
+   needs more replacements than you have - remove the leftmost character from
+   the counts and move the left edge in.
+5. Record the current width as a candidate for best.
+6. Return best.
+
+WHY "WIDTH MINUS THE COMMONEST COUNT" IS THE REPLACEMENT COST: you would keep
+the most frequent character and rewrite everything else, so the number of edits
+needed is exactly everything that is not that character.
+
+THE SUBTLE PART INTERVIEWERS PROBE: the highest count is never decreased when
+the window shrinks, which looks like a bug. It is not - a stale, too-high count
+can only make the window look MORE valid, so the window never shrinks when it
+should not, and the best answer can only be achieved by a genuinely valid
+window. Recomputing it properly also works and is easier to defend; say which
+you chose and why.
+
+WHAT PEOPLE GET WRONG: using an if instead of a while for the shrink, which
+fails when several characters must leave at once.
+""".strip("\n")
+
+_PLAIN_ALGO["Meeting Rooms II (minimum rooms)"] = r"""
+IN ONE SENTENCE: process meetings in start order, and keep a min-heap of the
+END times of the rooms currently in use - the heap's size is the rooms you
+need.
+
+STEPS
+1. If there are no meetings, the answer is 0.
+2. Sort the meetings by start time.
+3. Keep a min-heap of end times, empty to begin with.
+4. For each meeting: if the heap is not empty and its smallest end time is at
+   or before this meeting's start, that room has freed up - replace that end
+   time with this meeting's end (one heapreplace does the pop and push).
+5. Otherwise push this meeting's end time, which opens a new room.
+6. Return the heap's size.
+
+WHY THE MIN-HEAP HOLDS EXACTLY THE RIGHT THING: you only ever care about the
+room that frees up SOONEST, because if that one is still busy, all of them are.
+A heap answers that in O(log n), and nothing else about the rooms matters.
+
+THE ALTERNATIVE SOLUTION WORTH KNOWING - THE SWEEP LINE: make a list of
+(start, +1) and (end, -1) events, sort by time, walk through adding up the
+deltas, and take the running maximum. Same answer, no heap, and it generalises
+to "how many overlap at time T?" Mention it - it is the version that scales to
+streaming.
+
+WHAT PEOPLE GET WRONG: the tie between a meeting ending at 10 and another
+starting at 10. Whether they can share a room is a real ambiguity - ask. In the
+sweep-line version it decides whether the end events sort before the start
+events.
+""".strip("\n")
+
+_PLAIN_ALGO["Non-overlapping Intervals (min removals)"] = r"""
+IN ONE SENTENCE: sort by END time and greedily keep every interval that starts
+after the last kept one finished - whatever you skipped is what you remove.
+
+STEPS
+1. If the list is empty, return 0.
+2. Sort by END time, not by start.
+3. Remember the end of the first interval as your boundary, and start a removal
+   count at 0.
+4. For each remaining interval: if it starts BEFORE the boundary it overlaps -
+   count a removal and leave the boundary alone.
+5. Otherwise keep it and move the boundary to its end.
+6. Return the count.
+
+WHY SORT BY END AND NOT BY START: you want to keep as many intervals as
+possible, and the interval that frees up the timeline earliest leaves the most
+room for everything after it. Sorting by start can trap you into keeping one
+enormous interval that blocks several short ones. This is the same greedy proof
+as the classic activity-selection problem - say "activity selection" out loud,
+interviewers recognise it.
+
+WHY YOU DO NOT MOVE THE BOUNDARY WHEN YOU REMOVE: the interval you kept ends
+earlier (that is why it came first in the sorted order), so keeping the earlier
+boundary is always at least as good.
+
+WHAT PEOPLE GET WRONG: sorting by start out of habit, which gives a plausible
+answer that is wrong on inputs like [[1,100],[2,3],[3,4]] - it keeps the huge
+one and removes two, instead of removing one.
+""".strip("\n")
+
+_PLAIN_ALGO["Rotting Oranges (multi-source BFS)"] = r"""
+IN ONE SENTENCE: start the BFS from ALL the rotten oranges at once, so the
+wave spreads a minute at a time and the last one reached is your answer.
+
+STEPS
+1. Scan the grid. Queue every rotten orange with a time of 0, and count the
+   fresh ones.
+2. Run BFS. Pop a cell and its time; track the largest time you have seen.
+3. For each of the four neighbours, if it is a fresh orange, mark it rotten,
+   drop the fresh count by one, and queue it with time plus one.
+4. When the queue empties, if any fresh oranges remain they were unreachable -
+   return -1. Otherwise return the largest time.
+
+WHY SEEDING EVERY SOURCE AT ONCE IS THE TRICK: rot spreads from all rotten
+oranges simultaneously. Running a separate BFS from each one and taking the
+minimum would be correct but slow; putting them all in the queue at level 0
+makes one pass compute the true simultaneous spread. Recognise this whenever
+several starting points spread at the same rate - fire spreading, water
+filling, distance to the nearest of many targets (01 Matrix is the same shape).
+
+WHY MARKING ROTTEN AT QUEUE TIME MATTERS: an orange can be adjacent to two
+rotten ones. Marking it when you queue it stops it being queued twice with the
+same time.
+
+WHAT PEOPLE GET WRONG: forgetting the -1 case entirely, and returning the queue
+depth rather than the recorded time. Also, a grid with zero fresh oranges must
+return 0, not -1.
+""".strip("\n")
+
+_PLAIN_ALGO["Search a 2D Matrix"] = r"""
+IN ONE SENTENCE: if each row is sorted and every row starts after the previous
+one ends, the matrix is really one long sorted array - so binary-search it and
+convert the index.
+
+STEPS
+1. Handle the empty matrix. Note the number of rows m and columns n.
+2. Binary-search the range of flat indices from 0 to m times n minus 1.
+3. To read the value at a flat index, divide by n for the row and take the
+   remainder for the column.
+4. Compare and move lo or hi exactly as in an ordinary binary search.
+5. Return whether you found it.
+
+THE INDEX CONVERSION IS THE WHOLE PROBLEM: row = index / n, column = index % n.
+Write it down before you write anything else. Dividing by m instead of n is the
+classic bug, and it only misbehaves on non-square matrices - so it passes the
+first test you try.
+
+THE DIFFERENT PROBLEM THIS IS OFTEN CONFUSED WITH: if rows are sorted and
+columns are sorted but rows do NOT continue from one another (Search a 2D
+Matrix II), this flattening is invalid. There you start at the top-right corner
+and walk: too big, move left; too small, move down - O(m + n). Know which
+version you have been given, and ask if the statement is unclear.
+
+WHAT PEOPLE GET WRONG: binary-searching for the row first and then within it.
+That is also correct and O(log m + log n), which is the same as O(log mn) - but
+it is more code and more chances to slip.
+""".strip("\n")
+
+_PLAIN_ALGO["Search in Rotated Sorted Array"] = r"""
+IN ONE SENTENCE: one half of any slice of a rotated array is always properly
+sorted - work out which half that is, then check whether the target lies inside
+it.
+
+STEPS
+1. Standard binary search bounds, lo and hi.
+2. Take the middle; if it is the target, you are done.
+3. Decide which half is sorted: if the value at lo is at or below the value at
+   mid, the LEFT half is clean; otherwise the RIGHT half is.
+4. If the left half is sorted: check whether the target sits between the value
+   at lo (inclusive) and the value at mid (exclusive). If so, search left;
+   otherwise search right.
+5. If the right half is sorted: check whether the target sits between mid
+   (exclusive) and hi (inclusive). If so, search right; otherwise search left.
+6. Return -1 if the loop ends.
+
+WHY EXACTLY ONE HALF IS ALWAYS SORTED: there is only one break point in the
+whole array, so it can only fall in one of the two halves. Whichever half does
+not contain it is a plain sorted run - and in a sorted run you can decide
+membership with two comparisons. That is the entire algorithm.
+
+WHY THE RANGE CHECKS NEED THEIR EXACT INCLUSIVITY: mid has already been tested
+and is not the target, so it is excluded on the side where it sits; lo and hi
+have not been tested, so they are included. Getting this wrong loses the target
+when it happens to sit on a boundary.
+
+WHAT PEOPLE GET WRONG: trying to find the rotation point first and then binary
+searching - correct, but twice the code. And with duplicates allowed, the
+"which half is sorted" test becomes ambiguous and the worst case degrades to
+O(n); ask whether duplicates are possible.
+""".strip("\n")
+
+_PLAIN_ALGO["Sliding Window — recognize & apply"] = r"""
+IN ONE SENTENCE: keep a window over the array or string, grow it from the
+right, and shrink it from the left whenever it breaks the rule.
+
+THE SKELETON
+1. Set left to 0 and whatever bookkeeping the rule needs (a counter, a
+   dictionary of counts, a running sum).
+2. Walk right through the input, adding element right to the bookkeeping.
+3. While the window is INVALID, remove element left from the bookkeeping and
+   move left forward.
+4. The window is now valid - record its size (for "longest") or compare it
+   against the best (for "shortest").
+5. Return the best.
+
+HOW TO SPOT THAT IT IS A WINDOW PROBLEM: the answer is a CONTIGUOUS run
+(substring, subarray - not a subsequence), and the question says longest,
+shortest, or "does one exist" under some constraint. If the elements do not
+have to be adjacent, it is not a window.
+
+THE TWO FLAVOURS AND WHERE THE RECORD LINE GOES
+* LONGEST valid window: shrink only while invalid, and record AFTER the shrink
+  loop, when the window is guaranteed valid.
+* SHORTEST valid window: grow until valid, then record INSIDE the shrink loop
+  while it is still valid, shrinking as far as you can.
+Putting the record line in the wrong place is the single most common bug in
+this pattern, and the fix is to say out loud which flavour you are writing.
+
+FIXED-SIZE WINDOWS ARE EASIER: if the size k is given, just add the new element
+and remove the one k positions back - no inner loop at all.
+
+WHY IT IS O(n) DESPITE LOOKING NESTED: the left edge only ever moves forward,
+so across the whole run each pointer travels at most n steps. Count total
+pointer movement, not loop nesting.
+
+WHAT PEOPLE GET WRONG: forgetting to remove the outgoing element from the
+bookkeeping when left advances, which leaves stale counts and a window that
+silently reports the wrong contents.
+""".strip("\n")
+
+_PLAIN_ALGO["Two Pointers — recognize & apply"] = r"""
+IN ONE SENTENCE: put a finger at each end of a SORTED sequence and move the one
+that helps - the sortedness tells you which that is.
+
+THE SKELETON (the classic sorted two-sum)
+1. Put i at the start and j at the end.
+2. While they have not met, add the two values.
+3. Equal to the target - you are done.
+4. Too small - you need more, and only the left finger can give you a bigger
+   value, so move i right.
+5. Too big - move j left.
+6. If they meet, no pair exists.
+
+WHY IT IS CORRECT AND NOT JUST A GUESS: when the sum is too small, EVERY pair
+using i with a smaller partner is also too small, so discarding i loses nothing.
+Each move eliminates a whole row of possibilities, which is what turns O(n^2)
+into O(n). Being able to state that elimination argument is what the
+interviewer is checking.
+
+THE THREE SHAPES THIS PATTERN TAKES
+* OPPOSITE ENDS, moving inward: sorted two-sum, container with most water,
+  valid palindrome, reverse in place, squares of a sorted array.
+* SAME DIRECTION at different speeds - read and write: remove duplicates,
+  move zeroes, compact an array in place.
+* SAME DIRECTION at different speeds - fast and slow on a linked list: find the
+  middle, detect a cycle, remove the nth from the end.
+
+THE PREREQUISITE PEOPLE FORGET: the opposite-ends version needs sorted input.
+If the array is unsorted and the problem does not let you sort (because indices
+must be preserved, as in the original Two Sum), use a hash map instead - that
+is exactly why those two problems have different solutions.
+
+WHAT PEOPLE GET WRONG: using "while i <= j" and letting a pointer pair with
+itself; and moving both pointers on a hit when the problem wants all pairs
+rather than the first.
+""".strip("\n")
+
+_PLAIN_ALGO["Union-Find / Disjoint Set Union (DSU)"] = r"""
+IN ONE SENTENCE: every group is a tree, each node points at its parent, and the
+root's identity IS the group - so "same group?" is just "same root?".
+
+THE THREE PIECES
+1. SET UP: an array where each node starts as its own parent, plus a rank (or
+   size) array of zeros.
+2. FIND(x): walk up the parent chain until you reach a node that is its own
+   parent - that is the root. On the way up, point each node you pass directly
+   at its grandparent. That is PATH COMPRESSION, and it flattens the tree as a
+   side effect of asking the question.
+3. UNION(a, b): find both roots. If they are the same, the two were already
+   connected - return false, which is exactly how you detect a cycle. Otherwise
+   attach the shorter tree's root under the taller one's, and bump the rank if
+   they were equal.
+
+WHY BOTH OPTIMISATIONS ARE NEEDED: union by rank stops the tree from becoming
+a long chain; path compression flattens whatever chains do form. Together they
+give near-constant time per operation (inverse Ackermann - just say "effectively
+O(1)"). With neither, find degrades to O(n) and the structure is pointless.
+
+WHEN TO REACH FOR IT: connected components, cycle detection in an UNDIRECTED
+graph, Kruskal's minimum spanning tree, "are these two accounts the same
+person?", and any problem where edges arrive over time and you must answer
+connectivity as you go. That last case is where DSU beats DFS outright - DFS
+would have to re-run from scratch after every new edge.
+
+WHAT IT CANNOT DO: un-merge. There is no efficient split operation, so if the
+problem removes edges, DSU is the wrong tool - and saying that shows real
+understanding.
+
+WHAT PEOPLE GET WRONG: comparing the nodes themselves instead of their roots,
+and updating parent[b] instead of parent[root_of_b], which merges one node
+rather than a whole group.
+""".strip("\n")
+
+_PLAIN_ALGO["Find Median from Data Stream (two heaps)"] = r"""
+IN ONE SENTENCE: split the numbers into a smaller half and a larger half, keep
+them balanced, and the median is sitting on the two facing tops.
+
+STEPS
+1. Keep two heaps: a MAX-heap for the smaller half (in Python, push negated
+   values) and a MIN-heap for the larger half.
+2. To add a number: push it onto the max-heap of the low half.
+3. Immediately move that heap's top over to the high half. This guarantees
+   every value in low is at most every value in high.
+4. If the high half is now larger, move its top back to low. Low is allowed to
+   hold one extra element; high is not.
+5. To read the median: if low is bigger, the answer is its top. Otherwise
+   average the two tops.
+
+WHY THE PUSH-THEN-MOVE DANCE: adding directly to whichever heap looks right
+requires comparing against the tops and gets fiddly with edge cases. Always
+pushing into low and then shifting one across enforces the ordering property
+automatically, with no comparisons at all.
+
+WHY TWO HEAPS RATHER THAN A SORTED LIST: inserting into a sorted list is O(n)
+because of the shifting. Two heaps give O(log n) inserts and O(1) median
+reads - and it streams, so you never store a sorted copy of everything.
+
+WHERE THIS SHOWS UP FOR REAL: p50/p95 latency dashboards, running statistics on
+event streams, sliding-window medians (add a removal step and a lazy-deletion
+set).
+
+WHAT PEOPLE GET WRONG: forgetting to negate on the way OUT of the max-heap, so
+the median comes back with the wrong sign. And integer division when averaging
+the two tops - the median of an even-sized set can be a fraction.
+""".strip("\n")
+
+_PLAIN_ALGO["Merge k Sorted Lists (min-heap)"] = r"""
+IN ONE SENTENCE: put the first element of every list into a min-heap, then
+repeatedly take the global smallest and replace it with the next element from
+whichever list it came from.
+
+STEPS
+1. For each list that is not empty, push a triple onto the heap: the first
+   value, the index of the list, and the position 0 within it.
+2. While the heap is not empty, pop the smallest triple and append its value to
+   the output.
+3. If that list has another element, push the next triple from the same list.
+4. Return the output.
+
+WHY THE EXTRA INDICES IN THE TUPLE: Python compares tuples element by element,
+so if two values tie it will try to compare the next item. Carrying the list
+index (a number, always comparable) as the tiebreaker stops it from ever trying
+to compare the payloads themselves - which crashes if they are objects like
+list nodes. This is a real, common runtime error, not a stylistic point.
+
+WHY THE HEAP HOLDS ONLY k ITEMS: you only ever need the current front of each
+list, because everything behind a front is larger. That is what makes the space
+O(k) rather than O(total), and the time O(N log k) rather than O(N log N).
+
+THE ALTERNATIVE WORTH NAMING: merge the lists pairwise in rounds, like a
+tournament - also O(N log k), no heap needed, and often easier to reason about
+for linked lists. Concatenating everything and sorting is O(N log N) and throws
+away the fact that the inputs were already sorted.
+
+WHAT PEOPLE GET WRONG: pushing entire lists onto the heap, which loses the
+memory advantage completely.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Window Substring (sliding window)"] = r"""
+IN ONE SENTENCE: grow a window until it contains everything you need, then
+shrink it from the left as far as you can while it still does - and remember
+the smallest one you ever saw.
+
+STEPS
+1. Count the characters required by t. Keep a "missing" counter set to the
+   length of t - how many required characters the window still lacks.
+2. Walk a right edge through s. If the required-count for this character is
+   still positive, it covers a genuine need, so drop missing by one. Then
+   decrement its count regardless (going negative just records a surplus).
+3. While missing is 0, the window is valid: compare its width against the best
+   so far and record it.
+4. Still inside that loop, remove the leftmost character - increment its count
+   back, and if that count becomes positive again you have just broken a
+   requirement, so raise missing back to 1. Move the left edge forward.
+5. Return the best window, or an empty string if none was found.
+
+WHY THE COUNTS ARE ALLOWED TO GO NEGATIVE: a negative count means "the window
+has more of this character than it needs". Letting it go negative means you
+know exactly how many surplus copies can be discarded before the requirement
+breaks - no separate bookkeeping. That single idea is what makes this solution
+short.
+
+WHY THE RECORDING HAPPENS INSIDE THE SHRINK LOOP: this is a SHORTEST-window
+problem. You want the smallest valid window, so you must measure while the
+window is still valid and shrinking. For LONGEST-window problems you record
+after the shrink loop instead. Knowing which flavour you are in is the whole
+game.
+
+WHAT PEOPLE GET WRONG: initialising the best width to a real number rather than
+infinity, so an all-failing input returns a bogus slice; and forgetting that t
+may contain repeated characters, which is why you count rather than use a set.
+""".strip("\n")
+
+_PLAIN_ALGO["Union-Find (Disjoint Set Union)"] = r"""
+IN ONE SENTENCE: keep every group as a tree pointing at a single root, so
+"are these two connected?" collapses to "do they reach the same root?".
+
+STEPS
+1. Start an array where every node is its own parent, and a size array of ones.
+2. FIND: follow parent pointers to the root. While walking, repoint each node
+   at its grandparent - path compression, which flattens the tree just by
+   asking the question.
+3. UNION: find both roots. Same root means they were already connected - return
+   false, and that return value is a ready-made cycle detector. Otherwise hang
+   the SMALLER group's root under the larger one's and add the sizes.
+
+WHY UNION BY SIZE (OR RANK): always attaching the smaller tree under the bigger
+one keeps the depth logarithmic. Attach arbitrarily and you can build a chain
+of n nodes, at which point find is O(n) and you have written a linked list with
+extra steps.
+
+WHAT THE SIZE ARRAY GIVES YOU FOR FREE: the size of any node's component, in
+one lookup at its root. Problems like "largest connected group" need nothing
+extra.
+
+TYPICAL USES: counting components, Kruskal's MST (sort edges, union while they
+join different groups), detecting a cycle in an undirected graph, "accounts
+merge" style identity problems, and grid problems where regions get connected
+over time.
+
+WHAT PEOPLE GET WRONG: recursion in find that blows the stack on a deep chain
+before compression has kicked in - the iterative version above avoids it. And
+using DSU on a DIRECTED graph for cycle detection, where it does not apply; use
+DFS with a recursion-stack marker there.
+""".strip("\n")
+
+_PLAIN_ALGO["Rank Transform of an Array"] = r"""
+IN ONE SENTENCE: sort the distinct values, and each value's rank is its
+position in that sorted order.
+
+STEPS
+1. Take the set of the array to drop duplicates, then sort it.
+2. Build a dictionary from each value to its position plus one, so ranks start
+   at 1.
+3. Map every element of the original array through that dictionary and return
+   the result.
+
+WHY DEDUPLICATING FIRST IS THE WHOLE POINT: equal values must share a rank, and
+the next distinct value takes the immediately following rank - not a skipped
+one. Sorting without dedup would give [10,20,20,30] the ranks 1,2,3,4 instead
+of the correct 1,2,2,3.
+
+WHY A DICTIONARY RATHER THAN SEARCHING: after building the map, each of the n
+lookups is O(1), so the whole thing is dominated by the sort at O(n log n).
+Binary-searching the sorted list for each element also works and is the same
+complexity, but it is more code.
+
+WHAT PEOPLE GET WRONG: starting the ranks at 0, and forgetting the empty-array
+case.
+""".strip("\n")
+
+_PLAIN_ALGO["Insert Interval"] = r"""
+IN ONE SENTENCE: the list is already sorted and disjoint, so walk it once in
+three phases - copy what ends too early, absorb everything that touches the new
+interval, copy the rest.
+
+STEPS
+1. Phase one: while the current interval ENDS before the new one STARTS, it
+   cannot overlap - copy it straight to the output.
+2. Phase two: while the current interval STARTS at or before the new one ENDS,
+   it overlaps - widen the new interval by taking the minimum of the starts and
+   the maximum of the ends. Do not output these; they are being absorbed.
+3. Append the (now possibly widened) new interval.
+4. Phase three: copy every remaining interval unchanged.
+5. Return the output.
+
+WHY THREE SEPARATE LOOPS BEAT ONE CLEVER LOOP: each phase has exactly one
+simple condition, and none of them needs an if-else ladder. Trying to do it in
+a single loop with flags is where this problem gets bugs. Say "three phases"
+out loud before you write anything.
+
+WHY NO SORT IS NEEDED: the input is guaranteed sorted and non-overlapping. If
+it were not, this becomes Merge Intervals - append the new one and sort. Say
+which assumption you are relying on.
+
+WHAT PEOPLE GET WRONG: using strict comparisons so that touching intervals like
+[1,3] and [3,5] fail to merge; and mutating the caller's interval objects
+in place, which is a nasty surprise. Copy before widening.
+""".strip("\n")
+
+_PLAIN_ALGO["Trie (Prefix Tree)"] = r"""
+IN ONE SENTENCE: one node per character, children stored in a dictionary, and a
+flag marking the nodes where a complete word ends.
+
+STEPS
+1. A node holds a dictionary from character to child node, and a boolean saying
+   "a word ends exactly here".
+2. INSERT: start at the root and walk the word character by character, creating
+   a child whenever one is missing. Set the flag on the final node.
+3. FIND A PREFIX: walk the same way; if any character has no child, the prefix
+   is absent. Return the node you land on.
+4. SEARCH A WHOLE WORD: find the prefix, then check the flag. Present but flag
+   false means it is only a prefix of other words, not a word itself.
+5. STARTS-WITH: find the prefix and just check it exists.
+
+WHY THE FLAG IS NOT OPTIONAL: after inserting "apple", the path also spells
+"app". Without the flag you cannot tell a real word from a passing-through
+node, and search("app") wrongly returns true.
+
+WHY A TRIE RATHER THAN A HASH SET OF WORDS: a hash set answers "is this an
+exact word?" just as fast, but it cannot answer "which words start with 'ca'?"
+without scanning everything. The trie makes prefix queries proportional to the
+prefix length, independent of how many words are stored. That is the whole
+reason it exists - autocomplete, spell-check, IP routing tables, word-search
+boards.
+
+COST: insert and search are O(length of the word), which is independent of the
+number of words. Memory is the trade-off - one node per character per distinct
+path.
+
+WHAT PEOPLE GET WRONG: building it with a fixed 26-slot array when the alphabet
+might include digits, spaces or unicode - a dictionary is safer. And forgetting
+that deletion needs care: you can only unlink a node that has no children and
+no flag.
+""".strip("\n")
+
+_PLAIN_ALGO["Assign Cookies"] = r"""
+IN ONE SENTENCE: sort both lists, then give the smallest cookie that will do to
+the least greedy child still waiting.
+
+STEPS
+1. Sort the children's greed factors and sort the cookie sizes.
+2. Point one index at the first child and one at the first cookie.
+3. While both still have entries: if the current cookie is big enough for the
+   current child, that child is satisfied - advance the child index.
+4. Advance the cookie index either way. A cookie too small for the least greedy
+   remaining child is too small for everyone left, so it is discarded.
+5. Return the number of satisfied children.
+
+WHY THE GREEDY CHOICE IS SAFE: spending a large cookie on an easily satisfied
+child can only waste it, since a smaller cookie would have done. Serving
+children in increasing greed with the smallest sufficient cookie therefore
+never blocks a later assignment. That exchange argument is the proof, and it is
+what an interviewer means by "why is greedy correct here?".
+
+WHY THE COOKIE INDEX ADVANCES UNCONDITIONALLY: the sorted order means a cookie
+that fails the current child is useless to every remaining child too - they are
+all at least as greedy. Advancing it is not a heuristic, it is forced.
+
+WHAT PEOPLE GET WRONG: advancing the child index when the cookie was too small,
+which silently skips a child who could have been served later.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
