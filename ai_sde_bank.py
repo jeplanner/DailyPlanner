@@ -6546,3 +6546,131 @@ bars:        #
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ── More DSA diagrams (batch 4) ────────────────────────────────────────────
+_DIAGRAM.update({
+    "Rotate Image (90 degrees, in place)": r"""
+90-deg clockwise = TRANSPOSE then reverse each ROW:
+ 1 2 3     transpose    1 4 7     reverse rows    7 4 1
+ 4 5 6      ------->     2 5 8      -------->      8 5 2
+ 7 8 9                   3 6 9                     9 6 3
+""".strip("\n"),
+    "Move Zeroes": r"""
+[0, 1, 0, 3, 12]   slow pointer marks next non-zero slot
+ write<-           read all; on non-zero, put it at write++ then advance
+ [1, 3, 12, 0, 0]  finally fill the tail with zeros. Stable, in place.
+""".strip("\n"),
+    "Longest Palindromic Substring (expand around center)": r"""
+"babad"   try each center (and each gap), expand out while chars match:
+   b a b a d
+     ^        center 'a' at 1: b<-a->b match -> "bab" (len 3)
+         ^    center 'a' at 3: b<-a->d no    -> "aba" (len 3)
+answer = "bab" (or "aba"). 2n-1 possible centers.
+""".strip("\n"),
+    "Longest Increasing Subsequence (patience + binary search)": r"""
+[10, 9, 2, 5, 3, 7, 101, 18]   keep 'tails' = smallest tail per length:
+ 10 -> [10]   9 -> [9]   2 -> [2]   5 -> [2,5]   3 -> [2,3]
+ 7 -> [2,3,7]   101 -> [2,3,7,101]   18 -> [2,3,7,18]
+len(tails) = 4  (binary-search each number into tails)
+""".strip("\n"),
+    "Minimum Window Substring (sliding window)": r"""
+s="ADOBECODEBANC", t="ABC"   grow right until window has all of t,
+ [ADOBEC]           has A,B,C -> shrink left while still valid
+     [BECODEBA]     ...track the smallest valid window...
+          [BANC]    -> answer "BANC"
+need-counts + a 'have' counter; expand right, contract left.
+""".strip("\n"),
+    "Longest Repeating Character Replacement": r"""
+s="AABABBA", k=2 replacements   window valid if:
+ (window length) - (count of most frequent char) <= k
+grow right; if invalid, shrink left. Track the longest valid window.
+answer = 4  (e.g. "ABBA" -> replace 2 to get "BBBB")
+""".strip("\n"),
+    "Subarray Product Less Than K": r"""
+nums=[10,5,2,6], k=100   sliding window of PRODUCT:
+ [10]        prod 10
+ [10,5]      prod 50
+ [10,5,2]    prod 100 -> not < 100, shrink left -> [5,2]
+each valid window of size w adds w subarrays. answer = 8
+""".strip("\n"),
+    "Find Minimum in Rotated Sorted Array": r"""
+[4,5,6,7,0,1,2]   binary search for the 'drop':
+ L      M      R   nums[M]=7 > nums[R]=2 -> min is to the RIGHT (L=M+1)
+        L M   R    nums[M]=1 < nums[R]=2 -> min is here or LEFT (R=M)
+converge on 0 = minimum.
+""".strip("\n"),
+    "Rotate Array by k (reversal trick)": r"""
+[1,2,3,4,5,6,7] k=3   reverse whole, then reverse the two parts:
+ reverse all      -> 7 6 5 4 3 2 1
+ reverse first k  -> 5 6 7 | 4 3 2 1
+ reverse rest     -> 5 6 7 | 1 2 3 4   = rotated right by 3
+""".strip("\n"),
+    "Diameter of a Binary Tree": r"""
+        1          diameter = longest path (in edges) between any 2 nodes
+      /   \         at each node: leftHeight + rightHeight is a candidate
+     2     3        answer = max over all nodes
+    / \
+   4   5            here longest = 4-2-1-3 = 3 edges
+""".strip("\n"),
+    "Invert a Binary Tree": r"""
+      4              swap every node's left/right children:
+    /   \                    4
+   2     7    ---->        /   \
+  / \   / \               7     2
+ 1  3  6  9              / \   / \
+                        9  6  3  1
+""".strip("\n"),
+    "Balanced Binary Tree": r"""
+balanced = every node's subtree heights differ by <= 1:
+      1              1
+     / \              \
+    2   3              2      height(left)=0, height(right)=2
+   /                    \     |0 - 2| = 2 > 1 -> NOT balanced
+  4                      3
+ (balanced)          (skewed, unbalanced)
+""".strip("\n"),
+    "Path Sum (root-to-leaf boolean)": r"""
+target 22:      5          subtract each node from target as you descend;
+              /   \         at a LEAF, success if remaining == leaf value
+             4     8        5->17->13->2 ... 5+4+11+2 = 22  TRUE
+            /     / \       must end exactly at a leaf.
+          11    13   4
+         /  \
+        7    2
+""".strip("\n"),
+    "Lowest Common Ancestor of a Binary Tree": r"""
+        3            LCA(5,1): recurse; a node is the LCA if one target
+      /   \          is found in its left subtree and the other in its right
+     5     1         5 found left of 3, 1 found right of 3 -> LCA = 3
+    / \   / \        LCA(5,4): both under 5 -> LCA = 5
+   6   2 0   8
+""".strip("\n"),
+    "Minimum Path Sum": r"""
+grid costs        dp[i][j] = grid + min(up, left)
+ 1 3 1             dp:  1 4 5
+ 1 5 1                  2 7 6
+ 4 2 1                  6 8 7   <- bottom-right = min cost path = 7
+only move right/down; accumulate the cheapest way in.
+""".strip("\n"),
+    "Kth Smallest Element in a BST": r"""
+in-order traversal of a BST visits values in SORTED order:
+        3            in-order: 1, 2, 3, 4
+       / \           k=1 -> 1st visited = 1
+      1   4          stop as soon as you pop the kth node
+       \
+        2
+""".strip("\n"),
+    "Construct Binary Tree from Preorder and Inorder": r"""
+preorder = [3,9,20,15,7]   inorder = [9,3,15,20,7]
+ preorder[0]=3 is the ROOT; find 3 in inorder -> left=[9], right=[15,20,7]
+        3            recurse on each side with the matching preorder slice
+      /   \
+     9     20
+          /  \
+        15    7
+""".strip("\n"),
+})
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
