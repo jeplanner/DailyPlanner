@@ -1,7 +1,7 @@
 """Prompt-free batch generator for ai_sde_bank.py.
 
 Runs as a single simple command (`python3 scripts/_ai_gen.py`) so the
-permission parser can allow it — no heredocs, pipes, or && chains.
+permission parser can allow it -- no heredocs, pipes, or && chains.
 Replace the BATCH list, run it, then git add/commit/push as separate
 simple commands. Validates every code block (ast.parse), dedups against
 existing titles, and checks every entry has an example before writing.
@@ -16,258 +16,268 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Minimum Number of Moves to Seat Everyone",
-         answer="Given seat positions and student positions, each move shifts a student by 1; minimize total moves to seat everyone (one per seat). Greedy: SORT both, pair the i-th student with the i-th seat, and sum the absolute differences — matching sorted-to-sorted is optimal for L1 cost.",
-         tags=["min-moves-seat","greedy","sorting","array","dsa"],
-         code='''# Min total unit moves to seat each student (sorted pairing).
-def min_moves_seat(seats, students):
-    seats.sort()
-    students.sort()
-    total = 0
-    for s, p in zip(seats, students):
-        total += abs(s - p)            # cost to move this student to its seat
-    return total''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Pairing without sorting (suboptimal); using squared distance instead of absolute.",
-         example="min_moves_seat([3,1,5], [2,7,4]) -> 4."),
-    dict(cat="dsa", title="Maximum Number of Coins You Can Get",
-         answer="3n piles; repeatedly you pick the top 3 remaining piles, Alice takes the max, YOU take the second, Bob takes the min — maximize your total. Greedy: sort ascending; Bob takes the n smallest, then you take every OTHER pile from the largest side, i.e. the 2nd, 4th, ... from the top.",
-         tags=["max-coins","greedy","sorting","array","dsa"],
-         code='''# Your total coins when you always take the 2nd-largest of each chosen triple.
-def max_coins(piles):
-    piles.sort()
-    n = len(piles) // 3
-    total = 0
-    # skip the n smallest (Bob's); take every second pile going down from the top
-    i = len(piles) - 2
-    for _ in range(n):
-        total += piles[i]              # your pile (2nd largest of the triple)
-        i -= 2                         # skip Alice's pile, move to the next triple
-    return total''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Taking the largest (that's Alice's); miscounting the stride of 2 or the n Bob piles.",
-         example="max_coins([2,4,1,2,7,8]) -> 9  (you take 7 and 2)."),
-    dict(cat="dsa", title="Assign Cookies",
-         answer="Each child has a greed factor g; each cookie a size s; a child is content if s >= g. Maximize content children. Greedy two-pointer: sort both, give the smallest sufficient cookie to the least greedy child, advancing pointers.",
-         tags=["assign-cookies","greedy","two-pointers","sorting","dsa"],
-         code='''# Max children satisfied (cookie size >= greed) via greedy two pointers.
-def find_content_children(g, s):
-    g.sort()
-    s.sort()
-    child = cookie = 0
-    while child < len(g) and cookie < len(s):
-        if s[cookie] >= g[child]:      # this cookie satisfies this child
-            child += 1
-        cookie += 1                    # move to the next cookie regardless
-    return child''',
-         complexity="Time O(n log n + m log m), space O(1).",
-         pitfalls="Not advancing the cookie pointer when it's too small; sorting only one array.",
-         example="find_content_children([1,2,3], [1,1]) -> 1; find_content_children([1,2], [1,2,3]) -> 2."),
-    dict(cat="dsa", title="Boats to Save People",
-         answer="Each boat holds at most 2 people and a weight limit; minimize boats. Greedy two-pointer: sort; pair the heaviest with the lightest if they fit together, else the heaviest goes alone — always advance the heavy pointer.",
-         tags=["boats-save-people","greedy","two-pointers","sorting","dsa"],
-         code='''# Min boats (cap 2 people, weight limit) via greedy two pointers.
-def num_rescue_boats(people, limit):
-    people.sort()
-    light, heavy = 0, len(people) - 1
-    boats = 0
-    while light <= heavy:
-        if people[light] + people[heavy] <= limit:
-            light += 1                 # lightest rides with the heaviest
-        heavy -= 1                     # heaviest always boards
-        boats += 1
-    return boats''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Pairing two heavy people (a boat holds at most 2 but must respect the limit); forgetting the heavy pointer always moves.",
-         example="num_rescue_boats([3,2,2,1], 3) -> 3."),
-    dict(cat="dsa", title="Largest Odd Number in String",
-         answer="Given a numeric string, return the largest-value ODD substring that is a PREFIX ending at the last odd digit (any longer prefix including it is larger). Scan from the right for the first odd digit; the answer is the prefix up to and including it, else empty.",
-         tags=["largest-odd-number","greedy","string","digits","dsa"],
-         code='''# Largest odd-valued prefix substring of a numeric string.
-def largest_odd_number(num):
-    # find the rightmost odd digit; the prefix through it is the largest odd number
-    for i in range(len(num) - 1, -1, -1):
-        if int(num[i]) % 2 == 1:
-            return num[:i + 1]
-    return ''''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Returning just the digit instead of the whole prefix; scanning left-to-right (misses the longest prefix).",
-         example="largest_odd_number('35427') -> '35427'; largest_odd_number('4206') -> ''."),
-    dict(cat="dsa", title="Check if Two Strings Are Almost Equivalent",
-         answer="Two strings are almost equivalent if the frequency of EVERY letter differs by at most 3 between them. Count letters in both; check |count1[c] - count2[c]| <= 3 for all 26 letters.",
-         tags=["almost-equivalent","counting","hash-map","string","dsa"],
-         code='''# True if every letter's frequency differs by at most 3 between the strings.
-def check_almost_equivalent(word1, word2):
-    from collections import Counter
-    c1, c2 = Counter(word1), Counter(word2)
-    for ch in set(word1) | set(word2):
-        if abs(c1[ch] - c2[ch]) > 3:   # frequency gap too large
-            return False
-    return True''',
-         complexity="Time O(n + m), space O(1) (bounded alphabet).",
-         pitfalls="Only checking letters in one string (must union both); using > 3 vs >= 3 (threshold is inclusive at 3).",
-         example="check_almost_equivalent('aaaa', 'bccb') -> False; check_almost_equivalent('abcdeef', 'abaaacc') -> True."),
-    dict(cat="dsa", title="Count the Number of Consistent Strings",
-         answer="Given an allowed set of characters and a list of words, count words whose characters are ALL in the allowed set. Put allowed chars in a set; a word is consistent if set(word) is a subset.",
-         tags=["consistent-strings","hash-set","subset","string","dsa"],
-         code='''# Count words made only of allowed characters.
-def count_consistent(allowed, words):
-    allowed_set = set(allowed)
+    dict(cat="dsa", title="Height Checker",
+         answer="Students should stand in non-decreasing height order; count how many are out of place versus the sorted arrangement. Sort a copy and count positions that differ.",
+         tags=["height-checker","counting-sort","sorting","array","dsa"],
+         code='''# Count students not in their sorted (expected) height position.
+def height_checker(heights):
+    expected = sorted(heights)         # target non-decreasing order
     count = 0
-    for word in words:
-        if set(word) <= allowed_set:   # all characters are allowed
-            count += 1
+    for actual, want in zip(heights, expected):
+        if actual != want:
+            count += 1                 # this position is out of order
     return count''',
-         complexity="Time O(total characters), space O(alphabet).",
-         pitfalls="Checking membership char-by-char in a list (O(k) each) instead of a set; misusing subset direction.",
-         example="count_consistent('ab', ['ad','bd','aaab','baa']) -> 2."),
-    dict(cat="dsa", title="Sort Array By Parity",
-         answer="Reorder so all even integers come before all odd ones (any order within). In-place two-pointer: swap an odd on the left with an even on the right, converging the pointers.",
-         tags=["sort-by-parity","two-pointers","in-place","array","dsa"],
-         code='''# Move all evens before all odds, in place, via two pointers.
-def sort_array_by_parity(nums):
-    left, right = 0, len(nums) - 1
-    while left < right:
-        if nums[left] % 2 == 0:
-            left += 1                  # already an even in place
-        elif nums[right] % 2 == 1:
-            right -= 1                 # already an odd in place
-        else:
-            nums[left], nums[right] = nums[right], nums[left]  # swap odd/even
-    return nums''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Using extra arrays when in-place is asked; advancing both pointers on a swap without re-checking.",
-         example="sort_array_by_parity([3,1,2,4]) -> evens first, e.g. [4,2,1,3]."),
-    dict(cat="dsa", title="Unique Number of Occurrences",
-         answer="Return True if the number of occurrences of each value is unique. Count values, then check the multiset of counts has no duplicates (len(set(counts)) == len(counts)).",
-         tags=["unique-occurrences","counting","hash-set","array","dsa"],
-         code='''# True if every value's occurrence count is distinct.
-def unique_occurrences(arr):
+         complexity="Time O(n log n) (or O(n) counting sort), space O(n).",
+         pitfalls="Comparing to the reversed order; sorting the original in place and losing it.",
+         example="height_checker([1,1,4,2,1,3]) -> 3."),
+    dict(cat="dsa", title="Relative Sort Array",
+         answer="Sort arr1 so elements follow the order in arr2; elements not in arr2 go last in ascending order. Count arr1, emit arr2's values in order (using counts), then the leftovers sorted.",
+         tags=["relative-sort","counting","custom-order","array","dsa"],
+         code='''# Sort arr1 by arr2's order; unlisted elements ascending at the end.
+def relative_sort_array(arr1, arr2):
     from collections import Counter
-    counts = list(Counter(arr).values())
-    return len(counts) == len(set(counts))''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Comparing values instead of their counts; forgetting a set collapses duplicate counts.",
-         example="unique_occurrences([1,2,2,1,1,3]) -> True; unique_occurrences([1,2]) -> False."),
-    dict(cat="dsa", title="Sort Characters By Frequency",
-         answer="Rearrange a string so characters appear in DESCENDING frequency order. Count characters, sort by count desc, then repeat each char count times.",
-         tags=["sort-by-frequency","counting","sorting","string","dsa"],
-         code='''# Rebuild the string with characters ordered by descending frequency.
-def frequency_sort(s):
-    from collections import Counter
-    counts = Counter(s)
-    # sort characters by count, most frequent first
-    ordered = sorted(counts.items(), key=lambda kv: -kv[1])
-    return ''.join(ch * cnt for ch, cnt in ordered)''',
-         complexity="Time O(n + k log k), space O(n).",
-         pitfalls="Sorting characters alphabetically instead of by count; forgetting to repeat each char its count times.",
-         example="frequency_sort('tree') -> 'eert' or 'eetr' (e twice first)."),
-    dict(cat="dsa", title="First Unique Character in a String",
-         answer="Return the index of the first non-repeating character, or -1. Count characters in one pass, then scan again for the first with count 1.",
-         tags=["first-unique-character","counting","hash-map","string","dsa"],
-         code='''# Index of the first non-repeating character, else -1.
-def first_uniq_char(s):
-    from collections import Counter
-    counts = Counter(s)
-    for i, ch in enumerate(s):
-        if counts[ch] == 1:            # first character seen exactly once
-            return i
-    return -1''',
-         complexity="Time O(n), space O(1) (bounded alphabet).",
-         pitfalls="Returning the character instead of its index; a single pass can't know future duplicates (need two passes).",
-         example="first_uniq_char('leetcode') -> 0; first_uniq_char('aabb') -> -1."),
-    dict(cat="dsa", title="Intersection of Two Arrays II",
-         answer="Return the intersection including duplicates (each element appears as many times as it does in both). Count one array, then for each element of the other decrement and emit when the count is positive.",
-         tags=["intersection-arrays","counting","hash-map","array","dsa"],
-         code='''# Multiset intersection of two arrays (duplicates preserved).
-def intersect(nums1, nums2):
-    from collections import Counter
-    counts = Counter(nums1)
+    counts = Counter(arr1)
     result = []
-    for x in nums2:
-        if counts[x] > 0:              # still available in nums1's multiset
-            result.append(x)
-            counts[x] -= 1
+    for x in arr2:                     # emit in arr2's prescribed order
+        result.extend([x] * counts.pop(x, 0))
+    for x in sorted(counts):           # leftovers ascending
+        result.extend([x] * counts[x])
     return result''',
-         complexity="Time O(n + m), space O(min(n, m)).",
-         pitfalls="Using a set (drops duplicates); not decrementing the count so an element repeats too often.",
-         example="intersect([1,2,2,1], [2,2]) -> [2,2]."),
-    dict(cat="glossary", title="At-least-once vs at-most-once vs exactly-once",
-         answer="Message DELIVERY GUARANTEES. AT-MOST-ONCE: fire-and-forget; a message may be lost but never duplicated (no retries) — cheapest, for tolerable-loss telemetry. AT-LEAST-ONCE: retried until acknowledged, so it's never lost but MAY be duplicated — the common default; consumers must be IDEMPOTENT. EXACTLY-ONCE: never lost and never duplicated — the strongest but hardest; true end-to-end exactly-once is often approximated via at-least-once delivery + idempotent processing (dedup keys, transactional writes), since perfect exactly-once across a network is famously difficult.",
-         tags=["delivery-semantics","at-least-once","exactly-once","idempotency","messaging"],
-         example="A payments pipeline uses at-least-once delivery (never drop a charge) plus an idempotency key on the consumer, giving effective exactly-once processing without needing the broker to guarantee it."),
-    dict(cat="glossary", title="Backpressure",
-         answer="A flow-control mechanism where a downstream component that can't keep up SIGNALS upstream to slow down, preventing unbounded queue growth and out-of-memory crashes. Implemented via bounded buffers, blocking/pausing producers, TCP-style windows, or reactive-streams request(n) demand. Without backpressure a fast producer overwhelms a slow consumer — queues grow until they exhaust memory or latency explodes. The alternatives when overwhelmed are to buffer (bounded), drop, or block; backpressure chooses to slow the source.",
-         tags=["backpressure","flow-control","reactive-streams","bounded-buffer","reliability"],
-         example="A Kafka consumer lagging behind pauses its fetch so the broker retains rather than floods it; a reactive stream signals request(10) so the publisher emits only 10 items until the subscriber asks for more."),
-    dict(cat="glossary", title="Cache stampede",
-         answer="Also 'thundering herd on cache' — when a popular cache key EXPIRES and many concurrent requests all miss simultaneously, they stampede the database to recompute the same value at once, spiking load. Mitigations: a LOCK/single-flight so only one request recomputes while others wait or serve stale; PROBABILISTIC early expiration (refresh a bit before TTL); staggered/jittered TTLs; and serving stale-while-revalidate. Common cause of correlated DB overload right after a cache flush or a hot key's expiry.",
-         tags=["cache-stampede","thundering-herd","single-flight","stale-while-revalidate","caching"],
-         example="A homepage's cached feed expires at a round minute; 10,000 requests miss together and hammer the DB. A single-flight lock lets one request rebuild it while the rest briefly serve the stale copy — flattening the spike."),
-    dict(cat="glossary", title="Read-through vs write-through cache",
-         answer="Cache-population strategies. READ-THROUGH: the cache sits in front of the DB; on a miss the CACHE loads from the DB, stores, and returns — the app only talks to the cache. WRITE-THROUGH: writes go to the cache AND synchronously to the DB together, keeping them consistent at the cost of write latency. Contrast write-BACK (write to cache, flush to DB async — fast but risks loss) and cache-aside (app manages loads/invalidations). Read-through simplifies reads; write-through keeps the cache fresh on writes but slows them.",
-         tags=["read-through","write-through","write-back","cache-aside","caching"],
-         example="A product catalog uses read-through so a miss transparently loads from the DB into Redis; an inventory counter uses write-through so each decrement updates Redis and the DB together, keeping reads consistent."),
-    dict(cat="ml_coding", title="Min-max scaling (numpy)",
-         answer="Min-max scaling maps each feature linearly to [0,1]: (x - min) / (max - min), fit per column on training data. Useful when you need bounded inputs (e.g. image pixels, some neural nets); sensitive to outliers (a single extreme value compresses the rest).",
-         tags=["min-max-scaling","normalization","feature-scaling","preprocessing","ml-coding"],
-         code='''# Scale each feature column to [0, 1]. ast.parse-only.
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Forgetting leftovers must be sorted; not removing consumed keys so they reappear.",
+         example="relative_sort_array([2,3,1,3,2,4,6,7,9,2,19], [2,1,4,3,9,6]) -> [2,2,2,1,4,3,3,9,6,7,19]."),
+    dict(cat="dsa", title="Find Words That Can Be Formed by Characters",
+         answer="Given a set of available characters, return the total length of words that can be spelled using them (each char used at most as many times as it appears). For each word, check its letter counts fit within the available counts.",
+         tags=["words-formed-by-chars","counting","hash-map","string","dsa"],
+         code='''# Sum lengths of words spellable from the available characters.
+def count_characters(words, chars):
+    from collections import Counter
+    available = Counter(chars)
+    total = 0
+    for word in words:
+        wc = Counter(word)
+        if all(wc[c] <= available[c] for c in wc):   # every letter fits
+            total += len(word)
+    return total''',
+         complexity="Time O(total characters), space O(alphabet).",
+         pitfalls="Only checking presence not counts; mutating the available counter across words.",
+         example="count_characters(['cat','bt','hat','tree'], 'atach') -> 6  ('cat' + 'hat')."),
+    dict(cat="dsa", title="Degree of an Array",
+         answer="The degree is the max frequency of any element; find the shortest contiguous subarray with the same degree. Track first and last index of each value; for each value at max frequency, the window length is last-first+1; take the minimum.",
+         tags=["degree-of-array","hash-map","first-last-index","array","dsa"],
+         code='''# Shortest subarray whose degree equals the whole array's degree.
+def find_shortest_subarray(nums):
+    first, count = {}, {}
+    last = {}
+    for i, x in enumerate(nums):
+        if x not in first:
+            first[x] = i               # remember first occurrence
+        last[x] = i                    # keep updating last occurrence
+        count[x] = count.get(x, 0) + 1
+    degree = max(count.values())
+    best = len(nums)
+    for x in count:
+        if count[x] == degree:         # this value sets the degree
+            best = min(best, last[x] - first[x] + 1)
+    return best''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Only considering one max-frequency value (ties matter); off-by-one in the window length.",
+         example="find_shortest_subarray([1,2,2,3,1,4,2]) -> 6."),
+    dict(cat="dsa", title="Longest Common Prefix",
+         answer="Find the longest common prefix among an array of strings. Compare characters column by column across all strings; stop at the first mismatch or the shortest string's end.",
+         tags=["longest-common-prefix","string","vertical-scan","dsa"],
+         code='''# Longest common prefix shared by all strings (vertical scan).
+def longest_common_prefix(strs):
+    if not strs:
+        return ''
+    for i, ch in enumerate(strs[0]):   # walk the first string's chars
+        for other in strs[1:]:
+            if i >= len(other) or other[i] != ch:
+                return strs[0][:i]     # mismatch or ran off an end
+    return strs[0]''',
+         complexity="Time O(total characters), space O(1).",
+         pitfalls="Not handling an empty list or empty string; indexing past a shorter string.",
+         example="longest_common_prefix(['flower','flow','flight']) -> 'fl'."),
+    dict(cat="dsa", title="Isomorphic Strings",
+         answer="Two strings are isomorphic if characters in s can be consistently mapped to characters in t (a bijection preserving order). Keep two maps (s->t and t->s) and verify every pair is consistent both ways.",
+         tags=["isomorphic-strings","hash-map","bijection","string","dsa"],
+         code='''# True if s and t are isomorphic (consistent one-to-one char mapping).
+def is_isomorphic(s, t):
+    if len(s) != len(t):
+        return False
+    map_st, map_ts = {}, {}
+    for a, b in zip(s, t):
+        if a in map_st and map_st[a] != b:
+            return False               # s-char already maps elsewhere
+        if b in map_ts and map_ts[b] != a:
+            return False               # t-char already claimed
+        map_st[a] = b
+        map_ts[b] = a
+    return True''',
+         complexity="Time O(n), space O(1) (bounded alphabet).",
+         pitfalls="Using only one direction (misses two chars mapping to the same target); ignoring length mismatch.",
+         example="is_isomorphic('egg','add') -> True; is_isomorphic('foo','bar') -> False."),
+    dict(cat="dsa", title="Word Pattern",
+         answer="Check a string of words follows a pattern (like 'abba'). Bijection between pattern letters and words; two maps enforce a one-to-one correspondence and lengths must match.",
+         tags=["word-pattern","hash-map","bijection","string","dsa"],
+         code='''# True if words follow the pattern via a one-to-one mapping.
+def word_pattern(pattern, s):
+    words = s.split()
+    if len(pattern) != len(words):
+        return False
+    p2w, w2p = {}, {}
+    for p, w in zip(pattern, words):
+        if p in p2w and p2w[p] != w:
+            return False               # pattern char maps to a different word
+        if w in w2p and w2p[w] != p:
+            return False               # word already bound to another char
+        p2w[p] = w
+        w2p[w] = p
+    return True''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Not checking both directions; forgetting the count of words must equal the pattern length.",
+         example="word_pattern('abba', 'dog cat cat dog') -> True; word_pattern('abba', 'dog cat cat fish') -> False."),
+    dict(cat="dsa", title="Ransom Note",
+         answer="Can ransomNote be built from the letters in magazine (each letter used once)? Count magazine letters; verify every ransomNote letter has enough supply.",
+         tags=["ransom-note","counting","hash-map","string","dsa"],
+         code='''# True if ransomNote can be spelled from magazine's letters.
+def can_construct(ransom_note, magazine):
+    from collections import Counter
+    supply = Counter(magazine)
+    need = Counter(ransom_note)
+    return all(supply[c] >= need[c] for c in need)''',
+         complexity="Time O(n + m), space O(alphabet).",
+         pitfalls="Checking presence instead of counts; scanning magazine per letter (O(n*m)).",
+         example="can_construct('aa', 'aab') -> True; can_construct('aa', 'ab') -> False."),
+    dict(cat="dsa", title="Find All Numbers Disappeared in an Array",
+         answer="For nums in [1, n], find all values in [1, n] missing from the array. In-place trick: for each value, mark index abs(v)-1 negative; the indices still positive correspond to missing numbers.",
+         tags=["disappeared-numbers","in-place","index-marking","array","dsa"],
+         code='''# Missing values from [1..n] using in-place negative marking.
+def find_disappeared_numbers(nums):
+    for v in nums:
+        idx = abs(v) - 1               # value maps to this index
+        if nums[idx] > 0:
+            nums[idx] = -nums[idx]     # mark 'seen'
+    result = []
+    for i, v in enumerate(nums):
+        if v > 0:                      # never marked -> i+1 is missing
+            result.append(i + 1)
+    return result''',
+         complexity="Time O(n), space O(1) (output aside).",
+         pitfalls="Not using abs when re-reading marked values; off-by-one between value and index.",
+         example="find_disappeared_numbers([4,3,2,7,8,2,3,1]) -> [5,6]."),
+    dict(cat="dsa", title="Majority Element (Boyer-Moore)",
+         answer="Find the element appearing more than n/2 times. Boyer-Moore voting: keep a candidate and a count; matching votes increment, differing decrement, and a zero count adopts a new candidate. The majority survives.",
+         tags=["majority-element","boyer-moore","voting","array","dsa"],
+         code='''# Majority element (> n/2) via Boyer-Moore voting.
+def majority_element(nums):
+    candidate = None
+    count = 0
+    for x in nums:
+        if count == 0:
+            candidate = x              # adopt a new candidate
+        count += 1 if x == candidate else -1
+    return candidate''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Assuming a majority always exists (verify if not guaranteed); resetting count incorrectly.",
+         example="majority_element([2,2,1,1,1,2,2]) -> 2."),
+    dict(cat="dsa", title="Single Number (XOR)",
+         answer="Every element appears twice except one; find the single. XOR all elements: pairs cancel (x^x=0) and 0^single = single.",
+         tags=["single-number","xor","bit-manipulation","array","dsa"],
+         code='''# Find the element that appears once (all others twice) via XOR.
+def single_number(nums):
+    result = 0
+    for x in nums:
+        result ^= x                    # duplicates cancel out
+    return result''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Using a set/count (O(n) space) when XOR is O(1); assuming exactly-twice does not hold.",
+         example="single_number([4,1,2,1,2]) -> 4."),
+    dict(cat="dsa", title="Missing Number",
+         answer="Array holds n distinct numbers from [0, n] with one missing; find it. Sum 0..n via n(n+1)/2 and subtract the array sum; the difference is the missing number (or XOR trick).",
+         tags=["missing-number","math","xor","array","dsa"],
+         code='''# Missing value from [0..n] via the expected-sum difference.
+def missing_number(nums):
+    n = len(nums)
+    expected = n * (n + 1) // 2         # sum of 0..n
+    return expected - sum(nums)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Off-by-one on n (range is 0..n inclusive); integer overflow in other languages (use XOR there).",
+         example="missing_number([3,0,1]) -> 2."),
+    dict(cat="glossary", title="Hedged requests",
+         answer="A tail-latency reduction technique: after a request has been outstanding longer than, say, the 95th-percentile latency, send a DUPLICATE ('hedge') request to another replica and take whichever responds first, cancelling the other. It trims the slow tail (a single slow server no longer dictates p99) at the cost of a little extra load (bounded because hedges only fire for the slow fraction). Popularized by Google's 'The Tail at Scale'.",
+         tags=["hedged-requests","tail-latency","p99","replicas","performance"],
+         example="A read waits past its p95 (say 10ms) with no reply, so the client fires a second read to another replica; the first to answer wins -- so one GC-paused server no longer blows up p99, for only ~5% extra requests."),
+    dict(cat="glossary", title="Load shedding",
+         answer="Deliberately DROPPING or rejecting a fraction of incoming work when a system is overloaded, to protect the rest from collapse. Better to fail some requests fast (429/503) than to let queues grow until everything times out (congestion collapse). Often prioritized -- shed low-value/retry traffic first, keep health checks and paying users -- and paired with backpressure and admission control. The goal: degrade throughput gracefully instead of falling over entirely.",
+         tags=["load-shedding","overload","admission-control","429","reliability"],
+         example="At 100% CPU an API starts returning 503 to 20% of anonymous requests (keeping logged-in traffic) so latency stays bounded, instead of accepting everything and timing out for all."),
+    dict(cat="glossary", title="Request coalescing",
+         answer="Collapsing multiple identical in-flight requests into a SINGLE upstream call, sharing its result among all waiters (a.k.a. single-flight). When many callers ask for the same key at once (a hot cache miss), only the first triggers the expensive fetch; the rest wait and receive the same answer. Prevents duplicated work and cache stampedes; the cache-layer cousin of hedging's opposite -- fewer calls, not more.",
+         tags=["request-coalescing","single-flight","cache-stampede","deduplication","performance"],
+         example="1,000 concurrent requests miss the same cache key; a single-flight guard makes just one hit the database while the other 999 block on that one result -- collapsing 1,000 DB queries into 1."),
+    dict(cat="glossary", title="Graceful degradation",
+         answer="Designing a system so that when a dependency fails or load spikes, it drops to a REDUCED but still-useful mode instead of failing entirely. Non-essential features are disabled, stale/cached or default data is served, and the core function survives. Enabled by circuit breakers, fallbacks, feature toggles, and load shedding. The opposite of a brittle system where one failed dependency takes everything down.",
+         tags=["graceful-degradation","fallback","circuit-breaker","resilience","reliability"],
+         example="If the recommendation service is down, an e-commerce page hides the 'Recommended for you' carousel and serves a generic bestsellers list from cache -- the user can still browse and buy rather than seeing an error page."),
+    dict(cat="ml_coding", title="PCA via SVD (numpy)",
+         answer="PCA finds directions of maximum variance. Center the data, take the SVD (X = U S Vt); the rows of Vt are principal components (right singular vectors), and projecting onto the top-k gives the reduced representation. SVD is the numerically stable route (vs eigendecomposition of the covariance).",
+         tags=["pca","svd","dimensionality-reduction","unsupervised","ml-coding"],
+         code='''# PCA to k components via SVD. ast.parse-only.
 import numpy as np
 
-def min_max_scale(x_train, x_test=None, eps=1e-8):
-    mn = x_train.min(axis=0)                       # per-feature min (train)
-    mx = x_train.max(axis=0)                       # per-feature max (train)
-    train_scaled = (x_train - mn) / (mx - mn + eps)
-    if x_test is None:
-        return train_scaled
-    test_scaled = (x_test - mn) / (mx - mn + eps)  # reuse train min/max
-    return train_scaled, test_scaled''',
-         complexity="Time O(n * features), space O(n * features).",
-         pitfalls="Fitting on the full dataset (test leakage); divide-by-zero on constant features (add eps); per-row instead of per-column.",
-         example="min_max_scale(np.array([[1.],[3.],[5.]])) -> [[0.],[0.5],[1.]]."),
-    dict(cat="ml_coding", title="Gradient descent step (numpy)",
-         answer="One step of batch gradient descent for linear regression: compute predictions X@w, the error, the gradient of MSE (X^T @ error * 2/n), and update w -= lr * grad. The core loop of most parametric learning.",
-         tags=["gradient-descent","linear-regression","optimization","training","ml-coding"],
-         code='''# One batch gradient-descent update for linear regression. ast.parse-only.
+def pca(X, k):
+    X_centered = X - X.mean(axis=0)               # center each feature
+    # economy SVD; rows of Vt are the principal directions
+    U, S, Vt = np.linalg.svd(X_centered, full_matrices=False)
+    components = Vt[:k]                            # top-k directions
+    projected = X_centered @ components.T         # reduced coordinates
+    return projected, components''',
+         complexity="Time O(n * d * min(n,d)), space O(n * d).",
+         pitfalls="Forgetting to center (PCA assumes zero mean); using U instead of Vt for components; taking too many components.",
+         example="pca(np.array([[2.,0.],[0.,2.],[ -2.,0.],[0.,-2.]]), 1) projects the 2-D points onto their top variance axis."),
+    dict(cat="ml_coding", title="Dropout forward (numpy)",
+         answer="Dropout randomly zeros a fraction p of activations during training to prevent co-adaptation, then scales survivors by 1/(1-p) (inverted dropout) so the expected value is unchanged and inference needs no scaling. At inference it is a no-op.",
+         tags=["dropout","regularization","inverted-dropout","training","ml-coding"],
+         code='''# Inverted dropout forward pass. ast.parse-only (rng passed in).
 import numpy as np
 
-def gd_step(X, y, w, lr):
-    n = X.shape[0]
-    pred = X @ w                                   # linear predictions
-    error = pred - y                               # residuals
-    grad = (X.T @ error) * (2.0 / n)               # dMSE/dw
-    return w - lr * grad                           # step downhill''',
-         complexity="Time O(n * features), space O(features).",
-         pitfalls="Wrong gradient scale (missing 2/n); sign flipped (adding the gradient); not transposing X for the gradient.",
-         example="gd_step(np.array([[1.,1.],[1.,2.]]), np.array([1.,2.]), np.zeros(2), 0.1) moves w toward the fit."),
-    dict(cat="ml_coding", title="Euclidean distance matrix (numpy)",
-         answer="Pairwise squared Euclidean distances between rows of A and rows of B via the identity ||a-b||^2 = ||a||^2 + ||b||^2 - 2 a·b — fully vectorized, avoiding Python loops. Take sqrt (clip negatives from float error) for actual distances.",
-         tags=["euclidean-distance","vectorization","knn","pairwise","ml-coding"],
-         code='''# Pairwise Euclidean distances between rows of A and B. ast.parse-only.
+def dropout_forward(x, p, training, rng):
+    if not training or p == 0:
+        return x                                  # no-op at inference
+    keep = 1 - p
+    mask = (rng.random(x.shape) < keep) / keep    # scaled keep-mask
+    return x * mask                               # zero-and-scale survivors''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Not scaling by 1/keep (train/inference mismatch); applying dropout at inference; dropping p vs keeping p confusion.",
+         example="dropout_forward(x, 0.5, training=True, rng) zeros ~half of x and doubles the rest; training=False returns x unchanged."),
+    dict(cat="ml_coding", title="Accuracy and confusion matrix (numpy)",
+         answer="Accuracy = fraction correct. The confusion matrix C[i][j] counts samples of true class i predicted as class j; its diagonal is correct predictions. Build it by incrementing C[true, pred] per sample.",
+         tags=["accuracy","confusion-matrix","classification-metrics","evaluation","ml-coding"],
+         code='''# Accuracy and a confusion matrix for integer labels. ast.parse-only.
 import numpy as np
 
-def euclidean_distance_matrix(A, B):
-    a_sq = np.sum(A ** 2, axis=1, keepdims=True)   # ||a||^2 column
-    b_sq = np.sum(B ** 2, axis=1, keepdims=True).T # ||b||^2 row
-    cross = A @ B.T                                # a . b
-    sq = a_sq + b_sq - 2 * cross                   # squared distances
-    sq = np.maximum(sq, 0)                         # clip tiny negatives
-    return np.sqrt(sq)''',
-         complexity="Time O(n * m * d), space O(n * m).",
-         pitfalls="Forgetting to clip negatives before sqrt (NaN); transposing the wrong term; double Python loops instead of the identity.",
-         example="euclidean_distance_matrix(np.zeros((1,2)), np.ones((1,2))) -> [[1.414...]]."),
-    dict(cat="conceptual", title="Why do we need idempotent consumers with at-least-once delivery, and how do you make one?",
-         answer="Most real message systems give AT-LEAST-ONCE delivery, not exactly-once, because guaranteeing a message is delivered exactly one time across an unreliable network is effectively impossible: the broker sends a message, the consumer processes it, but the ACK back to the broker can be lost (network blip, consumer crash after processing but before acking). The broker, seeing no ack, MUST redeliver — otherwise it would risk losing messages. So the same message can legitimately arrive more than once, and the consumer cannot tell a genuine first delivery from a redelivery. If processing has SIDE EFFECTS (charge a card, increment a counter, send an email), naive at-least-once means double-charges, inflated counts, and duplicate emails. The fix is to make the consumer IDEMPOTENT — processing the same message twice yields the same end state as processing it once. Techniques: (1) a DEDUP KEY / idempotency key — record each processed message id in a store and skip if already seen (must be atomic with the side effect, e.g. same DB transaction, or you re-introduce a gap); (2) design operations to be naturally idempotent — 'set status = shipped' instead of 'increment', or UPSERT instead of INSERT; (3) conditional writes / optimistic concurrency so a replay is a no-op; (4) for external effects that can't be deduped (emails), keep a sent-log keyed by message id. The subtlety is ATOMICITY: the dedup record and the side effect must commit together, otherwise a crash between them leaves you either double-processing or marking-done-without-doing. This is why 'exactly-once processing' is achievable (at-least-once delivery + idempotent consumer) even though 'exactly-once delivery' is not.",
-         tags=["idempotency","at-least-once","exactly-once","dedup-key","why"],
-         example="An order-paid consumer stores processed message ids in the same DB transaction that marks the order paid; a redelivery finds the id already recorded and skips — so a lost ack causing redelivery never double-charges the customer."),
-    dict(cat="conceptual", title="Why does min-max scaling suffer from outliers while standardization is more robust?",
-         answer="Min-max scaling maps a feature to [0,1] via (x - min)/(max - min). Its two anchor points are the extreme MIN and MAX of the data — the single most outlier-prone statistics there are. If one sample is a wild outlier (say a data-entry error of 1,000,000 in a column normally ranging 0–100), it becomes the max, and now EVERY other value is divided by ~1,000,000, so the entire normal range gets crushed into a tiny sliver near 0 — the feature loses almost all its resolution and becomes nearly useless to the model. A single bad point dictates the scale for all points. Standardization, (x - mean)/std, instead centers on the MEAN and scales by the STANDARD DEVIATION — both AGGREGATE statistics computed over all samples. An outlier still perturbs the mean and std, but its influence is diluted across n points (the mean moves by outlier/n, the std by a bounded amount), not made the sole anchor. So the bulk of the data keeps a sensible spread even with a few outliers. The trade-offs: min-max gives a guaranteed bounded range (needed for some algorithms and image inputs) but is fragile to outliers and to test values outside the training min/max (they fall outside [0,1]); standardization has an unbounded range but preserves relative spacing and handles outliers more gracefully. Best practice: standardize by default for most models; use min-max when you specifically need bounded inputs and the data is outlier-clean or clipped/winsorized first; use ROBUST scaling (median and IQR) when outliers are heavy and you still want bounded-ish behavior.",
-         tags=["min-max-scaling","standardization","outliers","robust-scaling","why"],
-         example="A salary column of [30k, 40k, 50k, 1,000k typo]: min-max squashes the three real values into [0, 0.01, 0.02] near zero (the typo owns the scale), while standardization keeps them near [-0.6, -0.5, -0.4] with the typo as a visible large positive z-score — the model still distinguishes the normal salaries."),
-    dict(cat="behavioral", title="STAR: Earning trust after a mistake / owning an incident (Earn Trust / Ownership)",
-         answer="Amazon LPs: EARN TRUST (leaders listen, speak candidly, treat others respectfully, are self-critical, and own mistakes) and OWNERSHIP (act on behalf of the whole company, never say 'that's not my job'). Show you owned a failure you caused, communicated transparently, fixed the root cause, and rebuilt trust — no blame-shifting.",
-         tags=["behavioral","star","earn-trust","ownership","amazon-lp"],
-         example="SITUATION: I shipped a config change that I believed was low-risk; it silently disabled retry-on-failure for a background job, and two days later we discovered ~4 hours of user exports had failed without alerting. TASK: The failure was mine and customers were affected; I had to own it, contain the damage, and make sure it couldn't recur. ACTION: I immediately raised it in the team channel rather than hoping it went unnoticed, wrote a plain-language summary of what I changed and its impact, and paged myself to lead the fix. I re-ran the failed exports for affected users after verifying the data, then addressed the real gap: the job had no alerting on a zero-retry failure, so I added monitoring and an alert, and added a test that would have caught the disabled retry. In the blameless post-mortem I was explicit that my change caused it and focused the actions on the systemic holes (no alert, no test) rather than on myself. RESULT: All affected exports were recovered within a day, the new alerting caught two unrelated failures the next month, and my manager later said owning it openly — instead of minimizing it — actually increased the team's trust in me. I turned a self-inflicted incident into durable monitoring the whole team now relies on."),
+def accuracy_and_confusion(y_true, y_pred, num_classes):
+    accuracy = np.mean(y_true == y_pred)          # fraction correct
+    cm = np.zeros((num_classes, num_classes), dtype=int)
+    for t, p in zip(y_true, y_pred):
+        cm[t, p] += 1                             # true t predicted p
+    return accuracy, cm''',
+         complexity="Time O(n), space O(num_classes^2).",
+         pitfalls="Swapping the (true, pred) axes; num_classes smaller than the max label; comparing floats for equality.",
+         example="accuracy_and_confusion(np.array([0,1,1]), np.array([0,1,0]), 2) -> accuracy 0.667, cm [[1,0],[1,1]]."),
+    dict(cat="conceptual", title="Why do hedged requests reduce tail latency, and why not just send duplicate requests always?",
+         answer="Tail latency (p99, p999) in a large system is dominated not by the average server but by the occasional slow one: a server doing garbage collection, serving a cold cache, sharing a noisy CPU, or briefly queueing. In a request that fans out to many servers, the SLOWEST component gates the whole response, so even if each server is fast 99% of the time, a request touching 100 of them is very likely to hit at least one slow one -- tail latency compounds. HEDGED REQUESTS attack this directly: wait until a request is clearly running slow (past, say, the p95 for that operation), then send a second copy to a DIFFERENT replica and take whichever finishes first. Because the slowness of one server is usually independent of another, the probability that BOTH the original and the hedge are slow is much lower (roughly the product of the individual slow-probabilities), so the tail collapses toward the typical latency. The reason you DON'T just duplicate every request always is COST: sending two copies of everything doubles the load on the whole fleet, and a system running near capacity would tip into overload -- which itself creates queueing and makes latency worse, defeating the purpose. The elegance of the p95-triggered hedge is that hedges only fire for the small fraction of requests that are actually slow (~5%), so the extra load is bounded to a few percent while capturing almost all the tail-latency benefit. Refinements: 'tied requests' where the two copies tell each other to cancel once one starts executing (cutting wasted work further), and never hedging when the system is already hot (to avoid amplifying overload). The principle: spend a little redundant work precisely where it buys tail-latency improvement, not everywhere.",
+         tags=["hedged-requests","tail-latency","p99","tail-at-scale","why"],
+         example="A request fanning out to 100 leaf servers each with 1% chance of a 1s stall has a ~63% chance at least one stalls; hedging the slow 5% to a second replica makes both-slow astronomically rarer, so p99 drops from ~1s toward the ~10ms typical -- for only ~5% extra requests, whereas always-duplicating would add 100% load and risk overload."),
+    dict(cat="conceptual", title="Why scale by 1/(1-p) in dropout, and why is inference a no-op?",
+         answer="Dropout regularizes a network by randomly zeroing each activation with probability p during training, which forces the network not to rely on any single unit (preventing co-adaptation) and acts like training an ensemble of subnetworks. But zeroing units changes the EXPECTED MAGNITUDE of a layer's output: if a unit's normal output is a and it survives with probability keep = 1-p, then its expected contribution during training drops to keep*a. If you did nothing to correct this, the layer feeding into the next one would, on average, send a signal that is (1-p) times as large during training as it would be at inference (when all units are active) -- so the distributions of activations seen by downstream layers would MISMATCH between training and test, and the carefully-learned weights would be miscalibrated at inference, degrading accuracy. There are two ways to fix the mismatch. Classic dropout scales activations DOWN by keep at inference; but the modern standard is INVERTED DROPOUT, which instead scales the surviving activations UP by 1/keep = 1/(1-p) during training. That way the expected value of each activation during training becomes keep * (a/keep) = a -- exactly what it would be with no dropout -- so training-time activations already match the full-network scale. The payoff is that INFERENCE needs no special handling at all: you simply run the full network with every unit active and no scaling, which is faster and simpler (important because inference happens far more often than training and you don't want per-unit correction there). So the 1/(1-p) factor is a bookkeeping trick that moves the necessary rescaling into the training path, keeping expected activations invariant and making the test-time forward pass a clean no-op. A subtlety: the scaling preserves the MEAN but inflates the VARIANCE of activations during training, which is part of dropout's noise-injection regularization effect.",
+         tags=["dropout","inverted-dropout","regularization","train-test-consistency","why"],
+         example="With p=0.5 (keep=0.5), a unit that would output 4 is kept and multiplied by 1/0.5=2 to output 8 during training half the time and 0 the other half -- expected 4, matching the no-dropout value -- so at inference you just output 4 with no scaling."),
+    dict(cat="behavioral", title="STAR: Disagreeing with a decision then fully committing (Have Backbone; Disagree and Commit)",
+         answer="Amazon LP: HAVE BACKBONE; DISAGREE AND COMMIT -- leaders respectfully challenge decisions they disagree with, even when uncomfortable, but once a decision is made they commit wholly. Show you voiced a well-reasoned dissent with data, and then -- when overruled -- backed the decision genuinely rather than sabotaging it.",
+         tags=["behavioral","star","disagree-and-commit","have-backbone","amazon-lp"],
+         example="SITUATION: My team decided to build a new service on a NoSQL store I believed was the wrong fit -- our access patterns were highly relational with multi-entity transactions. TASK: As the senior engineer I owed the team my honest technical judgment, but the tech lead and two others favored NoSQL for its scaling story. ACTION: I wrote a one-page doc laying out the specific queries and the transactional consistency we needed, showed where NoSQL would force complex application-side joins and risk anomalies, and proposed Postgres with a clear scaling path. I presented it directly but without rancor, and asked hard questions. The group still chose NoSQL, weighting operational familiarity higher than I did. Rather than relitigate or quietly resist, I committed fully: I helped design the data model to minimize the join pain I'd worried about, wrote the access layer, and added integration tests around the consistency edge cases I'd flagged. RESULT: We shipped on time; two of the anomaly cases I'd raised did surface in testing and my guardrails caught them early, so we handled them cleanly instead of in production. Months later we did add a relational store for one subsystem -- but because I'd committed and built well, the team trusted my earlier dissent and brought me in to lead that migration. Voicing the disagreement AND committing wholeheartedly both mattered."),
 ]
 
 
