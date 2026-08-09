@@ -17868,6 +17868,726 @@ are free to extend; and mishandling the sign change, which is where the arithmet
 gets fiddly - trace [2, -3] on paper.
 """.strip("\n")
 
+_PLAIN_ALGO["Non-decreasing Array With One Modification"] = r"""
+IN ONE SENTENCE: find each violation, and when you fix one, choose WHICH of the
+two elements to change so you do not create a new problem - a second violation
+means impossible.
+
+STEPS
+1. Keep a flag for whether you have already used your one change.
+2. Walk from the second element. A violation is when this element is less than
+   the previous one.
+3. On a violation: if you have already changed something, return false.
+4. Otherwise decide which side to modify. If this element is at least as large as
+   the element TWO back - or there is no element two back - lower the previous
+   element down to this one. Otherwise raise this element up to the previous one.
+5. Mark the change as used and continue.
+
+WHY THE CHOICE IN STEP 4 IS THE ENTIRE PROBLEM: on [3, 4, 2, 3] the violation is
+at 2. Raising 2 up to 4 gives [3,4,4,3] which breaks again. Lowering 4 down to 2
+gives [3,2,2,3] which also breaks. The correct move depends on the element two
+positions back: if nums[i] can sit above nums[i-2], lower the previous one;
+otherwise you have no choice but to raise the current one. Anyone who just counts
+violations gets this wrong on exactly that input.
+
+WHY LOWERING IS PREFERRED WHEN BOTH WORK: making a value as SMALL as legally
+possible leaves the most room for whatever follows. Greedy prefers the least
+constraining fix.
+
+WHY COUNTING VIOLATIONS IS NOT ENOUGH: [4,2,3] has one violation and is fixable;
+[4,2,1] has two and is not - but [3,4,2,3] has one violation and requires the
+right choice to remain fixable. Count-only solutions pass many tests and fail the
+interesting one.
+
+WHAT PEOPLE GET WRONG: not handling the i-2 boundary at the start of the array;
+and always raising the current element, which is the plausible wrong answer.
+""".strip("\n")
+
+_PLAIN_ALGO["Remove Duplicate Letters"] = r"""
+IN ONE SENTENCE: build the answer on a stack, and pop a letter off whenever it is
+bigger than the incoming one AND it appears again later - so you can afford to
+lose it now.
+
+STEPS
+1. Record the LAST index at which each character occurs.
+2. Keep a stack for the result and a set of characters currently on it.
+3. Walk the string. If the character is already on the stack, skip it entirely -
+   it is placed.
+4. Otherwise, while the stack is non-empty AND its top is greater than the
+   current character AND that top appears again later in the string, pop it and
+   remove it from the set.
+5. Push the current character and record it in the set.
+6. Join the stack.
+
+WHY ALL THREE POP CONDITIONS ARE NEEDED: greater-than means removing it improves
+the ordering. Appears-again-later means removing it is SAFE, because you can
+place it afterwards. Drop the second condition and you delete a character's only
+occurrence; drop the first and you destroy an already-optimal prefix.
+
+WHY THE SEEN SET IS ESSENTIAL: each letter appears exactly once in the answer, so
+if it is already on the stack there is nothing to do - and without the check you
+would push duplicates.
+
+WHY IT PRODUCES THE LEXICOGRAPHICALLY SMALLEST RESULT: at every position you
+place the smallest character you can afford to place, deferring anything larger
+that you are still able to recover later. That is the greedy invariant, and the
+last-occurrence map is what tells you what you can afford.
+
+THE PATTERN NAME: this is a monotonic stack used for lexicographic minimisation.
+The same shape solves "Remove K Digits" - pop while the top is bigger and you
+still have removals left.
+
+WHAT PEOPLE GET WRONG: using a count-remaining map instead of last-index (both
+work, but mixing them up breaks the safety check); and forgetting to remove the
+popped character from the seen set.
+""".strip("\n")
+
+_PLAIN_ALGO["Sort Characters By Frequency"] = r"""
+IN ONE SENTENCE: count the characters, sort those counts descending, then emit
+each character repeated its count.
+
+STEPS
+1. Build a frequency map of the characters.
+2. Sort the (character, count) pairs by count, highest first.
+3. For each pair, append the character repeated count times.
+4. Join into a string.
+
+WHY YOU BUILD FROM THE COUNTS RATHER THAN SORTING THE STRING: sorting the raw
+characters by frequency also works, but emitting from the counts is O(k log k) on
+the distinct characters instead of O(n log n) on the whole string, and it makes
+the grouping automatic.
+
+WHY TIES ARE UNSPECIFIED: characters with equal frequency may appear in any
+order, so no tie-break is required. Ask if the problem statement is silent -
+some variants want alphabetical within a frequency, which is a one-line change to
+the key.
+
+THE O(n) VERSION: bucket by frequency. Make a list of buckets indexed by count,
+drop each character into its bucket, then walk the buckets from the highest index
+down. No sort at all, since a frequency can never exceed the string length.
+Offering that is what elevates this beyond a two-line answer.
+
+WHAT PEOPLE GET WRONG: sorting ascending; and building the string with repeated
+concatenation inside a loop, which is quadratic in Python - collect pieces and
+join once.
+""".strip("\n")
+
+_PLAIN_ALGO["Coin Change II (count ways)"] = r"""
+IN ONE SENTENCE: put the COINS in the outer loop and the amounts in the inner
+one - that single ordering is what counts combinations rather than permutations.
+
+STEPS
+1. Make an array of counts, one slot per amount from 0 to the target. Set slot 0
+   to 1 - there is exactly one way to make nothing: take no coins.
+2. For each coin, in the OUTER loop, walk the amounts upward from the coin's
+   value.
+3. Add the count at (amount minus coin) into the count at amount.
+4. Return the slot at the target.
+
+WHY THE LOOP ORDER IS THE WHOLE PROBLEM: with coins outside, every combination is
+built in a fixed coin order - you finish considering pennies before you ever look
+at nickels - so 1+2 and 2+1 can never both be counted. Flip the loops and each
+amount considers every coin, which counts orderings separately and gives
+permutations. This is the single most important thing to be able to explain here,
+and interviewers ask it directly.
+
+HOW IT DIFFERS FROM COIN CHANGE I: that problem MINIMISES coins and either loop
+order works, because a minimum does not care about ordering. This one COUNTS, and
+counting is order-sensitive. Same table, same coins, completely different meaning.
+
+WHY THE INNER LOOP GOES UPWARD: coins are unlimited, so you WANT to reuse the
+same coin within one pass - reading a slot you have already updated this round is
+exactly what allows repetition. Compare with 0/1 knapsack (Partition Equal Subset
+Sum), which walks downward precisely to prevent it. Direction encodes
+"unlimited" versus "at most one".
+
+WHAT PEOPLE GET WRONG: the loop order; and setting slot 0 to 0, which makes every
+count zero.
+""".strip("\n")
+
+_PLAIN_ALGO["Count and Say"] = r"""
+IN ONE SENTENCE: start at "1" and repeatedly read the previous term aloud -
+"three ones" becomes "31" - for n-1 rounds.
+
+STEPS
+1. Start the result at the string "1".
+2. Repeat n-1 times: walk the current string, grouping runs of identical
+   characters.
+3. For each run, append its LENGTH followed by the CHARACTER.
+4. Replace the result with what you built and continue.
+
+WHY THE ORDER IS COUNT-THEN-DIGIT: "1211" is read as "one 1, one 2, two 1s" which
+writes as "111221". Writing the digit before the count reverses every pair and
+produces a completely different sequence - it is the only real trap.
+
+WHY IT MUST BE ITERATIVE FROM THE START: term n is defined only in terms of term
+n-1, so there is no formula and no way to jump ahead. The sequence grows roughly
+30% per term, which is why n is capped small in the constraints.
+
+HOW TO WALK THE RUNS CLEANLY: an index and an inner while that advances while the
+next character matches the current one. Building a list of pieces and joining
+once at the end avoids quadratic string concatenation.
+
+WHY THE LOOP RUNS n-1 TIMES: the first term is given, so you apply the
+transformation one fewer time than the term number. Off by one here returns a
+neighbouring term, which is easy to miss because it still looks plausible.
+
+WHAT PEOPLE GET WRONG: the digit/count order, the n-1 count, and forgetting to
+emit the final run after the loop ends.
+""".strip("\n")
+
+_PLAIN_ALGO["Number of Steps to Reduce a Number in Binary to One"] = r"""
+IN ONE SENTENCE: process the binary string from the least significant bit,
+carrying a bit - a 0 costs one step (divide), a 1 costs two (add then divide).
+
+STEPS
+1. Keep a step count and a carry, both 0.
+2. Walk the string from the LAST character back to index 1 - stopping before the
+   leading bit.
+3. The effective bit is the character plus the carry.
+4. If the effective bit is 1, the number is odd: you add one (which sets the
+   carry for the next position) and then divide - two steps.
+5. If it is 0, the number is even: just divide - one step. The carry stays as it
+   is.
+6. If a carry remains at the end, the leading bit becomes 10, needing one extra
+   step.
+
+WHY YOU SIMULATE ON THE STRING RATHER THAN THE NUMBER: the input can be hundreds
+of bits long, far beyond a machine integer. Working bit by bit with a carry is
+exactly long-hand binary arithmetic and it costs O(length).
+
+WHY DIVIDING BY TWO IS JUST MOVING LEFT: dividing a binary number by two drops
+the last bit, so walking from the right IS the sequence of divisions. That
+reframing is what turns a simulation into a single pass.
+
+WHY THE CARRY: adding one to an odd number can ripple - 0111 plus 1 becomes 1000.
+Carrying a single bit as you move left handles the ripple without ever building
+the whole number.
+
+WHY YOU STOP BEFORE THE LEADING BIT: once everything below it is consumed you are
+at 1, which is the target. The extra step at the end covers the case where the
+carry turned the leading 1 into 10.
+
+WHAT PEOPLE GET WRONG: converting the string to an integer, which fails on long
+inputs; and forgetting the final carry step.
+""".strip("\n")
+
+_PLAIN_ALGO["Range Bitwise AND"] = r"""
+IN ONE SENTENCE: the answer is the COMMON BINARY PREFIX of the two endpoints -
+shift both right until they are equal, then shift back.
+
+STEPS
+1. Keep a shift counter at 0.
+2. While the two numbers differ, shift both right by one and increment the
+   counter.
+3. When they are equal, that shared value is the common prefix. Shift it left by
+   the counter to restore the zeros.
+
+WHY EVERY DIFFERING BIT MUST BECOME ZERO: if the low bits differ anywhere in the
+range, then somewhere between left and right that bit flips from 1 to 0, and
+ANDing across the range zeroes it. Only the bits that are identical in every
+number of the range survive - and those are exactly the shared high-order prefix
+of the two endpoints.
+
+WHY YOU DO NOT NEED TO LOOK AT THE NUMBERS IN BETWEEN: if left and right agree on
+a prefix, every number between them agrees on it too - that is what having the
+same prefix means. And wherever they first differ, the range necessarily contains
+a number where that bit is 0. So the endpoints alone determine the answer.
+
+WHY LOOPING OVER THE RANGE IS IMPOSSIBLE: the range can span billions of values.
+This runs in at most 32 iterations regardless of size, which is the point of the
+question.
+
+WHAT PEOPLE GET WRONG: forgetting to shift back at the end, which returns the
+prefix without its trailing zeros; and attempting the literal loop, which times
+out.
+""".strip("\n")
+
+_PLAIN_ALGO["Reverse Integer"] = r"""
+IN ONE SENTENCE: peel digits off the end with mod 10 and push them onto a growing
+result, then check the 32-bit range before returning.
+
+STEPS
+1. Record the sign and work with the absolute value.
+2. While the number is non-zero: multiply the result by 10 and add the last digit
+   (the remainder mod 10), then remove that digit with integer division.
+3. Re-apply the sign.
+4. If the result falls outside the signed 32-bit range, return 0.
+
+WHY MULTIPLY-AND-ADD REVERSES: each existing digit shifts one place left while
+the newly extracted last digit lands in the units position. Do it on 123 by hand:
+result goes 3, then 32, then 321.
+
+WHY THE OVERFLOW CHECK IS THE ACTUAL QUESTION: reversing 1534236469 exceeds the
+32-bit maximum, and the specification says return 0. In Python integers are
+unbounded so you can check afterwards - but say out loud that in C++ or Java you
+must check BEFORE the multiplication, by comparing the result against
+(MAX - digit) / 10. Knowing why the check has to move is what is being tested.
+
+WHY TRAILING ZEROS DISAPPEAR: 120 reverses to 021 which is 21, and that is
+correct - the arithmetic drops the leading zero naturally with no special case.
+
+WHY HANDLE THE SIGN SEPARATELY: negative modulo behaves differently across
+languages, so taking the absolute value first avoids an entire class of
+language-specific bugs.
+
+WHAT PEOPLE GET WRONG: converting to a string and reversing - it works, but it
+sidesteps the arithmetic the question is about; and omitting the overflow clamp.
+""".strip("\n")
+
+_PLAIN_ALGO["Reverse Words in a String"] = r"""
+IN ONE SENTENCE: split on whitespace runs, reverse the list of words, and join
+with single spaces.
+
+STEPS
+1. Split the string on whitespace - the default split drops empty pieces, which
+   collapses multiple spaces and removes leading and trailing ones for free.
+2. Reverse the resulting list.
+3. Join with a single space.
+
+WHY THE DEFAULT SPLIT MATTERS: splitting on a literal single space produces empty
+strings for every doubled space, and those become stray spaces in the output.
+Using the whitespace-run split handles "  the   sky " correctly with no cleanup
+code, and the messy-whitespace cases are exactly what this problem tests.
+
+THE O(1)-SPACE VERSION IF ASKED (on a mutable character array): reverse the
+ENTIRE string, then reverse each word individually in place, then compact the
+spaces. Two reversals composing into a word-level reversal is the same trick as
+Rotate Array - worth naming even if you write the simple version.
+
+WHY THE SIMPLE VERSION IS FINE TO LEAD WITH: it is three lines and obviously
+correct. Offer the in-place approach as the follow-up rather than opening with
+it.
+
+WHAT PEOPLE GET WRONG: splitting on a single space; and reversing the characters
+of each word as well as the word order, which is a different problem.
+""".strip("\n")
+
+_PLAIN_ALGO["Single Number II (appears once among triples)"] = r"""
+IN ONE SENTENCE: XOR no longer cancels when things appear three times, so count
+the set bits at each position and take the count modulo 3.
+
+STEPS
+1. For each of the 32 bit positions, count how many numbers have that bit set.
+2. If that count is not divisible by 3, the lonely number must have that bit -
+   so set it in the answer.
+3. Return the assembled answer.
+
+WHY MODULO 3 REPLACES XOR: XOR is effectively addition modulo 2, which is exactly
+what makes pairs vanish. With triples you need addition modulo 3, and there is no
+single built-in operator for it - so you count each bit position explicitly. Being
+able to state that XOR is mod-2 arithmetic is the insight that generalises this
+to appears-k-times.
+
+WHY IT IS STILL O(n): the outer loop is over a fixed 32 bit positions, which is a
+constant, so the work is 32n - linear. Say that; it looks quadratic at a glance.
+
+THE NEGATIVE-NUMBER TRAP IN PYTHON: Python integers have arbitrary precision and
+negative numbers behave as if infinitely sign-extended, so a naive bit loop
+mishandles them. Mask to 32 bits and, if the top bit is set, convert back by
+subtracting 2^32.
+
+THE SLICKER SOLUTION TO MENTION: two accumulator variables, ones and twos, that
+track bits seen once and twice using bitwise operations - constant space and one
+pass. It is hard to derive live; knowing it exists is enough.
+
+WHAT PEOPLE GET WRONG: reaching for XOR out of habit, which returns nonsense; and
+the sign handling.
+""".strip("\n")
+
+_PLAIN_ALGO["Single Number III (two uniques)"] = r"""
+IN ONE SENTENCE: XOR everything to get a^b, isolate any bit where a and b differ,
+then split the array on that bit and XOR each half separately.
+
+STEPS
+1. XOR every element. All the pairs cancel, leaving a XOR b - the two unique
+   values combined.
+2. Isolate the lowest set bit of that result with x & (-x). Any set bit works;
+   the lowest is easiest to extract.
+3. Walk the array again, XORing numbers that have that bit into one accumulator
+   and numbers that lack it into another.
+4. Return the two accumulators.
+
+WHY A SET BIT IN a^b MEANS THEY DIFFER THERE: XOR produces 1 exactly where the
+inputs disagree. So any set bit is a position where a has 1 and b has 0, or the
+reverse - which is precisely a property that separates them.
+
+WHY THE SPLIT IS CLEAN: every duplicated pair has identical bits, so both copies
+land in the SAME group and cancel there. Meanwhile a and b are guaranteed to land
+in different groups. Each group therefore reduces to the simple Single Number
+problem.
+
+WHY x & (-x) ISOLATES THE LOWEST SET BIT: in two's complement, negating flips
+every bit and adds one, which leaves the lowest set bit matching and everything
+above it inverted. ANDing keeps only that bit. Worth memorising as a standalone
+trick.
+
+WHAT PEOPLE GET WRONG: choosing a bit position where a^b has a ZERO, which fails
+to separate them; and forgetting that duplicates must fall in the same group,
+which is what makes the whole thing work.
+""".strip("\n")
+
+_PLAIN_ALGO["Majority Element II (> n/3)"] = r"""
+IN ONE SENTENCE: Boyer-Moore with TWO candidates instead of one - because at most
+two values can each exceed a third of the array - followed by a verification
+pass.
+
+STEPS
+1. Keep two candidates and two counters.
+2. For each number, in this exact priority order: if it matches candidate one,
+   increment that counter; else if it matches candidate two, increment that one;
+   else if counter one is zero, adopt this number as candidate one; else if
+   counter two is zero, adopt it as candidate two; otherwise decrement BOTH
+   counters.
+3. Second pass: count the actual occurrences of the two surviving candidates and
+   return those that genuinely exceed n/3.
+
+WHY AT MOST TWO ANSWERS EXIST: three values each appearing more than n/3 times
+would need more than n elements. So the answer set has size 0, 1 or 2 - which is
+why two candidate slots suffice.
+
+WHY THE ORDER OF THE CHECKS MATTERS: matching an existing candidate must be tested
+BEFORE adopting a new one, or a number equal to candidate one could be installed
+as candidate two, and the same value would occupy both slots. That ordering is the
+main implementation trap.
+
+WHY DECREMENTING BOTH: it is the generalisation of the single-candidate version's
+cancellation - one occurrence of a third value cancels one of each candidate,
+which is how minority values eliminate themselves.
+
+WHY THE VERIFICATION PASS IS MANDATORY HERE, UNLIKE VERSION ONE: the original
+problem guarantees a majority exists, so the survivor is correct. Here no such
+guarantee is given - the algorithm always produces two candidates even when
+nothing qualifies, so you must count them for real.
+
+WHAT PEOPLE GET WRONG: skipping the verification; and the check ordering, which
+produces duplicate candidates.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Gap (bucket sort)"] = r"""
+IN ONE SENTENCE: spread the numbers into buckets sized just under the average
+gap - then the biggest gap must be BETWEEN buckets, so you never compare within
+one.
+
+STEPS
+1. Fewer than two elements: gap is 0. Find the minimum and maximum; if equal,
+   the gap is 0.
+2. Choose the bucket size as (max - min) divided by (n - 1), at least 1. That is
+   the average gap.
+3. Create the buckets and record only the minimum and maximum value falling in
+   each. You do not need the contents.
+4. Walk the non-empty buckets in order. The candidate gap is the current
+   bucket's minimum minus the previous non-empty bucket's maximum.
+5. Return the largest such gap.
+
+WHY THE MAXIMUM GAP CANNOT BE INSIDE A BUCKET: with n numbers spanning a range,
+the average gap is (max-min)/(n-1) and the LARGEST gap must be at least the
+average. Buckets are sized at the average, so any two numbers inside one bucket
+differ by less than that - which is less than the maximum gap. Therefore the
+answer always spans a bucket boundary. That argument is the entire algorithm and
+it is what you must be able to say.
+
+WHY YOU ONLY STORE EACH BUCKET'S MIN AND MAX: the only comparisons that matter
+cross boundaries, so within a bucket you need the smallest (to compare leftward)
+and largest (to compare rightward). The rest is irrelevant.
+
+WHY IT ACHIEVES O(n) WHEN SORTING IS O(n log n): the question explicitly demands
+linear time, which rules out comparison sorting. Bucketing is the standard escape
+and this is its classic showcase.
+
+WHAT PEOPLE GET WRONG: skipping empty buckets incorrectly - you must compare
+against the last NON-EMPTY bucket, not the immediately previous index; and a
+bucket size of zero when the range is small, hence the max-with-1.
+""".strip("\n")
+
+_PLAIN_ALGO["Min Stack (O(1) getMin)"] = r"""
+IN ONE SENTENCE: alongside the values, keep a second stack whose top is always
+the minimum of everything currently stored.
+
+STEPS
+1. Two stacks: values, and running minimums.
+2. Push: append the value; append the smaller of the value and the current
+   minimum (or the value itself if the min stack is empty).
+3. Pop: pop both together.
+4. Top: the value stack's top. Get-minimum: the min stack's top.
+
+WHY A SINGLE MINIMUM VARIABLE FAILS: when the minimum is popped off, you have no
+record of what the previous minimum was, and recovering it needs a scan. The
+parallel stack stores the answer for every prefix, so popping restores the
+previous minimum automatically. That is the insight the question exists for.
+
+WHY BOTH STACKS MOVE TOGETHER: keeping them the same height means position i of
+the min stack always describes the state after i pushes, which makes pop a single
+symmetric operation with no bookkeeping.
+
+THE SPACE OPTIMISATION IF ASKED: only push onto the min stack when the new value
+is less than or EQUAL to the current minimum, and only pop it when the popped
+value equals the current minimum. The equality is essential in both places - with
+strict comparison, duplicate minimums are recorded once but popped twice, and the
+structure silently breaks.
+
+WHAT PEOPLE GET WRONG: forgetting to pop the min stack, leaving a stale minimum;
+and using strict inequality in the optimised variant.
+""".strip("\n")
+
+_PLAIN_ALGO["Next Greater Element II (circular)"] = r"""
+IN ONE SENTENCE: it is the ordinary monotonic-stack solution, but you walk the
+array TWICE using modulo indexing so elements can find answers that wrap around.
+
+STEPS
+1. Result array filled with -1; an empty stack of indices.
+2. Loop i from 0 to 2n-1, using i modulo n to read the actual value.
+3. While the stack is non-empty and the current value exceeds the value at the
+   stack's top, pop and write the current value into that index's result slot.
+4. Only PUSH during the first pass - when i is less than n.
+5. Return the result.
+
+WHY TWO PASSES ARE ENOUGH: an element's next-greater is either ahead of it, or
+wraps around and lies before it. Walking the array twice exposes every element to
+the full circle exactly once. A third pass would find nothing new.
+
+WHY YOU MUST NOT PUSH IN THE SECOND PASS: the second pass exists only to RESOLVE
+indices still waiting. Pushing again would add duplicate indices and could
+overwrite correct answers with values from the wrong lap.
+
+WHY MODULO RATHER THAN BUILDING A DOUBLED ARRAY: concatenating the array to itself
+also works and is easier to read, at the cost of O(n) extra memory. Modulo
+indexing keeps it O(n) for the stack alone. Either is accepted - say which you
+chose.
+
+WHY -1 IS THE DEFAULT: anything still on the stack after both passes has no
+greater element anywhere in the circle.
+
+WHAT PEOPLE GET WRONG: pushing during both passes; and forgetting the modulo on
+the read, which indexes out of range.
+""".strip("\n")
+
+_PLAIN_ALGO["Rotate Array by k (reversal trick)"] = r"""
+IN ONE SENTENCE: reverse the whole array, then reverse the first k elements and
+the rest separately - three reversals compose into a rotation.
+
+STEPS
+1. Reduce k modulo n, since rotating by a full length changes nothing.
+2. Reverse the entire array.
+3. Reverse the first k elements.
+4. Reverse the remaining n-k elements.
+
+WHY IT WORKS - trace [1,2,3,4,5] with k=2: reversing everything gives
+[5,4,3,2,1]. The last two elements are now at the front but backwards, so
+reversing the first two gives [4,5,3,2,1], and reversing the rest gives
+[4,5,1,2,3] - which is the array rotated right by two. Doing this trace once by
+hand is what makes the trick memorable rather than magical.
+
+WHY THE MODULO IS NOT OPTIONAL: k can exceed n, and without reducing it the
+sub-ranges are nonsensical.
+
+WHY THIS BEATS THE ALTERNATIVES: copying to a new array is O(n) space; rotating
+one step at a time k times is O(nk). The reversal trick is O(n) time and O(1)
+space, which is what the follow-up demands.
+
+THE CYCLIC-REPLACEMENT ALTERNATIVE: move each element directly to its final
+position, following cycles and using the greatest common divisor of n and k to
+know how many cycles there are. Same complexity, considerably harder to get
+right - mention it, write the reversals.
+
+WHAT PEOPLE GET WRONG: rotating left instead of right (the sub-range boundaries
+swap); and forgetting the modulo, which crashes or silently does nothing.
+""".strip("\n")
+
+_PLAIN_ALGO["Spiral Matrix II (generate)"] = r"""
+IN ONE SENTENCE: the same four-wall spiral as reading a matrix, except you WRITE
+an incrementing counter instead of collecting values.
+
+STEPS
+1. Make an n by n grid of zeros. Set top and left to 0, bottom and right to n-1,
+   and a counter at 1.
+2. While the walls have not crossed:
+   a. Walk the top row left to right writing the counter and incrementing; then
+      move top down.
+   b. Walk the right column downward; move right in.
+   c. Walk the bottom row right to left; move bottom up.
+   d. Walk the left column upward; move left in.
+3. Return the grid.
+
+WHY THE GUARDS ARE LESS FIDDLY HERE THAN IN SPIRAL MATRIX I: the grid is square,
+so you never hit the single-row or single-column asymmetry that forces the extra
+checks when reading a rectangular matrix. On an odd n the centre cell is written
+by the top-row pass and the walls then cross, which terminates cleanly. If you
+generalise to rectangles, the guards come back.
+
+WHY THE COUNTER NEEDS NO SEPARATE TRACKING: it increments once per cell written,
+and the spiral visits every cell exactly once, so it ends at n squared naturally.
+
+WHY THE WALLS APPROACH RATHER THAN DIRECTION VECTORS: four integers encode the
+shrinking boundary directly. The alternative - a direction vector that turns when
+it would leave the grid or hit a written cell - needs a visited check on every
+step.
+
+WHAT PEOPLE GET WRONG: writing the same cell twice on odd n by not moving a wall
+after an edge; and starting the counter at 0.
+""".strip("\n")
+
+_PLAIN_ALGO["Basic Calculator (with parentheses)"] = r"""
+IN ONE SENTENCE: accumulate a running result and a current sign; when you meet an
+opening bracket, push the outside context onto a stack and start fresh; when you
+meet the closing one, pop it back and fold the inner result in.
+
+STEPS
+1. Keep a result at 0, a number being built at 0, a sign of +1, and a stack.
+2. A digit extends the number - multiply by ten and add.
+3. A plus or minus: first fold the completed number into the result using the
+   CURRENT sign, then reset the number to 0 and set the sign for what comes next.
+4. An opening bracket: push the current result and the current sign onto the
+   stack, then reset the result to 0 and the sign to +1 - you are evaluating a
+   fresh sub-expression.
+5. A closing bracket: fold the pending number into the result, then pop the saved
+   sign and result and combine: result = savedResult + savedSign times
+   innerResult.
+6. At the end, fold in any pending number and return.
+
+WHY YOU PUSH THE SIGN AS WELL AS THE RESULT: the bracket may be preceded by a
+minus, as in "5 - (3 + 2)", and that minus applies to the ENTIRE parenthesised
+value. Saving only the result loses it and the sign is applied to just the first
+term. This is the single most common bug in this problem.
+
+WHY THERE IS NO PRECEDENCE HANDLING: with only plus and minus, everything is left
+to right, so a running total works. Add multiplication and you need either a
+second accumulator or the shunting-yard algorithm - worth saying, because the
+follow-up is usually "now support times and divide".
+
+WHY THE NUMBER IS FOLDED IN LAZILY: you cannot act on a number until you know it
+has ended, which is signalled by the next operator, bracket, or the end of the
+string. Hence the fold appears in several branches.
+
+WHAT PEOPLE GET WRONG: not saving the sign; forgetting the final fold after the
+loop; and mishandling multi-digit numbers or spaces.
+""".strip("\n")
+
+_PLAIN_ALGO["Sliding Window Maximum (deque)"] = r"""
+IN ONE SENTENCE: keep a deque of INDICES whose values decrease from front to
+back - the front is always the current window's maximum.
+
+STEPS
+1. Walk the array with the right edge.
+2. Drop the front index if it has fallen out of the window - that is, if it is at
+   or before (i minus k).
+3. While the back of the deque holds a value less than or equal to the incoming
+   value, pop it from the back. Those elements can never be the maximum again -
+   the newcomer is bigger and will outlive them.
+4. Push the current index at the back.
+5. Once the window is full, record the value at the front index.
+
+WHY THE SMALLER ELEMENTS CAN BE DISCARDED PERMANENTLY: if an earlier element is
+smaller than the one just arrived, then for every future window containing the
+earlier one, the newer one is also present and is larger. The earlier element is
+dominated forever, so it can be deleted with no loss. That domination argument is
+the whole algorithm.
+
+WHY A DEQUE AND NOT A HEAP: a heap gives the maximum in O(log k) but cannot
+efficiently remove an element that has merely expired. The deque removes from the
+front by index and from the back by dominance, both O(1) - so the whole run is
+O(n) rather than O(n log k).
+
+WHY INDICES RATHER THAN VALUES: you must know when an element leaves the window,
+which is a question about position.
+
+WHY IT IS O(n) DESPITE THE INNER WHILE: each index is pushed once and popped
+once. Total work is linear - the same counting argument as every monotonic
+structure.
+
+WHAT PEOPLE GET WRONG: popping from the front by value rather than by expiry;
+using strict less-than in step 3 when equal values also need removing (either
+works, but be deliberate); and recording results before the first full window.
+""".strip("\n")
+
+_PLAIN_ALGO["Add Digits (digital root)"] = r"""
+IN ONE SENTENCE: repeatedly summing digits until one remains is the digital root,
+and there is a closed form: 1 + (n-1) mod 9, with zero as a special case.
+
+STEPS
+1. If the number is 0, return 0.
+2. Otherwise return 1 plus (number minus 1) modulo 9.
+
+WHY THE FORMULA IS TRUE: summing the digits of a number never changes its
+remainder modulo 9, because 10 leaves remainder 1 when divided by 9, and so does
+every power of 10. So the digital root equals the number modulo 9 - except that
+multiples of 9 give remainder 0 while their digital root is 9. The expression
+1 + (n-1) mod 9 shifts the range to 1..9 and fixes exactly that case.
+
+WHY THE ZERO GUARD: 0 has digital root 0, but the formula would give 1 + (-1 mod
+9), which is 9 in Python. It is the only input that breaks it.
+
+WHY THIS IS ASKED: the loop version is four lines and obviously correct, so the
+question is really "can you find the O(1) form and justify it?". Lead with the
+loop, then present the formula WITH the mod-9 reasoning - the formula alone,
+unexplained, looks memorised.
+
+WHERE THE MOD-9 FACT IS USED FOR REAL: casting out nines, a classic hand
+arithmetic check, and some checksum schemes.
+
+WHAT PEOPLE GET WRONG: n % 9 alone, which returns 0 instead of 9 for multiples of
+nine; and forgetting the zero case.
+""".strip("\n")
+
+_PLAIN_ALGO["Average Salary Excluding the Minimum and Maximum"] = r"""
+IN ONE SENTENCE: total everything, subtract the single smallest and single
+largest, divide by two fewer than the count.
+
+STEPS
+1. Sum the salaries.
+2. Subtract the minimum and the maximum.
+3. Divide by the length minus 2.
+
+WHY YOU SUBTRACT RATHER THAN SORT: you only need the two extreme VALUES, not the
+order of everything else. Three linear scans (sum, min, max) beat an O(n log n)
+sort, and in one pass you could compute all three together.
+
+WHY EXACTLY ONE OF EACH IS REMOVED EVEN WITH DUPLICATES: the problem removes one
+minimum and one maximum, not all occurrences of them. If three people earn the
+lowest salary, two of them remain in the average. Subtracting the value once is
+exactly right - and misreading this is the only conceptual trap here.
+
+WHY THE DENOMINATOR IS n-2: two entries have been removed. The constraints
+guarantee at least three salaries, so it is never zero.
+
+WHY FLOATING-POINT DIVISION: the answer is an average and is expected to be a
+real number. Integer division silently truncates.
+
+WHAT PEOPLE GET WRONG: removing every occurrence of the extremes; and dividing by
+the original length.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Elements With Strictly Smaller and Greater Elements"] = r"""
+IN ONE SENTENCE: an element qualifies exactly when it is neither the smallest nor
+the largest value in the array - so find both extremes and count what lies
+strictly between.
+
+STEPS
+1. Find the minimum and the maximum.
+2. Count the elements strictly greater than the minimum and strictly less than
+   the maximum.
+
+WHY "HAS SOMETHING SMALLER AND SOMETHING LARGER" REDUCES TO THAT: if a value
+exceeds the global minimum, then something smaller exists by definition; if it is
+below the global maximum, something larger exists. So the two conditions collapse
+to a simple range test and you never compare pairs.
+
+WHY STRICT COMPARISONS ON BOTH SIDES: an element EQUAL to the minimum has nothing
+strictly smaller, so it fails - even if other copies of that value exist.
+Duplicates of the extremes are excluded, which is the detail the problem is
+checking.
+
+WHY THE ALL-EQUAL CASE RETURNS ZERO: the minimum and maximum coincide, so no
+value can be strictly between them - and the formula gives 0 with no special
+case.
+
+WHY NOT SORT: you only need two aggregate values, both obtainable in one linear
+pass. Sorting is O(n log n) for information you do not use.
+
+WHAT PEOPLE GET WRONG: using non-strict comparisons, which counts the extremes;
+and comparing every pair, which is quadratic.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
