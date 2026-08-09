@@ -22738,6 +22738,494 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P0[_e["title"]]
 
 
+_EX_P0B = {}
+
+_EX_P0B["3Sum"] = [
+    """The textbook case, traced.
+nums = [-1,0,1,2,-1,-4] -> sorted [-4,-1,-1,0,1,2]
+i=0 (-4): lo=1 hi=5 -> -4-1+2=-3 <0, lo++ ... no triplet sums to 0.
+i=1 (-1): lo=2 hi=5 -> -1-1+2=0 HIT, record [-1,-1,2]. lo=3,hi=4 -> -1+0+1=0
+          HIT, record [-1,0,1].
+i=2 (-1): equals nums[1], SKIP - otherwise [-1,0,1] is emitted twice.
+i=3 (0):  0+1+2=3 >0, hi-- ... nothing.
+Answer [[-1,-1,2],[-1,0,1]].""",
+
+    """The all-zeros case, which exposes duplicate handling.
+nums = [0,0,0,0]. Sorted, i=0: lo=1 hi=3 -> 0 HIT, record [0,0,0].
+Then lo advances while nums[lo]==nums[lo-1], so lo runs to hi and the inner loop
+ends. i=1 skips (equals nums[0]), and so on.
+Correct answer is exactly one triplet. Without either skip you get up to four
+copies of [0,0,0].""",
+
+    """No solution at all.
+nums = [1,2,3]. Sorted, i=0: 1+2+3=6 > 0, hi-- , lo meets hi, done. Empty
+result.
+Also nums with fewer than 3 elements: the outer loop range is len-2, so it never
+runs. Both handled without special cases.""",
+
+    """The case that shows why sorting is the whole trick.
+Unsorted, you would need a hash-set approach per pair - O(n^2) with O(n) space
+and messy deduplication, because you cannot tell which duplicates you have
+already emitted.
+Sorted, the array gives you two things at once: a DIRECTION (sum too small ->
+move lo right, because everything right is larger) and ADJACENCY of duplicates
+(so the skip is a one-line neighbour comparison). Both come from the same
+O(n log n) sort.""",
+
+    """A larger case, to see the pruning.
+nums = [-5,-4,-3,-2,1,2,3,4,5]
+i on -5: pointers find (-5,1,4) and (-5,2,3).
+i on -4: finds (-4,-1?no) ... (-4,1,3).
+Once nums[i] > 0 you could break entirely - if the smallest of three sorted
+numbers is positive, their sum cannot be zero. That early exit is not required
+but it is a good thing to mention; it turns many real inputs from O(n^2) into
+near-linear.""",
+
+    """The generalisation interviewers move to.
+4Sum: fix two indices in nested loops and two-pointer the rest - O(n^3).
+kSum: recurse, peeling one index per level down to the two-pointer base case -
+O(n^(k-1)).
+3Sum Closest: same sweep, but instead of testing for zero you track the smallest
+|sum - target| seen.
+3Sum Smaller: on a hit, add (hi - lo) at once and advance lo, because every
+partner between them also qualifies - the bulk-count trick.""",
+]
+
+_EX_P0B["Binary Tree Right Side View"] = [
+    """The textbook case, traced.
+      1
+    2   3
+      5   4
+Level 0: queue [1], size 1 -> last is 1, record 1. Push 2,3.
+Level 1: size 2 -> pop 2 (not last), pop 3 (last) record 3. Push 5,4.
+Level 2: size 2 -> pop 5, pop 4 (last) record 4.
+Answer [1,3,4].""",
+
+    """The case that breaks 'just follow right children'.
+      1
+    2
+  3
+Following right pointers from the root gives [1] - the right child is empty.
+Level order gives [1,2,3]: standing on the right you can see the entire left
+chain, because nothing blocks it.
+This single example is why the problem is level-order rather than a walk.""",
+
+    """A mixed case where visibility alternates sides.
+      1
+    2   3
+  4
+Level 0 -> 1. Level 1 -> 3 (rightmost). Level 2 -> 4, because 4 is the ONLY node
+at that level, so it is trivially the rightmost.
+Answer [1,3,4]. The visible node switches from the right subtree to the left
+subtree between levels, which no pointer-following approach can produce.""",
+
+    """The empty tree and the single node.
+Empty -> return an empty list before the loop, or the queue-size read fails.
+Single node -> one level, one node, which is the last of its level -> [1].
+Both fall out of the standard skeleton.""",
+
+    """Why freezing the queue size is the critical line.
+You push children into the same queue you are popping from, so its length grows
+while you work. If the inner loop reads the CURRENT length each iteration, it
+keeps consuming into the next level and the boundary dissolves - you end up with
+one flat traversal and the wrong answer.
+Snapshot the size before the inner loop. That one line is the backbone of every
+level-order variant.""",
+
+    """The variants this unlocks, all the same skeleton.
+Left side view: record index 0 instead of the last.
+Average of levels: sum and divide by the frozen size.
+Zigzag: reverse alternate levels when building the output.
+Largest value per level: max of the level.
+Minimum depth: return the depth of the first level containing a leaf.
+Learn the frozen-size loop once and six problems become three-line edits.""",
+]
+
+_EX_P0B["Clone Graph (DFS)"] = [
+    """The textbook case, traced.
+Graph: 1 -- 2, 1 -- 4, 2 -- 3, 3 -- 4 (a square).
+dfs(1): not in map -> create clone 1', REGISTER it, then loop neighbours.
+  dfs(2): create 2', register, neighbours: dfs(1) -> already in map, returns 1'.
+          dfs(3): create 3', register, neighbours dfs(2)->2', dfs(4)->new 4'...
+  Eventually every node has exactly one clone and the edges mirror the original.
+Four nodes created, each visited once.""",
+
+    """The cycle case - what happens without early registration.
+Two nodes pointing at each other: 1 -- 2.
+Correct order: create 1', register 1->1', then dfs(2) creates 2', registers,
+then dfs(1) finds 1' in the map and returns it. Done.
+Wrong order (recurse before registering): dfs(1) creates 1', calls dfs(2), which
+creates 2', calls dfs(1) - not in the map yet - which creates ANOTHER 1', calls
+dfs(2) again... infinite recursion until the stack dies.
+Registering before descending is the entire problem.""",
+
+    """The single node with no edges.
+node = 1 with an empty neighbour list. dfs creates 1', registers it, the
+neighbour loop body never runs, returns 1'. Correct.
+And the empty input: return nothing immediately, before touching the map.""",
+
+    """Why the map is keyed by NODE, not by value.
+Values can repeat in a general graph - two distinct nodes may both hold 5.
+Keying by value would make them collapse into one clone, silently merging two
+parts of the graph.
+Keying by the node object (identity) is correct. In Python that means the node
+must be hashable, which it is by default. Mention this if the interviewer says
+values are not guaranteed unique.""",
+
+    """A disconnected graph, and the assumption to check.
+This solution starts from one node and reaches only its connected component. If
+the graph has several components, you would need a loop over all nodes with a
+shared map.
+The standard problem statement guarantees connectivity, so the single-entry
+version is correct - but stating that you noticed the assumption is worth
+doing.""",
+
+    """The BFS alternative, for very deep graphs.
+Create the start node's clone and put the original in a queue. While the queue
+is non-empty: pop a node, and for each neighbour, create and register its clone
+if unseen (pushing it), then append the neighbour's clone to the current clone's
+list.
+Same O(V + E), no recursion, so it survives graphs deeper than the stack limit.
+The registration-before-exploration rule is identical - it just becomes
+"register when you enqueue".""",
+]
+
+_EX_P0B["Coin Change (fewest coins)"] = [
+    """The textbook case, traced.
+coins = [1,2,5], amount = 11.
+dp[0]=0. Building up:
+  dp[1]=1 (1)      dp[2]=1 (2)       dp[3]=2 (2+1)
+  dp[4]=2 (2+2)    dp[5]=1 (5)       dp[6]=2 (5+1)
+  dp[7]=2 (5+2)    dp[8]=3 (5+2+1)   dp[9]=3 (5+2+2)
+  dp[10]=2 (5+5)   dp[11]=3 (5+5+1)
+Answer 3.""",
+
+    """The impossible case.
+coins = [2], amount = 3. dp[1] stays infinity (no coin fits), dp[2]=1,
+dp[3] = dp[1]+1 which is still infinity.
+Return -1. The infinity sentinel is what makes this fall out naturally - with a
+-1 sentinel you would need a guard on every lookup.""",
+
+    """The greedy counterexample - have this ready.
+coins = [1,3,4], amount = 6.
+Greedy takes the largest first: 4, then 1, then 1 = THREE coins.
+DP finds 3 + 3 = TWO coins.
+Greedy fails because taking the biggest coin now can leave a remainder that
+needs many small coins. DP tries every last-coin choice at every amount, so it
+cannot be misled. Interviewers ask specifically for a counterexample here.""",
+
+    """Amount zero, and why dp[0] = 0 matters.
+amount = 0 -> answer 0, no coins needed. The base case returns it directly.
+More importantly, dp[0]=0 is what every other cell is ultimately built from - if
+you seed it wrong, every answer is off by one or infinite.""",
+
+    """The complexity, and when it stops being acceptable.
+O(amount x number of coins) time, O(amount) space. For amount = 10,000 and 10
+coins that is 100,000 operations - trivial.
+But the amount is a VALUE, not an input length, so this is pseudo-polynomial: an
+amount of 10^9 makes the table impossible regardless of how few coins there are.
+Saying "pseudo-polynomial" and explaining why is a strong signal.""",
+
+    """The sibling that flips the loop order.
+Coin Change II counts the number of WAYS rather than the minimum coins, and
+there the loop order decides the answer: coins outside counts combinations,
+amounts outside counts permutations.
+For THIS problem either order works, because a minimum does not care about
+ordering. Knowing which problems are order-sensitive - and why - is what the
+pairing is testing.""",
+]
+
+_EX_P0B["Decode Ways (DP)"] = [
+    """The textbook case, traced.
+s = "226". prev=1, curr=1.
+  i=1 ('2'): single '2' valid -> cur += curr = 1. two-digit "22" is 22, in
+             10..26 -> cur += prev = 1. cur=2. Slide: prev=1, curr=2.
+  i=2 ('6'): single '6' valid -> cur += 2. two-digit "26" = 26, valid ->
+             cur += 1. cur=3.
+Answer 3: "2 2 6" (BBF), "22 6" (VF), "2 26" (BZ).""",
+
+    """The leading-zero rejection.
+s = "06". The very first character is '0', which cannot decode - there is no
+letter 0 - so return 0 immediately before the loop.
+Contrast "10", which is valid as a single pair -> 1 way. The zero is only legal
+when it is the second digit of 10 or 20.""",
+
+    """The zero that kills a branch mid-string.
+s = "230".
+  i=1 ('3'): single valid (+1), "23" valid (+1) -> curr=2.
+  i=2 ('0'): single '0' is NOT valid, so no addition from curr. Two-digit "30"
+             is 30, outside 10..26, so no addition from prev. cur = 0.
+Answer 0 - the string cannot be decoded at all. A zero that is neither preceded
+by 1 nor 2 makes the whole decoding impossible.""",
+
+    """The classic bug: allowing "06" as a pair.
+s = "106".
+  i=1 ('0'): single invalid; "10" = 10, valid -> curr = prev = 1.
+  i=2 ('6'): single '6' valid -> +1 (from curr=1); two-digit "06" = 6, which is
+             NOT in 10..26 -> no addition.
+Answer 1 ("10 6" = JF). If you only checked "is the pair <= 26" and forgot the
+lower bound of 10, you would count "06" and return 2. Checking both bounds is
+the fix.""",
+
+    """A longer string to see the Fibonacci-like growth.
+s = "11111" -> 8 ways. s = "111111" -> 13.
+When every adjacent pair is a valid letter, the recurrence is exactly
+f(n) = f(n-1) + f(n-2) - the Fibonacci numbers. Zeros and out-of-range pairs are
+what break that pattern and collapse the count.
+Recognising the Fibonacci skeleton makes the two-variable structure obvious.""",
+
+    """Why two variables suffice, and the follow-up.
+Each position looks back at most two characters, so a rolling window of two
+counts is enough - O(1) space instead of an O(n) table.
+The follow-up is usually Decode Ways II, which introduces '*' as a wildcard for
+1-9. The structure survives, but each branch becomes a count of possibilities
+(a '*' alone is 9 ways; "1*" is 9; "2*" is 6), and the arithmetic gets fiddly.
+Same recurrence, richer transitions.""",
+]
+
+_EX_P0B["Generate Parentheses (backtracking)"] = [
+    """The textbook case, traced.
+n = 2. Start "" (0 open, 0 close).
+  "(" (1,0)
+    "((" (2,0) -> can only close: "(()" then "(())" - length 4, record.
+    "()" (1,1) -> open<2 so "()(", then "()()" - record.
+Answer ["(())", "()()"]. The tree of choices has exactly two leaves.""",
+
+    """n = 1 and n = 0.
+n = 1 -> ["()"] - the only well-formed string.
+n = 0 -> [""] by convention, since the empty string is vacuously balanced. Worth
+confirming which the problem wants; some expect an empty list.""",
+
+    """The invalid string the second condition prevents.
+Suppose you compared close against n instead of against open. Starting from "",
+you could add ")" first, producing ")(" - correct length, completely invalid.
+The rule "you can only close what you have already opened" is enforced by
+close < open. Read it out loud when you write it; it is the invariant.""",
+
+    """Why pruning beats generate-and-filter.
+Brute force: generate all 2^(2n) strings of brackets and keep the valid ones.
+For n=5 that is 1,024 strings of which only 42 are valid - 96% wasted.
+For n=10, 1,048,576 strings for 16,796 valid ones.
+Backtracking never constructs an invalid prefix at all, so the work is
+proportional to the OUTPUT size, not the search space. That is the defining idea
+of backtracking.""",
+
+    """The count, and what it tells you about complexity.
+The number of results is the nth Catalan number: 1, 2, 5, 14, 42, 132 for
+n = 1..6.
+Since the output itself grows exponentially, no algorithm can be polynomial -
+you must produce every string. So O(4^n / sqrt(n)) is the honest complexity, and
+saying "the output is exponential, so that is the floor" is the right way to
+answer the complexity question.""",
+
+    """The string-building detail that matters at scale.
+Passing current + "(" creates a new string at every call - O(n) per node.
+Using a list you append to and pop from makes each step O(1), joining once at a
+leaf.
+For n=10 with 16,796 results the difference is measurable. It is also the same
+choose/explore/un-choose discipline as every other backtracking problem, so it
+is worth writing that way by default.""",
+]
+
+_EX_P0B["Longest Substring Without Repeating Characters"] = [
+    """The textbook case, traced.
+s = "abcabcbb". left=0, best=0.
+  r=0 'a': last={a:0}, width 1, best 1
+  r=1 'b': width 2, best 2
+  r=2 'c': width 3, best 3
+  r=3 'a': 'a' last seen at 0, which is >= left, so left=1. width 3.
+  r=4 'b': last 1 >= left(1), left=2. width 3.
+  r=5 'c': last 2 >= left(2), left=3. width 3.
+  r=6 'b': last 4 >= 3, left=5. width 2.
+  r=7 'b': last 6 >= 5, left=7. width 1.
+Answer 3 ("abc").""",
+
+    """The case that requires the 'at or after left' check.
+s = "abba".
+  r=0 'a': left=0, last={a:0}, best 1
+  r=1 'b': best 2 ("ab")
+  r=2 'b': 'b' last at 1 >= left(0) -> left=2. width 1.
+  r=3 'a': 'a' last at 0. Without the check you would set left = 1, moving it
+           BACKWARDS and reporting a window "bba" that contains a repeat.
+           With the check, 0 < left(2), so 'a' is stale - ignore it. width 2.
+Answer 2. This input is precisely why the stale-index test exists.""",
+
+    """All identical, and all distinct.
+s = "bbbb": every character repeats immediately, left chases right, best 1.
+s = "abcdef": no repeats ever, left never moves, best 6.
+These two bracket the behaviour and are worth running as a sanity check after
+any edit.""",
+
+    """The empty string and a single character.
+"" -> 0, the loop never runs.
+"a" -> 1.
+Both handled with no special casing, which is a sign the width formula
+(right - left + 1) is correct.""",
+
+    """Why it is O(n) despite looking like nested scanning.
+The left edge only ever moves FORWARD. Across the whole run, right advances n
+times and left advances at most n times, so the total pointer movement is
+bounded by 2n.
+Count total movement rather than reading loop nesting - the same argument
+applies to every sliding-window and monotonic-stack problem.""",
+
+    """The jump versus the shrink-loop variant.
+An alternative removes characters from a set one at a time in an inner while
+loop until the duplicate is gone. That is also O(n) amortised and slightly
+easier to reason about.
+The last-seen-index jump moves left in one step instead of several. Both are
+accepted; the jump requires the staleness check, the shrink loop does not.
+Knowing why the jump needs an extra guard is the interesting part.""",
+]
+
+_EX_P0B["Lowest Common Ancestor of a Binary Tree"] = [
+    """The textbook case, traced.
+      3
+    5   1
+  6  2 0 8
+    7 4
+LCA(5, 1): at node 3, left search finds 5 (returns 5 immediately), right search
+finds 1. Both non-empty -> node 3 is the answer.""",
+
+    """The case where one node is an ancestor of the other.
+LCA(5, 4) in the same tree.
+At node 5, the function returns 5 immediately because the node IS one of the
+targets - it does NOT keep searching below for 4.
+That early return is deliberate: if one target is an ancestor of the other, the
+ancestor is the answer. Continuing the search would still work but the early
+return is what makes the code four lines.""",
+
+    """Both targets in the same subtree.
+LCA(6, 4): at node 3, the right search returns nothing, the left search returns
+node 5 (because within 5, one side found 6 and the other found 4, so 5 is the
+meeting point).
+Only one side is non-empty at the root, so the root passes 5 upward unchanged.
+Answer 5.""",
+
+    """Why no parent pointers or path lists are needed.
+The obvious approach records the root-to-node path for each target and compares
+them - correct, and O(n) extra space.
+This version needs neither. Each call reports one of three things: nothing found
+below me, something found below me, or I am the meeting point. The first node to
+see results from BOTH sides is necessarily the lowest, because anything higher
+would also see both but is reached later on the way up.""",
+
+    """The BST version, which is much simpler.
+In a Binary Search Tree you can walk down from the root: if both targets are
+smaller go left, if both larger go right, otherwise you have found the split
+point.
+O(height) and O(1) space, no recursion. If the interviewer says BST and you give
+the general-tree solution, you have missed the point of the question - and the
+reverse mistake is worse.""",
+
+    """The assumption to raise.
+The standard statement guarantees both nodes EXIST in the tree. If they might
+not, this solution can return a non-null answer when only one is present -
+it would return that one node.
+Handling absence properly requires either a pre-check or returning a count
+alongside the node. Naming that assumption unprompted is a good signal.""",
+]
+
+_EX_P0B["Merge Intervals"] = [
+    """The textbook case, traced.
+[[1,3],[2,6],[8,10],[15,18]] - already sorted by start.
+  merged=[[1,3]].
+  [2,6]: 2 <= 3, overlap -> extend end to max(3,6)=6. merged=[[1,6]].
+  [8,10]: 8 > 6, gap -> append. merged=[[1,6],[8,10]].
+  [15,18]: 15 > 10 -> append.
+Answer [[1,6],[8,10],[15,18]].""",
+
+    """The swallowed interval - why max() on the end matters.
+[[1,10],[2,3]] sorted by start.
+  merged=[[1,10]]. Then [2,3]: 2 <= 10 so they overlap.
+  With max: end stays max(10,3)=10 -> [[1,10]]. Correct.
+  Without max (assigning 3 blindly): [[1,3]] - you have silently shrunk the
+  interval and lost coverage from 3 to 10.
+This is the single most common bug in the problem.""",
+
+    """Touching intervals - the ambiguity to raise.
+[[1,4],[4,5]]. With <= they merge into [1,5]. With strict < they stay separate.
+Both are defensible depending on whether the intervals are closed or half-open.
+Ask. For meeting rooms, a meeting ending at 4 and another starting at 4 usually
+do NOT conflict; for numeric ranges they usually do merge.""",
+
+    """Unsorted input, which is what makes sorting mandatory.
+[[8,10],[1,3],[2,6]] - without sorting, the sweep compares [1,3] against
+merged's last [8,10], sees no overlap, and appends - producing three intervals
+when the answer is two.
+Sorting by start is what guarantees that anything capable of overlapping the
+current interval comes next, which is what collapses O(n^2) pairwise comparison
+into one pass.""",
+
+    """Edge cases.
+Empty input -> empty output, guarded before indexing.
+One interval -> returned unchanged.
+Identical intervals [[1,4],[1,4]] -> merge into one, since 1 <= 4.
+All disjoint -> every interval appended, output equals input.""",
+
+    """The family, and when to sort by END instead.
+Insert Interval: three phases over an already-sorted list.
+Meeting Rooms II: sort by start, min-heap of end times; the heap size is the
+rooms needed.
+Non-overlapping Intervals and Minimum Arrows: sort by END and greedily keep -
+because when you want to KEEP the most intervals, finishing earliest leaves the
+most room.
+Rule of thumb: sort by start to MERGE, sort by end to SELECT.""",
+]
+
+_EX_P0B["Number of Islands (DFS flood-fill)"] = [
+    """The textbook case, traced.
+grid = 11110 / 11010 / 11000 / 00000
+Scan row 0: (0,0) is '1' -> count=1, sink the whole connected mass. The DFS
+spreads through (0,0),(0,1),(0,2),(0,3),(1,0),(1,1),(1,3),(2,0),(2,1) - every
+land cell orthogonally connected.
+Continue scanning: everything is now '0'.
+Answer 1. All the land was one island despite the ragged shape.""",
+
+    """A grid with several islands.
+11000 / 11000 / 00100 / 00011
+(0,0) starts island 1 and sinks four cells.
+(2,2) is untouched land -> island 2, sinks one cell.
+(3,3) -> island 3, sinks two cells.
+Answer 3. Note (2,2) and (3,3) are diagonal neighbours and are NOT connected -
+only up/down/left/right count. Confirm that with the interviewer; some variants
+use 8-directional connectivity.""",
+
+    """All water, and all land.
+00000 -> 0 islands, the sink function is never called.
+11111 / 11111 -> exactly 1 island; the first cell's DFS sinks the entire grid,
+so the outer loop finds nothing more.
+These bracket the counter's behaviour.""",
+
+    """Why sinking replaces a visited set.
+Turning land into water makes the cell fail the '1' test forever, so a separate
+visited structure is unnecessary and you save O(mn) memory.
+If the interviewer says the grid must not be modified, switch to a visited set
+of coordinates - and say so proactively, because destroying the caller's input
+is a real design concern.""",
+
+    """The scale case that breaks the recursion.
+A 1000 x 1000 grid of all '1's. The DFS recursion depth reaches one million and
+Python raises RecursionError long before that.
+Fixes: an explicit stack, or BFS with a queue. Both are the same algorithm with
+your own container instead of the call stack. Mention this whenever the
+interviewer says "large grid".""",
+
+    """The Union-Find alternative, and when it wins.
+Treat each land cell as a node, union it with its land neighbours, and count the
+distinct roots. Same answer, O(mn x alpha).
+DFS is simpler for a static grid. Union-Find wins when the grid CHANGES over
+time - "Number of Islands II", where land is added one cell at a time and you
+must report the count after each addition. Re-running DFS after every addition
+would be O(k x mn); Union-Find handles each addition in near-constant time.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0B:
+        _e["examples"] = _EX_P0B[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
