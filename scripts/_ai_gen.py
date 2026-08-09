@@ -16,285 +16,246 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Plus One",
-         answer="Given digits of a number (most significant first), add one and return the digit array. Walk from the last digit: if it's 9 it becomes 0 and carries; otherwise increment and return. If all were 9, prepend a 1.",
-         tags=["plus-one","digits","carry","array","dsa"],
-         code='''# Add one to a number represented as a digit array.
-def plus_one(digits):
-    for i in range(len(digits) - 1, -1, -1):
-        if digits[i] < 9:
-            digits[i] += 1             # no carry: done
-            return digits
-        digits[i] = 0                  # 9 -> 0 and carry left
-    return [1] + digits                # all nines: e.g. 999 -> 1000''',
-         complexity="Time O(n), space O(1) (amortized).",
-         pitfalls="Forgetting the all-nines prepend; converting to int (overflows for big numbers in other languages).",
-         example="plus_one([1,2,9]) -> [1,3,0]; plus_one([9,9]) -> [1,0,0]."),
-    dict(cat="dsa", title="Add Binary",
-         answer="Add two binary strings and return the binary sum string. Walk both from the right with a carry, summing bit + bit + carry, appending sum%2 and carrying sum//2.",
-         tags=["add-binary","strings","carry","bit-manipulation","dsa"],
-         code='''# Add two binary strings, returning the binary sum.
-def add_binary(a, b):
-    i, j = len(a) - 1, len(b) - 1
-    carry = 0
-    out = []
-    while i >= 0 or j >= 0 or carry:
-        total = carry
-        if i >= 0:
-            total += int(a[i]); i -= 1
-        if j >= 0:
-            total += int(b[j]); j -= 1
-        out.append(str(total % 2))     # this bit
-        carry = total // 2             # carry up
-    return ''.join(reversed(out))''',
-         complexity="Time O(max(n, m)), space O(max(n, m)).",
-         pitfalls="Dropping the final carry; not reversing the output digits.",
-         example="add_binary('11', '1') -> '100'."),
-    dict(cat="dsa", title="Excel Sheet Column Number",
-         answer="Convert an Excel column title (A, B, ..., Z, AA, ...) to its number. It's base-26 with digits 1..26: for each char, result = result*26 + (ord(c)-ord('A')+1).",
-         tags=["excel-column-number","base-26","string","math","dsa"],
-         code='''# Excel column title -> its 1-based column number (base 26).
-def title_to_number(column_title):
+    dict(cat="dsa", title="Reverse Integer",
+         answer="Reverse the digits of a 32-bit signed integer; return 0 on overflow. Pop digits with %10 and //10, push onto the result, and check the 32-bit bounds before it overflows.",
+         tags=["reverse-integer","math","overflow","dsa"],
+         code='''# Reverse a signed 32-bit integer's digits; 0 on overflow.
+def reverse_integer(x):
+    INT_MIN, INT_MAX = -2**31, 2**31 - 1
+    sign = -1 if x < 0 else 1
+    x = abs(x)
     result = 0
-    for ch in column_title:
-        result = result * 26 + (ord(ch) - ord('A') + 1)
+    while x:
+        result = result * 10 + x % 10   # append the next digit
+        x //= 10
+    result *= sign
+    if result < INT_MIN or result > INT_MAX:
+        return 0                        # overflow -> 0
     return result''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Treating it as 0-indexed base 26 (it's 1..26, no zero digit); wrong char offset.",
-         example="title_to_number('AB') -> 28; title_to_number('ZY') -> 701."),
-    dict(cat="dsa", title="Excel Sheet Column Title",
-         answer="Convert a column number to its Excel title. It's bijective base-26 (no zero): repeatedly subtract 1, take mod 26 for the letter, then divide by 26.",
-         tags=["excel-column-title","base-26","math","string","dsa"],
-         code='''# Column number -> Excel column title (bijective base 26).
-def number_to_title(n):
-    out = []
-    while n > 0:
-        n -= 1                         # shift to 0-indexed for this digit
-        out.append(chr(ord('A') + n % 26))
-        n //= 26
-    return ''.join(reversed(out))''',
-         complexity="Time O(log n), space O(log n).",
-         pitfalls="Forgetting the n-=1 shift (bijective base 26 has no zero); not reversing.",
-         example="number_to_title(28) -> 'AB'; number_to_title(701) -> 'ZY'."),
-    dict(cat="dsa", title="Happy Number",
-         answer="Repeatedly replace n by the sum of squares of its digits; n is happy if this reaches 1, unhappy if it loops. Detect the cycle with a seen-set (or Floyd's two pointers).",
-         tags=["happy-number","cycle-detection","hash-set","math","dsa"],
-         code='''# True if repeated digit-square-sum reaches 1 (else it cycles).
-def is_happy(n):
-    def squares(x):
-        return sum(int(d) ** 2 for d in str(x))
-    seen = set()
-    while n != 1 and n not in seen:
-        seen.add(n)
-        n = squares(n)                 # advance the sequence
-    return n == 1''',
-         complexity="Time O(log n) per step, bounded steps; space O(number of distinct values).",
-         pitfalls="No cycle detection -> infinite loop on unhappy numbers; squaring the number instead of each digit.",
-         example="is_happy(19) -> True; is_happy(2) -> False."),
-    dict(cat="dsa", title="Power of Three",
-         answer="Check if n is a power of 3. Iterative: while n divisible by 3, divide; happy if it reduces to 1. (Or use the max-int power-of-3 divisibility trick.)",
-         tags=["power-of-three","math","division","dsa"],
-         code='''# True if n is a power of three.
-def is_power_of_three(n):
-    if n < 1:
-        return False
-    while n % 3 == 0:
-        n //= 3                        # strip factors of 3
-    return n == 1''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Not handling n <= 0; using float logs (rounding errors misclassify edge values).",
-         example="is_power_of_three(27) -> True; is_power_of_three(45) -> False."),
-    dict(cat="dsa", title="Ugly Number",
-         answer="An ugly number is positive with only prime factors 2, 3, and 5. Divide out all 2s, 3s, and 5s; it's ugly if what remains is 1.",
-         tags=["ugly-number","math","factorization","dsa"],
-         code='''# True if n's only prime factors are 2, 3, and 5.
-def is_ugly(n):
-    if n < 1:
-        return False
-    for p in (2, 3, 5):
-        while n % p == 0:
-            n //= p                    # remove this prime factor fully
-    return n == 1''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Not rejecting n <= 0; leaving a factor because you divided each prime only once.",
-         example="is_ugly(6) -> True; is_ugly(14) -> False."),
-    dict(cat="dsa", title="Valid Perfect Square",
-         answer="Decide if n is a perfect square without sqrt. Binary search the root in [1, n]: mid*mid vs n narrows the range.",
-         tags=["valid-perfect-square","binary-search","math","dsa"],
-         code='''# True if n is a perfect square, via binary search on the root.
-def is_perfect_square(n):
-    lo, hi = 1, n
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        sq = mid * mid
-        if sq == n:
-            return True
-        if sq < n:
-            lo = mid + 1               # root is larger
-        else:
-            hi = mid - 1               # root is smaller
-    return False''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Overflow of mid*mid in other languages; off-by-one in the binary-search bounds.",
-         example="is_perfect_square(16) -> True; is_perfect_square(14) -> False."),
-    dict(cat="dsa", title="Arranging Coins",
-         answer="With n coins, form a staircase where row i has i coins; return the number of COMPLETE rows. Solve k(k+1)/2 <= n by binary search (or the quadratic formula).",
-         tags=["arranging-coins","binary-search","math","dsa"],
-         code='''# Number of complete staircase rows buildable from n coins.
-def arrange_coins(n):
-    lo, hi = 0, n
-    while lo <= hi:
-        k = (lo + hi) // 2
-        need = k * (k + 1) // 2        # coins to fill k full rows
-        if need == n:
-            return k
-        if need < n:
-            lo = k + 1                 # can afford more rows
-        else:
-            hi = k - 1
-    return hi                          # last k that fit''',
-         complexity="Time O(log n), space O(1).",
-         pitfalls="Returning lo instead of hi at the end; overflow of k*(k+1) in other languages.",
-         example="arrange_coins(5) -> 2  (rows 1+2 fit, row 3 needs 3 more); arrange_coins(8) -> 3."),
-    dict(cat="dsa", title="Sqrt(x) via Binary Search",
-         answer="Compute the integer square root (floor) without built-in sqrt. Binary search r in [0, x]: the largest r with r*r <= x.",
-         tags=["sqrt","binary-search","math","dsa"],
-         code='''# Integer (floor) square root of x via binary search.
-def my_sqrt(x):
-    if x < 2:
-        return x
-    lo, hi = 1, x // 2
-    ans = 1
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        if mid * mid <= x:
-            ans = mid                  # candidate; try larger
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return ans''',
          complexity="Time O(log x), space O(1).",
-         pitfalls="Returning the ceiling instead of the floor; not handling x < 2.",
-         example="my_sqrt(8) -> 2; my_sqrt(16) -> 4."),
-    dict(cat="dsa", title="Count Primes (Sieve of Eratosthenes)",
-         answer="Count primes strictly less than n. Sieve of Eratosthenes: mark multiples of each prime starting from its square as composite; count what stays prime.",
-         tags=["count-primes","sieve-of-eratosthenes","math","dsa"],
-         code='''# Count primes < n via the Sieve of Eratosthenes.
-def count_primes(n):
-    if n < 3:
+         pitfalls="Not checking 32-bit overflow; mishandling the sign of negatives.",
+         example="reverse_integer(-123) -> -321; reverse_integer(1534236469) -> 0 (overflow)."),
+    dict(cat="dsa", title="Palindrome Number",
+         answer="Determine if an integer reads the same forwards and backwards, without converting to a string. Negatives aren't palindromes; reverse only HALF the digits and compare to the other half.",
+         tags=["palindrome-number","math","two-halves","dsa"],
+         code='''# True if an integer is a palindrome (reversing half the digits).
+def is_palindrome(x):
+    if x < 0 or (x % 10 == 0 and x != 0):
+        return False                    # negatives / trailing zero can't be palindromes
+    reversed_half = 0
+    while x > reversed_half:
+        reversed_half = reversed_half * 10 + x % 10
+        x //= 10
+    # even length: x == reversed_half; odd: drop the middle digit
+    return x == reversed_half or x == reversed_half // 10''',
+         complexity="Time O(log x), space O(1).",
+         pitfalls="Forgetting numbers ending in 0 (except 0) fail; mishandling the odd-length middle digit.",
+         example="is_palindrome(121) -> True; is_palindrome(-121) -> False; is_palindrome(10) -> False."),
+    dict(cat="dsa", title="Fizz Buzz",
+         answer="For 1..n output 'Fizz' for multiples of 3, 'Buzz' for 5, 'FizzBuzz' for both, else the number. Build each string by concatenating the applicable words.",
+         tags=["fizzbuzz","simulation","modulo","dsa"],
+         code='''# Classic FizzBuzz for 1..n.
+def fizz_buzz(n):
+    out = []
+    for i in range(1, n + 1):
+        s = ''
+        if i % 3 == 0:
+            s += 'Fizz'
+        if i % 5 == 0:
+            s += 'Buzz'
+        out.append(s or str(i))         # fall back to the number
+    return out''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Checking 3 and 5 separately with elif (misses FizzBuzz); off-by-one on the range.",
+         example="fizz_buzz(5) -> ['1','2','Fizz','4','Buzz']."),
+    dict(cat="dsa", title="Add Digits (Digital Root)",
+         answer="Repeatedly sum digits until one digit remains. Closed form (digital root): 0 for 0, else 1 + (n-1) % 9 -- an O(1) result from modular arithmetic.",
+         tags=["add-digits","digital-root","math","dsa"],
+         code='''# Digital root: repeated digit sum reduced to one digit, in O(1).
+def add_digits(num):
+    if num == 0:
         return 0
-    is_prime = [True] * n
-    is_prime[0] = is_prime[1] = False
-    p = 2
-    while p * p < n:
-        if is_prime[p]:
-            for multiple in range(p * p, n, p):
-                is_prime[multiple] = False   # cross off multiples of p
-        p += 1
-    return sum(is_prime)''',
-         complexity="Time O(n log log n), space O(n).",
-         pitfalls="Counting primes <= n instead of < n; starting the inner loop below p*p (redundant work).",
-         example="count_primes(10) -> 4  (2,3,5,7)."),
-    dict(cat="dsa", title="Roman to Integer",
-         answer="Convert a Roman numeral to an integer. Map symbols to values; add each, but if a symbol is smaller than the one after it, subtract it (handles IV, IX, XL, etc.).",
-         tags=["roman-to-integer","hash-map","string","math","dsa"],
-         code='''# Convert a Roman numeral string to its integer value.
-def roman_to_int(s):
-    values = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}
+    return 1 + (num - 1) % 9''',
+         complexity="Time O(1), space O(1).",
+         pitfalls="Special-casing 0 wrong; using n % 9 directly (returns 0 for multiples of 9 instead of 9).",
+         example="add_digits(38) -> 2  (3+8=11 -> 1+1=2)."),
+    dict(cat="dsa", title="Number Complement",
+         answer="Flip every bit of a positive integer within its own bit-length (not the full 32 bits). Build a mask of all 1s the same width as num, then XOR.",
+         tags=["number-complement","bit-manipulation","mask","dsa"],
+         code='''# Complement of a positive integer within its own bit width.
+def find_complement(num):
+    mask = 1
+    while mask < num:
+        mask = (mask << 1) | 1          # grow an all-ones mask to num's width
+    return num ^ mask                   # flip only the meaningful bits''',
+         complexity="Time O(number of bits), space O(1).",
+         pitfalls="Using ~num (flips the sign bits too); mask too short or too long.",
+         example="find_complement(5) -> 2  (101 -> 010)."),
+    dict(cat="dsa", title="Find Pivot Index",
+         answer="Find the index where the sum of the numbers to the left equals the sum to the right. Track a running left sum; the right sum is total - left - nums[i]. Return the first match, else -1.",
+         tags=["pivot-index","prefix-sum","array","dsa"],
+         code='''# Index where left-sum equals right-sum, else -1.
+def pivot_index(nums):
+    total = sum(nums)
+    left = 0
+    for i, x in enumerate(nums):
+        if left == total - left - x:    # right sum equals left sum
+            return i
+        left += x
+    return -1''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Including nums[i] in either side; not returning the leftmost pivot.",
+         example="pivot_index([1,7,3,6,5,6]) -> 3."),
+    dict(cat="dsa", title="Running Sum of 1d Array",
+         answer="Return the running (prefix) sum where result[i] = sum(nums[0..i]). Accumulate in place or into a new array.",
+         tags=["running-sum","prefix-sum","array","dsa"],
+         code='''# Prefix sums: result[i] = nums[0] + ... + nums[i].
+def running_sum(nums):
+    result = []
     total = 0
-    for i in range(len(s)):
-        # subtract if a smaller value precedes a larger one
-        if i + 1 < len(s) and values[s[i]] < values[s[i + 1]]:
-            total -= values[s[i]]
-        else:
-            total += values[s[i]]
+    for x in nums:
+        total += x                      # accumulate
+        result.append(total)
+    return result''',
+         complexity="Time O(n), space O(n) (or O(1) in place).",
+         pitfalls="Resetting the accumulator inside the loop; off-by-one when writing in place.",
+         example="running_sum([1,2,3,4]) -> [1,3,6,10]."),
+    dict(cat="dsa", title="Richest Customer Wealth",
+         answer="Each row is one customer's bank accounts; return the maximum total wealth across customers. Sum each row and take the max.",
+         tags=["richest-customer","matrix","sum","array","dsa"],
+         code='''# Maximum row-sum (customer with the most total wealth).
+def maximum_wealth(accounts):
+    return max(sum(customer) for customer in accounts)''',
+         complexity="Time O(m * n), space O(1).",
+         pitfalls="Summing columns instead of rows; empty input (guard if needed).",
+         example="maximum_wealth([[1,2,3],[3,2,1]]) -> 6; maximum_wealth([[1,5],[7,3],[3,5]]) -> 10."),
+    dict(cat="dsa", title="How Many Numbers Are Smaller Than the Current Number",
+         answer="For each element, count how many others are strictly smaller. Counting-sort style: tally value frequencies (values bounded 0..100), then a prefix sum gives, for each value, how many are smaller.",
+         tags=["smaller-than-current","counting-sort","prefix-sum","array","dsa"],
+         code='''# For each element, count how many values are strictly smaller.
+def smaller_numbers_than_current(nums):
+    count = [0] * 102                   # values bounded 0..100
+    for x in nums:
+        count[x + 1] += 1               # shift so prefix sum = strictly-smaller
+    for i in range(1, 102):
+        count[i] += count[i - 1]        # prefix sum of frequencies
+    return [count[x] for x in nums]''',
+         complexity="Time O(n + range), space O(range).",
+         pitfalls="Counting equal values as smaller (needs strict); off-by-one in the prefix shift.",
+         example="smaller_numbers_than_current([8,1,2,2,3]) -> [4,0,1,1,3]."),
+    dict(cat="dsa", title="Decompress Run-Length Encoded List",
+         answer="Pairs (freq, val) describe a run-length encoding; expand to the full list. For each adjacent pair, append val freq times.",
+         tags=["decompress-rle","run-length-encoding","array","dsa"],
+         code='''# Expand run-length pairs [freq, val, freq, val, ...] into the full list.
+def decompress_rle_list(nums):
+    result = []
+    for i in range(0, len(nums), 2):
+        freq, val = nums[i], nums[i + 1]
+        result.extend([val] * freq)     # repeat the value freq times
+    return result''',
+         complexity="Time O(total output), space O(total output).",
+         pitfalls="Swapping freq and val; stepping by 1 instead of 2 over the pairs.",
+         example="decompress_rle_list([1,2,3,4]) -> [2,4,4,4]."),
+    dict(cat="dsa", title="Matrix Diagonal Sum",
+         answer="Sum the primary and secondary diagonals of a square matrix, counting the center once if n is odd. Add mat[i][i] and mat[i][n-1-i]; subtract the center if double-counted.",
+         tags=["matrix-diagonal-sum","matrix","array","dsa"],
+         code='''# Sum both diagonals of a square matrix (center counted once).
+def diagonal_sum(mat):
+    n = len(mat)
+    total = 0
+    for i in range(n):
+        total += mat[i][i]              # primary diagonal
+        total += mat[i][n - 1 - i]      # secondary diagonal
+    if n % 2 == 1:
+        total -= mat[n // 2][n // 2]    # center added twice
     return total''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Not handling the subtractive pairs; reading past the end without a bounds check.",
-         example="roman_to_int('MCMXCIV') -> 1994."),
-    dict(cat="dsa", title="Number of 1 Bits (Hamming Weight)",
-         answer="Count set bits in an integer. Repeatedly clear the lowest set bit with n &= n-1 and count iterations (Brian Kernighan's trick) -- loops only as many times as there are set bits.",
-         tags=["hamming-weight","bit-manipulation","kernighan","dsa"],
-         code='''# Count set bits (Hamming weight) via Brian Kernighan's trick.
-def hamming_weight(n):
-    count = 0
-    while n:
-        n &= n - 1                     # clear the lowest set bit
-        count += 1
-    return count''',
-         complexity="Time O(number of set bits), space O(1).",
-         pitfalls="Looping 32 times unconditionally (fine but slower); infinite loop if you forget to modify n.",
-         example="hamming_weight(11) -> 3  (1011 has three 1s)."),
-    dict(cat="glossary", title="Exponential backoff with jitter",
-         answer="A RETRY strategy: wait exponentially longer between attempts (base * 2^attempt) to relieve a struggling dependency, plus JITTER -- randomization of the delay -- to prevent many clients from retrying in lockstep (the 'thundering herd' that re-overloads the service the instant it recovers). Common forms: full jitter (sleep = random(0, cap)) and equal jitter. Always cap the max delay and the attempt count. Without jitter, synchronized retries create load spikes; with it, retries spread out.",
-         tags=["exponential-backoff","jitter","retries","thundering-herd","reliability"],
-         example="After a 503, a client waits ~random(0, min(cap, base*2^n)) before retry n; 1,000 clients that failed together now retry at random times instead of hammering the recovering service simultaneously."),
-    dict(cat="glossary", title="Token bucket vs leaky bucket",
-         answer="Two RATE-LIMITING algorithms. TOKEN BUCKET: tokens refill at a steady rate into a bucket of capacity B; each request consumes a token, and requests with no token are rejected/delayed -- it allows BURSTS up to B while bounding the average rate. LEAKY BUCKET: requests enter a queue that drains ('leaks') at a fixed rate; it SMOOTHS output to a constant rate and drops overflow -- no bursts. Token bucket favors bursty-but-bounded traffic (most APIs); leaky bucket favors a strictly smooth output rate.",
-         tags=["token-bucket","leaky-bucket","rate-limiting","burst","throttling"],
-         example="An API using a token bucket (capacity 100, refill 10/s) lets a client burst 100 requests instantly then settle to 10/s; a leaky bucket would instead force a steady 10/s regardless of arrival bursts, queuing or dropping the rest."),
-    dict(cat="glossary", title="Sliding window vs fixed window rate limiter",
-         answer="FIXED WINDOW counts requests per aligned interval (e.g. per calendar minute) and resets at the boundary -- simple, but allows a 2x burst straddling the boundary (max at the end of one window plus max at the start of the next). SLIDING WINDOW fixes this: sliding-log keeps timestamps and counts the last N seconds exactly (accurate but memory-heavy); sliding-window-counter interpolates between the current and previous fixed windows (a good approximation, cheap). Sliding windows give smoother, boundary-safe limiting at some extra cost.",
-         tags=["sliding-window","fixed-window","rate-limiting","boundary-burst","throttling"],
-         example="Limit 100/min: with a fixed window a client sends 100 at 0:59 and 100 at 1:00 -- 200 in two seconds; a sliding-window counter weights the previous minute's count and blocks that boundary burst."),
-    dict(cat="glossary", title="Connection draining",
-         answer="When removing an instance (deploy, scale-in, health failure), CONNECTION DRAINING (a.k.a. deregistration delay) stops sending it NEW requests while letting IN-FLIGHT requests finish within a timeout before the instance is terminated. Prevents dropping active requests during rollouts/autoscaling. Paired with graceful shutdown (the app stops accepting, finishes work, closes cleanly) and readiness probes that fail first so the load balancer removes it from rotation.",
-         tags=["connection-draining","graceful-shutdown","deployment","load-balancer","reliability"],
-         example="During a rolling deploy the load balancer marks an instance draining: no new requests route to it, but its 30 in-flight requests get up to 30s to complete before the container is killed -- so users mid-request aren't cut off."),
-    dict(cat="ml_coding", title="L2 regularization (ridge) loss and gradient (numpy)",
-         answer="L2 regularization adds lambda * sum(w^2) to the loss, penalizing large weights to reduce overfitting (weight decay). Its gradient contribution is 2*lambda*w, pulling weights toward zero. Usually the bias is NOT regularized.",
-         tags=["l2-regularization","ridge","weight-decay","overfitting","ml-coding"],
-         code='''# L2 (ridge) penalty term and its gradient. ast.parse-only.
+         pitfalls="Double-counting the center on odd n; wrong secondary-diagonal index.",
+         example="diagonal_sum([[1,2,3],[4,5,6],[7,8,9]]) -> 25."),
+    dict(cat="dsa", title="Transpose Matrix",
+         answer="Return the transpose of a matrix (rows become columns). Build result[j][i] = matrix[i][j]; works for non-square shapes.",
+         tags=["transpose-matrix","matrix","array","dsa"],
+         code='''# Transpose an m x n matrix into n x m.
+def transpose(matrix):
+    rows, cols = len(matrix), len(matrix[0])
+    result = [[0] * rows for _ in range(cols)]
+    for i in range(rows):
+        for j in range(cols):
+            result[j][i] = matrix[i][j] # swap indices
+    return result''',
+         complexity="Time O(m * n), space O(m * n).",
+         pitfalls="Assuming square dimensions; allocating the result with swapped dimensions wrong.",
+         example="transpose([[1,2,3],[4,5,6]]) -> [[1,4],[2,5],[3,6]]."),
+    dict(cat="glossary", title="Circuit breaker states",
+         answer="A CIRCUIT BREAKER protects a caller from a failing dependency by tracking failures and short-circuiting calls. Three states: CLOSED (normal -- requests flow, failures counted); OPEN (failure threshold exceeded -- requests fail fast without calling the dependency, giving it time to recover); HALF-OPEN (after a cooldown -- a few trial requests test recovery; success closes the breaker, failure re-opens it). Prevents a struggling service from being hammered and stops cascading failures/thread exhaustion in the caller.",
+         tags=["circuit-breaker","closed-open-half-open","cascading-failure","resilience","reliability"],
+         example="Payment service starts timing out; after 50% of calls fail the breaker trips OPEN and the checkout instantly returns a fallback for 30s, then goes HALF-OPEN to probe -- one success closes it, restoring normal calls without a thundering retry herd."),
+    dict(cat="glossary", title="Bulkhead isolation",
+         answer="A resilience pattern named after a ship's watertight compartments: partition resources (thread pools, connection pools, instances) so a failure or overload in one part CANNOT sink the whole system. If calls to a slow dependency get their own bounded pool, they can exhaust only that pool -- other features keep working instead of every thread blocking on the slow call. Combines with circuit breakers and timeouts; the core idea is fault CONTAINMENT.",
+         tags=["bulkhead","isolation","resource-partitioning","fault-containment","reliability"],
+         example="An app gives the flaky recommendations API its own 10-thread pool; when it hangs, only those 10 threads block and the recommendations feature degrades -- checkout and search, on separate pools, stay fully responsive."),
+    dict(cat="glossary", title="Liveness vs readiness probes",
+         answer="Two health-check types (e.g. in Kubernetes). LIVENESS answers 'is this process healthy or wedged?' -- if it fails, the orchestrator RESTARTS the container (fixes deadlocks/hangs). READINESS answers 'can it serve traffic right now?' -- if it fails, the pod is removed from the load-balancer rotation but NOT restarted (used during warmup, or when a dependency is temporarily unavailable). Confusing them is harmful: a readiness-style check wired to liveness will restart pods that are merely busy; there's also a STARTUP probe for slow-booting apps.",
+         tags=["liveness","readiness","health-check","kubernetes","reliability"],
+         example="An app with a 60s cache warmup fails READINESS during warmup (no traffic sent yet) but passes LIVENESS (process is fine); once warm, readiness passes and it joins the load balancer -- versus a hang, where liveness fails and the container is restarted."),
+    dict(cat="glossary", title="Service mesh",
+         answer="A dedicated INFRASTRUCTURE LAYER that handles service-to-service communication for a microservice system, moving cross-cutting concerns out of application code into SIDECAR proxies (e.g. Envoy) deployed next to each service. The mesh (data plane = proxies, control plane = config/policy) provides mTLS encryption, load balancing, retries/timeouts, circuit breaking, traffic shifting (canary), and observability (metrics/traces) UNIFORMLY, without each app implementing them. Trade-off: added latency (extra hop) and operational complexity. Examples: Istio, Linkerd.",
+         tags=["service-mesh","sidecar","envoy","istio","microservices"],
+         example="With Istio, an app calls another service by plain HTTP to its local Envoy sidecar; the mesh transparently adds mTLS, retries, a 2% canary split, and distributed traces -- none of it in the app's code."),
+    dict(cat="ml_coding", title="R-squared (coefficient of determination) (numpy)",
+         answer="R^2 measures the fraction of variance in the target explained by the model: 1 - SS_res/SS_tot, where SS_res = sum((y-pred)^2) and SS_tot = sum((y-mean(y))^2). 1 is perfect; 0 means no better than predicting the mean; negative means worse than the mean.",
+         tags=["r2-score","regression-metric","variance-explained","evaluation","ml-coding"],
+         code='''# R^2 (coefficient of determination) for regression. ast.parse-only.
 import numpy as np
 
-def l2_penalty(w, lam):
-    penalty = lam * np.sum(w ** 2)                # add to the data loss
-    grad = 2 * lam * w                            # add to the weight gradient
-    return penalty, grad''',
-         complexity="Time O(features), space O(features).",
-         pitfalls="Regularizing the bias term; forgetting the factor of 2 in the gradient; wrong sign (it pushes toward zero).",
-         example="l2_penalty(np.array([3.,4.]), 0.1) -> penalty 2.5, grad [0.6, 0.8]."),
-    dict(cat="ml_coding", title="K-means assignment step (numpy)",
-         answer="One assignment step of Lloyd's k-means: assign each point to its nearest centroid. Compute distances to all centroids and take the argmin per point. (The update step then recomputes centroids as cluster means.)",
-         tags=["kmeans","clustering","assignment-step","unsupervised","ml-coding"],
-         code='''# K-means assignment: nearest-centroid label per point. ast.parse-only.
+def r2_score(y_true, y_pred):
+    ss_res = np.sum((y_true - y_pred) ** 2)       # residual sum of squares
+    ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)  # total variance
+    return 1 - ss_res / ss_tot''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Dividing by zero when y is constant (SS_tot=0); swapping SS_res and SS_tot; expecting R^2 in [0,1] (it can go negative).",
+         example="r2_score(np.array([3.,5.,7.]), np.array([3.,5.,7.])) -> 1.0 (perfect fit)."),
+    dict(cat="ml_coding", title="Train-test split (numpy)",
+         answer="Randomly partition data into train and test sets by shuffling indices and slicing at test_size. Shuffling avoids order bias; keep X and y aligned by permuting the SAME index array.",
+         tags=["train-test-split","data-splitting","shuffling","evaluation","ml-coding"],
+         code='''# Shuffle and split X, y into train/test. ast.parse-only (rng passed in).
 import numpy as np
 
-def assign_clusters(X, centroids):
-    # distances[i, k] = ||X[i] - centroids[k]||
-    diff = X[:, None, :] - centroids[None, :, :]   # broadcast to (n, k, d)
-    dist = np.sqrt(np.sum(diff ** 2, axis=2))      # (n, k) distances
-    return np.argmin(dist, axis=1)                 # nearest centroid index''',
-         complexity="Time O(n * k * d), space O(n * k * d).",
-         pitfalls="Broadcasting on the wrong axes; taking argmin over the wrong dimension; forgetting sqrt is monotonic (optional here).",
-         example="assign_clusters(np.array([[0.,0.],[10.,10.]]), np.array([[0.,0.],[10.,10.]])) -> [0, 1]."),
-    dict(cat="ml_coding", title="Precision, recall, F1 from a confusion matrix (numpy)",
-         answer="From a multiclass confusion matrix C (rows=true, cols=pred), per-class precision = TP/(TP+FP) = diag/col_sum, recall = TP/(TP+FN) = diag/row_sum, and F1 = harmonic mean. Guard against divide-by-zero for empty classes.",
-         tags=["precision","recall","f1","confusion-matrix","ml-coding"],
-         code='''# Per-class precision, recall, F1 from a confusion matrix. ast.parse-only.
+def train_test_split(X, y, test_size, rng):
+    n = X.shape[0]
+    idx = rng.permutation(n)            # random shuffle of row indices
+    cut = int(n * (1 - test_size))      # boundary between train and test
+    train_idx, test_idx = idx[:cut], idx[cut:]
+    return X[train_idx], X[test_idx], y[train_idx], y[test_idx]''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Shuffling X and y independently (breaks alignment); off-by-one on the cut; not stratifying for imbalanced classes.",
+         example="train_test_split(X, y, 0.2, rng) yields ~80% train / 20% test rows, X and y still aligned."),
+    dict(cat="ml_coding", title="Gradient clipping (numpy)",
+         answer="Gradient clipping caps the gradient to prevent exploding gradients (common in RNNs). Clip-by-NORM: if the global L2 norm exceeds a threshold, scale the whole gradient down by threshold/norm so its direction is preserved but its magnitude is bounded.",
+         tags=["gradient-clipping","exploding-gradients","rnn","training","ml-coding"],
+         code='''# Clip a gradient by global L2 norm. ast.parse-only.
 import numpy as np
 
-def prf_from_confusion(cm, eps=1e-12):
-    tp = np.diag(cm).astype(float)                # correct per class
-    precision = tp / (cm.sum(axis=0) + eps)       # diag / predicted count
-    recall = tp / (cm.sum(axis=1) + eps)          # diag / actual count
-    f1 = 2 * precision * recall / (precision + recall + eps)
-    return precision, recall, f1''',
-         complexity="Time O(num_classes^2), space O(num_classes).",
-         pitfalls="Swapping the precision/recall axes (col vs row sums); divide-by-zero on absent classes; averaging wrongly (macro vs micro).",
-         example="prf_from_confusion(np.array([[5,1],[2,2]])) gives class-0 precision 5/7, recall 5/6."),
-    dict(cat="conceptual", title="Why add jitter to exponential backoff instead of just backing off exponentially?",
-         answer="Exponential backoff alone solves one problem: it stops clients from hammering a struggling service by making each successive retry wait longer (1s, 2s, 4s, ...), giving the dependency room to recover. But it does NOT solve a second, subtler problem -- SYNCHRONIZATION. Consider what causes retries in the first place: usually a shared event, like a service going down, a deploy, or a network partition, that fails MANY clients at the SAME instant. If every one of those clients uses the identical deterministic backoff schedule, they all wait 1s and retry together, all wait 2s and retry together, and so on. The retries arrive in synchronized WAVES: the moment the service comes back up, it's hit by the entire herd simultaneously, which re-overloads it and knocks it down again -- a self-perpetuating 'thundering herd' oscillation where the system never stabilizes even though average load would be fine if spread out. JITTER breaks the synchronization by RANDOMIZING each client's delay: instead of sleeping exactly 2^n seconds, a client sleeps a random amount in [0, 2^n] (full jitter) or [2^(n-1), 2^n] (equal jitter). Now the clients that failed together retry at DIFFERENT times, spreading the load into a smooth trickle the recovering service can absorb, so it stays up and everyone eventually succeeds. AWS's analysis showed full jitter dramatically reduces both peak load and the total work (competing requests) versus no-jitter backoff. The cost is negligible -- one random number per retry -- and the only nuance is choosing a jitter form (full jitter is simplest and usually best) and still capping the max delay and attempt count. So the rule: exponential backoff controls the AVERAGE retry rate over time; jitter controls the CORRELATION between clients. You need both -- backoff without jitter still produces destructive synchronized retry storms.",
-         tags=["exponential-backoff","jitter","thundering-herd","retries","why"],
-         example="A service outage fails 10,000 clients at once: with plain backoff all 10,000 retry at t=1s, t=3s, t=7s in synchronized spikes that re-crash it on recovery; with full jitter each retries at a random offset, turning the spikes into a flat, absorbable load and letting the service stabilize."),
-    dict(cat="conceptual", title="Why does L2 regularization reduce overfitting, and how does it differ from L1?",
-         answer="Overfitting happens when a model fits noise in the training data by using large, finely-tuned weights that make the decision surface wiggle to pass through individual points; such models generalize poorly because those exact weights don't reflect the true signal. L2 regularization adds a penalty proportional to the SUM OF SQUARED WEIGHTS (lambda * sum w^2) to the loss, so the optimizer now trades off fitting the data against keeping weights SMALL. This shrinks weights toward zero (weight decay), producing a smoother, lower-variance function that's less able to chase noise -- reducing variance at the cost of a little bias (the bias-variance tradeoff). Intuitively, among all models that fit the data comparably well, L2 prefers the one with the smallest, most spread-out weights, which is usually the simpler, more generalizable one. Geometrically, minimizing loss subject to an L2 (spherical) constraint pulls the solution toward the origin along all axes proportionally. The KEY DIFFERENCE from L1 (which penalizes the sum of ABSOLUTE weights): L1's constraint region is a diamond with corners ON the axes, so its optimum tends to land exactly at a corner where some weights are EXACTLY ZERO -- L1 produces SPARSE solutions and effectively does feature selection. L2's spherical constraint has no corners, so it shrinks weights smoothly toward but rarely exactly to zero -- keeping all features but damping them. Consequences: use L2 (ridge) when you believe most features contribute a little and you want stable, well-conditioned solutions (it also fixes multicollinearity by making the problem strictly convex); use L1 (lasso) when you expect few relevant features and want an interpretable sparse model; use both (elastic net) to get sparsity plus stability. Also, L2 has a clean gradient (2*lambda*w) that's easy to optimize, whereas L1's gradient is non-differentiable at zero (needs subgradients/proximal methods). Finally, the bias term is usually left unregularized because penalizing it would bias predictions rather than control complexity.",
-         tags=["l2-regularization","l1-regularization","overfitting","bias-variance","why"],
-         example="Fitting a degree-10 polynomial to 12 noisy points: unregularized weights explode to fit every wiggle; L2 shrinks all coefficients smoothly for a gentle curve; L1 zeros out most high-degree coefficients, effectively selecting a low-degree fit -- both generalize far better than the unpenalized model."),
-    dict(cat="behavioral", title="STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)",
-         answer="Amazon LP: INVENT AND SIMPLIFY -- leaders expect and require innovation, find ways to simplify, are externally aware, and are not limited by 'not invented here'. Show you replaced a complex, slow process with a simpler invention that scaled, with a measurable result.",
-         tags=["behavioral","star","invent-and-simplify","amazon-lp","innovation"],
-         example="SITUATION: Our team spent ~2 days per release manually coordinating a fragile deploy -- a 40-step runbook of copy-paste commands across services, error-prone and a frequent source of incidents. TASK: As tech lead I wanted to cut both the toil and the incident rate, not just document the runbook better. ACTION: Rather than accept the complexity, I looked for the root simplification: the 40 steps were really the same 4 operations repeated per service with different parameters. I built a small declarative deploy tool -- each service described its deploy in a short YAML file, and one command orchestrated ordering, health checks, and automatic rollback on failure. I deliberately kept it minimal (no bespoke DSL, reused our existing CI) so the team could adopt it without a learning curve, and I piloted it on my own service first to prove it before asking others to switch. RESULT: Deploy time dropped from ~2 days to under 30 minutes, deploy-caused incidents fell to nearly zero over the next quarter because rollback was automatic, and three other teams adopted the tool. The win came from REFUSING to treat the 40 steps as inherent complexity and instead finding the simple pattern underneath -- and from keeping the solution small enough that adoption was trivial."),
+def clip_by_norm(grad, max_norm):
+    norm = np.linalg.norm(grad)                   # global L2 norm
+    if norm > max_norm:
+        grad = grad * (max_norm / norm)           # scale down, keep direction
+    return grad''',
+         complexity="Time O(size of grad), space O(size of grad).",
+         pitfalls="Clipping each element independently (changes direction) vs by-norm; dividing by zero when norm is 0.",
+         example="clip_by_norm(np.array([3.,4.]), 2.5) scales [3,4] (norm 5) down to [1.5, 2.0] (norm 2.5)."),
+    dict(cat="conceptual", title="Why do you need both liveness and readiness probes, and what breaks if you conflate them?",
+         answer="Liveness and readiness answer fundamentally different questions, and using one where you need the other causes distinct failure modes. LIVENESS asks 'is this process broken beyond self-recovery?' -- a deadlock, an unrecoverable hang, a corrupted internal state. The orchestrator's response to a failed liveness check is to RESTART the container, because the only fix for a wedged process is to kill and replace it. READINESS asks a different question: 'can this instance serve requests RIGHT NOW?' -- which can be temporarily 'no' for perfectly healthy reasons: it's still warming a cache, loading a model, running migrations, or a downstream dependency it needs is briefly unavailable. The response to a failed readiness check is to REMOVE the pod from the load balancer rotation (stop sending it traffic) WITHOUT restarting it, because there's nothing to fix -- it just needs a moment, and traffic should go to other ready pods meanwhile. Now the failure modes from conflating them: (1) If you wire a readiness-type condition into the LIVENESS probe -- say, liveness fails when a dependency is down -- then a transient dependency outage makes the orchestrator RESTART all your pods, turning a brief blip into a crash-loop that destroys in-flight work and, worse, hammers the recovering dependency with a fleet of cold-starting pods (a self-inflicted thundering herd). Even a slow-warming app can get killed mid-warmup and never come up. (2) If you use a LIVENESS-type check for READINESS -- e.g. readiness only checks the process is up, not that warmup finished -- the load balancer sends traffic to a pod before it can serve, causing errors/timeouts for real users during every deploy and scale-up. (3) Liveness probes that are too aggressive (short timeout, checking heavy dependencies) restart pods that are merely under load, reducing capacity exactly when you need it and amplifying the overload. The correct design: liveness should be a CHEAP, LOCAL check that only fails when the process is genuinely unrecoverable (never call external dependencies from it); readiness should reflect the FULL ability to serve, including warmup and critical dependencies, and is allowed to flap. Slow-starting apps additionally use a STARTUP probe so liveness doesn't fire during a long boot. The principle: restart is the remedy for a broken process; rotation-removal is the remedy for a temporarily-unable one -- and treating those two remedies as interchangeable is what breaks.",
+         tags=["liveness","readiness","health-check","crash-loop","why"],
+         example="A model server takes 90s to load weights and depends on a feature store: liveness is a trivial '/healthz returns 200' (so it isn't killed mid-load), while readiness returns 503 until weights are loaded AND the feature store is reachable -- so it joins the LB only when truly serviceable; wiring the feature-store check into liveness instead would crash-loop every pod during a feature-store blip."),
+    dict(cat="conceptual", title="Why can R-squared be negative, and what does that tell you about a model?",
+         answer="R^2 is defined as 1 - SS_res/SS_tot, where SS_res = sum of squared residuals of the MODEL (sum (y_i - pred_i)^2) and SS_tot = sum of squared deviations from the MEAN of y (sum (y_i - ybar)^2). SS_tot is exactly the residual sum of squares you'd get from the simplest possible 'model': always predict the mean of y, ignoring the inputs entirely. So R^2 is really a COMPARISON: it measures how much your model reduces squared error RELATIVE TO just predicting the mean. If the model is perfect, SS_res=0 and R^2=1. If the model does exactly as well as predicting the mean, SS_res=SS_tot and R^2=0. And crucially, if the model does WORSE than predicting the mean -- SS_res > SS_tot -- then SS_res/SS_tot > 1 and R^2 goes NEGATIVE. This is not a bug; it's information. On TRAINING data fit by ordinary least squares with an intercept, R^2 is mathematically guaranteed to be in [0,1] because OLS explicitly minimizes SS_res and can always at least match the mean. But R^2 can and does go negative in the situations that matter most: (1) evaluating on a TEST/holdout set, where a model that overfit the training data can predict worse than the test-set mean -- a strong signal of overfitting or distribution shift; (2) a badly MISSPECIFIED model or one fit without an intercept; (3) using a model trained on one distribution to predict another. So a negative R^2 is a red flag that says: 'you would have been better off ignoring your features and just predicting the average.' It typically indicates severe overfitting, a broken model, data leakage in the wrong direction, or a train/test mismatch -- and it's a reason to distrust the model rather than a mere low score. This is also why R^2 alone can mislead: it's relative to the variance of THIS dataset (a high-variance target inflates it, a low-variance one deflates it), so pair it with absolute error metrics (RMSE/MAE) and check it on held-out data.",
+         tags=["r2-score","overfitting","model-evaluation","negative-r2","why"],
+         example="A degree-15 polynomial fit to 20 training points scores R^2=0.99 on train but on a fresh test set its wild extrapolations give SS_res far above the test variance, yielding R^2=-3.2 -- telling you the model is worse than a constant mean predictor and has badly overfit."),
+    dict(cat="behavioral", title="STAR: Raising the bar on hiring or quality (Hire and Develop the Best / Insist on Highest Standards)",
+         answer="Amazon LPs: HIRE AND DEVELOP THE BEST (raise the performance bar with every hire/promotion, recognize exceptional talent, develop others) and INSIST ON THE HIGHEST STANDARDS (continually raise the bar, drive quality up, ensure defects don't get sent down the line). Show you improved a bar -- interview quality or engineering quality -- and the durable effect.",
+         tags=["behavioral","star","highest-standards","hire-and-develop","amazon-lp"],
+         example="SITUATION: Our team's code reviews had become rubber-stamps -- LGTMs within minutes, and defects were slipping to production because reviewers skimmed. TASK: As a senior engineer I wanted to raise the quality bar without turning reviews into a bottleneck people resented. ACTION: I first modeled it myself: I wrote thorough, kind reviews with concrete suggestions and rationale, and I authored a lightweight review checklist (tests present, edge cases, error handling, observability) so the bar was explicit rather than a matter of mood. I introduced a 'no self-merge for non-trivial changes' norm and paired with two junior engineers to teach them how to review well -- not just spot bugs but mentor authors. For a recurring class of defect (unhandled nulls from an upstream service) I added a lint rule so the bar was enforced automatically, keeping human review for judgment. RESULT: Escaped defects in that area dropped noticeably over the next two quarters, review turnaround stayed under a day because the checklist made reviews focused, and the two juniors became trusted reviewers others sought out -- one was promoted partly on that growth. The bar rose AND the team's overall skill rose, which is the durable win: quality became a habit and a teaching mechanism, not a gate one person enforced."),
 ]
 
 
