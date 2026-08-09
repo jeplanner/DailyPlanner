@@ -107,6 +107,45 @@
     .code { font-size: 11.5px; padding: 9px 10px; -webkit-overflow-scrolling: touch; }
     .tag { font-size: 11px; }
   }
+  /* Same dark treatment when the OS is set to dark but no explicit
+     .dark class is present. Without this, these panels keep their light
+     background while --color-text flips to near-white, so the text
+     disappears on mobile. */
+  html.dark .fld.deep .lbl { color: #a5b4fc; }
+  html.dark .fld.recipe .lbl { color: #fcd34d; }
+  html.dark .fld.plan .lbl { color: #c4b5fd; }
+  html.dark .exs > .lbl { color: #6ee7b7; }
+  html.dark .ex .n { background: #10b981; }
+  html.dark .fld.answer .lbl { color: #a5b4fc; }
+  html.dark .fld.freq .lbl { color: #d8b4fe; }
+  html.dark .fld.mnem .lbl { color: #fdba74; }
+  html.dark .fld.cx .lbl { color: #7dd3fc; }
+  html.dark .fld.pitfall .lbl { color: #fcd34d; }
+  html.dark .fld.follow .lbl { color: #6ee7b7; }
+  @media (prefers-color-scheme: dark) {
+    :root:not(.light) .code.diagram { background: #0b1220; color: #cbd5e1; }
+    :root:not(.light) .fld.mnem { background: #2a1a0f; }
+    :root:not(.light) .fld.deep { background: #131a33; border-left-color: #818cf8; }
+    :root:not(.light) .ex { background: #0e2119; border-left-color: #10b981; }
+    :root:not(.light) .q-time { color: #c7d2fe; background: #1e1b4b; }
+    :root:not(.light) .fld.recipe { background: #241a06; border-left-color: #fbbf24; }
+    :root:not(.light) .fld.plan { background: #1e1b33; }
+    :root:not(.light) .diff-easy { color: #6ee7b7; background: #064e3b; }
+    :root:not(.light) .diff-medium { color: #fcd34d; background: #78350f; }
+    :root:not(.light) .diff-hard { color: #fca5a5; background: #7f1d1d; }
+    :root:not(.light) .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+    :root:not(.light) .fld.deep .lbl { color: #a5b4fc; }
+    :root:not(.light) .fld.recipe .lbl { color: #fcd34d; }
+    :root:not(.light) .fld.plan .lbl { color: #c4b5fd; }
+    :root:not(.light) .exs > .lbl { color: #6ee7b7; }
+    :root:not(.light) .ex .n { background: #10b981; }
+    :root:not(.light) .fld.answer .lbl { color: #a5b4fc; }
+    :root:not(.light) .fld.freq .lbl { color: #d8b4fe; }
+    :root:not(.light) .fld.mnem .lbl { color: #fdba74; }
+    :root:not(.light) .fld.cx .lbl { color: #7dd3fc; }
+    :root:not(.light) .fld.pitfall .lbl { color: #fcd34d; }
+    :root:not(.light) .fld.follow .lbl { color: #6ee7b7; }
+  }
 </style>
 {% include "_pwa_head.html" %}
 </head>

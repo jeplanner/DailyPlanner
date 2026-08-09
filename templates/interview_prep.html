@@ -204,6 +204,25 @@
     .trend-controls { flex-wrap: wrap; }
     .star b { width: 18px; height: 18px; }
   }
+  /* Same dark treatment when the OS is set to dark but no explicit
+     .dark class is present. Without this, these panels keep their light
+     background while --color-text flips to near-white, so the text
+     disappears on mobile. */
+  html.dark .q-sw .lbl { color: #fcd34d; }
+  html.dark .q-probes > .lbl { color: #c4b5fd; }
+  html.dark .q-probe .n { color: #c4b5fd; }
+  @media (prefers-color-scheme: dark) {
+    :root:not(.light) .coach.scold { background: #2a1414; }
+    :root:not(.light) .coach.push { background: #2a1c10; }
+    :root:not(.light) .coach.cheer { background: #0f2a20; }
+    :root:not(.light) .coach.celebrate { background: #161a33; }
+    :root:not(.light) .q-sw { background: #241a06; border-left-color: #fbbf24; }
+    :root:not(.light) .q-probe { background: #1e1233; border-left-color: #8b5cf6; }
+    :root:not(.light) .sd-tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+    :root:not(.light) .q-sw .lbl { color: #fcd34d; }
+    :root:not(.light) .q-probes > .lbl { color: #c4b5fd; }
+    :root:not(.light) .q-probe .n { color: #c4b5fd; }
+  }
 </style>
 {% include "_pwa_head.html" %}
 </head>
