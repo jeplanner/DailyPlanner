@@ -23226,6 +23226,495 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P0B[_e["title"]]
 
 
+_EX_P0C = {}
+
+_EX_P0C["Linked Lists — reversal & fast/slow pointers"] = [
+    """Reversal traced pointer by pointer.
+list 1->2->3. prev=None, curr=1.
+  save nxt=2; 1.next=None; prev=1; curr=2      state: 1 | 2->3
+  save nxt=3; 2.next=1;    prev=2; curr=3      state: 2->1 | 3
+  save nxt=None; 3.next=2; prev=3; curr=None   state: 3->2->1
+Return prev = 3. Draw these three boxes on paper once and the problem is
+permanently solved.""",
+
+    """Empty list and single node.
+head = None: the loop never runs, prev stays None, return None. Correct.
+head = 1: save None, 1.next = None (already), prev=1, curr=None. Return 1.
+Both fall out with no special casing - a sign the loop invariant is right.""",
+
+    """Fast/slow finding the middle - even and odd lengths differ.
+1->2->3->4->5 (odd): slow ends on 3, the true middle.
+1->2->3->4 (even): fast starts at 1, moves to 3, then fast.next is None so the
+loop stops with slow on 3 - the SECOND of the two middles.
+If you want the first middle instead, change the condition to
+`while fast.next and fast.next.next`. Which one you land on is decided entirely
+by that line, so know which the problem wants.""",
+
+    """Cycle detection, and why the step sizes are 1 and 2.
+1->2->3->4->2 (4 points back to 2). slow: 1,2,3,4,2... fast: 1,3,2,4,3...
+Once both are inside the loop, fast closes the gap by exactly ONE node per
+iteration, so the gap must reach zero - it can never jump over.
+With steps of 1 and 3 the gap shrinks by 2 each time and can skip past zero on
+an odd-length cycle. That is why the classic algorithm uses 1 and 2.""",
+
+    """The bug that destroys the list.
+Writing `curr.next = prev` BEFORE saving `curr.next` loses the entire remainder
+in one statement - you now have a two-node list and no way back.
+The order is: save, flip, advance prev, advance curr. Four lines, and the first
+one is the one people drop under pressure.""",
+
+    """What this pattern unlocks.
+Reverse Linked List II (reverse a sublist), Palindrome Linked List (find the
+middle, reverse the second half, compare), Reorder List (middle + reverse +
+interleave), Remove Nth From End (gap of n between two pointers), Linked List
+Cycle II (find the cycle entrance).
+Every one is a combination of "reverse in place" and "two pointers at different
+speeds". Own those two primitives and the whole category collapses.""",
+]
+
+_EX_P0C["Longest Increasing Subsequence (patience + binary search)"] = [
+    """The textbook case, traced.
+nums = [10,9,2,5,3,7,101,18], tails = []
+  10 -> append        tails=[10]
+  9  -> replaces 10   tails=[9]
+  2  -> replaces 9    tails=[2]
+  5  -> append        tails=[2,5]
+  3  -> replaces 5    tails=[2,3]
+  7  -> append        tails=[2,3,7]
+  101-> append        tails=[2,3,7,101]
+  18 -> replaces 101  tails=[2,3,7,18]
+Answer: len(tails) = 4. The actual LIS is [2,3,7,101] or [2,3,7,18].""",
+
+    """The crucial point: tails is NOT the subsequence.
+In the trace above the final tails is [2,3,7,18], which IS a valid LIS here -
+but that is a coincidence. Consider [1,10,11,2]:
+  1 -> [1];  10 -> [1,10];  11 -> [1,10,11];  2 -> replaces 10 -> [1,2,11]
+[1,2,11] is not a subsequence of the input in that order. Only the LENGTH (3) is
+meaningful. Saying this out loud is what shows you understand the algorithm
+rather than having memorised it.""",
+
+    """Edge cases.
+Strictly decreasing [5,4,3,2,1]: every element replaces position 0, tails ends
+as [1], answer 1. Correct - any single element is an increasing subsequence.
+All equal [7,7,7]: with bisect_left, 7 always lands at position 0 and replaces,
+so the answer is 1 - which is right for STRICTLY increasing.
+Empty -> 0. Single element -> 1.""",
+
+    """Why bisect_left and not bisect_right.
+On [7,7,7] with bisect_right, each 7 would be inserted AFTER the existing 7,
+appending each time and returning 3 - which is the answer to the NON-decreasing
+version of the problem.
+One function call decides which problem you solved. If the interviewer says
+"non-decreasing", switch to bisect_right; otherwise leave it.""",
+
+    """Why replacing a tail never loses anything.
+Replacing tails[i] with a smaller value does not make any existing subsequence
+shorter - it records that a chain of length i+1 can now END on a smaller number,
+which only makes it EASIER for future elements to extend it.
+That monotonic-improvement argument is why the greedy is safe, and it is the
+follow-up question. tails is always sorted for the same reason, which is what
+makes it binary-searchable.""",
+
+    """The complexity comparison, and recovering the actual sequence.
+The O(n^2) DP is simpler: dp[i] = 1 + max(dp[j]) over all j < i with
+nums[j] < nums[i]. Easy to write and easy to explain, and it gives you the
+sequence by backtracking.
+This version is O(n log n). To recover the actual subsequence you must record,
+for each element, the index it was placed at plus a predecessor pointer, then
+walk back from the last append. Worth mentioning - the length is cheap, the
+sequence costs bookkeeping.""",
+]
+
+_EX_P0C["Maximum Product Subarray"] = [
+    """The textbook case, traced.
+nums = [2,3,-2,4]. best=cur_max=cur_min=2.
+  3:  candidates (3, 2*3=6, 2*3=6) -> max 6, min 3.  best=6
+  -2: candidates (-2, 6*-2=-12, 3*-2=-6) -> max -2, min -12. best stays 6
+  4:  candidates (4, -2*4=-8, -12*4=-48) -> max 4, min -48. best stays 6
+Answer 6, from [2,3].""",
+
+    """The case the minimum exists for.
+nums = [-2,3,-4].
+  start: best=max=min=-2
+  3:  candidates (3, -6, -6) -> max 3, min -6.  best=3
+  -4: candidates (-4, 3*-4=-12, -6*-4=24) -> max 24, min -12. best=24
+Without tracking the minimum you would never see 24. The -6 looked worthless at
+the time and became the answer one step later. That is the entire reason for the
+second variable.""",
+
+    """Zeros, and why 'the number alone' is a candidate.
+nums = [-2,0,-1].
+  -2: best=-2
+  0:  candidates (0, 0, 0) -> max 0, min 0. best=0
+  -1: candidates (-1, 0*-1=0, 0) -> max 0, min -1. best stays 0
+Answer 0. The standalone candidate is what lets the run RESTART after a zero -
+without it, a zero would poison every subsequent product.""",
+
+    """All negatives.
+nums = [-1,-2,-3].
+  -1: best=-1
+  -2: candidates (-2, 2, 2) -> max 2, min -2. best=2
+  -3: candidates (-3, -6, 6) -> max 6, min -6. best=6
+Answer 6, which comes from the subarray [-2,-3], not from all three - the full
+product is -6 because three negatives give a negative.
+That is the general rule: with an odd count of negatives you must drop one from
+an end, and the running min/max pair discovers which end automatically. Sign
+parity is what makes this problem error-prone, so trace it rather than
+reasoning about it in your head.""",
+
+    """The bug that passes half the tests.
+Computing the new max first and then using it to compute the new min:
+    cur_max = max(n, cur_max*n, cur_min*n)
+    cur_min = min(n, cur_max*n, cur_min*n)   # cur_max is already updated
+On [-2,3,-4] this gives the wrong min and the answer comes out as 3 rather than
+24. Build all three candidates from the OLD pair first, then assign both.""",
+
+    """Contrast with Maximum Subarray (Kadane).
+Kadane needs one variable because addition is monotonic - adding a bigger number
+always helps.
+Multiplication is not: multiplying by a negative REVERSES the order, so the
+worst becomes the best. That single fact is why this problem needs two running
+values and Kadane needs one. If asked "why can't you just use Kadane here?",
+that is the answer.""",
+]
+
+_EX_P0C["Word Break (DP)"] = [
+    """The textbook case, traced.
+s = "leetcode", dict = {leet, code}. dp[0]=True.
+  i=4: j=0, dp[0] True and s[0:4]="leet" in dict -> dp[4]=True
+  i=8: j=4, dp[4] True and s[4:8]="code" in dict -> dp[8]=True
+Answer dp[8] = True.
+Read the array aloud: "dp[i] is true when the first i characters can be cut into
+dictionary words." Once you can say that sentence the loops write
+themselves.""",
+
+    """The case where greedy fails.
+s = "abcd", dict = {a, abc, b, cd}.
+Longest-match greedy takes "abc" first, leaving "d" which is not a word ->
+reports False.
+DP tries every cut: dp[1]=True ("a"), dp[2]=True ("a"+"b"), dp[4]=dp[2] and
+s[2:4]="cd" in dict -> True.
+Greedy commits to the longest first piece and cannot back out; DP considers
+every split point, so it cannot be trapped.""",
+
+    """A False case, to see the array stay dark.
+s = "catsandog", dict = {cats, dog, sand, and, cat}.
+dp[3]=True (cat), dp[4]=True (cats), dp[7]=True (cat+sand or cats+and).
+i=9: try every j - s[7:9]="og" not a word, s[4:9]="andog" no, s[3:9]="sandog" no.
+dp[9] stays False. Answer False.
+Notice how much of the array is True and the answer is still False - a common
+source of confusion.""",
+
+    """Edge cases.
+Empty string -> dp[0] is True by definition, so True.
+A single-character word in the dict -> works.
+A dict word longer than s -> the slice simply never matches; no bounds error
+because j only ranges below i.""",
+
+    """Why a set for the dictionary.
+Membership in a list is O(k) per check, and you do O(n^2) checks - so a
+1,000-character string with a 10,000-word dictionary becomes 10^10 operations.
+With a set each check is O(length of the slice). Converting the dictionary once,
+outside the loops, is the difference between passing and timing out.""",
+
+    """The follow-up: Word Break II.
+That variant asks for ALL the sentences, not just whether one exists. It becomes
+backtracking with memoisation on the start index, and the output can be
+exponential - "aaaa...a" with dict {a, aa} produces a combinatorial explosion.
+Knowing that the II version cannot be polynomial because its OUTPUT is not
+polynomial is the right way to answer its complexity question.""",
+]
+
+_EX_P0C["Word Search (backtracking)"] = [
+    """The textbook case, traced.
+board = ABCE / SFCS / ADEE, word = "ABCCED".
+Start at (0,0)='A' matches word[0]. Mark it '#'.
+  Try (0,1)='B' = word[1]. Mark. Try (0,2)='C' = word[2]. Mark.
+  Try (1,2)='C' = word[3]. Mark. Try (2,2)='E' = word[4]. Mark.
+  Try (2,1)='D' = word[5]. Mark. i reaches len(word) -> True.
+Every cell restores its letter on the way back out.""",
+
+    """A near-miss requiring backtrack and retry.
+Same board, word = "ABCB".
+A,B,C match at (0,0),(0,1),(0,2). Now looking for 'B': neighbours of (0,2) are
+(0,1) which is '#' (already on the path), (1,2)='C', and out-of-bounds.
+Fails, so the path unwinds - restoring '#' back to letters - and other starts
+are tried. Answer False.
+The letter 'B' exists on the board but cannot be reused, which is exactly what
+the marking enforces.""",
+
+    """The bug that only shows on later starting cells.
+Forget the restore line and run "SEE" on the same board.
+The first failed attempt leaves '#' scattered across the board permanently. A
+later start that would have succeeded now walks into '#' cells and fails.
+The result is a False that is correct for some inputs and wrong for others -
+the worst kind of bug, because small tests pass.""",
+
+    """Single-cell and single-letter cases.
+board = [['A']], word = "A" -> the helper is called with i=0, the letter
+matches, then i reaches len(word)=1 immediately at the next call -> True.
+word = "AA" on the same board -> after marking, no neighbour exists, so False.
+Correct: you cannot reuse the single cell.""",
+
+    """The pruning that makes it fast in practice.
+Before searching at all, count the letters on the board and compare with the
+letters the word needs - if the board lacks a letter, return False instantly.
+Second trick: if the word's LAST letter is rarer on the board than its first,
+search for the reversed word. Both are cheap and can cut a pathological input
+from seconds to milliseconds.
+Worth naming, because the naive version is exponential in the worst case.""",
+
+    """Complexity, stated honestly.
+O(m x n x 4^L) where L is the word length - every cell is a potential start and
+each step branches four ways (three after the first, since you never immediately
+go back).
+Space is O(L) for the recursion. The in-place marking is what keeps the space
+from being O(mn) for a visited grid, at the cost of mutating the caller's
+board - a trade worth mentioning.""",
+]
+
+_EX_P0C["Partition Equal Subset Sum"] = [
+    """The textbook case, traced.
+nums = [1,5,11,5]. total 22, even, target 11.
+dp = [T,F,F,...] over sums 0..11.
+  num=1:  dp[1]=T
+  num=5:  going down - dp[6]=dp[1]=T, dp[5]=dp[0]=T
+  num=11: dp[11]=dp[0]=T -> answer True
+Subset {11} against {1,5,5}, both summing to 11.""",
+
+    """The odd-total shortcut.
+nums = [1,2,5]. total 8... even. Try nums = [1,2,3,5]: total 11, odd -> return
+False immediately, because two equal integer halves cannot sum to an odd number.
+It is one line and it avoids building the table at all for half the inputs.""",
+
+    """A False case with an even total.
+nums = [1,2,5]. total 8, target 4.
+  num=1: dp[1]=T
+  num=2: dp[3]=dp[1]=T, dp[2]=dp[0]=T
+  num=5: 5 > 4, the inner loop range is empty - skipped entirely
+dp[4] is False. Answer False. Even totals do not guarantee a split.""",
+
+    """Why the inner loop goes DOWNWARD - the bug made visible.
+nums = [3], target 6, going UPWARD:
+  s=3: dp[3] = dp[0] = True
+  s=6: dp[6] = dp[3] = True   <-- but dp[3] was just set THIS round
+You have used the single 3 twice and wrongly report that 6 is reachable.
+Going downward, s=6 reads dp[3] from BEFORE this number existed (False), and
+then s=3 is set. The direction is the entire difference between 0/1 knapsack and
+unbounded knapsack.""",
+
+    """Edge cases.
+Single element -> total is that element; if odd, False; if even, target is half
+and the single number cannot make it unless it is 0. [2] -> total 2, target 1,
+dp[1] never set -> False. Correct.
+Empty array -> total 0, target 0, dp[0] is True -> True (two empty subsets).
+Confirm what the problem wants for empty input.""",
+
+    """The complexity, and why it is not really polynomial.
+O(n x target) time and O(target) space. With n=200 and values up to 100, target
+is at most 10,000 - trivial.
+But target is a VALUE, so it is pseudo-polynomial: the input length is n, and
+the runtime depends on the magnitude of the numbers. Subset-sum is NP-complete
+in general, and this DP is only fast because the constraints bound the sum.
+Saying that is what turns a coding answer into a complexity-theory one.""",
+]
+
+_EX_P0C["Permutations (backtracking)"] = [
+    """The textbook case, traced.
+nums = [1,2,3].
+  choose 1 -> choose 2 -> choose 3 -> record [1,2,3], undo, undo
+             choose 3 -> choose 2 -> record [1,3,2], undo, undo
+  undo 1, choose 2 -> ... [2,1,3], [2,3,1]
+  undo 2, choose 3 -> ... [3,1,2], [3,2,1]
+Six results = 3!. The tree has 3 choices at the first level, 2 at the second, 1
+at the third.""",
+
+    """The copy bug, which produces six identical empty lists.
+Appending `path` instead of `path[:]` stores a REFERENCE. The path keeps
+mutating as the recursion continues, and by the end every stored reference
+points at the same, now-empty, list.
+Symptom: the right NUMBER of results, all identical. If you ever see that,
+this is the cause - and the identical bug appears in Subsets, Combination Sum
+and Path Sum II.""",
+
+    """Single element and empty input.
+[1] -> one permutation [[1]].
+[] -> the base case fires immediately with an empty path, giving [[]] - one
+permutation, the empty one. That is mathematically correct (0! = 1) but confirm
+what the problem expects.""",
+
+    """Why a used[] array rather than a start index.
+Subsets and Combinations pass a start index, so each element is considered once
+in order and [1,2] is the same set as [2,1].
+Permutations need ORDER to matter, so every index must be available at every
+level - which means loop over all of them and skip the ones already in the path.
+Choosing between "start index" and "used array" IS the problem; get that right
+and the code writes itself.""",
+
+    """Handling duplicates - Permutations II.
+nums = [1,1,2] would give 6 results with the plain algorithm, but only 3 are
+distinct.
+Fix: sort first, then inside the loop skip index i when nums[i] == nums[i-1] AND
+used[i-1] is False - meaning the identical earlier copy was NOT taken on this
+branch, so taking this one would repeat a branch already explored.
+That condition is fiddly; trace [1,1,2] by hand once to convince yourself.""",
+
+    """Complexity, and why it cannot be better.
+n! permutations each of length n, so O(n x n!) just to write the output. The
+algorithm is optimal because the output itself is that large.
+For n=10 that is 3.6 million results - already impractical. If a problem asks
+for permutations of a large n, it is really asking for something else, such as
+the k-th permutation in order, which is computed directly with factorial
+arithmetic rather than by enumeration.""",
+]
+
+_EX_P0C["Topological Sort (Kahn's algorithm)"] = [
+    """The textbook case, traced.
+5 nodes, edges 0->2, 0->3, 1->3, 2->4, 3->4.
+in-degrees: 0:0, 1:0, 2:1, 3:2, 4:2. Queue starts [0,1].
+  pop 0 -> order [0]; 2 drops to 0 (queue), 3 drops to 1
+  pop 1 -> order [0,1]; 3 drops to 0 (queue)
+  pop 2 -> order [0,1,2]; 4 drops to 1
+  pop 3 -> order [0,1,2,3]; 4 drops to 0 (queue)
+  pop 4 -> order [0,1,2,3,4]
+Length 5 = node count, so it is a valid order.""",
+
+    """The cycle case.
+3 nodes, edges 0->1, 1->2, 2->0. Every in-degree is 1, so the queue starts
+EMPTY, the loop never runs, and the order has length 0 != 3.
+Return the empty list to signal impossibility. Nodes in a cycle can never reach
+in-degree zero because each waits on another cycle member - which is why the
+length check is a complete cycle detector, not a heuristic.""",
+
+    """The answer is not unique.
+For the first example, [0,1,2,3,4] and [1,0,3,2,4] are both valid.
+Whenever the queue holds more than one node, any of them may be taken. If the
+problem wants a deterministic or lexicographically smallest order, swap the
+queue for a min-heap - a one-line change worth knowing.""",
+
+    """Edge cases.
+No edges at all -> every in-degree is 0, all nodes queue immediately, and any
+order is valid.
+A single node -> trivially ordered.
+A disconnected graph -> handled naturally, since the queue seeds from every
+zero-in-degree node regardless of component.""",
+
+    """The direction bug that looks almost right.
+For an edge u -> v, it is v that gains an in-degree, because v is the one
+waiting.
+Incrementing u instead produces a REVERSED order, which passes symmetric test
+cases and fails real ones. Write one tiny example on paper before coding those
+two lines - it is the only place this algorithm goes wrong.""",
+
+    """Where it is used, and the DFS alternative.
+Course prerequisites, build systems compiling dependencies first, spreadsheet
+cell recalculation, package installation order, task scheduling with
+dependencies.
+The DFS alternative: post-order traversal, prepending each finished node, and
+detecting cycles with a recursion-stack marker. Same result; Kahn's is easier to
+reason about and naturally gives you the cycle check for free.""",
+]
+
+_EX_P0C["Remove Nth Node From End of List"] = [
+    """The textbook case, traced.
+1->2->3->4->5, n=2. dummy->1->2->3->4->5. fast=slow=dummy.
+Advance fast 2 steps: fast is on node 2.
+Move both while fast.next exists:
+  fast 3, slow 1 | fast 4, slow 2 | fast 5, slow 3. fast.next is None -> stop.
+slow is on 3, which is the node BEFORE the target 4.
+slow.next = slow.next.next removes 4. Result 1->2->3->5.""",
+
+    """Removing the head - why the dummy is essential.
+1->2, n=2. The target IS the head.
+With the dummy: fast advances 2 to node 2; fast.next is None so the loop never
+runs; slow is still on dummy; dummy.next = dummy.next.next skips node 1.
+Return dummy.next = 2.
+Without a dummy, slow would have nothing in front of the head to reassign, and
+you would need a separate branch for this case.""",
+
+    """Single-node list.
+1, n=1. dummy->1. fast advances 1 step to node 1. fast.next is None, loop
+skipped. slow is dummy, slow.next = None. Return dummy.next = None - an empty
+list, correctly.""",
+
+    """The loop-condition bug.
+Stopping at `while fast:` instead of `while fast.next:` moves slow one step too
+far - it lands ON the target rather than before it. You then delete the WRONG
+node (the one after the target), and in a singly linked list you cannot recover,
+because you have no pointer to the predecessor.
+One character of difference; trace the first example to confirm which you
+need.""",
+
+    """Why the gap makes it one pass.
+After the head start, the distance between fast and slow is fixed at n forever -
+both move at the same speed. So when fast reaches the end, slow is exactly n
+nodes behind, which is the definition of nth-from-the-end.
+The two-pass alternative (count the length, then walk to length - n) is equally
+correct and often clearer; the one-pass version is what the follow-up asks
+for.""",
+
+    """The family of gap and speed tricks.
+Fixed gap of n: this problem.
+Speed 1 and 2: find the middle, detect a cycle.
+Two pointers from opposite ends: sorted two-sum, palindrome check.
+All three are "two pointers", but the relationship between them differs - fixed
+distance, different speeds, or converging. Naming which one a problem needs is
+the recognition step.""",
+]
+
+_EX_P0C["Number of Connected Components"] = [
+    """The textbook case, traced.
+n=5, edges [[0,1],[1,2],[3,4]].
+Adjacency: 0:[1], 1:[0,2], 2:[1], 3:[4], 4:[3].
+  i=0 not seen -> count=1, DFS marks 0,1,2.
+  i=1,2 already seen -> skip.
+  i=3 not seen -> count=2, DFS marks 3,4.
+  i=4 seen -> skip.
+Answer 2.""",
+
+    """Isolated nodes count as components.
+n=4, edges = []. No node has a neighbour, so each outer-loop iteration finds an
+unseen node and the DFS marks only that node.
+Answer 4. This is why the outer loop runs over ALL nodes rather than only over
+nodes appearing in edges - forgetting that undercounts.""",
+
+    """A single component covering everything.
+n=4, edges [[0,1],[1,2],[2,3]]. The first DFS from 0 reaches every node, so the
+remaining three iterations all skip.
+Answer 1.""",
+
+    """The undirected-edge bug.
+Adding only one direction - graph[u].append(v) without graph[v].append(u) - on
+edges [[0,1]] makes node 1 unreachable from... actually it makes 0 reach 1 but
+not 1 reach 0. Starting the outer loop at 0 still finds both, so the answer
+looks right.
+Now try edges [[1,0]]: DFS from 0 finds nothing, count becomes 1; then node 1 is
+unseen, count becomes 2. Wrong.
+The bug depends on edge ORDER, which is why it survives casual testing.""",
+
+    """The Union-Find alternative, and when it is better.
+Start count at n. For each edge, union the endpoints; if their roots differed,
+decrement the count.
+Same answer in O(E x alpha). This wins when edges ARRIVE OVER TIME and you must
+report the count after each one - DFS would have to re-run from scratch every
+time. It is also the natural fit if you later need "are these two connected?"
+queries.""",
+
+    """Where this shows up.
+Counting islands in a grid (cells as nodes), friend circles / provinces
+(adjacency matrix), detecting whether a network has split, clustering records
+that share an identifier, and checking whether a graph is a valid tree
+(connected AND exactly n-1 edges).
+That last one is a nice two-line extension: run this, and require both count==1
+and len(edges)==n-1.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0C:
+        _e["examples"] = _EX_P0C[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
