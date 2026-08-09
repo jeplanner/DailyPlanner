@@ -16,268 +16,285 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Height Checker",
-         answer="Students should stand in non-decreasing height order; count how many are out of place versus the sorted arrangement. Sort a copy and count positions that differ.",
-         tags=["height-checker","counting-sort","sorting","array","dsa"],
-         code='''# Count students not in their sorted (expected) height position.
-def height_checker(heights):
-    expected = sorted(heights)         # target non-decreasing order
-    count = 0
-    for actual, want in zip(heights, expected):
-        if actual != want:
-            count += 1                 # this position is out of order
-    return count''',
-         complexity="Time O(n log n) (or O(n) counting sort), space O(n).",
-         pitfalls="Comparing to the reversed order; sorting the original in place and losing it.",
-         example="height_checker([1,1,4,2,1,3]) -> 3."),
-    dict(cat="dsa", title="Relative Sort Array",
-         answer="Sort arr1 so elements follow the order in arr2; elements not in arr2 go last in ascending order. Count arr1, emit arr2's values in order (using counts), then the leftovers sorted.",
-         tags=["relative-sort","counting","custom-order","array","dsa"],
-         code='''# Sort arr1 by arr2's order; unlisted elements ascending at the end.
-def relative_sort_array(arr1, arr2):
-    from collections import Counter
-    counts = Counter(arr1)
-    result = []
-    for x in arr2:                     # emit in arr2's prescribed order
-        result.extend([x] * counts.pop(x, 0))
-    for x in sorted(counts):           # leftovers ascending
-        result.extend([x] * counts[x])
-    return result''',
-         complexity="Time O(n log n), space O(n).",
-         pitfalls="Forgetting leftovers must be sorted; not removing consumed keys so they reappear.",
-         example="relative_sort_array([2,3,1,3,2,4,6,7,9,2,19], [2,1,4,3,9,6]) -> [2,2,2,1,4,3,3,9,6,7,19]."),
-    dict(cat="dsa", title="Find Words That Can Be Formed by Characters",
-         answer="Given a set of available characters, return the total length of words that can be spelled using them (each char used at most as many times as it appears). For each word, check its letter counts fit within the available counts.",
-         tags=["words-formed-by-chars","counting","hash-map","string","dsa"],
-         code='''# Sum lengths of words spellable from the available characters.
-def count_characters(words, chars):
-    from collections import Counter
-    available = Counter(chars)
-    total = 0
-    for word in words:
-        wc = Counter(word)
-        if all(wc[c] <= available[c] for c in wc):   # every letter fits
-            total += len(word)
-    return total''',
-         complexity="Time O(total characters), space O(alphabet).",
-         pitfalls="Only checking presence not counts; mutating the available counter across words.",
-         example="count_characters(['cat','bt','hat','tree'], 'atach') -> 6  ('cat' + 'hat')."),
-    dict(cat="dsa", title="Degree of an Array",
-         answer="The degree is the max frequency of any element; find the shortest contiguous subarray with the same degree. Track first and last index of each value; for each value at max frequency, the window length is last-first+1; take the minimum.",
-         tags=["degree-of-array","hash-map","first-last-index","array","dsa"],
-         code='''# Shortest subarray whose degree equals the whole array's degree.
-def find_shortest_subarray(nums):
-    first, count = {}, {}
-    last = {}
-    for i, x in enumerate(nums):
-        if x not in first:
-            first[x] = i               # remember first occurrence
-        last[x] = i                    # keep updating last occurrence
-        count[x] = count.get(x, 0) + 1
-    degree = max(count.values())
-    best = len(nums)
-    for x in count:
-        if count[x] == degree:         # this value sets the degree
-            best = min(best, last[x] - first[x] + 1)
-    return best''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Only considering one max-frequency value (ties matter); off-by-one in the window length.",
-         example="find_shortest_subarray([1,2,2,3,1,4,2]) -> 6."),
-    dict(cat="dsa", title="Longest Common Prefix",
-         answer="Find the longest common prefix among an array of strings. Compare characters column by column across all strings; stop at the first mismatch or the shortest string's end.",
-         tags=["longest-common-prefix","string","vertical-scan","dsa"],
-         code='''# Longest common prefix shared by all strings (vertical scan).
-def longest_common_prefix(strs):
-    if not strs:
-        return ''
-    for i, ch in enumerate(strs[0]):   # walk the first string's chars
-        for other in strs[1:]:
-            if i >= len(other) or other[i] != ch:
-                return strs[0][:i]     # mismatch or ran off an end
-    return strs[0]''',
-         complexity="Time O(total characters), space O(1).",
-         pitfalls="Not handling an empty list or empty string; indexing past a shorter string.",
-         example="longest_common_prefix(['flower','flow','flight']) -> 'fl'."),
-    dict(cat="dsa", title="Isomorphic Strings",
-         answer="Two strings are isomorphic if characters in s can be consistently mapped to characters in t (a bijection preserving order). Keep two maps (s->t and t->s) and verify every pair is consistent both ways.",
-         tags=["isomorphic-strings","hash-map","bijection","string","dsa"],
-         code='''# True if s and t are isomorphic (consistent one-to-one char mapping).
-def is_isomorphic(s, t):
-    if len(s) != len(t):
-        return False
-    map_st, map_ts = {}, {}
-    for a, b in zip(s, t):
-        if a in map_st and map_st[a] != b:
-            return False               # s-char already maps elsewhere
-        if b in map_ts and map_ts[b] != a:
-            return False               # t-char already claimed
-        map_st[a] = b
-        map_ts[b] = a
-    return True''',
-         complexity="Time O(n), space O(1) (bounded alphabet).",
-         pitfalls="Using only one direction (misses two chars mapping to the same target); ignoring length mismatch.",
-         example="is_isomorphic('egg','add') -> True; is_isomorphic('foo','bar') -> False."),
-    dict(cat="dsa", title="Word Pattern",
-         answer="Check a string of words follows a pattern (like 'abba'). Bijection between pattern letters and words; two maps enforce a one-to-one correspondence and lengths must match.",
-         tags=["word-pattern","hash-map","bijection","string","dsa"],
-         code='''# True if words follow the pattern via a one-to-one mapping.
-def word_pattern(pattern, s):
-    words = s.split()
-    if len(pattern) != len(words):
-        return False
-    p2w, w2p = {}, {}
-    for p, w in zip(pattern, words):
-        if p in p2w and p2w[p] != w:
-            return False               # pattern char maps to a different word
-        if w in w2p and w2p[w] != p:
-            return False               # word already bound to another char
-        p2w[p] = w
-        w2p[w] = p
-    return True''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Not checking both directions; forgetting the count of words must equal the pattern length.",
-         example="word_pattern('abba', 'dog cat cat dog') -> True; word_pattern('abba', 'dog cat cat fish') -> False."),
-    dict(cat="dsa", title="Ransom Note",
-         answer="Can ransomNote be built from the letters in magazine (each letter used once)? Count magazine letters; verify every ransomNote letter has enough supply.",
-         tags=["ransom-note","counting","hash-map","string","dsa"],
-         code='''# True if ransomNote can be spelled from magazine's letters.
-def can_construct(ransom_note, magazine):
-    from collections import Counter
-    supply = Counter(magazine)
-    need = Counter(ransom_note)
-    return all(supply[c] >= need[c] for c in need)''',
-         complexity="Time O(n + m), space O(alphabet).",
-         pitfalls="Checking presence instead of counts; scanning magazine per letter (O(n*m)).",
-         example="can_construct('aa', 'aab') -> True; can_construct('aa', 'ab') -> False."),
-    dict(cat="dsa", title="Find All Numbers Disappeared in an Array",
-         answer="For nums in [1, n], find all values in [1, n] missing from the array. In-place trick: for each value, mark index abs(v)-1 negative; the indices still positive correspond to missing numbers.",
-         tags=["disappeared-numbers","in-place","index-marking","array","dsa"],
-         code='''# Missing values from [1..n] using in-place negative marking.
-def find_disappeared_numbers(nums):
-    for v in nums:
-        idx = abs(v) - 1               # value maps to this index
-        if nums[idx] > 0:
-            nums[idx] = -nums[idx]     # mark 'seen'
-    result = []
-    for i, v in enumerate(nums):
-        if v > 0:                      # never marked -> i+1 is missing
-            result.append(i + 1)
-    return result''',
-         complexity="Time O(n), space O(1) (output aside).",
-         pitfalls="Not using abs when re-reading marked values; off-by-one between value and index.",
-         example="find_disappeared_numbers([4,3,2,7,8,2,3,1]) -> [5,6]."),
-    dict(cat="dsa", title="Majority Element (Boyer-Moore)",
-         answer="Find the element appearing more than n/2 times. Boyer-Moore voting: keep a candidate and a count; matching votes increment, differing decrement, and a zero count adopts a new candidate. The majority survives.",
-         tags=["majority-element","boyer-moore","voting","array","dsa"],
-         code='''# Majority element (> n/2) via Boyer-Moore voting.
-def majority_element(nums):
-    candidate = None
-    count = 0
-    for x in nums:
-        if count == 0:
-            candidate = x              # adopt a new candidate
-        count += 1 if x == candidate else -1
-    return candidate''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Assuming a majority always exists (verify if not guaranteed); resetting count incorrectly.",
-         example="majority_element([2,2,1,1,1,2,2]) -> 2."),
-    dict(cat="dsa", title="Single Number (XOR)",
-         answer="Every element appears twice except one; find the single. XOR all elements: pairs cancel (x^x=0) and 0^single = single.",
-         tags=["single-number","xor","bit-manipulation","array","dsa"],
-         code='''# Find the element that appears once (all others twice) via XOR.
-def single_number(nums):
+    dict(cat="dsa", title="Plus One",
+         answer="Given digits of a number (most significant first), add one and return the digit array. Walk from the last digit: if it's 9 it becomes 0 and carries; otherwise increment and return. If all were 9, prepend a 1.",
+         tags=["plus-one","digits","carry","array","dsa"],
+         code='''# Add one to a number represented as a digit array.
+def plus_one(digits):
+    for i in range(len(digits) - 1, -1, -1):
+        if digits[i] < 9:
+            digits[i] += 1             # no carry: done
+            return digits
+        digits[i] = 0                  # 9 -> 0 and carry left
+    return [1] + digits                # all nines: e.g. 999 -> 1000''',
+         complexity="Time O(n), space O(1) (amortized).",
+         pitfalls="Forgetting the all-nines prepend; converting to int (overflows for big numbers in other languages).",
+         example="plus_one([1,2,9]) -> [1,3,0]; plus_one([9,9]) -> [1,0,0]."),
+    dict(cat="dsa", title="Add Binary",
+         answer="Add two binary strings and return the binary sum string. Walk both from the right with a carry, summing bit + bit + carry, appending sum%2 and carrying sum//2.",
+         tags=["add-binary","strings","carry","bit-manipulation","dsa"],
+         code='''# Add two binary strings, returning the binary sum.
+def add_binary(a, b):
+    i, j = len(a) - 1, len(b) - 1
+    carry = 0
+    out = []
+    while i >= 0 or j >= 0 or carry:
+        total = carry
+        if i >= 0:
+            total += int(a[i]); i -= 1
+        if j >= 0:
+            total += int(b[j]); j -= 1
+        out.append(str(total % 2))     # this bit
+        carry = total // 2             # carry up
+    return ''.join(reversed(out))''',
+         complexity="Time O(max(n, m)), space O(max(n, m)).",
+         pitfalls="Dropping the final carry; not reversing the output digits.",
+         example="add_binary('11', '1') -> '100'."),
+    dict(cat="dsa", title="Excel Sheet Column Number",
+         answer="Convert an Excel column title (A, B, ..., Z, AA, ...) to its number. It's base-26 with digits 1..26: for each char, result = result*26 + (ord(c)-ord('A')+1).",
+         tags=["excel-column-number","base-26","string","math","dsa"],
+         code='''# Excel column title -> its 1-based column number (base 26).
+def title_to_number(column_title):
     result = 0
-    for x in nums:
-        result ^= x                    # duplicates cancel out
+    for ch in column_title:
+        result = result * 26 + (ord(ch) - ord('A') + 1)
     return result''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Using a set/count (O(n) space) when XOR is O(1); assuming exactly-twice does not hold.",
-         example="single_number([4,1,2,1,2]) -> 4."),
-    dict(cat="dsa", title="Missing Number",
-         answer="Array holds n distinct numbers from [0, n] with one missing; find it. Sum 0..n via n(n+1)/2 and subtract the array sum; the difference is the missing number (or XOR trick).",
-         tags=["missing-number","math","xor","array","dsa"],
-         code='''# Missing value from [0..n] via the expected-sum difference.
-def missing_number(nums):
-    n = len(nums)
-    expected = n * (n + 1) // 2         # sum of 0..n
-    return expected - sum(nums)''',
+         pitfalls="Treating it as 0-indexed base 26 (it's 1..26, no zero digit); wrong char offset.",
+         example="title_to_number('AB') -> 28; title_to_number('ZY') -> 701."),
+    dict(cat="dsa", title="Excel Sheet Column Title",
+         answer="Convert a column number to its Excel title. It's bijective base-26 (no zero): repeatedly subtract 1, take mod 26 for the letter, then divide by 26.",
+         tags=["excel-column-title","base-26","math","string","dsa"],
+         code='''# Column number -> Excel column title (bijective base 26).
+def number_to_title(n):
+    out = []
+    while n > 0:
+        n -= 1                         # shift to 0-indexed for this digit
+        out.append(chr(ord('A') + n % 26))
+        n //= 26
+    return ''.join(reversed(out))''',
+         complexity="Time O(log n), space O(log n).",
+         pitfalls="Forgetting the n-=1 shift (bijective base 26 has no zero); not reversing.",
+         example="number_to_title(28) -> 'AB'; number_to_title(701) -> 'ZY'."),
+    dict(cat="dsa", title="Happy Number",
+         answer="Repeatedly replace n by the sum of squares of its digits; n is happy if this reaches 1, unhappy if it loops. Detect the cycle with a seen-set (or Floyd's two pointers).",
+         tags=["happy-number","cycle-detection","hash-set","math","dsa"],
+         code='''# True if repeated digit-square-sum reaches 1 (else it cycles).
+def is_happy(n):
+    def squares(x):
+        return sum(int(d) ** 2 for d in str(x))
+    seen = set()
+    while n != 1 and n not in seen:
+        seen.add(n)
+        n = squares(n)                 # advance the sequence
+    return n == 1''',
+         complexity="Time O(log n) per step, bounded steps; space O(number of distinct values).",
+         pitfalls="No cycle detection -> infinite loop on unhappy numbers; squaring the number instead of each digit.",
+         example="is_happy(19) -> True; is_happy(2) -> False."),
+    dict(cat="dsa", title="Power of Three",
+         answer="Check if n is a power of 3. Iterative: while n divisible by 3, divide; happy if it reduces to 1. (Or use the max-int power-of-3 divisibility trick.)",
+         tags=["power-of-three","math","division","dsa"],
+         code='''# True if n is a power of three.
+def is_power_of_three(n):
+    if n < 1:
+        return False
+    while n % 3 == 0:
+        n //= 3                        # strip factors of 3
+    return n == 1''',
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Not handling n <= 0; using float logs (rounding errors misclassify edge values).",
+         example="is_power_of_three(27) -> True; is_power_of_three(45) -> False."),
+    dict(cat="dsa", title="Ugly Number",
+         answer="An ugly number is positive with only prime factors 2, 3, and 5. Divide out all 2s, 3s, and 5s; it's ugly if what remains is 1.",
+         tags=["ugly-number","math","factorization","dsa"],
+         code='''# True if n's only prime factors are 2, 3, and 5.
+def is_ugly(n):
+    if n < 1:
+        return False
+    for p in (2, 3, 5):
+        while n % p == 0:
+            n //= p                    # remove this prime factor fully
+    return n == 1''',
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Not rejecting n <= 0; leaving a factor because you divided each prime only once.",
+         example="is_ugly(6) -> True; is_ugly(14) -> False."),
+    dict(cat="dsa", title="Valid Perfect Square",
+         answer="Decide if n is a perfect square without sqrt. Binary search the root in [1, n]: mid*mid vs n narrows the range.",
+         tags=["valid-perfect-square","binary-search","math","dsa"],
+         code='''# True if n is a perfect square, via binary search on the root.
+def is_perfect_square(n):
+    lo, hi = 1, n
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        sq = mid * mid
+        if sq == n:
+            return True
+        if sq < n:
+            lo = mid + 1               # root is larger
+        else:
+            hi = mid - 1               # root is smaller
+    return False''',
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Overflow of mid*mid in other languages; off-by-one in the binary-search bounds.",
+         example="is_perfect_square(16) -> True; is_perfect_square(14) -> False."),
+    dict(cat="dsa", title="Arranging Coins",
+         answer="With n coins, form a staircase where row i has i coins; return the number of COMPLETE rows. Solve k(k+1)/2 <= n by binary search (or the quadratic formula).",
+         tags=["arranging-coins","binary-search","math","dsa"],
+         code='''# Number of complete staircase rows buildable from n coins.
+def arrange_coins(n):
+    lo, hi = 0, n
+    while lo <= hi:
+        k = (lo + hi) // 2
+        need = k * (k + 1) // 2        # coins to fill k full rows
+        if need == n:
+            return k
+        if need < n:
+            lo = k + 1                 # can afford more rows
+        else:
+            hi = k - 1
+    return hi                          # last k that fit''',
+         complexity="Time O(log n), space O(1).",
+         pitfalls="Returning lo instead of hi at the end; overflow of k*(k+1) in other languages.",
+         example="arrange_coins(5) -> 2  (rows 1+2 fit, row 3 needs 3 more); arrange_coins(8) -> 3."),
+    dict(cat="dsa", title="Sqrt(x) via Binary Search",
+         answer="Compute the integer square root (floor) without built-in sqrt. Binary search r in [0, x]: the largest r with r*r <= x.",
+         tags=["sqrt","binary-search","math","dsa"],
+         code='''# Integer (floor) square root of x via binary search.
+def my_sqrt(x):
+    if x < 2:
+        return x
+    lo, hi = 1, x // 2
+    ans = 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if mid * mid <= x:
+            ans = mid                  # candidate; try larger
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return ans''',
+         complexity="Time O(log x), space O(1).",
+         pitfalls="Returning the ceiling instead of the floor; not handling x < 2.",
+         example="my_sqrt(8) -> 2; my_sqrt(16) -> 4."),
+    dict(cat="dsa", title="Count Primes (Sieve of Eratosthenes)",
+         answer="Count primes strictly less than n. Sieve of Eratosthenes: mark multiples of each prime starting from its square as composite; count what stays prime.",
+         tags=["count-primes","sieve-of-eratosthenes","math","dsa"],
+         code='''# Count primes < n via the Sieve of Eratosthenes.
+def count_primes(n):
+    if n < 3:
+        return 0
+    is_prime = [True] * n
+    is_prime[0] = is_prime[1] = False
+    p = 2
+    while p * p < n:
+        if is_prime[p]:
+            for multiple in range(p * p, n, p):
+                is_prime[multiple] = False   # cross off multiples of p
+        p += 1
+    return sum(is_prime)''',
+         complexity="Time O(n log log n), space O(n).",
+         pitfalls="Counting primes <= n instead of < n; starting the inner loop below p*p (redundant work).",
+         example="count_primes(10) -> 4  (2,3,5,7)."),
+    dict(cat="dsa", title="Roman to Integer",
+         answer="Convert a Roman numeral to an integer. Map symbols to values; add each, but if a symbol is smaller than the one after it, subtract it (handles IV, IX, XL, etc.).",
+         tags=["roman-to-integer","hash-map","string","math","dsa"],
+         code='''# Convert a Roman numeral string to its integer value.
+def roman_to_int(s):
+    values = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}
+    total = 0
+    for i in range(len(s)):
+        # subtract if a smaller value precedes a larger one
+        if i + 1 < len(s) and values[s[i]] < values[s[i + 1]]:
+            total -= values[s[i]]
+        else:
+            total += values[s[i]]
+    return total''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Off-by-one on n (range is 0..n inclusive); integer overflow in other languages (use XOR there).",
-         example="missing_number([3,0,1]) -> 2."),
-    dict(cat="glossary", title="Hedged requests",
-         answer="A tail-latency reduction technique: after a request has been outstanding longer than, say, the 95th-percentile latency, send a DUPLICATE ('hedge') request to another replica and take whichever responds first, cancelling the other. It trims the slow tail (a single slow server no longer dictates p99) at the cost of a little extra load (bounded because hedges only fire for the slow fraction). Popularized by Google's 'The Tail at Scale'.",
-         tags=["hedged-requests","tail-latency","p99","replicas","performance"],
-         example="A read waits past its p95 (say 10ms) with no reply, so the client fires a second read to another replica; the first to answer wins -- so one GC-paused server no longer blows up p99, for only ~5% extra requests."),
-    dict(cat="glossary", title="Load shedding",
-         answer="Deliberately DROPPING or rejecting a fraction of incoming work when a system is overloaded, to protect the rest from collapse. Better to fail some requests fast (429/503) than to let queues grow until everything times out (congestion collapse). Often prioritized -- shed low-value/retry traffic first, keep health checks and paying users -- and paired with backpressure and admission control. The goal: degrade throughput gracefully instead of falling over entirely.",
-         tags=["load-shedding","overload","admission-control","429","reliability"],
-         example="At 100% CPU an API starts returning 503 to 20% of anonymous requests (keeping logged-in traffic) so latency stays bounded, instead of accepting everything and timing out for all."),
-    dict(cat="glossary", title="Request coalescing",
-         answer="Collapsing multiple identical in-flight requests into a SINGLE upstream call, sharing its result among all waiters (a.k.a. single-flight). When many callers ask for the same key at once (a hot cache miss), only the first triggers the expensive fetch; the rest wait and receive the same answer. Prevents duplicated work and cache stampedes; the cache-layer cousin of hedging's opposite -- fewer calls, not more.",
-         tags=["request-coalescing","single-flight","cache-stampede","deduplication","performance"],
-         example="1,000 concurrent requests miss the same cache key; a single-flight guard makes just one hit the database while the other 999 block on that one result -- collapsing 1,000 DB queries into 1."),
-    dict(cat="glossary", title="Graceful degradation",
-         answer="Designing a system so that when a dependency fails or load spikes, it drops to a REDUCED but still-useful mode instead of failing entirely. Non-essential features are disabled, stale/cached or default data is served, and the core function survives. Enabled by circuit breakers, fallbacks, feature toggles, and load shedding. The opposite of a brittle system where one failed dependency takes everything down.",
-         tags=["graceful-degradation","fallback","circuit-breaker","resilience","reliability"],
-         example="If the recommendation service is down, an e-commerce page hides the 'Recommended for you' carousel and serves a generic bestsellers list from cache -- the user can still browse and buy rather than seeing an error page."),
-    dict(cat="ml_coding", title="PCA via SVD (numpy)",
-         answer="PCA finds directions of maximum variance. Center the data, take the SVD (X = U S Vt); the rows of Vt are principal components (right singular vectors), and projecting onto the top-k gives the reduced representation. SVD is the numerically stable route (vs eigendecomposition of the covariance).",
-         tags=["pca","svd","dimensionality-reduction","unsupervised","ml-coding"],
-         code='''# PCA to k components via SVD. ast.parse-only.
+         pitfalls="Not handling the subtractive pairs; reading past the end without a bounds check.",
+         example="roman_to_int('MCMXCIV') -> 1994."),
+    dict(cat="dsa", title="Number of 1 Bits (Hamming Weight)",
+         answer="Count set bits in an integer. Repeatedly clear the lowest set bit with n &= n-1 and count iterations (Brian Kernighan's trick) -- loops only as many times as there are set bits.",
+         tags=["hamming-weight","bit-manipulation","kernighan","dsa"],
+         code='''# Count set bits (Hamming weight) via Brian Kernighan's trick.
+def hamming_weight(n):
+    count = 0
+    while n:
+        n &= n - 1                     # clear the lowest set bit
+        count += 1
+    return count''',
+         complexity="Time O(number of set bits), space O(1).",
+         pitfalls="Looping 32 times unconditionally (fine but slower); infinite loop if you forget to modify n.",
+         example="hamming_weight(11) -> 3  (1011 has three 1s)."),
+    dict(cat="glossary", title="Exponential backoff with jitter",
+         answer="A RETRY strategy: wait exponentially longer between attempts (base * 2^attempt) to relieve a struggling dependency, plus JITTER -- randomization of the delay -- to prevent many clients from retrying in lockstep (the 'thundering herd' that re-overloads the service the instant it recovers). Common forms: full jitter (sleep = random(0, cap)) and equal jitter. Always cap the max delay and the attempt count. Without jitter, synchronized retries create load spikes; with it, retries spread out.",
+         tags=["exponential-backoff","jitter","retries","thundering-herd","reliability"],
+         example="After a 503, a client waits ~random(0, min(cap, base*2^n)) before retry n; 1,000 clients that failed together now retry at random times instead of hammering the recovering service simultaneously."),
+    dict(cat="glossary", title="Token bucket vs leaky bucket",
+         answer="Two RATE-LIMITING algorithms. TOKEN BUCKET: tokens refill at a steady rate into a bucket of capacity B; each request consumes a token, and requests with no token are rejected/delayed -- it allows BURSTS up to B while bounding the average rate. LEAKY BUCKET: requests enter a queue that drains ('leaks') at a fixed rate; it SMOOTHS output to a constant rate and drops overflow -- no bursts. Token bucket favors bursty-but-bounded traffic (most APIs); leaky bucket favors a strictly smooth output rate.",
+         tags=["token-bucket","leaky-bucket","rate-limiting","burst","throttling"],
+         example="An API using a token bucket (capacity 100, refill 10/s) lets a client burst 100 requests instantly then settle to 10/s; a leaky bucket would instead force a steady 10/s regardless of arrival bursts, queuing or dropping the rest."),
+    dict(cat="glossary", title="Sliding window vs fixed window rate limiter",
+         answer="FIXED WINDOW counts requests per aligned interval (e.g. per calendar minute) and resets at the boundary -- simple, but allows a 2x burst straddling the boundary (max at the end of one window plus max at the start of the next). SLIDING WINDOW fixes this: sliding-log keeps timestamps and counts the last N seconds exactly (accurate but memory-heavy); sliding-window-counter interpolates between the current and previous fixed windows (a good approximation, cheap). Sliding windows give smoother, boundary-safe limiting at some extra cost.",
+         tags=["sliding-window","fixed-window","rate-limiting","boundary-burst","throttling"],
+         example="Limit 100/min: with a fixed window a client sends 100 at 0:59 and 100 at 1:00 -- 200 in two seconds; a sliding-window counter weights the previous minute's count and blocks that boundary burst."),
+    dict(cat="glossary", title="Connection draining",
+         answer="When removing an instance (deploy, scale-in, health failure), CONNECTION DRAINING (a.k.a. deregistration delay) stops sending it NEW requests while letting IN-FLIGHT requests finish within a timeout before the instance is terminated. Prevents dropping active requests during rollouts/autoscaling. Paired with graceful shutdown (the app stops accepting, finishes work, closes cleanly) and readiness probes that fail first so the load balancer removes it from rotation.",
+         tags=["connection-draining","graceful-shutdown","deployment","load-balancer","reliability"],
+         example="During a rolling deploy the load balancer marks an instance draining: no new requests route to it, but its 30 in-flight requests get up to 30s to complete before the container is killed -- so users mid-request aren't cut off."),
+    dict(cat="ml_coding", title="L2 regularization (ridge) loss and gradient (numpy)",
+         answer="L2 regularization adds lambda * sum(w^2) to the loss, penalizing large weights to reduce overfitting (weight decay). Its gradient contribution is 2*lambda*w, pulling weights toward zero. Usually the bias is NOT regularized.",
+         tags=["l2-regularization","ridge","weight-decay","overfitting","ml-coding"],
+         code='''# L2 (ridge) penalty term and its gradient. ast.parse-only.
 import numpy as np
 
-def pca(X, k):
-    X_centered = X - X.mean(axis=0)               # center each feature
-    # economy SVD; rows of Vt are the principal directions
-    U, S, Vt = np.linalg.svd(X_centered, full_matrices=False)
-    components = Vt[:k]                            # top-k directions
-    projected = X_centered @ components.T         # reduced coordinates
-    return projected, components''',
-         complexity="Time O(n * d * min(n,d)), space O(n * d).",
-         pitfalls="Forgetting to center (PCA assumes zero mean); using U instead of Vt for components; taking too many components.",
-         example="pca(np.array([[2.,0.],[0.,2.],[ -2.,0.],[0.,-2.]]), 1) projects the 2-D points onto their top variance axis."),
-    dict(cat="ml_coding", title="Dropout forward (numpy)",
-         answer="Dropout randomly zeros a fraction p of activations during training to prevent co-adaptation, then scales survivors by 1/(1-p) (inverted dropout) so the expected value is unchanged and inference needs no scaling. At inference it is a no-op.",
-         tags=["dropout","regularization","inverted-dropout","training","ml-coding"],
-         code='''# Inverted dropout forward pass. ast.parse-only (rng passed in).
+def l2_penalty(w, lam):
+    penalty = lam * np.sum(w ** 2)                # add to the data loss
+    grad = 2 * lam * w                            # add to the weight gradient
+    return penalty, grad''',
+         complexity="Time O(features), space O(features).",
+         pitfalls="Regularizing the bias term; forgetting the factor of 2 in the gradient; wrong sign (it pushes toward zero).",
+         example="l2_penalty(np.array([3.,4.]), 0.1) -> penalty 2.5, grad [0.6, 0.8]."),
+    dict(cat="ml_coding", title="K-means assignment step (numpy)",
+         answer="One assignment step of Lloyd's k-means: assign each point to its nearest centroid. Compute distances to all centroids and take the argmin per point. (The update step then recomputes centroids as cluster means.)",
+         tags=["kmeans","clustering","assignment-step","unsupervised","ml-coding"],
+         code='''# K-means assignment: nearest-centroid label per point. ast.parse-only.
 import numpy as np
 
-def dropout_forward(x, p, training, rng):
-    if not training or p == 0:
-        return x                                  # no-op at inference
-    keep = 1 - p
-    mask = (rng.random(x.shape) < keep) / keep    # scaled keep-mask
-    return x * mask                               # zero-and-scale survivors''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Not scaling by 1/keep (train/inference mismatch); applying dropout at inference; dropping p vs keeping p confusion.",
-         example="dropout_forward(x, 0.5, training=True, rng) zeros ~half of x and doubles the rest; training=False returns x unchanged."),
-    dict(cat="ml_coding", title="Accuracy and confusion matrix (numpy)",
-         answer="Accuracy = fraction correct. The confusion matrix C[i][j] counts samples of true class i predicted as class j; its diagonal is correct predictions. Build it by incrementing C[true, pred] per sample.",
-         tags=["accuracy","confusion-matrix","classification-metrics","evaluation","ml-coding"],
-         code='''# Accuracy and a confusion matrix for integer labels. ast.parse-only.
+def assign_clusters(X, centroids):
+    # distances[i, k] = ||X[i] - centroids[k]||
+    diff = X[:, None, :] - centroids[None, :, :]   # broadcast to (n, k, d)
+    dist = np.sqrt(np.sum(diff ** 2, axis=2))      # (n, k) distances
+    return np.argmin(dist, axis=1)                 # nearest centroid index''',
+         complexity="Time O(n * k * d), space O(n * k * d).",
+         pitfalls="Broadcasting on the wrong axes; taking argmin over the wrong dimension; forgetting sqrt is monotonic (optional here).",
+         example="assign_clusters(np.array([[0.,0.],[10.,10.]]), np.array([[0.,0.],[10.,10.]])) -> [0, 1]."),
+    dict(cat="ml_coding", title="Precision, recall, F1 from a confusion matrix (numpy)",
+         answer="From a multiclass confusion matrix C (rows=true, cols=pred), per-class precision = TP/(TP+FP) = diag/col_sum, recall = TP/(TP+FN) = diag/row_sum, and F1 = harmonic mean. Guard against divide-by-zero for empty classes.",
+         tags=["precision","recall","f1","confusion-matrix","ml-coding"],
+         code='''# Per-class precision, recall, F1 from a confusion matrix. ast.parse-only.
 import numpy as np
 
-def accuracy_and_confusion(y_true, y_pred, num_classes):
-    accuracy = np.mean(y_true == y_pred)          # fraction correct
-    cm = np.zeros((num_classes, num_classes), dtype=int)
-    for t, p in zip(y_true, y_pred):
-        cm[t, p] += 1                             # true t predicted p
-    return accuracy, cm''',
-         complexity="Time O(n), space O(num_classes^2).",
-         pitfalls="Swapping the (true, pred) axes; num_classes smaller than the max label; comparing floats for equality.",
-         example="accuracy_and_confusion(np.array([0,1,1]), np.array([0,1,0]), 2) -> accuracy 0.667, cm [[1,0],[1,1]]."),
-    dict(cat="conceptual", title="Why do hedged requests reduce tail latency, and why not just send duplicate requests always?",
-         answer="Tail latency (p99, p999) in a large system is dominated not by the average server but by the occasional slow one: a server doing garbage collection, serving a cold cache, sharing a noisy CPU, or briefly queueing. In a request that fans out to many servers, the SLOWEST component gates the whole response, so even if each server is fast 99% of the time, a request touching 100 of them is very likely to hit at least one slow one -- tail latency compounds. HEDGED REQUESTS attack this directly: wait until a request is clearly running slow (past, say, the p95 for that operation), then send a second copy to a DIFFERENT replica and take whichever finishes first. Because the slowness of one server is usually independent of another, the probability that BOTH the original and the hedge are slow is much lower (roughly the product of the individual slow-probabilities), so the tail collapses toward the typical latency. The reason you DON'T just duplicate every request always is COST: sending two copies of everything doubles the load on the whole fleet, and a system running near capacity would tip into overload -- which itself creates queueing and makes latency worse, defeating the purpose. The elegance of the p95-triggered hedge is that hedges only fire for the small fraction of requests that are actually slow (~5%), so the extra load is bounded to a few percent while capturing almost all the tail-latency benefit. Refinements: 'tied requests' where the two copies tell each other to cancel once one starts executing (cutting wasted work further), and never hedging when the system is already hot (to avoid amplifying overload). The principle: spend a little redundant work precisely where it buys tail-latency improvement, not everywhere.",
-         tags=["hedged-requests","tail-latency","p99","tail-at-scale","why"],
-         example="A request fanning out to 100 leaf servers each with 1% chance of a 1s stall has a ~63% chance at least one stalls; hedging the slow 5% to a second replica makes both-slow astronomically rarer, so p99 drops from ~1s toward the ~10ms typical -- for only ~5% extra requests, whereas always-duplicating would add 100% load and risk overload."),
-    dict(cat="conceptual", title="Why scale by 1/(1-p) in dropout, and why is inference a no-op?",
-         answer="Dropout regularizes a network by randomly zeroing each activation with probability p during training, which forces the network not to rely on any single unit (preventing co-adaptation) and acts like training an ensemble of subnetworks. But zeroing units changes the EXPECTED MAGNITUDE of a layer's output: if a unit's normal output is a and it survives with probability keep = 1-p, then its expected contribution during training drops to keep*a. If you did nothing to correct this, the layer feeding into the next one would, on average, send a signal that is (1-p) times as large during training as it would be at inference (when all units are active) -- so the distributions of activations seen by downstream layers would MISMATCH between training and test, and the carefully-learned weights would be miscalibrated at inference, degrading accuracy. There are two ways to fix the mismatch. Classic dropout scales activations DOWN by keep at inference; but the modern standard is INVERTED DROPOUT, which instead scales the surviving activations UP by 1/keep = 1/(1-p) during training. That way the expected value of each activation during training becomes keep * (a/keep) = a -- exactly what it would be with no dropout -- so training-time activations already match the full-network scale. The payoff is that INFERENCE needs no special handling at all: you simply run the full network with every unit active and no scaling, which is faster and simpler (important because inference happens far more often than training and you don't want per-unit correction there). So the 1/(1-p) factor is a bookkeeping trick that moves the necessary rescaling into the training path, keeping expected activations invariant and making the test-time forward pass a clean no-op. A subtlety: the scaling preserves the MEAN but inflates the VARIANCE of activations during training, which is part of dropout's noise-injection regularization effect.",
-         tags=["dropout","inverted-dropout","regularization","train-test-consistency","why"],
-         example="With p=0.5 (keep=0.5), a unit that would output 4 is kept and multiplied by 1/0.5=2 to output 8 during training half the time and 0 the other half -- expected 4, matching the no-dropout value -- so at inference you just output 4 with no scaling."),
-    dict(cat="behavioral", title="STAR: Disagreeing with a decision then fully committing (Have Backbone; Disagree and Commit)",
-         answer="Amazon LP: HAVE BACKBONE; DISAGREE AND COMMIT -- leaders respectfully challenge decisions they disagree with, even when uncomfortable, but once a decision is made they commit wholly. Show you voiced a well-reasoned dissent with data, and then -- when overruled -- backed the decision genuinely rather than sabotaging it.",
-         tags=["behavioral","star","disagree-and-commit","have-backbone","amazon-lp"],
-         example="SITUATION: My team decided to build a new service on a NoSQL store I believed was the wrong fit -- our access patterns were highly relational with multi-entity transactions. TASK: As the senior engineer I owed the team my honest technical judgment, but the tech lead and two others favored NoSQL for its scaling story. ACTION: I wrote a one-page doc laying out the specific queries and the transactional consistency we needed, showed where NoSQL would force complex application-side joins and risk anomalies, and proposed Postgres with a clear scaling path. I presented it directly but without rancor, and asked hard questions. The group still chose NoSQL, weighting operational familiarity higher than I did. Rather than relitigate or quietly resist, I committed fully: I helped design the data model to minimize the join pain I'd worried about, wrote the access layer, and added integration tests around the consistency edge cases I'd flagged. RESULT: We shipped on time; two of the anomaly cases I'd raised did surface in testing and my guardrails caught them early, so we handled them cleanly instead of in production. Months later we did add a relational store for one subsystem -- but because I'd committed and built well, the team trusted my earlier dissent and brought me in to lead that migration. Voicing the disagreement AND committing wholeheartedly both mattered."),
+def prf_from_confusion(cm, eps=1e-12):
+    tp = np.diag(cm).astype(float)                # correct per class
+    precision = tp / (cm.sum(axis=0) + eps)       # diag / predicted count
+    recall = tp / (cm.sum(axis=1) + eps)          # diag / actual count
+    f1 = 2 * precision * recall / (precision + recall + eps)
+    return precision, recall, f1''',
+         complexity="Time O(num_classes^2), space O(num_classes).",
+         pitfalls="Swapping the precision/recall axes (col vs row sums); divide-by-zero on absent classes; averaging wrongly (macro vs micro).",
+         example="prf_from_confusion(np.array([[5,1],[2,2]])) gives class-0 precision 5/7, recall 5/6."),
+    dict(cat="conceptual", title="Why add jitter to exponential backoff instead of just backing off exponentially?",
+         answer="Exponential backoff alone solves one problem: it stops clients from hammering a struggling service by making each successive retry wait longer (1s, 2s, 4s, ...), giving the dependency room to recover. But it does NOT solve a second, subtler problem -- SYNCHRONIZATION. Consider what causes retries in the first place: usually a shared event, like a service going down, a deploy, or a network partition, that fails MANY clients at the SAME instant. If every one of those clients uses the identical deterministic backoff schedule, they all wait 1s and retry together, all wait 2s and retry together, and so on. The retries arrive in synchronized WAVES: the moment the service comes back up, it's hit by the entire herd simultaneously, which re-overloads it and knocks it down again -- a self-perpetuating 'thundering herd' oscillation where the system never stabilizes even though average load would be fine if spread out. JITTER breaks the synchronization by RANDOMIZING each client's delay: instead of sleeping exactly 2^n seconds, a client sleeps a random amount in [0, 2^n] (full jitter) or [2^(n-1), 2^n] (equal jitter). Now the clients that failed together retry at DIFFERENT times, spreading the load into a smooth trickle the recovering service can absorb, so it stays up and everyone eventually succeeds. AWS's analysis showed full jitter dramatically reduces both peak load and the total work (competing requests) versus no-jitter backoff. The cost is negligible -- one random number per retry -- and the only nuance is choosing a jitter form (full jitter is simplest and usually best) and still capping the max delay and attempt count. So the rule: exponential backoff controls the AVERAGE retry rate over time; jitter controls the CORRELATION between clients. You need both -- backoff without jitter still produces destructive synchronized retry storms.",
+         tags=["exponential-backoff","jitter","thundering-herd","retries","why"],
+         example="A service outage fails 10,000 clients at once: with plain backoff all 10,000 retry at t=1s, t=3s, t=7s in synchronized spikes that re-crash it on recovery; with full jitter each retries at a random offset, turning the spikes into a flat, absorbable load and letting the service stabilize."),
+    dict(cat="conceptual", title="Why does L2 regularization reduce overfitting, and how does it differ from L1?",
+         answer="Overfitting happens when a model fits noise in the training data by using large, finely-tuned weights that make the decision surface wiggle to pass through individual points; such models generalize poorly because those exact weights don't reflect the true signal. L2 regularization adds a penalty proportional to the SUM OF SQUARED WEIGHTS (lambda * sum w^2) to the loss, so the optimizer now trades off fitting the data against keeping weights SMALL. This shrinks weights toward zero (weight decay), producing a smoother, lower-variance function that's less able to chase noise -- reducing variance at the cost of a little bias (the bias-variance tradeoff). Intuitively, among all models that fit the data comparably well, L2 prefers the one with the smallest, most spread-out weights, which is usually the simpler, more generalizable one. Geometrically, minimizing loss subject to an L2 (spherical) constraint pulls the solution toward the origin along all axes proportionally. The KEY DIFFERENCE from L1 (which penalizes the sum of ABSOLUTE weights): L1's constraint region is a diamond with corners ON the axes, so its optimum tends to land exactly at a corner where some weights are EXACTLY ZERO -- L1 produces SPARSE solutions and effectively does feature selection. L2's spherical constraint has no corners, so it shrinks weights smoothly toward but rarely exactly to zero -- keeping all features but damping them. Consequences: use L2 (ridge) when you believe most features contribute a little and you want stable, well-conditioned solutions (it also fixes multicollinearity by making the problem strictly convex); use L1 (lasso) when you expect few relevant features and want an interpretable sparse model; use both (elastic net) to get sparsity plus stability. Also, L2 has a clean gradient (2*lambda*w) that's easy to optimize, whereas L1's gradient is non-differentiable at zero (needs subgradients/proximal methods). Finally, the bias term is usually left unregularized because penalizing it would bias predictions rather than control complexity.",
+         tags=["l2-regularization","l1-regularization","overfitting","bias-variance","why"],
+         example="Fitting a degree-10 polynomial to 12 noisy points: unregularized weights explode to fit every wiggle; L2 shrinks all coefficients smoothly for a gentle curve; L1 zeros out most high-degree coefficients, effectively selecting a low-degree fit -- both generalize far better than the unpenalized model."),
+    dict(cat="behavioral", title="STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)",
+         answer="Amazon LP: INVENT AND SIMPLIFY -- leaders expect and require innovation, find ways to simplify, are externally aware, and are not limited by 'not invented here'. Show you replaced a complex, slow process with a simpler invention that scaled, with a measurable result.",
+         tags=["behavioral","star","invent-and-simplify","amazon-lp","innovation"],
+         example="SITUATION: Our team spent ~2 days per release manually coordinating a fragile deploy -- a 40-step runbook of copy-paste commands across services, error-prone and a frequent source of incidents. TASK: As tech lead I wanted to cut both the toil and the incident rate, not just document the runbook better. ACTION: Rather than accept the complexity, I looked for the root simplification: the 40 steps were really the same 4 operations repeated per service with different parameters. I built a small declarative deploy tool -- each service described its deploy in a short YAML file, and one command orchestrated ordering, health checks, and automatic rollback on failure. I deliberately kept it minimal (no bespoke DSL, reused our existing CI) so the team could adopt it without a learning curve, and I piloted it on my own service first to prove it before asking others to switch. RESULT: Deploy time dropped from ~2 days to under 30 minutes, deploy-caused incidents fell to nearly zero over the next quarter because rollback was automatic, and three other teams adopted the tool. The win came from REFUSING to treat the 40 steps as inherent complexity and instead finding the simple pattern underneath -- and from keeping the solution small enough that adoption was trivial."),
 ]
 
 
