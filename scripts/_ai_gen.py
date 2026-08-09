@@ -16,122 +16,140 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Repeated Substring Pattern",
-         answer="Decide whether a string can be constructed by repeating one of its substrings. Slick trick: concatenate the string with itself and strip the first and last characters; the original string appears in that (2n-2)-length string IFF it's periodic.",
-         tags=["repeated-substring","string","pattern","dsa"],
-         code='''# Can the string be built by repeating one of its substrings?
-def repeated_substring_pattern(s):
-    doubled = (s + s)[1:-1]      # concatenate, then strip one char from each end
-    return s in doubled          # s reappears iff it is periodic''',
-         complexity="Time O(n) (with a good substring search), space O(n).",
-         pitfalls="Not stripping both ends (would always match at position 0); brute-forcing all divisors is slower.",
-         example="repeated_substring_pattern('abab') -> True; repeated_substring_pattern('aba') -> False."),
-    dict(cat="dsa", title="Power of Three",
-         answer="Determine if n is a power of three WITHOUT loops or logs. Since 3 is prime, any power of three divides the largest power of three that fits in a 32-bit int (3^19 = 1162261467). So n>0 is a power of three iff 1162261467 % n == 0.",
-         tags=["power-of-three","math","number-theory","dsa"],
-         code='''# Is n a power of three? (no loops: check divisibility of the max power)
-def is_power_of_three(n):
-    if n <= 0:
-        return False
-    # 3^19 = 1162261467 is the largest power of 3 fitting in a 32-bit int
-    return 1162261467 % n == 0''',
-         complexity="Time O(1), space O(1).",
-         pitfalls="Only works because 3 is prime (this trick fails for composite bases); n must be > 0.",
-         example="is_power_of_three(27) -> True; is_power_of_three(45) -> False."),
-    dict(cat="dsa", title="Number Complement",
-         answer="Flip every bit of a positive integer WITHIN its own bit-length (leading zeros aren't flipped). Build a mask of all 1s the same width as num, then XOR — XOR with 1 flips a bit, so every bit inside the width toggles.",
-         tags=["number-complement","bit-manipulation","xor","dsa"],
-         code='''# Flip every bit of a positive integer within its bit-length.
-def find_complement(num):
-    mask = 1
-    while mask < num:
-        mask = (mask << 1) | 1   # grow a mask of all 1s the width of num
-    return num ^ mask            # XOR flips every bit inside that width''',
-         complexity="Time O(bits), space O(1).",
-         pitfalls="Flipping the leading zeros (mask must match num's width); off-by-one on the mask.",
-         example="find_complement(5) -> 2  (101 -> 010)."),
-    dict(cat="dsa", title="Jewels and Stones",
-         answer="Given a string of jewel types and a string of stones, count how many stones are jewels. Put the jewel characters in a set for O(1) membership, then count stones found in it.",
-         tags=["jewels-stones","hash-set","string","counting","dsa"],
-         code='''# Count how many stones are also jewels (each char in jewels is a type).
-def num_jewels_in_stones(jewels, stones):
-    jewel_set = set(jewels)
-    return sum(1 for s in stones if s in jewel_set)''',
-         complexity="Time O(len(jewels) + len(stones)), space O(len(jewels)).",
-         pitfalls="Using a list membership check (O(n) each) instead of a set; case sensitivity matters.",
-         example="num_jewels_in_stones('aA', 'aAAbbbb') -> 3."),
-    dict(cat="dsa", title="Defanging an IP Address",
-         answer="'Defang' an IPv4 address by replacing every period with '[.]' so it can't be accidentally clicked. A single string replace does it.",
-         tags=["defang-ip","string","replace","dsa"],
-         code='''# Replace every '.' in an IP with '[.]' to 'defang' it.
-def defang_ip_addr(address):
-    return address.replace(".", "[.]")''',
+    dict(cat="dsa", title="Truncate Sentence",
+         answer="Keep only the first k words of a space-separated sentence. Split into words and join the first k back together.",
+         tags=["truncate-sentence","string","split","dsa"],
+         code='''# Keep only the first k words of a sentence.
+def truncate_sentence(s, k):
+    return " ".join(s.split()[:k])   # split into words, keep the first k''',
          complexity="Time O(n), space O(n).",
-         pitfalls="Manual char-by-char building when a single replace suffices.",
-         example="defang_ip_addr('1.1.1.1') -> '1[.]1[.]1[.]1'."),
-    dict(cat="dsa", title="Replace Elements with Greatest Element on Right Side",
-         answer="Replace each element with the GREATEST element to its right; the last element becomes -1. Scan from the RIGHT, keeping a running maximum: set each position to the current max-so-far, then update the max with the old value.",
-         tags=["replace-greatest-right","suffix-max","array","dsa"],
-         code='''# Replace each element with the greatest element to its RIGHT (-1 for last).
-def replace_elements(arr):
-    greatest = -1
-    for i in range(len(arr) - 1, -1, -1):
-        arr[i], greatest = greatest, max(greatest, arr[i])
-    return arr''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Scanning left-to-right (needs the suffix max); updating the max before assigning.",
-         example="replace_elements([17,18,5,4,6,1]) -> [18,6,6,6,1,-1]."),
-    dict(cat="dsa", title="Decode XORed Array",
-         answer="An array was XOR-encoded as encoded[i] = arr[i] XOR arr[i+1]; given the encoded array and the first original element, recover the array. Since XOR is its own inverse, arr[i+1] = arr[i] XOR encoded[i] — rebuild forward from 'first'.",
-         tags=["decode-xored-array","xor","bit-manipulation","array","dsa"],
-         code='''# Recover the array from its XOR-encoding, given the first element.
-def decode_xored(encoded, first):
-    result = [first]
-    for e in encoded:
-        result.append(result[-1] ^ e)   # arr[i] = arr[i-1] ^ encoded[i-1]
-    return result''',
+         pitfalls="Truncating by characters instead of words; off-by-one on k.",
+         example="truncate_sentence('Hello how are you Contestant', 4) -> 'Hello how are you'."),
+    dict(cat="dsa", title="Sorting the Sentence",
+         answer="Each word of a shuffled sentence ends with its 1-based POSITION digit; reconstruct the original sentence. Read the last character of each word as its index, strip it, and place the word at that position.",
+         tags=["sorting-sentence","string","dsa"],
+         code='''# Reconstruct a sentence where each word ends with its 1-based position.
+def sort_sentence(s):
+    words = s.split()
+    result = [""] * len(words)
+    for w in words:
+        pos = int(w[-1])             # last char is the 1-based position
+        result[pos - 1] = w[:-1]     # strip the digit, place by position
+    return " ".join(result)''',
          complexity="Time O(n), space O(n).",
-         pitfalls="Forgetting XOR is self-inverse; off-by-one aligning encoded[i] to arr[i], arr[i+1].",
-         example="decode_xored([1,2,3], 1) -> [1,0,2,1]."),
-    dict(cat="dsa", title="Split a String in Balanced Strings",
-         answer="Count the maximum number of BALANCED substrings (equal numbers of 'L' and 'R') you can split the string into. Greedily track a running balance (+1 for R, -1 for L); every time it returns to 0 a balanced segment closes, so increment the count.",
-         tags=["balanced-split","greedy","string","dsa"],
-         code='''# Max number of balanced substrings (equal count of 'L' and 'R').
-def balanced_string_split(s):
-    count = 0        # running balance: +1 for R, -1 for L
-    result = 0
-    for ch in s:
-        count += 1 if ch == 'R' else -1
-        if count == 0:
-            result += 1   # a balanced segment closes here
-    return result''',
+         pitfalls="Not stripping the digit; using 0-based indexing (positions are 1-based).",
+         example="sort_sentence('is2 sentence4 This1 a3') -> 'This is a sentence'."),
+    dict(cat="dsa", title="Rank Transform of an Array",
+         answer="Replace each element with its RANK: the smallest value gets rank 1, the next-distinct gets 2, and EQUAL values share a rank. Sort the distinct values, map each to its 1-based rank, then look up every element.",
+         tags=["rank-transform","sorting","hash-map","array","dsa"],
+         code='''# Replace each element with its rank (1 = smallest, ties share a rank).
+def array_rank_transform(arr):
+    rank = {v: i + 1 for i, v in enumerate(sorted(set(arr)))}
+    return [rank[v] for v in arr]''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Not deduping (ties must share a rank); 0-based ranks.",
+         example="array_rank_transform([40,10,20,30]) -> [4,1,2,3]; array_rank_transform([100,100,100]) -> [1,1,1]."),
+    dict(cat="dsa", title="Sum of All Odd Length Subarrays",
+         answer="Sum the totals of every ODD-length contiguous subarray. Instead of enumerating subarrays (O(n^2) or worse), compute each element's CONTRIBUTION: index i appears in (i+1)*(n-i) subarrays; half-ish of those (rounded up) have odd length, so it contributes ((count+1)//2) * value.",
+         tags=["sum-odd-subarrays","contribution","math","array","dsa"],
+         code='''# Sum over all odd-length contiguous subarrays (via each element's contribution).
+def sum_odd_length_subarrays(arr):
+    total = 0
+    n = len(arr)
+    for i in range(n):
+        left = i + 1                  # choices for the subarray's start
+        right = n - i                 # choices for the subarray's end
+        subarrays = left * right      # subarrays containing index i
+        odd = (subarrays + 1) // 2    # how many have odd length
+        total += odd * arr[i]
+    return total''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Overcomplicating — greedy closing at balance 0 is optimal; miscounting the direction signs.",
-         example="balanced_string_split('RLRRLLRLRL') -> 4."),
-    dict(cat="glossary", title="TCP vs UDP",
-         answer="Two transport protocols. TCP is CONNECTION-oriented and RELIABLE: a 3-way handshake, then guaranteed in-order, error-checked, retransmitted delivery with flow/congestion control — at the cost of overhead and latency (handshakes, ordering, head-of-line blocking). UDP is CONNECTIONLESS and best-effort: fire datagrams with no delivery/order guarantee and no handshake — minimal overhead/latency. Use TCP when correctness matters (web, files); UDP when timeliness beats perfection (video, VoIP, gaming, DNS).",
-         tags=["tcp","udp","transport","networking"],
-         example="A file download uses TCP (every byte must arrive correctly); a live video call uses UDP (a dropped frame beats stalling the stream to retransmit)."),
-    dict(cat="glossary", title="TLS 1.3 handshake",
-         answer="Establishes an encrypted, authenticated channel, streamlined in TLS 1.3 to ONE round trip (1-RTT), with 0-RTT resumption for repeat visits. The client sends its key share up front; the server replies with its share + certificate, and both derive a shared session key via EPHEMERAL Diffie-Hellman — giving FORWARD SECRECY. It dropped legacy ciphers and starts encryption earlier — faster and safer than TLS 1.2's 2-RTT.",
-         tags=["tls","tls1.3","handshake","forward-secrecy","encryption"],
-         example="On TLS 1.3 the browser and server exchange key shares in one round trip, verify the server's certificate, and derive a forward-secret session key — so a future key compromise can't decrypt today's traffic."),
-    dict(cat="glossary", title="JWT structure & claims",
-         answer="A JSON Web Token has three base64url parts separated by dots: HEADER (algorithm/type), PAYLOAD (the CLAIMS — sub=user id, exp=expiry, iat=issued-at, roles), and SIGNATURE (over header+payload with a secret/private key). The server verifies the signature to trust the claims WITHOUT a DB lookup — stateless auth. Never put secrets in the payload (it's base64-encoded, not encrypted) and always verify exp + signature.",
-         tags=["jwt","claims","authentication","stateless","token"],
-         example="A JWT 'xxxxx.yyyyy.zzzzz' carrying {sub:'123', exp:1699999999, role:'admin'} is trusted after the API verifies its signature and expiry — no session store needed."),
-    dict(cat="glossary", title="Cookie security flags (Secure / HttpOnly / SameSite)",
-         answer="Attributes that harden cookies. SECURE: send only over HTTPS. HTTPONLY: forbid JavaScript access (document.cookie) — mitigates XSS token theft. SAMESITE (Strict/Lax/None): control whether the cookie rides cross-site requests — Lax/Strict mitigate CSRF. Together they protect session cookies from interception, script theft, and forgery.",
-         tags=["cookie-flags","secure","httponly","samesite","web-security"],
-         example="A session cookie set 'Secure; HttpOnly; SameSite=Lax' can't be read by injected JS, can't leak over HTTP, and won't ride a cross-site POST — closing XSS and CSRF vectors."),
-    dict(cat="glossary", title="HSTS (HTTP Strict Transport Security)",
-         answer="A response header telling browsers to ALWAYS use HTTPS for a domain for a set duration, refusing any plain-HTTP connection even if the user types http:// or clicks an old link. It prevents SSL-stripping man-in-the-middle attacks and the insecure initial redirect. Preloading (a browser-shipped list) closes even the first-visit gap.",
-         tags=["hsts","https","ssl-stripping","web-security","networking"],
-         example="With 'Strict-Transport-Security: max-age=31536000; includeSubDomains', a browser upgrades every future request to HTTPS automatically, so an attacker can't downgrade the connection to HTTP."),
-    dict(cat="conceptual", title="Why is UDP used for video, gaming, VoIP, and DNS despite being unreliable?",
-         answer="TCP's reliability costs LATENCY that hurts real-time and tiny-request workloads. TCP guarantees IN-ORDER delivery, so one lost packet triggers a retransmit AND head-of-line blocking — all later data waits a full round trip. For a live call or game that stall is worse than the loss: by the time the retransmitted frame arrives it's stale; you'd rather skip it and show the next. UDP delivers datagrams immediately with no ordering/retransmit, letting the APP decide what to do about loss (interpolate a dropped frame, ignore a stale position). For DNS, a query/response is one tiny exchange; TCP's 3-way handshake would triple the round trips for no benefit, so UDP sends one packet and gets one back (falling back to TCP only for large responses). The principle: use UDP when late data is useless and loss is app-handleable; TCP when every byte and its order matter. (QUIC/HTTP/3 builds selective reliability ON TOP of UDP to get per-stream guarantees without TCP's head-of-line blocking.)",
-         tags=["udp","tcp","latency","real-time","why"],
-         example="A 100ms-late video frame is worthless, so a call uses UDP and drops it; a bank transfer uses TCP because a missing byte corrupts the data — the cost model, not 'reliable is always better', decides."),
+         pitfalls="Enumerating all subarrays (slow); miscounting odd-length occurrences.",
+         example="sum_odd_length_subarrays([1,4,2,5,3]) -> 58."),
+    dict(cat="dsa", title="Kth Missing Positive Number",
+         answer="Given a sorted array of distinct positives, find the kth MISSING positive integer. Walk the positive integers, advancing the array pointer when a number is present and counting misses otherwise; return the current number when the miss count hits k. (A binary-search O(log n) variant also exists.)",
+         tags=["kth-missing-positive","array","binary-search","dsa"],
+         code='''# The kth missing positive integer from a sorted array of positives.
+def find_kth_positive(arr, k):
+    missing = 0
+    current = 1
+    i = 0
+    while True:
+        if i < len(arr) and arr[i] == current:
+            i += 1                   # this number is present
+        else:
+            missing += 1             # 'current' is missing
+            if missing == k:
+                return current
+        current += 1''',
+         complexity="Time O(n + k) (O(log n) with binary search), space O(1).",
+         pitfalls="Off-by-one on the miss count; not advancing the array pointer on a match.",
+         example="find_kth_positive([2,3,4,7,11], 5) -> 9."),
+    dict(cat="dsa", title="Matrix Reshape",
+         answer="Reshape an m×n matrix into r×c if the element counts match (m*n == r*c), preserving row-major order; otherwise return the original. Flatten the matrix, then slice the flat list into rows of length c.",
+         tags=["matrix-reshape","matrix","dsa"],
+         code='''# Reshape a matrix to r x c if the element count matches, else return it.
+def matrix_reshape(mat, r, c):
+    rows, cols = len(mat), len(mat[0])
+    if rows * cols != r * c:
+        return mat                   # incompatible reshape -> unchanged
+    flat = [v for row in mat for v in row]
+    return [flat[i * c:(i + 1) * c] for i in range(r)]''',
+         complexity="Time O(m*n), space O(m*n).",
+         pitfalls="Not checking the count compatibility; wrong slice bounds when rebuilding rows.",
+         example="matrix_reshape([[1,2],[3,4]], 1, 4) -> [[1,2,3,4]]."),
+    dict(cat="dsa", title="Largest Perimeter Triangle",
+         answer="Find the largest perimeter of a valid triangle formed by any three of the given side lengths. Sort descending and check consecutive triples: the triangle inequality holds for the largest side iff it's less than the sum of the other two, so the first valid triple gives the max perimeter.",
+         tags=["largest-perimeter-triangle","sorting","greedy","math","dsa"],
+         code='''# Largest perimeter of a valid triangle from three of the given lengths.
+def largest_perimeter(nums):
+    nums.sort(reverse=True)
+    for i in range(len(nums) - 2):
+        # a valid triangle needs the two smaller sides to exceed the largest
+        if nums[i] < nums[i + 1] + nums[i + 2]:
+            return nums[i] + nums[i + 1] + nums[i + 2]
+    return 0''',
+         complexity="Time O(n log n), space O(1).",
+         pitfalls="Checking the wrong inequality direction; not sorting to reach the max first.",
+         example="largest_perimeter([3,6,2,3]) -> 8  (2+3+3); largest_perimeter([1,2,1]) -> 0."),
+    dict(cat="dsa", title="Can Make Arithmetic Progression",
+         answer="Decide whether the numbers can be reordered into an arithmetic progression (constant difference between consecutive terms). Sort them, compute the first difference, and verify every subsequent gap matches it.",
+         tags=["arithmetic-progression","sorting","array","dsa"],
+         code='''# Can the numbers be reordered into an arithmetic progression?
+def can_make_arithmetic(arr):
+    arr.sort()
+    diff = arr[1] - arr[0]
+    for i in range(2, len(arr)):
+        if arr[i] - arr[i - 1] != diff:   # inconsistent common difference
+            return False
+    return True''',
+         complexity="Time O(n log n), space O(1).",
+         pitfalls="Not sorting first; assuming length >= 2 without checking.",
+         example="can_make_arithmetic([3,5,1]) -> True (1,3,5); can_make_arithmetic([1,2,4]) -> False."),
+    dict(cat="glossary", title="QUIC",
+         answer="A modern transport protocol built ON TOP of UDP (the basis of HTTP/3) that delivers TCP-like reliability + TLS encryption while avoiding TCP's limits. Wins: streams are INDEPENDENT (a lost packet stalls only its own stream, killing transport-level head-of-line blocking), the handshake merges transport + TLS into ~1-RTT (0-RTT on resumption), and connections survive IP changes via a connection ID (seamless Wi-Fi<->cellular handoff). It runs in user space, so it evolves faster than kernel TCP.",
+         tags=["quic","http3","transport","udp","networking"],
+         example="A phone switching from Wi-Fi to cellular keeps its QUIC/HTTP/3 connection alive via the connection ID, whereas a TCP connection (tied to the IP 4-tuple) would break."),
+    dict(cat="glossary", title="DNS recursion / resolution",
+         answer="How a hostname becomes an IP. A stub resolver asks a RECURSIVE resolver (your ISP's or 8.8.8.8) which does the legwork: query a ROOT server (-> .com TLD servers), then the TLD server (-> the domain's authoritative nameserver), then the authoritative server (-> the IP). Results are CACHED at each level with a TTL. 'Recursive' = the resolver does the whole chain for you; 'iterative' = each server just refers you onward.",
+         tags=["dns","recursion","resolution","caching","networking"],
+         example="Resolving www.example.com, the recursive resolver walks root -> .com -> example.com's authoritative server, gets the IP, caches it for the TTL, and returns it."),
+    dict(cat="glossary", title="OpenID Connect (OIDC)",
+         answer="An IDENTITY layer on top of OAuth2. OAuth2 handles AUTHORIZATION (granting scoped access via an access token); OIDC adds AUTHENTICATION (proving who the user is) via an ID TOKEN — a signed JWT with identity claims (sub, email, name). It powers 'Sign in with Google/Apple'. In short: OAuth2 = 'can this app access X?'; OIDC = 'who is this user?'.",
+         tags=["oidc","openid-connect","oauth2","authentication","sso"],
+         example="'Sign in with Google' uses OIDC: after consent, Google returns an ID token (a JWT) proving the user's identity to your app, plus an access token to call Google APIs."),
+    dict(cat="glossary", title="PKCE",
+         answer="Proof Key for Code Exchange — an OAuth2 extension securing the authorization-code flow for PUBLIC clients (mobile apps, SPAs) that can't safely store a client secret. The app makes a random 'code verifier', sends its hash (the 'code challenge') when requesting the auth code, then sends the original verifier when exchanging the code for a token. An attacker who intercepts the code can't use it without the verifier — defeating code-interception attacks.",
+         tags=["pkce","oauth2","mobile","security","authorization-code"],
+         example="A mobile app using PKCE sends a hashed challenge up front; even if malware grabs the returned auth code, it can't exchange it for a token without the original code verifier."),
+    dict(cat="glossary", title="Certificate pinning",
+         answer="Hardcoding (pinning) the expected server certificate or public key in the CLIENT, so it trusts only THAT specific cert/key rather than any cert signed by a trusted CA. It defends against a compromised or rogue CA issuing a fraudulent certificate for your domain (a MITM). Trade-off: rotating the cert without updating the app breaks connections — so pin a backup key or the CA and plan rotation carefully.",
+         tags=["certificate-pinning","tls","mitm","security","mobile"],
+         example="A banking app pins its server's public key; even if an attacker tricks a CA into issuing a valid cert for the bank's domain, the app rejects it because it doesn't match the pinned key."),
+    dict(cat="conceptual", title="Why did QUIC/HTTP/3 build a new protocol over UDP instead of just improving TCP?",
+         answer="Two barriers made fixing TCP impractical. First, OSSIFICATION: TCP lives in the OS KERNEL and is inspected/'helped' by middleboxes (routers, firewalls, NAT, load balancers) everywhere; any change to TCP's wire format tends to be dropped or mangled by them, so new TCP features take a decade-plus and often can't deploy at all. UDP is treated as opaque datagrams, sidestepping middleboxes. Second, TCP has an inherent limit that can't be patched: it delivers a SINGLE ordered byte stream, so with HTTP/2 multiplexing one lost packet blocks ALL streams (transport-level head-of-line blocking) — fixing it needs per-stream sequencing at the transport, i.e. a different protocol. QUIC puts reliability, ordering, and independent streams IN USER SPACE over UDP: no cross-stream HOL blocking, a merged transport+TLS handshake (1-RTT/0-RTT), connection migration across IP changes, and the ability to EVOLVE via app/browser updates (no kernel/middlebox changes). So it wasn't 'UDP beats TCP' but 'UDP is the only path both deployable through today's internet AND open to redesigning the transport.'",
+         tags=["quic","tcp","udp","ossification","http3","why"],
+         example="Google could roll QUIC improvements to billions of Chrome users with a browser update; the equivalent TCP change would need every OS kernel and middlebox on the internet to update first — which is why HTTP/3 lives on UDP."),
 ]
 
 
