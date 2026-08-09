@@ -125,6 +125,20 @@
   .star b { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; font-weight: 800; color: #fff; margin-right: 7px; vertical-align: 1px; }
   .star.s b { background: #6366f1; } .star.t b { background: #0ea5e9; } .star.a b { background: #f59e0b; } .star.r b { background: #10b981; }
   .q-tip { font-size: 12.5px; font-style: italic; color: var(--color-text-secondary); margin: 8px 0 10px; }
+  /* What separates a hire from a no-hire on this specific question, and the
+     follow-ups the panel will push with — where the round is actually decided. */
+  .q-sw { white-space: pre-wrap; font-size: 13px; line-height: 1.6; background: #fffbeb;
+          border-left: 3px solid #f59e0b; border-radius: 6px; padding: 8px 11px; margin: 8px 0; }
+  .q-sw .lbl { display: block; font-size: 10px; font-weight: 800; text-transform: uppercase;
+               letter-spacing: .04em; color: #b45309; margin-bottom: 3px; }
+  html.dark .q-sw { background: #241a06; border-left-color: #fbbf24; }
+  .q-probes { margin: 8px 0; }
+  .q-probes > .lbl { display: block; font-size: 10px; font-weight: 800; text-transform: uppercase;
+                     letter-spacing: .04em; color: #7c3aed; margin-bottom: 4px; }
+  .q-probe { display: flex; gap: 9px; padding: 6px 10px; margin-bottom: 4px; background: #faf5ff;
+             border-left: 3px solid #a78bfa; border-radius: 6px; font-size: 13px; line-height: 1.5; }
+  .q-probe .n { flex: none; font-weight: 800; color: #7c3aed; }
+  html.dark .q-probe { background: #1e1233; border-left-color: #8b5cf6; }
   .q-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
   .q-edited { font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 999px; padding: 2px 7px; flex: none; }
   .q-edit label { display: block; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); margin: 8px 0 3px; }
@@ -566,6 +580,10 @@
         <div class="star a"><b>A</b>${esc(q.a)}</div>
         <div class="star r"><b>R</b>${esc(q.r)}</div>
         <div class="q-tip">💡 ${esc(q.tip)}</div>
+        ${q.strong_weak ? `<div class="q-sw"><span class="lbl">Strong vs weak — what separates a hire</span>${esc(q.strong_weak)}</div>` : ""}
+        ${q.probes && q.probes.length ? `<div class="q-probes"><span class="lbl">They will push back (${q.probes.length}) — the first answer is never the test</span>${
+            q.probes.map((p,i)=>`<div class="q-probe"><span class="n">${i+1}</span><span>${esc(p)}</span></div>`).join("")
+          }</div>` : ""}
         ${q.tags && q.tags.length ? `<div class="sd-tags">${q.tags.map(t=>`<button class="sd-tag" data-qtag="${esc(t)}" type="button">#${esc(t)}</button>`).join("")}</div>` : ""}
         <div class="q-actions">
           <button class="btn sm" data-use type="button">＋ Use as my story</button>

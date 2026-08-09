@@ -1348,3 +1348,448 @@ for _q_item in QUESTIONS:
 
 #: Total preparation time for the whole behavioral bank, in minutes.
 TOTAL_PREP_MINUTES = sum(q["prep_minutes"] for q in QUESTIONS)
+
+
+# ══ Follow-up probes & the strong/weak contrast ═══════════════════════════
+# At Director+ the FIRST answer is never the test. You give a competent STAR,
+# and then they push - "why that and not X?", "what would you do differently
+# at 3x the scale?", "who disagreed?" - and the round is decided in those two
+# minutes. Rehearsing the story without rehearsing the pushback is the single
+# most common preparation gap.
+#
+# `probes` is what they will actually ask next. `strong_weak` is the contrast
+# that separates a hire from a no-hire on that specific question - not generic
+# advice, but what the good version sounds like against the mediocre one.
+#
+# Applied to the P0 set first, since those are near-certain to come up.
+_PROBES = {}
+_STRONG_WEAK = {}
+
+
+def _P(title, probes, strong_weak):
+    _PROBES[title] = probes
+    _STRONG_WEAK[title] = strong_weak.strip("\n")
+
+
+_P("Describe a time you led without any formal authority.",
+   ["Who was the hardest person to bring along, and what specifically changed "
+    "their mind?",
+    "What would you have done if they had simply refused?",
+    "How is this different from what you would have done WITH authority?",
+    "Did you ever have to escalate? Why or why not?",
+    "How long did it take to get alignment, and was that acceptable?"],
+   """STRONG: names the specific CURRENCY you used - data, a pilot, a coalition,
+or reframing their goal as yours - and says why that currency fitted that person.
+Ends with the mechanism that made the alignment stick after the moment passed.
+
+WEAK: "I built relationships and communicated well." Every candidate says this
+and it distinguishes nobody. Also weak: a story where the influence worked
+because you were secretly senior, or because an executive intervened - that is
+authority, borrowed.
+
+THE DETAIL THAT LANDS: naming someone you did NOT convince, and what you did
+about the residual risk. It proves the story is real.""")
+
+_P("Describe a time you cut scope to hit a date.",
+   ["Who pushed back hardest, and how did that conversation end?",
+    "What did you cut that you now think you should have kept?",
+    "How did you decide WHAT to cut rather than how much?",
+    "Did the customer notice?",
+    "Would you have made the same call if the date had been soft?"],
+   """STRONG: a stated decision RULE for what gets cut - what is load-bearing for
+the launch promise versus what is desirable - plus the named person you
+disappointed and how you handled them. Quantifies what shipping late would have
+cost.
+
+WEAK: "we descoped the nice-to-haves." That is a tautology; nice-to-haves are
+defined as the things you cut. Say the actual features and the actual argument.
+
+THE TRAP: describing a cut nobody objected to. If it was uncontroversial it was
+not a trade-off, and the interviewer will read it as a soft example.""")
+
+_P("Tell me about how you track and drive a program to completion.",
+   ["What would tell you in week three that the date is at risk?",
+    "How do you stop status being sanitised on the way up to you?",
+    "What do you do personally versus what does the mechanism do?",
+    "Which of your metrics would you drop if you could keep only two?",
+    "Give me an example where your tracking caught something early."],
+   """STRONG: names LEADING indicators - milestone date volatility, ageing
+cross-team dependencies, integration test pass rate, buffer burn - and explains
+what each would have caught. Treats "how bad news travels" as part of the answer,
+not an afterthought.
+
+WEAK: a list of artifacts - RAID log, RACI, weekly status, a dashboard. Artifacts
+are not mechanisms. If you name one, immediately say what decision it drives and
+what behaviour it changes.
+
+THE DETAIL THAT LANDS: "if my dashboard is always green until it is suddenly red,
+that is a culture problem I caused, not a measurement problem."''""")
+
+_P("Tell me about the most complex program you've delivered.",
+   ["What made it complex - scale, ambiguity, politics, or technology?",
+    "What would have happened if you had not been there?",
+    "What was the single decision that most changed the outcome?",
+    "What did you get wrong?",
+    "How would you run it differently today?"],
+   """STRONG: defines the complexity precisely - twelve teams and three
+regulators is a different problem from one team and an impossible deadline - then
+narrates the two or three DECISIONS that mattered rather than the whole timeline.
+Ends with a number.
+
+WEAK: a chronological walk through the project. Interviewers stop listening
+around minute three. Compress the situation into thirty seconds and spend the
+time on the judgement calls.
+
+THE TRAP: complexity described as effort ("it was very challenging, lots of
+moving parts"). Complexity is structural - name the structure.""")
+
+_P("Describe delivering bad news to leadership.",
+   ["How much notice did they have before you told them?",
+    "What did you bring besides the bad news?",
+    "How did they react, and what did you do with that?",
+    "Had you flagged the risk earlier? If not, why not?",
+    "What changed afterwards so it would not happen again?"],
+   """STRONG: told them EARLY, arrived with options and a recommendation rather
+than a problem, took ownership without dramatising, and named the mechanism that
+stopped a repeat. Ideally shows a moment where you volunteered news nobody had
+asked for yet.
+
+WEAK: a story where the bad news was already obvious to everyone, or where you
+delivered it and the answer was simply "we moved the date". No options means no
+judgement on display.
+
+THE DETAIL THAT LANDS: "I would rather be the person who tells you in week four
+than the person who is right in week twelve." Say the principle, then the
+story.""")
+
+_P("Tell me about managing senior/executive stakeholders.",
+   ["Tell me about one you could NOT align. What happened?",
+    "How do you handle two executives who want opposite things?",
+    "What do you do when an exec keeps changing their mind?",
+    "How do you say no to someone three levels above you?",
+    "How do you know what they actually care about?"],
+   """STRONG: shows a real DISAGREEMENT and how it resolved - including a version
+where you changed your own mind on evidence. Demonstrates that you tailor to what
+each executive optimises for rather than sending everyone the same update.
+
+WEAK: "I kept them informed with regular updates and built trust." A stakeholder
+story with no tension in it is a status report, and the interviewer will probe
+until they find the tension or conclude there was none.
+
+THE TRAP: describing management as communication frequency. Executives do not
+want more updates; they want fewer, sharper ones with a decision attached.""")
+
+_P("Describe a time you had to recover a failing program.",
+   ["What did you find that the status reports had not shown?",
+    "Was it scope growth, bad estimates, or blocked execution?",
+    "Did you replace anyone? Why or why not?",
+    "How did you rebuild credibility with the exec sponsor?",
+    "What was in place at the end that had not been there before?"],
+   """STRONG: separates the three causes - scope grew, estimates were wrong,
+execution was blocked - and says which it was, because the fix differs entirely.
+Gets ground truth BEFORE re-planning. Ends with a mechanism, not a heroic sprint.
+
+WEAK: a rescue narrated as personal effort - "I worked weekends, I got everyone
+in a room, I drove it home." That reads as someone who can be a hero once, not
+someone who can run a portfolio.
+
+THE DETAIL THAT LANDS: refusing to give a new date in week one, and saying what
+you told the sponsor instead.""")
+
+_P("Tell me about a time you failed.",
+   ["What did it cost, in money or time or trust?",
+    "At what point could you have caught it, and why did you not?",
+    "What did you change about how you work?",
+    "Has that change been tested since?",
+    "Who else was affected, and how did you handle them?"],
+   """STRONG: a real failure with your name on it, owned in the first sentence
+with no shared blame and no "we". Quantifies the cost. The fix is SYSTEMIC - a
+changed mechanism - not a personal resolution to try harder.
+
+WEAK: a disguised strength ("I was too ambitious"), a failure that was really
+someone else's, or one so small it cost nothing. At this level, a soft failure
+answer is read as either evasion or a shallow career.
+
+THE TEST: "I now do X" is junior. "I changed the process so it cannot happen
+again, and here is the evidence it held" is senior. That is the whole
+difference.""")
+
+_P("Describe a time you had to say no to a senior leader.",
+   ["What did you offer instead of just refusing?",
+    "How did they take it, and what did you do next?",
+    "Have you ever said no and been overruled? What then?",
+    "How do you decide when it is worth spending the capital?",
+    "What would have happened if you had said yes?"],
+   """STRONG: never a flat no - always "not that, but here are two things I can
+do, and here is what each costs". Shows you understood WHY they wanted it before
+declining. If overruled, you committed fully and wrote the risk down once.
+
+WEAK: a story where you were obviously right and they obviously wrong, told with
+a hint of satisfaction. Panels notice contempt, and it is disqualifying at
+leadership level.
+
+THE DETAIL THAT LANDS: naming the cost of the no - what it spent politically -
+which shows you understand that saying no is a finite resource.""")
+
+_P("Tell me about a conflict with a peer or stakeholder.",
+   ["What was their case, stated as they would state it?",
+    "What did you concede?",
+    "How is the relationship now?",
+    "Would they tell this story the same way?",
+    "When would you have escalated?"],
+   """STRONG: presents the other side's reasoning GENEROUSLY and accurately
+before saying what you did. Lands the resolution on a shared metric or a jointly
+agreed experiment rather than on hierarchy. Names something you gave up.
+
+WEAK: a conflict where you were entirely right, resolved by escalation, with the
+other party characterised as unreasonable or political. That answer tells the
+panel how you will describe THEM one day.
+
+THE QUESTION BEHIND THE QUESTION: can you be right without being contemptuous?
+The generosity you show the absent party is the actual signal.""")
+
+_P("Tell me about influencing people you had no authority over.",
+   ["What did you try first that did not work?",
+    "How did you find out what they actually cared about?",
+    "Did you use data, a pilot, a coalition, or reframing - and why that one?",
+    "How did you keep it aligned after the initial agreement?",
+    "Who is the hardest type of person for you to influence?"],
+   """STRONG: names the specific lever and why it suited that person, and
+includes a first attempt that FAILED. Real influence stories have a false start;
+frictionless ones sound rehearsed.
+
+WEAK: "I built trust and showed them the benefits." Also weak: influence that was
+really just persistence, or that worked because their manager told them to.
+
+THE DETAIL THAT LANDS: how you made the change durable once you were no longer
+in the room - because influence that evaporates when you look away is not
+influence.""")
+
+_P("Describe a hard trade-off you made.",
+   ["What was the case FOR the option you rejected?",
+    "Who was hurt by the decision, and how did you handle them?",
+    "What information would have changed your mind?",
+    "Was it reversible? Did that affect how fast you moved?",
+    "Looking back, was it right?"],
+   """STRONG: presents the rejected option as genuinely attractive - if it was
+obviously worse, it was not a trade-off. Names who lost, states the decision
+criterion, and distinguishes one-way from two-way doors.
+
+WEAK: a "trade-off" between a good option and a bad one, which is just a
+decision. Or a trade-off with no named loser, which means nobody cared.
+
+THE DETAIL THAT LANDS: "here is what would have made me choose differently" -
+it shows the decision was reasoned rather than rationalised afterwards.""")
+
+_P("Tell me about handling competing priorities.",
+   ["What did you STOP doing?",
+    "Who was unhappy, and did you tell them yourself?",
+    "How did you decide - what was the actual criterion?",
+    "What happened when a new priority arrived mid-quarter?",
+    "How did you protect the team from thrash?"],
+   """STRONG: leads with what was KILLED and who was disappointed. Names the
+objective everything was ranked against. Shows a published not-doing list or an
+equivalent mechanism that stopped the argument recurring weekly.
+
+WEAK: "I prioritised using a framework and communicated the plan." Frameworks are
+free; the hard part is holding the line, and that is what the story should be
+about.
+
+THE DETAIL THAT LANDS: telling the people whose work was cut yourself, before
+the list was published. It costs an hour and it is the difference between a plan
+that survives and one that gets relitigated.""")
+
+_P("Describe a time you grew someone into a bigger role.",
+   ["What was the gap, specifically?",
+    "What did you give away that was uncomfortable to give away?",
+    "Did they make a mistake on your watch? What did you do?",
+    "How did you know they were ready?",
+    "Tell me about someone who did NOT work out."],
+   """STRONG: gave real SCOPE with real exposure rather than tasks, coached with
+questions instead of answers, and deliberately allowed reversible mistakes. The
+proof point is what they achieved without you - a promotion, or the function
+running unchanged while you were away.
+
+WEAK: mentoring described as regular one-to-ones and encouragement. That is
+management hygiene, not development.
+
+THE PAIRED STORY YOU NEED: have the one that did not work out ready too. Leaders
+who have only success stories here read as untested, and the follow-up is
+coming.""")
+
+_P("Describe leading a high-stakes initiative with a tight, immovable deadline.",
+   ["What made the date genuinely immovable?",
+    "What did you sacrifice to hold it?",
+    "How did you know in week two whether it was achievable?",
+    "What was your fallback if it slipped?",
+    "How did you protect the team from burning out?"],
+   """STRONG: says immediately that with a fixed date, SCOPE is the only
+variable - and shows the tiering agreed up front rather than negotiated in the
+final month. Names the early signal that told you the date would hold.
+
+WEAK: a story where the date was hit through overtime and heroics. It answers the
+question and fails the seniority test - the panel is listening for mechanism, not
+stamina.
+
+THE DETAIL THAT LANDS: agreeing the must-have / should-have / nice-to-have tiers
+at the START, when the conversation is abstract and unemotional.""")
+
+_P("Give an example of motivating a demotivated or burned-out team.",
+   ["What had actually caused it?",
+    "What did you change structurally rather than emotionally?",
+    "Did anyone leave anyway?",
+    "How did you measure whether it worked?",
+    "What would you spot earlier next time?"],
+   """STRONG: diagnoses the CAUSE before acting - repeated thrash, no visible
+progress, unclear ownership, an impossible commitment - and fixes the structure
+that produced it. Morale is a symptom; the story should be about what you removed.
+
+WEAK: motivation through recognition, team events and encouragement. Those help
+at the margin and nobody was demotivated because of insufficient pizza.
+
+THE DETAIL THAT LANDS: killing a workstream or renegotiating a commitment to give
+the team a winnable goal. Removing something is usually the intervention that
+works.""")
+
+_P("Tell me about a time you led a team through a major change.",
+   ["Who resisted, and were they right about anything?",
+    "What did you communicate, and how often?",
+    "What did you get wrong in the rollout?",
+    "How did you know the change had actually taken?",
+    "What did the change cost that you did not anticipate?"],
+   """STRONG: takes the resistance seriously and concedes where the resisters had
+a point. Distinguishes announcing a change from embedding it, and names how you
+knew it had stuck - a behaviour that persisted after you stopped pushing.
+
+WEAK: change described as a communication plan. Also weak: no resistance at all,
+which means either it was not a major change or you did not hear the objections.
+
+THE DETAIL THAT LANDS: what you changed about the plan BECAUSE of the pushback.
+It shows the consultation was real rather than theatre.""")
+
+_P("Tell me about a time you made an unpopular decision.",
+   ["Who was most against it, and did you speak to them directly?",
+    "What did you do to make it easier to accept?",
+    "Was it still right in hindsight?",
+    "How do you distinguish unpopular-and-right from unpopular-and-wrong?",
+    "Did anyone leave over it?"],
+   """STRONG: explains the reasoning in terms the objectors would recognise,
+shows you delivered it yourself rather than through a proxy, and holds the
+position without needing to be proved right by the outcome.
+
+WEAK: unpopular decisions where the unpopularity was mild, or where you were
+vindicated so cleanly that no judgement was required. Also weak: framing
+unpopularity as evidence of courage - sometimes it is evidence of being wrong.
+
+THE DETAIL THAT LANDS: acknowledging what the decision cost in goodwill and
+saying you would spend it again - or, more interestingly, that you would not.""")
+
+_P("Tell me about a time you took ownership of a problem outside your remit.",
+   ["Why did you rather than someone else?",
+    "How did you avoid stepping on the actual owner?",
+    "Did you hand it back, and how?",
+    "When is taking ownership the WRONG move?",
+    "What did it cost you elsewhere?"],
+   """STRONG: took it because nobody else would and the cost of waiting was real,
+brought the rightful owner along rather than around, and handed it back with a
+mechanism so it would not need rescuing again.
+
+WEAK: a story that is really about being helpful, or one where you quietly did
+someone else's job and are still slightly annoyed about it.
+
+THE MATURITY SIGNAL: naming when ownership is the wrong move - when it removes
+accountability from the person who should hold it. Volunteering that shows
+judgement rather than eagerness.""")
+
+_P("Centralized vs. embedded TPM - which model do you prefer and why?",
+   ["We are embedded today. What would you change first?",
+    "How do you stop centralised TPMs becoming process police?",
+    "Who wins when the solid line and the dotted line disagree?",
+    "What ratio of TPMs to engineers, and why?",
+    "How would you know in six months whether the model was working?"],
+   """STRONG: gives a DEFAULT with explicit conditions that would change it, and
+names the costs of each model as precisely as the benefits. Raises the
+independence problem - a TPM reviewed by the leader whose program they report on
+will produce optimistic status, and that is incentives, not character.
+
+WEAK: "it depends" with no position, which reads as inexperience. Equally weak:
+importing your last company's structure with no reference to theirs.
+
+THE DETAIL THAT LANDS: naming the arbitration mechanism for the matrix. Everyone
+says hybrid; almost nobody says who decides when the two lines disagree.""")
+
+_P("How do you set up portfolio governance without creating bureaucracy?",
+   ["An exec wants every program reviewed monthly. How do you push back?",
+    "What would you delete first in a typical PMO?",
+    "How do you stop the ungoverned tier failing invisibly?",
+    "How do you decide the tier thresholds?",
+    "What if decision latency rises after your changes?"],
+   """STRONG: leads with the test - what DECISION does this forum make, and who
+would notice if it stopped? Governs by exception with explicit tiers, and offers
+a measure of the governance itself (decision latency) plus a willingness to delete
+your own process.
+
+WEAK: describing a governance structure - steering committees, monthly reviews, a
+dashboard - with no test for whether any of it earns its place. That IS the
+bureaucracy the question is asking you to avoid.
+
+THE DETAIL THAT LANDS: putting an expiry date on new process, so it has to
+justify itself again in two quarters.""")
+
+_P("How would you design the TPM function for a company at our scale?",
+   ["What would you need to know before answering properly?",
+    "What is the first thing you would change here?",
+    "How do you justify the size of the function at budget time?",
+    "What does a TPM do that an engineering manager cannot?",
+    "How do you hire for it - what is your bar?"],
+   """STRONG: asks where delivery actually breaks here - across teams or inside
+them - because that single question determines the design. Gives a shape with
+numbers, names what the function will NOT do, and says how it would be measured.
+
+WEAK: a generic org chart with no reference to their situation, or a pure
+listening answer with no point of view. They are hiring a point of view; bring
+one and say you will test it.
+
+THE DETAIL THAT LANDS: being explicit that the function must be able to justify
+its own cost, and how you would demonstrate that.""")
+
+_P("Tell me about a time the org structure itself was the root cause of a "
+   "delivery problem.",
+   ["How did you distinguish structure from execution as the cause?",
+    "What did you change, and what got worse as a result?",
+    "How long did the change take to show up in delivery?",
+    "Did you have the authority to change it, or did you have to persuade?",
+    "When is a reorg the wrong answer?"],
+   """STRONG: shows the diagnosis - the same failure recurring across different
+people, which is the signature of structure rather than capability - and names the
+specific change (reporting lines, decision rights, a forum) plus what it cost.
+Every org change trades something away; say what.
+
+WEAK: a story where the structure was blamed but the fix was really better
+communication. Also weak: a reorg with only upside described.
+
+THE MATURITY SIGNAL: saying when a reorg is the wrong answer - it is the most
+visible move available to a new leader and usually the most expensive.""")
+
+_P("Tell me about setting a vision or strategy for your area.",
+   ["What did you deliberately choose NOT to do?",
+    "How did you know the strategy was working before the results came in?",
+    "Who disagreed with it?",
+    "What changed when reality pushed back?",
+    "How did you make it real for an engineer three levels down?"],
+   """STRONG: starts from a business outcome rather than a roadmap, names the BET
+and the explicit not-doing list, and gives a LEADING indicator you watched to know
+whether you were wrong before the lagging results arrived.
+
+WEAK: a vision statement and a roadmap. A strategy that excludes nothing is not a
+strategy, and the fastest way to expose that is the "what did you not do?"
+follow-up - which is why it is always asked.
+
+THE DETAIL THAT LANDS: how it changed a decision someone made without consulting
+you. That is the only real evidence a strategy landed.""")
+
+
+for _q_item in QUESTIONS:
+    if _q_item["q"] in _PROBES:
+        _q_item["probes"] = _PROBES[_q_item["q"]]
+        _q_item["strong_weak"] = _STRONG_WEAK[_q_item["q"]]

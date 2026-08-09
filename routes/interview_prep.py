@@ -715,15 +715,33 @@ def behavioral_pdf():
     user_id = session["user_id"]
     selected, label = _bank_select(
         _beh_merged_items(user_id), ("q",), QUESTION_CATEGORIES, "q")
+    selected.sort(key=lambda it: it.get("rank") or 0)
     heading = label or "Behavioral Question Bank"
-    subtitle = (f"{len(selected)} question{'' if len(selected) == 1 else 's'} "
-                f"| DailyPlanner Interview Prep | {_today().isoformat()}")
+    _mins = sum(it.get("prep_minutes") or 0 for it in selected)
+    subtitle = " | ".join(x for x in [
+        f"{len(selected)} question{'' if len(selected) == 1 else 's'}",
+        (f"{_mins // 60}h {_mins % 60}m of prep" if _mins else ""),
+        "DailyPlanner Interview Prep", _today().isoformat()] if x)
     sections = [{
         "title": it["q"],
         "cat": QUESTION_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
-        "fields": [("Situation", it.get("s")), ("Task", it.get("t")),
+        # Planning line first, then STAR, then the two coaching blocks: what
+        # separates a hire on this question, and the follow-ups they will push.
+        "fields": [(" ".join(x for x in [
+                        f"Prep time & priority",
+                    ] if x),
+                    " | ".join(x for x in [
+                        (f"{it['prep_label']}" if it.get("prep_label") else ""),
+                        (f"Stack rank #{it['rank']}" if it.get("rank") else ""),
+                        (f"Story: {it['story_label']}" if it.get("story_label") else ""),
+                        (it.get("priority_note") or "")] if x) or None),
+                   ("Situation", it.get("s")), ("Task", it.get("t")),
                    ("Action", it.get("a")), ("Result", it.get("r")),
-                   ("Tip", it.get("tip"))],
+                   ("Tip", it.get("tip")),
+                   ("Strong vs weak", it.get("strong_weak")),
+                   ("They will push back",
+                    "\n".join(f"{n}. {p}" for n, p in
+                              enumerate(it.get("probes") or [], 1)) or None)],
         "arch": None, "tags": it.get("tags"),
     } for it in selected]
     try:
