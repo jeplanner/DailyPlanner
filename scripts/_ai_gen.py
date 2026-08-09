@@ -16,140 +16,154 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Truncate Sentence",
-         answer="Keep only the first k words of a space-separated sentence. Split into words and join the first k back together.",
-         tags=["truncate-sentence","string","split","dsa"],
-         code='''# Keep only the first k words of a sentence.
-def truncate_sentence(s, k):
-    return " ".join(s.split()[:k])   # split into words, keep the first k''',
+    dict(cat="dsa", title="Shuffle String",
+         answer="Rearrange a string so the character at position i moves to position indices[i]. Allocate a result array and place each character at its target index.",
+         tags=["shuffle-string","array","string","dsa"],
+         code='''# Rearrange string so that char i moves to position indices[i].
+def restore_string(s, indices):
+    result = [''] * len(s)
+    for ch, idx in zip(s, indices):
+        result[idx] = ch          # place each char at its target position
+    return "".join(result)''',
          complexity="Time O(n), space O(n).",
-         pitfalls="Truncating by characters instead of words; off-by-one on k.",
-         example="truncate_sentence('Hello how are you Contestant', 4) -> 'Hello how are you'."),
-    dict(cat="dsa", title="Sorting the Sentence",
-         answer="Each word of a shuffled sentence ends with its 1-based POSITION digit; reconstruct the original sentence. Read the last character of each word as its index, strip it, and place the word at that position.",
-         tags=["sorting-sentence","string","dsa"],
-         code='''# Reconstruct a sentence where each word ends with its 1-based position.
-def sort_sentence(s):
-    words = s.split()
-    result = [""] * len(words)
-    for w in words:
-        pos = int(w[-1])             # last char is the 1-based position
-        result[pos - 1] = w[:-1]     # strip the digit, place by position
-    return " ".join(result)''',
-         complexity="Time O(n), space O(n).",
-         pitfalls="Not stripping the digit; using 0-based indexing (positions are 1-based).",
-         example="sort_sentence('is2 sentence4 This1 a3') -> 'This is a sentence'."),
-    dict(cat="dsa", title="Rank Transform of an Array",
-         answer="Replace each element with its RANK: the smallest value gets rank 1, the next-distinct gets 2, and EQUAL values share a rank. Sort the distinct values, map each to its 1-based rank, then look up every element.",
-         tags=["rank-transform","sorting","hash-map","array","dsa"],
-         code='''# Replace each element with its rank (1 = smallest, ties share a rank).
-def array_rank_transform(arr):
-    rank = {v: i + 1 for i, v in enumerate(sorted(set(arr)))}
-    return [rank[v] for v in arr]''',
-         complexity="Time O(n log n), space O(n).",
-         pitfalls="Not deduping (ties must share a rank); 0-based ranks.",
-         example="array_rank_transform([40,10,20,30]) -> [4,1,2,3]; array_rank_transform([100,100,100]) -> [1,1,1]."),
-    dict(cat="dsa", title="Sum of All Odd Length Subarrays",
-         answer="Sum the totals of every ODD-length contiguous subarray. Instead of enumerating subarrays (O(n^2) or worse), compute each element's CONTRIBUTION: index i appears in (i+1)*(n-i) subarrays; half-ish of those (rounded up) have odd length, so it contributes ((count+1)//2) * value.",
-         tags=["sum-odd-subarrays","contribution","math","array","dsa"],
-         code='''# Sum over all odd-length contiguous subarrays (via each element's contribution).
-def sum_odd_length_subarrays(arr):
-    total = 0
-    n = len(arr)
-    for i in range(n):
-        left = i + 1                  # choices for the subarray's start
-        right = n - i                 # choices for the subarray's end
-        subarrays = left * right      # subarrays containing index i
-        odd = (subarrays + 1) // 2    # how many have odd length
-        total += odd * arr[i]
-    return total''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Enumerating all subarrays (slow); miscounting odd-length occurrences.",
-         example="sum_odd_length_subarrays([1,4,2,5,3]) -> 58."),
-    dict(cat="dsa", title="Kth Missing Positive Number",
-         answer="Given a sorted array of distinct positives, find the kth MISSING positive integer. Walk the positive integers, advancing the array pointer when a number is present and counting misses otherwise; return the current number when the miss count hits k. (A binary-search O(log n) variant also exists.)",
-         tags=["kth-missing-positive","array","binary-search","dsa"],
-         code='''# The kth missing positive integer from a sorted array of positives.
-def find_kth_positive(arr, k):
-    missing = 0
-    current = 1
-    i = 0
-    while True:
-        if i < len(arr) and arr[i] == current:
-            i += 1                   # this number is present
-        else:
-            missing += 1             # 'current' is missing
-            if missing == k:
-                return current
-        current += 1''',
-         complexity="Time O(n + k) (O(log n) with binary search), space O(1).",
-         pitfalls="Off-by-one on the miss count; not advancing the array pointer on a match.",
-         example="find_kth_positive([2,3,4,7,11], 5) -> 9."),
-    dict(cat="dsa", title="Matrix Reshape",
-         answer="Reshape an m×n matrix into r×c if the element counts match (m*n == r*c), preserving row-major order; otherwise return the original. Flatten the matrix, then slice the flat list into rows of length c.",
-         tags=["matrix-reshape","matrix","dsa"],
-         code='''# Reshape a matrix to r x c if the element count matches, else return it.
-def matrix_reshape(mat, r, c):
-    rows, cols = len(mat), len(mat[0])
-    if rows * cols != r * c:
-        return mat                   # incompatible reshape -> unchanged
-    flat = [v for row in mat for v in row]
-    return [flat[i * c:(i + 1) * c] for i in range(r)]''',
-         complexity="Time O(m*n), space O(m*n).",
-         pitfalls="Not checking the count compatibility; wrong slice bounds when rebuilding rows.",
-         example="matrix_reshape([[1,2],[3,4]], 1, 4) -> [[1,2,3,4]]."),
-    dict(cat="dsa", title="Largest Perimeter Triangle",
-         answer="Find the largest perimeter of a valid triangle formed by any three of the given side lengths. Sort descending and check consecutive triples: the triangle inequality holds for the largest side iff it's less than the sum of the other two, so the first valid triple gives the max perimeter.",
-         tags=["largest-perimeter-triangle","sorting","greedy","math","dsa"],
-         code='''# Largest perimeter of a valid triangle from three of the given lengths.
-def largest_perimeter(nums):
-    nums.sort(reverse=True)
-    for i in range(len(nums) - 2):
-        # a valid triangle needs the two smaller sides to exceed the largest
-        if nums[i] < nums[i + 1] + nums[i + 2]:
-            return nums[i] + nums[i + 1] + nums[i + 2]
-    return 0''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Checking the wrong inequality direction; not sorting to reach the max first.",
-         example="largest_perimeter([3,6,2,3]) -> 8  (2+3+3); largest_perimeter([1,2,1]) -> 0."),
-    dict(cat="dsa", title="Can Make Arithmetic Progression",
-         answer="Decide whether the numbers can be reordered into an arithmetic progression (constant difference between consecutive terms). Sort them, compute the first difference, and verify every subsequent gap matches it.",
-         tags=["arithmetic-progression","sorting","array","dsa"],
-         code='''# Can the numbers be reordered into an arithmetic progression?
-def can_make_arithmetic(arr):
+         pitfalls="Reading vs writing the index direction; building the string by concatenation (slow).",
+         example="restore_string('aiohn', [3,1,4,2,0]) -> 'nihao'."),
+    dict(cat="dsa", title="Minimum Absolute Difference",
+         answer="Return all pairs (as sorted lists) whose absolute difference equals the MINIMUM absolute difference in the array. Sort first — the minimum difference is always between ADJACENT sorted elements — find that min, then collect all adjacent pairs achieving it.",
+         tags=["min-abs-difference","sorting","array","dsa"],
+         code='''# All pairs with the smallest absolute difference, sorted ascending.
+def minimum_abs_difference(arr):
     arr.sort()
-    diff = arr[1] - arr[0]
-    for i in range(2, len(arr)):
-        if arr[i] - arr[i - 1] != diff:   # inconsistent common difference
-            return False
-    return True''',
-         complexity="Time O(n log n), space O(1).",
-         pitfalls="Not sorting first; assuming length >= 2 without checking.",
-         example="can_make_arithmetic([3,5,1]) -> True (1,3,5); can_make_arithmetic([1,2,4]) -> False."),
-    dict(cat="glossary", title="QUIC",
-         answer="A modern transport protocol built ON TOP of UDP (the basis of HTTP/3) that delivers TCP-like reliability + TLS encryption while avoiding TCP's limits. Wins: streams are INDEPENDENT (a lost packet stalls only its own stream, killing transport-level head-of-line blocking), the handshake merges transport + TLS into ~1-RTT (0-RTT on resumption), and connections survive IP changes via a connection ID (seamless Wi-Fi<->cellular handoff). It runs in user space, so it evolves faster than kernel TCP.",
-         tags=["quic","http3","transport","udp","networking"],
-         example="A phone switching from Wi-Fi to cellular keeps its QUIC/HTTP/3 connection alive via the connection ID, whereas a TCP connection (tied to the IP 4-tuple) would break."),
-    dict(cat="glossary", title="DNS recursion / resolution",
-         answer="How a hostname becomes an IP. A stub resolver asks a RECURSIVE resolver (your ISP's or 8.8.8.8) which does the legwork: query a ROOT server (-> .com TLD servers), then the TLD server (-> the domain's authoritative nameserver), then the authoritative server (-> the IP). Results are CACHED at each level with a TTL. 'Recursive' = the resolver does the whole chain for you; 'iterative' = each server just refers you onward.",
-         tags=["dns","recursion","resolution","caching","networking"],
-         example="Resolving www.example.com, the recursive resolver walks root -> .com -> example.com's authoritative server, gets the IP, caches it for the TTL, and returns it."),
-    dict(cat="glossary", title="OpenID Connect (OIDC)",
-         answer="An IDENTITY layer on top of OAuth2. OAuth2 handles AUTHORIZATION (granting scoped access via an access token); OIDC adds AUTHENTICATION (proving who the user is) via an ID TOKEN — a signed JWT with identity claims (sub, email, name). It powers 'Sign in with Google/Apple'. In short: OAuth2 = 'can this app access X?'; OIDC = 'who is this user?'.",
-         tags=["oidc","openid-connect","oauth2","authentication","sso"],
-         example="'Sign in with Google' uses OIDC: after consent, Google returns an ID token (a JWT) proving the user's identity to your app, plus an access token to call Google APIs."),
-    dict(cat="glossary", title="PKCE",
-         answer="Proof Key for Code Exchange — an OAuth2 extension securing the authorization-code flow for PUBLIC clients (mobile apps, SPAs) that can't safely store a client secret. The app makes a random 'code verifier', sends its hash (the 'code challenge') when requesting the auth code, then sends the original verifier when exchanging the code for a token. An attacker who intercepts the code can't use it without the verifier — defeating code-interception attacks.",
-         tags=["pkce","oauth2","mobile","security","authorization-code"],
-         example="A mobile app using PKCE sends a hashed challenge up front; even if malware grabs the returned auth code, it can't exchange it for a token without the original code verifier."),
-    dict(cat="glossary", title="Certificate pinning",
-         answer="Hardcoding (pinning) the expected server certificate or public key in the CLIENT, so it trusts only THAT specific cert/key rather than any cert signed by a trusted CA. It defends against a compromised or rogue CA issuing a fraudulent certificate for your domain (a MITM). Trade-off: rotating the cert without updating the app breaks connections — so pin a backup key or the CA and plan rotation carefully.",
-         tags=["certificate-pinning","tls","mitm","security","mobile"],
-         example="A banking app pins its server's public key; even if an attacker tricks a CA into issuing a valid cert for the bank's domain, the app rejects it because it doesn't match the pinned key."),
-    dict(cat="conceptual", title="Why did QUIC/HTTP/3 build a new protocol over UDP instead of just improving TCP?",
-         answer="Two barriers made fixing TCP impractical. First, OSSIFICATION: TCP lives in the OS KERNEL and is inspected/'helped' by middleboxes (routers, firewalls, NAT, load balancers) everywhere; any change to TCP's wire format tends to be dropped or mangled by them, so new TCP features take a decade-plus and often can't deploy at all. UDP is treated as opaque datagrams, sidestepping middleboxes. Second, TCP has an inherent limit that can't be patched: it delivers a SINGLE ordered byte stream, so with HTTP/2 multiplexing one lost packet blocks ALL streams (transport-level head-of-line blocking) — fixing it needs per-stream sequencing at the transport, i.e. a different protocol. QUIC puts reliability, ordering, and independent streams IN USER SPACE over UDP: no cross-stream HOL blocking, a merged transport+TLS handshake (1-RTT/0-RTT), connection migration across IP changes, and the ability to EVOLVE via app/browser updates (no kernel/middlebox changes). So it wasn't 'UDP beats TCP' but 'UDP is the only path both deployable through today's internet AND open to redesigning the transport.'",
-         tags=["quic","tcp","udp","ossification","http3","why"],
-         example="Google could roll QUIC improvements to billions of Chrome users with a browser update; the equivalent TCP change would need every OS kernel and middlebox on the internet to update first — which is why HTTP/3 lives on UDP."),
+    min_diff = min(arr[i + 1] - arr[i] for i in range(len(arr) - 1))
+    return [[arr[i], arr[i + 1]] for i in range(len(arr) - 1)
+            if arr[i + 1] - arr[i] == min_diff]''',
+         complexity="Time O(n log n), space O(n).",
+         pitfalls="Comparing all pairs (O(n^2)); the min diff is only between adjacent sorted values.",
+         example="minimum_abs_difference([4,2,1,3]) -> [[1,2],[2,3],[3,4]]."),
+    dict(cat="dsa", title="Average Salary Excluding the Minimum and Maximum",
+         answer="Compute the average of the salaries after removing exactly ONE minimum and ONE maximum. Sum all, subtract the min and max, divide by (n - 2).",
+         tags=["average-salary","array","math","dsa"],
+         code='''# Average of salaries, dropping the single minimum and maximum.
+def average_salary(salary):
+    total = sum(salary) - min(salary) - max(salary)
+    return total / (len(salary) - 2)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Dividing by n instead of n-2; removing all occurrences of min/max instead of one each.",
+         example="average_salary([4000,3000,1000,2000]) -> 2500.0."),
+    dict(cat="dsa", title="Maximum Gap (bucket sort)",
+         answer="Find the largest gap between successive values in the sorted order, in O(n) without fully sorting. Pigeonhole insight: with n numbers spanning [lo, hi], the max gap is at least ceil((hi-lo)/(n-1)); use buckets of that size so the max gap always spans EMPTY buckets — track each bucket's min/max and compare across buckets.",
+         tags=["maximum-gap","bucket-sort","pigeonhole","array","dsa"],
+         code='''# Largest gap between successive elements in sorted order, in O(n).
+def maximum_gap(nums):
+    if len(nums) < 2:
+        return 0
+    lo, hi = min(nums), max(nums)
+    if lo == hi:
+        return 0
+    n = len(nums)
+    bucket_size = max(1, (hi - lo) // (n - 1))
+    bucket_count = (hi - lo) // bucket_size + 1
+    buckets = [[None, None] for _ in range(bucket_count)]   # [min, max] per bucket
+    for num in nums:
+        b = (num - lo) // bucket_size
+        bmin, bmax = buckets[b]
+        buckets[b][0] = num if bmin is None else min(bmin, num)
+        buckets[b][1] = num if bmax is None else max(bmax, num)
+    max_gap = 0
+    prev_max = lo
+    for bmin, bmax in buckets:
+        if bmin is None:
+            continue                                # skip empty buckets
+        max_gap = max(max_gap, bmin - prev_max)     # gap across empty buckets
+        prev_max = bmax
+    return max_gap''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Sorting (O(n log n)) when O(n) is required; wrong bucket sizing/count.",
+         example="maximum_gap([3,6,9,1]) -> 3."),
+    dict(cat="dsa", title="Find Lucky Integer in an Array",
+         answer="A 'lucky' integer has a frequency equal to its own value; return the LARGEST lucky integer, or -1 if none. Count frequencies, then take the max value whose count equals the value.",
+         tags=["find-lucky","counting","hash-map","array","dsa"],
+         code='''# Largest value whose frequency equals its value ('lucky'), or -1.
+from collections import Counter
+def find_lucky(arr):
+    counts = Counter(arr)
+    lucky = [v for v, c in counts.items() if v == c]
+    return max(lucky) if lucky else -1''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Returning the first match instead of the largest; forgetting the -1 default.",
+         example="find_lucky([2,2,3,4]) -> 2; find_lucky([1,2,2,3,3,3]) -> 3."),
+    dict(cat="dsa", title="Count Items Matching a Rule",
+         answer="Each item is [type, color, name]; count how many match a rule given by a key ('type'/'color'/'name') and a value. Map the rule key to the tuple index and count matches.",
+         tags=["count-items-rule","array","filtering","dsa"],
+         code='''# Count items whose given attribute (type/color/name) matches ruleValue.
+def count_matches(items, rule_key, rule_value):
+    idx = {"type": 0, "color": 1, "name": 2}[rule_key]
+    return sum(1 for item in items if item[idx] == rule_value)''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Hardcoding the wrong index for the rule key; case sensitivity of values.",
+         example="count_matches([['phone','blue','pixel'],['computer','silver','lenovo']], 'color', 'silver') -> 1."),
+    dict(cat="dsa", title="Unique Morse Code Words",
+         answer="Each lowercase word maps to a Morse-code string (concatenating per-letter codes); count how many DISTINCT transformations the words produce. Build each word's code, add to a set, and return the set size.",
+         tags=["unique-morse","hash-set","string","encoding","dsa"],
+         code='''# Number of distinct Morse-code transformations of the words.
+def unique_morse_representations(words):
+    morse = [".-","-...","-.-.","-..",".","..-.","--.","....","..",".---",
+             "-.-",".-..","--","-.","---",".--.","--.-",".-.","...","-",
+             "..-","...-",".--","-..-","-.--","--.."]
+    seen = set()
+    for word in words:
+        code = "".join(morse[ord(c) - ord('a')] for c in word)
+        seen.add(code)
+    return len(seen)''',
+         complexity="Time O(total characters), space O(number of words).",
+         pitfalls="Off-by-one in the letter->index mapping; comparing words instead of their codes.",
+         example="unique_morse_representations(['gin','zen','gig','msg']) -> 2."),
+    dict(cat="dsa", title="String to Integer (atoi)",
+         answer="Parse a leading 32-bit integer from a string like C's atoi: skip leading whitespace, read an optional +/- sign, consume consecutive digits (stopping at the first non-digit), and CLAMP the result to the signed 32-bit range.",
+         tags=["atoi","string","parsing","overflow","dsa"],
+         code='''# Parse a leading integer from a string (atoi): spaces, sign, digits, clamp.
+def my_atoi(s):
+    s = s.lstrip()               # 1) skip leading whitespace
+    if not s:
+        return 0
+    sign = 1
+    i = 0
+    if s[0] in "+-":             # 2) optional sign
+        sign = -1 if s[0] == '-' else 1
+        i = 1
+    num = 0
+    while i < len(s) and s[i].isdigit():   # 3) consume digits
+        num = num * 10 + int(s[i])
+        i += 1
+    num *= sign
+    return max(-2**31, min(num, 2**31 - 1))   # 4) clamp to 32-bit range''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Not clamping to 32-bit bounds; mishandling the sign or trailing non-digits.",
+         example="my_atoi('   -042') -> -42; my_atoi('4193 with words') -> 4193; my_atoi('words 987') -> 0."),
+    dict(cat="glossary", title="Load balancer: L4 vs L7",
+         answer="Two layers a load balancer can operate at. L4 (TRANSPORT) balances by IP/port, forwarding TCP/UDP connections without inspecting content — very fast, protocol-agnostic, but 'dumb' (can't route by URL/header). L7 (APPLICATION) understands HTTP, so it can route by path/host/header/cookie, terminate TLS, do content-based routing, retries, and sticky sessions — smarter but higher overhead. Use L4 for raw throughput/non-HTTP; L7 for HTTP microservice routing.",
+         tags=["load-balancer","l4","l7","networking","routing"],
+         example="An L4 LB just sends each TCP connection to some backend; an L7 LB routes /api/* to the API service and /images/* to a static service, and can retry a failed HTTP request."),
+    dict(cat="glossary", title="Sticky sessions (session affinity)",
+         answer="A load-balancing feature that routes a given user's requests to the SAME backend every time (usually via a cookie or IP hash). Needed when a server holds per-user in-memory session state. Downsides: it undermines even load distribution and breaks if that server dies (the user loses their session). Better to keep servers STATELESS with session state in a shared store (Redis) so any server can serve any request.",
+         tags=["sticky-sessions","session-affinity","load-balancing","statelessness"],
+         example="A cart in one server's memory needs sticky sessions to hit the same server; storing the cart in Redis lets any server serve you, so the LB balances freely."),
+    dict(cat="glossary", title="Health check (liveness vs readiness)",
+         answer="A periodic probe (e.g. GET /healthz) a load balancer/orchestrator sends to each backend to decide if it should receive traffic. Unhealthy instances are pulled OUT of rotation and re-added on recovery — self-healing and zero-downtime deploys. Distinguish LIVENESS (is the process alive? restart if not) from READINESS (is it ready to serve? hold traffic until yes).",
+         tags=["health-check","liveness","readiness","kubernetes","reliability"],
+         example="Kubernetes uses a readiness probe to hold traffic from a pod until it's warmed up, and a liveness probe to restart a deadlocked pod — so users never hit a broken instance."),
+    dict(cat="glossary", title="mTLS (mutual TLS)",
+         answer="An extension of TLS where BOTH sides authenticate with certificates, not just the server — the client also presents a cert the server verifies, so each party cryptographically proves its identity. It's the backbone of zero-trust service-to-service auth (and service meshes): services accept connections only from peers with valid certs, encrypting and authenticating internal traffic without passwords/tokens.",
+         tags=["mtls","mutual-tls","zero-trust","service-mesh","security"],
+         example="In a service mesh every service presents a short-lived cert; a payment service accepts a call from the orders service only after verifying its mTLS cert, so a rogue pod without a valid cert can't talk to it."),
+    dict(cat="glossary", title="BGP (Border Gateway Protocol)",
+         answer="The routing protocol that glues the internet together — it exchanges REACHABILITY information between autonomous systems (ISPs, large networks) so they pick the best path to any block of IPs. It's policy-driven (business relationships, not just shortest path) and trust-based, which is why BGP misconfigurations or hijacks can black-hole or reroute huge swaths of traffic. Anycast (CDNs/DNS) relies on BGP announcing the same IP from many locations.",
+         tags=["bgp","routing","internet","anycast","networking"],
+         example="A CDN announces the same anycast IP via BGP from PoPs worldwide, so BGP routes each user to the nearest PoP — and a bad BGP announcement can misroute a big chunk of traffic."),
+    dict(cat="conceptual", title="Why (and when) choose L7 load balancing over L4?",
+         answer="L4 and L7 trade SMARTS for SPEED/generality. An L4 load balancer works at the transport layer — it sees only IP/port and forwards whole TCP/UDP connections without looking inside — so it's extremely fast, low-overhead, and protocol-agnostic (any TCP/UDP, not just HTTP), but 'dumb': it can't route by URL/header/cookie, terminate TLS, or do HTTP-aware retries. An L7 load balancer parses the HTTP request, enabling CONTENT-BASED ROUTING (/api vs /images, by Host/header), TLS termination, request-level retries and circuit breaking, cookie-based sticky sessions, rate limiting, and per-route observability — the features microservice/web stacks need. The cost is more CPU/latency per request (it buffers and parses) and it only speaks the protocols it's built for. So: choose L7 when you need HTTP-aware routing/features (the common web/microservices case — an API gateway or ingress); choose L4 for raw throughput, ultra-low latency, or non-HTTP traffic (databases, custom TCP, UDP games). Many stacks combine them: an L4 LB spreads connections across L7 proxies that do the smart routing.",
+         tags=["load-balancer","l4","l7","routing","why"],
+         example="A public API uses an L7 ingress to route /orders vs /users and terminate TLS; a high-throughput database or UDP game server front-ends with an L4 LB because it just needs to spread connections fast without parsing content."),
 ]
 
 
