@@ -24981,6 +24981,703 @@ for _e in ENTRIES:
 
 
 
+_EX_P0F = {}
+
+_EX_P0F["Find Peak Element (binary search)"] = [
+    """The textbook case, traced.
+nums = [1,2,3,1]. lo=0, hi=3.
+mid=1: nums[1]=2 < nums[2]=3 -> we are climbing, so a peak must lie to the
+right: lo=2.
+mid=2: nums[2]=3 > nums[3]=1 -> descending, so a peak is at mid or left: hi=2.
+lo==hi==2, return 2. nums[2]=3 is greater than both neighbours. Correct.""",
+
+    """A strictly increasing array - the peak is the last element.
+nums = [1,2,3,4,5]. Every comparison nums[mid] < nums[mid+1] is true, so lo
+marches right: lo=3, then 4. Return 4.
+This is where 'treat out of bounds as -infinity' earns its keep: nums[5] does
+not exist, but conceptually it is -inf, so nums[4]=5 IS a peak. The code never
+touches index 5 because the loop stops when lo==hi.
+Strictly decreasing [5,4,3,2,1] is the mirror image: hi collapses to 0 and index
+0 is the peak.""",
+
+    """Why ANY peak is enough, and how that makes log-time possible.
+nums = [1,5,1,5,1] has peaks at index 1 and index 3; returning either is
+accepted.
+That is the crucial relaxation. Finding the GLOBAL maximum requires looking at
+every element - O(n), no way around it, since the maximum could hide anywhere.
+Finding SOME local peak does not, because the slope tells you a direction: if
+you are climbing, there must be a peak somewhere ahead (the array either keeps
+climbing to the end, which makes the end a peak, or turns over somewhere).
+That existence argument is the correctness proof, and it is what an interviewer
+is really asking for.""",
+
+    """Edge cases: one and two elements.
+[1]: lo==hi==0, the loop never runs, return 0. A single element is a peak by
+definition (both neighbours are -inf).
+[1,2]: mid=0, 1 < 2 -> lo=1, return 1.
+[2,1]: mid=0, 2 > 1 -> hi=0, return 0.
+Note nums[mid+1] is only ever read when lo < hi, which guarantees mid+1 <= hi is
+in bounds - the loop condition is what keeps the index safe, so do not 'fix' it
+to lo <= hi.""",
+
+    """The plateau caveat.
+The problem guarantees nums[i] != nums[i+1] - no two adjacent elements are equal
+- and this algorithm needs that guarantee.
+On [1,2,2,2,1] the comparison nums[mid] < nums[mid+1] is false in the middle of
+the plateau, so you would move hi left and could miss the real structure; with
+equal neighbours there is no slope to follow and no better strategy than a
+linear scan.
+Ask about duplicates. If they are allowed, say the guarantee is gone and the
+worst case becomes O(n) - the same reasoning as duplicates in a rotated sorted
+array.""",
+
+    """The same slope trick in two dimensions.
+'Find a Peak Element II' (LeetCode 1901): binary-search the COLUMNS. For the
+middle column, find its row-wise maximum in O(m); compare it with its left and
+right neighbours and move toward the larger side.
+O(m log n) instead of O(m x n).
+Generalise the pattern: whenever a local property (rather than a global one) is
+asked for AND you can derive a direction from a comparison, binary search
+applies - even without a sorted array. That is the deeper lesson of this
+problem, and it is why interviewers still ask it.""",
+]
+
+_EX_P0F["Heap / Top-K — when 'K largest/most frequent' appears"] = [
+    """The textbook case, traced heap state by heap state.
+nums = [3,1,5,2,4], k = 2. h is a MIN-heap capped at size 2.
+push 3 -> [3]. push 1 -> [1,3]. size 2, fine.
+push 5 -> [1,3,5], size 3 > 2 -> pop the smallest, 1. h = [3,5].
+push 2 -> size 3 -> pop 2 (it is now the smallest). h = [3,5].
+push 4 -> [3,4,5] -> pop 3. h = [4,5].
+Return sorted descending: [5,4].
+Read the invariant off the trace: the heap always holds the best k seen so far,
+and its ROOT is the weakest survivor - the one to evict.""",
+
+    """Why a MIN-heap for the k LARGEST (the part everyone gets backwards).
+You want cheap access to the element most likely to be kicked out - and that is
+the SMALLEST of your current top k. A min-heap puts exactly that on top, so the
+evict-if-worse test is `if x > h[0]` in O(1) and the eviction is O(log k).
+Use a max-heap instead and the root is your BEST element, which you never want
+to remove - finding the worst would cost O(k).
+Mirror it for the k smallest: keep a MAX-heap (in Python, push -x), root = the
+largest survivor.
+Card version: keep the heap whose root is the item you are ready to throw
+away.""",
+
+    """Edge cases: k >= n, k = 0, and duplicates.
+k = 5 on a 3-element list: the heap never exceeds k, so nothing is evicted and
+you get all three back - correct, though you should confirm the caller expects
+fewer than k results.
+k = 0: every push is immediately followed by a pop, and you return []. Correct
+but wasteful; guard it if k comes from user input.
+Duplicates [5,5,5], k=2 -> [5,5]. The k largest is a multiset, not a set - do
+not dedupe unless the problem says 'distinct'.""",
+
+    """The streaming case - the one sorting cannot do.
+Server logs arrive at 50k events/second and you must always be able to answer
+'what are the 10 slowest requests in the last minute?'
+Sorting requires holding every event; the size-k heap holds ten. Memory is O(k)
+regardless of how long the stream runs, and each event costs at most one O(log
+10) push.
+This is why the pattern shows up in system-design rounds too: per-shard size-k
+heaps, then merge the shard heaps at the coordinator. Say 'heap' when the
+interviewer says 'top 10 trending' and you are already on the right track.""",
+
+    """Top K Frequent Elements - the two-stage version.
+nums = [1,1,1,2,2,3], k = 2.
+Stage 1: count with a dict -> {1:3, 2:2, 3:1}.
+Stage 2: run the size-k heap over the (count, value) pairs -> keeps (2,2) and
+(3,1) -> answer [1,2].
+Cost O(n + m log k) where m is the number of distinct values.
+There is a linear alternative worth naming: BUCKET SORT by frequency. Make
+buckets[0..n], put each value in the bucket for its count, then read buckets
+from the top until you have k. O(n) total, because a count can never exceed n.
+That is the optimal answer for this specific problem.""",
+
+    """Costs, and the three ways to do Top-K.
+n items, k wanted:
+- Sort everything: O(n log n), simplest, fine when k is close to n or n is small.
+- Size-k heap: O(n log k) time, O(k) space, works on a stream.
+- Quickselect: O(n) average, O(n^2) worst case, O(1) extra, needs the whole array
+  in memory and reorders it.
+- Bucket/counting sort by frequency (only when the key range is bounded): O(n).
+Say the constraints back to the interviewer before choosing: 'n is 10^6, k is
+10, and it is a stream, so the size-k heap' is a complete answer.""",
+]
+
+_EX_P0F["Intervals — merge, insert, overlap"] = [
+    """Merging, traced.
+[[1,3],[2,6],[8,10],[15,18]]. Already sorted by start.
+merged = [[1,3]]. Next [2,6]: 2 <= 3, so they overlap -> extend the end to
+max(3,6)=6. merged = [[1,6]].
+Next [8,10]: 8 > 6, no overlap -> append. merged = [[1,6],[8,10]].
+Next [15,18]: 15 > 10 -> append.
+Answer [[1,6],[8,10],[15,18]].
+The sort is what makes one pass sufficient: after sorting by start, anything
+that overlaps the running interval must be the very next one.""",
+
+    """The case that proves you need max(), not just end.
+[[1,10],[2,3],[4,5]]. Sorted by start already.
+merged = [[1,10]]. [2,3] overlaps -> end = max(10,3) = 10, unchanged.
+[4,5] overlaps -> end = max(10,5) = 10.
+Answer [[1,10]].
+Write `last[1] = end` instead of the max and you get [[1,5]] - you SHRANK the
+interval by swallowing a small one nested inside a big one. Nested intervals are
+the standard hidden test case here, and this one line is what they check.""",
+
+    """Touching endpoints - the ambiguity you must ask about.
+[[1,4],[4,5]]. With `start <= last[1]` these merge into [[1,5]], treating the
+intervals as CLOSED (a meeting ending at 4 and one starting at 4 conflict).
+With `start < last[1]` they stay separate - HALF-OPEN, which is what you want
+for meetings: a 3-4pm and a 4-5pm meeting can use the same room.
+Neither is more correct; it depends on the domain. Ask 'is the end inclusive?'
+and state which convention your code uses. Merge Intervals wants <= ; Meeting
+Rooms wants < .""",
+
+    """Insert Interval - the same sweep in three phases.
+Insert [4,8] into [[1,2],[3,5],[6,7],[8,10],[12,16]] (already sorted, no
+insertion sort needed):
+Phase 1 - everything ending BEFORE 4 goes straight through: [1,2].
+Phase 2 - everything overlapping gets absorbed: [3,5],[6,7],[8,10] merge with
+[4,8] into [3,10].
+Phase 3 - everything starting AFTER 10 goes through: [12,16].
+Answer [[1,2],[3,10],[12,16]]. Since the input is pre-sorted this is O(n) with
+no sort at all - which is the whole point of that problem being separate from
+Merge Intervals.""",
+
+    """Edge cases: empty input, one interval, all identical.
+[]: the code indexes intervals[0] and crashes - guard it. `if not intervals:
+return []` is one line and it is a real bug otherwise.
+[[1,5]] -> [[1,5]], the loop body never runs.
+[[1,2],[1,2],[1,2]] -> [[1,2]]; identical intervals overlap by any definition.
+[[5,6],[1,2]] unsorted -> the sort fixes it to [[1,2],[5,6]]; forgetting to sort
+would report them merged or not depending on input order, which is the classic
+'works on the example, fails the hidden tests' failure.""",
+
+    """The three interval questions and their three different sorts.
+- MERGE overlapping -> sort by START, sweep, extend.
+- MINIMUM ROOMS / max concurrent -> sort by START with a min-heap of ends, or
+  the sweep-line: +1 at each start, -1 at each end, track the running max.
+- MAXIMUM non-overlapping kept (equivalently minimum removed) -> sort by END and
+  greedily keep the earliest finisher.
+Getting the sort key wrong is the single biggest source of wrong answers in this
+family - sorting by start for the activity-selection problem gives a
+provably-wrong greedy. Decide what the answer is 'about' (coverage, concurrency,
+or count) and the key follows.""",
+]
+
+_EX_P0F["Kth Largest Element"] = [
+    """The textbook case, traced.
+nums = [3,2,1,5,6,4], k = 2.
+heap = first k = [3,2] -> heapify -> [2,3], root 2.
+x=1: 1 > 2? No -> ignore.
+x=5: 5 > 2 -> heapreplace: pop 2, push 5 -> [3,5], root 3.
+x=6: 6 > 3 -> replace -> [5,6], root 5.
+x=4: 4 > 5? No -> ignore.
+Return heap[0] = 5. Sorted descending the array is [6,5,4,3,2,1], and the 2nd
+largest is indeed 5.""",
+
+    """Why heapreplace and not push-then-pop.
+heapreplace pops the root and pushes the new value in ONE sift-down. push
+followed by pop does two operations and briefly grows the heap to k+1.
+Same answer, roughly half the work, and it makes the invariant explicit: the
+heap size is pinned at exactly k from start to finish.
+There is a subtle correctness point too - heapreplace is only safe because we
+already checked `x > heap[0]`. Call it unconditionally and you could evict a
+value larger than the one you insert.""",
+
+    """Duplicates - kth largest is by POSITION, not by distinct value.
+nums = [3,3,3,3], k = 3 -> answer 3.
+nums = [5,5,4], k = 2 -> the sorted-descending order is [5,5,4], so the 2nd
+largest is 5, not 4.
+If the question wanted the 2nd largest DISTINCT value the answer would be 4, and
+you would dedupe first. LeetCode 215 means positional; ask, because the phrasing
+is genuinely ambiguous and interviewers use it to see whether you clarify.""",
+
+    """Edge cases: k = 1, k = n, and k > n.
+k=1: the heap holds one element and ends up holding the maximum. Correct, though
+max(nums) is obviously better.
+k=n: the heap is the whole array, nothing is ever replaced, root = the minimum -
+which is indeed the nth largest.
+k > n: `nums[:k]` silently returns the whole list and you get the minimum back
+instead of an error. Guard it, or state the precondition. Silent wrong answers
+on out-of-range input are exactly what code review catches.""",
+
+    """Quickselect - the O(n) average alternative, worked.
+Partition like quicksort, but recurse into ONLY the side containing the answer.
+nums = [3,2,1,5,6,4], k=2 -> we want index 1 in descending order, i.e. index
+n-k = 4 in ascending order.
+Pick pivot 4: partition to [3,2,1] | 4 | [5,6]. The pivot lands at index 3.
+We want index 4 > 3, so recurse right on [5,6] looking for index 4.
+Pivot 5: [5] | 6? partition puts 5 at index 4 - hit. Answer 5.
+Average O(n) because the work halves each round: n + n/2 + n/4 ... = 2n.
+Worst case O(n^2) on adversarial input (always picking the extreme as pivot);
+random pivot selection makes that vanishingly unlikely.""",
+
+    """Choosing between heap, quickselect, and sort - say the trade-off out loud.
+Sort: O(n log n), one line (`sorted(nums)[-k]`), always acceptable as a first
+answer.
+Heap: O(n log k) time, O(k) space, handles STREAMS, deterministic.
+Quickselect: O(n) average, O(1) extra space, but reorders the input, has an
+O(n^2) worst case, and cannot handle a stream.
+The interview-winning answer is not picking one - it is naming all three and
+then saying which the constraints favour. 'The array fits in memory and k is
+small, so I would use the heap; if I could mutate the input and wanted the best
+average time, quickselect.'""",
+]
+
+_EX_P0F["Letter Combinations of a Phone Number"] = [
+    """The textbook case, traced.
+digits = "23".
+result starts as [''].
+Digit '2' maps to 'abc': result becomes ['a','b','c'] - every prefix ('') times
+every letter.
+Digit '3' maps to 'def': each of the three prefixes is extended by each of three
+letters -> ['ad','ae','af','bd','be','bf','cd','ce','cf'].
+9 = 3 x 3 combinations, in exactly the order LeetCode expects because the
+comprehension iterates prefixes in the outer loop and letters in the inner
+one.""",
+
+    """A digit with FOUR letters, and mixed sizes.
+digits = "79" -> '7' is 'pqrs' (4 letters), '9' is 'wxyz' (4 letters) -> 16
+results.
+digits = "27" -> 3 x 4 = 12 results: aw... no, 'ap','aq','ar','as','bp',...,'cs'.
+The count is the PRODUCT of the per-digit letter counts, which is why 7 and 9
+having four letters matters: a 4-digit number of all 7s and 9s gives 256
+combinations, not 81.
+Good sanity check to state before coding - it tells the interviewer you know the
+output size is exponential in the input length.""",
+
+    """The empty input - the guard that is actually required.
+digits = "": without the guard, result stays [''] and you return [''] - a list
+containing one EMPTY STRING. The expected answer is [], a list containing
+nothing.
+Those are different, and LeetCode fails you for the first. It is the single most
+common wrong submission on this problem.
+The guard exists because the iterative build starts from a seed [''] that is
+only meaningful once at least one digit extends it.""",
+
+    """The backtracking version - same tree, different traversal.
+    def backtrack(i, path):
+        if i == len(digits):
+            result.append(''.join(path)); return
+        for ch in mapping[digits[i]]:
+            path.append(ch); backtrack(i+1, path); path.pop()
+This walks the SAME decision tree depth-first instead of level-by-level.
+Identical output and identical complexity; the iterative version is shorter, the
+recursive one generalises better when you need pruning (say, only return
+combinations that are real dictionary words - you can then abandon a prefix
+early, which the iterative build cannot do).""",
+
+    """Complexity, and why nothing does better.
+O(4^n x n) where n is the number of digits: up to 4^n combinations, each costing
+O(n) to build the string.
+No algorithm can beat that because PRODUCING the output already takes that long
+- this is output-sensitive, so 'the answer is exponential' is not a failure, it
+is the specification.
+Memory: the iterative version holds the entire previous level, which is 4^(n-1)
+strings. The recursive version holds only one path plus the result list - the
+same total if you keep every answer, but far less if you stream them to the
+caller with `yield`.""",
+
+    """The Cartesian-product pattern elsewhere.
+This is `itertools.product(*[mapping[d] for d in digits])` in one line - say
+that, then write the loop, because the interviewer wants the mechanism.
+Same shape in:
+- Generating all combinations of feature flags or config options.
+- Expanding a glob or a brace pattern: {a,b}{1,2} -> a1,a2,b1,b2.
+- Enumerating test-matrix cells (3 OSes x 4 Python versions x 2 architectures).
+- Building all board states one move deep.
+Recognition cue: 'for each position, choose one of several options,
+independently'. Independent choices -> product; dependent choices -> full
+backtracking with pruning.""",
+]
+
+_EX_P0F["Longest Palindromic Substring (expand around center)"] = [
+    """The textbook case, traced center by center.
+s = "babad".
+i=0: odd center 'b' -> expand, s[-1] out of bounds, palindrome "b" (0,0). Even
+center between 'b' and 'a' -> mismatch, empty.
+i=1: odd center 'a' -> s[0]='b' == s[2]='b' -> expand to (0,2) = "bab"; next
+would be s[-1], stop. Best so far "bab", length 3.
+i=2: odd center 'b' -> s[1]='a' == s[3]='a' -> "aba" (1,3), also length 3, not
+STRICTLY longer, so the earlier one is kept.
+i=3, i=4: nothing longer.
+Answer "bab". "aba" is equally valid - the problem accepts either, which is
+worth saying.""",
+
+    """The even-length case - why there are 2n-1 centers.
+s = "cbbd". The answer "bb" has NO middle character; its center sits in the GAP
+between index 1 and index 2.
+i=1: odd center gives "b"; even center expand(1,2) sees s[1]='b' == s[2]='b' ->
+palindrome (1,2), length 2. Best.
+If you only tried the n character-centers you would return "c" and never find
+"bb". That is why every i tries two centers: n characters plus n-1 gaps = 2n-1
+centers total.""",
+
+    """Edge cases: empty, single char, all identical.
+"" -> the guard returns "". Without it, `start,end = 0,0` and `s[0:1]` raises.
+"a" -> one center, answer "a".
+"aaaa" -> the center at the gap between index 1 and 2 expands all the way to
+(0,3), answer "aaaa". Note this is the WORST case for this algorithm: every
+expansion runs the full width, so it really is Theta(n^2).
+"abcd" (no palindrome longer than 1) -> every expansion stops immediately,
+answer "a".""",
+
+    """Reading the return values of expand() - the off-by-one that bites.
+expand returns `left + 1, right - 1`, not `left, right`. The while loop exits
+only AFTER stepping one position too far in each direction (either out of bounds
+or on a mismatch), so the last VALID palindrome is one step back on both sides.
+Check it on "aba" with center i=1: the loop runs until left=-1, right=3, then
+returns (0,2) - exactly the bounds of "aba", and s[0:3] is the substring.
+Return the raw left,right and every answer is two characters too wide and
+usually an IndexError.""",
+
+    """The DP alternative, and why nobody writes it.
+dp[i][j] = True if s[i:j+1] is a palindrome, built from dp[i+1][j-1] and
+s[i]==s[j]. Also O(n^2) TIME but O(n^2) SPACE, versus O(1) space for
+expand-around-center.
+The expansion version is shorter, faster in practice (no table allocation), and
+easier to explain. Mention DP exists, then write the expansion.
+For completeness: Manacher's algorithm solves it in O(n) by reusing previously
+computed radii. Nobody expects you to write it; NAMING it when asked 'can you do
+better than n^2?' is the correct move.""",
+
+    """The palindrome family, and how the centers idea transfers.
+- Count all palindromic substrings (LeetCode 647): identical loop, but instead
+  of tracking the longest you add 1 for every successful expansion step.
+- Longest Palindromic SUBSEQUENCE: NOT this algorithm - subsequences are not
+  contiguous, so it is a 2-D DP (or LCS of s and reversed s).
+- Palindrome Partitioning: backtracking that uses a palindrome check at each cut.
+The distinction between SUBSTRING (contiguous) and SUBSEQUENCE (not) decides the
+whole approach, and interviewers deliberately use whichever word you are less
+likely to notice.""",
+]
+
+_EX_P0F["Longest Repeating Character Replacement"] = [
+    """The textbook case, traced.
+s = "AABABBA", k = 1.
+right=0 'A': counts A=1, max_freq=1, window "A" size 1, 1-1=0 <= 1, best=1.
+right=1 'A': A=2, max_freq=2, size 2, 2-2=0 <= 1, best=2.
+right=2 'B': B=1, max_freq stays 2, size 3, 3-2=1 <= 1, best=3 ("AAB" -> replace
+the B).
+right=3 'A': A=3, max_freq=3, size 4, 4-3=1 <= 1, best=4 ("AABA").
+right=4 'B': B=2, max_freq 3, size 5, 5-3=2 > 1 -> shrink: drop s[0]='A' (A=2),
+left=1, size 4, 4-3=1 <= 1. best stays 4.
+right=5 'B': B=3, max_freq=3, size 5 (left=1), 5-3=2 > 1 -> shrink, left=2, size
+4. best 4.
+right=6 'A': A=3, size 5, 5-3=2 > 1 -> shrink, left=3, size 4.
+Answer 4.""",
+
+    """The key insight, stated plainly.
+window_size - max_freq = the number of characters you would have to replace to
+make the whole window one letter.
+So the window is VALID exactly when that number is <= k. Everything else is
+bookkeeping.
+Say that sentence before writing code and the loop practically writes itself:
+grow right always, shrink left while invalid, record the best valid size.""",
+
+    """Why max_freq is never decreased - the part that looks like a bug.
+When the window shrinks, the code decrements the count but leaves max_freq
+alone, so max_freq can be STALE (larger than any current count).
+That is deliberate and safe. A stale max_freq only makes the validity test more
+permissive, so the window may not shrink when it 'should' - but `best` is only
+ever updated with a size that is at least as large as a genuinely valid window
+found earlier. The answer is a MAXIMUM, and it can never exceed the true best,
+because a window that big was actually achieved at some point.
+Recomputing max_freq properly (max(counts.values()) each step) is also correct
+and costs O(26) per step. If the stale version makes you uneasy in an interview,
+write the honest one and say why the cheaper one still works.""",
+
+    """Edge cases: k = 0, k >= len(s), and a single character.
+k=0 on "ABAB": no replacements allowed, so the answer is the longest run of one
+character = 1.
+k=4 on "ABAB": every window is valid (4-1=3 <= 4), so the answer is the whole
+string, 4.
+s="A", k=0 -> 1. s="" -> the loop never runs, best=0.
+These four pin the boundaries of the formula; run them mentally before you
+submit.""",
+
+    """A case where the naive approach explodes.
+Brute force checks every substring and, for each, counts the most frequent
+character: O(n^2) substrings x O(n) counting = O(n^3), or O(n^2) with
+incremental counts.
+On n = 10^5 that is 10^10 operations - hours.
+The sliding window is O(n): right advances n times, and left advances at most n
+times TOTAL across the whole run (it never moves backwards). Two pointers, each
+monotone, is the entire reason the window pattern is linear.""",
+
+    """The sliding-window family and which flavour this is.
+Fixed-size window: 'maximum sum of any 5 consecutive elements' - the window
+never changes size.
+Variable window, shrink while INVALID (this problem, Longest Substring Without
+Repeating Characters, Max Consecutive Ones III): grow right, shrink left until
+valid again, record the max size.
+Variable window, shrink while VALID (Minimum Window Substring, Minimum Size
+Subarray Sum): grow until valid, then shrink as far as you can, record the min
+size.
+Deciding which of the three you are in - and therefore whether you record on
+grow or on shrink - is the recognition step. Everything else is the same four
+lines.""",
+]
+
+_EX_P0F["Meeting Rooms II (minimum rooms)"] = [
+    """The textbook case, traced.
+intervals = [[0,30],[5,10],[15,20]], sorted by start already.
+[0,30]: heap empty -> open a room, heap = [30].
+[5,10]: heap[0]=30 > 5, so the earliest-ending room is still busy -> open a
+second room, heap = [10,30].
+[15,20]: heap[0]=10 <= 15, that room is free -> reuse it (heapreplace) ->
+heap = [20,30].
+len(heap) = 2. Answer 2 rooms.""",
+
+    """Why the heap holds END times and is keyed by the EARLIEST end.
+At each new meeting the only question is 'is ANY room free?' - and if any room is
+free, the one that freed up first certainly is. So you only ever need to inspect
+the minimum end time, which is exactly what a min-heap root gives you in O(1).
+If the earliest-ending room is still busy, every other room is too, so a new one
+is unavoidable.
+That last sentence is the greedy correctness proof, and it is what makes the
+answer optimal rather than merely feasible.""",
+
+    """No overlap at all, and total overlap.
+[[1,2],[3,4],[5,6]]: each meeting finds the single room free (2 <= 3, 4 <= 5) and
+reuses it. heap never grows past 1. Answer 1.
+[[1,10],[2,10],[3,10]]: nothing ever frees in time, so each meeting opens a room.
+Answer 3.
+Empty input -> the guard returns 0.
+One meeting -> 1. These four bound the answer between 1 and n and confirm the
+heap size is doing the counting.""",
+
+    """Touching endpoints - the convention question again.
+[[1,4],[4,5]]: the test is `heap[0] <= start`, i.e. 4 <= 4 is true, so the room
+is reused and the answer is 1.
+That treats intervals as half-open - a meeting ending at 4pm and one starting at
+4pm can share a room, which matches how calendars actually work.
+Change it to `<` and you get 2. Ask which the problem wants; Meeting Rooms II
+wants the reuse, whereas Merge Intervals treats the same touch as an overlap.
+Same numbers, opposite convention, because the QUESTIONS differ.""",
+
+    """The sweep-line alternative - often cleaner, same answer.
+Build two sorted arrays: all starts, and all ends. Walk them with two pointers;
+every start increments a counter, every end decrements it; the answer is the
+maximum the counter ever reaches.
+[[0,30],[5,10],[15,20]] -> starts [0,5,15], ends [10,20,30].
+0 -> 1; 5 -> 2; 10(end) -> 1; 15 -> 2; 20(end) -> 1; 30(end) -> 0. Peak 2.
+Same O(n log n) from the sorts, no heap needed, and it generalises immediately to
+'how many are concurrent at time T?'.
+Know both: the heap version also tells you WHICH room each meeting used, which
+the sweep-line does not.""",
+
+    """Where this exact question appears in system design.
+- Server capacity: each request occupies a worker for a duration; the peak
+  concurrency is how many workers you must provision.
+- Database connection pool sizing from a query trace.
+- CDN or video-streaming concurrent-viewer peaks for bandwidth planning.
+- Car-park / hotel-room / seat allocation.
+The mapping is always the same: intervals of occupancy -> maximum concurrent
+count -> the resource you must buy. When an interviewer asks 'how many instances
+do we need?', this is the algorithm behind the estimate.""",
+]
+
+_EX_P0F["Non-overlapping Intervals (min removals)"] = [
+    """The textbook case, traced.
+[[1,2],[2,3],[3,4],[1,3]] sorted by END -> [[1,2],[2,3],[1,3],[3,4]].
+prev_end = 2 (from [1,2]).
+[2,3]: start 2 < 2? No -> keep it, prev_end = 3.
+[1,3]: start 1 < 3 -> overlaps the kept one -> remove, removals = 1.
+[3,4]: start 3 < 3? No -> keep, prev_end = 4.
+Answer 1 removal. The kept set is [1,2],[2,3],[3,4] - three non-overlapping
+intervals, which is the maximum possible.""",
+
+    """Why sort by END and not by START - the counterexample.
+[[1,100],[2,3],[4,5]].
+Sorted by START, a greedy that keeps the first interval keeps [1,100] and then
+must remove BOTH of the others: 2 removals.
+Sorted by END -> [[2,3],[4,5],[1,100]]: keep [2,3], keep [4,5] (4 >= 3), remove
+[1,100]: 1 removal. Optimal.
+The intuition: finishing earliest leaves the most room for everything after it.
+A long interval is expensive no matter when it starts, and sorting by end is what
+exposes that.
+This is the classic ACTIVITY SELECTION greedy, and this counterexample is the
+proof sketch you should be able to produce on demand.""",
+
+    """No overlaps at all, and total overlap.
+[[1,2],[3,4],[5,6]]: each start is >= the previous end, nothing is removed.
+Answer 0.
+[[1,10],[2,10],[3,10]]: sorted by end (all 10, ties in any order). Keep the
+first; both others start before 10 -> removals = 2. You can only ever keep one
+of a mutually-overlapping group.
+Empty input -> guard returns 0. Single interval -> 0.""",
+
+    """Touching endpoints - and why this one uses strict `<`.
+[[1,2],[2,3]]: start 2 < prev_end 2 is FALSE, so both are kept and the answer is
+0.
+That is correct for this problem: [1,2] and [2,3] do not overlap, they merely
+touch. Using `<=` would remove one and report 1, which fails the LeetCode tests.
+Note this is the OPPOSITE convention from Merge Intervals, which merges touching
+intervals. Read the problem's definition of 'overlapping' every single time - the
+two problems live one click apart and use different rules.""",
+
+    """The complementary framing: minimum removals = n - maximum kept.
+Instead of counting what you throw away, count what you keep: the greedy is
+'keep the earliest finisher whose start is not before the last kept end'. That
+count is the maximum number of non-overlapping intervals, and the removals are
+just n minus it.
+Same loop, and the 'maximum kept' phrasing is the one used by:
+- Maximum Number of Events That Can Be Attended,
+- Minimum Number of Arrows to Burst Balloons (which is literally 'count the
+  groups you keep'),
+- scheduling the most jobs on one machine.
+Recognising that removals and keeps are the same problem saves you re-deriving
+it under a new name.""",
+
+    """Where the earliest-deadline greedy shows up for real.
+- Scheduling the most non-conflicting jobs on a single machine or meeting room.
+- Choosing the most ads/segments to fit in a fixed break without overlap.
+- Bandwidth or licence allocation where each grant occupies a window.
+- Selecting the maximum set of compatible calendar invitations.
+The caveat worth naming: this greedy is optimal for MAXIMISING COUNT. If the
+intervals have different VALUES and you want maximum total value, greedy fails
+and you need weighted interval scheduling - sort by end, then DP with a binary
+search for the last compatible interval. Knowing where the greedy stops being
+correct is the senior-level answer.""",
+]
+
+_EX_P0F["Rotting Oranges (multi-source BFS)"] = [
+    """The textbook case, traced minute by minute.
+grid = [[2,1,1],
+        [1,1,0],
+        [0,1,1]]
+Seed: (0,0) is rotten -> queue [(0,0,0)]. fresh = 6.
+Minute 1: (0,0) rots (0,1) and (1,0). fresh = 4.
+Minute 2: (0,1) rots (0,2); (1,0) rots (1,1). fresh = 2.
+Minute 3: (1,1) rots (2,1). fresh = 1.
+Minute 4: (2,1) rots (2,2). fresh = 0.
+minutes = 4, fresh == 0 -> return 4.
+The cell (2,0) is empty (0) and is never touched - empty cells are walls, not
+oranges.""",
+
+    """The impossible case - an unreachable fresh orange.
+grid = [[2,1,1],
+        [0,1,1],
+        [1,0,1]]
+The orange at (2,0) is isolated: its neighbours are (1,0)=0 (empty) and
+(2,1)=0 (empty). Rot spreads everywhere else, but fresh never reaches 0.
+Return -1.
+This is why the fresh COUNTER exists. Without it you would have to re-scan the
+grid at the end - correct, but an extra O(R x C) pass, and easy to forget
+entirely (returning `minutes` and calling it done is the standard wrong
+answer).""",
+
+    """Two sources at once - why multi-source BFS is the right frame.
+grid = [[2,1,1,1,2]] (a single row).
+BOTH rotten oranges are seeded at time 0. Minute 1 rots (0,1) and (0,3); minute
+2 rots (0,2). Answer 2.
+Running BFS from each source separately and taking a minimum would need two
+traversals and a per-cell minimum. Seeding them together lets one sweep compute
+'distance to the NEAREST source' for every cell - which is exactly what the
+question asks.
+Same idea as 01 Matrix, Walls and Gates, and Pacific Atlantic: many starts, one
+sweep.""",
+
+    """Edge cases: no fresh oranges, and no rotten ones.
+[[0,2]]: fresh = 0 from the start. The BFS runs, minutes stays 0, fresh == 0 ->
+return 0. Correct - nothing needs to rot.
+[[0,0]]: no oranges at all -> 0.
+[[1]]: one fresh orange, no source. The queue is empty, the loop never runs,
+fresh = 1 != 0 -> return -1. Correct.
+That first case is the one people break: initialising minutes to -1 or returning
+`minutes - 1` to 'fix' an off-by-one makes the all-empty grid return the wrong
+answer.""",
+
+    """Marking rotten at PUSH time, not at pop time.
+The code sets grid[nr][nc] = 2 and decrements fresh at the moment it enqueues.
+If you deferred that to when the cell is POPPED, two different rotten neighbours
+could each enqueue the same fresh orange, it would be counted twice, fresh would
+go negative, and the queue would hold duplicates.
+This is the same rule as every other BFS: mark visited when you push. Say it out
+loud - it is the difference between an implementation that works and one that
+works only on the examples.""",
+
+    """Cost, and the pattern to name in an interview.
+O(R x C) time - every cell is enqueued at most once - and O(R x C) space for the
+queue in the worst case (a grid that starts entirely rotten).
+The label to say: 'multi-source BFS on a grid, where the BFS level IS the
+elapsed time'.
+Same shape elsewhere:
+- 01 Matrix: distance from every cell to the nearest 0.
+- Walls and Gates: distance to the nearest gate.
+- Shortest Bridge: BFS out from one island to reach the other.
+- Fire/flood spread simulations and epidemic-style diffusion models.
+Whenever 'time' advances uniformly for everything at once, BFS levels are your
+clock.""",
+]
+
+_EX_P0F["Search a 2D Matrix"] = [
+    """The textbook case, traced.
+matrix = [[1, 3, 5, 7],
+          [10,11,16,20],
+          [23,30,34,60]], target = 3. m=3, n=4, so indices run 0..11.
+lo=0, hi=11. mid=5 -> (5//4, 5%4) = (1,1) -> 11 > 3 -> hi=4.
+mid=2 -> (0,2) -> 5 > 3 -> hi=1.
+mid=0 -> (0,0) -> 1 < 3 -> lo=1.
+mid=1 -> (0,1) -> 3 == target -> True.
+Four probes for twelve cells: log2(12) is about 3.6.""",
+
+    """The index mapping, spelled out.
+Flatten the matrix row by row and cell k is at row k//n, column k%n.
+k=0 -> (0,0). k=3 -> (0,3), the end of row 0. k=4 -> (1,0), the start of row 1.
+k=11 -> (2,3).
+Note the divisor is n, the number of COLUMNS, not m. Using m works only on square
+matrices, so it passes the small examples and fails the hidden tests - a
+genuinely nasty bug because it looks symmetric.
+Sanity check on paper with a non-square matrix every time you write this.""",
+
+    """A target that is absent.
+Same matrix, target = 13. lo=0,hi=11.
+mid=5 -> 11 < 13 -> lo=6. mid=8 -> (2,0)=23 > 13 -> hi=7.
+mid=6 -> (1,2)=16 > 13 -> hi=5. Now lo=6 > hi=5, loop exits, return False.
+The exit condition `while lo <= hi` with hi = mid-1 / lo = mid+1 is the standard
+value-finding template - contrast with the boundary template used in Find
+Minimum in Rotated Sorted Array, which uses `lo < hi` and `hi = mid`.""",
+
+    """Empty and degenerate shapes.
+matrix = [] -> the guard returns False before indexing matrix[0].
+matrix = [[]] -> `not matrix[0]` catches it. Without this second check, n = 0 and
+`mid // n` raises ZeroDivisionError.
+matrix = [[5]], target 5 -> lo=hi=0, one probe, True.
+A single row [[1,3,5]] behaves exactly like a plain sorted array, which is a
+useful mental model for the whole approach.""",
+
+    """The DIFFERENT problem: Search a 2D Matrix II.
+LeetCode 240 relaxes the guarantee: rows are sorted and columns are sorted, but
+a row's first element is NOT necessarily larger than the previous row's last. The
+flattened array is no longer sorted, so this binary search is simply wrong.
+The right tool there is the staircase walk: start at the TOP-RIGHT corner; if the
+value is too big move left, if too small move down. Each step eliminates a whole
+row or column, so it is O(m + n).
+Read the constraints carefully - these two problems look identical in the
+statement's first sentence and need completely different algorithms.""",
+
+    """Cost, and the two-binary-search alternative.
+This version: O(log(m x n)) = O(log m + log n).
+Alternative: binary-search the rows for the one whose range could contain the
+target, then binary-search inside it - also O(log m + log n), same cost, more
+code, but it generalises when rows have different lengths.
+The flattened version is the tidier answer and shows you can reason about index
+arithmetic, which is the actual skill being tested. State the mapping
+(k -> (k//n, k%n)) before you write the loop and the rest is a plain binary
+search.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0F:
+        _e["examples"] = _EX_P0F[_e["title"]]
+
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
