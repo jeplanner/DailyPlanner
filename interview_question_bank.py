@@ -1067,3 +1067,284 @@ QUESTIONS = [
 # Derive searchable theme tags for every question.
 for _q_item in QUESTIONS:
     _q_item["tags"] = _beh_tags(_q_item)
+
+
+# ══ Difficulty, frequency & the "how to remember" hook ════════════════════
+# Difficulty here is not "is the question hard to understand" - they are all
+# plain English. It is how hard the question is to answer WELL at Senior
+# Director / Head-of-TPM altitude, where a competent program-manager answer
+# reads as junior. Anything needing real org, money or board numbers is Hard,
+# because you cannot improvise those in the room.
+_CAT_DIFFICULTY = {
+    # Exec-depth: needs figures, org context and a point of view you have
+    # actually held. These are where Director+ candidates get sorted.
+    "board": "Hard",
+    "finance": "Hard",
+    "orgdesign": "Hard",
+    "talent": "Hard",
+    "strategy": "Hard",
+    "failure": "Hard",          # the honesty/altitude trap question
+    "conflict": "Hard",         # easy to answer defensively and lose the room
+    # Core senior-PM ground, still expected to be crisp and quantified.
+    "leadership": "Medium",
+    "delivery": "Medium",
+    "stakeholders": "Medium",
+    "prioritization": "Medium",
+    "influence": "Medium",
+    "risk": "Medium",
+    "decision": "Medium",
+    "people": "Medium",
+    "ambiguity": "Medium",
+    "communication": "Medium",
+    "collaboration": "Medium",
+    "customer": "Medium",
+    "growth": "Medium",
+}
+
+# How often this comes up in a Senior Director / Head-of-TPM loop specifically.
+# Not "in interviews generally" - the mix shifts sharply upward at this level:
+# execution questions shrink, org design and money grow.
+_CAT_FREQUENCY = {
+    "leadership": "Asked in essentially every loop - usually the opening question of at least one round.",
+    "delivery": "Asked in essentially every loop - this is the baseline competence check.",
+    "stakeholders": "Asked in essentially every loop, and almost always by the hiring manager.",
+    "conflict": "Asked in essentially every loop - frequently as the follow-up to a delivery story.",
+    "failure": "Asked in essentially every loop. At Director+ a shallow answer here is disqualifying.",
+    "prioritization": "Very frequently asked - expect it from the product or business partner on the panel.",
+    "influence": "Very frequently asked - it is the defining skill of the role and panels probe it hard.",
+    "orgdesign": "Very likely at this level - often the round that separates Director from Senior Director.",
+    "strategy": "Very likely at this level - usually from the skip-level or the exec panel.",
+    "risk": "Commonly asked, often as a scenario rather than a 'tell me about a time'.",
+    "decision": "Commonly asked, usually probing your judgment under incomplete information.",
+    "communication": "Commonly asked, and continuously assessed by HOW you answer everything else.",
+    "talent": "Expected at Head-of-function level - you are being hired to build the org, not just run it.",
+    "finance": "Expected at Head-of-function level and a common gap in TPM candidates - a real differentiator.",
+    "board": "Expected at Head-of-function level - asked by the exec panel and often decisive.",
+    "people": "Commonly asked, especially if the role has direct reports.",
+    "collaboration": "Commonly asked, though at this level it is usually folded into influence or conflict.",
+    "ambiguity": "Commonly asked - the 'no clear owner, no clear requirements' scenario.",
+    "customer": "Sometimes asked - more often in product-led companies than platform orgs.",
+    "growth": "Sometimes asked, usually near the end of the loop or by the recruiter.",
+}
+
+# One memory hook per theme: the SHAPE of a strong answer, not its content.
+# Under pressure you will not recall a script - you will recall a shape.
+_CAT_HOOK = {
+    "leadership": "Lead with the DECISION you owned, not the project you ran. 'I decided X against Y advice, here is the evidence, here is what it cost.' Ownership shows in what you chose, not what you coordinated.",
+    "delivery": "Do not narrate the plan. Name the constraint, the mechanism you built to manage it, and the number at the end. Mechanism beats effort - 'I built a weekly risk review with named owners' beats 'I worked closely with the teams'.",
+    "stakeholders": "Name the DISAGREEMENT and how you resolved it. A stakeholder story with no tension in it is a status report. Show you changed a senior person's mind, or that you changed yours with evidence.",
+    "conflict": "Be generous about the other side's reasoning before you say what you did. The panel is testing whether you can be right without being contemptuous. Then land it on a shared metric, not on hierarchy.",
+    "failure": "Own it in the first sentence, no shared blame, no 'we'. Then the SYSTEM fix, not the personal resolution - 'I now do X' is junior, 'I changed the mechanism so it cannot recur' is senior. Give the cost in numbers.",
+    "prioritization": "Say what you KILLED and who was unhappy. Anyone can list what they funded. Naming the thing you stopped, and the exec you disappointed, is what makes it a real prioritization answer.",
+    "influence": "No authority means no mandate, so show the currency you used: data, a coalition, a pilot, or reframing their goal as yours. Name which one and why it fit that person.",
+    "risk": "Distinguish the risk you MANAGED from the one you ACCEPTED. Senior people accept risks deliberately and say so out loud, with the trigger that would change their mind.",
+    "decision": "State the decision, the information you did NOT have, and the reversibility. One-way versus two-way door is the language they want, and the speed should follow the door.",
+    "people": "Concrete behaviour, concrete feedback, concrete outcome - including the time it did not work out and you exited someone. Managers who have never exited anyone read as untested.",
+    "strategy": "Start from the business outcome, not the roadmap. Then the bet you made, what you deliberately did NOT do, and the leading indicator you watched to know if you were wrong.",
+    "communication": "BLUF - answer first, then at most three supporting points, then the ask. Demonstrate it in HOW you answer this question, because they are grading the delivery as much as the content.",
+    "collaboration": "Show the seam you fixed between two functions, not the meeting you ran. The interesting part is always where the handoff was broken and what you changed structurally.",
+    "ambiguity": "Show how you MANUFACTURED clarity - a written doc, a forced decision, a time-boxed spike - rather than waiting for it. Ambiguity answers are about the mechanism you imposed.",
+    "customer": "Tie it to a number the business cares about, then to a customer behaviour you actually observed. Second-hand customer empathy is transparent.",
+    "growth": "Name a real, current gap and the specific thing you are doing about it. A fake weakness ('I care too much') is the fastest way to lose credibility at this level.",
+    "orgdesign": "Structure follows the decisions you want made fastest. Say which decisions were slow, what you changed (reporting lines, decision rights, forums), and what got worse - every org change trades something away.",
+    "finance": "Talk in unit economics and opportunity cost, not budget size. 'I moved $Xm from A to B because the return per engineer was 3x' is the register. Know your numbers cold.",
+    "board": "BLUF, exactly three things, then the ask. Boards want a DECISION, not status. Never bury bad news past the first slide, and give confidence levels rather than false-precision dates.",
+    "talent": "Show the system you built - levels, calibration, growth paths - not the individual you saved. And show you applied the standard to a top performer, because values that cost nothing are not values.",
+}
+
+for _q_item in QUESTIONS:
+    _q_item.setdefault("difficulty", _CAT_DIFFICULTY.get(_q_item["cat"], "Medium"))
+    _q_item.setdefault("frequency", _CAT_FREQUENCY.get(
+        _q_item["cat"], "Commonly asked at senior program-leadership level."))
+    _q_item.setdefault("mnemonic", _CAT_HOOK.get(_q_item["cat"], ""))
+
+
+# ══ Signature stories ═════════════════════════════════════════════════════
+# The single biggest efficiency in behavioral prep: you do not need 134
+# answers, you need about eight REAL stories, each rehearsed until you can
+# tell it in two minutes, and the ability to re-aim one at whatever was
+# actually asked. Every question below is mapped to the story that most
+# naturally covers it, so you can see your coverage and prepare by STORY
+# rather than by question.
+STORY_SLOTS = {
+    "turnaround": {
+        "label": "The rescue",
+        "brief": "A programme that was late, failing or off the rails when you took it, and what you changed. Your workhorse - it covers delivery, risk, conflict and leadership at once.",
+    },
+    "scale": {
+        "label": "The scale-up",
+        "brief": "Taking something from working-at-small-scale to working at 10x - traffic, headcount, markets or teams. Shows systems thinking rather than heroics.",
+    },
+    "org": {
+        "label": "The org change",
+        "brief": "A reorg, an operating-model change, or a decision-rights redesign you led. The story that proves you operate ABOVE the programme layer.",
+    },
+    "conflict": {
+        "label": "The hard disagreement",
+        "brief": "A senior person you disagreed with, and how it resolved - including a version where you were the one who changed their mind.",
+    },
+    "failure": {
+        "label": "The failure",
+        "brief": "Something that genuinely went wrong under your ownership, with the cost in numbers and the systemic fix. Must be real; panels can smell a safe one.",
+    },
+    "money": {
+        "label": "The money call",
+        "brief": "A budget, buy-versus-build, headcount or investment decision you owned, in unit economics. The most common gap in TPM candidates.",
+    },
+    "people": {
+        "label": "The people call",
+        "brief": "Growing someone into a bigger role, and separately, exiting someone. You need both halves - only the happy one reads as untested.",
+    },
+    "exec": {
+        "label": "The exec moment",
+        "brief": "Delivering hard news, or a decision, to a board or exec staff - and what you did when it did not land the first time.",
+    },
+}
+
+# Which story each theme naturally draws on. A question can be answered from a
+# different story if it fits better - this is a starting map, not a rule.
+_CAT_STORY = {
+    "delivery": "turnaround", "risk": "turnaround", "leadership": "turnaround",
+    "ambiguity": "turnaround", "customer": "scale", "strategy": "scale",
+    "orgdesign": "org", "collaboration": "org", "communication": "exec",
+    "board": "exec", "stakeholders": "exec", "conflict": "conflict",
+    "influence": "conflict", "decision": "conflict", "failure": "failure",
+    "growth": "failure", "finance": "money", "prioritization": "money",
+    "people": "people", "talent": "people",
+}
+for _q_item in QUESTIONS:
+    _q_item.setdefault("story", _CAT_STORY.get(_q_item["cat"], "turnaround"))
+    _q_item["story_label"] = STORY_SLOTS[_q_item["story"]]["label"]
+
+
+# ══ Prep time & stack rank ════════════════════════════════════════════════
+# prep_minutes is NOT reading time. Preparing a behavioral answer properly
+# means: pick your real story, write the STAR, dig out the actual numbers,
+# say it out loud twice, and cut it to two minutes. That is the work being
+# costed here, which is why nothing is under ten minutes.
+_CAT_PREP_MIN = {
+    # Exec-depth answers need real figures you may have to go and find.
+    "board": 30, "finance": 30, "orgdesign": 28, "talent": 25, "strategy": 25,
+    # The high-stakes narrative answers - worth rehearsing until they are tight.
+    "failure": 25, "conflict": 22, "influence": 20, "risk": 18, "decision": 18,
+    # Core ground you can build once and re-aim.
+    "leadership": 18, "delivery": 18, "stakeholders": 18, "prioritization": 18,
+    "people": 18, "ambiguity": 15, "communication": 15, "collaboration": 15,
+    "customer": 15, "growth": 12,
+}
+
+
+def _tpm_prep_minutes(q):
+    mins = _CAT_PREP_MIN.get(q["cat"], 18)
+    # A longer model answer carries more moving parts to internalise.
+    _words = len((q.get("a") or "").split())
+    mins += min(10, _words / 20.0)
+    if q.get("difficulty") == "Hard":
+        mins += 5                      # needs real numbers, so needs digging
+    mins = max(10, min(60, mins))
+    return int(round(mins / 5.0) * 5)
+
+
+for _q_item in QUESTIONS:
+    _q_item.setdefault("prep_minutes", _tpm_prep_minutes(_q_item))
+    _m = _q_item["prep_minutes"]
+    _q_item["prep_label"] = f"{_m} min" if _m < 60 else "1h"
+
+
+# The questions that are close to guaranteed in a Head-of-TPM loop. These get
+# a large boost so they sit at the very top of the study order regardless of
+# what the category heuristic says.
+_MUST_PREP = {
+    # Verified against the actual question text in this bank. These are the
+    # ones a Head-of-TPM loop asks in some form almost every time, plus the
+    # exec-depth questions that most reliably separate candidates.
+    "Describe a time you led without any formal authority.",
+    "Tell me about the most complex program you've delivered.",
+    "Tell me about a time you failed.",
+    "Describe a time you had to recover a failing program.",
+    "Tell me about a conflict with a peer or stakeholder.",
+    "Describe a time you had to say no to a senior leader.",
+    "Describe delivering bad news to leadership.",
+    "Tell me about managing senior/executive stakeholders.",
+    "Tell me about handling competing priorities.",
+    "Describe a hard trade-off you made.",
+    "Tell me about influencing people you had no authority over.",
+    "Describe managing a crisis or major incident.",
+    "Tell me about how you track and drive a program to completion.",
+    "Describe a time you cut scope to hit a date.",
+    "Tell me about setting a vision or strategy for your area.",
+    "How would you design the TPM function for a company at our scale?",
+    "Centralized vs. embedded TPM - which model do you prefer and why?",
+    "How do you structure an update for the board or CEO?",
+    "Tell me about a time you delivered bad news to executives.",
+    "How do you handle an executive who demands a date you do not believe in?",
+    "Walk me through how you build a business case for a major investment.",
+    "How do you make a build versus buy decision?",
+    "How do you quantify ROI for infrastructure work with no direct revenue?",
+    "How do you hire senior TPMs - what is your bar?",
+    "Tell me about a time you had to manage out a leader.",
+    "Describe a decision you made with imperfect data.",
+    "Describe a time you changed your mind.",
+    "Why this role, and why you? (positioning)",
+    "Tell me about a time the org structure itself was the root cause of a delivery problem.",
+    "How do you set up portfolio governance without creating bureaucracy?",
+}
+
+_CAT_RANK_WEIGHT = {
+    # What a Head-of-TPM loop actually weights most heavily.
+    "leadership": 3.0, "delivery": 2.9, "stakeholders": 2.9, "failure": 2.9,
+    "influence": 2.8, "conflict": 2.8, "prioritization": 2.7,
+    "orgdesign": 2.7, "strategy": 2.6, "risk": 2.5, "decision": 2.5,
+    "board": 2.5, "communication": 2.4, "finance": 2.4, "talent": 2.3,
+    "people": 2.2, "ambiguity": 2.1, "collaboration": 2.0,
+    "customer": 1.8, "growth": 1.6,
+}
+
+
+def _tpm_freq_tier(q):
+    f = (q.get("frequency") or "").lower()
+    if "essentially every loop" in f:
+        return 3.0
+    if "very frequently" in f or "very likely" in f or "expected at head" in f:
+        return 2.4
+    if "commonly" in f:
+        return 1.8
+    return 1.2
+
+
+def _tpm_rank_score(q):
+    score = 3.0 * _tpm_freq_tier(q)
+    score += 2.0 * _CAT_RANK_WEIGHT.get(q["cat"], 2.0)
+    if q["q"] in _MUST_PREP:
+        score += 3.0
+    # Cheap-and-common goes first: a 15-minute answer asked every time beats a
+    # 30-minute one asked sometimes. Capped so the short ones cannot sweep.
+    score += min(1.5, 30.0 / max(10, q.get("prep_minutes", 18)))
+    return score
+
+
+_ordered = sorted(QUESTIONS, key=lambda q: (-_tpm_rank_score(q), q["cat"], q["q"]))
+_total = len(_ordered)
+for _i, _q_item in enumerate(_ordered, 1):
+    _q_item["rank"] = _i
+    _pct = _i / _total
+    _q_item["priority"] = ("P0" if _pct <= 0.18 else
+                           "P1" if _pct <= 0.45 else
+                           "P2" if _pct <= 0.75 else "P3")
+
+_percat = {}
+for _q_item in _ordered:
+    _percat[_q_item["cat"]] = _percat.get(_q_item["cat"], 0) + 1
+    _q_item["cat_rank"] = _percat[_q_item["cat"]]
+
+_PRIORITY_NOTE = {
+    "P0": "P0 - prepare these first. Near-certain to be asked, and a weak answer here costs you the loop.",
+    "P1": "P1 - core. Expect several of these; have a story ready for each.",
+    "P2": "P2 - depth. Prepare once P0 and P1 are rehearsed out loud.",
+    "P3": "P3 - long tail. Skim for the shape; do not spend rehearsal time here.",
+}
+for _q_item in QUESTIONS:
+    _q_item["priority_note"] = _PRIORITY_NOTE[_q_item["priority"]]
+
+#: Total preparation time for the whole behavioral bank, in minutes.
+TOTAL_PREP_MINUTES = sum(q["prep_minutes"] for q in QUESTIONS)

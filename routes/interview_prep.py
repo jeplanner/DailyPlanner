@@ -20,6 +20,9 @@ from flask import (Blueprint, Response, jsonify, redirect, render_template,
 
 from auth import login_required
 from interview_question_bank import CATEGORIES as QUESTION_CATEGORIES, QUESTIONS
+from tpm_round_bank import (ENTRIES as TPM_ROUND_ENTRIES, ROUNDS as TPM_ROUNDS,
+                            ROUND_BRIEF as TPM_ROUND_BRIEF,
+                            TOTAL_PREP_MINUTES as TPM_TOTAL_PREP_MINUTES)
 from system_design_bank import (CATEGORIES as SD_CATEGORIES,
                                  DETAIL_ORDER as SD_DETAIL_ORDER,
                                  ENTRIES as SD_ENTRIES)
@@ -591,6 +594,30 @@ def _valid_qid(qid):
 # table stores full names.
 _OVERRIDE_MAP = {"q": "question", "s": "situation", "t": "task",
                  "a": "action", "r": "result", "tip": "tip"}
+
+
+@interview_prep_bp.route("/tpm-rounds", methods=["GET"])
+@login_required
+def tpm_rounds_page():
+    """The two CASE rounds of a TPM loop — product thinking and program
+    management. The behavioral round lives in the question bank and the
+    design round in the system-design bank; these two had no coverage."""
+    return render_template("tpm_rounds.html")
+
+
+@interview_prep_bp.route("/api/tpm-rounds", methods=["GET"])
+@login_required
+def tpm_rounds_api():
+    """Case-round bank: framework, worked answer, strong-vs-weak contrast,
+    interviewer probes and pitfalls per question. Static reference content."""
+    items = [{"id": f"t{i}", **e} for i, e in enumerate(TPM_ROUND_ENTRIES)]
+    return jsonify({
+        "rounds": [{"key": k, "label": v} for k, v in TPM_ROUNDS.items()],
+        "briefs": TPM_ROUND_BRIEF,
+        "entries": items,
+        "total": len(items),
+        "total_minutes": TPM_TOTAL_PREP_MINUTES,
+    })
 
 
 @interview_prep_bp.route("/api/interview-prep/questions", methods=["GET"])

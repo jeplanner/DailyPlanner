@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<title>TPM Case Rounds — DailyPlanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='design-system.css') }}">
+<script src="https://unpkg.com/feather-icons"></script>
+<script src="{{ url_for('static', filename='js/global.js') }}"></script>
+<script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<style>
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 16px 16px 72px; }
+  h1 { font-size: 22px; font-weight: 900; letter-spacing: -.02em; margin: 6px 0 2px; }
+  .sub { color: var(--color-text-secondary); font-size: 13px; margin: 0 0 12px; }
+  .card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; padding: 14px; }
+  .btn { font: inherit; font-weight: 700; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+  .btn.sm { padding: 5px 9px; font-size: 12.5px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .controls select, .controls input[type=text] { font: inherit; font-size: 14px; padding: 9px 11px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg); color: var(--color-text); }
+  .controls input.search { flex: 1; min-width: 160px; }
+  .only { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--color-text-secondary); white-space: nowrap; }
+
+  /* The loop map: which round each bank covers, so nothing is a surprise. */
+  .loop { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 0 0 12px; }
+  .loop .r { border: 1px solid var(--color-border); border-radius: 12px; padding: 10px 12px; background: var(--color-surface); }
+  .loop .r .n { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); }
+  .loop .r .t { font-size: 14px; font-weight: 800; margin: 2px 0 4px; }
+  .loop .r .c { font-size: 12px; color: var(--color-text-secondary); line-height: 1.45; }
+  .loop .r.here { border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1 inset; }
+  .loop .r a { color: var(--color-primary); font-weight: 700; text-decoration: none; font-size: 12px; }
+
+  .effort { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; font-weight: 700; color: var(--color-text-secondary); margin: 0 0 10px; }
+  .effort b { color: var(--color-text); font-weight: 900; }
+  .effort .bar { flex: 1 0 100%; height: 6px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
+  .effort .bar > i { display: block; height: 100%; background: #10b981; }
+
+  .brief { font-size: 13px; line-height: 1.6; background: #eef2ff; border-left: 3px solid #6366f1; border-radius: 8px; padding: 10px 13px; margin: 0 0 12px; }
+  html.dark .brief { background: #1e1b4b; }
+  .brief b { font-weight: 800; }
+
+  .q-card { border: 1px solid var(--color-border); border-radius: 12px; margin-bottom: 8px; background: var(--color-surface); overflow: hidden; }
+  .q-card.done { border-color: #a7f3d0; }
+  .q-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer; }
+  .q-head .q-prac { width: 18px; height: 18px; flex: none; cursor: pointer; }
+  .q-head .q-text { flex: 1; font-size: 14.5px; font-weight: 700; }
+  .q-card.done .q-text { color: var(--color-text-secondary); }
+  .q-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--color-text-secondary); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px 8px; white-space: nowrap; flex: none; }
+  .q-pri { font-size: 10px; font-weight: 900; border-radius: 999px; padding: 2px 7px; white-space: nowrap; flex: none; color: #fff; }
+  .pri-P0 { background: #dc2626; } .pri-P1 { background: #ea580c; } .pri-P2 { background: #0891b2; }
+  .q-time { font-size: 10.5px; font-weight: 800; color: #4338ca; background: #eef2ff; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
+  html.dark .q-time { background: #1e1b4b; color: #c7d2fe; }
+  .q-diff { font-size: 10px; font-weight: 800; text-transform: uppercase; border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
+  .diff-medium { color: #b45309; background: #fef3c7; } .diff-hard { color: #b91c1c; background: #fee2e2; }
+  html.dark .diff-medium { color: #fcd34d; background: #78350f; } html.dark .diff-hard { color: #fca5a5; background: #7f1d1d; }
+
+  .q-body { padding: 0 13px 13px 41px; display: none; }
+  .q-card.open .q-body { display: block; }
+  .fld { margin: 9px 0; font-size: 13.5px; line-height: 1.55; }
+  .fld .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; display: block; margin-bottom: 3px; }
+  /* Each block is colour-coded so you can find the one you want at a glance:
+     what they test (grey), the framework (indigo), the worked answer (green),
+     strong-vs-weak (amber), probes (purple), pitfalls (red). */
+  .fld.test .lbl { color: var(--color-text-secondary); }
+  .fld.frame { white-space: pre-wrap; background: #f5f7ff; border-left: 3px solid #6366f1; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.62; }
+  .fld.frame .lbl { color: #4338ca; }
+  html.dark .fld.frame { background: #131a33; border-left-color: #818cf8; }
+  .fld.worked { white-space: pre-wrap; background: #f0fdf4; border-left: 3px solid #34d399; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.62; }
+  .fld.worked .lbl { color: #047857; }
+  html.dark .fld.worked { background: #0e2119; border-left-color: #10b981; }
+  .fld.sw { white-space: pre-wrap; background: #fffbeb; border-left: 3px solid #f59e0b; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.6; }
+  .fld.sw .lbl { color: #b45309; }
+  html.dark .fld.sw { background: #241a06; border-left-color: #fbbf24; }
+  .fld.pit { white-space: pre-wrap; background: #fef2f2; border-left: 3px solid #f87171; border-radius: 6px; padding: 9px 12px; font-size: 13px; line-height: 1.6; }
+  .fld.pit .lbl { color: #b91c1c; }
+  html.dark .fld.pit { background: #2a1215; border-left-color: #ef4444; }
+  .probes { margin: 9px 0; }
+  .probes > .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #7c3aed; display: block; margin-bottom: 4px; }
+  .probe { display: flex; gap: 9px; padding: 6px 10px; margin-bottom: 4px; background: #faf5ff; border-left: 3px solid #a78bfa; border-radius: 6px; font-size: 13px; line-height: 1.5; }
+  .probe .n { flex: none; font-weight: 800; color: #7c3aed; }
+  html.dark .probe { background: #1e1233; border-left-color: #8b5cf6; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 2px; }
+  .tag { font-size: 11px; font-weight: 600; color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 999px; padding: 2px 9px; }
+  html.dark .tag { background: #1e1b4b; border-color: #3730a3; color: #c7d2fe; }
+  .empty { color: var(--color-text-secondary); font-size: 14px; padding: 26px 0; text-align: center; }
+  h2 { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-secondary); margin: 20px 0 9px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 12px 11px 64px; }
+    h1 { font-size: 19px; }
+    .controls { flex-direction: column; align-items: stretch; }
+    .controls select, .controls input.search, .controls button { width: 100%; box-sizing: border-box; }
+    .q-body { padding: 0 12px 12px 12px; }
+    .q-head { padding: 11px 12px; gap: 8px; }
+  }
+</style>
+{% include "_pwa_head.html" %}
+</head>
+<body>
+<div class="nav-icons">{% include "_top_nav.html" %}</div>
+<div class="wrap">
+  <h1>🎯 TPM Case Rounds</h1>
+  <p class="sub">Product thinking &amp; program management — the two <b>case</b> rounds of a Technical Program Management loop. These are not STAR questions: the interviewer gives you a scenario and grades how you think out loud.</p>
+
+  <div class="loop" id="loop"></div>
+  <div class="effort" id="effort"></div>
+
+  <div class="card" style="margin-bottom:10px;">
+    <div class="controls">
+      <select id="round"><option value="">Both rounds</option></select>
+      <select id="pri">
+        <option value="">Any priority</option>
+        <option value="P0">P0 — rehearse first</option>
+        <option value="P1">P1 — know the framework</option>
+        <option value="P2">P2 — read it</option>
+      </select>
+      <input type="text" class="search" id="search" placeholder="Search e.g. metric, dependency, build vs buy…">
+      <label class="only"><input type="checkbox" id="unstudied"> Not yet rehearsed</label>
+    </div>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
+  let BANK = null, shown = []; const roundLabel = {};
+  const PKEY = "tpm_rounds_done"; const done = new Set();
+  try { (JSON.parse(localStorage.getItem(PKEY)||"[]")||[]).forEach(x=>done.add(x)); } catch(_){}
+  const save = () => { try { localStorage.setItem(PKEY, JSON.stringify([...done])); } catch(_){} };
+  const hrs = (m) => m < 60 ? `${m}m` : (m%60 ? `${Math.floor(m/60)}h ${m%60}m` : `${Math.floor(m/60)}h`);
+
+  // The four rounds, and which bank covers each — so you can see at a glance
+  // what is prepared and what still has no coverage.
+  function loopMap(){
+    const rounds = [
+      {n:"Round 1", t:"Product thinking", c:"Do you hold a point of view about the product, not just the plan?", here:true},
+      {n:"Round 2", t:"Design", c:"System &amp; architecture depth.", link:"/interview-prep", linkText:"System design bank →"},
+      {n:"Round 3", t:"Program management", c:"The craft round: planning, dependencies, risk, recovery.", here:true},
+      {n:"Round 4", t:"Behavioral", c:"STAR at exec altitude.", link:"/interview-prep", linkText:"Question bank →"},
+    ];
+    $("loop").innerHTML = rounds.map(r=>`
+      <div class="r ${r.here?'here':''}">
+        <div class="n">${r.n}</div><div class="t">${r.t}</div>
+        <div class="c">${r.c}</div>
+        ${r.here?'<div class="c" style="margin-top:4px;color:#6366f1;font-weight:700;">On this page ↓</div>'
+                :`<div style="margin-top:4px;"><a href="${r.link}">${r.linkText}</a></div>`}
+      </div>`).join("");
+  }
+
+  function effort(list){
+    const tot = list.reduce((s,e)=>s+(e.prep_minutes||0),0);
+    const left = list.reduce((s,e)=>s+(done.has(e.id)?0:(e.prep_minutes||0)),0);
+    const pct = tot ? Math.round((tot-left)/tot*100) : 0;
+    $("effort").innerHTML =
+      `<span>⏱ <b>${hrs(left)}</b> of rehearsal left</span>` +
+      `<span>${list.length} case${list.length===1?"":"s"} · <b>${hrs(tot)}</b> total</span>` +
+      `<span><b>${pct}%</b> rehearsed</span>` +
+      `<span class="bar"><i style="width:${pct}%"></i></span>`;
+  }
+
+  function render(){
+    if(!BANK) return;
+    const rnd = $("round").value, pri = $("pri").value;
+    const term = ($("search").value||"").trim().toLowerCase(), onlyUn = $("unstudied").checked;
+    const list = BANK.entries.filter(e =>
+      (!rnd || e.round===rnd) && (!pri || e.priority===pri) && (!onlyUn || !done.has(e.id)) &&
+      (!term || e.title.toLowerCase().includes(term) || (e.framework||"").toLowerCase().includes(term)
+             || (e.tags||[]).some(t=>t.includes(term)))
+    ).sort((a,b)=>(a.rank||0)-(b.rank||0));
+    shown = list; effort(list);
+
+    // The round brief only makes sense when a single round is selected.
+    const brief = rnd && BANK.briefs && BANK.briefs[rnd]
+      ? `<div class="brief"><b>What this round is really testing.</b> ${esc(BANK.briefs[rnd])}</div>` : "";
+
+    const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
+    $("list").innerHTML = brief + (list.map(e => `
+      <div class="q-card ${done.has(e.id)?'done':''}" data-id="${e.id}">
+        <div class="q-head">
+          <input type="checkbox" class="q-prac" ${done.has(e.id)?'checked':''} title="Mark rehearsed">
+          <span class="q-text">${esc(e.title)}</span>
+          <span class="q-pri pri-${esc(e.priority)}" title="${esc(e.priority_note||'')}">${esc(e.priority)}</span>
+          <span class="q-time">⏱ ${esc(e.prep_label)}</span>
+          <span class="q-diff diff-${esc((e.difficulty||'').toLowerCase())}">${esc(e.difficulty)}</span>
+          <span class="q-badge">${esc(roundLabel[e.round]||e.round)}</span>
+        </div>
+        <div class="q-body">
+          ${fld("test","What they are actually testing",e.what_they_test)}
+          ${fld("test","How often it comes up",e.frequency)}
+          ${fld("frame","The framework — impose this structure",e.framework)}
+          ${fld("worked","Worked answer at the right altitude",e.worked)}
+          ${fld("sw","Strong vs weak — what separates a hire",e.strong_weak)}
+          ${(e.probes&&e.probes.length)
+            ? `<div class="probes"><span class="lbl">The follow-up probes (${e.probes.length}) — the first answer is never the test</span>${
+                e.probes.map((p,i)=>`<div class="probe"><span class="n">${i+1}</span><span>${esc(p)}</span></div>`).join("")
+              }</div>` : ""}
+          ${fld("pit","Pitfalls",e.pitfalls)}
+          ${e.tags&&e.tags.length ? `<div class="tags">${e.tags.map(t=>`<span class="tag">#${esc(t)}</span>`).join("")}</div>` : ""}
+        </div>
+      </div>`).join("") || '<div class="card"><div class="empty">No cases match.</div></div>');
+  }
+
+  $("list").addEventListener("click", (e) => {
+    const card = e.target.closest(".q-card"); if(!card) return;
+    if (e.target.classList.contains("q-prac")) {
+      const id = card.dataset.id;
+      if (e.target.checked) done.add(id); else done.delete(id);
+      save(); card.classList.toggle("done", e.target.checked); effort(shown); return;
+    }
+    if (e.target.closest("a")) return;
+    if (e.target.closest(".q-head")) card.classList.toggle("open");
+  });
+  ["round","pri","unstudied"].forEach(id => $(id).addEventListener("change", render));
+  $("search").addEventListener("input", render);
+
+  (async () => {
+    try {
+      BANK = await api("/api/tpm-rounds");
+      (BANK.rounds||[]).forEach(r => roundLabel[r.key]=r.label);
+      $("round").innerHTML = '<option value="">Both rounds</option>' +
+        (BANK.rounds||[]).map(r=>`<option value="${r.key}">${esc(r.label)}</option>`).join("");
+      loopMap(); render();
+    } catch(e){ if(window.toast) toast("Couldn't load","error"); }
+    if (window.feather) feather.replace();
+  })();
+})();
+</script>
+</body>
+</html>
