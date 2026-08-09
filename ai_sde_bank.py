@@ -6326,3 +6326,139 @@ pop returns 3 (last in, first out)
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ── More DSA diagrams (batch 3) ────────────────────────────────────────────
+_DIAGRAM.update({
+    "Jump Game": r"""
+nums = [2, 3, 1, 1, 4]   can you reach the last index?
+ i:      0  1  2  3  4
+reach:   2  3  3  4  4    reach = max(reach, i + nums[i]); if i>reach -> stuck
+final reach 4 >= last index 4  -> TRUE
+""".strip("\n"),
+    "Gas Station": r"""
+gas   = [1, 2, 3, 4, 5]     cost = [3, 4, 5, 1, 2]
+diff  = [-2,-2,-2, 3, 3]    total = 0 >= 0 -> a solution exists
+run a running tank; whenever it dips below 0, START fresh at next station
+answer start index = 3
+""".strip("\n"),
+    "Sliding Window Maximum (deque)": r"""
+nums=[1,3,-1,-3,5], k=3   deque holds INDICES, values decreasing
+ window [1,3,-1] -> max 3
+ window [3,-1,-3]-> max 3
+ window [-1,-3,5]-> max 5     front of deque = current window's max
+pop smaller values from the back before pushing; drop indices that fell out.
+""".strip("\n"),
+    "Next Greater Element (monotonic stack)": r"""
+nums = [2, 1, 2, 4]   next greater to the right:
+ stack keeps indices of values waiting for a bigger one
+ 2 ->[2]  1 ->[2,1]  2 pops 1(ans 2) ->[2,2]  4 pops all (ans 4,4)
+result = [4, 2, 4, -1]
+""".strip("\n"),
+    "Validate Binary Search Tree": r"""
+        5            each node must fall in (low, high):
+      /   \          go left  -> tighten high to node.val
+     1     4         go right -> tighten low  to node.val
+          / \
+         3   6       4 is in right subtree of 5 but 4 < 5 -> INVALID
+compare to an inherited range, NOT just direct children.
+""".strip("\n"),
+    "Clone Graph (DFS)": r"""
+   1 --- 2       visited = {original: copy}
+   |     |       DFS: make a copy, then for each neighbor
+   4 --- 3         if unseen -> recurse & copy, else reuse the copy
+avoids infinite loops on cycles by checking 'visited' first.
+""".strip("\n"),
+    "Word Ladder (shortest transformation, BFS)": r"""
+hit -> hot -> dot -> dog -> cog     change one letter each step
+BFS level by level (each word = a node, neighbors differ by 1 letter):
+ L1: hit   L2: hot   L3: dot,lot   L4: dog,log   L5: cog
+shortest length = 5. BFS guarantees the FEWEST steps.
+""".strip("\n"),
+    "Meeting Rooms II (minimum rooms)": r"""
+intervals: [0,30] [5,10] [15,20]
+timeline:  |=====0..30=====|
+              |5..10|
+                    |15..20|
+min-heap of END times; if next start >= earliest end, reuse a room.
+peak overlap = 2  -> 2 rooms needed
+""".strip("\n"),
+    "Maximal Square (DP)": r"""
+matrix (1=filled)      dp[i][j] = side of largest square ending here
+ 1 0 1 0                = 1 + min(up, left, up-left)  if cell==1
+ 1 0 1 1                dp:  1 0 1 0
+ 1 1 1 1                     1 0 1 1
+ 1 0 1 1                     1 1 1 2  <- side 2 -> area 4
+largest square area = 4
+""".strip("\n"),
+    "Search in Rotated Sorted Array": r"""
+[4,5,6,7,0,1,2] target 0     one half is always sorted
+ L      M      R   nums[M]=7; left half [4..7] sorted, 0 not in it -> go right
+        L M    R   search right half -> find 0
+binary search, but first decide WHICH half is sorted, then which side to keep.
+""".strip("\n"),
+    "Find Median from Data Stream": r"""
+two heaps balance the numbers:
+   maxHeap (lower half)      minHeap (upper half)
+        [.. 1 2]      <=        [3 4 ..]
+median = top of the bigger heap (odd count),
+       or average of both tops (even count). Rebalance after each add.
+""".strip("\n"),
+    "Design a Min Stack": r"""
+push 5,3,7,2   keep a parallel 'min-so-far' stack:
+ vals:  5 3 7 2      mins: 5 3 3 2   (top of mins = current minimum)
+pop -> pop BOTH. getMin() -> read top of mins in O(1).
+""".strip("\n"),
+    "Number of Provinces": r"""
+friendships (adjacency):   union-find groups connected cities
+ 0 - 1     2      union(0,1); 2 alone; union(3,4)
+ 3 - 4            find(0)==find(1); find(2) separate; find(3)==find(4)
+distinct roots = 3 provinces
+""".strip("\n"),
+    "Set Matrix Zeroes (O(1) space)": r"""
+use row 0 and col 0 as MARKERS instead of extra memory:
+ 1 1 1      a 0 anywhere -> mark its row-start and col-start as 0
+ 1 0 1  ->  then sweep: zero any cell whose row-marker or col-marker is 0
+ 1 1 1      (handle the first row/col with two flags)
+""".strip("\n"),
+    "Generate Parentheses": r"""
+n=2, grow a string with rules open<=n and close<=open:
+                ""
+              /    \
+           "("      (close not allowed yet)
+          /   \
+       "(("    "()"
+        |        \
+      "(()"      "()("
+        |          |
+     "(())"      "()()"      -> the 2 valid strings
+""".strip("\n"),
+    "Merge k Sorted Lists": r"""
+lists: 1->4->5   1->3->4   2->6
+min-heap of the current heads: [1,1,2]
+pop smallest -> push that node's next -> repeat
+output: 1 1 2 3 4 4 5 6      (k-way merge in O(N log k))
+""".strip("\n"),
+    "Permutations (backtracking)": r"""
+permute([1,2,3]) - pick an unused number at each level:
+            [ ]
+       /     |     \
+     [1]    [2]    [3]
+    /  \
+ [1,2] [1,3]
+   |     |
+[1,2,3] [1,3,2] ...   choose -> recurse -> un-choose (backtrack)
+""".strip("\n"),
+    "Trapping Rain Water": r"""
+bars:        #
+       #~~~~~#      water above bar i = min(maxLeft, maxRight) - height[i]
+       #~#~~#      two pointers move inward from the shorter wall
+     # #~#~###
+     0 1 2 3 4     trapped = sum of the '~' cells
+""".strip("\n"),
+})
+
+# Re-apply diagrams after the batch-3 update above.
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
