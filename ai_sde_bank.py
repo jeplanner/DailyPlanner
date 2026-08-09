@@ -21037,6 +21037,609 @@ for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
 
+# ══ Depth pass: the core LLM entries ══════════════════════════════════════
+# These four are the highest-ranked entries in the whole bank for an AI SDE
+# loop, and they were carrying a short answer and a single example. Same house
+# style as the DSA walkthroughs: derive the idea rather than assert it, then
+# six worked examples that VARY the domain - a product scenario, a numeric
+# calculation, a failure case, a contrast against a sibling concept, and an
+# interview-style application.
+_WALKTHROUGH_LLM = {}
+_EXAMPLES_LLM = {}
+
+
+_WALKTHROUGH_LLM["What is a Large Language Model (LLM)?"] = r"""
+WHAT IT ACTUALLY DOES - and it is much simpler than it looks
+An LLM does exactly one thing: given a sequence of tokens, it predicts a
+probability distribution over what the next token should be. That is the entire
+mechanism. Everything else - answering questions, writing code, holding a
+conversation - is that one operation applied over and over, feeding each
+predicted token back in as input.
+
+If that sounds too simple to produce what you have seen ChatGPT do, that
+reaction is the right starting point, and the resolution is the interesting
+part.
+
+HOW NEXT-TOKEN PREDICTION TURNS INTO CAPABILITY
+To predict the next token really well across the entire internet, you are
+forced to learn things that look nothing like autocomplete:
+  "The capital of France is ___"          -> you need facts
+  "def fibonacci(n): if n <= 1: return ___" -> you need code semantics
+  "2 + 2 = ___"                            -> you need arithmetic
+  "The murderer turned out to be the ___"  -> you need to track a whole story
+Prediction is a demanding objective precisely because the only way to get good
+at it in general is to model the structure that generated the text. Capability
+is a by-product of compression, not a separate feature that was added.
+
+THE THREE THINGS THAT MADE IT WORK
+1. The TRANSFORMER architecture (2017). Earlier models read text one word at a
+   time, so training could not be parallelised and long-range connections
+   decayed. Attention lets every token look at every other token directly and
+   in parallel, which made it possible to train on enormous data with GPUs.
+2. SCALE. More parameters, more data, more compute produced smooth, predictable
+   improvements - the scaling laws. Capabilities that nobody engineered
+   appeared as the models grew.
+3. SELF-SUPERVISION. Training needs no labels. The label for any position is
+   simply the next token, which is already there. That is what unlocked
+   training on trillions of tokens - human labelling could never have reached
+   that scale.
+
+WHAT "LARGE" ACTUALLY REFERS TO
+Parameters - the learned numbers, from a few billion to hundreds of billions.
+Training tokens - trillions. And compute - the reason frontier training runs
+cost tens of millions of dollars. A useful anchor: parameters are roughly the
+model's capacity to store patterns, and inference memory is roughly parameters
+times bytes per parameter, which is why a 70B model at 2 bytes each needs about
+140GB just to hold its weights.
+
+WHAT FOLLOWS FROM THE MECHANISM - this is where interviews go
+Because it predicts plausible tokens rather than retrieving facts:
+  * It HALLUCINATES. A fluent wrong answer and a fluent right answer are
+    produced by the identical process; the model has no separate "do I know
+    this?" signal.
+  * It has a KNOWLEDGE CUTOFF, because facts live in frozen weights.
+  * It is STATELESS. Every turn re-reads the whole conversation; there is no
+    memory between calls beyond what you put in the context window.
+  * It is NON-DETERMINISTIC when sampling, because you are drawing from a
+    distribution rather than taking the argmax.
+  * It is BAD AT EXACT ARITHMETIC and character-level tasks, because it sees
+    tokens rather than digits or letters.
+Every one of those limitations is a direct consequence of "predict the next
+token", and being able to derive them from the mechanism - rather than reciting
+them as a list - is what separates a real answer from a memorised one.
+
+THE ONE-LINE TAKEAWAY
+An LLM is a next-token predictor trained on enough text that predicting well
+required learning how the world is described. Its abilities and its failures
+come from the same single mechanism.
+""".strip("\n")
+
+_EXAMPLES_LLM["What is a Large Language Model (LLM)?"] = [
+    """The mechanism traced concretely.
+Prompt: "The Eiffel Tower is located in the city of"
+The model produces a distribution over its entire vocabulary:
+   "Paris"  0.94
+   "Lyon"   0.01
+   "France" 0.01
+   ...tens of thousands of other tokens sharing the rest
+It emits "Paris", appends it to the input, and runs again on
+"The Eiffel Tower is located in the city of Paris" to predict the token after
+that. Generating 100 tokens means 100 forward passes, each one reading
+everything produced so far. That loop is the whole of text generation.""",
+
+    """Why prediction forces understanding - a case where autocomplete cannot work.
+"Sarah put the book on the table. She then picked ___ up."
+To choose "it" and have it refer to the book, the model must track that Sarah
+is the subject, the book is the object, and the pronoun refers to the book
+rather than the table. No amount of surface-level word-frequency statistics
+gets this right consistently. The training objective is trivial; the only way
+to satisfy it across billions of such cases is to represent the situation being
+described.""",
+
+    """The numbers, so the scale is concrete.
+A 70-billion-parameter model:
+  storage at fp16 (2 bytes/param) = 140 GB just for the weights
+  that does not fit on a single 80GB A100 - hence tensor parallelism, or
+  quantisation to 4-bit which brings it to roughly 35GB and fits on one card
+  training data: on the order of 1-15 trillion tokens
+  training compute: thousands of GPUs for weeks, tens of millions of dollars
+Inference is cheap and training is not: the same model that cost $50m to train
+answers a question for a fraction of a cent. That asymmetry is why almost
+everyone consumes models rather than training them.""",
+
+    """The failure case that comes straight from the mechanism.
+Ask a model: "How many r's are in 'strawberry'?"
+Models have famously got this wrong. The reason is not stupidity - it is that
+the model never sees the letters. "strawberry" arrives as perhaps two or three
+tokens, and the character composition inside a token is not directly visible.
+It is being asked about a level of structure below its input representation.
+The same root cause explains weakness at reversing strings, counting
+characters, and rhyming in some languages. Knowing WHY it fails tells you the
+fix: give it a tool, or force character-level spacing in the prompt.""",
+
+    """Contrast against the sibling technologies, which interviewers probe.
+* Traditional ML classifier: trained on labelled examples for ONE task, cannot
+  do anything else, small and cheap, and its confidence score is meaningful.
+* Search engine: retrieves documents that exist. Cannot synthesise, but never
+  invents.
+* LLM: generates new text for any task expressible in language, but has no
+  retrieval guarantee and no reliable confidence.
+This is precisely why RAG exists - it bolts the search engine's grounding onto
+the LLM's synthesis. Being able to place the three side by side is usually how
+the "what is an LLM" question actually gets scored.""",
+
+    """The interview application - a system-design implication.
+"You are serving an LLM to 10,000 concurrent users. What dominates your
+design?"
+Everything follows from the mechanism. Generation is sequential - token N+1
+needs token N - so you cannot parallelise within one response, which makes
+latency roughly proportional to output length. The KV-cache grows with context
+length and consumes GPU memory per active request, so concurrency is bounded by
+memory, not by compute. That is why continuous batching, prompt caching for
+shared prefixes, and capping max output tokens are the three levers that
+actually matter. Every one of those is derived from "it predicts one token at a
+time", which is why the mechanism is worth understanding rather than
+memorising.""",
+]
+
+
+_WALKTHROUGH_LLM["What is RAG (Retrieval-Augmented Generation)?"] = r"""
+THE PROBLEM RAG EXISTS TO SOLVE
+An LLM's knowledge is frozen in its weights at training time. So it cannot
+answer questions about your company's documents, last week's events, or
+anything private - and worse, when it does not know, it does not say so. It
+produces a fluent guess, because fluent-and-wrong is generated by exactly the
+same mechanism as fluent-and-right.
+
+You have three options: retrain the model (millions of dollars, and stale
+again next month), fine-tune it (expensive, and it teaches STYLE far more
+reliably than it teaches FACTS), or - put the relevant text into the prompt at
+question time. The third is RAG.
+
+THE NAME IS THE ALGORITHM
+  RETRIEVE  the chunks of your corpus most relevant to the question
+  AUGMENT   the prompt by pasting them in
+  GENERATE  the answer, instructed to use only what was provided
+If you remember nothing else, remember that the acronym is literally the three
+steps in order.
+
+HOW RETRIEVAL ACTUALLY WORKS - the part worth understanding
+1. INDEXING, done once, offline:
+   Split your documents into chunks of a few hundred tokens. Run each chunk
+   through an embedding model to get a vector - a list of numbers positioning
+   that text in a space where similar meaning means nearby vectors. Store the
+   vectors in a vector database.
+2. QUERY TIME:
+   Embed the user's question with the SAME model, find the nearest chunk
+   vectors (cosine similarity), and take the top k.
+3. PROMPT:
+   "Answer using only the following context. If the answer is not there, say
+   you do not know. Context: [chunks] Question: [question]"
+
+WHY EMBEDDINGS RATHER THAN KEYWORD SEARCH: a user asking "how do I reset my
+password?" should match a document titled "Credential recovery procedure",
+which shares no keywords. Embeddings match MEANING. The trade-off is the
+reverse case - keyword search is better for exact identifiers, error codes and
+product names, which is why serious systems use both and fuse the results
+(hybrid search).
+
+WHY IT WORKS AT ALL - the insight underneath: LLMs are far better at reading
+and synthesising text placed in front of them than at recalling facts from
+their weights. RAG plays to the strength and routes around the weakness. It
+converts a memory problem into a reading-comprehension problem.
+
+WHERE RAG SYSTEMS ACTUALLY FAIL - and interviewers go straight here
+Nearly every failure is RETRIEVAL, not generation. If the answer-bearing chunk
+was not in the top k, no model can answer, and it will often produce something
+plausible anyway. So the metric that matters most is recall@k, and the common
+causes of poor recall are:
+  * Chunking that splits the answer across two chunks, or strips the heading
+    that gave it context.
+  * A question phrased differently from the source text (fixed with query
+    rewriting or HyDE).
+  * Top-k too small, or no reranker, so the right chunk was retrieved at
+    position 15 and thrown away.
+  * A stale index.
+The second failure mode is generation ignoring the context and answering from
+its weights anyway - reduced by explicit instructions, and by requiring
+citations so an unsupported claim is visible.
+
+THE ONE-LINE TAKEAWAY
+RAG turns "what do you remember?" into "here is the relevant text, now read
+it." Its quality is dominated by retrieval, so debug the retriever before you
+touch the prompt.
+""".strip("\n")
+
+_EXAMPLES_LLM["What is RAG (Retrieval-Augmented Generation)?"] = [
+    """The full pipeline traced end to end on one question.
+Corpus: 4,000 internal HR and IT pages. Question: "How many days of parental
+leave do I get?"
+  1. Embed the question -> a 1536-dimension vector.
+  2. Search the vector store -> top 5 chunks by cosine similarity, e.g.
+     "Parental Leave Policy v3, section 2" (0.89), "Leave entitlements
+     summary" (0.84), "Parental Leave Policy v2 - superseded" (0.83), ...
+  3. Build the prompt: instructions + those 5 chunks + the question.
+  4. The model answers "20 weeks, per Parental Leave Policy v3" and cites the
+     chunk.
+Notice the superseded v2 document also scored highly - that is a real and
+common problem, and it is fixed with metadata filtering on document status,
+not with a better model.""",
+
+    """A numeric look at why chunking dominates quality.
+A 40-page policy PDF, chunked three ways:
+  * 2000-token chunks: few chunks, each containing lots of irrelevant text.
+    Retrieval is imprecise and you burn context budget.
+  * 200-token chunks: precise, but "20 weeks" ends up in a chunk that never
+    mentions "parental leave" because the heading was two chunks earlier. The
+    embedding is therefore about weeks-in-general and never matches.
+  * 500-token chunks with 50-token overlap, and each chunk prefixed with its
+    document title and section heading: the heading travels with the content,
+    so the embedding captures what the passage is ABOUT.
+The third option typically lifts recall@5 by double digits with no model
+change. This is why "improve the chunking" is nearly always the highest-return
+first fix.""",
+
+    """The failure case: retrieval succeeded, the answer was still wrong.
+Question: "What is our refund policy for enterprise customers?"
+The retriever returned the CONSUMER refund policy, which is textually very
+similar - same vocabulary, same structure. The model dutifully answered from
+it and produced a confident, well-cited, wrong answer.
+Diagnosis: semantic similarity cannot distinguish two near-identical documents
+that differ by one attribute. Fixes: metadata filtering on customer segment,
+a reranker (a cross-encoder that reads query and chunk together and is far
+better at fine distinctions), and making the model quote the source so a human
+spots the mismatch.
+The lesson generalises: high similarity is not the same as relevance.""",
+
+    """RAG versus fine-tuning - the contrast interviewers always ask for.
+"Should we fine-tune the model on our documents instead?"
+  Fine-tuning teaches STYLE, FORMAT and TASK behaviour well. It teaches FACTS
+  unreliably - the model may produce something that looks like your content
+  without being it, and you cannot cite a source.
+  RAG gives grounding, citations, instant updates (re-index, no retraining),
+  access control per document, and cheap corrections (fix the document).
+  Cost: RAG adds retrieval latency and consumes context tokens on every call.
+The usual right answer: RAG for knowledge, fine-tuning for behaviour, and both
+together when you need a specific output format over private knowledge. An
+answer that just says "fine-tuning is better because it is baked in" is the
+common wrong one.""",
+
+    """Evaluating it - which is where most teams have nothing.
+Build a golden set of 100 real questions with known answers and known source
+documents. Then measure the two stages SEPARATELY, because they fail
+separately:
+  RETRIEVAL: recall@k - was the correct chunk in the top k? If this is 60%,
+  your ceiling is 60% and no prompt engineering will move it.
+  GENERATION: faithfulness (is every claim supported by the retrieved text?)
+  and answer relevance.
+A worked case: one team's end-to-end accuracy was 62%. Splitting the metrics
+showed recall@5 at 68% and faithfulness at 91% - so the generator was fine and
+the retriever was the whole problem. They added a reranker and raised k from 5
+to 20 before reranking; recall went to 89% and end-to-end to 81%. Measuring
+the stages separately is what told them where to spend the effort.""",
+
+    """The system-design version of this question.
+"Design a RAG chatbot over 10 million internal documents."
+The parts that actually matter:
+  * Ingestion: a pipeline that re-indexes on document change, with metadata
+    (owner, ACL, status, date) attached to every chunk.
+  * Access control: filter by the USER's permissions at query time - a
+    retrieval system that ignores ACLs is a data breach that answers politely.
+  * Retrieval: hybrid (BM25 + vector) with a cross-encoder reranker; ANN index
+    such as HNSW because exact nearest-neighbour over 10m vectors is too slow.
+  * Serving: semantic caching for repeated questions, prompt caching for the
+    fixed instruction prefix, streaming responses for perceived latency.
+  * Guardrails: refuse when retrieval confidence is low rather than answering
+    unsupported, and always return citations.
+  * Evaluation: golden set in CI, so a chunking change cannot silently regress
+    recall.
+Leading with access control and evaluation - rather than with the embedding
+model - is what marks an engineer who has actually shipped one of these.""",
+]
+
+
+_WALKTHROUGH_LLM["Why do LLMs hallucinate, and how do you reduce it?"] = r"""
+THE MISCONCEPTION TO CLEAR FIRST
+Hallucination is not a bug that a big enough model will eventually fix. It is a
+direct consequence of what the model IS. The model produces the most plausible
+continuation of the text so far. "Plausible" and "true" are correlated in the
+training data but they are not the same property, and the model has no
+mechanism that separates them.
+
+Crucially, there is no internal signal that says "I do not know this". The
+identical process generates a correct citation and a fabricated one, with the
+same fluency and often the same apparent confidence. That is why hallucinations
+are so convincing - and why asking the model "are you sure?" is close to
+useless.
+
+WHY IT HAPPENS - four distinct causes with four different fixes
+1. THE FACT WAS NEVER IN THE TRAINING DATA, or appeared rarely. The model
+   interpolates from similar-looking things: an invented but plausible-sounding
+   citation, a library function that ought to exist. Rare entities are the
+   highest-risk category.
+2. THE FACT IS STALE. Weights are frozen at the cutoff, so the model confidently
+   reports a superseded price, API, or leader.
+3. THE OBJECTIVE REWARDS ANSWERING. Both pretraining and RLHF push toward
+   helpful, complete-looking responses. "I do not know" is rarely the highest
+   scoring continuation, so the model is systematically biased against
+   admitting ignorance.
+4. SAMPLING. At temperature above zero you deliberately draw lower-probability
+   tokens. One unlucky token early can commit the model to a false claim, which
+   it then continues consistently - because it now conditions on its own
+   output.
+
+THE ONE THAT SURPRISES PEOPLE: the model is not lying, and it is not confused.
+It is doing exactly what it was trained to do. Fabrication and recall are the
+same operation.
+
+HOW TO REDUCE IT - ordered by how much they actually buy you
+* GROUND IT (RAG). Put the true text in the prompt, instruct the model to use
+  only that, and require citations. This is by far the largest single
+  reduction, because it converts recall into reading comprehension.
+* ALLOW AND REWARD "I DON'T KNOW". Explicitly instruct it, and - if you control
+  evaluation - score abstention as a success when the context lacks the answer.
+  Without this the model has no permission to decline.
+* REQUIRE CITATIONS, THEN VERIFY THEM. Not just asking for sources, but
+  programmatically checking that each cited span exists in the retrieved text.
+  An unverifiable claim becomes visible rather than invisible.
+* LOWER THE TEMPERATURE for factual tasks. Temperature 0 for extraction and
+  question answering; higher only for creative work.
+* CONSTRAIN THE OUTPUT. JSON schemas, enums and structured output eliminate
+  whole classes of invention.
+* SELF-CONSISTENCY. Sample the answer several times; claims that vary between
+  samples are the ones to distrust. Expensive, but it is a genuine uncertainty
+  signal where the model's stated confidence is not.
+* GIVE IT TOOLS. A calculator, a database query, a search call. Do not ask the
+  model to recall what it can look up.
+* HUMAN REVIEW ON HIGH-STAKES PATHS. Design for it rather than hoping the model
+  improves.
+
+WHAT YOU CANNOT DO: eliminate it. Every serious deployment assumes some rate of
+wrong output and designs the product around that - showing sources, making
+verification easy, limiting blast radius. Saying this out loud is a maturity
+signal; promising a hallucination-free system is not.
+
+THE ONE-LINE TAKEAWAY
+The model predicts plausible text and has no separate knowledge of truth, so
+grounding it in retrieved sources - and giving it permission to abstain - is
+what moves the number.
+""".strip("\n")
+
+_EXAMPLES_LLM["Why do LLMs hallucinate, and how do you reduce it?"] = [
+    """The canonical case: fabricated citations.
+Ask for academic references on a niche topic and you may get:
+  "Chen, L. et al. (2019). Attention-based methods for supply chain
+   forecasting. Journal of Operations Management, 47(3), 218-240."
+Plausible author, plausible journal, plausible volume - and it does not exist.
+The model has learned the FORM of a citation extremely well and is generating a
+well-formed instance. It was never storing a bibliography.
+This has produced real-world consequences: lawyers have been sanctioned for
+filing briefs containing fabricated case law. The lesson is that fluency of
+format is completely uncorrelated with existence of the referent.""",
+
+    """The numeric version - where the risk concentrates.
+A team measured hallucination rate on 500 internal questions:
+  questions about common, well-documented topics:   3% wrong
+  questions about rare entities (one customer, one
+  internal tool mentioned in a single document):   34% wrong
+Same model, same prompt. The eleven-fold difference is entirely explained by
+how much support the fact had in the data. This tells you where to spend the
+grounding effort: rare, specific, long-tail entities. A blanket "make the model
+better" would have missed it; segmenting the eval set found it.""",
+
+    """The stale-knowledge case, which is not really hallucination but is
+diagnosed the same way.
+"What is the current pricing for [cloud service]?" The model answers with the
+price from its training cutoff, confidently and with no hedging. The fact WAS
+true; it is no longer. No amount of prompting fixes this - the information is
+not in the model.
+Fix: retrieval from a live source, or a tool call. This is worth separating
+from true fabrication in an interview, because the diagnosis is different -
+one is a data-freshness problem, the other is a grounding problem.""",
+
+    """The case where the fix made things worse - a real trap.
+A team saw hallucinations and set temperature to 0, expecting determinism to
+mean correctness. Hallucination rate barely moved. Temperature 0 makes the
+model pick the MOST LIKELY token; if the most likely continuation is a
+confident fabrication, you now get that same fabrication every time, more
+reliably.
+Temperature reduces VARIANCE, not error. The team's actual problem was that
+nothing was grounded - adding RAG dropped the rate from 22% to 4%, and
+temperature 0 on top of that helped consistency. Ordering the fixes correctly
+is what the question is really about.""",
+
+    """Self-consistency as a usable uncertainty signal.
+Ask the same factual question five times at temperature 0.7:
+  Run 1: "The policy allows 20 days."
+  Run 2: "The policy allows 20 days."
+  Run 3: "The policy allows 20 days."
+  Run 4: "The policy allows 25 days."
+  Run 5: "The policy allows 20 days."
+The disagreement is the signal. Consistent answers correlate with correctness
+far better than the model's own stated confidence does, which is close to
+useless. In production you can route low-consistency answers to a human or to a
+fallback, at 5x the inference cost - a real trade-off worth naming rather than
+presenting self-consistency as free.""",
+
+    """The interview application - designing for it rather than promising it away.
+"We are building an AI assistant for medical dosage questions. How do you
+handle hallucination?"
+The answer that lands is NOT a list of prompt tricks. It is:
+  1. This is a high-stakes domain, so the system must be designed on the
+     assumption that some output will be wrong.
+  2. Ground every answer in an approved formulary, retrieved at query time -
+     never from weights.
+  3. Require a citation for every dosage claim, and verify programmatically
+     that the cited text contains the number. Refuse if it does not.
+  4. Constrain the output to a schema so free-text invention is impossible in
+     the dosage field.
+  5. Abstain by default: if retrieval confidence is below a threshold, say so
+     and route to a pharmacist.
+  6. Log everything, evaluate against a clinician-reviewed golden set in CI,
+     and monitor the abstention rate as a health metric.
+  7. Do not ship it as an authority - ship it as a lookup aid with a human in
+     the loop.
+Saying "you cannot eliminate it, so here is how the product absorbs it" is the
+senior answer.""",
+]
+
+
+_WALKTHROUGH_LLM["Pretraining vs Fine-tuning vs Prompting (how to adapt an LLM)"] = r"""
+THE QUESTION BEHIND THE QUESTION
+You have a task and a general-purpose model. There are three levers for making
+the model do your task, they differ by roughly four orders of magnitude in
+cost, and picking the wrong one is one of the most expensive mistakes a team
+can make. Interviewers ask this to find out whether you reach for the cheap
+lever first.
+
+THE THREE LEVERS, FROM CHEAPEST TO MOST EXPENSIVE
+
+1. PROMPTING - change the input, not the model
+   You write instructions, provide a few examples in the prompt (few-shot), or
+   structure the task. The model's weights are untouched.
+   Cost: minutes. Iteration: seconds. Data needed: a handful of examples.
+   What it is good at: almost everything, surprisingly. Format, tone, task
+   framing, reasoning steps.
+   Limits: you pay for the instruction tokens on EVERY call; the context window
+   caps how many examples you can show; and it cannot teach genuinely new
+   capability or deep domain style.
+
+2. FINE-TUNING - adjust the weights on your examples
+   Continue training the pretrained model on a few hundred to a few thousand
+   input/output pairs. Usually LoRA rather than full fine-tuning: freeze the
+   original weights and train small low-rank adapter matrices, which cuts the
+   trainable parameters by orders of magnitude and lets it run on modest
+   hardware.
+   Cost: hours to days, plus the data-collection effort, which is usually the
+   real cost.
+   What it is genuinely good at: consistent FORMAT, domain TONE and STYLE,
+   following a narrow task reliably, and shortening prompts (the behaviour is
+   baked in, so you stop paying for a long instruction every call).
+   What it is BAD at, and this is the widely-made mistake: teaching FACTS.
+   Fine-tuning shifts the distribution of how the model talks far more
+   reliably than what it knows, and you get no citations and no easy updates.
+
+3. PRETRAINING - train from scratch
+   Cost: millions of dollars, months, a large specialised team.
+   Almost nobody should do this. It is justified only for a genuinely different
+   modality, a language or domain with no adequate base model, or when the
+   model itself is your product.
+
+WHERE RETRIEVAL FITS - the fourth option people forget to name
+RAG is not on this ladder; it is orthogonal. It changes what INFORMATION the
+model has, not how it behaves. So the clean decomposition is:
+   need new KNOWLEDGE      -> retrieval
+   need new BEHAVIOUR      -> prompting first, then fine-tuning
+   need a new BASE MODEL   -> pretraining, and probably not
+Stating that split explicitly is the strongest single sentence in this answer.
+
+THE DECISION PROCEDURE
+1. Try prompting properly first - not a one-line instruction, but a real
+   attempt with clear task framing and few-shot examples. Most teams that
+   "needed fine-tuning" had not done this.
+2. If the problem is that it lacks information, add retrieval.
+3. If, with a good prompt and good context, the behaviour is still wrong or
+   inconsistent - or the prompt has grown so long that cost or latency hurts -
+   then fine-tune.
+4. Consider pretraining essentially never.
+
+THE COST ASYMMETRY THAT DRIVES EVERYTHING: prompting is iterated in seconds and
+changed with a deploy. Fine-tuning requires collecting and cleaning data, a
+training run, an evaluation, and a new artefact to version and serve - and it
+must be redone when the base model is upgraded. That maintenance tail is the
+part teams underestimate.
+
+THE ONE-LINE TAKEAWAY
+Prompting changes the instructions, fine-tuning changes the behaviour,
+retrieval changes the knowledge, pretraining changes the model. Start at the
+cheap end and only move up when you can say precisely what the cheaper lever
+failed to do.
+""".strip("\n")
+
+_EXAMPLES_LLM["Pretraining vs Fine-tuning vs Prompting (how to adapt an LLM)"] = [
+    """The textbook decision, worked through.
+Task: classify incoming support tickets into 12 categories.
+  Prompting attempt: an instruction listing the 12 categories with a one-line
+  description each, plus 3 examples. Result: 88% accuracy, shipped in an
+  afternoon.
+  Is that enough? If the downstream action is routing to a queue where a human
+  reads it anyway, yes - ship it and stop.
+  If 88% is not enough: collect 2,000 labelled tickets and fine-tune. Result
+  typically 94-96%, plus a much shorter prompt (no need to list the categories
+  every call), which cuts token cost per request substantially at volume.
+The decision hinges on whether the extra 6-8 points justify the data
+collection - which is a product question, not a modelling one.""",
+
+    """The classic expensive mistake.
+A team wanted the model to answer questions about their 50,000 internal
+documents. They fine-tuned on the documents.
+Result: the model produced text that SOUNDED like their documentation - right
+tone, right vocabulary, right structure - and invented specifics. No citations,
+no way to tell which parts were real, and every document update meant
+retraining.
+They should have used RAG. Fine-tuning taught the model to imitate the style of
+their corpus, which is exactly what fine-tuning is good at, and precisely not
+what they needed. This is the single most common misapplication in the field
+and it is worth being able to name it instantly.""",
+
+    """The numeric comparison that makes the trade-off concrete.
+Task: extract structured data from invoices, 1 million calls per month.
+  PROMPTING: 800-token instruction with examples + 500-token invoice = 1,300
+  input tokens per call. At roughly $3 per million input tokens that is about
+  $3,900/month, forever.
+  FINE-TUNED: behaviour is baked in, so a 50-token instruction + 500-token
+  invoice = 550 tokens, about $1,650/month, plus a one-off training cost of a
+  few hundred dollars and the engineering to build the dataset.
+  Payback: roughly one month at this volume.
+At 10,000 calls a month instead of a million, the same maths says never
+fine-tune. Volume is what flips this decision, and quoting that is what turns
+an opinion into an analysis.""",
+
+    """The case for prompting that people underrate - contrast with the instinct
+to train.
+Task: make the model respond in a specific JSON schema.
+  Instinct: fine-tune on thousands of schema-conforming outputs.
+  Reality: structured output / JSON mode with a supplied schema solves it
+  deterministically at the decoding level, with zero training, because the
+  sampler is constrained to valid tokens.
+The general lesson: before training, check whether a platform FEATURE already
+solves it. Structured output, function calling, and system prompts each remove
+whole categories of would-be fine-tuning work.""",
+
+    """When fine-tuning is genuinely the right call.
+A legal-tech company needed contract clauses drafted in their firm's specific
+house style - particular hedging language, clause ordering and defined-term
+conventions built up over decades.
+Prompting got close but was inconsistent across long documents, and the style
+guide was too long and too tacit to express as instructions. This is exactly
+the fine-tuning sweet spot: a BEHAVIOUR that is easy to demonstrate with
+examples and hard to describe in rules.
+They fine-tuned with LoRA on 3,000 clause pairs. Consistency improved sharply
+and the prompt shrank. Note the shape: they were not teaching facts, they were
+teaching a way of writing.""",
+
+    """The interview version, and the follow-up that separates candidates.
+"Our support bot gives inconsistent answers. Should we fine-tune?"
+Correct response: diagnose before prescribing. Ask what KIND of inconsistency.
+  * Wrong facts about our product? That is a knowledge problem -> RAG. Fine-
+    tuning would make it confidently wrong in a more on-brand voice.
+  * Right facts, but tone and format vary and it sometimes ignores the escalation
+    rules? That is a behaviour problem -> tighten the prompt first, and fine-
+    tune if the prompt is already good and still inconsistent.
+  * Inconsistent between identical calls? That is sampling -> lower the
+    temperature.
+Three completely different fixes behind one symptom. The candidate who asks
+which one it is before answering is the one who has actually done this.""",
+]
+
+
+for _e in ENTRIES:
+    if not _e.get("walkthrough") and _e["title"] in _WALKTHROUGH_LLM:
+        _e["walkthrough"] = _WALKTHROUGH_LLM[_e["title"]]
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EXAMPLES_LLM:
+        _e["examples"] = _EXAMPLES_LLM[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
