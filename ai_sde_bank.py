@@ -22198,6 +22198,546 @@ for _e in ENTRIES:
         _e["examples"] = _EXAMPLES_ML2[_e["title"]]
 
 
+# ══ Worked examples for the P0 DSA set ════════════════════════════════════
+# These entries already carry a plain_algo recipe (the derivation) and code.
+# What was missing is the thing the standing requirement asks for: several
+# TRACED cases that vary - the textbook one, a different shape, an edge case,
+# the case that breaks the naive approach, and a scale/real-world case.
+_EX_P0 = {}
+
+_EX_P0["Climbing Stairs"] = [
+    """The textbook case, traced.
+n = 5. prev=1 (ways to reach step 1), curr=2 (ways to reach step 2).
+  i=3: new = 1+2 = 3   -> prev=2, curr=3
+  i=4: new = 2+3 = 5   -> prev=3, curr=5
+  i=5: new = 3+5 = 8   -> prev=5, curr=8
+Answer 8. Enumerating to check: 11111, 1112, 1121, 1211, 2111, 122, 212, 221 -
+eight routes. The sequence 1,2,3,5,8 is Fibonacci shifted by one, which is the
+fastest way to sanity-check your implementation.""",
+
+    """The base cases, which the loop never touches.
+n = 1: one way (a single step). n = 2: two ways (1+1, or 2).
+These are returned before the loop starts, and they are what the whole
+recurrence is built on. If you seed prev and curr wrongly - say both at 1 -
+you compute Fibonacci from the wrong offset and every answer is one place out.
+Trace n=3 by hand after any change: it must give 3, not 2.""",
+
+    """The edge case that breaks a naive recursive version.
+Writing it as plain recursion - climb(n) = climb(n-1) + climb(n-2) - is correct
+and takes exponential time, because climb(30) recomputes climb(28) twice,
+climb(27) three times, and so on. At n=40 that is over a billion calls.
+Adding memoisation drops it to O(n). The iterative two-variable version is the
+same thing with the recursion unrolled, which is why it needs no cache at all.""",
+
+    """Why two variables rather than an array - the space case.
+n = 1,000,000. An array solution allocates a million integers, about 8 MB in
+Python and much more with object overhead. The two-variable version uses two
+integers regardless of n.
+Each step only ever looks back two positions, so nothing older is needed. That
+same observation - "the transition reaches back a fixed distance, so keep only
+that window" - is what turns a large class of DP problems from O(n) space into
+O(1).""",
+
+    """The variant that shows you understood the recurrence.
+If you could climb 1, 2 OR 3 steps at a time, the recurrence becomes
+ways(n) = ways(n-1) + ways(n-2) + ways(n-3), and you carry three variables.
+For n = 5: 1,2,4 seeds -> i=4: 1+2+4=7 -> i=5: 2+4+7=13.
+Nothing about the method changes; only the number of terms you sum and the
+number of variables you slide. Interviewers ask this immediately after the base
+version, so have the shape ready.""",
+
+    """The real-world framing this problem stands in for.
+It is the counting form of "how many distinct paths reach this state?", which
+appears as: how many ways to make change with ordered coins, how many binary
+strings of length n avoid two consecutive ones (same recurrence), and how many
+routes a robot can take on a 1-D track.
+The tell is always the same - the answer at position n is a fixed-size sum of
+answers at earlier positions, and no choice needs to be remembered beyond that
+window.""",
+]
+
+_EX_P0["Flood Fill"] = [
+    """The textbook case, traced.
+image = [[1,1,1],[1,1,0],[1,0,1]], start (1,1), new colour 2. Old colour is 1.
+DFS from (1,1): paint it 2, then visit its four neighbours.
+  (2,1) is 0 -> stop.  (0,1) is 1 -> paint, recurse.
+  (1,2) is 0 -> stop.  (1,0) is 1 -> paint, recurse.
+The fill spreads through every 1 connected orthogonally to the start.
+Result [[2,2,2],[2,2,0],[2,0,1]]. Note the bottom-right 1 is untouched - it
+touches the region only DIAGONALLY, and diagonals are not neighbours here.""",
+
+    """The edge case that causes infinite recursion if you skip the guard.
+image = [[0,0,0],[0,1,1]], start (0,0), new colour 0.
+The starting cell is already the target colour. Without the early return, you
+paint (0,0) with 0 - which changes nothing - then recurse to a neighbour that
+is also 0, which recurses back to (0,0), which still matches, forever.
+The two-line guard "if old == new: return image" at the top is not defensive
+padding; it is the termination condition.""",
+
+    """A single-cell region.
+image = [[1,0],[0,1]], start (0,0), new colour 3.
+The starting cell has no orthogonal neighbour of the same colour, so the fill
+paints exactly one cell: [[3,0],[0,1]].
+Worth tracing because it confirms the recursion terminates immediately at the
+bounds and colour checks rather than relying on any region-size logic.""",
+
+    """The case that shows why repainting IS the visited mark.
+Consider a 3x3 block of all 1s filled with 2. Cell (1,1) is reachable from all
+four of its neighbours. When the first neighbour paints it 2, every later visit
+finds a cell whose colour is 2 - not the old colour 1 - and returns
+immediately.
+Without mutation you would need a separate visited set. Because you are allowed
+to modify the grid, the recolour does both jobs. That trick reappears in
+Number of Islands (sinking land to water) and is worth carrying.""",
+
+    """The scale case that breaks the recursive version.
+A 1000 x 1000 image that is entirely one colour. The DFS recursion depth can
+reach a million frames, and Python's default limit is around 1,000 - you get a
+RecursionError, not a wrong answer.
+Fix: an explicit stack (same algorithm, your own list) or a BFS queue. Say this
+unprompted when the interviewer mentions large inputs; it is the standard
+follow-up and it separates people who have run this on real data.""",
+
+    """The real-world version.
+This is the paint-bucket tool in every image editor, and the same routine backs
+magic-wand selection (with a colour TOLERANCE instead of exact equality),
+region labelling in computer vision, and territory-capture logic in games.
+The tolerance variant is a good thing to mention: replace "colour equals old
+colour" with "colour is within a distance of the seed colour", and the rest of
+the algorithm is unchanged - which shows the structure is the part that
+matters.""",
+]
+
+_EX_P0["Invert a Binary Tree"] = [
+    """The textbook case, traced.
+      4                4
+    2   7    ->     7    2
+   1 3 6 9         9 6  3 1
+At the root, swap children: left becomes 7's subtree, right becomes 2's.
+Recurse into 7: swap 6 and 9. Recurse into 2: swap 1 and 3.
+Every node is visited once and performs exactly one swap - O(n) time, O(h)
+stack.""",
+
+    """The empty and single-node cases.
+Empty tree -> return nothing; the base case fires immediately.
+Single node with no children -> swap two empty pointers, which is a no-op, and
+return the node unchanged.
+Both are handled by the same two lines with no special casing, which is a good
+sign the recursion is written correctly.""",
+
+    """The lopsided case, which catches a common bug.
+      1
+    2
+  3
+Only left children. After inverting: 1 -> right child 2 -> right child 3.
+If you wrote the swap as two separate statements - root.left = root.right then
+root.right = root.left - you would set both to the ORIGINAL right (empty here),
+destroying the tree entirely and returning a single node. Trace this shape after
+writing the swap; it fails loudly.""",
+
+    """Why the traversal order does not matter.
+Swapping first then recursing (pre-order) and recursing first then swapping
+(post-order) both produce the same mirrored tree. The reason is that a swap at
+one node and a swap at its descendant are independent operations - neither
+affects which nodes the other touches.
+Contrast this with Flatten Binary Tree to Linked List, where the order is
+critical because each step consumes the structure the next step needs.""",
+
+    """The iterative version, for the deep-tree follow-up.
+Push the root onto a stack. While the stack is non-empty: pop a node, swap its
+children, and push both children if they exist.
+On a degenerate tree of 100,000 nodes in a single chain, the recursive version
+raises RecursionError in Python while this runs fine. A queue instead of a
+stack works equally well - the traversal order is irrelevant, as established
+above.""",
+
+    """The story behind the question, worth knowing.
+This became famous when the author of Homebrew was rejected by Google after
+being unable to invert a binary tree on a whiteboard. It is now the archetype of
+"easy problem under pressure".
+The practical lesson: it is four lines, so what is actually being tested is
+whether you stay calm, ask whether they want it in place, and mention the
+iterative variant for deep trees. Getting the code right is assumed; the
+surrounding judgement is the signal.""",
+]
+
+_EX_P0["Maximum Depth of Binary Tree"] = [
+    """The textbook case, traced bottom-up.
+      3
+    9   20
+       15  7
+depth(9) = 1 + max(0,0) = 1
+depth(15) = 1, depth(7) = 1
+depth(20) = 1 + max(1,1) = 2
+depth(3) = 1 + max(1,2) = 3
+Answer 3. Notice the recursion resolves from the leaves upward even though the
+calls are made from the root downward - that inversion is the thing to get
+comfortable with.""",
+
+    """The empty tree and the single node.
+Empty -> 0. This is the base case that terminates everything, and it is what
+makes the plus-one arithmetic come out right.
+Single node -> 1 + max(0, 0) = 1.
+If your function returns 0 for a single node, you are counting EDGES rather
+than NODES - a real ambiguity. Ask which definition the problem wants; this
+question uses nodes.""",
+
+    """The degenerate case, which is also the worst case.
+A tree that is one long left chain of 5 nodes has depth 5. Its shape is a linked
+list, and this is where the O(h) stack cost bites: h equals n rather than
+log n.
+On 100,000 nodes the recursive version exceeds Python's recursion limit. The
+BFS alternative - count levels with a queue - is O(n) time and O(width) space
+and does not recurse, which is the answer to "what if the tree is very
+deep?".""",
+
+    """Why trusting the recursion beats tracing it.
+The instinct is to mentally simulate every call, which becomes impossible past
+three levels. The productive habit is: assume the two child calls return the
+correct depths, then ask what this node should do with them. The answer is
+obviously "one more than the deeper one".
+That leap - trusting the recursive contract rather than unrolling it - is the
+single most transferable thing in this problem, and it is why it is asked
+early.""",
+
+    """The contrast with Minimum Depth, which is NOT symmetric.
+      1
+    2
+Maximum depth is 2. Minimum depth is also 2 - not 1.
+The naive mirror, 1 + min(left, right), returns 1 because the empty right child
+reports 0. But a node with one child is not a leaf, so no root-to-leaf path ends
+there.
+Minimum depth needs a special case for single-child nodes, or a BFS that stops
+at the first genuine leaf. Interviewers ask for minimum immediately after
+maximum precisely to see whether you notice the asymmetry.""",
+
+    """Where the pattern generalises.
+The same shape - solve both subtrees, combine, return - answers: count nodes
+(1 + left + right), sum values, find the maximum value, check balance (return
+height and use a sentinel for failure), and compute diameter (return depth
+while recording the best bend).
+Recognising that these are one template with a different combine step is worth
+more than memorising six functions.""",
+]
+
+_EX_P0["Min Cost Climbing Stairs (DP)"] = [
+    """The textbook case, traced.
+cost = [10, 15, 20]. prev=0, curr=0 (both starting positions are free).
+  c=10: new = 10 + min(0,0) = 10  -> prev=0,  curr=10
+  c=15: new = 15 + min(0,10) = 15 -> prev=10, curr=15
+  c=20: new = 20 + min(10,15) = 30-> prev=15, curr=30
+Answer = min(15, 30) = 15. Check by hand: start on stair 1 (cost 15), then step
+two to the top. 15 is right.""",
+
+    """The off-by-one at the very end, which is the whole difficulty.
+Returning curr instead of min(prev, curr) gives 30 above - you paid for the last
+stair when you did not have to.
+The top is NOT a stair; it has no price. You step onto it from either of the
+last two stairs, so the answer is a minimum over two values. Every wrong
+solution to this problem is this line.""",
+
+    """A longer case where the cheap path is not the obvious one.
+cost = [1, 100, 1, 1, 1, 100, 1, 1, 100, 1]
+Walking the DP: the optimal route pays 1 at index 0, then hops the 100s by
+taking two-steps, landing on indices 0,2,3,4,6,7,9 for a total of 6.
+A greedy "always take the cheaper next stair" gets trapped: from index 0 it
+compares 100 against 1 and jumps to index 2, which is right here, but the same
+rule fails on other layouts. DP considers every arrival at every stair, so it
+cannot be tricked.""",
+
+    """The two-element edge case.
+cost = [5, 3]. prev=0, curr=0.
+  c=5: new = 5 + 0 = 5   -> prev=0, curr=5
+  c=3: new = 3 + 0 = 3   -> prev=5, curr=3
+Answer = min(5, 3) = 3. Correct: start on stair 1 (index 1, cost 3) and step
+one to the top, ignoring index 0 entirely.
+This confirms that both starting positions are genuinely free - a seeding error
+here shows up immediately.""",
+
+    """Why the two updates must be simultaneous.
+Writing it as two statements:
+    prev = curr
+    curr = c + min(prev, curr)
+now uses the NEW prev (which equals the old curr) on both sides of the min, so
+the recurrence collapses to c + curr and the answer drifts high.
+Do it as one tuple assignment, or save the old curr in a temporary first. This
+is the same trap as Climbing Stairs and House Robber - any two-variable rolling
+DP has it.""",
+
+    """The contrast with Climbing Stairs, which shares the recurrence.
+Climbing Stairs COUNTS routes and sums the two predecessors. This MINIMISES cost
+and takes the smaller of the two predecessors, then adds a local price.
+Same window, same two variables, different combine operation. Once you see that
+a rolling-window DP is defined by (what the state means, how you combine the
+predecessors), both problems become one.""",
+]
+
+_EX_P0["Path Sum (root-to-leaf boolean)"] = [
+    """The textbook case, traced.
+      5
+    4   8
+  11      13  4
+ 7  2         1
+target 22. Path 5 -> 4 -> 11 -> 2 sums to 22.
+At 5: remaining becomes 17. At 4: remaining 13. At 11: remaining 2.
+At leaf 7: is 7 == 2? No. At leaf 2: is 2 == 2? Yes -> true propagates up.""",
+
+    """The empty tree, which must be false and not zero.
+root = empty, target = 0. Answer false.
+It is tempting to think an empty tree has a path summing to 0, but the problem
+asks for a root-to-LEAF path and there is no leaf. The base case returns false
+before any arithmetic happens - if yours returns true here, the base case is
+wrong.""",
+
+    """The trap: a node with one child is not a leaf.
+      1
+    2
+target 1. The correct answer is FALSE.
+At node 1, remaining becomes 0. Recursing left to node 2: 2 != 0, and 2 has no
+children so it is a leaf and returns false. Recursing right: empty, returns
+false.
+The bug is checking "remaining == 0" at any node rather than at a leaf. That
+version returns true at node 1's empty right child, which is not a path at
+all.""",
+
+    """Negative values break the tempting early exit.
+      5
+   -3     8
+   10
+target 12. Path 5 -> -3 -> 10 = 12.
+If you added a pruning rule "stop when remaining goes below zero", you would
+abandon this branch at -3 (remaining 7, then at 10 it works). More sharply, with
+target 2 and path 5 -> -3, remaining hits 0 mid-tree and then rises again.
+With negatives allowed, no monotonic pruning is valid - ask whether values can
+be negative before optimising.""",
+
+    """Why subtracting beats accumulating.
+Carrying a running sum means passing two numbers down (the sum so far and the
+original target) and comparing them at each leaf. Subtracting carries one
+number, and the leaf test is a single equality.
+Same answer, half the state. Whenever a recursion threads two values that are
+only ever compared, check whether one derived value replaces both.""",
+
+    """The variants that build on it.
+Path Sum II asks for ALL such paths - add a path list, append and pop around the
+recursion, and record a COPY at each success.
+Path Sum III drops the root-to-leaf requirement and counts any downward path -
+which becomes the prefix-sum-with-a-hashmap technique, the tree version of
+Subarray Sum Equals K.
+Knowing that the three are a family, and that the third changes technique
+entirely, is the useful thing here.""",
+]
+
+_EX_P0["Balanced Binary Tree"] = [
+    """The textbook balanced case.
+      3
+    9   20
+       15  7
+height(9) = 1. height(15) = height(7) = 1, so height(20) = 2.
+At the root: |1 - 2| = 1, which is allowed, so height(3) = 3 and the answer is
+true. No node ever returns the -1 flag.""",
+
+    """The unbalanced case, showing the flag propagate.
+      1
+    2   2
+  3   3
+ 4 4
+height(4)=1, height(3)=2, height(2 on the left)=3, height(2 on the right)=1.
+At the root: |3 - 1| = 2 > 1, so the root returns -1 and the answer is false.
+Note the imbalance is AT the root here; the next example shows the case that
+catches naive solutions.""",
+
+    """The case that breaks a root-only check.
+        1
+      2   2
+    3
+  4
+The root's two subtrees have heights 3 and 1 - already unbalanced, so this one
+is caught. But consider a tree whose root subtrees are both height 3 while a
+node three levels down has children of heights 2 and 0. A solution that only
+compares the root's two heights returns true; the correct answer is false.
+Balance must hold at EVERY node, which is why the check lives inside the
+recursion rather than at the top.""",
+
+    """The empty and single-node cases.
+Empty -> height 0, balanced by definition.
+Single node -> heights 0 and 0, difference 0, height 1, balanced.
+These fall out of the base case with no special handling. If your code raises on
+an empty tree, the base case is missing.""",
+
+    """Why the -1 flag makes it O(n) instead of O(n^2).
+The naive version calls a separate height() at each node. For a tree of n nodes
+with height h, that is O(n x h) - O(n^2) on a degenerate chain.
+The flag version computes each subtree's height exactly once on the way up, and
+carries the failure signal in the same return value. One traversal, O(n).
+The trick generalises: when you want two answers from one traversal, look for a
+value the real answer can never take and use it as the second channel. Here
+heights are always non-negative, so -1 is free.""",
+
+    """The definition to confirm before coding.
+This problem defines balanced as "the heights of every node's two subtrees
+differ by at most 1" - the AVL definition.
+Other definitions exist: red-black trees guarantee the longest path is at most
+twice the shortest, which is a weaker condition. A tree can satisfy that and
+fail the AVL test.
+Asking which definition is meant takes five seconds and occasionally changes the
+answer.""",
+]
+
+_EX_P0["Diameter of a Binary Tree"] = [
+    """The textbook case, traced.
+      1
+    2   3
+  4  5
+depth(4)=1, depth(5)=1.
+At node 2: bend = 1 + 1 = 2, best becomes 2; returns 1 + max(1,1) = 2.
+At node 3: bend = 0, returns 1.
+At node 1: bend = depth(2) + depth(3) = 2 + 1 = 3, best becomes 3.
+Answer 3 - the path 4 -> 2 -> 1 -> 3, measured in edges.""",
+
+    """The case where the diameter does NOT pass through the root.
+        1
+      2
+    3   4
+  5      6
+The root has only a left subtree. The longest path is 5 -> 3 -> 2 -> 4 -> 6,
+which has length 4 and never touches node 1.
+Any solution that computes depth(left) + depth(right) only at the root returns
+3. This example is the entire reason the bend is recorded at every node.""",
+
+    """The single node and the empty tree.
+Empty -> best stays 0.
+Single node -> depth returns 1, bend = 0 + 0 = 0, so the diameter is 0.
+That is correct under the edge-counting definition: one node has no edges. If
+the problem counted NODES the answer would be 1 - another definition worth
+confirming, since both appear in the wild.""",
+
+    """The degenerate chain.
+1 -> 2 -> 3 -> 4 (all left children).
+At each node the bend is depth(left) + 0, so the best rises 1, 2, 3 as you come
+back up. Answer 3.
+This is also the worst case for stack depth, which is the usual follow-up for
+very large trees.""",
+
+    """The distinction that is the whole problem.
+The helper RETURNS a depth and RECORDS a diameter, and they are different
+numbers.
+Return 1 + max(left, right), because a parent can only continue through ONE
+side - a path cannot fork.
+Record left + right, because the answer itself may bend here and use both.
+Returning the bend instead would let a parent build an impossible forked path,
+which produces silently inflated answers.""",
+
+    """The family this belongs to.
+Binary Tree Tilt: return the subtree SUM, record the absolute difference.
+Binary Tree Maximum Path Sum: return value + max(left, right) clamped at zero,
+record value + left + right.
+Diameter: return depth, record the sum.
+Three problems, one template - "return the straight-line contribution, record
+the bent one". Spotting that saves you deriving each from scratch.""",
+]
+
+_EX_P0["Merge Two Sorted Lists"] = [
+    """The textbook case, traced.
+l1 = 1->2->4, l2 = 1->3->4.
+  compare 1 and 1 -> take l1's 1 (<= keeps it stable), tail advances
+  compare 2 and 1 -> take l2's 1
+  compare 2 and 3 -> take 2
+  compare 4 and 3 -> take 3
+  compare 4 and 4 -> take l1's 4
+  l1 exhausted -> attach the rest of l2 (4)
+Result 1->1->2->3->4->4.""",
+
+    """One list empty.
+l1 = empty, l2 = 1->3. The while loop never runs, and the final line
+tail.next = l1 or l2 attaches all of l2 in one step.
+Both empty -> the loop does not run, tail.next becomes nothing, and dummy.next
+is nothing, which is the correct empty result.
+That one-line tail attachment is what removes the need for two cleanup loops.""",
+
+    """Completely disjoint ranges - the case where the loop barely runs.
+l1 = 1->2->3, l2 = 10->11->12.
+Every comparison takes from l1 until it is exhausted, then the whole of l2 is
+attached in one operation. Three comparisons, not six.
+Worth noticing because it shows the merge cost is O(n + m) driven by the SHORTER
+list's exhaustion, not by the total length.""",
+
+    """Why the dummy node earns its place.
+Without it, the first node needs a special case: "if the result head is not yet
+set, set it; otherwise append". That branch runs on every iteration and is where
+the bugs live.
+With the dummy, you have something to attach to from step one, and you return
+dummy.next at the end. Returning dummy itself leaves a stray 0 at the front -
+the single most common slip in this problem.""",
+
+    """Why <= rather than < matters for stability.
+With equal values (the two 1s above), taking from l1 preserves their original
+relative order. Using strict less-than takes from l2 first and swaps them.
+For plain integers nobody notices. When the nodes carry records sorted by a key,
+that swap is a stability bug - and it is the same single-character decision that
+makes Merge Sort stable. Worth saying out loud.""",
+
+    """The scaled-up version this is the building block of.
+Merge k Sorted Lists uses a min-heap of the k list heads, popping the global
+smallest and pushing that list's next node - O(N log k).
+The alternative is repeated pairwise merging in a tournament, which uses this
+exact function log k times over.
+So this problem is not really about two lists; it is the primitive that the
+k-way merge and external sorting are built from.""",
+]
+
+_EX_P0["Subtree of Another Tree"] = [
+    """The textbook match.
+root = 3(4(1,2),5), sub = 4(1,2).
+At node 3: same(3, 4)? Values differ -> false. Recurse.
+At node 4: same(4, 4)? Values match; same(1,1) true; same(2,2) true -> true.
+Answer true.""",
+
+    """The near-miss that must return false.
+root = 3(4(1,2(0)),5), sub = 4(1,2).
+At node 4 the values match and the left children match, but the right child 2 in
+the root tree has an extra child 0 while sub's 2 has none.
+same(2, 2) recurses: same(0, empty) -> one empty and one not -> false.
+So the whole comparison fails, correctly. Structure must match exactly, not just
+the values encountered.""",
+
+    """Empty cases.
+sub empty -> conventionally true (an empty tree is a subtree of anything), but
+CONFIRM this with the interviewer; some versions guarantee sub is non-empty.
+root empty and sub non-empty -> false, which the base case returns immediately.
+Both empty -> true.
+These three lines are where a sloppy implementation crashes.""",
+
+    """Why two separate recursions rather than one clever function.
+One recursion walks DOWN the big tree choosing a candidate start position. The
+other walks ACROSS both trees checking an exact match.
+Trying to do both in a single function is what makes this problem feel hard -
+you end up with a flag parameter and confusing logic. Two small functions, each
+with one job, and the solution writes itself.""",
+
+    """The complexity, and the faster alternative.
+Worst case O(n x m): a root tree of 1,000 nodes all with the same value, and a
+sub of 500 nodes, forces a deep comparison at nearly every position.
+The O(n + m) approach: serialise both trees to strings with explicit null
+markers and delimiters, then do a substring search. The null markers are
+essential - without them, 1(2) and 12 can serialise identically and you get
+false positives.""",
+
+    """The family resemblance worth naming.
+same() here is exactly the Same Tree problem.
+Symmetric Tree is the same two-node recursion with the calls CROSSED.
+Merge Two Binary Trees walks the identical pair-wise structure but combines
+instead of comparing.
+Four questions, one two-argument recursion. Recognising that means you write the
+helper without thinking and spend your time on the outer logic.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0:
+        _e["examples"] = _EX_P0[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
