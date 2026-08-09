@@ -7417,3 +7417,167 @@ same trick as 'subarray sum equals k', applied down tree paths.
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# -- More DSA diagrams (batch 8): graphs, MST, heaps, monotonic stacks ------
+_DIAGRAM.update({
+    "Dijkstra's Shortest Path (min-heap)": r"""
+A -1-> B, A -4-> C, B -2-> C, C -1-> D
+always pop the SMALLEST tentative distance (min-heap):
+ pop (0,A) settle A=0, push (1,B) (4,C)
+ pop (1,B) settle B=1, relax C: 1+2=3 < 4 -> push (3,C)
+ pop (3,C) settle C=3, push (4,D)   [stale (4,C) popped later, skipped]
+ pop (4,D) settle D=4
+once a node is popped its distance is FINAL - needs NON-NEGATIVE weights
+""".strip("\n"),
+    "Topological Sort (Kahn's algorithm)": r"""
+edges A->C, B->C, C->D      indegree: A0 B0 C2 D1
+ queue=[A,B]  pop A -> C:1
+              pop B -> C:0 -> push C
+              pop C -> D:0 -> push D
+              pop D
+order = A B C D    if fewer than N nodes come out, a CYCLE remains
+""".strip("\n"),
+    "Union-Find / Disjoint Set Union (DSU)": r"""
+union(1,2) union(3,4) union(2,4):
+  1   3          1        union by RANK keeps trees shallow;
+  |   |   ->    / \       path COMPRESSION reattaches nodes
+  2   4        2   3      straight to the root during find
+                    \     -> near O(1) amortized per operation
+                     4
+same component ?  find(x) == find(y)
+""".strip("\n"),
+    "Course Schedule (cycle detection)": r"""
+0 -> 1 -> 2      no cycle -> all courses finishable
+     ^    |
+     |____|      add 2 -> 1: cycle -> impossible
+Kahn: if popped count < numCourses, indegrees never reached 0 -> cycle
+DFS colors: WHITE unseen / GRAY on the current stack / BLACK done
+            reaching a GRAY node = back edge = cycle
+""".strip("\n"),
+    "Number of Connected Components": r"""
+n=5, edges 0-1, 1-2, 3-4
+  0 - 1 - 2      3 - 4        count = 2
+start a BFS/DFS from every UNVISITED node, mark its whole blob,
+count how many walks you had to start
+(DSU alternative: answer = n - number of SUCCESSFUL unions)
+""".strip("\n"),
+    "Bipartite Graph Check (BFS 2-coloring)": r"""
+BFS coloring: start RED, all neighbors BLUE, their neighbors RED, ...
+  R --- B
+  |     |     even cycle -> colors alternate cleanly -> BIPARTITE
+  B --- R
+  R --- B
+   \   /      odd cycle (triangle) -> the third node must be both
+     ?        RED and BLUE -> conflict -> NOT bipartite
+a neighbor already wearing MY color is the failure test
+""".strip("\n"),
+    "Bellman-Ford (shortest path with negative edges)": r"""
+relax ALL edges, V-1 times (the longest simple path has V-1 edges):
+ round 1 -> paths of <=1 edge are correct
+ round 2 -> paths of <=2 edges are correct   ... and so on
+after V-1 rounds every distance is final.
+run ONE extra round: if anything still improves -> NEGATIVE CYCLE
+handles negative weights (Dijkstra cannot). O(V*E), slower but safer
+""".strip("\n"),
+    "Flood Fill": r"""
+start (1,1), recolor 1 -> 2      spread to 4-neighbors, but ONLY
+ 1 1 1        2 2 2              through cells holding the ORIGINAL
+ 1 1 0   ->   2 2 0              color; the 0s block the spread
+ 1 0 1        2 0 1
+guard first: if newColor == oldColor, return (else infinite recursion)
+""".strip("\n"),
+    "01 Matrix (distance to nearest zero)": r"""
+MULTI-SOURCE BFS: push EVERY zero into the queue at distance 0,
+then expand outward one layer at a time.
+ 0 0 0        0 0 0
+ 0 1 0   ->   0 1 0        BFS layer k = cells whose nearest zero
+ 1 1 1        1 2 1        is exactly k steps away
+one BFS from all sources beats running a BFS per 1-cell
+""".strip("\n"),
+    "Network Delay Time (Dijkstra application)": r"""
+a signal from k spreads along weighted edges; Dijkstra gives each
+node its EARLIEST arrival time, and the answer is the MAXIMUM of them
+ k=1:  1 -1-> 2,  1 -4-> 3,  2 -1-> 3
+ arrive: node2 at 1, node3 at min(4, 1+1) = 2
+ answer = max(1, 2) = 2      (the last node to hear the signal)
+any node unreachable -> return -1
+""".strip("\n"),
+    "Shortest Path in Binary Matrix (8-directional BFS)": r"""
+BFS over 8 directions (diagonals allowed) on a 0/1 grid:
+ 0 1        path (0,0) -> (1,0) -> (1,1)
+ 0 0        length is counted in CELLS, and the start counts as 1 -> 3
+unweighted grid -> BFS gives the shortest path; DFS does NOT
+(the BFS layer number IS the answer the moment you reach the target)
+""".strip("\n"),
+    "Kruskal's Minimum Spanning Tree": r"""
+sort ALL edges by weight, add greedily, skip any that closes a cycle:
+ A-B 1, C-D 2, B-C 3, A-D 5
+ take A-B(1)   take C-D(2)   take B-C(3) -> 3 edges for 4 nodes, done
+ skip A-D(5): find(A) == find(D) already -> would form a cycle
+the cycle test IS union-find. O(E log E) - best on SPARSE graphs
+""".strip("\n"),
+    "Prim's Minimum Spanning Tree": r"""
+grow ONE tree from a start node; repeatedly take the cheapest edge
+that LEAVES the tree (min-heap of frontier edges):
+ {A} -1-> B take    {A,B} -3-> C take    {A,B,C} -2-> D take
+skip any popped edge whose far end is already IN the tree (cycle)
+O(E log V) with a heap - best on DENSE graphs
+""".strip("\n"),
+    "LRU Cache (hash map + doubly linked list)": r"""
+hash map: key -> node        list ordered by recency:
+ head(MRU) <-> C <-> B <-> A <-> tail(LRU)
+ get(B):  map finds the node in O(1), unlink it, splice to head
+ put when FULL: evict the node just before tail (A) and drop its key
+the map gives O(1) lookup, the linked list gives O(1) reorder + evict
+""".strip("\n"),
+    "Min Stack (O(1) getMin)": r"""
+store a PAIR (value, min-so-far) at every level - or a parallel stack:
+ push 5 -> (5,5)
+ push 3 -> (3,3)
+ push 7 -> (7,3)      the 7 remembers that 3 is below it
+ pop    -> top is (3,3) -> getMin() = 3
+every level carries the min of everything beneath it -> all ops O(1)
+""".strip("\n"),
+    "Largest Rectangle in Histogram (monotonic stack)": r"""
+heights [2,1,5,6,2,3]      keep an INCREASING stack of indices;
+       #                   when a SHORTER bar arrives, pop and settle
+     # #                   area = poppedHeight * (right - left - 1)
+ #   # #   #               bars 5 and 6 settle at index 4: 5 * 2 = 10
+ # # # # # #               answer = 10
+ 2 1 5 6 2 3   each bar is pushed once and popped once -> O(n)
+""".strip("\n"),
+    "Daily Temperatures (monotonic stack)": r"""
+[73,74,75,71,69,72,76]   the stack holds INDICES of days still waiting
+ 73 waits; 74 beats it -> ans[0]=1;  75 beats 74 -> ans[1]=1
+ 71,69 wait; 72 beats 69 -> ans[4]=1, beats 71 -> ans[3]=2
+ 76 clears everyone left -> ans = [1,1,4,2,1,1,0]
+monotonic DECREASING stack: a warmer day pops all the days it beats
+""".strip("\n"),
+    "Next Greater Element II (circular)": r"""
+circular [1,2,1]: walk the array TWICE using index i % n with ONE
+monotonic decreasing stack, so wrap-around neighbors are seen:
+ pass 1: 1 waits, 2 pops it -> nge[0]=2, the second 1 waits
+ pass 2: the 2 comes round again -> nge[2]=2; nothing beats 2 -> -1
+answer = [2,-1,2]      push indices only during the FIRST pass
+""".strip("\n"),
+    "Find Median from Data Stream (two heaps)": r"""
+ maxHeap (low half)   |   minHeap (high half)
+    [1 2 3]           |      [4 5 6]     sizes differ by at most 1
+      top = 3         |       top = 4
+ median = top of the LARGER heap, else average of the two tops
+addNum: push, then move one element across to rebalance
+ -> O(log n) to add, O(1) to read the median
+""".strip("\n"),
+    "Merge k Sorted Lists (min-heap)": r"""
+lists [1,4,5] [1,3,4] [2,6]
+the heap holds the CURRENT head of each list (only k items):
+ pop 1 -> push its next (4)     out: 1
+ pop 1 -> push 3                out: 1 1
+ pop 2 -> push 6                out: 1 1 2 ...
+O(N log k), not O(N log N) - the heap stays size k
+""".strip("\n"),
+})
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
