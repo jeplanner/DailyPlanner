@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pomodoro.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .wrap { max-width: 820px; margin: 0 auto; padding: 16px 16px 72px; }
@@ -187,10 +188,22 @@
     const tot = list.reduce((s,e)=>s+(e.prep_minutes||0),0);
     const left = list.reduce((s,e)=>s+(done.has(e.id)?0:(e.prep_minutes||0)),0);
     const pct = tot ? Math.round((tot-left)/tot*100) : 0;
+    // Actual rehearsal time clocked on the per-case Pomodoro timers.
+    let actualPart = "";
+    if (window.Pomodoro) {
+      const secs = Pomodoro.total("tpm_rounds", list.map(e=>e.id));
+      const timed = list.filter(e => Pomodoro.logged("tpm_rounds", e.id) >= 30);
+      const est = timed.reduce((s,e)=>s+(e.prep_minutes||0),0);
+      if (secs >= 30) actualPart =
+        `<span>⏳ <b>${hrs(Math.round(secs/60))}</b> actually clocked` +
+        (est ? ` on ${timed.length} case${timed.length===1?"":"s"} (est ${hrs(est)} → <b>${Math.round(secs/60/est*100)}%</b>)` : "") +
+        `</span>`;
+    }
     $("effort").innerHTML =
       `<span>⏱ <b>${hrs(left)}</b> of rehearsal left</span>` +
       `<span>${list.length} case${list.length===1?"":"s"} · <b>${hrs(tot)}</b> total</span>` +
       `<span><b>${pct}%</b> rehearsed</span>` +
+      actualPart +
       `<span class="bar"><i style="width:${pct}%"></i></span>`;
   }
 
@@ -211,7 +224,7 @@
 
     const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
     $("list").innerHTML = brief + (list.map(e => `
-      <div class="q-card ${done.has(e.id)?'done':''}" data-id="${e.id}">
+      <div class="q-card ${done.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head">
           <input type="checkbox" class="q-prac" ${done.has(e.id)?'checked':''} title="Mark rehearsed">
           <span class="q-text">${esc(e.title)}</span>
@@ -256,6 +269,11 @@
       $("round").innerHTML = '<option value="">Both rounds</option>' +
         (BANK.rounds||[]).map(r=>`<option value="${r.key}">${esc(r.label)}</option>`).join("");
       loopMap(); render();
+      // Per-case Pomodoro timers + actual-effort log.
+      if (window.Pomodoro) {
+        Pomodoro.init({ ns: "tpm_rounds", container: $("list") });
+        document.addEventListener("pomodoro:change", () => effort(shown));
+      }
     } catch(e){ if(window.toast) toast("Couldn't load","error"); }
     if (window.feather) feather.replace();
   })();

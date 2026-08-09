@@ -182,6 +182,7 @@
   <div id="list"></div>
 </div>
 
+<script src="/static/js/pomodoro.js"></script>
 <script>
 (function(){
   const $ = (id) => document.getElementById(id);
@@ -201,10 +202,24 @@
     const tot  = list.reduce((s,e)=>s+(e.prep_minutes||0),0);
     const left = list.reduce((s,e)=>s+(studied.has(e.id)?0:(e.prep_minutes||0)),0);
     const pct  = tot ? Math.round((tot-left)/tot*100) : 0;
+    // Actual effort clocked by the per-question Pomodoro timers, against
+    // the estimate for the same topics: "am I faster or slower than planned?"
+    let actualPart = "";
+    if (window.Pomodoro) {
+      const ids  = list.map(e=>e.id);
+      const secs = Pomodoro.total("ai_sde", ids);
+      const done = list.filter(e => Pomodoro.logged("ai_sde", e.id) >= 30);
+      const est  = done.reduce((s,e)=>s+(e.prep_minutes||0),0);
+      actualPart =
+        `<span>⏳ <b>${hrs(Math.round(secs/60))}</b> actually clocked` +
+        (est ? ` on ${done.length} topic${done.length===1?"":"s"} (est ${hrs(est)} → <b>${Math.round(secs/60/est*100)}%</b>)` : "") +
+        `</span>`;
+    }
     $("effort").innerHTML =
       `<span>⏱ <b>${hrs(left)}</b> of prep left</span>` +
       `<span>${list.length} topic${list.length===1?"":"s"} shown · <b>${hrs(tot)}</b> total</span>` +
       `<span><b>${pct}%</b> done</span>` +
+      actualPart +
       `<span>≈ <b>${(left/60/2).toFixed(0)}</b> days at 2 h/day</span>` +
       `<span class="bar"><i style="width:${pct}%"></i></span>`;
   }
@@ -226,7 +241,7 @@
     prog(); shown = list; effort(list);
     const fld = (cls,label,val) => val ? `<div class="fld ${cls}"><span class="lbl">${label}</span>${esc(val)}</div>` : "";
     $("list").innerHTML = list.map(e => `
-      <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}">
+      <div class="q-card ${studied.has(e.id)?'done':''}" data-id="${e.id}" data-est="${e.prep_minutes||''}">
         <div class="q-head" data-toggle>
           <input type="checkbox" class="q-prac" ${studied.has(e.id)?'checked':''} title="Mark studied">
           <span class="q-text">${esc(e.title)}</span>
@@ -295,6 +310,11 @@
       (BANK.categories||[]).forEach(c => catLabel[c.key]=c.label);
       $("cat").innerHTML = '<option value="">All topics</option>' + (BANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       render();
+      // Per-question Pomodoro timers + actual-effort log.
+      if (window.Pomodoro) {
+        Pomodoro.init({ ns: "ai_sde", container: $("list") });
+        document.addEventListener("pomodoro:change", () => effort(shown));
+      }
     } catch(e){ if(window.toast) toast("Couldn't load","error"); }
     if (window.feather) feather.replace();
   })();

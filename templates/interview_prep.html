@@ -11,6 +11,7 @@
 <script src="https://unpkg.com/feather-icons"></script>
 <script src="{{ url_for('static', filename='js/global.js') }}"></script>
 <script src="{{ url_for('static', filename='js/toast.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pomodoro.js') }}"></script>
 <style>
   body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-family); margin: 0; }
   .wrap { max-width: 760px; margin: 0 auto; padding: 16px 16px 72px; }
@@ -632,6 +633,8 @@
         sel.innerHTML = '<option value="">All competencies</option>' +
           (QBANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       renderBank();
+      // Per-question Pomodoro timers + actual-effort log.
+      if (window.Pomodoro) Pomodoro.init({ ns: "ip_behavioral", container: $("qbank-list") });
     } catch(e){ /* bank is best-effort */ }
   }
 
@@ -811,6 +814,7 @@
         sel.innerHTML = '<option value="">All categories</option>' +
           (SDBANK.categories||[]).map(c=>`<option value="${c.key}">${esc(c.label)}</option>`).join("");
       renderSDBank();
+      if (window.Pomodoro) Pomodoro.init({ ns: "ip_sysdesign", container: $("sdbank-list") });
     } catch(e){ /* best-effort */ }
   }
 
