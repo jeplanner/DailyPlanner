@@ -6983,3 +6983,123 @@ _DIAGRAM["Sqrt(x) — integer square root (binary search)"] = _DIAGRAM["Sqrt(x) 
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ── More DSA diagrams (batch 6) ────────────────────────────────────────────
+_DIAGRAM.update({
+    "Insert Interval": r"""
+existing: [1,3] [6,9]   insert [2,5]
+ before:  [1,3] [6,9]
+ merge overlaps of new with existing: [1,3] & [2,5] -> [1,5]
+ result:  [1,5] [6,9]
+add all-before, MERGE all overlapping into the new one, add all-after.
+""".strip("\n"),
+    "Non-overlapping Intervals (min removals)": r"""
+[1,2] [2,3] [3,4] [1,3]   sort by END, keep if start >= last kept end:
+ keep [1,2] (end 1)   keep [2,3]   keep [3,4]   [1,3] starts 1 < 3 -> REMOVE
+removals = 1  (greedy activity selection)
+""".strip("\n"),
+    "Symmetric Tree": r"""
+       1            mirror check: compare (left.left vs right.right)
+     /   \                       and (left.right vs right.left)
+    2     2
+   / \   / \        2==2, then 3<->3 and 4<->4 cross-match -> SYMMETRIC
+  3   4 4   3
+""".strip("\n"),
+    "Sum Root to Leaf Numbers": r"""
+       1            each root->leaf path is a number (build digit by digit):
+      / \           1->2 = 12
+     2   3          1->3 = 13
+                    sum = 12 + 13 = 25   (carry cur*10 + node.val down)
+""".strip("\n"),
+    "Sort Colors (Dutch National Flag)": r"""
+[2,0,2,1,1,0]   three pointers: low | mid | high
+ 0 -> swap to low, low++, mid++
+ 1 -> mid++
+ 2 -> swap to high, high--
+result: 0 0 1 1 2 2   (one pass, in place)
+""".strip("\n"),
+    "Permutation in String": r"""
+s1="ab", s2="eidbaooo"   fixed-size sliding window (len s1) with char counts:
+ window "ei" "id" "db" "ba" <- counts match s1 -> TRUE
+slide a window of len(s1); it's a permutation when counts equal.
+""".strip("\n"),
+    "Happy Number": r"""
+19 -> 1^2+9^2 = 82 -> 8^2+2^2 = 68 -> 100 -> 1   HAPPY (reaches 1)
+detect cycles with a seen-set (or fast/slow); if it loops without
+hitting 1 -> not happy.
+""".strip("\n"),
+    "Roman to Integer": r"""
+"MCMXCIV"   add each value, but SUBTRACT if a smaller precedes a larger:
+ M=1000  CM=900 (C before M)  XC=90  IV=4
+ 1000 + 900 + 90 + 4 = 1994
+""".strip("\n"),
+    "Min Cost Climbing Stairs (DP)": r"""
+cost=[10,15,20]   dp[i] = cost[i] + min(dp[i-1], dp[i-2])
+ dp: 10  15  min(15,10)+20=30      you may start at step 0 or 1
+answer = min(dp[last], dp[secondLast]) = min(30,15) = 15
+""".strip("\n"),
+    "Wiggle Subsequence (greedy)": r"""
+[1,7,4,9,2,5]   count direction FLIPS (up/down alternation):
+  1 /7 \4 /9 \2 /5     up down up down up -> 6 (whole thing wiggles)
+count each time the slope sign changes; +1 for the first element.
+""".strip("\n"),
+    "Kth Largest Element in a Stream": r"""
+k=3   keep a MIN-heap of the k largest seen so far:
+ add nums -> heap holds top-3; root = 3rd largest
+ add(x): push x; if size>k pop smallest; return heap[0]
+each add is O(log k); the root is always the answer.
+""".strip("\n"),
+    "Remove Nth Node From End of List": r"""
+1->2->3->4->5, n=2   two pointers, lead starts n ahead:
+ lead +2:  L at 3, trail at head
+ move both until lead hits end: trail lands just BEFORE the target
+ unlink -> 1->2->3->5
+""".strip("\n"),
+    "Swap Nodes in Pairs": r"""
+1->2->3->4   swap each adjacent pair (use a dummy head):
+ (1,2) -> 2->1   (3,4) -> 4->3
+result: 2->1->4->3    re-link tails carefully between pairs.
+""".strip("\n"),
+    "Odd Even Linked List": r"""
+1->2->3->4->5   split by POSITION (odd idx vs even idx), then join:
+ odd chain:  1->3->5
+ even chain: 2->4
+result: 1->3->5->2->4   (odd tail points to even head)
+""".strip("\n"),
+    "Squares of a Sorted Array": r"""
+[-4,-1,0,3,10]   sorted; largest squares are at the ENDS:
+ two pointers L,R; compare |L| vs |R|, place bigger square at the back
+ 100, 16, 9, 1, 0 -> reverse-fill -> [0,1,9,16,100]
+""".strip("\n"),
+    "Best Time to Buy and Sell Stock II (greedy)": r"""
+prices [7,1,5,3,6,4]   grab EVERY upward step (buy low, sell next high):
+ 1->5 (+4)   3->6 (+3)      total profit = 7
+sum all positive day-to-day differences.
+""".strip("\n"),
+    "Meeting Rooms (can attend all)": r"""
+[[0,30],[5,10],[15,20]]   sort by start; if any starts before prev ends -> NO
+ [0,30] then [5,10]: 5 < 30 -> OVERLAP -> cannot attend all -> False
+""".strip("\n"),
+    "Search a 2D Matrix": r"""
+row-sorted, each row starts after prev ends -> treat as ONE sorted array:
+  1  3  5  7
+ 10 11 16 20     binary search over [0, m*n); map mid -> (mid//n, mid%n)
+ 23 30 34 60
+""".strip("\n"),
+    "Excel Sheet Column Number": r"""
+"AB" -> base-26 (A=1..Z=26, no zero):
+ A=1 -> 1*26 + B(2) = 28
+like base conversion: result = result*26 + value(char)
+""".strip("\n"),
+    "Two Sum IV - Input is a BST": r"""
+        5          traverse the BST; for each node check (k - node.val)
+       / \         in a seen-set (or use two pointers on the in-order list)
+      3   6        k=9: see 5 (need 4), 3 (need 6), 6 -> 3+6=9 FOUND
+       \   \
+        4   7
+""".strip("\n"),
+})
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
