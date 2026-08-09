@@ -23715,6 +23715,651 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P0C[_e["title"]]
 
 
+_EX_P0D = {}
+
+_EX_P0D["Pacific Atlantic Water Flow"] = [
+    """The textbook 5x5 grid, traced.
+    1  2  2  3  5
+    3  2  3  4  4
+    2  4  5  3  1
+    6  7  1  4  5
+    5  1  1  2  4
+Pacific touches the top row and left column; Atlantic the bottom row and right
+column. Run the DFS INWARD from each border, only stepping to cells that are
+HIGHER OR EQUAL (that is water flowing backwards, uphill).
+Pacific reaches the whole top row and left column, then climbs inward wherever
+the next cell is higher or equal - e.g. (0,1)=2 -> (1,1)=2 is allowed because
+equal heights count as reachable.
+The intersection is [(0,4),(1,3),(1,4),(2,2),(3,0),(3,1),(4,0)].
+Sanity-check one: (2,2)=5. Going up: 5 -> (1,2)=3 -> (0,2)=2 downhill all the
+way to the Pacific. Going right: 5 -> (2,3)=3 -> (2,4)=1 downhill to the
+Atlantic. Both oceans, so it belongs in the answer.""",
+
+    """A 2x2 grid where almost everything qualifies.
+    1  2
+    4  3
+Pacific = top row + left column = {(0,0),(0,1),(1,0)} as starting cells;
+Atlantic = bottom row + right column = {(1,0),(1,1),(0,1)}.
+Climbing from the Pacific border: (0,0)=1 can climb to (0,1)=2 and (1,0)=4, and
+from (1,0)=4 to (1,1)=3? No - 3 < 4, so that branch stops. But (0,1)=2 climbs to
+(1,1)=3. So Pacific reaches all four.
+Atlantic reaches (1,0),(1,1),(0,1) and from (1,0)=4 cannot climb to (0,0)=1.
+Intersection = [(0,1),(1,0),(1,1)]. Cell (0,0)=1 is the lowest corner: water
+sitting there can never climb to the Atlantic side.""",
+
+    """The single-cell grid.
+[[1]]. That one cell is simultaneously on the top row (Pacific) and the bottom
+row (Atlantic), so it is seeded into both sets by the border loops.
+Answer [(0,0)]. Worth checking because the border loops add corner cells to BOTH
+sets - a common source of confusion when you first read the code.""",
+
+    """The plateau/pit case that breaks a strict '<' comparison.
+    3  3  3
+    3  1  3
+    3  3  3
+Every border cell is 3. Climbing from a 3 to another 3 must be ALLOWED
+(heights[r][c] < prev is the stop test, so equal heights pass), otherwise the
+outer ring would never expand and you would return only the seed cells.
+The centre 1 is a pit: reverse flow cannot climb 3 -> 1, so it is excluded -
+correctly, since real water at the centre is surrounded by higher walls and
+reaches no ocean.
+Answer: the whole ring, 8 cells, centre excluded.""",
+
+    """Why reversing the flow is the whole trick.
+The naive reading is: for each of the R x C cells, run a DFS downhill and see
+which oceans it reaches. That is R x C separate traversals, each up to R x C
+cells - O((R x C)^2), roughly 10^8 operations on a 200x200 grid.
+Reversing it, you run exactly TWO traversals (one seeded from every Pacific
+border cell, one from every Atlantic border cell) and each visits a cell at most
+once: O(R x C).
+The rule flips with the direction: forward flow goes to LOWER-or-equal
+neighbours, so reverse flow goes to HIGHER-or-equal ones. Getting that
+inequality backwards is the single most common bug here.""",
+
+    """The family of 'multi-source, reverse the question' problems.
+Rotting Oranges: instead of asking each fresh orange how far the nearest rotten
+one is, seed the BFS with all rotten oranges at once.
+01 Matrix (distance to nearest 0): seed with every 0.
+Walls and Gates: seed with every gate.
+Word Ladder II: BFS from both ends.
+The recognition cue is identical - the question asks something about MANY
+sources or MANY targets, and answering it per-cell would repeat work. Seed the
+traversal with the whole set and let one sweep answer for everybody.""",
+]
+
+_EX_P0D["Graphs — BFS, DFS, and when to use each"] = [
+    """Counting islands with DFS, traced.
+grid = [['1','1','0'],
+        ['0','1','0'],
+        ['0','0','1']]
+Scan row by row. (0,0) is land -> count=1, sink() floods (0,0), (0,1), (1,1) and
+turns them into '0'. The remaining scan finds those cells already water, so it
+does not recount them.
+(2,2) is land -> count=2, sink() floods just that one cell.
+Answer 2. Note what marking visited does here: it is not a separate set, it is
+an in-place mutation of the grid, which is O(1) extra space but destroys the
+input - say so in an interview and offer a `seen` set if the caller needs the
+grid intact.""",
+
+    """The same grid with BFS, and why the answer is identical.
+Replace the recursion with a queue: push (0,0), mark it water, then repeatedly
+pop a cell and push its unvisited land neighbours.
+Queue evolution: [(0,0)] -> pop (0,0), push (0,1),(1,0)? (1,0) is water, so just
+(0,1) -> pop (0,1), push (1,1) -> pop (1,1), no land neighbours -> empty.
+Same three cells, same island count. For CONNECTIVITY questions the two are
+interchangeable; only when the question is about DISTANCE does it matter.""",
+
+    """The case that forces BFS - shortest path in a maze.
+grid where '.' is open and '#' is wall:
+    S . . #
+    # # . .
+    . . . E
+DFS from S might wander down the long left-hand corridor and reach E after 7
+steps, then report 7. It found A path, not the shortest.
+BFS expands in rings: everything 1 step away, then 2, then 3. The first time it
+touches E, the ring number IS the shortest distance (5 here). That guarantee
+only holds when every edge costs the same; add weights and you need Dijkstra.""",
+
+    """The infinite-loop bug - forgetting to mark visited.
+Graph 1 - 2, undirected. DFS(1) visits 2; 2's neighbours include 1; without a
+visited set DFS(2) calls DFS(1), which calls DFS(2)... RecursionError.
+On a grid it is subtler: your `sink` marks cells as it goes, so it terminates.
+But if you write `if grid[r][c]=='1': queue.append(...)` in a BFS and only mark
+the cell when you POP it, the same cell gets pushed by several neighbours before
+it is ever popped. It still terminates, but the queue blows up and you may count
+a cell twice. Rule: mark visited at PUSH time, not at pop time.""",
+
+    """Choosing between them by what the question asks.
+'How many groups / components?' -> either; DFS recursion is shortest to write.
+'Shortest number of moves / minimum steps' -> BFS, always.
+'Does a path exist?' -> either; DFS often exits earlier in practice.
+'All paths / all combinations' -> DFS with backtracking (BFS would hold every
+partial path in memory at once).
+'Detect a cycle in a directed graph' -> DFS with three colours (white/grey/black)
+or Kahn's BFS topological sort.
+'Level-by-level output' -> BFS with the len(queue) trick.""",
+
+    """Cost, and the recursion-depth trap.
+Both are O(V + E): every node enters once, every edge is examined once (twice
+for undirected, once from each side). On an R x C grid V = R x C and E is about
+4V, so O(R x C).
+Space: BFS holds a frontier, which for a grid can be O(min(R,C)) but worst case
+O(R x C); DFS holds a call stack as deep as the longest path.
+That last point bites in Python: a 1000x1000 grid of all land gives a DFS depth
+of a million and the default recursion limit is 1000. Either convert to an
+explicit stack or say out loud that you would - interviewers at Amazon and Google
+notice.""",
+]
+
+_EX_P0D["Trees — BFS vs DFS"] = [
+    """Level order on the textbook tree, traced.
+        3
+      /   \\
+     9     20
+          /  \\
+        15     7
+q = [3]. Outer loop iteration 1: len(q)=1, pop 3, level=[3], push 9 and 20.
+Iteration 2: len(q)=2 - that snapshot is what separates the levels. Pop 9 (no
+children), pop 20 (push 15, 7). level=[9,20].
+Iteration 3: len(q)=2, pop 15 and 7, level=[15,7].
+Result [[3],[9,20],[15,7]]. The `for _ in range(len(q))` is the entire trick:
+it freezes how many nodes belong to the current level BEFORE any children are
+appended.""",
+
+    """The three DFS orders on the same small tree.
+        1
+      /   \\
+     2     3
+    / \\
+   4   5
+Preorder (root, left, right): 1 2 4 5 3 - use when you must process a node
+before its children (copying a tree, serialising).
+Inorder (left, root, right): 4 2 5 1 3 - on a BST this comes out SORTED, which
+is why 'kth smallest in a BST' is just an inorder walk that stops at k.
+Postorder (left, right, root): 4 5 2 3 1 - use when a node's answer depends on
+its children's answers (height, diameter, deleting a tree, max path sum).
+Most tree interview problems are postorder in disguise.""",
+
+    """A skewed tree - where the two differ sharply in memory.
+1 -> 2 -> 3 -> ... -> 10000, each node having only a right child.
+BFS: every level holds exactly one node, so the queue never exceeds size 1.
+Memory O(1) in practice.
+DFS: recursion depth 10000 - a RecursionError in Python (limit 1000).
+Now flip it: a perfectly balanced tree of 10000 nodes has depth ~14 (DFS is
+cheap) but its last level holds ~5000 nodes (BFS queue is huge).
+So the honest answer to 'which uses less memory' is: it depends on the shape -
+BFS is O(width), DFS is O(height).""",
+
+    """Postorder combine, worked - computing height.
+    def height(node):
+        if not node: return 0
+        return 1 + max(height(node.left), height(node.right))
+On the tree above: height(4)=1, height(5)=1 -> height(2)=2; height(3)=1 ->
+height(1) = 1 + max(2,1) = 3.
+Notice the shape: base case for None, recurse on both children, COMBINE, return.
+Diameter, balanced-check, max path sum, count-good-nodes and 'sum of left leaves'
+are all the same five lines with a different combine step. Learn the skeleton
+once.""",
+
+    """Choosing by the question's wording.
+'Level order' / 'zigzag' / 'right side view' / 'average of each level' /
+'minimum depth' -> BFS. (Minimum depth is a genuine BFS win: it stops at the
+FIRST leaf, whereas DFS must explore every branch.)
+'Path from root to leaf' / 'path sum' / 'lowest common ancestor' / 'validate a
+BST' / 'serialize' -> DFS.
+'Maximum depth' -> either; DFS is two lines.
+Right side view is a nice hybrid: BFS and take the LAST node of each level - or
+DFS visiting right-first and recording the first node seen at each new depth.""",
+
+    """Interview framing for 'which would you use here?'
+Say the rule out loud before you code: 'the question asks for levels, so BFS with
+a queue and the len(q) snapshot' or 'this needs each node's subtree result, so
+postorder DFS'. Then state the costs: both O(n) time; BFS O(width) space, DFS
+O(height) space, worst case O(n) for either on a degenerate tree.
+Finish with the caveat you will actually be asked about: 'in Python I would
+convert the DFS to an explicit stack if the tree can be deeper than ~1000
+nodes.' That one sentence separates a candidate who has only done small
+LeetCode inputs from one who has thought about production data.""",
+]
+
+_EX_P0D["Middle of the Linked List"] = [
+    """Odd length, traced.
+1->2->3->4->5. slow=fast=1.
+Check fast(1) and fast.next(2) exist -> slow=2, fast=3.
+Check fast(3), fast.next(4) -> slow=3, fast=5.
+Check fast(5): fast.next is None -> loop ends.
+slow is on 3, the exact middle of five nodes. Fast moved twice as fast, so when
+it has covered 4 edges slow has covered 2 - always half the distance.""",
+
+    """Even length - and why you get the SECOND middle.
+1->2->3->4->5->6. slow=1,fast=1.
+-> slow=2, fast=3 -> slow=3, fast=5 -> fast(5) and fast.next(6) exist, so one
+more step: slow=4, fast=None. Loop ends.
+Return 4, the second of the two middles (3 and 4).
+If the problem wants the FIRST middle instead, start fast one node ahead
+(fast = head.next) - then the loop runs one fewer time and slow stops on 3.
+Interviewers do ask for this variant, so know which knob changes it.""",
+
+    """Single node and empty list.
+head = 1: fast=1, fast.next is None, loop never runs, return 1. Correct.
+head = None: slow=fast=None; `while fast` is falsy immediately; return None.
+The `while fast and fast.next` order matters - checking fast.next first would
+raise AttributeError on the empty list. Python short-circuits left to right,
+which is exactly why that order is written that way.""",
+
+    """The condition bug: `while fast.next and fast.next.next`.
+On 1->2->3->4 this gives slow=2 (the FIRST middle) instead of 3, and on the
+empty list it crashes. Both variants appear in tutorials, so decide which the
+problem wants and TRACE a length-4 case before you submit. One extra minute of
+tracing beats a wrong-answer submission.""",
+
+    """Why not just count the length first?
+Two passes: walk once to get n=6, then walk n//2=3 steps to node 4. Same answer,
+O(n) time, O(1) space - and honestly it is easier to read.
+Fast/slow wins when you only get ONE pass over the data - a stream, an iterator
+you cannot rewind, or a list so long that a second traversal blows the cache.
+It is also the building block for the cycle problems, where you cannot compute a
+length at all because the walk never ends.""",
+
+    """The family this unlocks.
+Same two-pointer skeleton, different payload:
+- Detect a cycle: if fast ever equals slow, there is a loop.
+- Find the cycle START: after they meet, reset one pointer to head and advance
+  both one step at a time; they meet at the entry.
+- Palindrome linked list: find the middle here, reverse the second half, compare.
+- Reorder list / split in half: cut at slow.
+- Find the Duplicate Number: the same cycle logic on an array read as a
+  next-pointer function.
+Five well-known problems, one 4-line pattern.""",
+]
+
+_EX_P0D["Move Zeroes"] = [
+    """The textbook case, traced.
+nums = [0,1,0,3,12], write = 0.
+x=0  -> skip.
+x=1  -> nums[0]=1, write=1  => [1,1,0,3,12]
+x=0  -> skip.
+x=3  -> nums[1]=3, write=2  => [1,3,0,3,12]
+x=12 -> nums[2]=12, write=3 => [1,3,12,3,12]
+The array now looks wrong - there is stale junk after index 2. The second loop
+fills indices 3..4 with zeros: [1,3,12,0,0].
+The stale tail is expected: the write pointer counts how many real values there
+are, and everything past it is garbage to be overwritten.""",
+
+    """No zeros at all - the array must come back unchanged.
+nums = [1,2,3]. Every element is non-zero, so write ends at 3 and each
+assignment nums[write]=x writes a value back onto ITSELF. The zero-fill loop
+`range(3,3)` is empty.
+Result [1,2,3]. Correct, though it does 3 redundant self-assignments. If that
+bothers you, guard with `if write != i`, but the branch usually costs more than
+the write.""",
+
+    """All zeros, and the empty array.
+nums = [0,0,0]: write stays 0, the fill loop zeroes indices 0..2 (already zero).
+Result [0,0,0].
+nums = []: both loops are empty, returns []. No special-casing needed - the two
+loops degrade gracefully, which is a sign the invariant is right.""",
+
+    """The naive approach that breaks, and why.
+Tempting: iterate and `nums.remove(0)` then `nums.append(0)`.
+Two problems. First, mutating a list while iterating over it SKIPS elements -
+on [0,0,1] you remove index 0, the list shifts, and the loop's next index lands
+past the second zero. Second, remove() is O(n) each time, so the whole thing is
+O(n^2).
+The other tempting one - swapping every non-zero with nums[write] - is correct
+and also preserves order, but it does more writes than needed. Pack-then-fill is
+the cleanest statement of the invariant.""",
+
+    """The stable-partition invariant, stated properly.
+At every point in the first loop: nums[0:write] holds all non-zeros seen so far,
+IN THEIR ORIGINAL ORDER. That is the whole proof.
+'Stable' is the part people lose. If order did not matter you could do it with
+two pointers from both ends and fewer writes - but [0,1,0,3,12] would come back
+as [12,1,3,0,0], which fails the problem. Whenever a problem says 'preserving
+relative order', the write-pointer pack is the tool.""",
+
+    """Where the write-pointer shows up again.
+- Remove Element / Remove Duplicates from Sorted Array: same pack, different
+  skip condition.
+- Sort Colors (Dutch National Flag): three write pointers instead of one.
+- Partition a linked list around a value: same idea with node pointers.
+- Compacting a log or filtering a buffer in place before flushing it.
+Recognition cue: 'in place', 'O(1) extra space', 'preserve relative order'. When
+you see all three, reach for a write pointer.""",
+]
+
+_EX_P0D["Palindrome Linked List"] = [
+    """The even-length textbook case, traced.
+1->2->2->1.
+Find the middle: slow=1,fast=1 -> slow=2(index1), fast=2(index2) -> fast.next is
+the last node 1, so both move again: slow = the second 2 (index 2), fast=None.
+Reverse from slow: the tail 2->1 becomes 1->2, and prev points at the last node.
+Compare: left=1 vs right=1, left=2 vs right=2, then right runs off the end.
+True. Note the loop condition is `while right:` not `while left:` - the first
+half may be one node longer, and comparing that extra node would be wrong.""",
+
+    """An odd-length non-palindrome.
+1->2->3. slow ends on 2 (the middle), fast on 3.
+Reverse from 2: 3->2, prev=3.
+Compare left=1 (head) with right=3 -> mismatch, return False immediately.
+Notice the middle element never has to be compared in the odd case - it is its
+own mirror. The `while right` condition handles that for free.""",
+
+    """An odd-length palindrome, where the middle is shared.
+1->2->1. slow ends on 2, fast on the last 1.
+Reversing from slow gives 1->2, prev = the last node (1).
+Compare left=1 with right=1 -> match. Then left=2, right=2 -> match. right
+advances to None, loop ends, True.
+Both halves visit the middle node 2 here, and comparing it to itself is
+harmless. That is why the same code handles odd and even lengths with no
+branch.""",
+
+    """Edge cases: empty and single node.
+head=None: the middle loop never runs, slow=None, the reverse loop never runs,
+prev=None, so right=None and the compare loop is skipped. Returns True - an
+empty list is vacuously a palindrome.
+head=1: slow=1, reversing gives prev=1 and slow=None. left=head=1, right=1,
+values match, right advances to None. True.
+Both fall out of the same code, which is the usual sign a linked-list solution
+is structured correctly.""",
+
+    """The three approaches, and what each costs.
+1. Copy values into a Python list and compare with `vals == vals[::-1]`:
+   O(n) time, O(n) space, four lines. Perfectly acceptable as a first answer.
+2. Recursion, comparing the front pointer against the unwinding stack:
+   O(n) space in call frames, and harder to explain.
+3. Reverse the second half in place: O(n) time, O(1) space. This is what the
+   follow-up 'can you do it in O(1) space?' is fishing for.
+Say approach 1 out loud, then say 'the O(1) space version reverses the second
+half' and write that. You get credit for both.""",
+
+    """The production caveat: this MUTATES the list.
+After the compare, the second half is still reversed - if any other code holds a
+pointer into that list, it now sees garbage. In a threaded or shared-structure
+setting that is a real bug, not a nitpick.
+The fix is to reverse the second half back before returning, which most
+interviewers will ask about as the follow-up:
+    tail = prev
+    # ...do the comparison...
+    # then reverse `tail` again and reattach it after slow.
+Mentioning the mutation unprompted is a strong signal; it shows you are thinking
+about the caller and not just the return value.""",
+]
+
+_EX_P0D["Squares of a Sorted Array"] = [
+    """The textbook case, traced from the back.
+nums = [-4,-1,0,3,10]. left=0, right=4, result has 5 slots.
+i=4: |-4| vs |10| -> 10 wins, result[4]=100, right=3.
+i=3: |-4| vs |3| -> 4 wins, result[3]=16, left=1.
+i=2: |-1| vs |3| -> 3 wins, result[2]=9, right=2.
+i=1: |-1| vs |0| -> 1 wins, result[1]=1, left=2.
+i=0: left==right==2, |0| vs |0| -> else branch, result[0]=0.
+Answer [0,1,9,16,100]. Every step places exactly one value, so it is n steps
+total.""",
+
+    """All negatives - the output is the input reversed and squared.
+nums = [-5,-3,-1]. The largest square is always at the LEFT end here.
+i=2: |-5| > |-1| -> 25, left=1.
+i=1: |-3| > |-1| -> 9, left=2.
+i=0: left==right -> 1.
+Answer [1,9,25]. Useful mental check: sorted ascending negatives means their
+squares are sorted DESCENDING, so filling from the back gives ascending output
+for free.""",
+
+    """All non-negatives - the loop degenerates to a reverse copy.
+nums = [1,2,3]. The right pointer wins every comparison, so the result is filled
+3^2, 2^2, 1^2 from the back: [1,4,9].
+Combined with the previous example this is the proof sketch: the array is
+non-decreasing, so absolute values form a VALLEY - decreasing then increasing.
+The maximum of a valley is always at one of the two ends, which is exactly the
+invariant two pointers rely on.""",
+
+    """Edge cases: single element, and duplicates straddling zero.
+[-7] -> [49]; [0] -> [0]. The loop runs once with left==right and the else
+branch fires.
+[-2,-2,2,2]: i=3 -> |-2| vs |2| are equal, so the else branch takes the right
+one: 4, right=2. i=2 -> equal again, take right: 4, right=1. i=1 -> now
+left=0,right=1, both -2: take right, 4, right=0. i=0 -> 4.
+[4,4,4,4]. Ties are safe either way here because the values are equal; using
+`>` rather than `>=` just decides which pointer moves.""",
+
+    """The case that shows why sort() is the wrong answer.
+The one-liner `sorted(x*x for x in nums)` is correct and gets [0,1,9,16,100] too
+- but it is O(n log n). The entire point of this problem is that the input is
+ALREADY SORTED, and throwing that away is the mistake being tested.
+On n = 10^5 the difference is ~17x in comparisons. Say the one-liner exists,
+then say 'but the input is sorted, so we can do O(n) with two pointers' and
+write that. Skipping straight to the sort without naming the O(n) version is the
+answer that loses points.""",
+
+    """Why fill from the BACK and not the front.
+Filling forward would need the SMALLEST square next, which lives somewhere in
+the middle of the array (nearest to zero) - and you cannot find the middle
+without searching. Filling backward needs the LARGEST square, which is always at
+one end, and comparing two ends is O(1).
+General principle: when a two-pointer merge produces values in descending order
+of certainty, write into the output from the end. Same reason 'Merge Sorted
+Array' (LeetCode 88) merges in place from the back - you overwrite only slots you
+have already consumed.""",
+]
+
+_EX_P0D["Backtracking — subsets, permutations, combinations"] = [
+    """Subsets of [1,2,3] - the decision tree, traced.
+backtrack(0) records [] first, because every state is a valid subset.
+  pick 1 -> path=[1], record [1]
+    pick 2 -> [1,2], record
+      pick 3 -> [1,2,3], record; pop 3
+    pop 2
+    pick 3 -> [1,3], record; pop 3
+  pop 1
+  pick 2 -> [2], record; pick 3 -> [2,3], record; pop, pop
+  pick 3 -> [3], record; pop
+Result: [],[1],[1,2],[1,2,3],[1,3],[2],[2,3],[3] - 8 = 2^3 subsets.
+The `start` parameter is what stops [2,1] from appearing: each choice may only
+look FORWARD, so every subset is generated in index order exactly once.""",
+
+    """Permutations of [1,2,3] - what changes.
+Permutations care about order, so you drop `start` and instead track which
+elements are already used:
+    def backtrack(path, used):
+        if len(path) == len(nums): result.append(path[:]); return
+        for i in range(len(nums)):
+            if used[i]: continue
+            used[i] = True; path.append(nums[i])
+            backtrack(path, used)
+            path.pop(); used[i] = False
+Now the loop restarts from 0 every level, so 1 then 2 and 2 then 1 are both
+generated: 6 = 3! results.
+One-line summary: `start` = combinations (order does not matter), `used` =
+permutations (order matters).""",
+
+    """Combinations C(4,2) - adding a base case and a prune.
+Choose 2 from [1,2,3,4]:
+    def backtrack(start):
+        if len(path) == k: result.append(path[:]); return
+        for i in range(start, len(nums)):
+            path.append(nums[i]); backtrack(i+1); path.pop()
+Yields [1,2],[1,3],[1,4],[2,3],[2,4],[3,4] - 6 results.
+The prune: once fewer than k - len(path) candidates remain, no completion is
+possible, so cap the loop at `len(nums) - (k - len(path)) + 1`. On C(20,3) that
+cuts the explored nodes by more than half without changing the output.""",
+
+    """The bug that ruins every backtracking solution: appending path, not path[:].
+Write `result.append(path)` instead of `result.append(path[:])` and you append a
+REFERENCE to the same list object every time. The recursion then pops elements
+out of it, and at the end every entry in `result` is the same empty list:
+[[],[],[],[],[],[],[],[]].
+The symptom is unmistakable - all your answers are identical, usually all empty.
+The fix is one slice. This is the single most common backtracking bug, and
+interviewers watch for whether you write the copy without prompting.""",
+
+    """Duplicates - [1,2,2] and why you sort first.
+Plain subsets on [1,2,2] gives [2] twice and [1,2] twice.
+Fix: sort the input, then inside the loop skip a candidate that repeats its
+immediate predecessor at the same level:
+    if i > start and nums[i] == nums[i-1]: continue
+Trace: at level 0, i=1 picks the first 2; i=2 has nums[2]==nums[1] and i>start,
+so it is skipped - killing the duplicate branch at its root.
+`i > start` matters: within a single branch (i == start) the repeat is a
+legitimate second copy, as in [2,2].""",
+
+    """Complexity, and the pruning that makes hard instances tractable.
+Subsets: 2^n states, each copied in O(n) -> O(n x 2^n).
+Permutations: n! states -> O(n x n!). n=10 is 3.6 million, still fine; n=12 is
+479 million and will time out.
+That is why real backtracking problems are about the PRUNE, not the enumeration:
+N-Queens rejects a placement the moment a column or diagonal conflicts;
+Combination Sum stops a branch as soon as the running total exceeds the target;
+Word Search abandons a cell the moment the letter mismatches;
+Sudoku picks the most-constrained cell first.
+In an interview, write the generator, then say where you would prune and what it
+saves.""",
+]
+
+_EX_P0D["Binary Tree Maximum Path Sum"] = [
+    """The textbook tree, traced bottom-up.
+       -10
+       /  \\
+      9    20
+          /  \\
+        15    7
+gain(9): children None -> left=right=0. best = max(-inf, 9) = 9. Returns 9.
+gain(15): best = max(9,15) = 15. Returns 15.
+gain(7): best stays 15 (7 < 15). Returns 7.
+gain(20): left=15, right=7. best = max(15, 20+15+7) = 42. Returns 20+15 = 35.
+gain(-10): left=max(9,0)=9, right=max(35,0)=35. best = max(42, -10+9+35=34) = 42.
+Returns -10+35 = 25 (unused - it is the root).
+Answer 42, the path 15 -> 20 -> 7. The best path never touched the root.""",
+
+    """Why a node returns ONE child but scores TWO.
+A path is a simple line through the tree. At node 20 the line may TURN: come up
+from 15, pass through 20, go down to 7. That turn is a valid path (42) so it is
+eligible for `best`.
+But the value RETURNED to node 20's parent must be usable as part of a longer
+line going up - and a line that already turned cannot continue upward without
+branching. So gain() returns node.val + max(left, right): one child only.
+Those two different quantities in one function is the entire difficulty of this
+problem. If you return node.val+left+right you will get answers that are too
+large and impossible to trace.""",
+
+    """All-negative tree - why you cannot initialise best to 0.
+       -3
+       / \\
+     -2   -1
+gain(-2): best = -2, returns -2. gain(-1): best = max(-2,-1) = -1, returns -1.
+gain(-3): left = max(-2,0) = 0, right = max(-1,0) = 0, best = max(-1, -3) = -1.
+Answer -1 - the single node -1, since the path must contain at least one node.
+If you had started best at 0 you would return 0, which is not a path at all.
+Starting at float('-inf') is not decoration; it is correctness.""",
+
+    """A negative subtree that must be CUT, not carried.
+        10
+       /  \\
+     -50    20
+gain(-50) returns -50, but at node 10 we take left = max(-50, 0) = 0, so that
+subtree contributes nothing.
+best at node 10 = 10 + 0 + 20 = 30, not -20.
+That `max(..., 0)` clamp is how the algorithm decides to abandon a branch: a
+negative gain can only hurt, so treat it as 'do not extend that way'. Note it
+does not delete the branch - gain(-50) still ran and still updated `best` with
+-50 as a candidate, which matters in the all-negative case above.""",
+
+    """A single node, and a straight-line tree.
+Single node [5]: gain(5) sets best=5 and returns 5. Answer 5.
+Straight line 1 -> 2 -> 3 (each node has only a left child):
+gain(3)=3, best=3. gain(2): left=3, right=0, best = max(3, 2+3) = 5, returns 5.
+gain(1): left=5, best = max(5, 1+5) = 6, returns 6. Answer 6.
+With no branching, the 'turn' case degenerates to the straight-down case and the
+answer is just the best suffix sum - which is Kadane's algorithm on a path. That
+is not a coincidence; see the next example.""",
+
+    """The family: this IS Kadane's, lifted onto a tree.
+On an array, Kadane keeps `cur = max(x, cur + x)` - the clamp at 0 is the same
+'do not carry a negative prefix' decision - and a running `best`.
+On a tree, 'the running sum so far' becomes 'the best downward gain from this
+node', and `best` gains one extra candidate: the path that turns.
+Same skeleton, different combine:
+- Diameter of a binary tree: return 1 + max(left, right), score left+right.
+- Longest ZigZag path: return per-direction, score the turn.
+- Longest Univalue Path: same, gated on equal values.
+Recognising 'postorder DFS that returns one thing and scores another' turns four
+Hard problems into one pattern.""",
+]
+
+_EX_P0D["Dijkstra's Shortest Path (min-heap)"] = [
+    """The textbook graph, traced heap-pop by heap-pop.
+graph = {A:[(B,1),(C,4)], B:[(C,2)], C:[]}, source A.
+dist={A:0}, heap=[(0,A)].
+Pop (0,A). Relax A->B: 1 < inf, dist[B]=1, push (1,B). Relax A->C: 4 < inf,
+dist[C]=4, push (4,C). heap=[(1,B),(4,C)].
+Pop (1,B). Relax B->C: 1+2 = 3 < 4, so dist[C]=3, push (3,C).
+heap=[(3,C),(4,C)] - note there are now TWO entries for C.
+Pop (3,C). d=3 equals dist[C], so it is fresh; C has no outgoing edges.
+Pop (4,C). d=4 > dist[C]=3 -> STALE, skipped by the guard.
+Answer {A:0, B:1, C:3}.""",
+
+    """Why the stale check exists, and what happens without it.
+Python's heapq has no decrease-key, so when a shorter path to C is found you
+cannot edit the old (4,C) entry - you push a new one and leave the old one to be
+popped later. This is called lazy deletion.
+Without `if d > dist.get(node, inf): continue`, popping (4,C) would re-relax all
+of C's neighbours using the wrong distance 4. On this graph C has no neighbours
+so nothing breaks; on a larger graph it silently inflates distances downstream,
+and in the worst case each stale pop cascades into more pushes.
+Heap size is bounded by O(E) because you push at most once per successful
+relaxation.""",
+
+    """A graph where greedy order matters - the long-edge shortcut.
+S->A weight 10, S->B weight 1, B->A weight 2, A->T weight 1.
+Pop (0,S): dist A=10, B=1. Pop (1,B): relax B->A gives 3 < 10, so dist[A]=3,
+push (3,A). Pop (3,A): relax A->T gives 4, dist[T]=4. Pop (4,T). Pop the stale
+(10,A) -> skipped.
+Answer dist[T]=4, not 11. A plain BFS would have said 'S->A->T is 2 hops, done'
+and returned 11 - BFS counts EDGES, Dijkstra counts WEIGHT. When all weights are
+equal the two coincide, which is why BFS is the right (and faster) tool on
+unweighted graphs.""",
+
+    """Negative weights - the case Dijkstra gets WRONG.
+S->A = 1, S->B = 4, A->B = -3? Then the true dist[B] = 1 + (-3) = -2.
+Dijkstra pops (0,S), sets A=1, B=4; pops (1,A), relaxes A->B to -2, pushes.
+Here it happens to recover. But make it S->A=5, S->B=2, B->C=1, A->C=-10:
+Dijkstra pops B (2) then C (3) and FINALISES C at 3, before ever popping A. The
+true answer via A is 5-10 = -5.
+The correctness argument requires that once a node is popped, no cheaper path can
+appear later - which is only true when every edge is non-negative. With negative
+edges use Bellman-Ford (O(V x E), and it detects negative cycles).""",
+
+    """Unreachable nodes, and reconstructing the actual path.
+Add an isolated node D. It is never pushed, so `dist` simply has no key for it -
+callers should treat a missing key as infinity, or you can pre-fill dist with
+inf for every node so the output shape is uniform. Decide which and say so; a
+KeyError in the caller is a real bug.
+To return the path and not just the length, keep `parent[nbr] = node` on every
+successful relaxation, then walk parents backwards from the target and reverse.
+That is the version an interviewer asks for when the question is 'cheapest
+flight route', not 'cheapest price'.""",
+
+    """Cost, and the variants you should be able to name.
+O((V + E) log V) with a binary heap - each edge can cause one push, each push
+costs log of the heap size. With a Fibonacci heap it is O(E + V log V), which is
+theory-interesting and never what you implement.
+Variants worth naming in an interview:
+- All weights equal -> plain BFS, O(V+E).
+- Weights only 0 or 1 -> 0-1 BFS with a deque (push-front for 0, push-back for
+  1), also O(V+E).
+- Negative edges -> Bellman-Ford; negative cycles -> Bellman-Ford detects them.
+- All-pairs on a small dense graph -> Floyd-Warshall, O(V^3).
+- Need to reach a single target fast with a good heuristic -> A*, which is
+  Dijkstra with the priority h(n) added to the key.""",
+]
+
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0D:
+        _e["examples"] = _EX_P0D[_e["title"]]
+
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
