@@ -16,228 +16,36 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Diameter of Binary Tree",
-         answer="The diameter is the longest path (in edges) between any two nodes, which may not pass through the root. Bottom-up DFS returns each node's height while updating a running best = left_height + right_height (edges through that node).",
-         tags=["diameter-binary-tree","tree","dfs","height","dsa"],
-         code='''# Longest path (edges) between any two nodes in a binary tree.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def diameter_of_binary_tree(root):
-    best = [0]
-    def height(node):
-        if node is None:
-            return 0
-        lh = height(node.left)
-        rh = height(node.right)
-        best[0] = max(best[0], lh + rh)      # path through this node (edges)
-        return 1 + max(lh, rh)
-    height(root)
-    return best[0]''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Counting nodes instead of edges; assuming the diameter passes through the root.",
-         example="diameter_of_binary_tree(Node(1, Node(2, Node(4), Node(5)), Node(3))) -> 3."),
-    dict(cat="dsa", title="Sum of Left Leaves",
-         answer="Sum the values of all LEFT leaves (a left child that has no children). DFS carrying a flag for whether the current node is a left child; add its value if it is a leaf.",
-         tags=["sum-left-leaves","tree","dfs","recursion","dsa"],
-         code='''# Sum values of all left leaves in a binary tree.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def sum_of_left_leaves(root):
-    def dfs(node, is_left):
-        if node is None:
-            return 0
-        if node.left is None and node.right is None:
-            return node.val if is_left else 0    # count only left leaves
-        return dfs(node.left, True) + dfs(node.right, False)
-    return dfs(root, False)''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Counting all leaves (must be left children); treating a left internal node as a leaf.",
-         example="sum_of_left_leaves(Node(3, Node(9), Node(20, Node(15), Node(7)))) -> 24  (9 + 15)."),
-    dict(cat="dsa", title="Path Sum (root to leaf)",
-         answer="Determine if any root-to-leaf path sums to a target. DFS subtracting each node's value; at a leaf, success iff the remaining target equals the leaf value.",
-         tags=["path-sum","tree","dfs","recursion","dsa"],
-         code='''# True if some root-to-leaf path sums to target.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def has_path_sum(root, target):
-    if root is None:
-        return False
-    if root.left is None and root.right is None:
-        return target == root.val            # leaf: check remaining target
-    remaining = target - root.val
-    return has_path_sum(root.left, remaining) or has_path_sum(root.right, remaining)''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Returning True at a null child (over-counts); not requiring a LEAF (path must end at a leaf).",
-         example="has_path_sum(Node(5, Node(4, Node(11, Node(7), Node(2))), Node(8)), 22) -> True."),
-    dict(cat="dsa", title="Minimum Depth of Binary Tree",
-         answer="The minimum depth is the fewest nodes from root to the NEAREST leaf. Careful: a node with only one child is not a leaf, so take the child's depth (not min with 0). BFS finds the first leaf fastest.",
-         tags=["min-depth-tree","tree","bfs","dfs","dsa"],
-         code='''# Minimum root-to-leaf depth (nodes) of a binary tree.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def min_depth(root):
-    if root is None:
-        return 0
-    if root.left is None:
-        return 1 + min_depth(root.right)     # only right subtree exists
-    if root.right is None:
-        return 1 + min_depth(root.left)      # only left subtree exists
-    return 1 + min(min_depth(root.left), min_depth(root.right))''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Using min(left,right) blindly counts a missing child as depth 0 (wrong); a single-child node is not a leaf.",
-         example="min_depth(Node(2, None, Node(3, None, Node(4)))) -> 3."),
-    dict(cat="dsa", title="Merge Two Binary Trees",
-         answer="Overlay two trees: where both nodes exist, sum values; otherwise take whichever exists. Recurse on both children.",
-         tags=["merge-binary-trees","tree","recursion","dfs","dsa"],
-         code='''# Merge two binary trees by summing overlapping nodes.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def merge_trees(t1, t2):
-    if t1 is None:
-        return t2
-    if t2 is None:
-        return t1
-    merged = Node(t1.val + t2.val)           # overlap: sum the values
-    merged.left = merge_trees(t1.left, t2.left)
-    merged.right = merge_trees(t1.right, t2.right)
-    return merged
-
-def preorder(node):
-    if node is None:
-        return []
-    return [node.val] + preorder(node.left) + preorder(node.right)''',
-         complexity="Time O(min(n1, n2)), space O(h).",
-         pitfalls="Returning None when one side is null (should return the other); mutating inputs unintentionally.",
-         example="merge of [1,3,2] and [2,1,3] has preorder [3,4,5] at the roots/children overlap."),
-    dict(cat="dsa", title="Range Sum of BST",
-         answer="Sum values in a BST within [low, high]. Exploit the BST order: if node.val < low, skip the left subtree; if > high, skip the right; otherwise include the node and recurse both ways.",
-         tags=["range-sum-bst","bst","dfs","pruning","dsa"],
-         code='''# Sum BST node values within [low, high], pruning out-of-range subtrees.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def range_sum_bst(root, low, high):
-    if root is None:
-        return 0
-    if root.val < low:
-        return range_sum_bst(root.right, low, high)   # whole left is too small
-    if root.val > high:
-        return range_sum_bst(root.left, low, high)    # whole right is too big
-    return root.val + range_sum_bst(root.left, low, high) + range_sum_bst(root.right, low, high)''',
-         complexity="Time O(n) worst, better with pruning; space O(h).",
-         pitfalls="Not pruning (visits every node); wrong comparison direction for the BST invariant.",
-         example="range_sum_bst(BST of [10,5,15,3,7,18], 7, 15) -> 32  (7+10+15)."),
-    dict(cat="dsa", title="Search in a Binary Search Tree",
-         answer="Find the subtree rooted at the node equal to a value, using the BST property: go left if the target is smaller, right if larger, until found or null.",
-         tags=["search-bst","bst","binary-search","dsa"],
-         code='''# Return the subtree whose root equals val, using BST ordering.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def search_bst(root, val):
-    while root is not None and root.val != val:
-        root = root.left if val < root.val else root.right   # BST-guided descent
-    return root''',
-         complexity="Time O(h), space O(1).",
-         pitfalls="Scanning like a plain tree (O(n)); wrong branch direction.",
-         example="search_bst(BST of [4,2,7,1,3], 2).val -> 2; searching 5 -> None."),
-    dict(cat="dsa", title="Lowest Common Ancestor of a BST",
-         answer="In a BST, the LCA of p and q is the first node where the paths diverge. Walk from the root: if both values are smaller go left, if both larger go right; otherwise the current node is the split point = LCA.",
-         tags=["lca-bst","bst","ancestor","dsa"],
-         code='''# Lowest common ancestor of two values in a BST.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def lowest_common_ancestor(root, p, q):
-    while root:
-        if p < root.val and q < root.val:
-            root = root.left            # both in the left subtree
-        elif p > root.val and q > root.val:
-            root = root.right           # both in the right subtree
-        else:
-            return root                 # split point (or one equals root)
-    return None''',
-         complexity="Time O(h), space O(1).",
-         pitfalls="Using a general-tree LCA (ignores the BST shortcut); mishandling when one value equals the node.",
-         example="lowest_common_ancestor(BST of [6,2,8,0,4,7,9], 2, 8).val -> 6."),
-    dict(cat="dsa", title="Reverse Linked List",
-         answer="Reverse a singly linked list iteratively by re-pointing each node's next to its predecessor, advancing three pointers (prev, curr, next).",
-         tags=["reverse-linked-list","linked-list","pointers","dsa"],
-         code='''# Reverse a singly linked list in place.
+    dict(cat="dsa", title="Palindrome Linked List",
+         answer="Check a singly linked list reads the same forwards and backwards in O(1) space. Find the middle with fast/slow, reverse the second half, then compare the two halves node by node.",
+         tags=["palindrome-linked-list","linked-list","fast-slow-pointers","reverse","dsa"],
+         code='''# True if a linked list is a palindrome, using O(1) extra space.
 class ListNode:
     def __init__(self, val, next=None):
         self.val = val
         self.next = next
 
-def reverse_list(head):
-    prev = None
-    curr = head
-    while curr:
-        nxt = curr.next             # remember the rest
-        curr.next = prev            # flip the pointer
-        prev = curr                 # advance prev
-        curr = nxt                  # advance curr
-    return prev
-
-def to_list(head):
-    out = []
-    while head:
-        out.append(head.val)
-        head = head.next
-    return out
-
-def build(vals):
-    head = None
-    for v in reversed(vals):
-        head = ListNode(v, head)
-    return head''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Losing the rest of the list by overwriting next before saving it; returning head instead of prev.",
-         example="to_list(reverse_list(build([1,2,3,4,5]))) -> [5,4,3,2,1]."),
-    dict(cat="dsa", title="Middle of the Linked List",
-         answer="Return the middle node (second middle if even length). Fast/slow pointers: fast moves two steps per one of slow; when fast reaches the end, slow is at the middle.",
-         tags=["middle-linked-list","linked-list","fast-slow-pointers","dsa"],
-         code='''# Middle node of a linked list via fast/slow pointers.
-class ListNode:
-    def __init__(self, val, next=None):
-        self.val = val
-        self.next = next
-
-def middle_node(head):
+def is_palindrome(head):
+    # find the middle (slow ends at the start of the 2nd half)
     slow = fast = head
     while fast and fast.next:
-        slow = slow.next            # one step
-        fast = fast.next.next       # two steps
-    return slow
+        slow = slow.next
+        fast = fast.next.next
+    # reverse the second half
+    prev = None
+    while slow:
+        nxt = slow.next
+        slow.next = prev
+        prev = slow
+        slow = nxt
+    # compare halves
+    left, right = head, prev
+    while right:
+        if left.val != right.val:
+            return False
+        left = left.next
+        right = right.next
+    return True
 
 def build(vals):
     head = None
@@ -245,29 +53,27 @@ def build(vals):
         head = ListNode(v, head)
     return head''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Wrong loop condition returns the first middle on even lengths; null-deref if you skip the fast.next check.",
-         example="middle_node(build([1,2,3,4,5])).val -> 3; for [1,2,3,4,5,6] -> 4."),
-    dict(cat="dsa", title="Merge Two Sorted Lists",
-         answer="Merge two sorted linked lists into one sorted list. Use a dummy head; repeatedly attach the smaller of the two front nodes, then append the remaining tail.",
-         tags=["merge-sorted-lists","linked-list","two-pointers","dsa"],
-         code='''# Merge two sorted linked lists into one sorted list.
+         pitfalls="Comparing the whole reversed list instead of stopping at the shorter half; mutating without restoring (fine if not required).",
+         example="is_palindrome(build([1,2,2,1])) -> True; is_palindrome(build([1,2,3])) -> False."),
+    dict(cat="dsa", title="Remove Linked List Elements",
+         answer="Delete all nodes equal to a target value. Use a dummy head so removing the first node is uniform; walk with a prev pointer, skipping matching nodes.",
+         tags=["remove-linked-list-elements","linked-list","dummy-head","dsa"],
+         code='''# Remove all nodes with a given value from a linked list.
 class ListNode:
     def __init__(self, val, next=None):
         self.val = val
         self.next = next
 
-def merge_two_lists(l1, l2):
-    dummy = ListNode(0)
-    tail = dummy
-    while l1 and l2:
-        if l1.val <= l2.val:
-            tail.next = l1          # take from l1
-            l1 = l1.next
+def remove_elements(head, val):
+    dummy = ListNode(0, head)
+    prev = dummy
+    curr = head
+    while curr:
+        if curr.val == val:
+            prev.next = curr.next    # unlink the matching node
         else:
-            tail.next = l2          # take from l2
-            l2 = l2.next
-        tail = tail.next
-    tail.next = l1 or l2            # attach whatever remains
+            prev = curr              # keep it; advance prev
+        curr = curr.next
     return dummy.next
 
 def to_list(head):
@@ -282,88 +88,324 @@ def build(vals):
     for v in reversed(vals):
         head = ListNode(v, head)
     return head''',
-         complexity="Time O(n + m), space O(1).",
-         pitfalls="Forgetting to attach the leftover tail; not using a dummy head (messy first-node logic).",
-         example="to_list(merge_two_lists(build([1,2,4]), build([1,3,4]))) -> [1,1,2,3,4,4]."),
-    dict(cat="dsa", title="Linked List Cycle",
-         answer="Detect whether a linked list has a cycle. Floyd's tortoise and hare: a slow and a fast pointer; if they ever meet there's a cycle, if fast reaches null there isn't.",
-         tags=["linked-list-cycle","floyd","fast-slow-pointers","dsa"],
-         code='''# Detect a cycle in a linked list (Floyd's algorithm).
+         complexity="Time O(n), space O(1).",
+         pitfalls="Not using a dummy head (special-casing head removal); advancing prev when you removed a node.",
+         example="to_list(remove_elements(build([1,2,6,3,6]), 6)) -> [1,2,3]."),
+    dict(cat="dsa", title="Remove Nth Node From End of List",
+         answer="Delete the n-th node from the end in one pass. Two pointers: advance a lead pointer n steps first, then move lead and a trailing pointer together until lead hits the end; the trailing pointer sits just before the target.",
+         tags=["remove-nth-from-end","linked-list","two-pointers","dsa"],
+         code='''# Remove the nth node from the end in a single pass.
 class ListNode:
     def __init__(self, val, next=None):
         self.val = val
         self.next = next
 
-def has_cycle(head):
-    slow = fast = head
-    while fast and fast.next:
-        slow = slow.next
-        fast = fast.next.next
-        if slow is fast:            # pointers met -> cycle
-            return True
-    return False''',
+def remove_nth_from_end(head, n):
+    dummy = ListNode(0, head)
+    lead = trail = dummy
+    for _ in range(n):
+        lead = lead.next             # give lead an n-node head start
+    while lead.next:
+        lead = lead.next
+        trail = trail.next           # move together until lead is last
+    trail.next = trail.next.next     # unlink the target
+    return dummy.next
+
+def to_list(head):
+    out = []
+    while head:
+        out.append(head.val)
+        head = head.next
+    return out
+
+def build(vals):
+    head = None
+    for v in reversed(vals):
+        head = ListNode(v, head)
+    return head''',
          complexity="Time O(n), space O(1).",
-         pitfalls="Using a visited-set (O(n) space) when Floyd is O(1); missing the fast.next null check.",
-         example="has_cycle on a 3-node list whose tail links back to head -> True; a plain list -> False."),
-    dict(cat="glossary", title="Split-brain",
-         answer="A failure in a distributed/clustered system where a NETWORK PARTITION splits nodes into groups that each believe they're the sole authority (e.g. two primaries), so both accept writes and DIVERGE -- causing conflicting data and corruption when the partition heals. Prevented by QUORUM (a majority must agree, so a minority partition can't act), fencing tokens, and witness/tiebreaker nodes. Split-brain is the concrete danger CAP's 'partition' branch forces you to design against.",
-         tags=["split-brain","network-partition","quorum","consensus","distributed-systems"],
-         example="A 2-node DB cluster partitions; each node promotes itself to primary and takes writes, so the same row gets different values on each side -- a quorum requirement (need majority of 3+ nodes) would have kept the minority side read-only."),
-    dict(cat="glossary", title="Fencing token",
-         answer="A monotonically increasing number handed out with a LOCK or leadership grant so a stale holder can't cause damage after it's been superseded. If a client acquires a lock, pauses (GC/network), and its lease expires and is granted to another (with a higher token), the resource REJECTS the paused client's later write because it carries an OLD, lower token. Fencing turns 'I think I still hold the lock' into a checkable, ordered claim -- essential because leases alone can't stop a delayed process.",
-         tags=["fencing-token","distributed-lock","lease","split-brain","distributed-systems"],
-         example="Client A gets lock with token 33, stalls; its lease expires and B gets token 34 and writes. A wakes and writes with token 33 -- the storage sees 33 < 34 (last accepted) and rejects it, preventing corruption from the zombie lock holder."),
-    dict(cat="glossary", title="Gossip protocol",
-         answer="A decentralized, epidemic-style communication method where each node periodically exchanges state with a few RANDOM peers, so information spreads exponentially through the cluster without any central coordinator. Used for membership/failure detection and metadata dissemination (Cassandra, DynamoDB, Consul, Serf). Benefits: scalable, robust to failures, no single point of failure, eventually consistent view. Costs: eventual (not instant) convergence and some redundant messages. Convergence time is logarithmic in cluster size.",
-         tags=["gossip-protocol","epidemic","membership","failure-detection","distributed-systems"],
-         example="In Cassandra each node gossips with a few random peers every second; when one dies, that fact propagates cluster-wide within seconds via the exponential spread -- no central registry needed."),
-    dict(cat="glossary", title="Read repair and anti-entropy",
-         answer="Two mechanisms Dynamo-style stores use to converge replicas after eventual-consistency divergence. READ REPAIR: on a read that queries multiple replicas, detect stale ones (by version/timestamp) and asynchronously push the newest value to them -- cheap, fixes hot data on access. ANTI-ENTROPY: a background process compares replicas wholesale using MERKLE TREES (hash trees) to find differing key ranges efficiently and sync only those -- catches cold data never read. Together they repair the inconsistency that quorum writes/hinted handoff can leave behind.",
-         tags=["read-repair","anti-entropy","merkle-tree","eventual-consistency","distributed-systems"],
-         example="Cassandra compares replicas' Merkle trees during repair; only the subtrees whose hashes differ are streamed, so two 1M-key replicas that differ on 100 keys exchange those ranges instead of the whole dataset."),
-    dict(cat="ml_coding", title="Focal loss (numpy)",
-         answer="Focal loss addresses extreme class imbalance (e.g. object detection) by DOWN-WEIGHTING easy, well-classified examples so training focuses on hard ones. It multiplies cross-entropy by (1 - p_t)^gamma, where p_t is the predicted prob of the true class: easy examples (p_t near 1) get a tiny weight; hard ones (p_t low) keep near full weight.",
-         tags=["focal-loss","class-imbalance","object-detection","loss-function","ml-coding"],
-         code='''# Binary focal loss. ast.parse-only.
-import numpy as np
+         pitfalls="Off-by-one in the head start (use a dummy); not handling removal of the head node.",
+         example="to_list(remove_nth_from_end(build([1,2,3,4,5]), 2)) -> [1,2,3,5]."),
+    dict(cat="dsa", title="Odd Even Linked List",
+         answer="Group nodes at ODD positions before nodes at EVEN positions, preserving relative order, in O(1) space. Thread two chains (odd and even) with pointers, then attach the even chain after the odd tail.",
+         tags=["odd-even-linked-list","linked-list","pointers","dsa"],
+         code='''# Reorder so odd-indexed nodes precede even-indexed ones (1-based).
+class ListNode:
+    def __init__(self, val, next=None):
+        self.val = val
+        self.next = next
 
-def focal_loss(y_true, p, gamma=2.0, alpha=0.25, eps=1e-9):
-    p = np.clip(p, eps, 1 - eps)                  # avoid log(0)
-    p_t = np.where(y_true == 1, p, 1 - p)         # prob of the true class
-    alpha_t = np.where(y_true == 1, alpha, 1 - alpha)
-    loss = -alpha_t * (1 - p_t) ** gamma * np.log(p_t)   # down-weight easy ones
-    return np.mean(loss)''',
+def odd_even_list(head):
+    if not head or not head.next:
+        return head
+    odd = head
+    even = head.next
+    even_head = even                 # remember the start of the even chain
+    while even and even.next:
+        odd.next = even.next         # splice the next odd node
+        odd = odd.next
+        even.next = odd.next         # splice the next even node
+        even = even.next
+    odd.next = even_head             # attach evens after odds
+    return head
+
+def to_list(head):
+    out = []
+    while head:
+        out.append(head.val)
+        head = head.next
+    return out
+
+def build(vals):
+    head = None
+    for v in reversed(vals):
+        head = ListNode(v, head)
+    return head''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Losing the even-chain head; not terminating the odd chain before attaching evens.",
+         example="to_list(odd_even_list(build([1,2,3,4,5]))) -> [1,3,5,2,4]."),
+    dict(cat="dsa", title="Binary Tree Level Order Traversal",
+         answer="Return node values grouped by level (BFS). Use a queue; for each level, pop the current level's size number of nodes and enqueue their children.",
+         tags=["level-order-traversal","tree","bfs","queue","dsa"],
+         code='''# BFS level-order traversal grouped by level.
+from collections import deque
+
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def level_order(root):
+    if root is None:
+        return []
+    result = []
+    queue = deque([root])
+    while queue:
+        level = []
+        for _ in range(len(queue)):   # fix this level's node count
+            node = queue.popleft()
+            level.append(node.val)
+            if node.left:
+                queue.append(node.left)
+            if node.right:
+                queue.append(node.right)
+        result.append(level)
+    return result''',
          complexity="Time O(n), space O(n).",
-         pitfalls="Forgetting the (1-p_t)^gamma modulating factor (reduces to weighted CE); not clipping p (log(0)); wrong p_t for negatives.",
-         example="focal_loss(y, p, gamma=2) makes a confident-correct example (p_t=0.99) contribute ~0.0001x its CE, so rare hard positives dominate the gradient."),
-    dict(cat="ml_coding", title="He / Xavier weight initialization (numpy)",
-         answer="Good initialization keeps activation variance stable across layers. XAVIER/Glorot (for tanh/sigmoid) scales by sqrt(1/fan_in) (or 2/(fan_in+fan_out)); HE (for ReLU) scales by sqrt(2/fan_in) to compensate for ReLU zeroing half the activations. Wrong scale -> vanishing or exploding activations.",
-         tags=["weight-initialization","he-init","xavier-init","variance","ml-coding"],
-         code='''# He and Xavier initializers. ast.parse-only (rng passed in).
+         pitfalls="Not snapshotting the level size before the loop (mixes levels); forgetting the empty-tree case.",
+         example="level_order(Node(3, Node(9), Node(20, Node(15), Node(7)))) -> [[3],[9,20],[15,7]]."),
+    dict(cat="dsa", title="Binary Tree Zigzag Level Order Traversal",
+         answer="Level-order traversal but alternate direction each level (left-to-right, then right-to-left). Standard BFS, reversing every other level's collected values.",
+         tags=["zigzag-traversal","tree","bfs","queue","dsa"],
+         code='''# BFS level order, alternating direction per level.
+from collections import deque
+
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def zigzag_level_order(root):
+    if root is None:
+        return []
+    result = []
+    queue = deque([root])
+    left_to_right = True
+    while queue:
+        level = []
+        for _ in range(len(queue)):
+            node = queue.popleft()
+            level.append(node.val)
+            if node.left:
+                queue.append(node.left)
+            if node.right:
+                queue.append(node.right)
+        result.append(level if left_to_right else level[::-1])
+        left_to_right = not left_to_right   # flip direction
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Reversing the queue instead of the output list; forgetting to toggle the direction flag.",
+         example="zigzag_level_order(Node(3, Node(9), Node(20, Node(15), Node(7)))) -> [[3],[20,9],[15,7]]."),
+    dict(cat="dsa", title="Binary Tree Right Side View",
+         answer="Return the values visible from the right side (the last node of each level). BFS and take the last element of each level (or DFS visiting right first, recording the first node seen at each depth).",
+         tags=["right-side-view","tree","bfs","dsa"],
+         code='''# Values seen from the right: last node of each level.
+from collections import deque
+
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def right_side_view(root):
+    if root is None:
+        return []
+    result = []
+    queue = deque([root])
+    while queue:
+        n = len(queue)
+        for i in range(n):
+            node = queue.popleft()
+            if i == n - 1:            # last node of this level is visible
+                result.append(node.val)
+            if node.left:
+                queue.append(node.left)
+            if node.right:
+                queue.append(node.right)
+    return result''',
+         complexity="Time O(n), space O(n).",
+         pitfalls="Taking the rightmost CHILD rather than the last node at each level (a left-only deeper node can be visible); off-by-one on the last index.",
+         example="right_side_view(Node(1, Node(2, None, Node(5)), Node(3, None, Node(4)))) -> [1,3,4]."),
+    dict(cat="dsa", title="Symmetric Tree",
+         answer="Check a binary tree is a mirror of itself. Recurse on pairs (left subtree, right subtree): mirrored iff values equal AND left.left mirrors right.right AND left.right mirrors right.left.",
+         tags=["symmetric-tree","tree","recursion","mirror","dsa"],
+         code='''# True if a binary tree is symmetric about its center.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def is_symmetric(root):
+    def mirror(a, b):
+        if a is None and b is None:
+            return True
+        if a is None or b is None or a.val != b.val:
+            return False
+        # outer pair and inner pair must both mirror
+        return mirror(a.left, b.right) and mirror(a.right, b.left)
+    return root is None or mirror(root.left, root.right)''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Comparing subtrees in the same orientation (must cross: left.left vs right.right); missing one-null case.",
+         example="is_symmetric(Node(1, Node(2, Node(3), Node(4)), Node(2, Node(4), Node(3)))) -> True."),
+    dict(cat="dsa", title="Convert Sorted Array to BST",
+         answer="Build a HEIGHT-BALANCED BST from a sorted array. Recursively pick the middle element as the subtree root (so halves are balanced), building left from the left half and right from the right half.",
+         tags=["sorted-array-to-bst","bst","divide-and-conquer","recursion","dsa"],
+         code='''# Build a height-balanced BST from a sorted array.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def sorted_array_to_bst(nums):
+    def build(lo, hi):
+        if lo > hi:
+            return None
+        mid = (lo + hi) // 2          # middle keeps subtrees balanced
+        node = Node(nums[mid])
+        node.left = build(lo, mid - 1)
+        node.right = build(mid + 1, hi)
+        return node
+    return build(0, len(nums) - 1)
+
+def inorder(node):
+    if node is None:
+        return []
+    return inorder(node.left) + [node.val] + inorder(node.right)''',
+         complexity="Time O(n), space O(log n) recursion.",
+         pitfalls="Picking a non-middle root (unbalanced tree); off-by-one in the half ranges.",
+         example="inorder(sorted_array_to_bst([-10,-3,0,5,9])) -> [-10,-3,0,5,9] (and balanced)."),
+    dict(cat="dsa", title="Validate Binary Search Tree",
+         answer="Check a tree is a valid BST: every node greater than all in its left subtree and less than all in its right. Recurse carrying an allowed (low, high) range, tightening it as you descend.",
+         tags=["validate-bst","bst","recursion","bounds","dsa"],
+         code='''# True if the tree satisfies the BST ordering globally.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def is_valid_bst(root):
+    def valid(node, low, high):
+        if node is None:
+            return True
+        if not (low < node.val < high):   # must lie strictly in range
+            return False
+        return valid(node.left, low, node.val) and valid(node.right, node.val, high)
+    return valid(root, float('-inf'), float('inf'))''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Only comparing a node to its direct children (misses distant violations); using <= where strict < is required.",
+         example="is_valid_bst(Node(5, Node(1), Node(4, Node(3), Node(6)))) -> False (4 < 5 but in right subtree)."),
+    dict(cat="dsa", title="Kth Smallest Element in a BST",
+         answer="Find the k-th smallest value. An in-order traversal of a BST visits values in ascending order; stop at the k-th visited node (iterative in-order with a stack is O(h) space).",
+         tags=["kth-smallest-bst","bst","inorder","stack","dsa"],
+         code='''# Kth smallest value in a BST via iterative in-order traversal.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def kth_smallest(root, k):
+    stack = []
+    curr = root
+    while stack or curr:
+        while curr:
+            stack.append(curr)       # go as left as possible
+            curr = curr.left
+        curr = stack.pop()           # visit in ascending order
+        k -= 1
+        if k == 0:
+            return curr.val
+        curr = curr.right
+    return None''',
+         complexity="Time O(h + k), space O(h).",
+         pitfalls="Doing a full traversal when you can stop at k; decrementing k in the wrong place.",
+         example="kth_smallest(Node(3, Node(1, None, Node(2)), Node(4)), 1) -> 1."),
+    dict(cat="glossary", title="Lease",
+         answer="A LEASE is a lock with a TIME BOUND: a node is granted exclusive rights (to be leader, hold a lock, own a shard) for a limited duration and must RENEW before expiry to keep it. If the holder crashes or is partitioned, the lease simply EXPIRES and another node can take over -- avoiding the deadlock a permanent lock would cause. The catch: leases rely on bounded clock drift and don't stop a paused-then-resumed holder from acting on an expired lease, which is why they're paired with FENCING TOKENS. Core to leader election and distributed locks (Chubby, etcd, ZooKeeper).",
+         tags=["lease","distributed-lock","leader-election","expiry","distributed-systems"],
+         example="An etcd leader holds a 10s lease it renews every few seconds; if it crashes, the lease expires in 10s and a follower is elected -- no manual intervention, and no permanent lock stuck on a dead node."),
+    dict(cat="glossary", title="Hinted handoff",
+         answer="A technique in Dynamo-style systems to keep WRITES available during a temporary node outage. If a replica that should store a write is down, a healthy node accepts the write and stores a HINT (metadata noting the intended recipient); when the down node recovers, the hint is HANDED OFF (replayed) to it. This preserves write availability and durability during transient failures without waiting for the node, at the cost of temporary inconsistency (resolved later by read-repair/anti-entropy).",
+         tags=["hinted-handoff","availability","dynamo","eventual-consistency","distributed-systems"],
+         example="A write's target replica is rebooting; a neighbor stores it with a hint 'meant for node C'. When C comes back, the neighbor replays the buffered writes to it -- so the outage didn't reject the client's write."),
+    dict(cat="glossary", title="Quorum (W + R > N)",
+         answer="In a replicated store with N replicas, a QUORUM protocol requires W replicas to acknowledge a write and R replicas to answer a read. If W + R > N, the read and write replica sets are GUARANTEED to OVERLAP by at least one node, so every read sees the latest acknowledged write -- giving strong consistency while tolerating failures. Tuning shifts the trade-off: W=N,R=1 (fast reads, slow/fragile writes), W=1,R=N (fast writes), W=R=(N+1)/2 (balanced). SLOPPY quorums relax this for availability at the cost of the overlap guarantee.",
+         tags=["quorum","w-plus-r","replication","consistency","distributed-systems"],
+         example="With N=3, W=2, R=2: a write waits for 2 of 3 acks and a read queries 2 of 3; since 2+2>3 the read set always includes a node that saw the write -- so clients never read stale after a successful write."),
+    dict(cat="ml_coding", title="SGD with momentum update (numpy)",
+         answer="Momentum accelerates SGD by accumulating a velocity that is an exponential moving average of past gradients, damping oscillation in ravines and speeding progress along consistent directions. v = beta*v + g; w -= lr * v (or the equivalent with (1-beta) weighting).",
+         tags=["momentum","sgd","optimizer","velocity","ml-coding"],
+         code='''# SGD-with-momentum parameter update. ast.parse-only.
 import numpy as np
 
-def he_init(fan_in, fan_out, rng):
-    std = np.sqrt(2.0 / fan_in)                   # ReLU: keep variance stable
-    return rng.standard_normal((fan_in, fan_out)) * std
+def momentum_step(w, g, v, lr=1e-2, beta=0.9):
+    v = beta * v + g                              # accumulate velocity
+    w = w - lr * v                                # step along the velocity
+    return w, v''',
+         complexity="Time O(size of w), space O(size of w).",
+         pitfalls="Forgetting to persist v across steps (loses the accumulation); confusing this with Nesterov (which looks ahead before the gradient).",
+         example="Over steps with a consistent gradient direction, v grows and the effective step size increases, converging faster than plain SGD in a narrow valley."),
+    dict(cat="ml_coding", title="Label smoothing (numpy)",
+         answer="Label smoothing softens one-hot targets to discourage over-confidence and improve generalization/calibration. Replace the hard 1 with 1 - epsilon and distribute epsilon over the other classes: y_smooth = (1 - eps) * onehot + eps / num_classes.",
+         tags=["label-smoothing","regularization","calibration","classification","ml-coding"],
+         code='''# Apply label smoothing to one-hot targets. ast.parse-only.
+import numpy as np
 
-def xavier_init(fan_in, fan_out, rng):
-    std = np.sqrt(2.0 / (fan_in + fan_out))       # tanh/sigmoid
-    return rng.standard_normal((fan_in, fan_out)) * std''',
-         complexity="Time O(fan_in * fan_out), space O(fan_in * fan_out).",
-         pitfalls="Using Xavier with ReLU (activations shrink -- He compensates for the halving); initializing all weights equal (symmetry never breaks).",
-         example="he_init(256, 128, rng) gives weights with std sqrt(2/256) ~ 0.088, keeping ReLU activation variance roughly constant layer-to-layer."),
-    dict(cat="conceptual", title="Why does minimum depth of a binary tree need special handling for single-child nodes?",
-         answer="The maximum-depth problem has a clean recurrence: depth(node) = 1 + max(depth(left), depth(right)), with depth(null) = 0. It's tempting to write minimum depth by analogy as 1 + min(depth(left), depth(right)) -- but this is WRONG, and the reason exposes a subtle definitional point. Minimum depth is defined as the number of nodes on the shortest path from the root to a LEAF, and a leaf is a node with NO children. Now consider a node that has only ONE child -- say a left child but no right child. Its right subtree is empty, so depth(right) = 0. The naive min formula computes 1 + min(depth(left), 0) = 1 + 0 = 1, claiming this node is at minimum depth 1 as if it were a leaf. But it is NOT a leaf -- it has a left child -- so there is no root-to-leaf path that stops here. The formula has effectively invented a path that ends at a missing child, which isn't allowed. The correct rule: minimum depth must only take the min over children that ACTUALLY EXIST. So if one child is null, you must recurse into the non-null child (1 + depth(existing child)), NOT take min with the null side's 0. Only when BOTH children exist do you take 1 + min(left, right); when both are null (a true leaf) you return 1. Maximum depth doesn't suffer this because max naturally IGNORES the shorter (null) side -- max(depth(left), 0) = depth(left) whenever the left side is deeper -- so the missing child's 0 never wins and never fabricates a false path. The asymmetry is that min is 'attracted' to the zero from a missing subtree while max is repelled by it. The general lesson: when a recurrence's base case value (0 for null) can be spuriously selected by the aggregation (min picks small values), you must guard the base case so it only applies at genuine terminals -- here, genuine leaves. A BFS solution sidesteps the trap naturally: do a level-order traversal and return the depth of the FIRST node with no children, which is by construction the nearest leaf, and it's also faster because it stops as soon as it finds the shallowest leaf rather than exploring the whole tree.",
-         tags=["min-depth","binary-tree","recursion","edge-cases","why"],
-         example="For a right-skewed tree 1 -> 2 -> 3 (each only a right child), the true minimum depth is 3 (the only leaf is node 3); the naive 1+min(left,right) would return 1 at the root because the missing left child contributes depth 0 -- a path that doesn't end at a leaf."),
-    dict(cat="conceptual", title="Why does focal loss help with class imbalance where weighted cross-entropy alone falls short?",
-         answer="Extreme class imbalance -- like object detection where a single image has a handful of true objects and tens of thousands of easy background locations -- breaks naive training because the loss is dominated by the SHEER NUMBER of easy negatives. Even if each easy background example contributes a tiny individual loss (the model is already confident it's background, p near the correct value), there are so many of them that their SUM overwhelms the gradient signal from the rare, hard, informative positives; the model converges to 'predict background everywhere' and the useful examples get drowned out. The first fix people reach for is WEIGHTED (or balanced) cross-entropy: multiply the loss of the rare positive class by a large alpha and the common class by a small one, to rebalance their total contributions. This helps with the class-frequency imbalance -- it corrects for how MANY of each class there are -- but it has a blind spot: it weights every example of a class the SAME regardless of whether the model already gets it right. It does NOT distinguish EASY examples from HARD ones. So a mountain of easy, already-correct negatives still each carry the full (down-weighted) loss, and a well-classified example contributes as much per-example signal as a misclassified one of the same class. FOCAL LOSS adds the missing ingredient: a modulating factor (1 - p_t)^gamma, where p_t is the model's predicted probability of the TRUE class. When the model is confident and correct (p_t near 1), (1 - p_t)^gamma is tiny, so that example's loss is scaled down toward zero -- it's already learned, stop letting it dominate. When the model is wrong or unsure (p_t low), (1 - p_t)^gamma stays near 1, preserving the full loss -- keep focusing on it. Gamma controls the strength (gamma=0 recovers cross-entropy; gamma=2 is typical). The crucial difference from weighted CE is that focal loss re-weights by DIFFICULTY (a per-example, dynamic property that changes as the model learns), not by class membership (a static property). This automatically shifts the training focus onto the hard examples over time and stops the legion of easy negatives from swamping the gradient, even though there are vastly more of them. In practice focal loss is often combined with an alpha class-weight too (the paper's alpha-balanced focal loss), getting both effects: alpha handles the raw frequency imbalance, and the focal term handles the easy/hard imbalance -- and it was exactly this combination that let single-stage detectors like RetinaNet match two-stage ones. The broader principle: 'imbalance' can mean imbalance in COUNT (fixed by class weighting) or imbalance in DIFFICULTY/contribution (fixed by focal-style down-weighting of easy examples), and they need different tools.",
-         tags=["focal-loss","class-imbalance","weighted-cross-entropy","hard-example-mining","why"],
-         example="In detection with 100 hard positives and 100,000 easy backgrounds, weighted CE still lets the 100k easy examples (each already correct) sum to a dominating loss; focal loss with gamma=2 scales a p_t=0.99 background's loss by (0.01)^2=1e-4, so the hard positives finally drive the gradient."),
-    dict(cat="behavioral", title="STAR: Being frugal / doing more with less (Frugality)",
-         answer="Amazon LP: FRUGALITY -- accomplish more with less; constraints breed resourcefulness, self-sufficiency, and invention; no extra points for headcount, budget, or fixed expense. Show you delivered a meaningful outcome without throwing money/people at it, turning a constraint into a smarter solution.",
-         tags=["behavioral","star","frugality","amazon-lp","resourcefulness"],
-         example="SITUATION: Our analytics pipeline's cloud bill was climbing fast -- we were running a large always-on managed cluster to process nightly batch jobs, and the easy ask was to buy a bigger cluster to fix growing runtimes. TASK: I wanted to cut both cost and runtime WITHOUT more spend, treating the budget constraint as a design prompt. ACTION: Instead of scaling up, I profiled the jobs and found two things: the cluster sat idle ~20 hours a day, and 80% of the runtime came from a few unpartitioned full-table scans. I moved the batch jobs to ephemeral spot instances that spin up only for the nightly window and terminate after (paying for ~4 hours, not 24, at spot discounts), and I added partitioning and columnar formats so the heavy queries scanned a fraction of the data. I validated correctness against the old outputs before cutting over. RESULT: The monthly bill dropped by roughly two-thirds AND the nightly runtime got faster because of the query fixes -- a better result than the bigger-cluster proposal would have given, at lower cost. The frugality constraint forced me to actually understand the workload instead of masking inefficiency with more hardware, and the partitioning work kept paying off as data grew."),
+def label_smoothing(one_hot, eps=0.1):
+    num_classes = one_hot.shape[1]
+    # pull the target off 1.0 and spread eps mass across all classes
+    return one_hot * (1 - eps) + eps / num_classes''',
+         complexity="Time O(n * classes), space O(n * classes).",
+         pitfalls="Spreading eps over only the wrong classes (spread over ALL, including the true one is the standard form); using too large an eps (underfits).",
+         example="label_smoothing(np.array([[1.,0.,0.]]), 0.1) -> [[0.9333, 0.0333, 0.0333]] (true class 0.9+eps/3)."),
+    dict(cat="conceptual", title="Why does validating a BST require passing down min/max bounds instead of just comparing to children?",
+         answer="A naive BST validator checks, at each node, that node.left.val < node.val < node.right.val -- comparing a node only to its DIRECT children. This is WRONG because the BST property is GLOBAL, not local: it requires that EVERY value in a node's entire left subtree is less than the node, and every value in its entire right subtree is greater -- not merely the immediate children. A tree can satisfy every parent-child comparison and still violate the BST invariant because of a DISTANT descendant. Classic counterexample: root 5, left child 1, right child 4, where 4 has children 3 and 6. Every local check passes (1<5, 4>5? no -- take a cleaner one): root 10 with right child 15, and 15 has a left child 6. Locally 15>10 (fine) and 6<15 (fine), but 6 is in the RIGHT subtree of 10, so it must be >10 -- and it isn't. The local check never compares 6 against its grandparent 10, so it misses the violation. The fix is to thread down an ALLOWED RANGE (low, high) that every node must fall strictly within, tightening the range as you descend: when you go LEFT from a node with value v, the whole left subtree must be less than v, so you set the new upper bound to v (range becomes (low, v)); when you go RIGHT, everything must exceed v, so the new lower bound is v (range becomes (v, high)). A node is valid iff low < node.val < high AND both children are valid under their tightened ranges. This way, node 6 above would be validated against the range (10, 15) -- inherited from having gone right at 10 then left at 15 -- and correctly rejected because 6 is not > 10. The bounds carry the ancestor constraints that pure child comparisons lose. Two implementation notes: use strict inequalities (a BST typically forbids duplicates, or you must decide a consistent side for them), and use +/- infinity as the initial bounds for the root. An elegant alternative that also captures the global property: do an IN-ORDER traversal and verify the visited values are strictly increasing -- because an in-order walk of a valid BST yields sorted output, any out-of-order adjacent pair reveals a violation, distant or not. Both approaches work precisely because they encode the global ordering constraint rather than a purely local one.",
+         tags=["validate-bst","bst","bounds","in-order","why"],
+         example="Tree 10 -> right 15 -> left 6: local checks pass (15>10, 6<15) but it's an invalid BST because 6 sits in 10's right subtree; the range method validates 6 against (10, inf) inherited from ancestors and rejects it, and an in-order walk yields [10,6,15] which isn't sorted."),
+    dict(cat="conceptual", title="Why does momentum speed up gradient descent, and what problem with plain SGD does it fix?",
+         answer="Plain gradient descent updates weights by w -= lr * g, taking a step directly proportional to the current gradient. This struggles badly in a very common loss-surface shape: a long, narrow RAVINE -- a region that is steeply curved in some directions and gently sloped in others (mathematically, the Hessian has very different eigenvalues, i.e. a high condition number). In such a ravine, the gradient points mostly ACROSS the valley (down the steep walls) rather than ALONG it (toward the minimum). So plain SGD oscillates back and forth between the steep walls, making big zig-zag moves that largely cancel out, while creeping only slowly along the shallow direction toward the actual minimum. To avoid divergence on the steep axis you're forced to use a small learning rate, which makes the slow progress along the valley floor even slower -- a frustrating trade-off. MOMENTUM fixes this by giving the optimizer INERTIA. Instead of stepping by the raw gradient, it maintains a VELOCITY vector that is an exponentially-weighted running average of past gradients: v = beta*v + g, then w -= lr*v (beta ~ 0.9). The key effect is directional filtering. Along the OSCILLATING steep axis, successive gradients point in OPPOSITE directions on alternate steps, so they largely CANCEL in the running average -- the velocity in that direction stays small and the zig-zag is damped. Along the CONSISTENT shallow axis, successive gradients all point the SAME way, so they ACCUMULATE in the running average -- the velocity builds up and the optimizer accelerates toward the minimum, like a ball rolling downhill gathering speed. So momentum simultaneously suppresses the wasteful oscillation and amplifies progress in the productive direction, which is exactly the pathology plain SGD has in ill-conditioned ravines. Consequences and nuances: momentum lets you use a larger effective learning rate without diverging, it helps roll through small local bumps and flat regions (plateaus) where the raw gradient is tiny because the accumulated velocity carries it, and beta controls how much history is averaged (higher = smoother/more inertia but slower to change direction). NESTEROV momentum refines it by evaluating the gradient at the look-ahead position (where the velocity is about to take you), which gives a more responsive correction and often slightly better convergence. Modern optimizers like Adam combine this first-moment momentum with per-parameter adaptive scaling. The core intuition to remember: momentum turns a memoryless, oscillation-prone step into an inertial one that averages out noise/oscillation and accelerates along persistent gradient directions.",
+         tags=["momentum","sgd","optimization","ill-conditioning","why"],
+         example="On a loss shaped like a taco (steep sides, gentle length), plain SGD bounces between the steep walls and inches along the length; momentum cancels the alternating side-to-side gradients and accumulates the consistent lengthwise gradient, so it shoots down the valley far faster at the same learning rate."),
+    dict(cat="behavioral", title="STAR: Customer obsession -- starting from the customer and working backward",
+         answer="Amazon LP: CUSTOMER OBSESSION -- leaders start with the customer and work backwards; they work vigorously to earn and keep customer trust, and while they pay attention to competitors, they obsess over customers. Show you dug into a real customer pain, worked backward to the right solution (not the convenient one), and improved the customer outcome measurably.",
+         tags=["behavioral","star","customer-obsession","amazon-lp","working-backwards"],
+         example="SITUATION: Support tickets for our onboarding flow were rising, but the aggregate completion metric looked 'fine', so there was pressure to dismiss it as noise and ship the next planned feature. TASK: I suspected the average was hiding real pain, so I took ownership of understanding the actual customer experience before we built anything. ACTION: I worked backward from the customer: I read 60 recent tickets, watched session replays, and found a specific segment -- users on slow connections and older devices -- who hit a silent timeout on a heavy verification step and simply gave up (they never filed tickets, so they were invisible in our support counts but visible in drop-off). Rather than the convenient fix (a bigger spinner), I wrote a short 'working backwards' note describing that customer's experience and pushed for the real fix: make the verification asynchronous with a save-and-resume, so a slow step never blocked or lost their progress. I prototyped it and tested specifically on throttled connections and a low-end device to reproduce the actual customer's conditions. RESULT: Completion for that segment rose substantially and onboarding-related tickets dropped, while the aggregate metric that had looked 'fine' also ticked up because the hidden failures were real volume. The lesson I carry: averages hide the customers who are struggling -- starting from their concrete experience and working backward surfaced a fix we'd otherwise have ignored, and it earned trust with users who'd been silently churning."),
 ]
 
 
