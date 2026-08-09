@@ -7581,3 +7581,741 @@ O(N log k), not O(N log N) - the heap stays size k
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ══ Long-form walkthroughs ════════════════════════════════════════════════
+# The short `answer` field states the trick; these ESTABLISH it. The house
+# style, in order: (1) restate the problem in everyday words, (2) the brute
+# force first and why it is too slow, (3) each insight DERIVED, never
+# asserted, (4) why it is correct in plain language, (5) a hand-trace with
+# real numbers, (6) a one-line takeaway. Rendered as "Explained step by
+# step" under the answer, and included in the PDF export.
+_WALKTHROUGH = {}
+
+_WALKTHROUGH["Gas Station"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+Picture N petrol pumps arranged in a circle. Standing at pump i you can put gas[i]
+litres in your tank, and driving from pump i to the next pump burns cost[i] litres.
+You start with an EMPTY tank, you get to choose which pump to start at, and you must
+drive the whole circle without the tank ever going below zero. Which pump works?
+(If none works, answer -1.)
+
+THE OBVIOUS SOLUTION FIRST - always say this out loud
+Try pump 0 as the start and simulate the entire loop. If it fails, try pump 1. And so
+on. That is n starting points times n stations to simulate each = O(n^2). It is
+completely correct, just too slow. Everything below is about deleting that outer loop.
+
+INSIGHT 1 - only the NET matters, so throw away two arrays and keep one
+At each station you gain gas[i] and immediately lose cost[i] getting to the next one.
+So the only number that matters at station i is:
+    diff[i] = gas[i] - cost[i]
+Positive means that leg leaves you richer, negative means it drains you. The problem
+is now much plainer: given a circular list of numbers, find a starting index such that
+the running total never dips below zero as you walk the circle once.
+
+INSIGHT 2 - does an answer even exist? One sum tells you.
+Add up every diff. That total is the net fuel of one full lap.
+  - If the total is NEGATIVE, the whole circle consumes more fuel than exists in it.
+    No starting point can survive, no matter how clever. Return -1 immediately.
+  - If the total is ZERO or POSITIVE, an answer is guaranteed to exist.
+Why guaranteed: the deficits and surpluses must cancel out overall, so there is always
+some rotation where all the painful stretches end up behind you instead of ahead of
+you. This is the part most people accept on faith - the useful takeaway is that the
+TOTAL answers the question "is there an answer", it just does not tell you where.
+
+INSIGHT 3 - the restart trick (this is the step that looks like magic)
+Walk from station 0 keeping a running tank, remembering a candidate start s.
+Suppose you started at s and the tank first goes negative when you arrive at station f.
+CLAIM: no station strictly between s and f can be a valid start either. Skip them all.
+
+Here is why, in plain words. You did not run out of fuel BEFORE f. That means the
+running total from s to every station k in between was still zero or better. Now
+imagine restarting at k+1 instead of s. All you did was discard the stretch from s to
+k - and that stretch had a NON-NEGATIVE total. Throwing away a non-negative amount of
+fuel leaves you with less in the tank, never more, by the time you reach f. If the
+richer start s could not survive the journey to f, a poorer start certainly cannot.
+So every station from s up to f is dead. Jump the candidate to f + 1 and reset the
+tank to 0.
+
+WHY ONE PASS IS ENOUGH
+Every failure lets you skip an entire block of stations at once, and the pointer only
+ever moves forward - so each station is touched once. That is O(n) time and O(1) extra
+space. And because Insight 2 already PROVED an answer exists, whatever candidate you
+are holding at the end must be it. You never need to wrap around and re-verify.
+
+TRACE IT WITH REAL NUMBERS
+  gas  = [1, 2, 3, 4, 5]
+  cost = [3, 4, 5, 1, 2]
+  diff = [-2,-2,-2, 3, 3]      total = 0, and 0 >= 0, so an answer exists
+
+  i=0: tank = 0 + (-2) = -2   negative -> start becomes 1, tank resets to 0
+  i=1: tank = 0 + (-2) = -2   negative -> start becomes 2, tank resets to 0
+  i=2: tank = 0 + (-2) = -2   negative -> start becomes 3, tank resets to 0
+  i=3: tank = 0 +   3  =  3   fine
+  i=4: tank = 3 +   3  =  6   fine
+  answer = 3
+
+  Verify by hand starting at pump 3, tank empty:
+    at 3: +4 gas = 4, drive costs 1  -> 3 left
+    at 4: +5 gas = 8, drive costs 2  -> 6 left
+    at 0: +1 gas = 7, drive costs 3  -> 4 left
+    at 1: +2 gas = 6, drive costs 4  -> 2 left
+    at 2: +3 gas = 5, drive costs 5  -> 0 left, back where we began. Never negative.
+
+THE ONE-LINE TAKEAWAY
+The TOTAL decides IF an answer exists; the running TANK decides WHERE it starts. Any
+stretch that dies drags down every station inside it, so you get to skip the lot.
+""".strip("\n")
+_WALKTHROUGH["Gas Station (greedy circuit)"] = _WALKTHROUGH["Gas Station"]
+
+_WALKTHROUGH["Trapping Rain Water"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+The array is a bar chart - height[i] is how tall the bar at position i is. It rains
+until everything is soaked. Water sits in the dips between taller bars and spills off
+the ends. How many unit squares of water are held?
+
+THE REFRAME THAT MAKES IT EASY - stop thinking about puddles
+Do not try to find pools and measure them. Ask instead, for ONE column at a time:
+how deep is the water sitting directly above bar i?
+Water above bar i is held in by the tallest bar somewhere to its LEFT and the tallest
+bar somewhere to its RIGHT. The surface can rise to the level of the SHORTER of those
+two walls - one drop higher and it pours over that side. So:
+    water[i] = min(tallest on the left, tallest on the right) - height[i]
+and if that comes out negative, this bar is itself a wall and holds nothing, so use 0.
+Total answer = sum over all i. That single formula IS the problem.
+
+VERSION 1 - brute force
+For every i, scan left for the max and right for the max. O(n^2). Correct, slow.
+
+VERSION 2 - precompute, the one most people write
+Make two arrays in two passes: leftMax[i] = tallest bar from 0..i, rightMax[i] =
+tallest bar from i..n-1. Then one more pass applying the formula. O(n) time but O(n)
+extra space. This is already a perfectly good answer.
+
+VERSION 3 - two pointers, O(1) space (what the code above does)
+Keep a pointer at each end plus left_max and right_max seen so far, and always process
+the side whose current bar is SHORTER.
+    if height[left] < height[right]: handle the left bar, then left += 1
+    else:                            handle the right bar, then right -= 1
+
+WHY THAT IS SAFE - the part worth understanding
+When height[left] < height[right], we settle bar `left` using only left_max, as if we
+already knew the right side did not matter. That is justified: we are literally LOOKING
+at a bar on the right (height[right]) that is taller than height[left]. So the true
+tallest-on-the-right is at least that tall, which means the left side is the binding
+constraint and min(left, right) = left_max. Even better, the left pointer only ever
+advances past a bar when it has seen something at least as tall on the right, so the
+guarantee keeps holding as the pointers close in. Symmetrically for the other branch.
+The pointers only move inward, each bar is settled exactly once: O(n) time, O(1) space.
+
+TRACE IT WITH REAL NUMBERS
+  height = [0,1,0,2,1,0,1,3,2,1,2,1]        answer = 6
+  Spot-check the formula on index 5 (height 0):
+    tallest to the left  = 2  (the bar at index 3)
+    tallest to the right = 3  (the bar at index 7)
+    water = min(2,3) - 0 = 2 units sitting on top of index 5.
+  Now index 3 (height 2):
+    tallest left = 1, tallest right = 3 -> min is 1, and 1 - 2 = -1 -> clamp to 0.
+    Correct: that bar is a wall, water sits beside it, not on it.
+  Summing every column that way gives 6.
+
+COMMON CONFUSION
+People try to compute the water for a whole basin at once and get lost in edge cases.
+Column by column has no edge cases - the min() formula handles walls, flats and ends.
+
+THE ONE-LINE TAKEAWAY
+Water above a bar = min(tallest left, tallest right) - its own height. Everything else
+is just three different ways of getting those two maxima cheaply.
+""".strip("\n")
+_WALKTHROUGH["Trapping Rain Water (two pointers)"] = _WALKTHROUGH["Trapping Rain Water"]
+
+_WALKTHROUGH["Maximum Subarray (Kadane's algorithm)"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+Pick a contiguous stretch of the array (no skipping, no reordering) whose sum is as
+large as possible, and report that sum. With negative numbers in the mix you cannot
+just take everything.
+
+THE OBVIOUS SOLUTION FIRST
+Every subarray is defined by a start and an end, so try all pairs and sum each one.
+That is O(n^3), or O(n^2) if you keep a running sum as the end moves. Too slow, but
+say it - the interviewer wants to see you improve on your own baseline.
+
+THE INSIGHT - ask a smaller question at every position
+Instead of "what is the best subarray anywhere", ask the much easier question:
+    what is the best subarray that ENDS exactly at position i?
+Call it cur. Now here is the whole algorithm in one thought. A subarray ending at i is
+either (a) just the single element nums[i], or (b) the best subarray ending at i-1 with
+nums[i] glued onto its right end. There is no third option, because the stretch is
+contiguous - whatever comes before nums[i] must be an unbroken run ending at i-1.
+So:
+    cur = max(nums[i], cur + nums[i])
+and the answer overall is the largest cur we ever saw:
+    best = max(best, cur)
+
+READ THAT max() IN ENGLISH
+"cur + nums[i]" means keep the running streak alive. "nums[i]" alone means abandon
+everything behind me and start fresh here. You abandon exactly when the accumulated
+history is NEGATIVE - because dragging a negative prefix along can only hurt whatever
+comes next. That is the entire intuition: a negative running total is dead weight, drop
+it. Anything zero or better is worth carrying forward.
+
+WHY IT IS CORRECT
+The true best subarray has to end SOMEWHERE. At that ending index, cur held exactly the
+best possible sum for a subarray ending there (by the argument above), and best took a
+snapshot of every cur along the way. So the true maximum was seen and recorded.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [-2, 1, -3, 4, -1, 2, 1, -5, 4]
+  i=0: cur = -2                        best = -2
+  i=1: max(1, -2+1=-1)   -> cur = 1    best = 1     (dropped the negative history)
+  i=2: max(-3, 1-3=-2)   -> cur = -2   best = 1
+  i=3: max(4, -2+4=2)    -> cur = 4    best = 4     (dropped it again)
+  i=4: max(-1, 4-1=3)    -> cur = 3    best = 4     (kept the streak - 4 was worth it)
+  i=5: max(2, 3+2=5)     -> cur = 5    best = 5
+  i=6: max(1, 5+1=6)     -> cur = 6    best = 6
+  i=7: max(-5, 6-5=1)    -> cur = 1    best = 6
+  i=8: max(4, 1+4=5)     -> cur = 5    best = 6
+  answer 6, which is the stretch [4,-1,2,1]. Exactly right.
+
+THE EDGE CASE THAT CATCHES PEOPLE
+If every number is negative, initialising best to 0 returns 0 - but the empty subarray
+is usually not allowed, and the real answer is the least-negative single element.
+Initialise best and cur to nums[0] and start the loop at index 1, as the code does.
+
+THE ONE-LINE TAKEAWAY
+Best-ending-here is either this element alone or this element extending the previous
+run. A negative running total is dead weight - drop it and start fresh.
+""".strip("\n")
+
+_WALKTHROUGH["Majority Element (Boyer-Moore voting)"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+One value appears MORE than half the time in the array (strictly more than n/2). Find
+it, using O(1) extra memory - so no hash map of counts, and no sorting.
+
+THE OBVIOUS SOLUTIONS FIRST
+Count every value in a dictionary and return the one over n/2 - O(n) time but O(n)
+space. Or sort and take the middle element (the majority must cover the midpoint) -
+O(n log n). Both fine, both fail the O(1)-space constraint.
+
+THE INSIGHT - cancellation
+Think of it as an election where every element casts one vote, and any two voters for
+DIFFERENT candidates can be paired up and both walk away, cancelling each other out.
+The majority element appears more than n/2 times, so even if every single one of its
+votes is cancelled by a vote for someone else, there are literally not enough opposing
+votes to go around. Something of the majority must survive. That is the whole idea:
+pair off unlike votes, and whoever is still standing at the end is the answer.
+
+HOW THE CODE PERFORMS THAT PAIRING
+Keep a candidate and a counter, which you can read as "how many unmatched votes the
+current candidate has right now".
+  - counter is 0: nobody is standing, so adopt the current element as candidate.
+  - element equals the candidate: one more unmatched vote for them, counter += 1.
+  - element differs: pair this vote against one of the candidate's, counter -= 1.
+    Both are gone. Neither is counted for anyone any more.
+That is it. The counter is not a frequency - it is a surplus. It says nothing about
+how many times the candidate actually appears.
+
+WHY THE SURVIVOR IS THE RIGHT ANSWER
+Split the array into the majority votes (more than n/2 of them) and everything else
+(fewer than n/2). Every cancellation destroys at most one majority vote, and there are
+strictly fewer non-majority votes than majority votes, so the non-majority side runs
+out of ammunition first. The counter can only be driven to zero by opposition it does
+not have enough of. The last candidate standing is the majority element.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [2,2,1,1,1,2,2]
+  x=2: count 0 -> candidate=2, count=1
+  x=2: matches   -> count=2
+  x=1: differs   -> count=1
+  x=1: differs   -> count=0     (candidate is now unbacked, but still stored)
+  x=1: count 0   -> candidate=1, count=1
+  x=2: differs   -> count=0
+  x=2: count 0   -> candidate=2, count=1
+  answer 2. Check: 2 appears 4 times out of 7, which is more than 3.5. Correct.
+  Notice the candidate flipped to 1 in the middle and it did not matter - the true
+  majority had enough votes left to take the lead back.
+
+THE PITFALL EVERYONE HITS
+This is only valid when a majority is GUARANTEED to exist. Run it on [1,2,3] and it
+returns 3, which is nonsense. If existence is not promised, do a second pass counting
+the candidate to confirm it really does exceed n/2. Same idea extended to n/3 needs
+TWO candidates and two counters, plus a verification pass.
+
+THE ONE-LINE TAKEAWAY
+Pair off unlike votes and they annihilate. Something with more than half the votes
+cannot be fully cancelled, so the last one standing wins.
+""".strip("\n")
+_WALKTHROUGH["Majority Element (Boyer-Moore)"] = _WALKTHROUGH["Majority Element (Boyer-Moore voting)"]
+
+_WALKTHROUGH["Container With Most Water"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+Each number is the height of a vertical wall standing at that x-position. Pick exactly
+TWO walls, and they form a container with the flat ground. How much water can it hold?
+Water pours over the shorter wall, so:
+    area = min(height[left], height[right]) * (right - left)
+i.e. the SHORTER wall sets the depth, and the gap between them sets the width. Maximise
+that area. (Note: unlike Trapping Rain Water, the walls in between are ignored entirely
+- imagine they are made of glass.)
+
+THE OBVIOUS SOLUTION FIRST
+Try all pairs, compute the area for each, keep the biggest. O(n^2). Correct, too slow.
+
+THE INSIGHT - start as wide as possible, then never widen again
+Put one pointer at each end. Right now the width is the largest it will ever be. From
+here, any move makes the container narrower, so the ONLY way a future container beats
+this one is by being deeper. Depth is capped by the shorter wall. That gives you the
+rule:
+    move the pointer on the SHORTER wall inward.
+
+WHY DISCARDING THE SHORTER WALL LOSES NOTHING
+Say the left wall is the shorter one. Consider every container that still uses that
+left wall - pairing it with any wall further in. Each of those is narrower than the one
+you just measured (the other pointer can only come closer), and none of them is deeper,
+because the depth is capped by that same short left wall no matter how tall its partner
+is. So every one of them has area less than or equal to what you already recorded.
+They are all safely eliminated in one step. That is why one pass suffices: each move
+retires an entire family of pairs, not just one pair.
+If you moved the TALLER wall instead, you would lose width AND keep the same cap on
+depth, so you could destroy the real answer. That asymmetry is the whole trick.
+
+TRACE IT WITH REAL NUMBERS
+  height = [1,8,6,2,5,4,8,3,7]        indices 0..8
+  l=0(h=1), r=8(h=7): area = min(1,7)*8 = 8    best=8   left is shorter -> l=1
+  l=1(h=8), r=8(h=7): area = min(8,7)*7 = 49   best=49  right is shorter -> r=7
+  l=1(h=8), r=7(h=3): area = min(8,3)*6 = 18   best=49  right shorter -> r=6
+  l=1(h=8), r=6(h=8): area = min(8,8)*5 = 40   best=49  tie -> move either, r=5
+  ... nothing later beats it, and the pointers meet.
+  answer 49, from the walls of height 8 and 7. Correct.
+
+THE ONE-LINE TAKEAWAY
+Widest first, then only depth can save you - so always abandon the shorter wall. It
+can never do better than the container you just measured.
+""".strip("\n")
+_WALKTHROUGH["Container With Most Water (two pointers)"] = _WALKTHROUGH["Container With Most Water"]
+
+_WALKTHROUGH["Find the Duplicate Number (Floyd's cycle)"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+You have n+1 numbers, every one of them somewhere in the range 1..n. By the pigeonhole
+principle at least one value must repeat. Find that repeated value - without modifying
+the array and using O(1) extra space. Those two constraints are what make it hard;
+otherwise you would sort it or use a set.
+
+THE REFRAME - this array is secretly a linked list
+Read the array as a set of pointers: from index i, "next" is nums[i]. Start at index 0
+and keep following:  0 -> nums[0] -> nums[nums[0]] -> ...
+Every value is in 1..n, so every hop lands on a valid index and the walk NEVER ends -
+in a finite space, an endless walk must eventually revisit somewhere, which means the
+path is a tail leading into a CYCLE (the classic rho shape).
+
+WHY THE CYCLE ENTRANCE IS THE DUPLICATE
+A node has two arrows pointing INTO it exactly when two different indices hold the same
+value - that is precisely a duplicate. The entrance of the cycle is the one node
+reachable from two directions: once by walking in along the tail, and once by coming
+around the loop. So finding where the cycle begins IS finding the duplicate value.
+Index 0 is never a target because all values are >= 1, which guarantees index 0 sits on
+the tail and not inside the loop - that is why starting there is safe.
+
+PHASE 1 - detect that a cycle exists (tortoise and hare)
+Move slow one hop at a time and fast two hops at a time. Once both are inside the loop,
+fast gains exactly one step on slow every iteration, so the gap shrinks by one each
+time and must eventually hit zero. They collide. (Fast can never leap over slow - it
+would have to close a gap of 1 by moving 2, which lands it exactly on slow.) The
+meeting point is somewhere in the loop, but NOT generally the entrance.
+
+PHASE 2 - the reset that finds the entrance (the magic-looking bit)
+Put one pointer back at the start and leave the other at the meeting point, then move
+BOTH one step at a time. Where they meet is the cycle entrance.
+Why: let the tail be F steps long and let the meeting point be a steps into the loop.
+When they met, slow had walked F + a and fast had walked twice that. The extra distance
+fast covered is whole laps of the loop, so F + a is a multiple of the loop length. That
+means walking F more steps from the meeting point lands you exactly at the entrance -
+and walking F steps from the start also lands you at the entrance, by definition of F.
+Both pointers arrive there at the same moment. You do not need the numbers F or a; the
+walk finds it for you.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [1,3,4,2,2]      (values 1..4, five slots, so something repeats)
+  The links:  0 -> 1 -> 3 -> 2 -> 4 -> 2 -> 4 -> 2 ...
+  Tail is 0 -> 1 -> 3, then the loop is 2 -> 4 -> 2. The entrance is 2.
+  Phase 1: slow 1,3,2,4,2...  fast 3,4,4...  they meet inside the loop.
+  Phase 2: one pointer restarts at index 0 and both step one at a time; they meet at 2.
+  answer 2 - and indeed 2 appears twice in the array.
+
+WHY NOT JUST...
+A hash set is O(n) space (banned). Sorting modifies the array (banned) and is slower.
+Binary search on the ANSWER - count how many values are <= mid, and if that count
+exceeds mid the duplicate is in the lower half - is a great alternative worth
+mentioning: O(n log n) time, O(1) space, no cleverness required.
+
+THE ONE-LINE TAKEAWAY
+Treat values as pointers and the array becomes a linked list with a loop; two arrows
+into one node means a duplicate, so the cycle entrance is the answer.
+""".strip("\n")
+
+_WALKTHROUGH["First Missing Positive"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+Given any array of integers - negatives, zeros, duplicates, huge values, all allowed -
+find the smallest positive integer (1, 2, 3, ...) that is NOT present. Required: O(n)
+time and O(1) extra space, which is what makes this a hard problem instead of a trivial
+one.
+
+THE INSIGHT NOBODY SEES FIRST - the answer is boxed in
+With n slots in the array, the answer can only ever be somewhere in 1..n+1. Why: the
+best case is that the array holds exactly 1,2,3,...,n, and then the answer is n+1.
+Any other array is missing something smaller. So numbers that are negative, zero, or
+bigger than n are pure noise - they can never BE the answer, and they cannot block it.
+This shrinks an infinite search into n+1 possibilities.
+
+THE SECOND INSIGHT - use the array itself as the hash map
+A hash set would solve it instantly but costs O(n) space. Since we only care about
+values 1..n and we happen to have exactly n slots, we can store the information
+positionally: put value v into index v-1. Then "is 3 present?" becomes "does index 2
+hold a 3?" - answered in O(1) with no extra memory. The array becomes its own lookup
+table. This is the technique to remember: when values and indices live in the same
+small range, indices ARE your hash.
+
+THE PLACEMENT PASS
+Walk the array. Whenever the current value v is in range 1..n and is not already
+sitting in its home slot, SWAP it to index v-1. Then look at whatever got swapped in
+and repeat, because that new value may also need relocating - hence a while loop inside
+the for loop, not an if.
+
+WHY THE NESTED LOOP IS STILL O(n), NOT O(n^2)
+This is the question interviewers ask. Every swap puts at least one value into its
+final correct home, permanently. There are only n slots, so at most n swaps can ever
+happen across the entire run. The inner loop is therefore bounded in total, not per
+iteration. The guard `nums[v-1] != v` is what stops infinite swapping on duplicates -
+if the home slot already holds the right value, there is nothing to do.
+
+THE SCAN PASS
+Now walk once more. The first index i where nums[i] is not i+1 is a hole, and i+1 is
+the smallest missing positive. If every slot is correct, the array is exactly 1..n and
+the answer is n+1.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [3, 4, -1, 1]      n = 4, so the answer is somewhere in 1..5
+  i=0: value 3 belongs at index 2, which holds -1 -> swap  -> [-1, 4, 3, 1]
+       now index 0 holds -1, which is out of range -> stop, move on
+  i=1: value 4 belongs at index 3, which holds 1 -> swap   -> [-1, 1, 3, 4]
+       now index 1 holds 1, which belongs at index 0 -> swap -> [1, -1, 3, 4]
+       now index 1 holds -1, out of range -> stop
+  i=2: 3 is already at index 2. correct, nothing to do.
+  i=3: 4 is already at index 3. correct.
+  Scan: index 0 holds 1 (want 1, fine). index 1 holds -1 (want 2) -> MISMATCH.
+  answer = 2. Correct: the array contains 1, 3, 4 and is missing 2.
+
+THE ONE-LINE TAKEAWAY
+The answer must be in 1..n+1, so ignore everything else; then put value v at index v-1
+and the first slot holding the wrong value names the missing number.
+""".strip("\n")
+
+_WALKTHROUGH["Sort Colors (Dutch National Flag)"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+The array contains only 0s, 1s and 2s (classically red, white, blue). Sort it in place,
+in ONE pass, with O(1) space. Sorting normally, or counting then rewriting (two passes),
+both work but miss the point of the exercise.
+
+THE INSIGHT - maintain three regions and grow them as you go
+Rather than sorting, PARTITION. Keep the array split into four zones at all times:
+
+  [ 0 0 0 | 1 1 1 | ? ? ? ? ? | 2 2 2 ]
+           ^low     ^mid        ^high
+   settled  settled  unknown     settled
+
+  everything before low  is a confirmed 0
+  everything from low up to mid-1 is a confirmed 1
+  everything from mid to high is NOT YET LOOKED AT
+  everything after high is a confirmed 2
+
+That description is the loop invariant, and it is the entire algorithm. You are done
+when the unknown zone is empty, i.e. when mid passes high.
+
+THE THREE RULES - each one just shrinks the unknown zone
+Look at nums[mid], the first unknown element:
+  it is 0 -> swap it with nums[low]. Now the 0 zone is one bigger. Advance BOTH low and
+             mid, because whatever came back from position low can only have been a 1
+             (everything between low and mid is 1s by the invariant), and a 1 is already
+             where it belongs.
+  it is 1 -> it is already in the right zone. Just advance mid. No swap at all.
+  it is 2 -> swap it with nums[high] and shrink high by one. Do NOT advance mid, because
+             the value you just pulled in from the far end has never been examined - it
+             could be a 0, a 1 or another 2, and it still needs judging.
+
+THAT ASYMMETRY IS THE WHOLE EXAM
+"Advance mid on a 0, do not advance mid on a 2" is the single detail interviewers watch
+for, and the reason is exactly the one above: on the left you swap with a region you
+have already classified, on the right you swap with the unexplored region.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [2,0,2,1,1,0]     low=0, mid=0, high=5
+  mid=0 sees 2 -> swap with index 5, high=4, mid STAYS -> [0,0,2,1,1,2]
+  mid=0 sees 0 -> swap with index 0 (itself), low=1, mid=1 -> [0,0,2,1,1,2]
+  mid=1 sees 0 -> swap with index 1 (itself), low=2, mid=2 -> [0,0,2,1,1,2]
+  mid=2 sees 2 -> swap with index 4, high=3, mid STAYS     -> [0,0,1,1,2,2]
+  mid=2 sees 1 -> just advance, mid=3                      -> [0,0,1,1,2,2]
+  mid=3 sees 1 -> just advance, mid=4. Now mid > high (4 > 3) -> stop.
+  result [0,0,1,1,2,2]. One pass, no counting.
+
+WHERE ELSE THIS SHOWS UP
+This is the three-way partition inside quicksort, which is how quicksort survives
+arrays full of duplicate keys. Recognising it as a partition, not a sort, is what makes
+the pattern reusable.
+
+THE ONE-LINE TAKEAWAY
+Three pointers carve the array into settled-0s, settled-1s, unknown, settled-2s. Swap
+from the left and move on; swap from the right and look again.
+""".strip("\n")
+
+_WALKTHROUGH["Product of Array Except Self"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+Build an output array where out[i] is the product of every number in the input EXCEPT
+nums[i]. Two constraints do the work: no division allowed, and O(n) time.
+
+WHY DIVISION IS BANNED (and why the ban is reasonable)
+The tempting solution is to multiply everything into one total and then divide by
+nums[i]. It falls apart the moment a zero appears - you would be dividing by zero - and
+with two zeros every answer is 0, needing yet another special case. Banning division
+forces the cleaner idea and removes all the zero-handling.
+
+THE INSIGHT - split the product at i
+Everything except nums[i] is just two groups: the stuff to its LEFT and the stuff to
+its RIGHT. So:
+    out[i] = (product of nums[0..i-1]) * (product of nums[i+1..n-1])
+Notice neither group contains nums[i]. If you had those two numbers for each i you
+would be finished - and each can be built with a single running multiplication, the
+same way a running sum works.
+
+TWO SWEEPS, NO EXTRA ARRAYS
+First sweep, left to right: carry a running product `left` that starts at 1. Before
+multiplying nums[i] in, write the current value into out[i] - at that instant `left`
+holds exactly the product of everything strictly before i. Then fold nums[i] in.
+Second sweep, right to left: carry a running product `right` starting at 1, and this
+time MULTIPLY it into out[i] (which already holds the left part), then fold nums[i] in.
+After both sweeps out[i] = left part * right part. Done.
+The trick that keeps space at O(1) extra: the output array itself carries the partial
+result between the two sweeps, so you never allocate prefix[] and suffix[] arrays.
+(The output does not count as extra space by convention.)
+
+THE DETAIL THAT DECIDES CORRECTNESS
+Write to out[i] BEFORE folding nums[i] into the running product. If you fold first, the
+running product includes nums[i] and you get the whole product, which is exactly what
+you were trying to avoid. Off-by-one here is the classic bug.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [1,2,3,4]
+  Left sweep (left starts at 1):
+    i=0: out[0] = 1        then left = 1*1 = 1
+    i=1: out[1] = 1        then left = 1*2 = 2
+    i=2: out[2] = 2        then left = 2*3 = 6
+    i=3: out[3] = 6        then left = 6*4 = 24
+    out is now [1, 1, 2, 6]   - each holds the product of what came before it
+  Right sweep (right starts at 1):
+    i=3: out[3] = 6*1 = 6      then right = 1*4 = 4
+    i=2: out[2] = 2*4 = 8      then right = 4*3 = 12
+    i=1: out[1] = 1*12 = 12    then right = 12*2 = 24
+    i=0: out[0] = 1*24 = 24    then right = 24*1 = 24
+  answer [24, 12, 8, 6]. Check out[1]: 1*3*4 = 12. Correct.
+
+  And it handles zeros with no special code: nums = [0,2,3] gives left sweep [1,0,0]
+  and after the right sweep [6,0,0], which is right - only the zero position gets a
+  non-zero answer.
+
+THE ONE-LINE TAKEAWAY
+Everything-except-me = everything-to-my-left times everything-to-my-right. One forward
+running product, one backward running product, and write before you multiply.
+""".strip("\n")
+
+_WALKTHROUGH["Subarray Sum Equals K"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+Count how many contiguous stretches of the array add up to exactly k. Note COUNT, not
+find - overlapping stretches all count separately. Negative numbers are allowed, which
+quietly rules out the sliding-window approach people reach for first.
+
+WHY SLIDING WINDOW DOES NOT WORK HERE
+A sliding window relies on the sum growing when you extend and shrinking when you
+contract. With negatives that monotonic behaviour is gone - extending the window can
+make the sum go DOWN - so you never know whether to move the left or the right edge.
+Say this out loud in an interview; recognising when a technique does not apply scores
+as highly as knowing when it does.
+
+THE INSIGHT - prefix sums turn subarrays into subtraction
+Let prefix[i] be the sum of everything from the start up to position i. Then the sum of
+the stretch from index a+1 to index b is simply:
+    prefix[b] - prefix[a]
+So asking "does some stretch ending at b sum to k" becomes:
+    is there an earlier prefix equal to prefix[b] - k ?
+That is a lookup, not a search. Store every prefix sum you have seen in a hash map from
+value to how many times it occurred, and at each step add in the count of the value you
+need. One pass, O(n).
+
+READ THE THREE LINES IN ENGLISH
+  prefix += x                  running total up to and including this element
+  count += seen[prefix - k]    every earlier point where the running total was
+                               (current - k) marks the start of a stretch summing to k,
+                               so add ALL of them, not one
+  seen[prefix] += 1            record the current running total for future lookups
+
+WHY seen[0] = 1 BEFORE THE LOOP STARTS
+This is the line everyone forgets. It represents the empty prefix - the state before
+any element was added, where the running total is 0. Without it you miss every stretch
+that starts at index 0. Concretely: nums = [3], k = 3. After the first element prefix
+is 3 and you look up seen[3-3] = seen[0]. If that were not pre-seeded to 1 you would
+report 0 subarrays instead of 1.
+
+WHY IT MUST COUNT, NOT JUST FLAG
+The map stores COUNTS because the same prefix sum can occur many times (any zero-sum
+stretch in between recreates it), and each occurrence is a distinct valid starting
+point. Storing a boolean would undercount.
+
+TRACE IT WITH REAL NUMBERS
+  nums = [1, 2, 3], k = 3
+  start: seen = {0:1}, prefix = 0, count = 0
+  x=1: prefix=1. need seen[1-3] = seen[-2] = 0. count=0. seen={0:1, 1:1}
+  x=2: prefix=3. need seen[3-3] = seen[0]  = 1. count=1. seen={0:1, 1:1, 3:1}
+       -> that is the stretch [1,2]
+  x=3: prefix=6. need seen[6-3] = seen[3]  = 1. count=2. seen={0:1,1:1,3:1,6:1}
+       -> that is the stretch [3]
+  answer 2. The two stretches are [1,2] and [3]. Correct.
+
+THE FAMILY THIS BELONGS TO
+Same machinery solves: subarray with sum divisible by k (store prefix % k), longest
+subarray summing to k (store the FIRST index of each prefix instead of a count), and
+Path Sum III on a tree (same trick applied down a root-to-node path). Learn the pattern
+once, recognise it four times.
+
+THE ONE-LINE TAKEAWAY
+Subarray sum = difference of two prefix sums, so remember every prefix you have seen in
+a hash map and each new one becomes a single lookup.
+""".strip("\n")
+
+_WALKTHROUGH["Largest Rectangle in Histogram (monotonic stack)"] = r"""
+WHAT THE PROBLEM ACTUALLY IS
+The array is a histogram of adjacent bars, each one unit wide. Find the largest
+axis-aligned rectangle you can draw inside it. The rectangle may span several bars, but
+its height is then limited by the SHORTEST bar it spans.
+
+THE OBVIOUS SOLUTION FIRST
+For every bar, treat its height as the rectangle height and expand left and right while
+the neighbouring bars are at least that tall. Area = height * width. O(n^2) in the worst
+case. Correct, and worth stating - the fast version does exactly this, just without
+re-scanning.
+
+THE REFRAME - one question per bar
+Every maximal rectangle has some bar as its shortest member, so it is enough to ask,
+for each bar i:
+    how far left and how far right can a rectangle of height heights[i] stretch?
+It stretches until it meets a bar STRICTLY SHORTER than heights[i] on each side. So the
+whole problem reduces to: for each bar, find the nearest shorter bar to the left and the
+nearest shorter bar to the right. Then width = right - left - 1, area = height * width.
+"Nearest smaller element on each side" is the real problem, and that is what a monotonic
+stack computes in one pass.
+
+HOW THE STACK WORKS - what it is actually holding
+Keep a stack of indices whose heights are INCREASING from bottom to top. Read that as:
+these are the bars still waiting to find out where they end. While a bar is on the
+stack, its rectangle has not yet been blocked on the right.
+When a new bar of height h arrives:
+  - if it is taller, it cannot block anything. Push it and move on.
+  - if it is shorter, it BLOCKS every taller bar sitting on the stack. Pop each one and
+    settle its rectangle now, because you have just learned its right boundary.
+
+SETTLING A POPPED BAR - where the width comes from
+When you pop index `top`, the current position i is the first shorter bar to its RIGHT.
+And the element now exposed underneath it on the stack is, by the increasing property,
+the first shorter bar to its LEFT. So the rectangle spans strictly between them:
+    width = i - stack[-1] - 1
+and if the stack is empty, nothing to the left was shorter, so the bar extends all the
+way back to the start: width = i.
+
+THE SENTINEL TRICK
+Appending a 0 to the end of the heights forces every remaining bar to be popped and
+settled, because 0 is shorter than everything. Without it you would need a separate
+drain loop after the main loop. Small trick, removes a whole block of code.
+
+WHY IT IS O(n) DESPITE THE INNER WHILE LOOP
+Each index is pushed exactly once and popped at most once across the entire run, so the
+total work in the while loop over all iterations is bounded by n. Never judge the
+complexity by the nesting - count total pushes and pops.
+
+TRACE IT WITH REAL NUMBERS
+  heights = [2,1,5,6,2,3] with the sentinel -> [2,1,5,6,2,3,0]
+  i=0 h=2: stack empty -> push 0.                    stack indices [0]
+  i=1 h=1: 2 > 1 -> pop 0. height 2, stack empty so width = 1. area 2. best=2.
+           push 1.                                   stack [1]
+  i=2 h=5: 1 < 5 -> push 2.                          stack [1,2]
+  i=3 h=6: 5 < 6 -> push 3.                          stack [1,2,3]
+  i=4 h=2: 6 > 2 -> pop 3. height 6, width = 4-2-1 = 1. area 6.  best=6
+           5 > 2 -> pop 2. height 5, width = 4-1-1 = 2. area 10. best=10
+           1 < 2 -> stop. push 4.                    stack [1,4]
+  i=5 h=3: 2 < 3 -> push 5.                          stack [1,4,5]
+  i=6 h=0: pop 5 -> height 3, width = 6-4-1 = 1. area 3.
+           pop 4 -> height 2, width = 6-1-1 = 4. area 8.
+           pop 1 -> height 1, stack empty, width = 6. area 6.
+  answer 10 - the bars of height 5 and 6 taken at height 5, two wide.
+
+THE ONE-LINE TAKEAWAY
+Every rectangle is capped by its shortest bar, so for each bar find the nearest shorter
+bar on each side. A stack kept in increasing order hands you both boundaries for free.
+""".strip("\n")
+
+for _e in ENTRIES:
+    if not _e.get("walkthrough") and _e["title"] in _WALKTHROUGH:
+        _e["walkthrough"] = _WALKTHROUGH[_e["title"]]
+
+
+# Topic-specific replacements for mnemonics that the tag-based backfill made
+# too generic (e.g. every greedy problem inheriting the same greedy blurb).
+_BETTER_MNEMONIC = {
+    "Gas Station":
+        "TOTAL says IF (sum of gas < sum of cost -> -1); the running TANK says WHERE. "
+        "When the tank goes negative at station f, every station from the old start "
+        "through f is dead too - they'd have even less fuel - so jump to f+1 and reset.",
+    "Trapping Rain Water":
+        "Water on top of one bar = min(tallest left, tallest right) - its own height. "
+        "Think column by column, never puddle by puddle. Two pointers: always process "
+        "the SHORTER side, because that side is the one capping the depth.",
+    "Maximum Subarray (Kadane's algorithm)":
+        "Best-ending-here = max(this element alone, this element + best-ending-before). "
+        "A negative running total is dead weight - drop it and start fresh. Track the "
+        "global best separately as you go.",
+    "Majority Element (Boyer-Moore voting)":
+        "An election where two unlike votes cancel out. Something with MORE than half "
+        "the votes can't be fully cancelled, so the last candidate standing wins. "
+        "The counter is a SURPLUS, not a frequency.",
+    "Container With Most Water":
+        "Start widest, then only extra DEPTH can beat you - so always move the SHORTER "
+        "wall inward. Every pair using that short wall is narrower and no deeper, so "
+        "you retire a whole family of pairs per step.",
+    "Find the Duplicate Number (Floyd's cycle)":
+        "Values are pointers -> the array is a linked list with a loop. Two arrows into "
+        "one node = a duplicate, so the CYCLE ENTRANCE is the answer. Meet with "
+        "slow/fast, then reset one to the head and step both at speed 1.",
+    "First Missing Positive":
+        "The answer must be in 1..n+1, so anything <=0 or >n is noise. Put value v at "
+        "index v-1 (the array becomes its own hash map); the first slot not holding "
+        "i+1 names the missing number.",
+    "Sort Colors (Dutch National Flag)":
+        "Three pointers carve out settled-0s | settled-1s | UNKNOWN | settled-2s. "
+        "See a 0: swap left and advance mid (you swapped with known ground). See a 2: "
+        "swap right and do NOT advance mid (that value is unexamined).",
+    "Product of Array Except Self":
+        "Everything-except-me = everything-left-of-me x everything-right-of-me. One "
+        "forward running product, one backward running product, and always WRITE to "
+        "out[i] before folding nums[i] in.",
+    "Subarray Sum Equals K":
+        "Subarray sum = difference of two prefix sums, so 'sums to k' becomes 'have I "
+        "seen prefix - k before?' - a hash-map lookup. Seed seen[0]=1 for the empty "
+        "prefix. Negatives kill sliding window; prefix sums don't care.",
+    "Largest Rectangle in Histogram (monotonic stack)":
+        "Every rectangle is capped by its SHORTEST bar, so per bar find the nearest "
+        "shorter bar left and right. An increasing stack gives both: the new bar is the "
+        "right bound, the stack element beneath is the left bound.",
+}
+_BETTER_MNEMONIC["Gas Station (greedy circuit)"] = _BETTER_MNEMONIC["Gas Station"]
+_BETTER_MNEMONIC["Trapping Rain Water (two pointers)"] = _BETTER_MNEMONIC["Trapping Rain Water"]
+_BETTER_MNEMONIC["Majority Element (Boyer-Moore)"] = _BETTER_MNEMONIC["Majority Element (Boyer-Moore voting)"]
+_BETTER_MNEMONIC["Container With Most Water (two pointers)"] = _BETTER_MNEMONIC["Container With Most Water"]
+
+for _e in ENTRIES:
+    if _e["title"] in _BETTER_MNEMONIC:
+        _e["mnemonic"] = _BETTER_MNEMONIC[_e["title"]]

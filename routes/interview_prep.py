@@ -269,6 +269,7 @@ def ai_sde_pdf():
             (it.get("frequency") or "")] if x)
         fields = [("Difficulty & interview frequency", _diff_freq or None),
                   ("Answer / reasoning", it.get("answer")),
+                  ("Explained step by step", it.get("walkthrough")),
                   ("Example", it.get("example")),
                   ("How to remember", it.get("mnemonic")),
                   ("Complexity", it.get("complexity")),
