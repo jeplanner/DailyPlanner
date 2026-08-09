@@ -17251,6 +17251,623 @@ WHAT PEOPLE GET WRONG: both corrections; and forgetting that every child must
 receive at least one dollar, which is what the initial -1 check enforces.
 """.strip("\n")
 
+_PLAIN_ALGO["Gas Station (greedy circuit)"] = r"""
+IN ONE SENTENCE: the TOTAL tells you whether an answer exists at all; a running
+tank tells you WHERE it is - and every station you fail from is also a dead
+start.
+
+STEPS
+1. Keep three numbers: a total of all the gas-minus-cost differences, a running
+   tank, and a candidate start index at 0.
+2. Walk the stations. Add this station's difference to both the total and the
+   tank.
+3. If the tank goes negative, you could not reach here from the current
+   candidate. Move the candidate to the NEXT station and reset the tank to zero.
+4. At the end, if the total is negative there is not enough fuel in the whole
+   loop - return -1. Otherwise return the candidate.
+
+WHY THE JUMP IS SAFE, WHICH IS THE ENTIRE PROBLEM: suppose you start at s and
+run dry arriving at station f. Then no station between s and f works either -
+each of them would begin with an empty tank whereas your run reached it with a
+non-negative tank, so they have strictly less fuel available. All of them are
+eliminated at once, which is why one pass suffices instead of trying every start.
+
+WHY A NON-NEGATIVE TOTAL GUARANTEES A SOLUTION: if the total is non-negative,
+some starting point must work - the deficits can always be covered by the
+surpluses if you begin after the worst deficit. So the two checks divide cleanly:
+the total answers "is it possible", the tank answers "from where".
+
+WHY YOU DO NOT NEED TO SIMULATE THE WRAP-AROUND: the argument above proves the
+surviving candidate completes the loop, so no second pass around the circle is
+required.
+
+WHAT PEOPLE GET WRONG: resetting the tank but forgetting to move the start; and
+trying every starting station, which is O(n^2) and misses the insight.
+""".strip("\n")
+
+_PLAIN_ALGO["Height Checker"] = r"""
+IN ONE SENTENCE: sort a copy to get the target order, then count how many
+positions differ from it.
+
+STEPS
+1. Make a sorted copy of the heights.
+2. Walk both lists together, counting the positions where the values differ.
+3. Return that count.
+
+WHY YOU COMPARE VALUES AND NOT IDENTITIES: two students of the same height are
+interchangeable - if a position holds the right HEIGHT, it is not out of order,
+regardless of which student is there. Comparing anything other than the value
+over-counts on duplicates, which is the only trap here.
+
+WHY A COPY: the question asks how many are misplaced relative to sorted order, so
+you need both the original arrangement and the target one at the same time.
+Sorting in place destroys the thing you are measuring.
+
+THE O(n) VERSION IF ASKED: heights are bounded (1-100 in the usual constraints),
+so counting sort produces the target order in linear time. Worth naming.
+
+WHAT PEOPLE GET WRONG: sorting in place and then comparing against itself, which
+always returns 0; and assuming duplicates need special handling when they do not.
+""".strip("\n")
+
+_PLAIN_ALGO["Largest Odd Number in String"] = r"""
+IN ONE SENTENCE: scan from the right for the last odd digit - everything up to
+and including it is the answer.
+
+STEPS
+1. Walk the digits from the END toward the start.
+2. At the first odd digit you meet, return the prefix from position 0 up to and
+   including it.
+3. If no odd digit exists, return the empty string.
+
+WHY A PREFIX AND NOT ANY SUBSTRING: the problem asks for the largest odd-valued
+substring, and a longer number always beats a shorter one when the digits are
+non-negative. So you want the longest possible piece - which means starting at
+position 0 - and the only constraint is that it must END on an odd digit to be
+odd. Hence: longest prefix ending in an odd digit.
+
+WHY SCANNING FROM THE RIGHT: the FIRST odd digit you find from the right is the
+LAST one in the string, which gives the longest qualifying prefix. Scanning from
+the left and stopping at the first odd digit gives the shortest one.
+
+WHY LEADING ZEROS DO NOT MATTER HERE: the usual constraints permit them in the
+output substring; check the statement, because some variants do not.
+
+WHAT PEOPLE GET WRONG: converting to an integer, which overflows on the long
+inputs this problem deliberately uses - work with the string throughout.
+""".strip("\n")
+
+_PLAIN_ALGO["Lemonade Change (greedy)"] = r"""
+IN ONE SENTENCE: track how many fives and tens you hold, and when giving change
+for a twenty, always pay with a ten plus a five before resorting to three fives.
+
+STEPS
+1. Keep counts of fives and tens.
+2. A five: take it, increment fives. No change needed.
+3. A ten: you owe five. If you have no fives, fail. Otherwise spend one five and
+   gain a ten.
+4. A twenty: you owe fifteen. Prefer a ten plus a five; if you have no ten, use
+   three fives; if neither is possible, fail.
+5. If you get through every customer, return true.
+
+WHY THE PREFERENCE ORDER MATTERS - the whole problem: fives are the flexible
+currency. They can pay change for a ten OR a twenty, while a ten can only ever
+help with a twenty. So you should spend the inflexible note first and hoard the
+flexible one. Paying a twenty with three fives when a ten was available can
+strand you later, and that is the exact case the problem tests.
+
+WHY YOU NEVER TRACK TWENTIES: a twenty is never used as change for anything, so
+holding it is irrelevant. Recognising that a variable is unnecessary is a small
+but real signal.
+
+WHY GREEDY IS PROVABLY SAFE: at every step, spending the least flexible
+combination leaves you weakly better off for every possible future. There is no
+scenario where hoarding a ten helps more than hoarding an equivalent value in
+fives.
+
+WHAT PEOPLE GET WRONG: checking the three-fives option first; and tracking
+twenties, which adds state that never affects the answer.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Ascending Subarray Sum"] = r"""
+IN ONE SENTENCE: keep a running sum of the current strictly-increasing run,
+restart it whenever the run breaks, and remember the largest.
+
+STEPS
+1. Set both the best and the current sum to the first element.
+2. Walk from the second element. If it is strictly greater than the previous one,
+   the run continues - add it to the current sum.
+3. Otherwise the run ends - restart the current sum at this element.
+4. Update the best after each step.
+5. Return the best.
+
+WHY "STRICTLY" GREATER MATTERS: equal neighbours break the run. Using
+greater-than-or-equal quietly solves the non-decreasing version and gives larger,
+wrong answers on inputs with repeats - which is exactly what the test cases
+contain.
+
+WHY THIS IS KADANE'S SHAPE WITH A DIFFERENT RESTART RULE: Kadane restarts when
+the running sum stops helping; here you restart when the ASCENDING property
+breaks. Same two-variable skeleton, different condition. Noticing that family
+resemblance means you never have to invent this from scratch.
+
+WHY TWO VARIABLES, NOT ONE: the current run can shrink while the best stays put.
+Collapsing them returns the last run's sum rather than the maximum.
+
+WHAT PEOPLE GET WRONG: comparing against the running sum instead of against the
+previous ELEMENT; and seeding at 0, which fails on all-negative input.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Product of Two Elements in an Array"] = r"""
+IN ONE SENTENCE: find the two largest values in one pass and return the product
+of each minus one.
+
+STEPS
+1. Keep two variables for the largest and second largest, both starting at 0.
+2. For each value: if it beats the largest, the old largest becomes the second
+   and this becomes the largest. Otherwise if it beats the second, it becomes the
+   second.
+3. Return (largest - 1) times (second - 1).
+
+WHY THE TWO LARGEST ARE OPTIMAL: subtracting one is a monotonic transformation -
+it preserves order - so maximising (a-1)(b-1) over positive values is the same as
+maximising a and b independently. There is no trade-off to search for.
+
+WHY THE ELIF, NOT A SECOND IF: if the value already became the largest, it must
+not also be assigned to the second - that would duplicate one element and the
+problem needs two distinct positions. This is the classic bug in every
+find-the-top-two routine.
+
+WHY ONE PASS RATHER THAN SORTING: O(n) instead of O(n log n), and it generalises
+to a stream. Sorting is acceptable but the one-pass version is what the question
+is aimed at.
+
+WHY STARTING AT 0 IS SAFE HERE: the constraints guarantee positive values. With
+negatives allowed you would need to start at negative infinity, and the whole
+answer would change anyway since two negatives could win.
+
+WHAT PEOPLE GET WRONG: the elif; and forgetting to subtract one from BOTH terms.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Absolute Difference"] = r"""
+IN ONE SENTENCE: sort, because the closest pair must be adjacent - then find the
+smallest adjacent gap and collect every pair that achieves it.
+
+STEPS
+1. Sort the array.
+2. Find the minimum difference between consecutive elements.
+3. Walk the consecutive pairs again, collecting those whose difference equals
+   that minimum.
+4. Return them in order.
+
+WHY THE CLOSEST PAIR MUST BE ADJACENT AFTER SORTING: if two values have another
+value between them, that in-between value is closer to each of them than they
+are to each other. So no non-adjacent pair can ever be the minimum, and you only
+need to examine n-1 pairs instead of all n(n-1)/2.
+
+WHY TWO PASSES: you cannot collect the answers until you know the minimum, and
+you do not know the minimum until you have seen every gap. Doing it in one pass
+means clearing your collected list every time you find a smaller gap - also
+correct, and slightly more error-prone.
+
+WHY THE OUTPUT IS ALREADY SORTED: you walk the sorted array left to right, so the
+pairs come out in ascending order for free. No final sort is needed.
+
+WHAT PEOPLE GET WRONG: comparing all pairs, which is O(n^2); and forgetting that
+several pairs can tie for the minimum, returning only the first.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Operations to Make the Array Increasing"] = r"""
+IN ONE SENTENCE: sweep left to right; any element that is not already above its
+predecessor gets raised to exactly one more than it, and you count the difference.
+
+STEPS
+1. Remember the previous element, starting with the first.
+2. Walk from the second. If the current value is less than or equal to the
+   previous, you must raise it to previous plus one - add that difference to the
+   cost and set the previous to that new value.
+3. Otherwise the value is already fine; set the previous to it as-is.
+4. Return the total cost.
+
+WHY RAISING TO EXACTLY previous + 1 IS OPTIMAL: you only need STRICTLY
+increasing, so one more than the predecessor is the smallest legal value. Raising
+higher costs more now and constrains everything after it, never helping. Greedy
+minimal steps are safe because the constraint only looks backwards.
+
+WHY YOU TRACK THE ADJUSTED VALUE, NOT THE ORIGINAL: once you raise an element,
+subsequent elements must exceed the RAISED value. Comparing against the original
+input value lets later elements sit too low and the array is not increasing.
+This is the single bug in this problem.
+
+WHY OPERATIONS ARE COUNTED AS A DIFFERENCE: each operation adds one, so raising a
+value by k costs exactly k. No simulation is needed.
+
+WHAT PEOPLE GET WRONG: comparing against nums[i-1] from the input rather than the
+running previous; and using strictly-less-than in the check, which permits
+equality and leaves the array non-decreasing rather than increasing.
+""".strip("\n")
+
+_PLAIN_ALGO["Range Sum of BST"] = r"""
+IN ONE SENTENCE: use the BST ordering to skip whole subtrees that cannot contain
+anything in range.
+
+STEPS
+1. Empty node contributes 0.
+2. If the node's value is BELOW the low bound, everything in its left subtree is
+   even smaller - skip it entirely and recurse only right.
+3. If the value is ABOVE the high bound, everything right is even bigger - recurse
+   only left.
+4. Otherwise the value is in range: add it, and recurse into BOTH sides.
+
+WHY THE PRUNING IS THE POINT: a plain traversal that visits every node and tests
+each value is correct and O(n). The pruned version skips entire branches using the
+ordering, which is the only reason the input is a BST rather than a plain tree.
+An answer with no pruning technically works and misses what is being asked.
+
+WHY YOU STILL RECURSE BOTH WAYS WHEN IN RANGE: an in-range node can have
+in-range descendants on either side, so neither branch can be dismissed.
+
+THE SHAPE THIS SHARES: it is the same instinct as Closest BST Value and BST
+search - at each node, ask which subtrees the ordering lets you discard. Once you
+have that habit, every BST question gets easier.
+
+WHAT PEOPLE GET WRONG: recursing into both children unconditionally; and getting
+the direction backwards - below the low bound means go RIGHT, which is easy to
+invert under pressure.
+""".strip("\n")
+
+_PLAIN_ALGO["Sort Array by Increasing Frequency"] = r"""
+IN ONE SENTENCE: sort with a two-part key - frequency ascending, and value
+descending to break ties.
+
+STEPS
+1. Count the occurrences of every value.
+2. Sort the original array using the pair (count of this value, negative of this
+   value) as the key.
+3. Return the sorted array.
+
+WHY THE NEGATIVE VALUE: sorting is ascending by default, so negating the value
+makes larger values come first within the same frequency group. It is the
+standard trick for mixing ascending and descending criteria in one key without
+writing a comparator.
+
+WHY YOU SORT THE ARRAY AND NOT THE COUNTS: the output must contain every
+occurrence, not one entry per distinct value. Sorting the original list keeps all
+the duplicates and places them together automatically, since equal values share
+both key components.
+
+WHY EQUAL ELEMENTS END UP ADJACENT WITHOUT EXTRA WORK: they have identical keys,
+so any correct sort groups them.
+
+WHAT PEOPLE GET WRONG: sorting the distinct values and then expanding, which is
+more code for the same result; and forgetting the negation, which sorts ties
+ascending and fails the tie-break requirement.
+""".strip("\n")
+
+_PLAIN_ALGO["Split a String in Balanced Strings"] = r"""
+IN ONE SENTENCE: carry a running balance - plus one for R, minus one for L - and
+every time it returns to zero you have closed a balanced piece.
+
+STEPS
+1. Keep a running balance at 0 and a result count at 0.
+2. Walk the characters, adjusting the balance by plus or minus one.
+3. Whenever the balance hits exactly zero, increment the result.
+4. Return the result.
+
+WHY CUTTING AT EVERY ZERO MAXIMISES THE COUNT: a balanced piece is precisely a
+stretch where the balance starts and ends at zero. Cutting at the FIRST
+opportunity yields the most pieces, because any longer balanced piece can be
+split at the earlier zero into two balanced pieces. Greedy is not just adequate
+here, it is provably maximal.
+
+WHY THE BALANCE TECHNIQUE GENERALISES: mapping two symbols to +1 and -1 turns a
+counting question into a running sum, and "returns to zero" becomes the event you
+watch for. Valid Parentheses (single type), Minimum Add to Make Valid, and
+maximum-depth-of-nesting are all the same running balance with a different thing
+being detected.
+
+WHY THE PROBLEM GUARANTEES A BALANCED INPUT: it means the balance definitely
+returns to zero at the end, so you never have a leftover fragment to handle.
+
+WHAT PEOPLE GET WRONG: tracking two separate counters and comparing them, which
+works but is more state; and counting a piece when the balance merely changes
+sign rather than reaching zero.
+""".strip("\n")
+
+_PLAIN_ALGO["Water Bottles"] = r"""
+IN ONE SENTENCE: drink what you have, trade the empties for more, and repeat
+until you cannot afford another exchange.
+
+STEPS
+1. Start the total at the number of full bottles; you will drink all of them.
+2. Track the empties, which starts equal to that number.
+3. While you have at least the exchange rate in empties: divide to get how many
+   new full bottles you can buy, add them to the total, and set the empties to
+   the remainder PLUS the new bottles you are about to drink.
+4. Return the total.
+
+WHY THE EMPTIES CARRY OVER - the bug this problem exists for: after an exchange
+you have leftover empties that did not divide evenly, AND the new bottles become
+empty once drunk. Both must be counted. Forgetting the remainder is the classic
+error; with 9 bottles and an exchange rate of 3 you get 3 new, drink them, and
+those 3 empties buy 1 more - forgetting the leftovers loses that final bottle.
+
+WHY A LOOP RATHER THAN A FORMULA: there is a closed form, but the loop is short,
+obviously correct, and runs a logarithmic number of times. Reach for the formula
+only if asked for O(1).
+
+WHY YOU ADD THE NEW BOTTLES TO THE EMPTIES: you drink everything you acquire, so
+every full bottle becomes an empty exactly once.
+
+WHAT PEOPLE GET WRONG: setting the empties to just the new bottles and dropping
+the remainder; and using the exchange rate as a subtraction rather than a
+division, which loops needlessly.
+""".strip("\n")
+
+_PLAIN_ALGO["Convert BST to Greater Tree"] = r"""
+IN ONE SENTENCE: walk the tree in REVERSE in-order - right, node, left - carrying
+a running total, so every node is visited after everything larger than it.
+
+STEPS
+1. Keep a running sum outside the recursion, starting at 0.
+2. Write a traversal that visits the RIGHT child first.
+3. Then handle the node: add its value to the running sum, and overwrite the
+   node's value with the new running sum.
+4. Then visit the left child.
+5. Return the root.
+
+WHY REVERSE IN-ORDER IS THE WHOLE TRICK: a normal in-order walk of a BST visits
+values in ascending order. Reversing it visits them in DESCENDING order, which
+means by the time you reach any node, you have already seen exactly the values
+greater than it - and the running sum is precisely what that node needs. The
+traversal order does all the work; there is no searching at all.
+
+WHY THE ORDER OF THE THREE OPERATIONS MATTERS: the right subtree must be fully
+processed BEFORE the node updates the running sum, and the node must update it
+before the left subtree runs. Any other arrangement gives each node the wrong
+accumulated total.
+
+WHY YOU OVERWRITE AFTER ADDING: the node's new value includes itself plus
+everything greater, so you add first and then assign.
+
+WHAT PEOPLE GET WRONG: doing a normal in-order walk and then trying to fix up the
+values; and using a local variable instead of a shared running total, which
+resets at every level.
+""".strip("\n")
+
+_PLAIN_ALGO["Flatten Binary Tree to Linked List"] = r"""
+IN ONE SENTENCE: for each node that has a left subtree, find that subtree's
+rightmost node, staple the current right subtree onto it, then move the whole
+left subtree over to the right.
+
+STEPS
+1. Start at the root and loop while the current node exists.
+2. If it has a left child: walk down the left subtree's RIGHT spine to find its
+   rightmost node.
+3. Attach the current node's right subtree to that rightmost node's right
+   pointer.
+4. Move the left subtree to be the right subtree, and set the left pointer to
+   nothing.
+5. Advance to the current node's right child and repeat.
+
+WHY THIS PRODUCES PRE-ORDER: pre-order is node, then everything in the left
+subtree, then everything in the right. By splicing the right subtree onto the END
+of the left subtree and moving the left across, you place the entire left subtree
+immediately after the node and the right subtree after all of it - exactly
+pre-order, constructed in place.
+
+WHY THE RIGHTMOST NODE OF THE LEFT SUBTREE: it is the last node of the left
+subtree in pre-order, so it is where the right subtree must be joined to preserve
+the ordering.
+
+WHY THIS IS O(1) SPACE: no recursion and no stack - each node's right spine is
+walked at most once across the whole run, so it is also O(n) time despite the
+inner walk. This is the Morris-traversal idea applied to flattening, and naming
+that is a strong signal.
+
+THE SIMPLER ALTERNATIVE: do a pre-order traversal into a list and relink. O(n)
+space, easy to write, and worth offering before the in-place version.
+
+WHAT PEOPLE GET WRONG: forgetting to null the left pointer, which leaves a tree
+rather than a list; and advancing to the original right child instead of the new
+one.
+""".strip("\n")
+
+_PLAIN_ALGO["Largest Number (custom sort)"] = r"""
+IN ONE SENTENCE: sort the numbers as strings using the rule "a before b if a+b
+reads larger than b+a".
+
+STEPS
+1. Convert every number to a string.
+2. Sort with a comparator: compare the concatenation a+b against b+a, and put
+   whichever produces the larger string first.
+3. Join the sorted strings.
+4. If the result starts with a zero, the whole array was zeros - return "0".
+
+WHY THE PAIRWISE CONCATENATION RULE AND NOT PLAIN DESCENDING ORDER: comparing 3
+and 30 numerically puts 30 first, giving "303"; comparing the concatenations
+gives "330" versus "303", so 3 wins. Numeric order and lexicographic order both
+get this wrong, and that example is the reason the problem exists. Have it ready.
+
+WHY THE RULE IS A VALID SORT ORDER: it is transitive - if a+b beats b+a and b+c
+beats c+b, then a+c beats c+a - which is what makes it safe to hand to a sorting
+algorithm. Interviewers occasionally ask you to justify that the comparator is
+consistent, and knowing the word "transitive" is most of the answer.
+
+WHY THE ALL-ZEROS CHECK: [0, 0] would otherwise produce "00" rather than "0".
+It is the only edge case and it is easy to forget.
+
+WHY A COMPARATOR RATHER THAN A KEY: the rule is inherently pairwise - it cannot
+be expressed as a property of a single element. In Python that means
+functools.cmp_to_key, which is worth knowing exists.
+
+WHAT PEOPLE GET WRONG: sorting numerically or lexicographically; and returning
+"00...0" for an all-zero input.
+""".strip("\n")
+
+_PLAIN_ALGO["Lowest Common Ancestor of a BST"] = r"""
+IN ONE SENTENCE: walk down from the root - the first node that sits BETWEEN the
+two targets is their lowest common ancestor.
+
+STEPS
+1. Start at the root.
+2. If both targets are smaller than the current node, the answer is in the left
+   subtree - go left.
+3. If both are larger, go right.
+4. Otherwise they diverge here (or one of them IS this node), so this node is the
+   answer.
+
+WHY THE SPLIT POINT IS THE ANSWER: while both targets lie on the same side, the
+current node is an ancestor of both but not the LOWEST one - a node further down
+also contains both. The moment they fall on opposite sides, no deeper node can
+contain both, so this is the lowest. That is the whole argument.
+
+WHY THIS IS SO MUCH SIMPLER THAN THE GENERAL BINARY-TREE VERSION: in a plain
+binary tree you must search both subtrees and reason about what came back,
+because there is no ordering to guide you. The BST ordering turns a search into a
+single walk down - O(height) time and O(1) space with the iterative form.
+
+WHY IT WORKS WHEN ONE TARGET IS AN ANCESTOR OF THE OTHER: that node is not
+strictly less or greater than itself, so the loop stops there - which is the
+correct answer by the usual definition.
+
+WHAT PEOPLE GET WRONG: writing the general-tree solution and ignoring the BST
+property, which is correct but misses the point; and using strict comparisons
+that fail when a target equals the current node.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Add to Make Parentheses Valid"] = r"""
+IN ONE SENTENCE: track how many openers are currently unmatched, and count every
+closer that arrives with nothing to match it - the answer is the sum of the two.
+
+STEPS
+1. Keep two counters: unmatched openers, and closers that need an opener
+   inserted.
+2. An opening bracket increments the unmatched-opener count.
+3. A closing bracket: if there is an unmatched opener, it pairs off - decrement.
+   Otherwise it can never be matched, so increment the insertions-needed count.
+4. At the end, add the two counters. Any openers still unmatched each need a
+   closer.
+
+WHY TWO COUNTERS RATHER THAN ONE BALANCE: a single running balance can go
+negative and then recover, hiding the fact that a closer was orphaned. Once a
+closer has arrived with nothing open, no future opener can fix it - the damage
+is permanent and must be banked immediately. That asymmetry is why one number is
+not enough.
+
+WHY NO STACK IS NEEDED: with only one bracket type there is nothing to remember
+about WHICH opener is waiting, only how many. A stack would work and is pure
+overhead here - though with multiple bracket types you would need one.
+
+THE EXAMPLE THAT SHOWS THE TRAP: "())(" needs 2 insertions - one opener for the
+orphaned closer and one closer for the trailing opener. A single balance ends at
+zero and would report 0.
+
+WHAT PEOPLE GET WRONG: using one balance and taking its absolute value; and
+forgetting to add the leftover openers at the end.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Cost to Make Array Non-decreasing (increasing via increments)"] = r"""
+IN ONE SENTENCE: carry a high-water mark of everything seen so far, and raise any
+element that falls below it to exactly that level.
+
+STEPS
+1. Set a running maximum to the first element and the cost to 0.
+2. For each subsequent element: if it is below the running maximum, it must be
+   raised - add the difference to the cost. The running maximum stays where it
+   is.
+3. Otherwise this element is a new high - update the running maximum.
+4. Return the cost.
+
+WHY YOU RAISE TO THE RUNNING MAXIMUM AND NOT TO THE PREVIOUS ELEMENT: the array
+must be non-decreasing overall, so every element must be at least as large as
+EVERYTHING before it, not merely its immediate neighbour. On [5, 1, 1] the second
+element rises to 5 and so does the third - comparing only against neighbours
+would leave the third at 1.
+
+WHY THE RUNNING MAXIMUM DOES NOT CHANGE WHEN YOU RAISE: you raised the element to
+exactly the running maximum, so the maximum is unchanged. Recomputing or
+incrementing it is a common slip.
+
+WHY GREEDY IS OPTIMAL: raising to the minimum legal value is always best, since
+raising higher costs more immediately and never relaxes a future constraint.
+Constraints here only look backwards.
+
+WHAT PEOPLE GET WRONG: comparing against the previous element instead of the
+running maximum; and updating the maximum inside the raise branch.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Deletions to Make Character Frequencies Unique"] = r"""
+IN ONE SENTENCE: for each character's frequency, keep dropping it by one until it
+lands on a number nobody has claimed - and count every drop.
+
+STEPS
+1. Count how often each character appears.
+2. Keep a set of frequencies already claimed.
+3. For each frequency: while it is greater than zero AND already claimed,
+   decrement it and count one deletion.
+4. If it ended above zero, claim it.
+5. Return the total deletions.
+
+WHY DECREMENTING IS THE RIGHT MOVE: deleting a character reduces its frequency by
+one, so the reachable frequencies for a character are its current count and every
+value below. Going down to the nearest free slot is the cheapest way to make it
+unique.
+
+WHY THE ZERO GUARD: a frequency can be driven all the way to zero, meaning you
+deleted every instance of that character. Zero is allowed to repeat - several
+characters can be absent - so it must not be added to the claimed set. Missing
+this guard makes the loop run forever or wrongly block later characters.
+
+WHY GREEDY WORKS REGARDLESS OF ORDER: each character independently seeks the
+highest free slot at or below its count. Processing in a different order can pick
+different slots but never produces a smaller total, because the multiset of
+occupied slots is forced.
+
+WHY A SET RATHER THAN SORTING: you only need "is this frequency taken", which is
+a membership question.
+
+WHAT PEOPLE GET WRONG: adding zero to the claimed set; and using an if instead of
+a while, which only steps down once.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Operations to Make Array Equal to Target"] = r"""
+IN ONE SENTENCE: work with the DIFFERENCE array - how much each position must
+change - and count only where consecutive deltas move apart, because a range
+operation covers a whole run at once.
+
+STEPS
+1. Build the delta array: target minus nums at each position.
+2. The first delta must be paid in full - its absolute value.
+3. For each subsequent position, compare it with the previous delta. If they have
+   the same sign and the new one is LARGER in magnitude, you must add the extra.
+   If the sign flips, the new delta must be paid in full.
+4. Sum those costs.
+
+WHY YOU ONLY PAY FOR INCREASES: one operation adds or subtracts 1 across a
+contiguous RANGE. So a run of positions all needing +3 can be served by three
+operations covering the whole run - the cost is 3, not 3 times the length. You
+only pay again when a position needs MORE than its predecessor, because that
+excess needs its own narrower range.
+
+WHY A SIGN FLIP COSTS FULL PRICE: an operation that adds cannot also subtract.
+When the delta changes sign, none of the previous operations can be extended to
+cover this position, so it starts from scratch.
+
+THE PICTURE TO HOLD: think of the delta array as a skyline. The number of
+operations is the total vertical "rise" as you walk it left to right, counting
+positive and negative regions separately. That is exactly what the comparison
+computes.
+
+THE FAMILY: this is the difference-array idea from Corporate Flight Bookings and
+Car Pooling, run in reverse - there you built deltas from ranges, here you infer
+ranges from deltas.
+
+WHAT PEOPLE GET WRONG: summing all the absolute deltas, which ignores that ranges
+are free to extend; and mishandling the sign change, which is where the arithmetic
+gets fiddly - trace [2, -3] on paper.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
