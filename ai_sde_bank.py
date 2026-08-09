@@ -21640,6 +21640,564 @@ for _e in ENTRIES:
         _e["examples"] = _EXAMPLES_LLM[_e["title"]]
 
 
+# ══ Depth pass: ML core (batch 2) ═════════════════════════════════════════
+_WALKTHROUGH_ML2 = {}
+_EXAMPLES_ML2 = {}
+
+
+_WALKTHROUGH_ML2["What is an embedding?"] = r"""
+THE IDEA IN ONE PICTURE
+An embedding turns a thing - a word, a sentence, an image, a user, a product -
+into a list of numbers, positioned so that SIMILAR THINGS END UP CLOSE
+TOGETHER. Meaning becomes geometry, and once meaning is geometry you can do
+arithmetic on it: measure distance, find nearest neighbours, cluster, feed it
+to a model.
+
+WHY YOU CANNOT JUST USE THE RAW THING
+Models consume numbers, so text has to be encoded somehow. The obvious encoding
+is one-hot: a vocabulary of 50,000 words becomes a 50,000-long vector that is
+zero everywhere except a single 1. Two problems, and the second is fatal:
+  * It is enormous and almost entirely zeros.
+  * EVERY pair of words is exactly equally far apart. "cat" and "kitten" are as
+    distant as "cat" and "bureaucracy". The encoding contains no information
+    about meaning at all - it is just an index wearing a costume.
+Embeddings fix the second problem, which is the one that matters. A few hundred
+dense dimensions, learned rather than assigned, where distance is meaningful.
+
+WHERE THE NUMBERS COME FROM - and this is the part worth understanding
+Nobody hand-assigns the dimensions. They are learned from a task whose solution
+requires understanding.
+  Word2vec's task: predict a word from its neighbours (or the reverse). To do
+  that well, words that appear in similar contexts must get similar vectors -
+  because the model only sees context. "The ___ chased the mouse" is filled by
+  cat, dog, kitten, and so those words are pushed together in the space.
+  Modern sentence embeddings: usually trained contrastively - pull genuinely
+  related pairs (a question and its answer) together, push random pairs apart.
+The famous result that made this vivid: king - man + woman lands near queen.
+The direction from "man" to "woman" turns out to be roughly the same direction
+as from "king" to "queen", because gender is a consistent axis in the learned
+space. Nobody designed that axis; it emerged because it was useful for the
+prediction task.
+
+WHAT THE DIMENSIONS MEAN: individually, essentially nothing interpretable. The
+information is distributed across all of them. Do not go looking for "dimension
+42 is formality" - occasionally something like that appears, but the useful
+mental model is that only relative POSITION carries meaning.
+
+HOW YOU MEASURE CLOSENESS
+Cosine similarity - the angle between two vectors, ignoring their length - is
+the default for text. Length usually tracks something incidental like document
+length or word frequency, and you want meaning, which is direction. Dot product
+keeps the magnitude and is used when magnitude is meaningful (some
+recommendation setups). Euclidean distance is common for images. If vectors are
+normalised to unit length, cosine and Euclidean rank identically - a detail
+that comes up when you configure a vector database.
+
+WHERE THEY ARE USED - the same idea over and over
+Semantic search and RAG retrieval, recommendations ("users who embed near you"),
+clustering and deduplication, classification (embed then train a small
+classifier on top), anomaly detection (far from every cluster), and as the input
+layer of essentially every modern neural network over discrete tokens.
+
+THE LIMITATION TO BE ABLE TO NAME: an embedding reflects the data and the task
+it was trained on. A general-purpose model does not know your internal jargon,
+so "P1 ticket" may embed near nothing useful in your domain - which is why
+fine-tuning an embedding model on domain pairs, or using hybrid keyword+vector
+search, is often the fix when retrieval underperforms.
+
+THE ONE-LINE TAKEAWAY
+An embedding is a learned position in a space where distance means similarity -
+which is what lets you search, cluster and compare things that were never
+numbers to begin with.
+""".strip("\n")
+
+_EXAMPLES_ML2["What is an embedding?"] = [
+    """The classic demonstration, and what it actually shows.
+With word2vec vectors:
+  vec("king") - vec("man") + vec("woman")  ->  nearest neighbour is "queen"
+  vec("Paris") - vec("France") + vec("Italy")  ->  "Rome"
+What this reveals is that RELATIONSHIPS are directions in the space. The
+"capital of" relation is roughly a consistent offset vector, so subtracting and
+adding moves you along it. Nobody encoded a capital-of feature; it emerged
+because predicting context words well required representing that relationship.
+Worth knowing the caveat too: these analogies are cherry-picked and work far
+less cleanly than the popular presentation suggests.""",
+
+    """A concrete retrieval case - why it beats keyword matching.
+Query: "how do I reset my password"
+Document title: "Credential recovery procedure"
+Keyword overlap: zero. BM25 scores this near nothing.
+Cosine similarity between their embeddings: about 0.82 - a strong match,
+because both texts occupy the same region of meaning-space.
+Now the reverse case: query "error E4021". The embedding of a rare alphanumeric
+code is close to meaningless, while keyword search nails it exactly. That
+asymmetry is the entire argument for HYBRID search - vectors for meaning,
+BM25 for identifiers, fused. Being able to give one example of each direction
+is what shows you have actually built retrieval.""",
+
+    """The numbers, so the storage cost is concrete.
+1 million documents, embedded with a 1536-dimension model at 4 bytes per float:
+  1,000,000 x 1536 x 4 bytes = about 6.1 GB of raw vectors.
+Exact nearest-neighbour search over that means 1 million dot products of length
+1536 per query - far too slow interactively. Hence approximate indexes such as
+HNSW, which trade a small amount of recall for roughly logarithmic search time.
+Dimension reduction matters too: many models now support shortening (Matryoshka
+embeddings), so you can cut to 512 dimensions and a third of the storage with
+modest recall loss. These are the trade-offs a vector-database question is
+really about.""",
+
+    """The failure case - domain mismatch.
+A team used a general-purpose embedding model for retrieval over internal
+engineering tickets. Recall was poor on exactly the queries that mattered.
+Cause: their vocabulary - service code names, internal acronyms, severity
+conventions - carried meaning the model had never seen. "SEV2 on
+edge-router-fleet" embedded near generic networking text rather than near their
+actual incident reports.
+Fixes, in order of cost: hybrid search with BM25 to catch the exact tokens;
+adding a glossary expansion step to the query; and fine-tuning the embedding
+model on a few thousand of their own query-document pairs, which is the real
+solution when the jargon is central.""",
+
+    """Contrast against the sibling representations, which interviewers probe.
+* ONE-HOT: sparse, huge, all pairs equidistant. No notion of similarity.
+* TF-IDF / BM25: sparse, based on word overlap, excellent for exact terms,
+  blind to synonyms.
+* EMBEDDING: dense, learned, captures meaning and synonymy, weak on rare exact
+  tokens and unable to explain itself.
+* LLM hidden state: a contextual embedding - the same word gets a different
+  vector depending on its sentence, which fixes word2vec's inability to handle
+  "bank" meaning two things.
+That last distinction - static versus contextual embeddings - is the most
+commonly asked follow-up, so have it ready.""",
+
+    """The interview application.
+"You have 10 million products. Build 'customers also viewed'."
+Embedding-based answer: represent each product by an embedding learned from
+co-view behaviour rather than from its description - two products are similar
+if the same users viewed them, which captures substitutes far better than text
+does. Index with HNSW for fast nearest-neighbour lookup, precompute the top 50
+neighbours offline for the head of the catalogue, and serve the tail live.
+The important caveats to raise unprompted: cold-start products have no
+co-view signal, so fall back to text embeddings until behaviour accumulates;
+and a pure co-view model recommends things the user has already seen or
+already bought, so you need business filters on top. Naming the cold-start
+problem before being asked is what lands this.""",
+]
+
+
+_WALKTHROUGH_ML2["ROC curve, AUC & choosing a threshold"] = r"""
+WHAT THE CURVE IS ACTUALLY SHOWING
+A classifier does not output a class, it outputs a SCORE. You turn that into a
+decision by picking a threshold. Every possible threshold gives you a different
+trade-off between catching positives and raising false alarms, and the ROC curve
+is simply all of those trade-offs plotted at once.
+
+  x-axis: False Positive Rate = FP / (FP + TN) - of all the genuine negatives,
+          what fraction did I wrongly flag?
+  y-axis: True Positive Rate = TP / (TP + FN) - of all the genuine positives,
+          what fraction did I catch? (This is recall.)
+
+Sweep the threshold from 1 down to 0 and you trace the curve from the bottom
+left (flag nothing) to the top right (flag everything). The curve is a property
+of the MODEL; the point you choose on it is a property of your BUSINESS.
+
+WHAT AUC MEANS - the interpretation worth memorising
+AUC is the area under that curve, and it has a beautifully concrete meaning:
+  Pick one random positive and one random negative. AUC is the probability that
+  the model scores the positive higher than the negative.
+So 0.5 is a coin flip, 1.0 is perfect ranking, and 0.8 means that four times out
+of five the model ranks a genuine positive above a genuine negative. Being able
+to state that probabilistic interpretation - rather than "area under the curve"
+- is what marks a real understanding.
+
+WHY IT IS USEFUL: it is THRESHOLD-INDEPENDENT. It measures whether the model
+ranks well, separately from where you decide to cut. That makes it the right
+metric for comparing models before you have chosen an operating point.
+
+THE TRAP - and this is the part interviews are really testing
+On heavily imbalanced data, ROC-AUC is misleadingly flattering. The reason is
+the FPR denominator: with 1,000,000 negatives and 1,000 positives, 5,000 false
+positives is an FPR of only 0.005 - the curve barely moves. But of the 6,000
+things you flagged, 5,000 are wrong: precision is 17%, and the product is
+unusable.
+
+So for rare-event problems use the PRECISION-RECALL curve and PR-AUC instead.
+Its x-axis is recall and its y-axis is precision, and precision has the FLAGGED
+count in its denominator, so it reacts sharply to false positives. The baseline
+also differs usefully: a random model has ROC-AUC 0.5 regardless of imbalance,
+but PR-AUC equal to the positive rate - so on a 0.1% problem, PR-AUC of 0.4 is
+excellent while ROC-AUC of 0.9 may be worthless.
+
+HOW TO ACTUALLY CHOOSE THE THRESHOLD - the question people skip
+Not by maximising F1 out of habit. By minimising expected COST:
+  expected cost at threshold t = FP(t) x cost_of_false_alarm
+                               + FN(t) x cost_of_miss
+Sweep every threshold, compute that, take the minimum. It is a few lines of
+code and it is the correct objective, because F1 silently assumes the two
+errors cost the same - and they almost never do. If a chargeback costs Rs 9,000
+and a manual review costs Rs 200, the optimal threshold is far lower than the
+F1-optimal one.
+
+Other legitimate ways to pick: fix the recall you are contractually required to
+hit and take the best precision available there; or fix the alert volume your
+review team can actually process and take the best recall that fits.
+
+THE ONE-LINE TAKEAWAY
+The ROC curve is every threshold at once and AUC is the probability of ranking
+a positive above a negative. Use PR-AUC when positives are rare, and pick the
+operating point from the cost of each error, not from F1.
+""".strip("\n")
+
+_EXAMPLES_ML2["ROC curve, AUC & choosing a threshold"] = [
+    """Reading a curve concretely.
+A fraud model, 10,000 transactions, 100 fraudulent.
+  threshold 0.9: TP 40,  FP 10   -> TPR 0.40, FPR 0.001, precision 0.80
+  threshold 0.5: TP 80,  FP 200  -> TPR 0.80, FPR 0.020, precision 0.29
+  threshold 0.2: TP 95,  FP 1200 -> TPR 0.95, FPR 0.121, precision 0.07
+Same model at all three points - only the threshold moved. Going from 0.9 to
+0.2 more than doubles the fraud caught and destroys precision. Which point is
+right depends entirely on whether a missed fraud costs more than twelve
+wrongly-blocked customers.""",
+
+    """The probabilistic reading of AUC, made concrete.
+Model A has AUC 0.85, model B has 0.72.
+Interpretation: take a random fraudulent transaction and a random legitimate
+one. Model A ranks the fraud higher 85% of the time; model B 72%.
+That framing immediately tells you what AUC does NOT tell you: nothing about
+calibration (whether a score of 0.8 means an 80% chance), and nothing about
+performance at the operating point you will actually use. A model can have
+better AUC overall and be worse in the high-precision region you care about -
+which is why you plot the curve rather than quoting one number.""",
+
+    """The imbalance trap, with the numbers that expose it.
+Disease screening, 1,000,000 people, 1,000 actually ill (0.1%).
+Model flags 6,000; 1,000 of them are the genuine cases... no - it catches 500 of
+them and 5,500 are false alarms.
+  TPR = 500/1000 = 0.50
+  FPR = 5500/999000 = 0.0055  -> the ROC curve looks superb
+  precision = 500/6000 = 0.083 -> 11 out of 12 flagged people are healthy
+ROC-AUC might read 0.93 and the system is unusable. PR-AUC would have shown it
+immediately, because precision is the number that reacts to a large negative
+class. This example alone is usually enough to answer "when would you not use
+ROC-AUC?".""",
+
+    """Choosing the threshold by cost rather than by F1.
+Fraud model. A false positive costs Rs 200 (manual review plus customer
+irritation). A false negative costs Rs 9,000 (the chargeback).
+  F1-optimal threshold 0.42: FP 300, FN 120
+      cost = 300x200 + 120x9000 = 60,000 + 1,080,000 = Rs 1,140,000
+  Cost-optimal threshold 0.18: FP 1,400, FN 30
+      cost = 1,400x200 + 30x9000 = 280,000 + 270,000 = Rs 550,000
+The F1-optimal point loses roughly twice as much money. F1 treats the two errors
+as equally bad; the business does not. Sweeping thresholds against the real cost
+function is five lines of code and it is the correct objective.""",
+
+    """Contrast: ROC versus PR, stated as a rule.
+* Classes roughly balanced, and both error types matter -> ROC-AUC is fine and
+  is the conventional report.
+* Positives rare (fraud, disease, defects, click-through) -> PR-AUC, because
+  precision reacts to false positives while FPR does not.
+* Baselines differ: a random model always scores ROC-AUC 0.5, but PR-AUC equal
+  to the base rate. So on a 1% problem, PR-AUC of 0.3 is a strong model - you
+  must compare against the base rate, not against 0.5.
+* Ranking quality matters more than the cut point -> AUC of either kind. A
+  specific operating point matters -> quote precision AT a fixed recall.""",
+
+    """The interview application, including the follow-up.
+"Our model has 0.94 AUC. Ship it?"
+Correct response: ask for the base rate first. If positives are 0.5% of the
+data, 0.94 ROC-AUC tells me the ranking is decent but says nothing about
+whether the product is usable - I would want PR-AUC and precision at the recall
+we intend to operate at.
+Then: what does a false positive cost and what does a false negative cost? Show
+me the threshold sweep against expected cost.
+Then: is the model CALIBRATED? AUC is invariant to any monotonic
+transformation of the scores, so a model with excellent AUC can still have
+meaningless probabilities - which matters the moment anything downstream
+multiplies the score by an amount of money. Raising calibration unprompted is
+the detail that separates candidates here.""",
+]
+
+
+_WALKTHROUGH_ML2["L1 vs L2 regularization"] = r"""
+WHAT REGULARIZATION IS DOING AT ALL
+Left alone, a model minimises training error, and it will happily use large
+weights to fit noise. Regularization adds a PENALTY on the size of the weights
+to the loss, so every weight now has to earn its place: it is only worth keeping
+if the error it removes exceeds the penalty it costs.
+
+  total loss = prediction error + lambda x (penalty on the weights)
+
+Lambda is the price. Set it to zero and there is no regularization; set it very
+high and every weight is crushed toward zero and the model underfits.
+
+THE TWO PENALTIES
+  L2 (ridge):  penalty = sum of the SQUARES of the weights
+  L1 (lasso):  penalty = sum of the ABSOLUTE VALUES of the weights
+
+They sound almost identical and they behave completely differently in one
+crucial respect: L1 drives weights to EXACTLY zero, and L2 does not.
+
+WHY L1 GIVES YOU EXACT ZEROS - the derivation, because asserting it is not
+enough. Look at the gradient of the penalty with respect to a single weight w:
+  L2 penalty is w^2, so its gradient is 2w. As w shrinks toward zero, the
+  pull toward zero shrinks with it. At w = 0.001 the push is 0.002 - almost
+  nothing. So the weight approaches zero and never arrives.
+  L1 penalty is |w|, so its gradient is a CONSTANT (the sign of w) regardless of
+  how small w is. At w = 0.001 the push toward zero is still the full lambda. So
+  it pushes the weight through zero and holds it there.
+That constant-versus-shrinking gradient is the whole difference, and it is what
+makes L1 a feature-selection method rather than merely a shrinkage method.
+
+THE GEOMETRIC PICTURE, if you prefer it: the L1 constraint region is a diamond
+with corners ON the axes; the L2 region is a circle. The optimum tends to land
+where the loss contours first touch the constraint region, and a diamond is
+most likely to be touched at a corner - which is a point where some coordinates
+are exactly zero. A circle has no corners, so it is touched at a generic point
+where nothing is exactly zero.
+
+WHAT EACH IS GOOD FOR
+  L2: when you believe MANY features contribute a little. It shrinks everything
+  smoothly, handles correlated features gracefully by splitting the weight
+  between them, and is the default in neural networks (where it is usually
+  called weight decay).
+  L1: when you believe FEW features matter and you want the model to tell you
+  which. You get a sparse model that is smaller, faster and more interpretable.
+  With correlated features it behaves less kindly - it tends to pick one
+  arbitrarily and zero the others, which is unstable across retrains.
+  ELASTIC NET: both penalties together, which gives sparsity while handling
+  correlated groups better than pure L1. The usual answer when someone asks
+  "what if I want both?".
+
+THE PRACTICAL DETAIL PEOPLE FORGET: you must SCALE your features first. The
+penalty is on the weight, and a feature measured in millimetres needs a weight a
+thousand times larger than the same feature in metres to have the same effect -
+so without standardisation the penalty falls arbitrarily harder on some features
+than others.
+
+THE ONE-LINE TAKEAWAY
+Both shrink weights; L1's gradient stays constant all the way to zero so it
+produces exact zeros and selects features, while L2's gradient fades and so it
+shrinks everything without eliminating anything.
+""".strip("\n")
+
+_EXAMPLES_ML2["L1 vs L2 regularization"] = [
+    """The behaviour side by side on the same data.
+Linear model, 100 features, only 8 of which genuinely matter.
+  No regularization: all 100 weights non-zero, several large ones fitted to
+  noise. Train R^2 0.99, test R^2 0.61.
+  L2 (lambda tuned): all 100 weights non-zero but small - the irrelevant ones
+  sit around 0.001 to 0.02. Test R^2 0.83.
+  L1 (lambda tuned): 89 weights are EXACTLY 0.0; 11 survive, including all 8
+  real ones. Test R^2 0.85, and the model now names its own features.
+Same data, same base model. L1 additionally answered "which features matter?"
+for free - and that interpretability is often worth more than the marginal
+accuracy.""",
+
+    """The gradient argument as arithmetic - why zeros appear.
+Take a weight currently at w = 0.01 with lambda = 0.1.
+  L2: gradient contribution = 2 x lambda x w = 2 x 0.1 x 0.01 = 0.002.
+      A tiny nudge. Next step the weight is 0.0098, and the nudge shrinks
+      again. It asymptotes toward zero forever.
+  L1: gradient contribution = lambda x sign(w) = 0.1.
+      Fifty times larger, and it does NOT shrink as w does. It drives the
+      weight to zero and pins it there.
+This is the whole mechanism in two lines of arithmetic, and computing it
+explicitly is far more convincing than the diamond-versus-circle picture.""",
+
+    """The failure case: L1 with correlated features.
+Two features are 0.98 correlated - say "height in cm" and "height in inches"
+recorded separately by a data pipeline bug.
+  L2 splits the weight roughly evenly between them: 0.4 and 0.4.
+  L1 picks ONE and zeroes the other: 0.8 and 0.0 - and WHICH one it picks can
+  flip between retrains on slightly different data.
+For a model whose feature importances are reported to stakeholders, that
+instability is a real problem: the story changes every month for no substantive
+reason. Elastic net is the standard fix, because the L2 component keeps
+correlated features together while the L1 component still produces sparsity.""",
+
+    """Where each one is actually used in practice.
+* Neural networks: L2, almost always, under the name weight decay - typically
+  1e-4 to 1e-2. Sparsity is not the goal; smooth shrinkage is.
+* High-dimensional genomics or text with 50,000 features and 500 samples: L1,
+  because you need the model to select a handful of features and you want to
+  know which.
+* Recommender and embedding models: L2 on the embedding norms to stop rare
+  items acquiring huge vectors.
+* Compressed sensing and signal recovery: L1, precisely because it recovers
+  sparse signals.
+Naming weight decay as L2 is a small thing that signals you have trained
+networks rather than only read about regularization.""",
+
+    """Tuning lambda - the part that is actually the work.
+Sweep it logarithmically and watch train and validation error together:
+  lambda 0.0001: train 0.02, val 0.31 - barely regularized, still overfitting
+  lambda 0.01:   train 0.08, val 0.12 - the sweet spot
+  lambda 1.0:    train 0.29, val 0.30 - underfitting; the penalty dominates
+  lambda 100:    train 0.51, val 0.52 - all weights near zero, predicting the
+                 mean
+The U-shape in validation error is the same shape as the bias-variance curve,
+because that is exactly what lambda is trading. Choose it by cross-validation,
+never by intuition - and re-tune it if you change the feature scaling.""",
+
+    """The interview version, and the trap inside it.
+"Your model overfits. Would you use L1 or L2?"
+The answer is a question: do you want feature selection, and are your features
+correlated? Then:
+  * Many weak signals, correlated features, a neural network -> L2.
+  * Few strong signals, want interpretability, very high dimensional -> L1.
+  * Both concerns -> elastic net.
+The trap: candidates often say "L1 because it prevents overfitting more". It
+does not necessarily - it prevents overfitting DIFFERENTLY, by eliminating
+features rather than by shrinking all of them. And the follow-up that catches
+people is "did you standardise your features first?" - without that, the
+penalty is applied inconsistently and the comparison is meaningless.""",
+]
+
+
+_WALKTHROUGH_ML2["Class Imbalance Strategies"] = r"""
+WHY IMBALANCE BREAKS THINGS
+With 99.9% negatives, the model discovers something devastatingly effective:
+predicting "negative" for everything gives 99.9% accuracy. The loss function is
+an average over examples, so the rare class contributes almost nothing to it and
+the optimiser correctly ignores it. Nothing is broken - the model is doing
+exactly what you asked. You asked the wrong thing.
+
+Every fix is therefore one of three moves: change the DATA so the classes are
+less skewed, change the LOSS so rare examples count more, or change the
+DECISION so the threshold reflects the real costs. Naming those three
+categories - rather than listing eight techniques - is what makes the answer
+structured.
+
+FIRST, AND MOST IMPORTANTLY: FIX THE METRIC
+Before touching the model, stop using accuracy. Use precision and recall, PR-AUC,
+and F-beta if you need one number. If you optimise or report accuracy on a
+1% problem, everything downstream is meaningless. Many "imbalance problems" are
+really just measurement problems and disappear at this step.
+
+THE DATA-LEVEL FIXES
+  * OVERSAMPLE the minority - duplicate rare examples. Simple; risks
+    overfitting to the specific rare examples you have.
+  * SMOTE - generate synthetic minority points by interpolating between a rare
+    example and its near neighbours. Better than plain duplication in low
+    dimensions; unreliable in high dimensions and can manufacture points that
+    fall in the majority region, actively creating label noise.
+  * UNDERSAMPLE the majority - throw away negatives. Cheap and fast, and you
+    discard real information, which hurts when the majority class is itself
+    varied.
+  * COLLECT MORE MINORITY DATA. Unglamorous and usually the highest-return move
+    if it is possible at all - and the one candidates forget to mention.
+
+THE LOSS-LEVEL FIXES - usually the better default
+  * CLASS WEIGHTS: multiply the loss on minority examples by a constant, often
+    the inverse class frequency. One parameter in most libraries, no data
+    manipulation, no risk of leaking duplicated rows across a split.
+  * FOCAL LOSS: down-weights examples the model already gets right, so training
+    concentrates on the hard cases. Developed for extreme imbalance in object
+    detection and worth naming.
+
+THE DECISION-LEVEL FIX - the one people skip and often the most effective
+Train on the imbalanced data as-is, then MOVE THE THRESHOLD. A model can rank
+well while its default 0.5 cut is useless. Sweep the threshold against expected
+cost and pick the operating point. This costs nothing, does not touch training,
+and frequently recovers most of the achievable gain.
+
+WHEN NOT TO REBALANCE AT ALL: if you need CALIBRATED probabilities - because
+something downstream multiplies them by money - resampling distorts them. The
+model trained on a 50/50 resample will report far higher probabilities than
+reality. Either recalibrate afterwards, or use class weights and threshold
+tuning instead.
+
+THE MISTAKE THAT INVALIDATES EVERYTHING: resampling BEFORE the train/test split.
+Duplicated or synthetic minority points end up on both sides, the test set
+contains near-copies of training rows, and your metrics are fiction. Always
+split first, then resample the training fold only - and inside cross-validation,
+resample within each fold.
+
+THE ONE-LINE TAKEAWAY
+The loss ignores the rare class because it is an average. Fix the metric first,
+then prefer class weights and threshold tuning over resampling - and never
+resample before splitting.
+""".strip("\n")
+
+_EXAMPLES_ML2["Class Imbalance Strategies"] = [
+    """The baseline that exposes the problem.
+Fraud detection, 1,000,000 transactions, 1,000 fraudulent (0.1%).
+A model that predicts "not fraud" always:
+  accuracy 99.9%   - looks superb on a dashboard
+  recall 0%        - catches nothing
+  precision undefined - it flagged nothing at all
+This is the model you will accidentally train if you optimise accuracy, and it
+is why the first move is always to change the metric rather than the
+algorithm.""",
+
+    """Class weights versus resampling, measured.
+Same fraud dataset, three approaches, evaluated on an untouched test set:
+  Baseline (no handling):        recall 0.31, precision 0.72, PR-AUC 0.44
+  Random oversampling of fraud:  recall 0.68, precision 0.24, PR-AUC 0.46
+  Class weights (100:1):         recall 0.66, precision 0.41, PR-AUC 0.52
+Class weights matched the recall gain with far better precision and no data
+duplication. This is the usual ordering, and it is why weights are the
+sensible default - though the right choice is always empirical rather than
+doctrinal.""",
+
+    """Threshold tuning alone - the cheapest fix, often overlooked.
+Take the BASELINE model above, change nothing about training, and just move the
+decision threshold from 0.5 to 0.12:
+  recall goes 0.31 -> 0.71
+  precision goes 0.72 -> 0.38
+That is comparable to what resampling achieved, at zero training cost, with
+calibration undamaged and nothing to re-validate. Whenever someone proposes
+SMOTE as the first move, ask whether they have swept the threshold yet - very
+often they have not.""",
+
+    """The leakage failure that produces beautiful, fake results.
+A team applied SMOTE to the whole dataset and then split into train and test.
+Reported PR-AUC: 0.91. In production: 0.34.
+Cause: SMOTE generated synthetic minority points by interpolating between real
+ones. After the split, a synthetic point in the test set was an interpolation of
+two points in the training set - so the model had effectively seen it. The test
+set was contaminated with near-copies of training data.
+The rule that prevents it: split first, resample the TRAINING fold only, and
+inside cross-validation resample within each fold. This mistake is common
+enough that interviewers ask about it directly.""",
+
+    """When rebalancing is the wrong move entirely.
+A credit-risk model whose output is multiplied by loan value to compute expected
+loss. Resampling to 50/50 makes the model report roughly 50% default
+probability on borderline cases, when the true rate is 2%. The ranking is fine;
+the probabilities are nonsense, and every downstream monetary calculation is
+wrong by an order of magnitude.
+Here you either keep the natural distribution and tune the threshold, or
+recalibrate after resampling (Platt scaling or isotonic regression). Knowing
+that resampling breaks calibration - and that calibration matters whenever the
+score feeds an arithmetic decision - is a strong signal.""",
+
+    """The interview application, with the diagnosis ordering.
+"We have 0.5% positives and the model catches nothing. What do you do?"
+In order, and say the order out loud:
+  1. Change the metric. Accuracy is meaningless here - move to PR-AUC and
+     precision/recall. Half the time this reframes the whole problem.
+  2. Sweep the threshold on the existing model. Free, immediate, no retraining.
+  3. Add class weights. One parameter, no data manipulation, no leakage risk.
+  4. Only then consider resampling - and if so, training fold only.
+  5. Ask whether more minority data can be collected, or whether related
+     positives from an adjacent problem can be borrowed.
+  6. Check whether the features actually separate the classes at all - if two
+     classes are genuinely indistinguishable in your feature space, no
+     rebalancing technique will help and the answer is better features.
+That last point is the one that impresses: imbalance is sometimes a symptom of
+a feature problem, not the disease itself.""",
+]
+
+
+for _e in ENTRIES:
+    if not _e.get("walkthrough") and _e["title"] in _WALKTHROUGH_ML2:
+        _e["walkthrough"] = _WALKTHROUGH_ML2[_e["title"]]
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EXAMPLES_ML2:
+        _e["examples"] = _EXAMPLES_ML2[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
