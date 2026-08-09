@@ -16,90 +16,164 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="ai_applied", title="Data drift and model monitoring in production",
-         answer="In plain words: a model trained on last year's data slowly gets worse as the real world changes - drift monitoring catches that BEFORE users feel it. Two kinds. DATA (covariate) DRIFT: the input distribution shifts (new user behavior, a new product, seasonality) even if the relationship stays the same. CONCEPT DRIFT: the relationship between inputs and the label changes (what counted as fraud last year looks different now). You detect drift by comparing recent production data to the training/reference distribution - statistical tests (PSI, KL divergence, KS test) per feature, monitoring prediction distributions, and watching live metrics (accuracy where labels arrive, plus proxies like confidence, click-through, complaint rate). Responses: alert, investigate, and RETRAIN on fresh data (often on a schedule or triggered by drift). Because labels are often delayed (you learn the truth later), you rely on input-drift and proxy signals for early warning. Monitoring is what turns 'the model quietly rotted' into 'we caught it and retrained.'",
-         tags=["data-drift", "concept-drift", "monitoring", "mlops", "retraining", "ai"],
-         example="A demand-forecasting model degrades after a viral trend shifts buying patterns; a PSI alert on the 'category' feature fires days before accuracy would have visibly dropped, triggering a retrain on recent data - so the business never eats a week of bad forecasts.",
+    # ---- AI (6) ----
+    dict(cat="ai_applied", title="Design a time-series forecasting system",
+         answer="In plain words: predict future numbers (sales, traffic, demand, server load) from history - but time data has structure (trend, seasonality) and strict rules that make it different from normal ML. Key ideas: decompose the signal into TREND (long-term direction), SEASONALITY (repeating cycles - daily/weekly/yearly), and NOISE. Models range from classical (ARIMA, exponential smoothing/Prophet - great baselines, interpretable) to ML (gradient-boosted trees on lag/rolling features) to deep (LSTM/Transformer for complex multivariate series). CRITICAL rules: never shuffle - split by TIME (train on past, test on future); engineer LAG features (value last week) and rolling stats WITHOUT leaking future; and evaluate with a rolling/backtest (walk-forward) using MAPE/RMSE. Handle multiple seasonalities, holidays/events, missing data, and cold-start for new series. Forecast INTERVALS (uncertainty), not just a point, because decisions depend on the range. It's the same 'respect time, no leakage' discipline as any temporal ML.",
+         tags=["time-series", "forecasting", "arima", "seasonality", "applied", "ai"],
+         example="Forecasting store demand: decompose into weekly seasonality + upward trend + holiday spikes; a GBT on lag features (sales last 1/7/28 days) trained on 2 years, backtested walk-forward, predicts next week WITH a confidence interval so inventory is stocked for the likely range, not a single guess.",
          difficulty="Medium",
-         frequency="Very commonly asked in ML-engineer / applied-ML interviews - 'how do you know when a deployed model is going stale?'",
-         mnemonic="Models rot as the world shifts: DATA drift (inputs change) vs CONCEPT drift (input->label rule changes). Detect with PSI/KL/KS per feature + proxy metrics (labels lag). Respond = alert + retrain. 'Watch the inputs, not just accuracy.'"),
-    dict(cat="ai_applied", title="Feature stores (online vs offline features)",
-         answer="In plain words: ML models need the same features at TRAINING time (in bulk, historical) and at SERVING time (one user, right now, in milliseconds) - a feature store computes and serves features consistently so training and production don't silently disagree. It has two sides. OFFLINE store: large historical feature tables (in a warehouse) for training and batch scoring - throughput matters. ONLINE store: a low-latency key-value store (Redis/DynamoDB) holding the latest feature values for real-time lookup during inference - latency matters. The whole point is to avoid TRAINING-SERVING SKEW: if 'average order value last 30 days' is computed one way in the training pipeline and another way at serving, the model sees inconsistent inputs and quietly underperforms. A feature store defines each feature ONCE, materializes it to both stores, and guarantees point-in-time correctness (no future leakage in training). It also enables feature REUSE across teams/models. Examples: Feast, Tecton.",
-         tags=["feature-store", "online-features", "offline-features", "training-serving-skew", "mlops", "ai"],
-         example="A fraud model uses 'transactions in last hour'. The feature store computes it once: the offline table backfills it point-in-time for training, and the online store keeps the live value so serving reads it in <10ms - the SAME definition both places, so no training-serving skew.",
+         frequency="Very commonly asked applied-ML case (retail, infra, finance) - tests time-split discipline, seasonality, and no-leakage feature engineering.",
+         mnemonic="Decompose: Trend + Seasonality + Noise. Split by TIME (past->future), lag/rolling features WITHOUT leakage, backtest walk-forward (MAPE/RMSE), predict an INTERVAL. Classical (ARIMA/Prophet) baselines before deep. 'Respect time, forecast a range.'"),
+    dict(cat="ai_applied", title="Design an anomaly detection system",
+         answer="In plain words: automatically flag the rare weird thing - fraud, a failing server, a security breach, a defective part - when you mostly have 'normal' data and few or no labels for 'bad'. Because anomalies are rare and varied, you usually can't train a normal classifier. Approaches: (1) STATISTICAL - model normal (mean/std, z-score; for time series, deviation from forecast) and flag outliers. (2) UNSUPERVISED ML - isolation forest (anomalies are 'easy to isolate'), one-class SVM, or an AUTOENCODER (train to reconstruct normal data; high reconstruction error = anomaly). (3) SUPERVISED if you do have labels (but handle extreme imbalance). Design points: define what 'anomaly' means (point vs contextual vs collective), set the threshold by the COST of false alarms vs misses (alert fatigue is real), handle seasonality (3am traffic isn't anomalous at 3am), adapt as normal drifts, and give humans context to triage. Evaluate with precision/recall at the chosen threshold, not accuracy.",
+         tags=["anomaly-detection", "isolation-forest", "autoencoder", "unsupervised", "applied", "ai"],
+         example="Server monitoring: an autoencoder trained on normal metrics reconstructs them well; when a memory-leak pattern appears, reconstruction error spikes above threshold and pages on-call - catching a failure mode nobody wrote a rule for, while seasonality-aware baselines avoid false alarms during nightly batch jobs.",
          difficulty="Medium",
-         frequency="Commonly asked in ML-infra/MLE interviews - 'how do you serve features in real time and keep training/serving consistent?'",
-         mnemonic="One feature definition, two stores: OFFLINE (bulk history for training) + ONLINE (fast KV for serving). The point: kill TRAINING-SERVING SKEW + enable reuse. 'Define once, serve everywhere, no skew.'"),
-    dict(cat="ai_applied", title="A/B testing an ML / LLM feature",
-         answer="In plain words: to know a new model actually HELPS (not just looks better offline), you ship it to a random slice of users and compare against the old one on real business metrics. Randomly split users into CONTROL (old model) and TREATMENT (new model); pick a primary METRIC tied to the goal (conversion, watch time, resolution rate, revenue) plus GUARDRAIL metrics (latency, cost, error/complaint rate) that must not regress. Run long enough for STATISTICAL SIGNIFICANCE (power analysis for sample size), watch for novelty effects, and avoid peeking/p-hacking. For LLM features specifically: offline evals catch regressions cheaply first, then A/B validates real impact; you may need human eval or LLM-judge for quality since there's no single label. Ramp gradually (1% -> 10% -> 50%) with a canary and automatic rollback on guardrail breaches. The discipline: a model that wins offline can still lose online, so the online experiment is the source of truth.",
-         tags=["ab-testing", "experimentation", "evaluation", "mlops", "applied", "ai"],
-         example="A new recommendation model has higher offline nDCG, so it goes to a 5% A/B test; watch time is up 2% (significant) but p99 latency is up 40ms (within the guardrail), so it ramps to 100% - whereas an earlier candidate won offline but lost on watch time online and was killed.",
+         frequency="Commonly asked applied-ML design (security, infra, fraud, manufacturing) - tests unsupervised methods and threshold/cost thinking.",
+         mnemonic="Mostly-normal data, rare varied 'bad' -> model NORMAL, flag deviations: stats (z-score), isolation forest, or autoencoder (high reconstruction error). Set threshold by cost of FP vs FN; respect seasonality; adapt to drift. 'Learn normal, alarm on surprise.'"),
+    dict(cat="ai_llm", title="Model cards and responsible model documentation",
+         answer="In plain words: a model card is a short standardized 'nutrition label' for an ML model - it documents what the model does, how it was trained, how well it works, and where it should NOT be used - so others can use it responsibly. Introduced by Google, a model card typically covers: intended USE (and out-of-scope uses), training DATA and its known biases/limitations, evaluation results BROKEN DOWN by subgroup (not just aggregate - to expose fairness gaps), performance metrics and the conditions they hold under, ethical considerations, and caveats/recommendations. Why it matters: it forces teams to state limitations explicitly, helps users avoid misusing a model outside its tested range, supports fairness/compliance (EU AI Act, audits), and improves reproducibility. Analogous artifacts: DATASHEETS for datasets and SYSTEM cards for whole AI systems. It's cheap documentation with outsized value for trust and governance.",
+         tags=["model-cards", "responsible-ai", "documentation", "fairness", "governance", "ai"],
+         example="A face-detection model's card states it was trained mostly on adult faces, reports accuracy per skin-tone and age group (revealing lower accuracy on children), and explicitly lists 'surveillance' as out-of-scope - so a downstream team knows not to deploy it for a kids' app without more testing.",
+         difficulty="Easy",
+         frequency="Asked in responsible-AI / senior ML discussions - shows you think about limitations, fairness, and governance, not just accuracy.",
+         mnemonic="A 'nutrition label' for a model: intended use + OUT-of-scope, training data & biases, metrics BROKEN DOWN by subgroup, ethical caveats. Datasheets do this for data. Cheap doc, big trust/compliance value. 'State what it can't do, and for whom.'"),
+    dict(cat="ai_applied", title="Cold-start problem in ML systems",
+         answer="In plain words: recommenders and personalization need history to work, but new USERS, new ITEMS, and brand-new SYSTEMS have none - the cold-start problem is how to give good results before you've learned anything about them. Three flavors and fixes. NEW USER: no interaction history -> ask a few onboarding preferences, use demographics/context, or show popular/trending items until you learn. NEW ITEM: no one has interacted with it -> use CONTENT features (an LLM/embedding of its text/metadata puts it near similar known items) instead of collaborative signals. NEW SYSTEM: no data at all -> start with content-based or rules, log interactions, and transition to learned models as data accumulates. General tools: hybrid models (content + collaborative), embeddings from metadata, and EXPLORATION (bandits/Thompson sampling to try new things and gather data). The theme: lean on CONTENT and context when behavioral history is missing, and deliberately explore to collect it.",
+         tags=["cold-start", "recommendation", "content-based", "exploration", "applied", "ai"],
+         example="A streaming service adds a brand-new show with zero views; content embeddings from its description/genre place it near similar popular shows, so it's recommended to fans of those - and a small exploration budget shows it to some users to gather real interaction data fast (solving new-item cold-start).",
          difficulty="Medium",
-         frequency="Very commonly asked - 'how do you know your model change is actually better?' A/B testing is the expected answer at product companies.",
-         mnemonic="Offline eval says 'maybe'; the A/B test says 'yes/no'. Random control vs treatment, a primary metric + GUARDRAILS (latency/cost), enough samples for significance, ramp with canary + auto-rollback. 'Online is the source of truth.'"),
-    dict(cat="ai_llm", title="GraphRAG (retrieval over a knowledge graph)",
-         answer="In plain words: normal RAG retrieves independent text chunks, which struggles with questions that need CONNECTING facts across many documents ('how are X and Y related?', 'summarize themes across the whole corpus'). GraphRAG first builds a KNOWLEDGE GRAPH from your documents - an LLM extracts entities (people, orgs, concepts) and their relationships as nodes and edges - then answers by traversing and summarizing that graph. For broad 'sensemaking' questions it also pre-computes COMMUNITY summaries (clusters of related entities) so it can answer global questions no single chunk contains. Benefits: multi-hop reasoning, global/thematic questions, and explainable paths (you can see the connecting entities). Costs: the graph-building step is an expensive LLM pass over the corpus, and it's overkill for simple lookup questions. Use plain RAG for 'find the fact', GraphRAG when answers require relationships across many sources.",
-         tags=["graphrag", "knowledge-graph", "rag", "multi-hop", "retrieval", "ai"],
-         example="'What themes connect our top 3 customers' complaints?' Plain RAG returns a few unrelated tickets; GraphRAG extracted entities/relationships and community summaries across ALL tickets, so it can answer the cross-cutting, thematic question that no single chunk contains.",
+         frequency="Very commonly asked in recommendation/personalization design - 'how do you recommend a new item or serve a brand-new user?'",
+         mnemonic="No history yet -> lean on CONTENT + context, not collaborative signals. New user: onboarding/popular. New item: content embeddings. New system: rules then learn. Plus EXPLORATION (bandits) to gather data. 'Content when cold, explore to warm up.'"),
+    dict(cat="ai_llm", title="Guardrail frameworks (Llama Guard, NeMo Guardrails)",
+         answer="In plain words: guardrail frameworks are ready-made tools that wrap an LLM to enforce safety and scope rules - so you don't hand-build every check. They sit between the user and the model (and between the model and the user). LLAMA GUARD is a specialized classifier LLM that labels whether an input or output is safe across harm categories (violence, hate, self-harm, etc.) - you call it to screen prompts and responses. NEMO GUARDRAILS (NVIDIA) lets you define conversational RAILS in a config: allowed topics, refusal flows, fact-checking/grounding checks, and dialogue policies, so the bot stays on-topic and follows rules. Guardrails-AI and similar validate/repair structured output against a schema. In practice you compose them: an input rail (block disallowed/injection), output rails (toxicity, grounding/faithfulness, format validation, PII), and topic/scope rails. They implement the layered 'never trust the model alone' principle with reusable components instead of bespoke code - but you still tune and test them for your policies.",
+         tags=["guardrails", "llama-guard", "nemo-guardrails", "llm-safety", "moderation", "ai"],
+         example="A banking bot uses Llama Guard to screen every user message and reply for unsafe content, NeMo Guardrails to refuse off-topic requests ('I can only help with banking') and enforce a grounding check, and a schema validator on any JSON - a composed safety layer built from frameworks, not from scratch.",
+         difficulty="Medium",
+         frequency="Increasingly asked in production-LLM/safety interviews - naming concrete frameworks signals hands-on GenAI-safety experience.",
+         mnemonic="Ready-made safety wrappers: Llama Guard (classify input/output as safe?), NeMo Guardrails (topic/refusal/grounding rails), schema validators. Compose input + output + topic rails. Reusable 'never trust the model alone'. Still tune/test."),
+    dict(cat="ai_llm", title="Active learning (label the most useful examples)",
+         answer="In plain words: labelling data is expensive, so instead of labelling everything randomly, active learning lets the MODEL pick the examples that would teach it the most - so you reach good accuracy with far fewer labels. The loop: train on a small labelled set, run the model on unlabelled data, and SELECT the most informative examples for a human to label, add them, retrain, repeat. How to pick 'informative': UNCERTAINTY sampling (examples the model is least confident on - near the decision boundary), QUERY-BY-COMMITTEE (examples an ensemble disagrees on), or DIVERSITY/representativeness (cover different regions, avoid labelling near-duplicates). It shines when unlabelled data is plentiful but labelling is costly (medical images, legal docs). Cautions: it can bias the labelled set toward boundary cases (mix in some random labels), and repeated uncertainty picks can waste effort on inherently ambiguous/noisy examples. Pairs well with LLMs that pre-label and route only the uncertain ones to humans.",
+         tags=["active-learning", "labeling", "uncertainty-sampling", "data-efficiency", "ai"],
+         example="Building a medical-image classifier with 100k unlabelled scans but a costly radiologist: active learning labels the 500 scans the model is MOST uncertain about each round instead of 500 random ones, reaching target accuracy with ~5x fewer labels than random labelling.",
+         difficulty="Medium",
+         frequency="Asked in data-efficiency / applied-ML interviews - 'labelling is expensive; how do you spend the budget well?'",
+         mnemonic="Let the model choose what to label: pick the MOST UNCERTAIN (boundary) or most-disagreed examples, label those, retrain, repeat. Far fewer labels for the same accuracy. Mix in some random to avoid bias. 'Label what teaches the most.'"),
+    # ---- ml_coding numpy (3, ast.parse-only) ----
+    dict(cat="ml_coding", title="Sinusoidal positional encoding (numpy)",
+         answer="In plain words: transformers process tokens in parallel with no built-in sense of order, so you ADD a position signal to each token embedding. The original Transformer uses fixed sine/cosine waves of different frequencies: even dimensions use sine, odd use cosine, and the wavelength grows with the dimension index - so each position gets a unique pattern and the model can learn relative offsets from the smooth wave structure.",
+         tags=["positional-encoding", "transformer", "sinusoidal", "numpy", "ml-coding"],
+         code='''# Sinusoidal positional encoding matrix (seq_len, d_model). ast.parse-only.
+import numpy as np
+
+def positional_encoding(seq_len, d_model):
+    pos = np.arange(seq_len)[:, None]             # (seq_len, 1) positions
+    i = np.arange(d_model)[None, :]               # (1, d_model) dimension idx
+    # frequency term: 1 / 10000^(2*floor(i/2)/d_model)
+    angle_rates = 1.0 / np.power(10000, (2 * (i // 2)) / d_model)
+    angles = pos * angle_rates                    # (seq_len, d_model)
+    pe = np.zeros((seq_len, d_model))
+    pe[:, 0::2] = np.sin(angles[:, 0::2])         # even dims -> sine
+    pe[:, 1::2] = np.cos(angles[:, 1::2])         # odd dims  -> cosine
+    return pe''',
+         complexity="Time O(seq_len * d_model), space O(seq_len * d_model).",
+         pitfalls="Mixing sin/cos on the wrong (even/odd) dimensions; forgetting the 10000 base scales the wavelengths; adding vs concatenating (it's ADDED to embeddings).",
+         example="positional_encoding(50, 512) gives a (50, 512) matrix ADDED to token embeddings so position 5 and position 40 have distinguishable, smoothly-varying signals.",
+         difficulty="Medium",
+         frequency="Commonly asked in transformer-implementation interviews - 'how are positions encoded (the original way)?'",
+         mnemonic="Add waves: even dims = sin, odd dims = cos, wavelengths grow with dim (base 10000). Each position -> a unique smooth pattern the model reads as order. 'Stamp positions with layered sine waves.'"),
+    dict(cat="ml_coding", title="TF-IDF from scratch (numpy)",
+         answer="In plain words: TF-IDF scores how important a word is to a document within a collection. TERM FREQUENCY (TF) rewards words that appear often IN the document; INVERSE DOCUMENT FREQUENCY (IDF) down-weights words that appear in MANY documents (like 'the'). Multiply them: a word is important if it's frequent here but rare overall.",
+         tags=["tf-idf", "nlp", "text-vectorization", "numpy", "ml-coding"],
+         code='''# TF-IDF matrix from a list of token-lists. ast.parse-only.
+import numpy as np
+
+def tf_idf(docs, vocab):
+    n_docs = len(docs)
+    idx = {w: i for i, w in enumerate(vocab)}
+    tf = np.zeros((n_docs, len(vocab)))
+    for d, doc in enumerate(docs):
+        for w in doc:
+            if w in idx:
+                tf[d, idx[w]] += 1                # raw counts
+        if len(doc) > 0:
+            tf[d] /= len(doc)                     # normalize by doc length
+    # document frequency: in how many docs does each term appear
+    df = (tf > 0).sum(axis=0)                      # (vocab,)
+    idf = np.log((1 + n_docs) / (1 + df)) + 1      # smoothed idf
+    return tf * idf                                # (n_docs, vocab)''',
+         complexity="Time O(total tokens + n_docs*vocab), space O(n_docs*vocab).",
+         pitfalls="Forgetting IDF smoothing (+1) -> divide-by-zero / log(0); not normalizing TF by length; counting a term's df multiple times per doc.",
+         example="For docs about cats/dogs, 'the' gets a low TF-IDF (high df, low idf) while 'purr' scores high in the cat doc (frequent there, rare overall).",
+         difficulty="Medium",
+         frequency="Commonly asked classic NLP-coding question - 'implement TF-IDF' tests the TF x IDF intuition.",
+         mnemonic="Important = frequent HERE (TF) but rare EVERYWHERE (IDF = log(N/df)). Multiply them. 'the' scores low, 'purr' scores high. Smooth the idf (+1) to avoid log(0)."),
+    dict(cat="ml_coding", title="LSTM cell forward pass (numpy)",
+         answer="In plain words: an LSTM remembers information over long sequences using a CELL STATE (long-term memory) plus three GATES that decide what to forget, what to add, and what to output. Each step: the FORGET gate drops old memory, the INPUT gate writes new candidate memory, the cell state updates, and the OUTPUT gate reads out the hidden state. Gates are sigmoids (0-1 'how much'); the candidate uses tanh.",
+         tags=["lstm", "rnn", "gates", "sequence", "numpy", "ml-coding"],
+         code='''# One LSTM cell step. ast.parse-only. Weights concatenated for [x, h_prev].
+import numpy as np
+
+def sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-z))
+
+def lstm_step(x, h_prev, c_prev, Wf, Wi, Wc, Wo, bf, bi, bc, bo):
+    z = np.concatenate([x, h_prev])               # stack input + prev hidden
+    f = sigmoid(Wf @ z + bf)                       # forget gate: keep how much old memory
+    i = sigmoid(Wi @ z + bi)                       # input gate: write how much new
+    c_hat = np.tanh(Wc @ z + bc)                   # candidate memory
+    c = f * c_prev + i * c_hat                     # new cell state (forget + add)
+    o = sigmoid(Wo @ z + bo)                       # output gate
+    h = o * np.tanh(c)                             # new hidden state (read-out)
+    return h, c''',
+         complexity="Time O(hidden * (input+hidden)), space O(hidden).",
+         pitfalls="Using tanh where a sigmoid gate belongs (gates must be 0-1); forgetting to carry BOTH h and c to the next step; wrong concatenation order vs the weights.",
+         example="Feeding a sentence word-by-word, the forget gate can drop irrelevant past words while the cell state carries a subject across many steps so a later verb agrees with it.",
          difficulty="Hard",
-         frequency="Emerging topic in advanced RAG interviews - 'how would you handle multi-hop or corpus-wide questions RAG fails on?'",
-         mnemonic="Build a knowledge GRAPH (entities + relationships) from the docs, then traverse/summarize it - great for multi-hop and 'themes across everything' questions plain chunk-RAG can't do. Pricey to build. 'Connect the dots, don't just fetch chunks.'"),
-    dict(cat="ai_applied", title="Shadow deployment and canary for ML models",
-         answer="In plain words: two safe ways to roll out a new model without risking users. SHADOW (dark launch): the new model runs on REAL traffic in parallel with the current one, but its predictions are LOGGED, not shown to users - so you compare its behavior/latency against production on live data with zero user risk. CANARY: the new model actually SERVES a small slice of traffic (say 1-5%), you watch its live metrics vs the rest, and ramp up if healthy or roll back if not. Use shadow to validate correctness/latency and catch training-serving skew before anyone sees the output; use canary to measure real user impact gradually. They complement A/B testing (which is about measuring which is BETTER) - shadow/canary are about safe ROLLOUT. Pair with automatic rollback on guardrail breaches and good monitoring.",
-         tags=["shadow-deployment", "canary", "rollout", "mlops", "applied", "ai"],
-         example="Before launching a new pricing model, it runs in SHADOW for a week - scoring live requests, predictions logged - revealing it mishandles a rare input (a skew bug) with zero customer impact. After the fix, a 2% CANARY confirms real metrics hold, then it ramps to 100%.",
+         frequency="Asked in deep-learning/NLP interviews - 'explain/implement an LSTM cell and its gates'.",
+         mnemonic="Cell state = long memory; 3 gates (sigmoids): FORGET old, INPUT new (tanh candidate), OUTPUT read. c = f*c_prev + i*c_hat; h = o*tanh(c). 'Forget, write, remember, read.'"),
+    # ---- cs_fundamentals (2) ----
+    dict(cat="cs_fundamentals", title="Deadlock and its four necessary conditions",
+         answer="In plain words: a deadlock is when two or more processes are stuck forever, each waiting for a resource the other holds - like two people in a hallway each refusing to step aside. It can ONLY happen when all FOUR Coffman conditions hold at once: (1) MUTUAL EXCLUSION - a resource can't be shared (only one holder). (2) HOLD AND WAIT - a process holds one resource while waiting for another. (3) NO PREEMPTION - you can't forcibly take a resource away; the holder must release it. (4) CIRCULAR WAIT - a cycle of processes each waiting on the next. Break ANY one condition and deadlock is impossible - the basis of prevention: e.g. impose a global ORDER on resource acquisition (kills circular wait), require all resources up front (kills hold-and-wait), or allow preemption/timeouts. Alternatives: deadlock AVOIDANCE (Banker's algorithm) and DETECTION + recovery (find a cycle, kill/rollback a process).",
+         tags=["deadlock", "concurrency", "operating-systems", "coffman-conditions", "cs"],
+         code='''# Ordered locking prevents deadlock by killing 'circular wait'.
+import threading
+
+lock_a = threading.Lock()
+lock_b = threading.Lock()
+
+def safe_transfer():
+    # ALWAYS acquire in the same global order (a before b) in every thread
+    with lock_a:              # acquire lower-ranked lock first
+        with lock_b:          # then the higher-ranked one
+            pass              # no thread can form a cycle -> no deadlock''',
+         complexity="Prevention is a design constraint, not a runtime cost.",
+         pitfalls="Acquiring locks in different orders in different code paths (classic cause); holding a lock while calling out to code that grabs another.",
+         example="Thread 1 holds lock A wanting B; thread 2 holds B wanting A -> circular wait -> deadlock. Forcing every thread to grab A before B removes the cycle, so it can't happen.",
          difficulty="Medium",
-         frequency="Commonly asked in MLOps/deployment interviews - 'how do you safely roll out a new model?'",
-         mnemonic="SHADOW = run new model on live traffic but LOG only (no user sees it) - catch bugs/skew safely. CANARY = serve a small % for real, ramp if healthy. Shadow/canary = safe ROLLOUT; A/B = which is better. 'Test in the dark, then trickle it out.'"),
-    dict(cat="ai_applied", title="Human evaluation and inter-annotator agreement",
-         answer="In plain words: for subjective AI tasks (is this answer good? is this content harmful?) there's no automatic ground truth, so you have HUMANS label/rate - but humans disagree, so you must measure how much they agree to trust the labels. Design: write clear GUIDELINES with examples/edge cases, have MULTIPLE annotators rate each item, and measure INTER-ANNOTATOR AGREEMENT with a metric that corrects for chance - Cohen's kappa (two raters) or Fleiss' kappa (many), or Krippendorff's alpha. Low agreement means your task/guidelines are ambiguous (fix the rubric or the task), not just 'noisy humans'. Aggregate labels by majority vote or a model that weights annotators by reliability. Use humans for the gold set that calibrates cheaper automatic metrics (LLM-as-judge), spot-checks, and final quality gates - not for scoring every request (too slow/costly). Watch annotator fatigue and bias, especially for distressing content.",
-         tags=["human-evaluation", "inter-annotator-agreement", "kappa", "annotation", "evaluation", "ai"],
-         example="Rating chatbot answers 1-5: three annotators score 500 answers; Fleiss' kappa is 0.4 (only fair agreement), revealing the rubric is vague on 'partially correct' - after clarifying the guideline with examples, kappa rises to 0.75 and the labels become a trustworthy gold set for tuning an LLM-judge.",
-         difficulty="Medium",
-         frequency="Asked in eval-focused / applied-scientist interviews - 'how do you evaluate subjective quality reliably?'",
-         mnemonic="Humans label subjective tasks, but they disagree - measure agreement with kappa/alpha (chance-corrected). Low agreement = fix the GUIDELINES, not the humans. Use humans for the gold set that calibrates cheap auto-metrics. 'Clear rubric, multiple raters, measure agreement.'"),
-    dict(cat="ai_llm", title="Reranker cross-encoders (precision after retrieval)",
-         answer="In plain words: retrieval uses fast BI-ENCODERS (embed query and docs separately, compare vectors) - great for scanning millions quickly, but they never let the query and document 'read each other', so ranking is coarse. A cross-encoder RERANKER fixes the top results by reading the query and each candidate TOGETHER for a precise relevance score. The two-stage pattern: (1) retrieve ~50-100 candidates cheaply with the bi-encoder (recall), then (2) run a cross-encoder on just those pairs to reorder them by true relevance (precision). The cross-encoder is far more accurate because self-attention sees query and document jointly, catching nuances the separate embeddings miss - but it's too slow to run over the whole corpus, so you only apply it to the shortlist. This 'retrieve broad, rerank precise' step is one of the highest-ROI upgrades to a RAG or search system. Models: Cohere Rerank, bge-reranker, cross-encoder MS-MARCO.",
-         tags=["reranker", "cross-encoder", "bi-encoder", "retrieval", "rag", "ai"],
-         example="Query 'how to cancel auto-renewal'; the bi-encoder returns 50 candidates including 'how to enable auto-renewal' (embeds similarly). The cross-encoder reads query+doc together, understands cancel vs enable, and drops the wrong one to the bottom - so the right doc lands at rank 1.",
-         difficulty="Medium",
-         frequency="Commonly asked in search/RAG-quality interviews - 'bi-encoder vs cross-encoder, and where does each go?'",
-         mnemonic="Bi-encoder = fast, separate embeddings (scan millions, coarse). Cross-encoder = reads query+doc TOGETHER (slow, precise). Retrieve broad with bi-encoder, then RERANK the top-k with the cross-encoder. Big cheap win. 'Scan fast, judge close.'"),
-    dict(cat="ai_applied", title="Design a translation / localization pipeline",
-         answer="In plain words: translate content (UI strings, docs, support) into many languages accurately, keeping meaning, tone, and formatting - harder than 'call a translate API' because context and consistency matter. Core: an LLM or NMT model does the translation, but the design is about QUALITY and SCALE. Give CONTEXT (surrounding text, a glossary of brand/product terms, a style guide) so terms translate consistently and correctly - 'Apple' the company vs the fruit. Preserve PLACEHOLDERS/markup ({name}, HTML) so you don't break the string. Use TRANSLATION MEMORY (reuse past approved translations) for consistency and cost. Handle plurals/gender/right-to-left and locale formatting (dates, currency, numbers). QUALITY: automatic metrics (BLEU/COMET) plus human review for high-visibility strings, and a feedback loop. For scale: cache/batch, and prioritize human review for user-facing/legal content while auto-publishing low-risk text. Grounding (glossary + context) and consistency (translation memory) are the differentiators.",
-         tags=["translation", "localization", "nmt", "glossary", "applied", "ai", "system-design"],
-         example="Localizing an app to Japanese: the pipeline passes each string WITH its UI context and a glossary ('Cart' -> a fixed approved term), preserves the {count} placeholder, reuses translation memory for repeated strings, auto-publishes minor labels, and routes the checkout/legal strings to a human reviewer.",
-         difficulty="Medium",
-         frequency="Commonly asked at global product companies - tests context/glossary grounding, placeholder handling, and quality/human-review design.",
-         mnemonic="Not just 'call translate': give CONTEXT + a GLOSSARY (consistent terms), preserve placeholders/markup, reuse translation MEMORY, handle plurals/RTL/locale, eval with BLEU/COMET + human review for key strings. 'Context, glossary, memory, review.'"),
-    dict(cat="ai_applied", title="Named-entity recognition and extraction at scale",
-         answer="In plain words: pull structured entities out of text - names, companies, dates, amounts, product IDs, medical terms - so unstructured documents become queryable data. Approaches, cheapest to richest: (1) RULES/regex + gazetteers (lists) for well-formatted entities (emails, dates, IDs) - fast and precise where patterns hold. (2) A fine-tuned NER MODEL (transformer token-classifier like spaCy/BERT-NER) for names/orgs/locations - fast at scale once trained. (3) LLM zero/few-shot extraction for nuanced or novel entity types with no training data (costlier per doc). Design: often COMBINE them (rules for the easy stuff, model/LLM for the hard stuff), then NORMALIZE and LINK entities to canonical IDs (entity resolution - 'IBM' and 'International Business Machines' are the same). Handle overlapping/nested entities, domain jargon, and confidence-based human review. Metrics: entity-level precision/recall/F1. At scale, use the LLM to bootstrap labels, then a fast model for volume.",
-         tags=["ner", "entity-extraction", "entity-linking", "information-extraction", "applied", "ai"],
-         example="Processing millions of news articles: regex grabs dates/tickers, a fine-tuned NER model tags people/orgs/locations at high throughput, and entity linking maps 'Meta', 'Facebook', 'FB' to one canonical company ID - turning raw text into a searchable entity database.",
-         difficulty="Medium",
-         frequency="Commonly asked applied-NLP design - covers the rules-vs-model-vs-LLM tradeoff plus entity linking/normalization.",
-         mnemonic="Extract entities: rules/regex (easy patterns) + fine-tuned NER model (scale) + LLM (novel/nuanced). Then NORMALIZE + LINK to canonical IDs (IBM = International Business Machines). Confidence -> human. 'Tag, normalize, link.'"),
-    dict(cat="ai_applied", title="Design a churn prediction system",
-         answer="In plain words: predict which customers are about to leave so the business can intervene (a discount, outreach) before they go. It's a binary classification with strong business framing. LABEL: define churn precisely (canceled, or no activity for N days) - the definition drives everything. FEATURES: usage trends (declining logins/engagement), tenure, support tickets/complaints, billing events, and especially CHANGES over time (a drop is a stronger signal than a level). MODEL: gradient-boosted trees are a strong tabular baseline; output a probability. The point isn't just accuracy - it's ACTIONABILITY: rank customers by churn risk, and target interventions where expected value (save probability x customer value x uplift) is highest, not just highest risk. Beware: label leakage (a feature that only exists because they already churned), class imbalance (churn is rare - use PR-AUC/recall), and that predicting churn is useless without a retention ACTION. Measure the intervention's lift with an A/B holdout, not just model AUC.",
-         tags=["churn-prediction", "classification", "gradient-boosting", "business", "applied", "ai"],
-         example="A SaaS flags accounts whose weekly active users dropped 40% and support tickets spiked as high churn-risk; the success team offers those with high account value a check-in call, and an A/B holdout shows the outreach cuts churn in that segment by 15% - the model's value is the retained revenue, not its AUC.",
-         difficulty="Medium",
-         frequency="Very commonly asked applied-ML case - tests business framing, feature engineering, imbalance, leakage, and measuring real impact.",
-         mnemonic="Predict who'll leave -> intervene first. Define churn precisely; features = usage TRENDS/changes; GBTs output risk; target by expected VALUE not just risk; beware leakage + imbalance; prove it with an A/B holdout. 'Rank by savable value, then act.'"),
-    dict(cat="ai_llm", title="Embedding model fine-tuning for your domain",
-         answer="In plain words: off-the-shelf embedding models are trained on general text, so they can miss what 'similar' means in YOUR domain (legal, medical, your product's jargon) - fine-tuning them on your data makes retrieval much sharper. You train with CONTRASTIVE learning on pairs: positives that SHOULD be close (a question and its correct answer/passage, or two paraphrases) and negatives that should be far (especially HARD negatives - similar-looking wrong passages). The loss pulls positives together and pushes negatives apart in the vector space, so the model learns your domain's notion of relevance. Data can come from real query-click logs, human-labeled pairs, or LLM-generated pairs (synthetic). Even a light fine-tune on a few thousand good pairs often lifts retrieval recall noticeably over a generic model. Trade-offs: you now maintain/version the embedding model and must RE-EMBED your whole corpus when it changes. Alternatives if you can't fine-tune: better chunking, hybrid search, and a reranker.",
-         tags=["embedding-fine-tuning", "contrastive-learning", "retrieval", "domain-adaptation", "ai"],
-         example="A legal search tool: a generic embedder treats 'consideration' (contract term) like everyday 'consideration'. Fine-tuning on (legal query, correct clause) pairs with hard negatives teaches the domain meaning, lifting retrieval recall@10 from 0.7 to 0.85 - but the whole corpus must be re-embedded with the new model.",
+         frequency="Very commonly asked OS/concurrency question - 'what causes deadlock and how do you prevent it?'",
+         mnemonic="4 conditions (M-H-N-C): Mutual exclusion, Hold-and-wait, No-preemption, Circular-wait - ALL must hold. Break one to prevent (usually order your locks to kill circular wait). 'Same lock order, no deadlock.'"),
+    dict(cat="cs_fundamentals", title="TCP three-way handshake",
+         answer="In plain words: before TCP sends data it sets up a reliable connection with a three-message greeting so both sides agree they can hear each other and sync starting sequence numbers. (1) SYN - the client sends a SYN with its initial sequence number (ISN) x: 'let's talk, I start at x.' (2) SYN-ACK - the server replies with its own SYN (seq y) AND an ACK of x+1: 'got it, I start at y, expecting x+1.' (3) ACK - the client ACKs y+1: 'got yours.' Now both sides have confirmed send+receive works and synced sequence numbers, so ordered, reliable data can flow. The sequence numbers enable ordering and detecting lost/duplicate bytes. Teardown is a 4-way (FIN/ACK each direction). This setup cost (one round trip before data) is why connection reuse/keep-alive and protocols like QUIC/TLS 1.3 (0-RTT) matter for latency.",
+         tags=["tcp", "handshake", "networking", "sequence-numbers", "cs"],
+         diagram=r"""
+client                     server
+  |  --- SYN (seq=x) ------->  |   'I want to connect, I start at x'
+  |  <-- SYN-ACK (y, ack=x+1)- |   'OK, I start at y, expecting x+1'
+  |  --- ACK (ack=y+1) ------> |   'Got it' -> connection ESTABLISHED
+""".strip("\n"),
+         example="Loading a web page: your browser's TCP does SYN -> SYN-ACK -> ACK with the server (one round trip) before the HTTP request even goes out - which is why far-away servers feel slower and why keep-alive reuses the connection.",
+         difficulty="Easy",
+         frequency="Very commonly asked networking basic - 'walk me through the TCP handshake'.",
+         mnemonic="SYN -> SYN-ACK -> ACK (client, server, client). Sync starting SEQUENCE NUMBERS + confirm two-way reachability before data. One round trip of setup. 'Knock, knock-back, confirmed.'"),
+    # ---- conceptual (1) ----
+    dict(cat="conceptual", title="Why does labeling by uncertainty (active learning) beat random labeling, and when can it backfire?",
+         answer="Supervised models learn a decision boundary, and not all training examples are equally useful for finding it. Examples far from the boundary (obvious cats, obvious dogs) confirm what the model already knows and add little; examples NEAR the boundary (ambiguous, low-confidence) are where the model is wrong or unsure, and labeling those pins down the boundary precisely. Active learning exploits this: instead of labeling random examples (many of which are 'easy' and redundant), it repeatedly labels the examples the current model is most UNCERTAIN about, so each expensive human label removes the most confusion. Empirically this reaches a target accuracy with far fewer labels - a big deal when labeling is costly (radiologists, lawyers). Concretely the loop is: train on a seed set, score the unlabeled pool, pick the top-uncertainty items (or the items an ensemble most DISagrees on), get them labeled, retrain, repeat. WHEN IT BACKFIRES: (1) SAMPLING BIAS - by always chasing the boundary, the labeled set becomes unrepresentative of the true data distribution, which can hurt calibration and any model later trained on it (mitigate by mixing in some random labels and adding a diversity/representativeness criterion). (2) NOISY/AMBIGUOUS examples - the most 'uncertain' points can be inherently unlabelable garbage (mislabeled, corrupted, genuinely ambiguous), so the model burns its budget on examples that don't help and may even mislead (mitigate by filtering outliers or using query-by-committee). (3) The uncertainty estimate itself can be UNRELIABLE - a poorly-calibrated model is confidently wrong, so it won't flag the examples it should (mitigate with better uncertainty via ensembles/MC-dropout). (4) It's tied to ONE model - a set curated for model A's boundary may be a poor general-purpose dataset. The takeaway: uncertainty sampling is a powerful label-efficiency lever because it targets the most informative region, but it needs guardrails (diversity, some randomness, noise filtering, calibrated uncertainty) or its own selection bias undermines it.",
+         tags=["active-learning", "uncertainty-sampling", "sampling-bias", "data-efficiency", "why"],
+         example="Labeling 500 of 100k scans: uncertainty sampling picks the 500 borderline scans (max information) and hits target accuracy with 5x fewer labels than random - but if 50 of those are corrupted images the model finds 'uncertain', the budget is wasted, so you filter outliers and mix in random labels to keep the set representative.",
          difficulty="Hard",
-         frequency="Asked in retrieval/applied-scientist interviews - 'retrieval isn't good enough on our domain; would you fine-tune the embeddings?'",
-         mnemonic="Generic embeddings miss domain 'similarity' - fine-tune with CONTRASTIVE pairs (positives together, HARD negatives apart) on your data. Big recall lift, but you must RE-EMBED the corpus. No fine-tune? use hybrid + reranker. 'Teach the model YOUR notion of similar.'"),
-    dict(cat="ai_applied", title="Design a sentiment analysis system at scale",
-         answer="In plain words: classify text (reviews, tweets, support chats) as positive/negative/neutral (or finer emotions) across huge volume, reliably and cheaply. Approaches: (1) a fine-tuned transformer classifier (or even a strong linear model on embeddings) for high-throughput, low-cost scoring once you have labels; (2) LLM zero/few-shot for nuance or when labels are scarce, but pricier per item. Design points that separate a good answer: ASPECT-based sentiment (a review can be positive about battery but negative about price - overall sentiment hides this), SARCASM/negation ('yeah, great, it broke again') which fools naive models, DOMAIN adaptation (movie vs finance sentiment differ), MULTILINGUAL handling, and calibrated confidence with human review for edge cases. Serve with batching for throughput; monitor drift as language/slang evolves. Common production pattern: LLM to bootstrap labels + a fast fine-tuned model for volume, with aspect extraction for actionable insight rather than a single score.",
-         tags=["sentiment-analysis", "classification", "aspect-based", "nlp", "applied", "ai"],
-         example="Analyzing 1M product reviews: a fine-tuned classifier scores each cheaply, and ASPECT extraction reveals sentiment is +for 'quality' but -for 'shipping' - far more actionable than an overall 3.5 stars; sarcastic reviews are caught by a model trained with negation examples.",
-         difficulty="Medium",
-         frequency="Commonly asked applied-NLP design - tests the classifier-vs-LLM tradeoff plus real nuances (aspect, sarcasm, domain).",
-         mnemonic="Fine-tuned classifier (cheap scale) or LLM (nuance/no labels). The depth: ASPECT-based (per-topic, not one score), handle SARCASM/negation, domain + multilingual, confidence->human. 'Score fast, but per-aspect and sarcasm-aware.'"),
+         frequency="Asked in data-efficiency/applied-scientist interviews - 'why does active learning help, and what are its failure modes?'",
+         mnemonic="Boundary examples teach the most, so label the UNCERTAIN ones -> fewer labels for the same accuracy. Backfires via sampling BIAS, noisy 'uncertain' junk, and bad calibration -> fix with diversity + some random + outlier filtering. 'Label the confusing, but don't only label the confusing.'"),
 ]
 
 
