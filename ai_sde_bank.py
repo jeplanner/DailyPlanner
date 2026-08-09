@@ -6136,6 +6136,108 @@ cur:  -2  1  -2  4   3  5  6  1  5   (cur = max(x, cur+x))
 best: -2  1   1  4   4  5  6  6  6   -> 6  (subarray [4,-1,2,1])
 Reset the running sum whenever it goes negative.
 """.strip("\n"),
+    "Container With Most Water": r"""
+heights: [1, 8, 6, 2, 5, 4, 8, 3, 7]
+          L                       R    area = min(1,7) * width(8) = 8
+             L                    R    move the SHORTER wall inward
+area = min(height[L],height[R]) * (R - L); always move the shorter side.
+""".strip("\n"),
+    "Climbing Stairs": r"""
+ways to reach step n = ways(n-1) + ways(n-2)   (Fibonacci!)
+ step:  1  2  3  4  5
+ ways:  1  2  3  5  8      you arrive from one step below OR two below
+""".strip("\n"),
+    "House Robber": r"""
+houses: [2, 7, 9, 3, 1]   can't rob two adjacent
+ dp:     2  7 11 11 12     dp[i] = max(skip: dp[i-1], rob: dp[i-2]+house[i])
+max loot = 12  (rob 2 + 9 + 1)
+""".strip("\n"),
+    "Coin Change (fewest coins)": r"""
+coins {1,2,5}, amount 11:  dp[a] = fewest coins for a
+ a:  0 1 2 3 4 5 6 7 8 9 10 11
+dp:  0 1 1 2 2 1 2 3 3 4  2  3    dp[a] = min over c of dp[a-c] + 1
+answer dp[11] = 3   (5 + 5 + 1)
+""".strip("\n"),
+    "Unique Paths (grid DP)": r"""
+robot moves only right/down from top-left to bottom-right:
+   1  1  1  1
+   1  2  3  4        each cell = paths_from_above + paths_from_left
+   1  3  6 10        answer = bottom-right = 10  (for a 3x4 grid)
+""".strip("\n"),
+    "Longest Common Subsequence": r"""
+      ""  a  c  e
+  ""   0  0  0  0     if chars match: dp = diagonal + 1
+  a    0  1  1  1     else:           dp = max(up, left)
+  b    0  1  1  1
+  c    0  1  2  2     LCS('abcde','ace') length = 3  ('ace')
+  d    0  1  2  2
+  e    0  1  2  3
+""".strip("\n"),
+    "Edit Distance (Levenshtein)": r"""
+       ""  r  o  s
+  ""    0  1  2  3    match -> diagonal; else 1 + min(up, left, diag)
+  h     1  1  2  3    (delete / insert / replace)
+  o     2  2  1  2
+  r     3  2  2  2
+  s     4  3  3  2    edits('horse','ros') = 3
+  e     5  4  4  3
+""".strip("\n"),
+    "Merge Sort": r"""
+        [5, 2, 4, 1]
+       /            \        DIVIDE until single elements
+    [5,2]          [4,1]
+    /  \           /  \
+  [5]  [2]       [4]  [1]
+    \  /           \  /      then MERGE sorted halves back up
+    [2,5]          [1,4]
+        \          /
+        [1, 2, 4, 5]        O(n log n), stable
+""".strip("\n"),
+    "Course Schedule (topological sort)": r"""
+prereqs: 0 -> 1 -> 2   (take 0 before 1 before 2)
+indegree: 0:0  1:1  2:1
+queue starts with indegree-0 nodes: [0]
+pop 0 -> 1's indegree 0 -> pop 1 -> 2's indegree 0 -> pop 2
+processed all 3 -> NO cycle (schedulable). A leftover node = cycle.
+""".strip("\n"),
+    "Rotting Oranges (multi-source BFS)": r"""
+2=rotten 1=fresh 0=empty      BFS from ALL rotten at once, minute by minute
+ 2 1 1      min1: 2 2 1      min2: 2 2 2      min3: 2 2 2
+ 1 1 0  ->        2 1 0  ->        2 2 0  ->        2 2 0
+ 0 1 1            0 1 1            0 2 1            0 2 2
+answer = 4 minutes (last fresh turns). Multi-source = seed every rotten first.
+""".strip("\n"),
+    "Product of Array Except Self": r"""
+nums:     [1, 2, 3, 4]
+prefix ->  1  1  2  6     (product of everything to the LEFT)
+suffix <- 24 12  4  1     (product of everything to the RIGHT)
+answer  = 24 12  8  6     (prefix * suffix, no division)
+""".strip("\n"),
+    "Group Anagrams": r"""
+key = sorted letters (anagrams share a key):
+ "eat" -> "aet"      "tea" -> "aet"     "tan" -> "ant"
+ bucket "aet": [eat, tea]    bucket "ant": [tan, nat]
+Group by the canonical key in a hash map.
+""".strip("\n"),
+    "Kth Largest Element": r"""
+K=2 largest of [3,1,5,2,4] with a size-2 MIN-heap:
+  [3] -> [1,3] -> push5 pop1 -> [3,5] -> 2<3 skip -> push4 pop3 -> [4,5]
+root of the min-heap = the Kth largest = 4.
+""".strip("\n"),
+    "Design an LRU Cache": r"""
+hash map (O(1) find) + doubly linked list (O(1) reorder):
+   MRU  <-> [3] <-> [2] <-> [1] <->  LRU
+ get/put a key -> move its node to the FRONT (most recent)
+ over capacity -> evict the node at the BACK (least recent)
+""".strip("\n"),
+    "Stack vs Queue": r"""
+STACK (LIFO)              QUEUE (FIFO)
+ push 1,2,3                enqueue 1,2,3
+  top -> [3]                front -> [1] [2] [3] <- back
+         [2]                dequeue returns 1 (first in, first out)
+         [1]                (browser BACK = stack; print jobs = queue)
+pop returns 3 (last in, first out)
+""".strip("\n"),
 }
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
