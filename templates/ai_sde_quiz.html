@@ -205,7 +205,7 @@
   function finish(){
     const pct = Math.round(score/quiz.length*100);
     recordCompletion(pct);
-    // Riyaaz: 10 notes per correct answer, 25 for finishing, 150 for a clean sheet.
+    // Sadhana: 10 notes per correct answer, 25 for finishing, 150 for a clean sheet.
     if (window.Gamify) Gamify.quiz({ correct: score, total: quiz.length, mode: $("mode").value });
     $("game").classList.add("hide"); $("done").classList.remove("hide");
     $("finalpct").textContent = pct+"%";

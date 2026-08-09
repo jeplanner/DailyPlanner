@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════════
-   DAILYPLANNER — "RIYAAZ": GAMIFIED INTERVIEW PREP
+   DAILYPLANNER — "SADHANA": GAMIFIED INTERVIEW PREP
 
    A singing-themed progression layer over the prep banks. You earn
    NOTES (the XP) by studying topics, clocking Pomodoro focus time and
@@ -21,14 +21,15 @@
        Gamify.syncMinutes("ai_sde", minutesClockedSoFar);     // awards the delta
        Gamify.quiz({correct: 21, total: 25, mode: "mixed"});
 
-   All state is localStorage (key dp-riyaaz-v1), matching how the prep
+   All state is localStorage (key dp-sadhana-v1), matching how the prep
    pages already store progress.
    ════════════════════════════════════════════════════════════════ */
 (function () {
   "use strict";
   if (window.Gamify) return;
 
-  var KEY = "dp-riyaaz-v1";
+  var KEY = "dp-sadhana-v1";
+  var OLD_KEY = "dp-riyaaz-v1";        // pre-rename; migrated on first load
 
   /* ── the scale ───────────────────────────────────────────────────
      Seven swaras, three octaves. The frequencies are the equal-tempered
@@ -96,14 +97,14 @@
     { id: "headliner",   icon: "🌟", name: "Headliner",
       hint: "Study 500 topics",
       test: function (s) { return s.stats.topics >= 500; } },
-    { id: "riyaaz-3",    icon: "🔥", name: "Three Days of Riyaaz",
+    { id: "sadhana-3",   icon: "🔥", name: "Three Days of Sadhana",
       hint: "Practise 3 days running",
       test: function (s) { return s.streak.n >= 3; } },
-    { id: "riyaaz-7",    icon: "🪔", name: "In Tune",
-      hint: "A 7-day riyaaz streak",
+    { id: "sadhana-7",   icon: "🪔", name: "In Tune",
+      hint: "A 7-day sadhana streak",
       test: function (s) { return s.streak.n >= 7; } },
-    { id: "riyaaz-30",   icon: "👑", name: "Disciplined Voice",
-      hint: "A 30-day riyaaz streak",
+    { id: "sadhana-30",  icon: "👑", name: "Disciplined Voice",
+      hint: "A 30-day sadhana streak",
       test: function (s) { return s.streak.n >= 30; } },
     { id: "perfect",     icon: "🎯", name: "Perfect Pitch",
       hint: "Score 100% on a quiz",
@@ -111,7 +112,7 @@
     { id: "encore",      icon: "🎤", name: "Encore",
       hint: "Three focus sessions in one day",
       test: function (s) { return (s.day.sessions || 0) >= 3; } },
-    { id: "marathon",    icon: "⏳", name: "Marathon Riyaaz",
+    { id: "marathon",    icon: "⏳", name: "Marathon Sadhana",
       hint: "Three hours clocked in one day",
       test: function (s) { return s.day.minutes >= 180; } },
     { id: "octave-up",   icon: "⬆️", name: "Octave Up",
@@ -131,7 +132,7 @@
       test: function (s) { return levelFromXp(s.xp) >= MAX_LEVEL; } }
   ];
 
-  /* Today's riyaaz: three small targets. Hitting all three pays a bonus
+  /* Today's sadhana: three small targets. Hitting all three pays a bonus
      and is what the ring in the widget fills up. */
   var GOAL = { minutes: 25, topics: 3, quizzes: 1 };
   var GOAL_BONUS = 50;
@@ -157,6 +158,26 @@
   function load() {
     var s;
     try { s = JSON.parse(localStorage.getItem(KEY)); } catch (_) { s = null; }
+    /* This was called "riyaaz" when it shipped. Carry that progress over
+       rather than resetting anyone who had already started climbing. */
+    if (!s) {
+      try {
+        var old = JSON.parse(localStorage.getItem(OLD_KEY));
+        if (old && old.v === 1) {
+          s = old;
+          if (s.badges) {                       // the streak badge ids moved too
+            ["3", "7", "30"].forEach(function (n) {
+              if (s.badges["riyaaz-" + n] && !s.badges["sadhana-" + n]) {
+                s.badges["sadhana-" + n] = s.badges["riyaaz-" + n];
+                delete s.badges["riyaaz-" + n];
+              }
+            });
+          }
+          localStorage.setItem(KEY, JSON.stringify(s));
+          localStorage.removeItem(OLD_KEY);
+        }
+      } catch (_) {}
+    }
     if (!s || s.v !== 1) s = blank();
     var b = blank();
     /* Defensive merge: a half-written or older record must not throw. */
@@ -268,7 +289,7 @@
       state.day.xp += GOAL_BONUS;
       if (!(opts && opts.silent)) {
         setTimeout(function () {
-          say("🪔  Today's riyaaz complete - bonus " + GOAL_BONUS + " notes", "success");
+          say("🪔  Today's sadhana complete - bonus " + GOAL_BONUS + " notes", "success");
         }, 600);
       }
     }
@@ -424,7 +445,7 @@
 
     host.className = "gm";
     host.innerHTML =
-      '<button class="gm-main" type="button" data-gm="panel" title="Open your riyaaz progress">' +
+      '<button class="gm-main" type="button" data-gm="panel" title="Open your sadhana progress">' +
         '<span class="gm-swara">' + info.swara + '</span>' +
         '<span class="gm-meta">' +
           '<span class="gm-lvl">Level ' + lvl + ' · ' + (info.isMax ? "Maestro" : info.full + " · " + info.octave.label) + '</span>' +
@@ -435,7 +456,7 @@
         '</span>' +
       '</button>' +
       '<span class="gm-chip' + (state.streak.n > 0 ? " on" : "") + '" data-gm="panel" ' +
-        'title="Days of riyaaz in a row">🔥 ' + state.streak.n + '</span>' +
+        'title="Days of sadhana in a row">🔥 ' + state.streak.n + '</span>' +
       '<span class="gm-chip" data-gm="panel" title="Badges earned">🏅 ' + badgeCount + '/' + BADGES.length + '</span>' +
       '<span class="gm-chip' + (goalsHit === 3 ? " on" : "") + '" data-gm="panel" ' +
         'title="Today: ' + GOAL.minutes + ' min focus, ' + GOAL.topics + ' topics, ' + GOAL.quizzes + ' quiz">' +
@@ -474,9 +495,9 @@
       ? Math.round(state.stats.correct / state.stats.answered * 100) + "%" : "—";
 
     ov.innerHTML =
-      '<div class="gm-panel" role="dialog" aria-label="Riyaaz progress">' +
+      '<div class="gm-panel" role="dialog" aria-label="Sadhana progress">' +
         '<button class="gm-x" type="button" data-gm="close" aria-label="Close">×</button>' +
-        '<h3>🎤 Your riyaaz</h3>' +
+        '<h3>🎤 Your sadhana</h3>' +
         '<p class="muted">Study, clock focus time and take quizzes to earn notes and climb the scale. ' +
         'Practise every day to keep the streak alive.</p>' +
         '<div class="gm-stats">' +
@@ -487,7 +508,7 @@
           '<div class="gm-stat"><b>' + acc + '</b><span>quiz accuracy</span></div>' +
           '<div class="gm-stat"><b>' + state.stats.best + '%</b><span>best quiz</span></div>' +
         '</div>' +
-        '<div class="gm-h4">Today\'s riyaaz</div>' +
+        '<div class="gm-h4">Today\'s sadhana</div>' +
         '<div class="gm-goal">' +
           goalBox("Focus", state.day.minutes, GOAL.minutes, "min") +
           goalBox("Topics", state.day.topics, GOAL.topics, "") +

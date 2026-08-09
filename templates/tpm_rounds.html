@@ -283,7 +283,7 @@
           if (window.Gamify) Gamify.syncMinutes("tpm_rounds", Pomodoro.total("tpm_rounds")/60);
         });
       }
-      // Riyaaz progression, shared with the AI SDE bank.
+      // Sadhana progression, shared with the AI SDE bank.
       if (window.Gamify) {
         Gamify.mount($("gamebar"));
         Gamify.studiedBulk((BANK.entries||[]).filter(x => done.has(x.id)).map(x => ({
