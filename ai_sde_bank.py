@@ -14715,6 +14715,663 @@ WHAT PEOPLE GET WRONG: relaxing in place without the copy, and forgetting to
 guard against expanding from a node that is still infinity.
 """.strip("\n")
 
+_PLAIN_ALGO["Number of Provinces"] = r"""
+IN ONE SENTENCE: every direct friendship merges two groups, and the answer is
+how many distinct groups survive.
+
+STEPS
+1. Give every city its own parent slot, pointing at itself.
+2. Write find: follow parents up to a root, repointing each node at its
+   grandparent as you go (path compression).
+3. Write union: point one root at the other.
+4. Walk the upper triangle of the matrix - pairs i < j only, since the matrix is
+   symmetric. Whenever the entry is 1, union those two cities.
+5. Count the distinct roots across all cities. That is the number of provinces.
+
+WHY ONLY THE UPPER TRIANGLE: the connection matrix is symmetric and its diagonal
+is all 1s (every city connects to itself). Walking the whole thing does the same
+unions twice for no benefit.
+
+WHY COUNT ROOTS AT THE END RATHER THAN DECREMENTING: you can also start a counter
+at n and subtract one on every union that actually merged two DIFFERENT groups -
+that is O(1) at the end and is the cleaner version. Counting distinct roots is
+easier to get right first time. Either is accepted.
+
+THE ALTERNATIVE: DFS from every unvisited city, marking everything reachable, and
+count how many times you had to start. Same complexity, no Union-Find needed.
+Prefer DFS when the graph is given once; prefer Union-Find when edges arrive over
+time - and saying that distinction is what the question is really probing.
+
+WHAT PEOPLE GET WRONG: calling find on stale parent values after unions, and
+using the raw parent array instead of find() when counting groups at the end -
+which counts chains rather than roots.
+""".strip("\n")
+
+_PLAIN_ALGO["Odd Even Linked List"] = r"""
+IN ONE SENTENCE: unzip the list into two chains - one of odd positions, one of
+even - then staple the even chain onto the end of the odd one.
+
+STEPS
+1. Handle an empty list.
+2. Point odd at the head and even at the second node. Remember the even chain's
+   head - you will need it at the end.
+3. While the even pointer and its next both exist: link odd to the node after
+   even, then advance odd. Then link even to the node after the new odd, and
+   advance even.
+4. Finally, point the odd chain's tail at the saved even head.
+5. Return the original head.
+
+WHY YOU MUST SAVE THE EVEN HEAD FIRST: the moment you start relinking, the second
+node stops being reachable from the head. Without the saved pointer the whole
+even chain is lost.
+
+WHY THE LOOP CONDITION CHECKS BOTH even AND even.next: you advance two nodes per
+iteration through two different pointers, so both must exist before you dereference
+them. This is the same discipline as fast/slow pointers.
+
+WHAT "ODD AND EVEN" MEANS HERE: it is POSITION in the list, not the node values.
+Misreading that is more common than any pointer bug - re-read the statement.
+
+WHY IT IS O(1) SPACE: you are rewiring existing nodes, not building new ones. The
+problem specifically asks for that, so a version that collects values into two
+lists and rebuilds misses the point.
+
+WHAT PEOPLE GET WRONG: advancing both pointers in the wrong order, so odd links
+to a node that has already been moved; and forgetting the final staple, which
+returns only the odd half.
+""".strip("\n")
+
+_PLAIN_ALGO["Permutation in String"] = r"""
+IN ONE SENTENCE: a permutation is just a multiset of letters, so slide a
+fixed-size window over the haystack and check whether its letter counts match.
+
+STEPS
+1. If the needle is longer than the haystack, return false.
+2. Count the needle's letters. Count the first window of the same size in the
+   haystack.
+3. If the two counts already match, return true.
+4. Slide the window one step at a time: add the entering character's count,
+   subtract the leaving character's, and compare again.
+5. Return false if the window reaches the end without a match.
+
+WHY THE WINDOW SIZE IS FIXED: any permutation of the needle has exactly the same
+length, so you never grow or shrink - which makes this simpler than the variable
+sliding-window problems. Spotting "the window size is given" saves you the inner
+shrink loop.
+
+WHY COUNTS RATHER THAN SORTING EACH WINDOW: sorting every window is
+O(n x k log k). Updating two counters per step is O(1) per step. Recognising that
+an anagram check is a multiset comparison, not a sort, is the actual insight.
+
+THE OPTIMISATION IF ASKED: comparing two full counters each step is technically
+O(26). You can maintain a single "number of letters whose counts currently match"
+and update it in O(1), giving a true O(n). Mention it, but the counter comparison
+is usually accepted since 26 is a constant.
+
+WHAT PEOPLE GET WRONG: leaving zero-valued keys in the counter, so the equality
+comparison fails even though the letters match - either delete keys when they hit
+zero, or compare fixed-size arrays instead of dictionaries.
+""".strip("\n")
+
+_PLAIN_ALGO["Redundant Connection (Union-Find)"] = r"""
+IN ONE SENTENCE: add the edges one at a time, and the first edge whose two ends
+are ALREADY connected is the one that closes a cycle.
+
+STEPS
+1. Give every node its own parent slot (nodes are 1-indexed here, so size the
+   array accordingly).
+2. Write find with path compression.
+3. For each edge in the given order: find both roots.
+4. If the roots are the same, the two nodes were already connected, so this edge
+   creates a cycle - return it.
+5. Otherwise union them and continue.
+
+WHY THE FIRST SUCH EDGE IS THE ANSWER: the input is a tree plus exactly one extra
+edge, so exactly one edge closes a cycle. The problem asks for the last one in
+the input order that could be removed - and since only one is redundant,
+returning the first cycle-closer gives it.
+
+WHY UNION-FIND IS THE NATURAL TOOL: the question is purely "are these two already
+connected?", asked repeatedly as edges arrive. That is exactly what Union-Find
+answers in near-constant time. DFS would have to re-search after every insertion.
+
+WHY THE 1-INDEXING MATTERS: nodes run from 1 to n, so the parent array needs n+1
+slots. Sizing it at n silently drops the highest node.
+
+WHAT PEOPLE GET WRONG: unioning before checking, which merges the groups and
+hides the cycle; and comparing the raw nodes rather than their roots.
+""".strip("\n")
+
+_PLAIN_ALGO["Rotate List"] = r"""
+IN ONE SENTENCE: close the list into a ring, then cut it open at the right place.
+
+STEPS
+1. Handle the trivial cases: empty, single node, or k of zero.
+2. Walk to the tail, counting the length as you go.
+3. Reduce k modulo the length - rotating by the full length changes nothing. If
+   the result is 0, return the list untouched.
+4. Join the tail to the head, making a circle.
+5. Walk length minus k steps from the head to reach the NEW tail.
+6. The new head is the node after it. Break the circle by clearing the new tail's
+   next pointer.
+7. Return the new head.
+
+WHY THE MODULO IS NOT OPTIONAL: k can be far larger than the list. Without it you
+would walk millions of steps to end up where you started - or, in the circular
+version, loop forever.
+
+WHY MAKING IT CIRCULAR SIMPLIFIES EVERYTHING: rotating is just choosing a
+different place to cut a ring. Doing it with a linear list means tracking two
+separate sublists and re-joining them, which is more pointers and more bugs.
+
+WHY length MINUS k STEPS: rotating right by k means the last k nodes move to the
+front, so the new tail is the node at position length-k counting from the head.
+Derive that on a 5-node list with k of 2 before trusting it.
+
+WHAT PEOPLE GET WRONG: forgetting to break the circle, which returns an infinite
+list; and computing the step count as k rather than length minus k, which rotates
+the wrong way.
+""".strip("\n")
+
+_PLAIN_ALGO["Shortest Path in Binary Matrix (8-directional BFS)"] = r"""
+IN ONE SENTENCE: BFS from the top-left, where every cell has EIGHT neighbours
+instead of four, and the first arrival at the bottom-right is the shortest path.
+
+STEPS
+1. If either the start or the end cell is blocked, no path exists.
+2. Queue the start with a path length of 1 - the problem counts CELLS, not steps.
+3. Mark the start as seen.
+4. Pop a cell. If it is the destination, return its length.
+5. Otherwise generate all eight neighbours by varying the row offset and the
+   column offset over -1, 0 and 1, skipping the case where both are 0.
+6. Queue any neighbour that is in bounds, is a clear cell, and has not been seen.
+   Mark it seen at the moment you queue it.
+7. Return -1 if the queue empties.
+
+WHY BFS RATHER THAN DFS: BFS explores in order of increasing distance, so the
+first time it touches the destination is by the fewest cells. DFS would find some
+path and have to keep searching for a shorter one.
+
+WHY MARK AS SEEN WHEN QUEUING, NOT WHEN POPPING: in a grid with eight directions
+a cell can be reached from many neighbours on the same level. Marking at queue
+time stops the same cell entering the queue several times - correct either way,
+but much faster.
+
+WHY THE LENGTH STARTS AT 1: the problem defines the path length as the number of
+visited cells, and the start cell counts. Starting at 0 gives an answer one too
+small on every input.
+
+WHAT PEOPLE GET WRONG: forgetting to exclude the (0, 0) offset, which queues the
+cell itself; and only using four directions, which is a different problem
+entirely.
+""".strip("\n")
+
+_PLAIN_ALGO["Subarray Product Less Than K"] = r"""
+IN ONE SENTENCE: slide a window whose product stays under k, and every time you
+extend it, count all the valid subarrays ENDING at the new right edge at once.
+
+STEPS
+1. If k is 1 or less, no product of positive integers can be smaller - return 0.
+2. Keep a running product at 1, a left edge at 0, and a count at 0.
+3. Walk the right edge. Multiply the new element into the product.
+4. While the product has reached k, divide out the leftmost element and move the
+   left edge in.
+5. The window is now valid, and every subarray ending at the right edge and
+   starting anywhere from left onward is also valid - that is right minus left
+   plus one of them. Add that to the count.
+6. Return the count.
+
+WHY THE BULK COUNT IS CORRECT: if the whole window has a product below k, then so
+does every suffix of it, because dividing out elements from the left only makes
+the product smaller (the values are positive). So one addition certifies a whole
+family of subarrays - which is what makes this O(n) instead of O(n^2).
+
+WHY POSITIVITY IS ESSENTIAL: with a zero or a negative in the array, shrinking
+from the left would not reliably decrease the product, and the window would stop
+being valid. The problem guarantees positive integers, and that guarantee is
+doing real work - say so.
+
+WHY THE k <= 1 GUARD: without it, the shrink loop empties the window and then
+divides by nothing.
+
+WHAT PEOPLE GET WRONG: counting 1 per valid window instead of the whole block,
+which undercounts massively; and using floating-point division, which drifts -
+use integer division since you are removing exact factors.
+""".strip("\n")
+
+_PLAIN_ALGO["Subsets II (with duplicates)"] = r"""
+IN ONE SENTENCE: the ordinary subsets backtracking, plus one line that refuses to
+start a branch with the same value twice at the same depth.
+
+STEPS
+1. Sort the array first, so equal values sit next to each other.
+2. Write the standard backtracking: record a copy of the path at every call, then
+   loop over the candidates from a start index onward.
+3. Before using a candidate, check: if this is not the first choice at this level
+   (i is greater than start) AND this value equals the previous one, skip it.
+4. Otherwise push, recurse from i plus one, and pop.
+
+WHY THE CONDITION IS "i > start" AND NOT "i > 0": at a given level, the first
+candidate is allowed to be a duplicate of something used HIGHER up the tree -
+that is how [2,2] gets built. What you must prevent is choosing the same VALUE
+twice as alternatives at the same position, which is what produces two identical
+subsets. That single comparison is the entire difference from Subsets I, and
+getting it wrong either emits duplicates or silently drops valid answers.
+
+WHY SORTING IS A PREREQUISITE: the skip test compares against the immediate
+neighbour, which only identifies duplicates if equal values are adjacent.
+
+THE FAMILY: the same guard appears in Combination Sum II and Permutations II.
+Learn the "sort, then skip i > start with an equal previous" idiom once and all
+three fall out.
+
+WHAT PEOPLE GET WRONG: deduplicating at the end with a set of tuples - it works,
+but it does the exponential work first and then throws results away, and
+interviewers will ask you to prune instead.
+""".strip("\n")
+
+_PLAIN_ALGO["Surrounded Regions"] = r"""
+IN ONE SENTENCE: instead of hunting for enclosed regions, mark everything
+connected to the BORDER as safe - whatever is left unmarked must be surrounded.
+
+STEPS
+1. Write a flood-fill that walks from a cell through connected 'O's, marking each
+   with a temporary character such as 'S'.
+2. Run it from every cell on all four borders.
+3. Sweep the whole board: any remaining 'O' was never reached from the border, so
+   it is enclosed - flip it to 'X'.
+4. Flip every 'S' back to 'O'.
+
+WHY THE PROBLEM IS INVERTED: checking whether a given region touches the border
+requires exploring it fully before you can decide, and you would have to undo the
+work if it turned out to be safe. Starting from the border makes safety a
+positive, one-pass fact. Whenever "is this thing enclosed / unreachable?" is
+expensive, try computing the reachable set instead and taking the complement.
+
+WHY A TEMPORARY MARKER RATHER THAN A VISITED SET: the board is being mutated
+anyway, so a third character costs nothing and doubles as the visited mark. The
+final sweep converts it back.
+
+WHY EVERY BORDER CELL IS A SOURCE, NOT JUST THE CORNERS: a safe region can touch
+the edge anywhere along it.
+
+WHAT PEOPLE GET WRONG: forgetting the final restore pass, leaving 'S' on the
+board; and on a large board, blowing the recursion stack - mention converting to
+an explicit stack or BFS.
+""".strip("\n")
+
+_PLAIN_ALGO["Swap Nodes in Pairs"] = r"""
+IN ONE SENTENCE: with a pointer parked on the node BEFORE each pair, rewire three
+links so the second node comes first.
+
+STEPS
+1. Make a dummy node in front of the head and set prev to it.
+2. While there are at least two nodes after prev: call them first and second.
+3. Rewire in this order: point first at whatever came after second; point second
+   at first; point prev at second.
+4. Move prev to first, which is now the second node of the swapped pair and
+   therefore sits just before the next pair.
+5. Return dummy.next.
+
+WHY THE ORDER OF THE THREE REWIRES MATTERS: each one overwrites a pointer you may
+still need. Doing first.next last would lose the rest of the list. Write the
+target shape on paper - prev to second to first to rest - and then assign in an
+order where every right-hand side is still valid.
+
+WHY THE DUMMY IS ESSENTIAL: the very first pair swaps the head itself, so you
+need a node in front of it to reassign. It also makes every subsequent pair
+identical to the first, with no special cases.
+
+WHY prev ADVANCES TO first: after the swap, first is the second element of the
+pair, so it is exactly the predecessor of the next pair.
+
+WHY AN ODD-LENGTH LIST IS SAFE: the loop condition requires two nodes to exist,
+so a lone final node is simply left alone - which is what the problem wants.
+
+WHAT PEOPLE GET WRONG: swapping the VALUES instead of the nodes. It passes the
+tests and is explicitly not what is being asked - the point is pointer
+manipulation, and interviewers say so.
+""".strip("\n")
+
+_PLAIN_ALGO["Best Time to Buy and Sell Stock II (greedy)"] = r"""
+IN ONE SENTENCE: with unlimited trades, just collect every upward step - the sum
+of all the rises IS the maximum profit.
+
+STEPS
+1. Start the profit at 0.
+2. Walk from the second price onward.
+3. If today's price is higher than yesterday's, add the difference.
+4. Return the profit.
+
+WHY ADDING EVERY RISE IS OPTIMAL AND NOT NAIVE: any profitable trade from a low
+to a later high can be decomposed into the consecutive daily rises between them -
+the intermediate dips just cancel out. So buying and selling every single day you
+go up earns exactly the same as holding through a long climb, and it can never
+earn less. That decomposition argument is the answer to "why does this greedy
+work?", and it is what the question is testing.
+
+WHY THIS DIFFERS FROM THE FIRST STOCK PROBLEM: with only ONE transaction allowed
+you must find the best single buy-low/sell-high pair, which needs a running
+minimum. Unlimited transactions removes the constraint entirely and collapses the
+problem to summing the rises. Know which version you have been asked.
+
+WHY YOU NEVER TRACK A BUY PRICE: you are not simulating trades, you are summing
+deltas. Any attempt to track positions makes this harder than it is.
+
+WHAT PEOPLE GET WRONG: trying to find local minima and maxima and pair them up -
+correct but far more code and far more edge cases, especially with flat stretches.
+""".strip("\n")
+
+_PLAIN_ALGO["House Robber"] = r"""
+IN ONE SENTENCE: at each house make one decision - skip it and keep what you had,
+or rob it and add it to what you had two houses ago - and carry only those two
+numbers forward.
+
+STEPS
+1. Keep two numbers, both starting at 0: the best total up to two houses back,
+   and the best up to one house back.
+2. For each house: the new best is the larger of "the previous best" (skipping
+   this house) and "the two-back best plus this house's money" (robbing it).
+3. Slide the pair forward and continue.
+4. Return the one-back value.
+
+WHY TWO NUMBERS ARE ENOUGH: the adjacency rule only reaches back one house, so a
+decision at house i depends solely on houses i-1 and i-2. Everything earlier is
+already folded into those totals. That is the rolling-window space optimisation -
+O(1) instead of O(n).
+
+WHY BOTH START AT ZERO: robbing nothing earns nothing, and with all values
+non-negative the maximum is never worse than 0. If negative values were possible
+the seeding would need care - worth asking.
+
+WHY THE OBVIOUS SHORTCUT FAILS: "just take every other house" is wrong. On
+[2,1,1,2] the two alternating patterns give 2+1 = 3 and 1+2 = 3, while the real
+answer is 2+2 = 4 - robbing the two ends and skipping TWO houses in the middle.
+Non-adjacent does not mean strictly alternating, and that example is the one to
+have ready.
+
+WHAT PEOPLE GET WRONG: writing the two updates as separate statements, so the
+second reads a value the first has already overwritten. Do it as one simultaneous
+assignment.
+""".strip("\n")
+
+_PLAIN_ALGO["Majority Element (Boyer-Moore voting)"] = r"""
+IN ONE SENTENCE: hold one candidate and a counter - matching elements vote for
+it, different ones vote against, and when the count hits zero you adopt whoever
+you are looking at.
+
+STEPS
+1. Start with no candidate and a count of 0.
+2. For each element: if the count is 0, adopt this element as the candidate.
+3. Then add 1 to the count if it matches the candidate, or subtract 1 if not.
+4. Return the candidate.
+
+WHY THE SURVIVOR MUST BE THE MAJORITY: think of it as every element cancelling
+one element of a different value. An element appearing more than half the time
+has more copies than everything else combined, so it cannot be fully cancelled -
+whatever else happens, some of it survives. That pairing-off argument is the whole
+proof and it fits in one sentence.
+
+WHY THE COUNT IS NOT A FREQUENCY: it is the net lead of the current candidate over
+everything since the last reset, which is why it can drop to 0 and restart with a
+completely different value. Reading it as "how many times have I seen this" is
+where people lose confidence in the algorithm.
+
+WHY IT NEEDS THE GUARANTEE: if no true majority exists, this still returns
+something - just not a meaningful answer. When the guarantee is not given, do a
+second pass counting the candidate's actual occurrences to verify. Say that; it
+is the standard follow-up.
+
+WHY NOT A HASH MAP: counting works and is O(n) time, but it is O(n) space. This
+is O(1) space, which is the entire reason the algorithm is famous.
+
+WHAT PEOPLE GET WRONG: adopting a new candidate and then also decrementing in the
+same step - adopt first, then vote, which nets to a count of 1.
+""".strip("\n")
+
+_PLAIN_ALGO["Capacity to Ship Packages Within D Days"] = r"""
+IN ONE SENTENCE: binary-search the ANSWER - the ship's capacity - using a simple
+simulation to test whether a given capacity finishes in time.
+
+STEPS
+1. The smallest possible capacity is the heaviest single package (it must fit at
+   all); the largest useful one is the sum of everything (ship it all in one day).
+2. Write a helper: given a capacity, walk the packages in order, starting a new
+   day whenever the next package would overflow the current load. Return the days
+   used.
+3. Binary-search between the two bounds. If the middle capacity finishes within
+   the allowed days, it is feasible - record it and try smaller by moving hi to
+   mid. Otherwise move lo to mid plus one.
+4. Return lo.
+
+WHY THIS IS SEARCHABLE: feasibility is MONOTONIC - if a capacity works, every
+larger capacity also works. So the yes/no answer flips exactly once as capacity
+increases, which is the only precondition binary search needs. Say that sentence
+out loud; it is the insight, and the code follows from it.
+
+HOW TO SPOT THE PATTERN: the question asks for the minimum or maximum X such that
+something is possible, X lies in a known numeric range, and checking one X is
+easy while finding the best directly is not. Koko Eating Bananas, Split Array
+Largest Sum and Minimise Max Distance are the same problem in different costumes.
+
+WHY THE LOWER BOUND IS max(weights) AND NOT 1: a capacity below the heaviest
+package can never ship it, so the simulation would loop or lie. Getting the bounds
+right is half of these problems.
+
+WHY PACKAGES CANNOT BE REORDERED: the problem says "in order", which is what makes
+the simulation a simple greedy sweep rather than a packing problem.
+
+WHAT PEOPLE GET WRONG: the "lo < hi" versus "lo <= hi" template mix-up, and
+starting the day counter at 0 rather than 1.
+""".strip("\n")
+
+_PLAIN_ALGO["Construct Binary Tree from Preorder and Inorder"] = r"""
+IN ONE SENTENCE: preorder hands you the roots in order; inorder tells you, for
+each root, how many nodes fall on its left - and that split is the recursion.
+
+STEPS
+1. Build a map from value to its index in the inorder list, so the split point is
+   an O(1) lookup rather than a scan.
+2. Keep a moving pointer into the preorder list, starting at 0.
+3. Write a builder taking the inorder range lo to hi. If lo is past hi, return
+   nothing.
+4. Take the next value from preorder - that is this subtree's root - and advance
+   the pointer.
+5. Look up the root's index in inorder. Everything from lo to index-1 is its left
+   subtree; everything from index+1 to hi is its right.
+6. Recurse LEFT FIRST, then right, and return the assembled node.
+
+WHY THE ORDER OF THE TWO RECURSIVE CALLS IS NOT NEGOTIABLE: preorder is
+root-left-right, so the very next values in the list belong to the left subtree.
+Building the right subtree first would consume them in the wrong order and
+produce a valid-looking but wrong tree. This is the single most important line in
+the problem.
+
+WHY THE PREORDER POINTER IS SHARED RATHER THAN PASSED: each subtree consumes an
+unpredictable number of preorder values, so the pointer must persist across
+calls. Passing an index by value silently rebuilds the same nodes.
+
+WHY THE INDEX MAP MATTERS: scanning inorder for the root at every level makes the
+whole thing O(n^2) on a skewed tree. The map makes it O(n).
+
+WHAT PEOPLE GET WRONG: the assumption that all values are distinct - with
+duplicates the split point is ambiguous and the reconstruction is not unique. Say
+that; it shows you understand why the map is valid.
+""".strip("\n")
+
+_PLAIN_ALGO["Edit Distance (Levenshtein)"] = r"""
+IN ONE SENTENCE: fill a grid where each cell answers "how many edits turn this
+prefix of a into that prefix of b?" - and each cell looks at just three
+neighbours.
+
+STEPS
+1. Make a table with one extra row and column, so index i, j means the first i
+   characters of a against the first j characters of b.
+2. Base cases: turning a prefix into the empty string costs one delete per
+   character, so column 0 is 0,1,2,3...; the empty string into a prefix costs one
+   insert per character, so row 0 is the same.
+3. Sweep every cell. If the two characters match, no edit is needed here - copy
+   the diagonal value.
+4. If they differ, take 1 plus the smallest of three neighbours: the diagonal
+   (substitute), the one above (delete from a), and the one to the left (insert
+   into a).
+5. Return the bottom-right cell.
+
+WHY THOSE THREE NEIGHBOURS ARE EXACTLY THE THREE OPERATIONS: the diagonal means
+you consumed one character from each string - a substitution. Above means you
+consumed one from a only - a deletion. Left means one from b only - an insertion.
+Say those three mappings out loud before writing the loop; the code becomes
+mechanical.
+
+WHY THE BASE CASES ARE NOT DECORATION: they encode the only situations where the
+answer is known outright, and every other cell is built from them.
+
+THE SPACE OPTIMISATION IF ASKED: each row only reads the row above and the cell
+to its left, so two rows suffice - O(min(m, n)) space. Mention it.
+
+WHAT PEOPLE GET WRONG: the index shift. Table cell (i, j) compares a[i-1] with
+b[j-1], not a[i] with b[j]. Write that mapping down first, or every comparison is
+off by one.
+""".strip("\n")
+
+_PLAIN_ALGO["Jump Game"] = r"""
+IN ONE SENTENCE: sweep left to right tracking the furthest index you could
+possibly reach - if you ever stand somewhere beyond that reach, you are stuck.
+
+STEPS
+1. Start the reach at 0.
+2. Walk the array with the index. If the index has passed the reach, you cannot
+   even get here - return false.
+3. Otherwise extend the reach to the larger of itself and this index plus its
+   jump value.
+4. If the walk completes, return true.
+
+WHY YOU DO NOT NEED TO TRY DIFFERENT JUMP CHOICES: reachability is not about
+which jumps you pick - if you can reach index i at all, you can reach every index
+before it too, because you could always jump shorter. So a single number, the
+furthest reachable point, captures everything. That collapse from "explore all
+paths" to "carry one number" is the whole insight.
+
+WHY THE CHECK COMES BEFORE THE UPDATE: standing on an unreachable index means
+its jump value is fantasy and must not extend the reach.
+
+WHY DP IS OVERKILL HERE: a boolean "can I reach index i" table is correct and
+O(n^2). The greedy is O(n) and O(1) space. Offer the DP if you cannot justify the
+greedy, but the argument above is short enough to give.
+
+THE SIBLING: Jump Game II asks for the FEWEST jumps, which needs the level-boundary
+version - similar variables, different bookkeeping.
+
+WHAT PEOPLE GET WRONG: returning false when a zero is encountered. A zero is only
+fatal if the reach does not already extend past it, which is exactly what the
+comparison tests.
+""".strip("\n")
+
+_PLAIN_ALGO["Kth Smallest Element in a BST"] = r"""
+IN ONE SENTENCE: an in-order walk of a BST produces the values in sorted order,
+so walk in-order and stop after the kth value.
+
+STEPS
+1. Keep an explicit stack and a current node starting at the root.
+2. Loop while the stack is non-empty or the current node exists.
+3. Push the current node and go left, repeatedly, until there is no left child -
+   you are now holding the path to the smallest unvisited node.
+4. Pop a node. That is the next value in sorted order. Decrease k; if it hits 0,
+   return this node's value.
+5. Otherwise move to its right child and continue the outer loop.
+
+WHY IN-ORDER GIVES SORTED VALUES: the BST property says everything left of a node
+is smaller and everything right is larger, so visiting left, then the node, then
+right emits values in increasing order at every level - and therefore overall.
+That one line is why this problem is easy once you see it.
+
+WHY THE ITERATIVE VERSION IS PREFERRED: it stops the moment it has the answer.
+Recursion visits nodes after the kth unless you thread an early-exit flag through
+every call, which is uglier than the stack.
+
+WHY IT IS O(height + k) AND NOT O(n): you only descend to the leftmost path and
+then pop k times. Worth stating, since it is better than "traverse and index".
+
+THE FOLLOW-UP THEY ASK: "what if the tree is modified often and you need this
+frequently?" Store a subtree size in each node; then you can navigate straight to
+the kth in O(height) without traversing. That is the answer they are looking for.
+
+WHAT PEOPLE GET WRONG: decrementing k before the pop, and pushing the right child
+onto the stack directly instead of assigning it to current and letting the inner
+left-descent handle it.
+""".strip("\n")
+
+_PLAIN_ALGO["Longest Common Subsequence"] = r"""
+IN ONE SENTENCE: fill a grid where each cell is "the LCS length of this prefix of
+a and that prefix of b", and each cell depends on just its neighbours.
+
+STEPS
+1. Make a table with one extra row and column, all zeros - an empty prefix shares
+   nothing with anything.
+2. Sweep every cell. If the current characters of a and b match, this pair can
+   join the subsequence: take the diagonal value and add 1.
+3. If they do not match, at least one of the two characters is unusable, so take
+   the better of dropping a's character (the cell above) or dropping b's (the cell
+   to the left).
+4. Return the bottom-right cell.
+
+WHY THE MATCH CASE TAKES THE DIAGONAL AND NOTHING ELSE: when both characters
+match, there is never a reason not to pair them - any subsequence that skips this
+pair can be rewritten to include it without getting shorter. So no maximum is
+needed in that branch, and taking one is a common way to get a subtly wrong
+answer.
+
+WHY THE MISMATCH CASE TAKES A MAXIMUM: you genuinely do not know which character
+to sacrifice, so you try both and keep the better.
+
+THE PROBLEMS THIS UNLOCKS: Edit Distance is the same grid with three neighbours
+instead of two. Longest Palindromic Subsequence is LCS of a string with its own
+reverse. Shortest Common Supersequence and the diff algorithm behind version
+control are both built on this table.
+
+IF THEY WANT THE ACTUAL SUBSEQUENCE: walk backwards from the bottom-right,
+stepping diagonally when the characters match (recording that character) and
+otherwise toward the larger neighbour.
+
+WHAT PEOPLE GET WRONG: the index shift - cell (i, j) compares a[i-1] with b[j-1].
+And confusing subsequence with substring; a subsequence may skip characters.
+""".strip("\n")
+
+_PLAIN_ALGO["Merge Sort"] = r"""
+IN ONE SENTENCE: split the array in half, sort each half by the same method, then
+walk the two sorted halves together taking the smaller front element each time.
+
+STEPS
+1. An array of 0 or 1 elements is already sorted - that is the base case.
+2. Split at the midpoint and recursively sort each half.
+3. Merge: put an index at the front of each half. Repeatedly compare the two
+   front values and append the smaller, advancing that index.
+4. When one half runs out, append everything remaining from the other - it is
+   already sorted.
+5. Return the merged result.
+
+WHY IT IS ALWAYS O(n log n): the splitting is halving, so there are log n levels,
+and each level merges a total of n elements. Unlike quicksort, no input can make
+it degrade - the split is positional, not value-dependent. That guarantee is the
+reason it is used where worst-case latency matters.
+
+THE ONE LINE THAT MAKES IT STABLE: taking from the LEFT half when the two fronts
+are EQUAL. Using strictly-less-than would take from the right and swap the order
+of equal elements. Stability matters when you sort by one key after another, and
+interviewers ask about it - so know that this single comparison operator is where
+it lives.
+
+WHY IT IS THE ALGORITHM FOR LINKED LISTS AND EXTERNAL DATA: merging needs only
+sequential access, never random indexing, so it works on linked lists in O(1)
+extra space and on files too large for memory. Quicksort needs random access.
+
+THE COST: O(n) extra space for the merge buffer, which is its main downside
+against quicksort's in-place partitioning.
+
+WHAT PEOPLE GET WRONG: forgetting to append the leftover tail after the main
+merge loop, which silently drops the largest elements.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
