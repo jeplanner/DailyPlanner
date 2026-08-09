@@ -36,7 +36,7 @@ _CATEGORY_TAGS = {
 
 
 def Q(cat, title, answer, tags, code="", example="", complexity="", pitfalls="",
-      followups="", difficulty="", frequency="", mnemonic=""):
+      followups="", difficulty="", frequency="", mnemonic="", diagram=""):
     # difficulty: "Easy" | "Medium" | "Hard" (backfilled heuristically below if "")
     # frequency: how often it shows up in interviews at leading product companies
     #            (Amazon, Google, Meta, NVIDIA, Microsoft, Apple, ...) — backfilled if ""
@@ -44,7 +44,8 @@ def Q(cat, title, answer, tags, code="", example="", complexity="", pitfalls="",
     return {"cat": cat, "title": title, "answer": answer, "code": code,
             "example": example, "complexity": complexity, "pitfalls": pitfalls,
             "followups": followups, "tags": tags,
-            "difficulty": difficulty, "frequency": frequency, "mnemonic": mnemonic}
+            "difficulty": difficulty, "frequency": frequency, "mnemonic": mnemonic,
+            "diagram": diagram}
 
 
 ENTRIES = [
@@ -5916,3 +5917,142 @@ for _e in ENTRIES:
     _intro = _PLAIN.get(_e["title"])
     if _intro and not _e.get("answer", "").startswith("In plain words:"):
         _e["answer"] = f"In plain words: {_intro} " + _e.get("answer", "")
+
+
+# ── ASCII diagrams for visual DSA topics ───────────────────────────────────
+# A picture makes patterns click. These attach a small monospace diagram to
+# foundational problems (rendered in a <pre> block on the page + PDF). Keyed by
+# title; explicit diagram= on a Q(...) wins. Uses plain ASCII only.
+_DIAGRAM = {
+    "Two Pointers — recognize & apply": r"""
+sorted:  [2, 7, 11, 15]   target = 9
+          ^L          ^R    2+15=17 > 9  -> move R left
+          ^L      ^R        2+11=13 > 9  -> move R left
+          ^L  ^R            2+7 =9  == 9 -> FOUND
+Move the pointer that pushes the sum toward the target.
+""".strip("\n"),
+    "Sliding Window — recognize & apply": r"""
+s = a b c a b c b b
+    [a b c]              window grows right while unique
+    [a b c]a             next 'a' repeats -> shrink from left
+       [b c a]           left jumps past old 'a', still length 3
+Grow right; when a rule breaks, shrink from left. Track the best.
+""".strip("\n"),
+    "Binary Search — including 'search on the answer'": r"""
+[1, 3, 5, 7, 9, 11]   find 7
+ L        M         R   mid=5 <7 -> go right (L=M+1)
+             L  M   R   mid=9 >7 -> go left  (R=M-1)
+             L,M,R      mid=7 == 7 -> FOUND
+Each step throws away HALF. 1,000,000 items -> ~20 checks.
+""".strip("\n"),
+    "Reverse Linked List": r"""
+before:  1 -> 2 -> 3 -> None
+step:  None <- 1   2 -> 3      (flip each 'next' to point back)
+       None <- 1 <- 2   3
+after:   None <- 1 <- 2 <- 3   (return new head = 3)
+Three pointers: prev, curr, next. Save next, flip, advance.
+""".strip("\n"),
+    "Linked Lists — reversal & fast/slow pointers": r"""
+fast/slow (find middle):
+  1 -> 2 -> 3 -> 4 -> 5
+  S         (slow +1)        F moves +2 each step
+       S              F
+            S(mid)              F falls off end -> slow at middle
+""".strip("\n"),
+    "Trees — BFS vs DFS": r"""
+        3
+      /   \
+     9      20
+           /  \
+          15    7
+BFS (level order, use a QUEUE):  3 | 9 20 | 15 7   -> nearest first
+DFS (inorder, use recursion):    9 3 15 20 7        -> go deep, backtrack
+""".strip("\n"),
+    "Graphs — BFS, DFS, and when to use each": r"""
+grid ('1'=land):        BFS/DFS from each unvisited land cell,
+  1 1 0                 sink the whole island, count once.
+  1 0 0                 -> 2 islands
+  0 0 1
+BFS = ripple out (shortest path). DFS = dive deep (flood fill / cycles).
+""".strip("\n"),
+    "Number of Islands (DFS flood-fill)": r"""
+  1 1 0            visit (0,0): sink connected 1s -> island #1
+  1 0 0            (0,0)(1,0)(0,1) all become 0
+  0 0 1            later visit (2,2): island #2
+Answer: 2. Each new '1' you land on starts one flood-fill.
+""".strip("\n"),
+    "Number of Islands": r"""
+  1 1 0            land='1'. DFS from a '1', sink its whole
+  1 0 0            group to '0', count +1. Then continue.
+  0 0 1            -> 2 islands
+""".strip("\n"),
+    "Dynamic Programming — the 4-question method": r"""
+coin_change([1,2,5], amount=11), dp[a] = fewest coins for a:
+ a:  0 1 2 3 4 5 6 7 8 9 10 11
+dp:  0 1 1 2 2 1 2 3 3 4  2  3   <- dp[11]=dp[6]+1=3  (5+5+1)
+Fill small amounts first; each builds on earlier answers.
+""".strip("\n"),
+    "Backtracking — subsets, permutations, combinations": r"""
+subsets([1,2,3]) decision tree (include? / skip?):
+              []
+        /            \
+      [1]             []        <- choose 1 or not
+     /   \           /  \
+  [1,2]  [1]      [2]    []      ... continue for 3
+choose -> recurse -> UN-choose (pop) to explore the next branch.
+""".strip("\n"),
+    "Intervals — merge, insert, overlap": r"""
+sort by start:  [1,3] [2,6] [8,10] [15,18]
+  [1,3]                        take first
+  [1,3][2,6]  2 <= 3 overlap -> merge to [1,6]
+  ... [8,10]  8 > 6 gap       -> start new
+result: [1,6] [8,10] [15,18]
+""".strip("\n"),
+    "Merge Intervals": r"""
+sort by start:  [1,3] [2,6] [8,10] [15,18]
+  cur=[1,3]; next [2,6] starts 2 <= 3 -> extend end to 6 => [1,6]
+  next [8,10] starts 8 > 6 -> emit [1,6], cur=[8,10] ...
+result: [1,6] [8,10] [15,18]
+""".strip("\n"),
+    "Union-Find (Disjoint Set Union)": r"""
+union(0,1), union(1,2), union(3,4):
+  parents:   0   1   2      3   4
+             |   |            |
+             +->0<-+          +->3
+  find(2) -> 0,  find(0) -> 0  => same set
+  find(0) vs find(3)          => different sets  -> 2 groups
+""".strip("\n"),
+    "Heap / Top-K — when 'K largest/most frequent' appears": r"""
+K=2 largest of [3,1,5,2,4] with a MIN-heap of size 2:
+  push 3 -> [3]
+  push 1 -> [1,3]
+  push 5 -> [3,5] (pop 1, too small)
+  push 2 -> [3,5] (2<3, skip)   push 4 -> [4,5] (pop 3)
+root of min-heap = 2nd largest = 4.
+""".strip("\n"),
+    "Trapping Rain Water": r"""
+heights:        #
+        #~~~~~~~ #   ~ = trapped water
+        # ~ # ~ ##   water above a bar = min(maxLeft,maxRight) - height
+      # # # # # ###
+Two pointers move inward from the shorter wall.
+""".strip("\n"),
+    "Valid Parentheses": r"""
+"( [ { } ] )"   push opens, pop on close & check match:
+  (   -> stack: (
+  [   -> stack: ( [
+  {   -> stack: ( [ {
+  }   -> top { matches } -> pop
+  ]   -> top [ matches ] -> pop
+  )   -> top ( matches ) -> pop -> empty => VALID
+""".strip("\n"),
+    "Maximum Subarray (Kadane's algorithm)": r"""
+[-2, 1, -3, 4, -1, 2, 1, -5, 4]
+cur:  -2  1  -2  4   3  5  6  1  5   (cur = max(x, cur+x))
+best: -2  1   1  4   4  5  6  6  6   -> 6  (subarray [4,-1,2,1])
+Reset the running sum whenever it goes negative.
+""".strip("\n"),
+}
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]

@@ -183,6 +183,7 @@
     const ex = $("explain");
     ex.innerHTML =
       `<span class="lbl">Answer: ${esc(q.answer)}</span>${esc(q.explain)}`
+      + (q.diagram ? `<span class="lbl">Diagram</span><pre style="white-space:pre;overflow-x:auto;font-size:12px;background:var(--color-bg);border:1px solid var(--color-border);border-radius:8px;padding:8px 10px;margin:4px 0;">${esc(q.diagram)}</pre>` : "")
       + (q.mnemonic ? `<span class="lbl">How to remember</span><div class="mnem">${esc(q.mnemonic)}</div>` : "")
       + (q.example ? `<span class="lbl">Example</span>${esc(q.example)}` : "")
       + (q.frequency ? `<span class="lbl">Asked in interviews?</span><span class="freq">${esc(q.frequency)}</span>` : "");

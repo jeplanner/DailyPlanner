@@ -129,7 +129,7 @@ def self_attention(X, Wq, Wk, Wv):
 def qsrc(e):
     s = f"    Q({e['cat']!r}, {e['title']!r},\n      {e['answer']!r},\n      {e['tags']!r}"
     for f in ("code", "example", "complexity", "pitfalls", "followups",
-              "difficulty", "frequency", "mnemonic"):
+              "difficulty", "frequency", "mnemonic", "diagram"):
         if e.get(f):
             s += f",\n      {f}={e[f]!r}"
     return s + "),\n"

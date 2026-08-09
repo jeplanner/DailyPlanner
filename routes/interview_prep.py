@@ -275,6 +275,8 @@ def ai_sde_pdf():
                   ("Pitfalls", it.get("pitfalls")),
                   ("Follow-ups", it.get("followups"))]
         mono = [("Code", it.get("code"))] if it.get("code") else []
+        if it.get("diagram"):
+            mono.append(("Diagram", it.get("diagram")))
         sections.append({
             "title": it["title"],
             "cat": AI_SDE_CATEGORIES.get(it.get("cat"), it.get("cat", "")),
@@ -354,6 +356,7 @@ def _build_quiz(entries, mode, cat, n, seed):
             "explain": e.get("answer", ""),
             "mnemonic": e.get("mnemonic", ""),
             "example": e.get("example", ""),
+            "diagram": e.get("diagram", ""),
         })
     return questions
 

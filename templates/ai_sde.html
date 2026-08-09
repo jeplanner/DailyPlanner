@@ -39,6 +39,8 @@
   .fld .lbl { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); display: block; margin-bottom: 2px; }
   .fld.answer .lbl { color: #4338ca; } .fld.pitfall .lbl { color: #b45309; } .fld.follow .lbl { color: #047857; } .fld.cx .lbl { color: #0369a1; }
   .fld.freq .lbl { color: #9333ea; } .fld.mnem .lbl { color: #c2410c; }
+  .code.diagram { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
+  html.dark .code.diagram { background: #0b1220; color: #cbd5e1; }
   .fld.mnem { background: #fff7ed; border-left: 3px solid #fb923c; border-radius: 6px; padding: 6px 10px; }
   html.dark .fld.mnem { background: #2a1a0f; }
   .q-diff { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
@@ -123,6 +125,7 @@
           ${fld("freq","Asked in interviews?",e.frequency)}
           ${fld("answer","Answer / reasoning",e.answer)}
           ${e.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(e.code)}</div>` : ""}
+          ${e.diagram ? `<div class="fld"><span class="lbl">Diagram</span></div><div class="code diagram">${esc(e.diagram)}</div>` : ""}
           ${fld("","Example",e.example)}
           ${fld("mnem","How to remember",e.mnemonic)}
           ${fld("cx","Complexity",e.complexity)}
