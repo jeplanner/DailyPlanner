@@ -13480,6 +13480,1241 @@ reading a slot that has already been overwritten - keep them separate unless you
 have thought the direction through.
 """.strip("\n")
 
+# Same problem, two titles in the bank - share the recipe.
+_PLAIN_ALGO["How Many Numbers Are Smaller Than the Current Number"] = \
+    _PLAIN_ALGO["How Many Numbers Are Smaller Than the Current"]
+
+_PLAIN_ALGO["Intersection of Two Arrays II"] = r"""
+IN ONE SENTENCE: count the letters of one array, then walk the other spending
+those counts down - a value appears in the answer as many times as it appears in
+BOTH.
+
+STEPS
+1. Build a frequency map of the first array.
+2. Walk the second array. If the map still has a positive count for this value,
+   append it to the result and decrease that count by one.
+3. Return the result.
+
+WHY THE COUNT MUST BE DECREASED: the answer includes duplicates, but only as
+many as both arrays can support. If the first array has two 2s and the second
+has five, the answer holds exactly two. Consuming the count is what enforces
+that minimum without computing it explicitly.
+
+WHY A SET WOULD BE WRONG HERE: a set answers "does this value appear in both?"
+and would emit each value once. That is Intersection of Two Arrays (the first
+problem); this one keeps multiplicity, and the difference between the two is the
+entire point.
+
+THE FOLLOW-UPS THEY ASK - and they are the interesting part
+* "What if both arrays are already sorted?" Two pointers, no map, O(1) extra
+  space - advance whichever side is smaller, and on a match emit and advance
+  both.
+* "What if one array is huge and cannot fit in memory?" Build the map from the
+  SMALL one and stream the large one past it.
+
+WHAT PEOPLE GET WRONG: counting the second array instead of the first when
+their sizes differ, which wastes memory; and forgetting the positive-count
+check, so values are emitted more times than they exist.
+""".strip("\n")
+
+_PLAIN_ALGO["Is Subsequence"] = r"""
+IN ONE SENTENCE: walk the long string once with a finger on the short one, and
+advance that finger every time the characters match.
+
+STEPS
+1. Put an index at the start of s, the string you are trying to find.
+2. Walk every character of t.
+3. If the index has not run off the end of s and the current character matches
+   the character at the index, move the index forward.
+4. After the walk, s is a subsequence exactly when the index reached the end of
+   s.
+
+WHY GREEDY MATCHING IS SAFE: matching a character as EARLY as possible in t can
+never hurt - it leaves the maximum amount of t available for the characters
+still to come. So there is never a reason to skip a valid match and look for a
+later one, which is why no backtracking or DP is needed.
+
+WHY YOU ONLY LOOP OVER t: s is consumed passively by the index. Looping over
+both with nested loops is the instinct and it is unnecessary - one pass, O(len
+of t).
+
+THE FOLLOW-UP THAT CHANGES THE ANSWER: "what if there are a billion different s
+values to test against the same t?" Then preprocess t into, for each character,
+the sorted list of positions where it occurs, and binary-search forward for each
+character of s. That turns each query into O(len of s times log len of t)
+instead of re-scanning t every time. Interviewers ask this almost every time.
+
+WHAT PEOPLE GET WRONG: checking the bound after indexing rather than before,
+which reads past the end of s once it is fully matched.
+""".strip("\n")
+
+_PLAIN_ALGO["Isomorphic Strings"] = r"""
+IN ONE SENTENCE: check that the mapping between the two strings is consistent
+in BOTH directions - one character must always become the same character, and
+no two characters may collapse into one.
+
+STEPS
+1. If the lengths differ, return false.
+2. Keep two dictionaries: one mapping s-characters to t-characters, and one
+   mapping back the other way.
+3. Walk the two strings in step.
+4. If this s-character already has a mapping and it is not this t-character,
+   the mapping is inconsistent - return false.
+5. If this t-character is already claimed by a different s-character, two
+   characters are collapsing - return false.
+6. Otherwise record both directions and continue.
+7. Return true.
+
+WHY ONE DICTIONARY IS NOT ENOUGH: with only the forward map, "ab" and "aa"
+passes - 'a' maps to 'a' and 'b' maps to 'a', both consistent forwards. But two
+different characters have merged, which isomorphism forbids. The reverse map is
+what catches it, and that exact example is the test case interviewers use.
+
+WHAT ISOMORPHIC MEANS IN PLAIN WORDS: you could relabel every character of s
+and get t, with the relabelling being a one-to-one correspondence - a bijection.
+Bijection is precisely "consistent both ways", which is why two maps.
+
+THE NEAT ALTERNATIVE: convert each string to a pattern of first-occurrence
+indices - "egg" becomes [0,1,1], "add" becomes [0,1,1] - and compare the
+patterns. Same idea, one pass each, and it generalises to Word Pattern.
+
+WHAT PEOPLE GET WRONG: skipping the length check, so zip silently truncates and
+a shorter string passes against a longer one.
+""".strip("\n")
+
+_PLAIN_ALGO["Kth Distinct String in an Array"] = r"""
+IN ONE SENTENCE: count every string, then walk the array in its ORIGINAL order
+counting down k each time you meet one that appeared exactly once.
+
+STEPS
+1. Build a frequency map over the array.
+2. Walk the array in order. When a string's count is exactly 1, decrease k.
+3. When k hits 0, that string is the answer.
+4. If the walk finishes, return an empty string.
+
+WHY THE SECOND PASS GOES OVER THE ARRAY AND NOT THE MAP: the question says "the
+kth distinct string" in the order they appear. A map's iteration order is not the
+array's order, and relying on it is a bug even in Python where dictionaries
+happen to preserve insertion order - because the map's insertion order is first
+occurrences, which coincidentally works here but will not in a language without
+that guarantee. Walking the array makes the ordering explicit and obviously
+correct.
+
+WHY "DISTINCT" MEANS "APPEARS EXACTLY ONCE": not "the set of unique values". A
+string appearing twice is excluded entirely, not included once. Misreading this
+is more common than any coding error here.
+
+WHAT PEOPLE GET WRONG: decrementing k before checking, or checking for k equal
+to 0 before the decrement, both of which give an off-by-one answer.
+""".strip("\n")
+
+_PLAIN_ALGO["Kth Largest Element in a Stream"] = r"""
+IN ONE SENTENCE: keep a min-heap holding exactly the k largest values seen so
+far - its top is always the kth largest, and adding a number is a push plus a
+possible pop.
+
+STEPS
+1. In the constructor, store k, heapify the starting numbers, and pop until only
+   k remain.
+2. To add a value: push it onto the heap.
+3. If the heap now holds more than k, pop - which removes the smallest, and the
+   smallest cannot belong in the top k.
+4. Return the heap's top, which is the kth largest.
+
+WHY A MIN-HEAP FOR THE LARGEST: the top must be the item you are most willing to
+evict. When you are collecting the k biggest, the one to throw away is the
+smallest you currently hold - so the smallest must sit on top. This feels
+backwards and it is the mistake everyone makes once.
+
+WHY THIS SUITS A STREAM SPECIFICALLY: you never store the full history - only k
+values live in memory, however many numbers arrive. Each add is O(log k). Sorting
+would need every value retained and a re-sort per add.
+
+WHY THE CONSTRUCTOR CAN BE HANDED FEWER THAN k NUMBERS: the problem guarantees
+that by the time add is called the heap will have enough. Worth confirming with
+the interviewer rather than assuming.
+
+WHAT PEOPLE GET WRONG: popping BEFORE pushing, which can evict a value the new
+number should have displaced; and returning the max of the heap instead of its
+root.
+""".strip("\n")
+
+_PLAIN_ALGO["Kth Missing Positive Number"] = r"""
+IN ONE SENTENCE: walk the positive integers from 1, tick off the ones present in
+the array, and stop when you have skipped k of them.
+
+STEPS
+1. Keep a count of how many are missing, a current candidate starting at 1, and
+   an index into the array.
+2. Loop forever. If the array's current element equals the candidate, the number
+   is present - advance the array index.
+3. Otherwise the candidate is missing - increase the missing count, and if it
+   has reached k, return the candidate.
+4. Increase the candidate and continue.
+
+WHY THIS SIMPLE VERSION IS FINE TO WRITE FIRST: it is O(n + k) and completely
+obvious. Lead with it, get it correct, then offer the improvement rather than
+fumbling the clever version under pressure.
+
+THE O(log n) VERSION THEY ARE FISHING FOR: at index i the array holds
+arr[i], and the count of missing numbers below it is arr[i] - (i + 1) - a
+quantity that only ever increases as i grows. So binary-search for the first
+index where that count reaches k; the answer is then lo + k. Being able to say
+"the missing count is monotonic, therefore binary-searchable" is the insight -
+the code follows from it.
+
+WHAT PEOPLE GET WRONG: the final arithmetic in the binary-search version, which
+is genuinely fiddly. Derive it on a tiny example like arr = [2,3,4], k = 1
+before trusting it.
+""".strip("\n")
+
+_PLAIN_ALGO["Last Stone Weight (max-heap)"] = r"""
+IN ONE SENTENCE: repeatedly pull out the two heaviest stones, smash them, and
+put the difference back - a max-heap makes "the two heaviest" a constant-time
+question.
+
+STEPS
+1. Negate every weight and heapify, which turns Python's min-heap into a
+   max-heap.
+2. While more than one stone remains: pop twice and negate both back to positive.
+3. If they are not equal, push the difference back (negated).
+4. If they are equal, both are destroyed and nothing goes back.
+5. Return the last stone's weight, or 0 if the heap is empty.
+
+WHY A HEAP RATHER THAN SORTING EACH ROUND: the set changes after every smash, so
+a sorted list would need re-sorting or an O(n) insertion every round - O(n^2)
+overall. A heap re-establishes order in O(log n) per operation, giving
+O(n log n) in total.
+
+WHY THE NEGATION TRICK: Python has no max-heap. Storing negatives means the most
+negative - the largest original value - sits on top. Remember to negate on the
+way IN and on the way OUT; forgetting the second is the classic bug.
+
+WHY THE EMPTY CHECK AT THE END: every stone can be destroyed if the weights
+cancel out exactly, and the problem defines that as 0.
+
+WHAT PEOPLE GET WRONG: pushing the difference when it is 0, which leaves a
+phantom zero-weight stone in the heap and changes the final answer.
+""".strip("\n")
+
+_PLAIN_ALGO["Left and Right Sum Difference"] = r"""
+IN ONE SENTENCE: total the array once, then sweep it keeping a running left sum
+- the right sum is always the total minus the left sum minus the current
+element.
+
+STEPS
+1. Add up the whole array to get the total.
+2. Start the left sum at 0.
+3. For each element: compute the right sum as total minus left minus this
+   element, append the absolute difference between left and right, then add this
+   element to the left sum.
+4. Return the results.
+
+WHY YOU NEVER RECOMPUTE THE RIGHT SIDE: summing the tail at every index would be
+O(n^2). The identity total = left + current + right gives the right side for
+free from numbers you already have. This is the same prefix-sum move as Find
+Pivot Index - in fact that problem is this one asking where the difference is
+zero.
+
+WHY THE ORDER INSIDE THE LOOP MATTERS: the left sum must EXCLUDE the current
+element when you compute the difference, so the running total is updated after
+the append, not before.
+
+WHY THE ABSOLUTE VALUE: the question asks for the size of the gap, not its
+direction. Dropping it gives negative entries on the left-heavy side.
+
+WHAT PEOPLE GET WRONG: slicing the array to sum each side inside the loop,
+which is the O(n^2) version wearing clean syntax.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Score After Splitting a String"] = r"""
+IN ONE SENTENCE: sweep every split point keeping a running count of zeros on the
+left, and get the ones on the right by subtracting the left's ones from the
+total.
+
+STEPS
+1. Count all the ones in the string once, up front.
+2. Keep running counts of zeros and ones seen on the left.
+3. Walk i from the start to the SECOND-TO-LAST index - both halves must be
+   non-empty, so the split cannot be after the final character.
+4. Add the current character to the appropriate left counter.
+5. The score for splitting here is left zeros plus (total ones minus left ones).
+   Keep the best.
+6. Return the best.
+
+WHY THE RIGHT SIDE NEEDS NO SEPARATE SCAN: ones on the right = all the ones
+minus the ones already on the left. One precomputed total replaces a scan per
+split point, turning O(n^2) into O(n). It is the same trick as every prefix-sum
+problem: maintain one side, derive the other.
+
+WHY THE LOOP STOPS ONE SHORT: the problem requires both substrings to be
+non-empty. Including the last index would allow an empty right half and inflate
+the answer.
+
+WHAT PEOPLE GET WRONG: counting the ones AFTER the loop rather than before, and
+computing the split score using a right-hand zero count - it is zeros on the
+LEFT plus ones on the RIGHT, and mixing them up passes some tests.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Common Value"] = r"""
+IN ONE SENTENCE: both arrays are sorted, so walk two pointers forward and always
+advance whichever side is currently smaller - the first match you hit is the
+smallest common value.
+
+STEPS
+1. Put an index at the start of each array.
+2. While both are in range: if the two values are equal, return that value.
+3. If the first array's value is smaller, advance its index.
+4. Otherwise advance the second's.
+5. If either runs out, there is no common value - return -1.
+
+WHY THE FIRST MATCH IS THE MINIMUM: you only ever move forward, and you always
+move the smaller side. So you visit candidate values in increasing order and can
+never skip past a smaller shared value - it would have been reached first.
+
+WHY ADVANCING THE SMALLER SIDE IS FORCED, NOT A CHOICE: if the first array's
+value is smaller than the second's, that value cannot appear later in the
+second array - the second array is sorted and has already passed it. So it can
+be discarded with certainty. That is the same elimination argument behind every
+two-pointer merge.
+
+THE ALTERNATIVE AND WHY IT IS WORSE HERE: put one array in a set and scan the
+other. Correct and O(n + m) time, but O(n) extra space - and it throws away the
+sortedness you were given. The two-pointer version uses O(1).
+
+WHAT PEOPLE GET WRONG: advancing both pointers when the values differ, which
+can step over the match entirely.
+""".strip("\n")
+
+_PLAIN_ALGO["Minimum Recolors to Get K Consecutive Black Blocks"] = r"""
+IN ONE SENTENCE: a fixed-size window of k blocks needs exactly as many recolors
+as it contains whites, so slide the window and keep the smallest white count.
+
+STEPS
+1. Count the whites in the first k blocks. That is your starting answer.
+2. Slide the window one position at a time from index k to the end.
+3. Update the count in O(1): add 1 if the block ENTERING the window is white,
+   subtract 1 if the block LEAVING it (k positions back) was white.
+4. Keep the smallest count seen.
+5. Return it.
+
+WHY THE FIXED-SIZE WINDOW NEEDS NO INNER LOOP: with a variable window you must
+shrink until valid; here the size never changes, so each step is exactly one
+addition and one subtraction. Recognising "the window size is given" saves you
+writing the harder variant.
+
+WHY YOU DO NOT RECOUNT THE WINDOW: recounting k blocks at every position is
+O(nk). The add-one-remove-one update is what makes it O(n), and it is the
+defining move of the sliding-window pattern.
+
+THE INDEX TO GET RIGHT: the block leaving the window is at i minus k, not i
+minus k plus 1 or i minus k minus 1. Write the first two window positions out on
+paper if you are unsure - this is the only place this problem bites.
+
+WHAT PEOPLE GET WRONG: initialising the best to 0 rather than to the first
+window's count, which returns 0 for every input.
+""".strip("\n")
+
+_PLAIN_ALGO["Points That Intersect With Cars"] = r"""
+IN ONE SENTENCE: instead of marking every point of every interval, record only
+where coverage STARTS and ENDS, then sweep once adding the changes up.
+
+STEPS
+1. Make an array of changes covering the coordinate range, plus one slot of
+   headroom.
+2. For each interval, add 1 at its start and subtract 1 just PAST its end.
+3. Sweep the change array keeping a running total. That total is how many
+   intervals cover the current coordinate.
+4. Count the coordinates where the running total is above 0.
+5. Return the count.
+
+WHY THE DIFFERENCE ARRAY IS FASTER THAN MARKING: painting every covered point
+costs the total length of all intervals, which can be enormous. Recording two
+changes per interval costs O(number of intervals), and one sweep converts the
+changes into coverage. This is the standard trick for "many range updates, one
+final read".
+
+WHY THE MINUS ONE GOES AT end + 1: the interval INCLUDES its end coordinate, so
+coverage should only drop after it. Putting the decrement at end itself shortens
+every interval by one point - a silent off-by-one that passes small tests.
+
+WHY THE HEADROOM SLOT: without it, an interval ending at the last coordinate
+writes past the end of the array.
+
+THE SAME PATTERN ELSEWHERE: Corporate Flight Bookings, Car Pooling, and "how
+many meetings overlap at once" are all this difference-array sweep.
+
+WHAT PEOPLE GET WRONG: counting the running total instead of counting the
+POSITIONS where it is positive - the question asks how many points are covered,
+not how many coverings there are.
+""".strip("\n")
+
+_PLAIN_ALGO["Ransom Note"] = r"""
+IN ONE SENTENCE: count the magazine's letters, then spend one from that supply
+for each letter of the note - if the supply ever runs out, it cannot be built.
+
+STEPS
+1. Build a frequency map of the magazine's characters.
+2. Walk the note one character at a time.
+3. If the available count for that character is already 0 or less, return false.
+4. Otherwise decrease it by one and continue.
+5. Return true.
+
+WHY YOU COUNT THE MAGAZINE AND NOT THE NOTE: the magazine is the supply and the
+note is the demand. Counting the supply lets you spend it down and fail the
+instant a demand cannot be met, which also means you exit early on a bad input.
+
+WHY COUNTS AND NOT SETS: the note may need three 'a's while the magazine has
+one. Membership testing passes that incorrectly - which is exactly the case the
+problem exists to test.
+
+THE COMPARISON THIS IS WORTH MAKING: this is the same shape as Find Words That
+Can Be Formed by Characters, except there the supply is NOT consumed between
+words. Noticing which problems consume the supply and which do not is the real
+distinction.
+
+COMPLEXITY: O(n + m) time, and O(1) extra space when the alphabet is fixed at 26
+letters - worth saying, since a bounded alphabet makes the map constant-sized.
+
+WHAT PEOPLE GET WRONG: checking membership before decrementing but not the
+count, so a letter present once satisfies a note needing it twice.
+""".strip("\n")
+
+_PLAIN_ALGO["Remove Duplicates from Sorted List"] = r"""
+IN ONE SENTENCE: the list is sorted, so duplicates are neighbours - walk it and
+whenever a node matches the next one, skip over the next.
+
+STEPS
+1. Start at the head.
+2. While the current node and its next both exist: if their values are equal,
+   unlink the next node by pointing current past it.
+3. If they differ, move current forward.
+4. Return the head.
+
+WHY YOU DO NOT ADVANCE AFTER A DELETION: there may be three or more copies in a
+row. Staying put re-tests the current node against its NEW next, which removes
+the whole run. Advancing after every step would skip the second of three
+duplicates. This one line is the entire difficulty of the problem.
+
+WHY NO DUMMY NODE IS NEEDED HERE: unlike most list problems, the head is never
+removed - you always keep the FIRST copy of each value, so it survives. Compare
+with "Remove Linked List Elements", where the head can be deleted and a dummy
+becomes essential. Noticing when you do and do not need the dummy is worth
+saying aloud.
+
+WHY SORTEDNESS IS DOING THE WORK: on an unsorted list you would need a seen-set
+and O(n) extra space. Sorted input means equal values are adjacent, so the check
+is local.
+
+WHAT PEOPLE GET WRONG: advancing current unconditionally, which leaves the
+second copy in a run of three.
+""".strip("\n")
+
+_PLAIN_ALGO["Remove Linked List Elements"] = r"""
+IN ONE SENTENCE: walk the list holding a pointer to the node BEFORE the one you
+are inspecting, so you can unlink any match - including the head.
+
+STEPS
+1. Make a dummy node pointing at the head, and set prev to the dummy.
+2. Walk current through the list.
+3. If the current value matches, unlink it by pointing prev.next past it. Leave
+   prev where it is.
+4. If it does not match, keep it and move prev up to current.
+5. Advance current either way.
+6. Return dummy.next.
+
+WHY THE DUMMY IS ESSENTIAL HERE: the head itself may need removing, and possibly
+several heads in a row. Without a node in front of it there is nothing to
+reassign, so you would need a separate loop just to skip leading matches. The
+dummy makes the head an ordinary case - which is exactly why this trick exists.
+
+WHY prev DOES NOT MOVE ON A DELETION: after unlinking, prev's next now points at
+a node you have not inspected yet. Moving prev forward would step over it and
+miss consecutive matches.
+
+WHY YOU RETURN dummy.next RATHER THAN head: the original head may have been
+deleted, so the local variable head can be stale. dummy.next is always the
+current first node.
+
+WHAT PEOPLE GET WRONG: returning head, and advancing prev in both branches -
+each of which silently leaves matching nodes in the list.
+""".strip("\n")
+
+_PLAIN_ALGO["Reverse String (in place)"] = r"""
+IN ONE SENTENCE: put a pointer at each end and swap them, walking inward until
+they meet.
+
+STEPS
+1. Set left to the first index and right to the last.
+2. While left is strictly less than right, swap the two characters.
+3. Move left forward and right backward.
+4. Return the list.
+
+WHY THE LOOP STOPS WHEN THEY MEET: on an odd-length string the middle character
+is already in the right place, so swapping it with itself is harmless but
+pointless. Continuing past the crossing point would swap every pair back and
+undo the whole reversal - which is why the condition is strict.
+
+WHY IN PLACE MATTERS: the problem forbids allocating a second array, so the
+answer is O(1) extra space. Building a reversed copy is one line in Python and
+completely misses what is being asked.
+
+THE PATTERN: this is the simplest possible two-pointers-from-opposite-ends
+problem. Valid Palindrome, Squares of a Sorted Array and Container With Most
+Water are all the same skeleton with a different rule for what to do at each
+step.
+
+WHAT PEOPLE GET WRONG: using less-than-or-equal, which on odd lengths swaps the
+middle with itself (harmless) but on even lengths runs one step too far and
+starts undoing the swaps.
+""".strip("\n")
+
+_PLAIN_ALGO["Running Sum of 1d Array"] = r"""
+IN ONE SENTENCE: keep a running total and record it after adding each element.
+
+STEPS
+1. Start a total at 0 and an empty result list.
+2. For each element, add it to the total and append the total to the result.
+3. Return the result.
+
+WHY THIS TINY PROBLEM IS WORTH KNOWING BY NAME: this is the PREFIX SUM, and it
+is the foundation of a whole family - Subarray Sum Equals K, Find Pivot Index,
+Range Sum Query, Path Sum III, difference arrays. The key identity is that the
+sum of the slice from i to j equals prefix[j] minus prefix[i-1], which turns a
+range query from O(n) into O(1). Every one of those problems is this three-line
+loop plus one idea.
+
+THE IN-PLACE VERSION IF ASKED: add each element to the one before it, walking
+left to right, and return the same array. O(1) extra space, and it works because
+each position only reads the one immediately behind it, which is already final.
+
+WHAT PEOPLE GET WRONG: appending before adding, which shifts the whole result by
+one position; and in the in-place version, iterating right to left, which reads
+values that have not been updated yet.
+""".strip("\n")
+
+_PLAIN_ALGO["Search Insert Position"] = r"""
+IN ONE SENTENCE: binary-search for the LEFTMOST position where the target could
+sit without breaking the sorted order - which is the answer whether or not the
+target is present.
+
+STEPS
+1. Set lo to 0 and hi to the LENGTH of the array, not the last index. The
+   answer can legitimately be "past the end".
+2. While lo is strictly less than hi, take the middle.
+3. If the middle value is less than the target, the answer is somewhere to the
+   right - move lo to mid plus one.
+4. Otherwise the middle is a valid candidate, so keep it in range - move hi to
+   mid.
+5. When they meet, return lo.
+
+WHY THERE IS NO EQUALITY BRANCH: if the middle equals the target, that position
+IS the insert position, so it must stay in range - which is what hi = mid does.
+Adding a separate "return mid on equality" is fine for this problem but breaks
+the moment duplicates exist and you need the leftmost one. Writing it without
+the equality case gives you the reusable version.
+
+WHY hi STARTS AT LENGTH: a target bigger than everything belongs at index n, and
+starting hi at n-1 makes that answer unreachable.
+
+WHY THIS EXACT LOOP SHAPE IS WORTH MEMORISING: "lo < hi" paired with "lo = mid +
+1 / hi = mid" is the lower-bound template - it is bisect_left, and it powers
+Find First and Last Position, Longest Increasing Subsequence, and every
+search-on-the-answer problem. Learn this one shape properly rather than
+re-deriving it under pressure.
+
+WHAT PEOPLE GET WRONG: mixing this template with the other one. "lo <= hi" pairs
+with mid+1 and mid-1; "lo < hi" pairs with mid+1 and mid. Crossing them gives an
+infinite loop or an off-by-one, every single time.
+""".strip("\n")
+
+_PLAIN_ALGO["Search in a Binary Search Tree"] = r"""
+IN ONE SENTENCE: use the BST rule to pick a direction at every node - go left
+when the target is smaller, right when it is larger - until you land on it or
+fall off the tree.
+
+STEPS
+1. Start at the root.
+2. While the node exists and its value is not the target: move to the left child
+   if the target is smaller, otherwise to the right child.
+3. Return whatever you are standing on - the matching subtree, or nothing.
+
+WHY YOU NEVER LOOK AT BOTH SIDES: the BST property guarantees that everything in
+the discarded subtree is on the wrong side of the current value, so the target
+cannot possibly be there. Each step halves the search space in a balanced tree,
+giving O(height) - O(log n) balanced, O(n) in a degenerate chain.
+
+WHY THE ITERATIVE VERSION IS PREFERRED: it is O(1) space, whereas the recursion
+costs O(height) stack. The recursive version is three lines and equally correct;
+say you would write the loop for a deep tree.
+
+WHY IT RETURNS A SUBTREE, NOT A BOOLEAN: the problem asks for the node, and in a
+BST that node carries its whole subtree with it - which is what the caller
+usually wants.
+
+WHAT PEOPLE GET WRONG: writing a full traversal that visits every node. It
+returns the right answer and throws away the only property that makes a BST
+worth having, which is precisely what the question is testing.
+""".strip("\n")
+
+_PLAIN_ALGO["Sort Array By Parity"] = r"""
+IN ONE SENTENCE: two pointers from the ends - skip anything already on its
+correct side, and when both are wrong, swap them.
+
+STEPS
+1. Put left at the front and right at the back.
+2. While they have not met: if the left value is even, it belongs where it is -
+   move left forward.
+3. Otherwise, if the right value is odd, it also belongs where it is - move
+   right backward.
+4. If neither of those held, left is odd and right is even, so both are on the
+   wrong side. Swap them.
+5. Return the array.
+
+WHY THE THREE-BRANCH STRUCTURE: you only pay for a swap when it fixes TWO
+misplaced elements at once. Checking each side independently first means the
+common case - already-correct elements - costs one comparison and no writing.
+
+WHY THE ORDER OF EVENS IS NOT PRESERVED: the problem does not require it, and
+that is what allows the swap. If it DID require stable order, you would need the
+read/write two-pointer pass instead (copy evens forward, then odds), which is
+the same shape as Move Zeroes. Ask which one is wanted.
+
+WHY NO SWAP IS NEEDED AFTER THE SWAP: after exchanging, both new values are on
+their correct sides, so the next loop iteration will simply advance both
+pointers past them.
+
+WHAT PEOPLE GET WRONG: advancing a pointer after the swap inside the same
+branch, which can step past a value that still needs checking; letting the loop
+run while left equals right, which swaps an element with itself.
+""".strip("\n")
+
+_PLAIN_ALGO["Sqrt(x) via Binary Search"] = r"""
+IN ONE SENTENCE: binary-search the candidate roots between 1 and x/2, keeping
+the largest whose square still does not exceed x.
+
+STEPS
+1. If x is 0 or 1, its root is itself.
+2. Set lo to 1 and hi to x divided by 2 - no integer above x/2 can be a root of
+   x once x is at least 2.
+3. Keep an answer variable at 1.
+4. While lo has not passed hi, take the middle. If its square is at most x, it is
+   a valid candidate - record it and try larger by moving lo up.
+5. Otherwise the middle is too big - move hi down.
+6. Return the recorded answer.
+
+WHY YOU RECORD A CANDIDATE INSTEAD OF RETURNING ON AN EXACT HIT: the answer is
+the FLOOR of the root, which usually is not an exact square. Recording the best
+valid value as you go handles both cases with one piece of logic. The
+alternative - returning hi when the loop ends - also works, but the explicit
+candidate is easier to reason about under pressure.
+
+WHY hi STARTS AT x/2 AND NOT x: for x of at least 2, the root is never more than
+half of x. A small starting range saves a couple of iterations and, more
+importantly, shows you thought about bounds.
+
+WHY BINARY SEARCH AT ALL: the problem forbids the built-in square root. The
+squares are monotonic, so "is mid*mid at most x?" flips from yes to no exactly
+once - which is the precondition for binary search. That sentence is the answer
+to "why is this searchable?".
+
+WHAT PEOPLE GET WRONG: overflow on mid*mid in fixed-width languages - compare
+mid against x/mid instead, or use a 64-bit type and say so.
+""".strip("\n")
+
+_PLAIN_ALGO["Sqrt(x) — integer square root (binary search)"] = r"""
+IN ONE SENTENCE: binary-search for the integer whose square lands on or just
+below x, and when the loop ends, hi is sitting on the floor of the root.
+
+STEPS
+1. Return x directly when it is 0 or 1.
+2. Set lo to 1 and hi to x divided by 2.
+3. While lo has not passed hi, square the middle. Exactly x means you found a
+   perfect root - return it.
+4. Less than x means the root is bigger - move lo up.
+5. More than x means it is smaller - move hi down.
+6. When the loop ends, return hi.
+
+WHY hi IS THE FLOOR WHEN THE LOOP ENDS: the loop exits with hi one below lo. Every
+value at or below hi had a square not exceeding x, and everything from lo upward
+had a square exceeding it - so hi is exactly the largest integer whose square
+fits. Being able to say WHY hi is the answer, rather than remembering it, is the
+difference between owning this and guessing.
+
+THE SAME TEMPLATE, THREE PROBLEMS: this, Valid Perfect Square (return whether an
+exact hit occurred), and Arranging Coins (a different monotonic formula) are the
+identical "lo <= hi" search with one line changed.
+
+WHY NOT NEWTON'S METHOD: it converges faster and is a fine answer - repeatedly
+replace the guess with the average of the guess and x/guess. Mention it, but
+binary search is what is being asked and is harder to get subtly wrong.
+
+WHAT PEOPLE GET WRONG: returning lo instead of hi, which gives the CEILING and
+is off by one on every non-perfect square.
+""".strip("\n")
+
+_PLAIN_ALGO["Summary Ranges"] = r"""
+IN ONE SENTENCE: walk the sorted array, and each time the numbers stop being
+consecutive, close off the run you were building.
+
+STEPS
+1. Start an index at 0.
+2. While in range: remember the current value as the start of a run.
+3. While the NEXT value is exactly one more than the current, advance - you are
+   extending the run.
+4. When the run ends, emit a single number if the start and the end are the
+   same, otherwise emit "start->end".
+5. Move past the run and continue.
+6. Return the list of strings.
+
+WHY YOU COMPARE AGAINST THE NEXT VALUE AND NOT AN EXPECTED COUNTER: comparing
+each element to "start plus how many steps I have taken" also works, but reading
+the neighbour directly is what the problem is about - a run breaks precisely
+when two adjacent values differ by more than one.
+
+WHY THE SINGLE-NUMBER CASE NEEDS ITS OWN BRANCH: a run of length one must print
+as "5", not "5->5". That formatting rule is the actual test here; the scanning
+is easy.
+
+WHY THE INPUT BEING SORTED AND UNIQUE MATTERS: with duplicates, "one more than"
+would break on equal neighbours and you would emit spurious ranges. Confirm the
+guarantee rather than assuming it.
+
+WHAT PEOPLE GET WRONG: an off-by-one on the outer advance, which either
+re-processes the last element of a run or skips the first of the next one. Trace
+[0,1,2,4] by hand once and the loop shape sticks.
+""".strip("\n")
+
+_PLAIN_ALGO["Two Sum IV - Input is a BST"] = r"""
+IN ONE SENTENCE: traverse the tree in any order keeping a set of the values seen
+so far, and at each node ask whether its complement has already turned up.
+
+STEPS
+1. Keep a set of seen values.
+2. DFS from the root. At each node, check whether (k minus this node's value) is
+   already in the set - if so, a pair exists.
+3. Otherwise add this node's value to the set.
+4. Recurse into both children, returning true if either finds a pair.
+
+WHY THIS IS JUST TWO SUM WITH A TREE WALK: the classic Two Sum keeps a hash set
+of seen numbers and checks each new number's complement. The only difference here
+is the order in which numbers arrive - a traversal instead of an array scan. The
+set does not care about order, which is exactly why the approach transfers
+unchanged.
+
+THE BST-SPECIFIC ALTERNATIVE WORTH OFFERING: an in-order traversal of a BST
+produces sorted values, so you can flatten it and run the sorted two-pointer
+version - O(n) time and O(n) space. Better still, use two iterators walking
+in-order from the smallest and reverse-in-order from the largest, which gives
+O(height) space. Interviewers ask "can you use the BST property?" and that is
+the answer.
+
+WHY THE SET APPROACH IS STILL WORTH LEADING WITH: it works on ANY binary tree,
+not just a BST, and it is quicker to write correctly.
+
+WHAT PEOPLE GET WRONG: adding the node to the set BEFORE checking, so a node
+whose value is exactly half of k pairs with itself.
+""".strip("\n")
+
+_PLAIN_ALGO["Valid Mountain Array"] = r"""
+IN ONE SENTENCE: walk up while it strictly rises, then walk down while it
+strictly falls - it is a mountain only if you started climbing, stopped
+somewhere in the middle, and finished at the very end.
+
+STEPS
+1. Fewer than three elements can never be a mountain - return false.
+2. From index 0, advance while the next value is strictly greater. You are
+   climbing.
+3. Now check the peak. If you never moved, the array started by descending. If
+   you walked to the last index, it never came down. Either is a failure.
+4. Continue advancing while the next value is strictly smaller. You are
+   descending.
+5. It is a mountain exactly when you finished at the last index.
+
+WHY THE TWO PEAK CHECKS ARE BOTH NEEDED: they rule out the two degenerate
+shapes - a pure descent (no climb at all) and a pure ascent (no descent). Both
+would otherwise pass the final check on some inputs.
+
+WHY THE FINAL CHECK IS THE WHOLE TEST: if the descent stopped early, something
+interrupted it - a flat stretch or a second rise - so the array has more than one
+peak or a plateau. Landing exactly on the last index proves the descent ran all
+the way.
+
+WHY STRICT COMPARISONS EVERYWHERE: a plateau like [1,2,2,1] is not a mountain.
+Using greater-or-equal quietly accepts flat sections, which is the single
+mistake this problem is built to catch.
+
+WHAT PEOPLE GET WRONG: checking for a single peak by finding the maximum and
+verifying both sides - correct, but it breaks when the maximum appears twice,
+which the walking version handles naturally.
+""".strip("\n")
+
+_PLAIN_ALGO["Valid Perfect Square"] = r"""
+IN ONE SENTENCE: binary-search the numbers from 1 to n for one whose square is
+exactly n.
+
+STEPS
+1. Set lo to 1 and hi to n.
+2. While lo has not passed hi, square the middle.
+3. Exactly n - return true.
+4. Less than n - the root must be bigger, so move lo up.
+5. More than n - move hi down.
+6. If the loop ends without an exact hit, return false.
+
+WHY BINARY SEARCH APPLIES: squaring is monotonic over the positive integers, so
+"is mid squared at most n?" switches from yes to no exactly once. That single
+switch point is the only precondition binary search needs - it does not require
+an array.
+
+HOW THIS DIFFERS FROM INTEGER SQUARE ROOT: that problem returns the floor and so
+must decide what to give back when there is no exact hit. This one only asks
+whether an exact hit exists, so the loop can simply fall through to false. Same
+search, different exit.
+
+THE ARITHMETIC CURIOSITY WORTH MENTIONING: every perfect square is the sum of
+consecutive odd numbers - 1, 1+3, 1+3+5, and so on. Subtracting successive odd
+numbers from n until you reach 0 or go negative solves it in O(sqrt n) with no
+multiplication at all. It is a nice thing to offer after the binary search.
+
+WHAT PEOPLE GET WRONG: overflow on mid squared for large n in fixed-width
+languages, and starting hi at n/2, which wrongly excludes the answer for n of 1
+and 2.
+""".strip("\n")
+
+_PLAIN_ALGO["Word Pattern"] = r"""
+IN ONE SENTENCE: split the sentence into words and check that pattern letters
+and words pair up one-to-one, in both directions.
+
+STEPS
+1. Split the string on spaces. If the number of words does not match the
+   pattern's length, return false immediately.
+2. Keep two dictionaries: letter to word, and word to letter.
+3. Walk the pattern and the words together.
+4. If this letter is already mapped to a DIFFERENT word, return false.
+5. If this word is already claimed by a DIFFERENT letter, return false.
+6. Otherwise record both directions.
+7. Return true.
+
+WHY BOTH DIRECTIONS: with only the forward map, pattern "ab" against "dog dog"
+passes - 'a' maps to "dog" and 'b' maps to "dog", each individually consistent.
+But two letters have collapsed onto one word, which the pattern forbids. The
+reverse map is what catches it, and that is the test case the problem is built
+around.
+
+WHY THE LENGTH CHECK COMES FIRST: zipping two sequences of different lengths
+silently stops at the shorter one, so "abc" against "dog cat" would pass without
+it.
+
+THE PROBLEM THIS IS IDENTICAL TO: Isomorphic Strings, with words in place of
+characters. If you have solved one, say so and reuse the reasoning - recognising
+the same problem in new clothes is exactly what is being tested.
+
+WHAT PEOPLE GET WRONG: splitting on a fixed single space when the input may have
+multiple or trailing spaces - use the default split; and comparing with "not in"
+checks only, which misses the conflicting-mapping case.
+""".strip("\n")
+
+_PLAIN_ALGO["Bellman-Ford (shortest path with negative edges)"] = r"""
+IN ONE SENTENCE: relax every edge n-1 times - after round k, every shortest path
+using at most k edges is correct - then one extra round tells you whether a
+negative cycle exists.
+
+STEPS
+1. Set every distance to infinity except the source, which is 0.
+2. Repeat n-1 times: for every edge from u to v with weight w, if going through u
+   beats v's current distance, improve it.
+3. After those rounds, do ONE more pass over all edges. If anything can still be
+   improved, a negative cycle is reachable - report it.
+4. Otherwise the distances are final.
+
+WHY EXACTLY n-1 ROUNDS: a shortest path in a graph with n nodes visits each node
+at most once, so it uses at most n-1 edges. Each round guarantees correctness for
+paths one edge longer than the last, so n-1 rounds cover every possible shortest
+path. That is the whole proof, and it is short enough to say out loud.
+
+WHY THE EXTRA ROUND DETECTS NEGATIVE CYCLES: if distances were truly final, no
+edge could improve anything. An improvement in round n means some path keeps
+getting cheaper the more you go around - which is exactly a negative cycle.
+
+WHY NOT ALWAYS USE DIJKSTRA: Dijkstra is much faster at O(E log V), but it
+finalises each node when popped on the assumption that no cheaper route can
+appear later. A negative edge breaks that assumption. Bellman-Ford is slower at
+O(V x E) but makes no such assumption - that trade is the answer to "when would
+you use which?".
+
+WHERE IT IS USED FOR REAL: currency arbitrage detection (a negative cycle in log
+exchange rates IS an arbitrage), and distance-vector routing protocols.
+
+WHAT PEOPLE GET WRONG: relaxing from a node whose distance is still infinity,
+which overflows or produces nonsense - guard it; and stopping after n-1 rounds
+without the detection pass.
+""".strip("\n")
+
+_PLAIN_ALGO["Prim's Minimum Spanning Tree"] = r"""
+IN ONE SENTENCE: grow one tree outward from any starting node, always adding the
+cheapest edge that reaches somewhere new.
+
+STEPS
+1. Keep a visited set and a min-heap seeded with (weight 0, the start node).
+2. While the heap is not empty and the tree does not yet cover every node: pop
+   the cheapest entry.
+3. If that node is already in the tree, skip it - a stale entry.
+4. Otherwise add it to the tree and add its edge weight to the running total.
+5. Push all of its edges leading to nodes not yet in the tree.
+6. Return the total.
+
+WHY THE GREEDY IS PROVABLY OPTIMAL - THE CUT PROPERTY: at every moment there is
+a "cut" between the nodes in your tree and the nodes outside it. The cheapest
+edge crossing that cut must belong to some minimum spanning tree, because
+swapping it into any spanning tree that lacks it can only reduce the total. Prim
+takes exactly that edge every round. Being able to name the cut property is what
+separates a memorised answer here.
+
+PRIM VERSUS KRUSKAL: Prim grows ONE connected tree and suits dense graphs, using
+a heap. Kruskal sorts ALL edges and adds any that joins two different components,
+using Union-Find, and suits sparse graphs. Same answer, different bookkeeping -
+know both and know when each is preferred.
+
+WHY THE SKIP CHECK: a node can be pushed several times through different edges.
+Ignoring it once it is already in the tree is the same lazy-deletion pattern
+Dijkstra uses, since heapq has no decrease-key.
+
+WHAT PEOPLE GET WRONG: adding the weight before the visited check, which
+double-counts; and forgetting that a disconnected graph has no spanning tree at
+all - the loop ends with fewer than n visited, and you should report that.
+""".strip("\n")
+
+_PLAIN_ALGO["Maximum Subarray (Kadane's algorithm)"] = r"""
+IN ONE SENTENCE: walk the array asking one question at each element - is it
+better to extend the run I am on, or to start fresh right here?
+
+STEPS
+1. Set both the best answer and the current run to the first element.
+2. For every remaining element: the new current run is the larger of the element
+   alone, or the element added to the previous run.
+3. Update the best answer with the current run.
+4. Return the best.
+
+WHY THAT ONE COMPARISON IS THE WHOLE ALGORITHM: if the run you are carrying has
+gone negative, dragging it along can only hurt the next element - you would be
+better off starting again. So "extend or restart" is genuinely the only decision,
+and it is decided by whether the running sum is positive.
+
+WHY YOU NEED TWO VARIABLES: the current run and the best-ever are different
+numbers. The run can dip while the best stays put. Collapsing them into one is
+the classic mistake and it returns the sum of the whole array on all-positive
+input while failing everywhere else.
+
+WHY THE ALL-NEGATIVE CASE WORKS: seeding both variables with the first element
+rather than 0 means the answer for [-3,-1,-2] is -1, the least bad single
+element. Starting at 0 wrongly reports 0 - an empty subarray - which the problem
+does not allow. This is the single most-tested edge case.
+
+IF THEY ASK FOR THE ACTUAL SUBARRAY: track a tentative start that resets
+whenever you restart, and record the start and end whenever the best improves.
+
+WHAT PEOPLE GET WRONG: exactly the two above - one variable, or a zero seed.
+Both produce code that looks right and fails on the interviewer's second test.
+""".strip("\n")
+
+_PLAIN_ALGO["Binary Search Lower Bound (bisect_left)"] = r"""
+IN ONE SENTENCE: find the FIRST position where the target could be inserted
+without breaking the sorted order - equivalently, the count of elements strictly
+less than the target.
+
+STEPS
+1. Set lo to 0 and hi to the LENGTH of the array. The answer may legitimately be
+   "past the end", so hi is exclusive.
+2. While lo is strictly less than hi, take the middle.
+3. If the middle value is strictly LESS than the target, it cannot be the answer
+   and neither can anything before it - move lo to mid plus one.
+4. Otherwise the middle is still a candidate, so keep it in the range - move hi
+   to mid.
+5. When lo and hi meet, return lo.
+
+WHY THERE IS NO EQUALITY BRANCH: on an equal value you move hi down to mid,
+keeping that position alive while searching further left. That is precisely what
+makes it the LEFTMOST match rather than any match. Adding "return mid if equal"
+turns it into ordinary binary search and breaks the guarantee.
+
+THE TWO TEMPLATES, AND WHY YOU MUST NOT MIX THEM
+* "lo <= hi" with hi = length - 1, moves are mid+1 and mid-1. Finds AN exact
+  match.
+* "lo < hi" with hi = length, moves are mid+1 and mid. Finds a BOUNDARY.
+Crossing them gives an infinite loop or an off-by-one every single time. Pick the
+template from what you need - a match or a boundary - before writing a line.
+
+WHAT THIS UNLOCKS: Search Insert Position is this function verbatim. Find First
+and Last Position is this plus its upper-bound twin. Longest Increasing
+Subsequence uses it to place values into the tails array. Learn it once properly.
+
+WHAT PEOPLE GET WRONG: setting hi to length - 1, which makes "insert at the end"
+unreachable; and using less-than-or-equal in the comparison, which quietly turns
+it into the upper bound.
+""".strip("\n")
+
+_PLAIN_ALGO["Car Pooling"] = r"""
+IN ONE SENTENCE: record only the passenger changes at each pick-up and drop-off
+point, then drive along the road adding them up and watching for an overflow.
+
+STEPS
+1. Make an array of changes over the location range.
+2. For each trip, add the passenger count at the start location and subtract it
+   at the end location.
+3. Sweep the locations in order, keeping a running total of passengers on board.
+4. If the running total ever exceeds the capacity, return false.
+5. If the sweep finishes, return true.
+
+WHY THE DROP-OFF IS SUBTRACTED AT end AND NOT end + 1: passengers leave the car
+AT their destination, so they are no longer aboard while you are at that
+location. This is the opposite of an inclusive interval problem like Points That
+Intersect With Cars, where coverage includes the end point. Getting this
+backwards makes overlapping trips look like they collide when they do not - and
+it is the only real trap here.
+
+WHY A DIFFERENCE ARRAY RATHER THAN SIMULATING EACH KILOMETRE: marking every
+location of every trip costs the total distance travelled. Two writes per trip
+plus one sweep is O(trips + locations), and it is the standard answer for "many
+range updates, one final read".
+
+THE ALTERNATIVE: sort pick-up and drop-off events by location and process them
+in order with a heap or a counter - the sweep-line version. Preferred when
+locations are unbounded or sparse, since you cannot allocate an array then.
+
+WHAT PEOPLE GET WRONG: sweeping the changes in insertion order instead of
+location order, which is only correct because the array is indexed by location -
+so if you switch to a dictionary, you must sort the keys.
+""".strip("\n")
+
+_PLAIN_ALGO["Corporate Flight Bookings"] = r"""
+IN ONE SENTENCE: each booking adds seats to a RANGE of flights, so record a plus
+at the start and a minus just past the end, then take a running total.
+
+STEPS
+1. Make a change array with one slot per flight plus a slot of headroom.
+2. For each booking of first, last and seats: add the seats at index first minus
+   one (converting from 1-based flights to 0-based array), and subtract them at
+   index last.
+3. Sweep the array keeping a running total; the total at each position is the
+   seats booked on that flight.
+4. Return those totals.
+
+WHY THE SUBTRACTION SITS AT index last: because the array is 0-based and the
+flights are 1-based, index last is already "one past the last flight of the
+range". The two conversions cancel, which looks like a mistake and is not - write
+the index mapping down before you code, because this is where every bug in this
+problem comes from.
+
+WHY THE RUNNING TOTAL RECOVERS THE ANSWER: the change array is the DERIVATIVE of
+the seat counts. Summing it is integration - each position accumulates every
+booking that started at or before it and has not yet ended.
+
+WHY IT BEATS THE OBVIOUS LOOP: adding seats to every flight in every booking's
+range is O(bookings x flights) and times out on the real constraints. Two writes
+per booking plus one sweep is O(bookings + flights).
+
+WHAT PEOPLE GET WRONG: the off-by-one in both directions at once, which happens
+to pass a symmetric test case and fails everything else. Trace a single booking
+[1,1,10] by hand before trusting it.
+""".strip("\n")
+
+_PLAIN_ALGO["Kth Largest Element in an Array"] = r"""
+IN ONE SENTENCE: keep a min-heap of exactly k elements - once every number has
+passed through, the heap's top is the kth largest.
+
+STEPS
+1. Start an empty heap.
+2. Push each number.
+3. If the heap now holds more than k, pop. The pop removes the smallest, which
+   cannot belong in the top k.
+4. Return the heap's top.
+
+WHY A MIN-HEAP WHEN YOU WANT THE LARGEST: the top must be whatever you are most
+willing to discard. While collecting the k biggest, that is the smallest one you
+currently hold - so the smallest sits on top. This feels inverted and it is the
+mistake everyone makes exactly once.
+
+WHY THE TOP IS THE ANSWER: the heap ends up holding the k largest values in the
+array, and the smallest of those k IS the kth largest overall.
+
+THE FASTER ALTERNATIVE TO NAME - QUICKSELECT: partition around a pivot like
+quicksort, but recurse only into the side containing position k. O(n) on average,
+O(n^2) in the worst case (mitigated by a random pivot), and it mutates the input.
+Say it, say the caveat, and say the heap is what you would ship unless n is
+enormous.
+
+WHY NOT JUST SORT: O(n log n) and three characters of code - offer it as the
+baseline, then improve. Leading with the heap and never mentioning sort looks
+like you missed the simple answer.
+
+WHAT PEOPLE GET WRONG: returning the maximum of the heap rather than its root,
+and popping before pushing.
+""".strip("\n")
+
+_PLAIN_ALGO["Pairs of Songs Divisible by 60"] = r"""
+IN ONE SENTENCE: only each song's remainder mod 60 matters, so count remainders
+as you go and pair each new song with the ones already seen that complete it.
+
+STEPS
+1. Keep a count for each of the 60 possible remainders, and a result at 0.
+2. For each song, take its length mod 60.
+3. Work out the complementary remainder: (60 minus this remainder) mod 60.
+4. Add the count of songs already seen with that complement to the result.
+5. Then record this song's remainder.
+6. Return the result.
+
+WHY THE SECOND MOD IN STEP 3: when the remainder is 0, its partner is also 0 -
+not 60, which is not a valid remainder. Writing just (60 - r) breaks on exactly
+the songs that are already multiples of 60, and those are common in the test
+cases.
+
+WHY LOOKING BACKWARDS AVOIDS DOUBLE COUNTING: every pair is counted once, when
+you reach its LATER song. Checking against all songs in both directions would
+count each pair twice and you would have to halve it, which goes wrong for
+self-pairs.
+
+WHY ONLY REMAINDERS MATTER: (a + b) is divisible by 60 exactly when
+(a mod 60 + b mod 60) is. So a song of length 3600 behaves identically to one of
+length 60 - collapsing to 60 buckets is what makes this O(n).
+
+ORDER OF STEPS 4 AND 5 MATTERS: consult the counts before adding the current
+song, or a song with remainder 30 will pair with itself.
+
+WHAT PEOPLE GET WRONG: exactly the missing second mod, and using a dictionary
+keyed by raw lengths instead of remainders.
+""".strip("\n")
+
+_PLAIN_ALGO["Partition Labels (greedy)"] = r"""
+IN ONE SENTENCE: record where every letter LAST appears, then sweep the string
+stretching the current partition to cover the last occurrence of everything
+inside it - when you arrive at that boundary, cut.
+
+STEPS
+1. Build a map from each character to the last index at which it occurs.
+2. Keep a partition start at 0 and a running end at 0.
+3. Walk the string with the index. Extend the running end to the larger of
+   itself and this character's last occurrence.
+4. If the index has caught up with the running end, nothing inside this
+   partition appears later - so cut here. Record the length, and set the next
+   start to one past the index.
+5. Return the lengths.
+
+WHY "INDEX EQUALS END" IS EXACTLY THE RIGHT CUT POINT: the running end is the
+furthest any character seen so far reaches. Arriving there means every character
+in the current stretch is fully contained in it - which is the definition of a
+valid partition. Cutting any earlier would split a letter across two parts;
+cutting later would make the part unnecessarily long.
+
+WHY THE GREEDY GIVES THE MAXIMUM NUMBER OF PARTS: you cut at the first legal
+opportunity every time, and no valid partitioning could have cut sooner. So the
+parts are as small as they can be, which means there are as many as possible.
+
+WHY ONE PASS TO BUILD THE MAP IS ENOUGH: writing each character's index
+unconditionally leaves the LAST one, since later writes overwrite earlier ones.
+
+WHAT PEOPLE GET WRONG: recording the length as end minus start rather than end
+minus start plus one; and resetting the running end at a cut, which is harmless
+here but hides the logic - the next character will set it anyway.
+""".strip("\n")
+
+_PLAIN_ALGO["String Compression (in place)"] = r"""
+IN ONE SENTENCE: two pointers - a reader that measures each run of identical
+characters, and a writer that lays down the character followed by its count.
+
+STEPS
+1. Keep a read index and a write index, both at 0.
+2. While the reader is in range: note the current character, then advance the
+   reader while it keeps matching, counting the run length.
+3. Write the character at the write position and advance the writer.
+4. If the run was longer than 1, write each DIGIT of the count as a separate
+   character, advancing the writer for each.
+5. Return the write index, which is the new length.
+
+WHY THE COUNT IS WRITTEN DIGIT BY DIGIT: the output is an array of characters,
+so a run of 12 becomes '1' then '2' - two slots, not one. Writing the number as a
+single element is the mistake this problem is built to catch.
+
+WHY A RUN OF 1 GETS NO NUMBER: "a" compresses to "a", not "a1". Only runs of 2
+or more carry a count - which is also why compression can never make the array
+longer, and hence why writing in place is safe.
+
+WHY THE WRITER CAN NEVER OVERTAKE THE READER: a run of length L consumes L slots
+and writes at most 1 plus the digits of L, which is never more than L for L of 1
+or 2, and far less beyond. So you are always writing into space you have already
+consumed. Being able to argue that is what makes "in place" defensible rather
+than lucky.
+
+WHAT PEOPLE GET WRONG: returning the compressed array rather than the length -
+the problem asks for the new length, with the array modified in place.
+""".strip("\n")
+
+_PLAIN_ALGO["01 Matrix (distance to nearest zero)"] = r"""
+IN ONE SENTENCE: run one BFS seeded with EVERY zero at once, so the wave spreads
+outward and the first time it reaches a cell is that cell's distance.
+
+STEPS
+1. Make a distance grid filled with a "not visited" marker.
+2. Scan the matrix: every zero gets distance 0 and goes into the queue. Every one
+   stays unvisited.
+3. BFS. Pop a cell; for each of its four neighbours that is still unvisited, set
+   its distance to the current cell's distance plus one and queue it.
+4. Return the distance grid.
+
+WHY SEEDING ALL THE ZEROS AT ONCE IS THE WHOLE TRICK: running a separate BFS from
+each one-cell to find its nearest zero would be O(cells^2). Starting from every
+zero simultaneously means the expanding frontier reaches each cell exactly once,
+by its shortest route, and the whole grid is answered in one O(cells) pass.
+Reverse the direction of the question - from the targets outward rather than
+from each source inward - whenever "nearest X for every cell" appears.
+
+WHY BFS AND NOT DFS: BFS visits cells in order of increasing distance, so the
+first arrival IS the minimum. DFS can reach a cell by a long path first and would
+need repeated relaxation.
+
+WHY THE UNVISITED MARKER DOUBLES AS THE VISITED SET: a cell still holding the
+marker has never been reached, so the check and the assignment are the same
+operation - no separate visited grid needed.
+
+THE FAMILY THIS BELONGS TO: Rotting Oranges, Walls and Gates, and "shortest path
+from any exit" are the identical multi-source BFS with the story changed.
+
+WHAT PEOPLE GET WRONG: initialising the unvisited cells to 0 instead of a
+distinct marker, which makes them indistinguishable from real zeros and freezes
+the BFS immediately.
+""".strip("\n")
+
+_PLAIN_ALGO["Cheapest Flights Within K Stops (Bellman-Ford)"] = r"""
+IN ONE SENTENCE: relax every edge exactly k+1 times, using a SNAPSHOT of the
+previous round so no path can sneak in extra hops.
+
+STEPS
+1. Set every cost to infinity except the source, which is 0.
+2. Repeat k+1 times - at most k stops means at most k+1 flights.
+3. At the start of each round, take a copy of the current costs.
+4. For every flight from u to v with a price, if reaching u was possible in the
+   PREVIOUS round's costs, see whether going on to v beats the copy's value for
+   v - and if so, improve the copy.
+5. Replace the costs with the copy and go again.
+6. Return the destination's cost, or -1 if it is still infinity.
+
+WHY THE SNAPSHOT IS THE ENTIRE PROBLEM: without it, a cost improved earlier in
+the SAME round could be used again later in that round, chaining two flights into
+one iteration. The hop limit would silently leak and you would return a route
+using more than k stops. Reading from the previous round and writing to the copy
+is what makes each round mean exactly one more flight.
+
+WHY k+1 AND NOT k: "stops" counts the intermediate airports, so a direct flight
+is 0 stops and 1 edge. Off by one here is the second most common failure.
+
+WHY NOT DIJKSTRA: Dijkstra finalises a node at its cheapest cost, but here a more
+expensive route with fewer hops may be the only feasible one. The hop constraint
+breaks Dijkstra's assumption - you would need to track (node, hops) as the state,
+which is really this algorithm in another shape.
+
+WHAT PEOPLE GET WRONG: relaxing in place without the copy, and forgetting to
+guard against expanding from a node that is still infinity.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
