@@ -19,9 +19,10 @@
        effort changes, so the page can refresh its own summary line.
 
    Storage (localStorage, per namespace):
-     dp-pom-<ns>      {"<card id>": seconds_logged}
-     dp-pom-active    {ns, id, startedAt, mode, endsAt}   (one globally)
-     dp-pom-len       focus length in minutes (default 25)
+     dp-pom-<ns>        {"<card id>": seconds_logged}
+     dp-pom-paused-<ns> {"<card id>": ms_left_on_a_paused_session}
+     dp-pom-active      {ns, id, startedAt, mode, endsAt}   (one globally)
+     dp-pom-len         focus length in minutes (default 25)
 
    Only ONE timer runs at a time across the whole app: starting a second
    one banks the first one's elapsed seconds and stops it. Elapsed time
@@ -49,6 +50,11 @@
   function effortKey(ns) { return "dp-pom-" + ns; }
   function loadEffort(ns) { return readJSON(effortKey(ns), {}); }
   function saveEffort(ns, obj) { writeJSON(effortKey(ns), obj); }
+
+  /* Milliseconds left on a session that was PAUSED, per card. The button
+     says Pause, so resuming must pick the session up where it stopped
+     rather than handing out a fresh full-length one. */
+  function pausedKey(ns) { return "dp-pom-paused-" + ns; }
 
   function focusMinutes() {
     var n = parseInt(localStorage.getItem(LEN_KEY) || "", 10);
@@ -124,6 +130,7 @@
       "  min-width:56px; text-align:center; letter-spacing:.02em; }",
       ".pom.running .clock { color:#4338ca; }",
       ".pom.break .clock { color:#047857; }",
+      ".pom.held .clock { color:#b45309; }",
       ".pom button { font-size:12px; font-weight:700; padding:4px 10px; border-radius:8px; cursor:pointer;",
       "  border:1px solid #c4b5fd; background:#fff; color:#5b21b6; }",
       ".pom button:hover { background:#ede9fe; }",
@@ -142,6 +149,7 @@
       "html.dark .pom .clock { color:#c4b5fd; }",
       "html.dark .pom.running .clock { color:#a5b4fc; }",
       "html.dark .pom.break .clock { color:#6ee7b7; }",
+      "html.dark .pom.held .clock { color:#fbbf24; }",
       "html.dark .pom button, html.dark .pom select { background:#2e1065; border-color:#6d28d9; color:#ddd6fe; }",
       "html.dark .pom button:hover { background:#4c1d95; }",
       "html.dark .pom .spent { color:#c4b5fd; }",
@@ -152,6 +160,7 @@
       "  :root:not(.light) .pom .clock { color:#c4b5fd; }",
       "  :root:not(.light) .pom.running .clock { color:#a5b4fc; }",
       "  :root:not(.light) .pom.break .clock { color:#6ee7b7; }",
+      "  :root:not(.light) .pom.held .clock { color:#fbbf24; }",
       "  :root:not(.light) .pom button, :root:not(.light) .pom select { background:#2e1065; border-color:#6d28d9; color:#ddd6fe; }",
       "  :root:not(.light) .pom button:hover { background:#4c1d95; }",
       "  :root:not(.light) .pom .spent { color:#c4b5fd; }",
@@ -172,6 +181,7 @@
     this.ns = opts.ns;
     this.container = opts.container;
     this.effort = loadEffort(this.ns);
+    this.paused = readJSON(pausedKey(this.ns), {});
     this.tickHandle = null;
     var self = this;
 
@@ -203,6 +213,9 @@
         self.effort = loadEffort(self.ns);
         self.paint();
         self.emit();
+      } else if (ev.key === pausedKey(self.ns)) {
+        self.paused = readJSON(pausedKey(self.ns), {});
+        self.paint();
       } else if (ev.key === ACTIVE_KEY) {
         self.paint();
       }
@@ -252,31 +265,52 @@
     setActive(a);
   };
 
+  Controller.prototype.savePaused = function () {
+    writeJSON(pausedKey(this.ns), this.paused);
+  };
+
   /* ── control actions ─────────────────────────────────────────── */
   Controller.prototype.start = function (id, mode) {
     var a = getActive();
     if (a) this.bank();            // bank whatever was running first
-    var mins = mode === "break" ? BREAK_MIN : focusMinutes();
+    var ms = (mode === "break" ? BREAK_MIN : focusMinutes()) * 60000;
+    /* Resuming a paused session continues its remaining time; only a
+       fresh session gets the full length. */
+    if (mode !== "break" && this.paused[id] > 1000) {
+      ms = this.paused[id];
+      delete this.paused[id];
+      this.savePaused();
+    }
     setActive({
       ns: this.ns, id: id, mode: mode || "focus",
       startedAt: Date.now(),
-      endsAt: Date.now() + mins * 60000
+      endsAt: Date.now() + ms
     });
     this.paint();
   };
 
   Controller.prototype.pause = function () {
+    var a = getActive();
+    if (a && a.ns === this.ns && a.mode === "focus") {
+      var left = a.endsAt - Date.now();
+      if (left > 1000) this.paused[a.id] = left;   // remember where we stopped
+      else delete this.paused[a.id];
+      this.savePaused();
+    }
     this.bank();                   // keep the seconds...
     setActive(null);               // ...then stop the clock
     this.paint();
     this.emit();
   };
 
-  /* Clear the recorded effort for one card (the timer's reset button). */
+  /* Clear the recorded effort for one card (the timer's reset button).
+     Also discards a half-finished session, so Start means a full one. */
   Controller.prototype.reset = function (id) {
     var a = getActive();
     if (a && a.ns === this.ns && a.id === id) setActive(null);
     delete this.effort[id];
+    delete this.paused[id];
+    this.savePaused();
     saveEffort(this.ns, this.effort);
     this.paint();
     this.emit();
@@ -341,15 +375,20 @@
     var spent = bar.querySelector(".spent");
     var chip = card.querySelector(".q-spent");
 
+    var held = this.paused[id] > 1000 ? this.paused[id] : 0;
     bar.classList.toggle("running", isActive && a.mode === "focus");
     bar.classList.toggle("break", isActive && a.mode === "break");
+    bar.classList.toggle("held", !isActive && !!held);
     clock.textContent = isActive
       ? mmss((a.endsAt - Date.now()) / 1000)
-      : mmss(focusMinutes() * 60);
+      : (held ? mmss(held / 1000) : mmss(focusMinutes() * 60));
 
     var startBtn = bar.querySelector('[data-pom-act="start"]');
     var pauseBtn = bar.querySelector('[data-pom-act="pause"]');
-    startBtn.textContent = isActive ? "▶ Running" : "▶ Start";
+    startBtn.textContent = isActive ? "▶ Running" : (held ? "▶ Resume" : "▶ Start");
+    startBtn.title = held
+      ? "Resume this paused session where it stopped"
+      : "Start a focus session on this topic";
     startBtn.disabled = isActive;
     pauseBtn.disabled = !isActive;
 
@@ -404,6 +443,8 @@
   Controller.prototype.complete = function (a) {
     this.bank();                   // credit the final seconds
     setActive(null);
+    delete this.paused[a.id];      // the session finished, nothing held over
+    this.savePaused();
     this.paint();
     this.emit();
     chime();
@@ -451,6 +492,10 @@
       if (!sel) return;
       ev.stopPropagation();
       setFocusMinutes(parseInt(sel.value, 10));
+      /* Choosing a new length means the old half-finished sessions no
+         longer make sense - drop them so Start gives the new length. */
+      self.paused = {};
+      self.savePaused();
       /* Keep every card's dropdown in step - the length is a global
          preference, not a per-question one. */
       var all = self.container.querySelectorAll('select[data-pom-act="len"]');
