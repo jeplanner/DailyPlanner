@@ -18588,6 +18588,634 @@ WHAT PEOPLE GET WRONG: using non-strict comparisons, which counts the extremes;
 and comparing every pair, which is quadratic.
 """.strip("\n")
 
+_PLAIN_ALGO["Count Items Matching a Rule"] = r"""
+IN ONE SENTENCE: turn the rule name into a column index, then count the rows
+whose value in that column matches.
+
+STEPS
+1. Map the rule key ("type", "color", "name") to its position in each item: 0, 1
+   or 2.
+2. Walk the items, counting those whose value at that position equals the rule
+   value.
+
+WHY A DICTIONARY RATHER THAN AN IF-CHAIN: the mapping is data, not logic. A
+dictionary states it in one line, is trivially extended if a fourth attribute
+appears, and removes three branches where a typo could hide.
+
+THE GENERAL LESSON: whenever a chain of if-else statements only chooses a
+constant, replace it with a lookup table. It is shorter, faster to read, and
+much easier to extend - and interviewers notice the instinct.
+
+WHY IT IS ONE PASS: nothing needs to be sorted or grouped; you are filtering on a
+single field.
+
+WHAT PEOPLE GET WRONG: comparing the whole item rather than the selected field;
+and hard-coding the index instead of deriving it from the rule key.
+""".strip("\n")
+
+_PLAIN_ALGO["Count Odd Numbers in an Interval Range"] = r"""
+IN ONE SENTENCE: count the odds from 0 up to each endpoint and subtract - the
+classic prefix-count trick, in O(1).
+
+STEPS
+1. Write a helper: the number of odd values in 0 through x is (x + 1) integer
+   divided by 2.
+2. The answer is that helper at high, minus the helper at low minus 1.
+
+WHY (x+1)//2 COUNTS THE ODDS: the odd numbers up to x are 1, 3, 5, ... Pairing
+each with the even below it shows there are about half. The plus one before
+halving handles x being odd itself - check it on x=5 (gives 3: 1,3,5) and x=4
+(gives 2: 1,3).
+
+WHY low MINUS 1 AND NOT low: you want to EXCLUDE everything below low, and the
+prefix count at low would already include low itself. Subtracting the count up to
+low-1 keeps low in the range. This inclusive/exclusive boundary is the only real
+decision in the problem.
+
+WHY NOT LOOP: the range can span a billion values. The prefix-difference form is
+constant time regardless, and it is the same idea as prefix sums applied to a
+count rather than a total.
+
+WHAT PEOPLE GET WRONG: subtracting the count at low, which drops low from the
+range when it is odd.
+""".strip("\n")
+
+_PLAIN_ALGO["Defanging an IP Address"] = r"""
+IN ONE SENTENCE: replace every dot with the literal three characters "[.]".
+
+STEPS
+1. Call the string replace function, swapping "." for "[.]".
+2. Return the result.
+
+WHY THE ONE-LINER IS THE RIGHT ANSWER: there is no algorithm here. If asked to do
+it manually, walk the characters and append either "[.]" or the character to a
+list, then join - never build the string with repeated concatenation in a loop,
+which is quadratic in Python because each concatenation copies.
+
+WHY IT IS ASKED AT ALL: it is a warm-up, usually the first question in a screen.
+The signal is entirely in whether you write it cleanly and stop - over-engineering
+a trivial problem is itself a negative signal.
+
+WHY YOU DO NOT NEED A REGEX: a plain literal replace is clearer and faster. Regex
+would also require escaping the dot, which is an easy mistake.
+
+WHAT PEOPLE GET WRONG: forgetting that the dot is a regex metacharacter if they
+reach for a regex; and building the output with += in a loop.
+""".strip("\n")
+
+_PLAIN_ALGO["Detect Capital"] = r"""
+IN ONE SENTENCE: exactly three patterns are legal - all upper case, all lower
+case, or only the first letter capitalised - so test for those three.
+
+STEPS
+1. Return true if the word is entirely upper case, OR entirely lower case, OR in
+   title case (first letter upper, rest lower).
+
+WHY ENUMERATING THE VALID CASES BEATS DETECTING INVALID ONES: there are three
+accepted forms and many rejected ones. Checking the small closed set is shorter
+and impossible to get subtly wrong; hunting for violations means reasoning about
+every position.
+
+IF YOU MUST DO IT MANUALLY: count the upper-case letters. It is valid when the
+count is zero (all lower), equals the length (all upper), or is exactly one AND
+that one is the first character. That formulation is worth having, because
+interviewers often forbid the built-ins.
+
+THE EDGE CASE TO CONFIRM: a single-character word is valid either way - both "A"
+and "a" pass all the checks naturally.
+
+WHAT PEOPLE GET WRONG: accepting a capital anywhere rather than only at position
+zero; and assuming title case implies the rest must be letters when the input may
+be a single character.
+""".strip("\n")
+
+_PLAIN_ALGO["Find Words Containing Character"] = r"""
+IN ONE SENTENCE: walk the words with their positions and keep the index of every
+word that contains the character.
+
+STEPS
+1. Enumerate the list so you have both index and word.
+2. Test membership of the character in the word.
+3. Collect the indices that pass.
+
+WHY YOU RETURN INDICES RATHER THAN WORDS: read the question - it asks where, not
+what. Enumerate exists precisely so you do not have to maintain a manual counter
+alongside the loop.
+
+WHY MEMBERSHIP ON A STRING IS FINE HERE: scanning a word for a character is O(L),
+so the whole thing is O(total characters) - already optimal, since you must at
+minimum read every word once.
+
+WHEN YOU WOULD PREPROCESS INSTEAD: if you had to answer this for many different
+characters over the same word list, you would build a map from character to the
+set of word indices once, then answer each query instantly. Recognising when
+repeated queries change the right data structure is the transferable point.
+
+WHAT PEOPLE GET WRONG: returning the words themselves; and maintaining a manual
+index that drifts out of step with the loop.
+""".strip("\n")
+
+_PLAIN_ALGO["Jewels and Stones"] = r"""
+IN ONE SENTENCE: put the jewel types into a set, then count the stones whose type
+is in it.
+
+STEPS
+1. Build a set from the jewels string.
+2. Count the stones that are members of that set.
+
+WHY A SET AND NOT A SCAN OF THE JEWELS STRING: membership in a string is O(J), so
+checking every stone against it is O(S x J). The set makes each check O(1), giving
+O(S + J). On the small inputs here both pass, but the reasoning is exactly the
+same one that matters at scale - and stating it is what the question is for.
+
+WHY CASE MATTERS: upper and lower case letters are different jewel types in this
+problem. Normalising case is a real bug, not a convenience.
+
+THE PATTERN: build a lookup structure from the small side, stream the large side
+past it. That is the shape of Ransom Note, Find Words That Can Be Formed by
+Characters, and every membership-filtering problem.
+
+WHAT PEOPLE GET WRONG: nested loops over both strings; and lower-casing the
+input.
+""".strip("\n")
+
+_PLAIN_ALGO["Lucky Numbers in a Matrix"] = r"""
+IN ONE SENTENCE: collect the minimum of every row and the maximum of every
+column, then intersect the two sets.
+
+STEPS
+1. Build the set of row minimums.
+2. Build the set of column maximums - transposing the matrix gives you the
+   columns directly.
+3. Return the values present in both.
+
+WHY THE INTERSECTION IS THE ANSWER: a lucky number must be its row's minimum AND
+its column's maximum. Any value with both properties qualifies, so set
+intersection expresses the definition literally.
+
+WHY THERE IS AT MOST ONE: suppose two exist at different positions. Chase the
+comparisons - each is the minimum of its row and the maximum of its column - and
+you derive a contradiction. Saying "there can be at most one, and here is roughly
+why" is a nice extra even though the code does not depend on it.
+
+WHY TRANSPOSING IS SAFE: zip over the unpacked rows yields tuples of column
+values. It allocates, but the matrices here are small; for large ones, index
+directly.
+
+WHY SETS RATHER THAN COORDINATES: the problem asks for the VALUES, and duplicates
+across rows are not an issue since a lucky value is unique anyway.
+
+WHAT PEOPLE GET WRONG: taking the maximum of rows and the minimum of columns -
+inverted, and it silently returns wrong answers on symmetric test inputs.
+""".strip("\n")
+
+_PLAIN_ALGO["Number of Arithmetic Triplets"] = r"""
+IN ONE SENTENCE: put everything in a set, then for each value check whether the
+two values that would complete its triplet are also present.
+
+STEPS
+1. Build a set of the values.
+2. For each value n, test whether both (n + diff) and (n + 2 x diff) are in the
+   set.
+3. Count the values that pass.
+
+WHY EACH TRIPLET IS COUNTED EXACTLY ONCE: you always anchor on the SMALLEST
+member and look upward. A triplet has one smallest element, so it is discovered
+once and only once. Anchoring on the middle or checking both directions
+double-counts.
+
+WHY THE INDEX ORDER CONDITION COMES FOR FREE: the problem requires i < j < k, and
+the input is strictly increasing - so a larger value always sits at a larger
+index. Sortedness is what lets you ignore positions entirely and reason about
+values. Confirm the input really is sorted; without that guarantee you would need
+index bookkeeping.
+
+WHY THIS IS O(n) RATHER THAN O(n^3): the brute force tries every triple. Hashing
+converts "does the partner exist?" from a search into a lookup - the same trade as
+Two Sum.
+
+WHAT PEOPLE GET WRONG: checking n-diff and n+diff (anchoring on the middle), which
+counts each triplet once but breaks if you also anchor elsewhere; and using 2*diff
+incorrectly as diff*diff.
+""".strip("\n")
+
+_PLAIN_ALGO["Number of Employees Who Met the Target"] = r"""
+IN ONE SENTENCE: count the entries that are at least the target.
+
+STEPS
+1. Walk the hours, counting those greater than or equal to the target.
+
+WHY GREATER-THAN-OR-EQUAL: "met the target" includes exactly meeting it. Strict
+greater-than excludes the employee who worked precisely the required hours, which
+is the only trap in the problem and is exactly what the test cases check.
+
+WHY ONE PASS AND NO SORTING: you need a count, not an order. Any sorting here is
+wasted work.
+
+WHAT PEOPLE GET WRONG: the strictness of the comparison, and nothing else.
+""".strip("\n")
+
+_PLAIN_ALGO["Number of Senior Citizens"] = r"""
+IN ONE SENTENCE: the age always sits at the same two character positions in each
+ticket string, so slice those out and compare.
+
+STEPS
+1. Each detail is a fixed-width record: ten phone digits, one gender character,
+   two age digits, two seat digits.
+2. So the age is the substring at positions 11 and 12.
+3. Convert it to an integer and count the ones strictly above 60.
+
+WHY FIXED-WIDTH PARSING IS THE WHOLE PROBLEM: there are no delimiters, so you
+must count the field offsets correctly. Write the layout out before you index -
+0 through 9 is the phone, 10 is gender, 11 and 12 are the age. An off-by-one here
+reads the gender character or the first seat digit and throws or misjudges.
+
+WHY STRICTLY GREATER THAN 60: the problem defines senior as over sixty, so exactly
+60 does not count. Confirm against the statement; this and the offset are the only
+two decisions.
+
+THE REAL-WORLD PARALLEL: fixed-width record parsing is common in banking and
+telecom feeds. The habit that saves you is writing the field layout as a comment
+above the slice.
+
+WHAT PEOPLE GET WRONG: the slice bounds; and using greater-than-or-equal.
+""".strip("\n")
+
+_PLAIN_ALGO["Power of Two"] = r"""
+IN ONE SENTENCE: a power of two has exactly one bit set, and n & (n-1) clears the
+lowest set bit - so the result is zero precisely when there was only one.
+
+STEPS
+1. Return true when n is positive AND n ANDed with n-1 equals zero.
+
+WHY IT WORKS: 8 is 1000 in binary; 7 is 0111. They share no bits, so the AND is
+zero. For a non-power like 12 (1100), 11 is 1011, and the AND is 1000 - non-zero,
+because more than one bit was set.
+
+WHY THE POSITIVITY CHECK IS NOT OPTIONAL: zero satisfies the bit test (0 AND -1
+is 0) but is not a power of two. Negative numbers can also pass in two's
+complement. Both are excluded by requiring n > 0, and forgetting it is the single
+bug in this problem.
+
+THE SIBLINGS: n & (n-1) counts set bits when applied repeatedly (popcount);
+n & -n isolates the lowest set bit; and for powers of FOUR, add a check that the
+single bit sits in an even position, usually via a mask like 0x55555555.
+
+WHY NOT LOOP DIVIDING BY TWO: perfectly correct and O(log n) - offer it first if
+you like, then give the O(1) bit test with the explanation. The explanation is
+what is being graded, not the trick.
+
+WHAT PEOPLE GET WRONG: omitting n > 0.
+""".strip("\n")
+
+_PLAIN_ALGO["Remove Trailing Zeros From a String"] = r"""
+IN ONE SENTENCE: strip zero characters from the right-hand end only.
+
+STEPS
+1. Use a right-strip of the character "0".
+
+WHY RIGHT-STRIP AND NOT A FULL STRIP: leading zeros and internal zeros must
+survive. "1000100" becomes "10001" - a general strip would also eat the front, and
+a replace would destroy the interior.
+
+IF DOING IT MANUALLY: walk an index back from the end while the character is "0",
+then slice up to that point. Guard against a string of all zeros, where the index
+runs past the start.
+
+WHY THE STRING IS NOT CONVERTED TO AN INTEGER: the input can be longer than any
+machine integer, and converting would also silently remove leading zeros the
+problem wants kept.
+
+WHAT PEOPLE GET WRONG: using strip instead of rstrip; and the all-zeros case in
+the manual version.
+""".strip("\n")
+
+_PLAIN_ALGO["Repeated Substring Pattern"] = r"""
+IN ONE SENTENCE: concatenate the string with itself, chop one character off each
+end, and ask whether the original still appears inside - it does exactly when the
+string is periodic.
+
+STEPS
+1. Build s + s.
+2. Remove the first and last characters.
+3. Return whether s is a substring of what remains.
+
+WHY THE TRICK WORKS: in s+s the original appears at position 0 and at position n.
+Trimming one character from each end destroys both of those occurrences. So if s
+still appears anywhere, it must start at some position strictly between 0 and n -
+and a self-match at an internal offset is precisely the definition of a period.
+Conversely, if s is built from a repeated block, that shifted copy is guaranteed
+to be there.
+
+WHY TRIM EXACTLY ONE FROM EACH END: trimming less leaves the trivial matches;
+trimming more could delete a genuine periodic match near the boundary.
+
+THE ALTERNATIVE APPROACH: try every candidate block length that divides n, and
+check whether repeating that prefix reconstructs the string. That is O(n sqrt n)
+in practice, more obviously correct, and worth offering alongside - the
+concatenation trick is elegant but looks like magic unless you can justify it,
+and the justification is what is being graded.
+
+THE PROPER ALGORITHM IF PUSHED: the KMP failure function gives the smallest
+period in O(n) directly.
+
+WHAT PEOPLE GET WRONG: forgetting the trim, which makes every string match
+itself; and trimming both characters from the same end.
+""".strip("\n")
+
+_PLAIN_ALGO["Richest Customer Wealth"] = r"""
+IN ONE SENTENCE: sum each customer's accounts and take the largest total.
+
+STEPS
+1. For each row, sum it.
+2. Return the maximum of those sums.
+
+WHY NO SORTING: you want one aggregate, and a maximum is a single linear pass.
+Sorting the row totals would be O(m log m) for information you discard.
+
+WHY THE ROWS ARE CUSTOMERS: read the problem's orientation carefully - rows are
+customers and columns are banks. Summing columns answers a different question and
+the mistake is invisible on a square input, which the sample often is.
+
+WHY IT IS O(m x n): every value must be read at least once, so this is optimal.
+
+WHAT PEOPLE GET WRONG: summing the wrong axis; and initialising a running maximum
+at zero when negative balances are possible - check the constraints, though here
+they are non-negative.
+""".strip("\n")
+
+_PLAIN_ALGO["Smallest Even Multiple"] = r"""
+IN ONE SENTENCE: it is the least common multiple of 2 and n - which is n when n
+is already even, and 2n when it is odd.
+
+STEPS
+1. If n is even, return n.
+2. Otherwise return n times 2.
+
+WHY THAT IS THE LCM: an even n already contains the factor 2, so nothing more is
+needed. An odd n shares no factor with 2, so the smallest number divisible by both
+is their product.
+
+THE ONE-LINE ALTERNATIVE: n multiplied by (2 divided by gcd(2, n)) - the general
+LCM formula, which reduces to exactly the two cases above. Naming that the problem
+is an LCM in disguise is the whole signal; the arithmetic is trivial.
+
+WHY THE GENERAL FORMULA IS WORTH KNOWING: lcm(a, b) = a x b / gcd(a, b) comes up
+constantly - in cycle problems, scheduling, and fraction arithmetic.
+
+WHAT PEOPLE GET WRONG: always returning 2n, which is a multiple but not the
+smallest one when n is even.
+""".strip("\n")
+
+_PLAIN_ALGO["Sum of Squares of Special Elements"] = r"""
+IN ONE SENTENCE: for each position, check whether its 1-BASED index divides the
+array length, and if so add the square of the value there.
+
+STEPS
+1. Let n be the array length.
+2. Walk positions 0 to n-1. The 1-based index is position plus one.
+3. If n modulo that 1-based index is zero, add the square of the value.
+
+WHY THE INDEX IS 1-BASED: the problem defines special elements in terms of
+1-based positions, but the array is 0-based. Adding one at the point of the
+divisibility test - and nowhere else - is the entire difficulty. Mixing the two
+conventions is what goes wrong.
+
+WHY DIVISIBILITY OF n, NOT OF THE VALUE: it is the INDEX that must divide the
+length. Testing the value is a different and wrong question, and it is an easy
+misread.
+
+WHY POSITION 0 ALWAYS QUALIFIES: its 1-based index is 1, and 1 divides
+everything - so the first element is always special. A quick sanity check on your
+implementation.
+
+WHAT PEOPLE GET WRONG: the off-by-one; and squaring the index rather than the
+value.
+""".strip("\n")
+
+_PLAIN_ALGO["Sum of Values at Indices With K Set Bits"] = r"""
+IN ONE SENTENCE: for each position, count the set bits in the INDEX, and add the
+value when that count equals k.
+
+STEPS
+1. Walk the positions.
+2. Count the 1 bits in the index - via a binary string, or the n & (n-1) loop.
+3. If the count equals k, add the value at that position.
+
+WHY THE BITS ARE COUNTED ON THE INDEX AND NOT THE VALUE: read the statement
+carefully. It is a property of WHERE the element sits, not of the element. This
+misread is the only real trap.
+
+WHY INDEX 0 IS INCLUDED WHEN k IS 0: zero has no set bits, so position 0
+qualifies exactly when k is zero. Worth confirming against the examples.
+
+HOW TO COUNT THE BITS: converting to a binary string and counting characters is
+clear and fine. The arithmetic loop with n & (n-1) runs once per set bit instead
+of once per bit position - mention it if asked about efficiency, though with
+small arrays it does not matter.
+
+WHAT PEOPLE GET WRONG: counting bits of the value; and using popcount of the
+1-based position when the problem means the 0-based index.
+""".strip("\n")
+
+_PLAIN_ALGO["Truncate Sentence"] = r"""
+IN ONE SENTENCE: split into words, keep the first k, join them back with single
+spaces.
+
+STEPS
+1. Split the sentence on whitespace.
+2. Slice the first k words.
+3. Join with a single space.
+
+WHY SLICING IS SAFE WHEN k EXCEEDS THE WORD COUNT: a slice beyond the end simply
+returns everything, with no error. The problem guarantees k is within range, but
+the slice is naturally defensive.
+
+THE ONE-PASS ALTERNATIVE IF ASKED: count spaces as you scan and cut at the k-th
+one - it avoids building the intermediate list and is O(1) extra space. Worth
+naming, though the split version is what you would ship.
+
+WHY THE DEFAULT SPLIT: it collapses whitespace runs, so odd spacing in the input
+does not produce empty words. If the problem guarantees single spaces, either
+works.
+
+WHAT PEOPLE GET WRONG: slicing characters rather than words; and joining with the
+wrong separator.
+""".strip("\n")
+
+_PLAIN_ALGO["Unique Number of Occurrences"] = r"""
+IN ONE SENTENCE: count each value, then check whether those counts are all
+distinct - by comparing the list of counts against the set of counts.
+
+STEPS
+1. Build the frequency map.
+2. Take the list of counts and the set of counts.
+3. Return whether they are the same length.
+
+WHY COMPARING LENGTHS DETECTS DUPLICATES: a set discards repeats, so it is
+smaller than the list exactly when some count appeared more than once. It is the
+standard one-line duplicate test and it generalises to any collection.
+
+WHY IT IS THE COUNTS THAT MUST BE UNIQUE, NOT THE VALUES: the values are already
+distinct as map keys. The question is whether two different values happen to occur
+the same number of times.
+
+THE RELATED PROBLEM: Minimum Deletions to Make Character Frequencies Unique asks
+what it would COST to fix this, which is the greedy decrement-until-free approach.
+Recognising that these two are the same setup with different questions is worth
+saying.
+
+WHAT PEOPLE GET WRONG: checking whether the values are unique rather than the
+counts.
+""".strip("\n")
+
+_PLAIN_ALGO["Add Binary"] = r"""
+IN ONE SENTENCE: add from the right like school arithmetic, carrying, except the
+carry appears at 2 rather than 10.
+
+STEPS
+1. Put an index at the end of each string and set the carry to 0.
+2. Loop while EITHER index is still valid OR a carry remains.
+3. Sum the carry plus whichever digits still exist, treating a run-out string as
+   contributing 0.
+4. The output digit is the total modulo 2; the new carry is the total divided by
+   2.
+5. Collect the digits, then reverse and join.
+
+WHY THE LOOP CONDITION INCLUDES THE CARRY: "1" plus "1" is "10" - the result can
+be longer than either input. Stopping when the strings run out drops the final
+carry and is the classic bug.
+
+WHY YOU TREAT MISSING DIGITS AS ZERO: the strings can differ in length, and
+padding them in the condition avoids a separate loop for the remaining tail.
+
+WHY YOU BUILD BACKWARDS AND REVERSE: you generate the least significant digit
+first. Appending and reversing once at the end is O(n); inserting at the front
+each time is O(n^2).
+
+WHY NOT CONVERT TO INTEGERS AND ADD: the inputs can be far longer than a machine
+integer. In Python it would happen to work, which is exactly why the interviewer
+will ask you to do it manually - the point is the carry arithmetic.
+
+WHAT PEOPLE GET WRONG: dropping the last carry, and inserting at position 0 in a
+loop.
+""".strip("\n")
+
+_PLAIN_ALGO["Add Strings"] = r"""
+IN ONE SENTENCE: the same right-to-left carry addition as adding binary, but the
+carry appears at 10.
+
+STEPS
+1. An index at the end of each string, carry at 0.
+2. Loop while either index is valid or a carry remains.
+3. Convert each character to a digit by subtracting the code of "0"; a run-out
+   string contributes 0.
+4. The output digit is the total modulo 10, the carry is the total divided by 10.
+5. Collect, reverse, join.
+
+WHY SUBTRACT THE CODE OF "0": it converts a character to its numeric value using
+the fact that digit characters are contiguous in the encoding. It is the
+language-independent way to do it and shows you are not leaning on a built-in
+parser - which is what the problem forbids.
+
+WHY THE PROBLEM FORBIDS DIRECT CONVERSION: the inputs can exceed any machine
+integer. That constraint is the whole reason the question exists, so say it out
+loud rather than reaching for int().
+
+WHY IT IS EXACTLY THE SAME SHAPE AS ADD BINARY: only the base changes. If you can
+write one you can write the other, and saying so demonstrates that you see the
+pattern rather than memorising two solutions.
+
+WHAT PEOPLE GET WRONG: forgetting the trailing carry; and mishandling different
+input lengths by looping only over the shorter one.
+""".strip("\n")
+
+_PLAIN_ALGO["Add to Array-Form of Integer"] = r"""
+IN ONE SENTENCE: fold k directly into the carry as you walk the digit array from
+the right - so k IS the carry.
+
+STEPS
+1. Index at the last digit; treat k itself as the running carry.
+2. Loop while digits remain OR k is non-zero.
+3. If a digit remains, add it into k and step the index left.
+4. The output digit is k modulo 10; then divide k by 10.
+5. Reverse the collected digits at the end.
+
+WHY TREATING k AS THE CARRY IS THE ELEGANT MOVE: the classic approach converts k
+to a digit array and does a parallel addition. Folding k into the carry means the
+same loop handles both the array digits and the remaining value of k, including
+the case where k is longer than the array. It removes an entire branch.
+
+WHY THE LOOP MUST CONTINUE WHILE k IS NON-ZERO: k can be far larger than the
+number represented by the array, so digits keep being produced after the array is
+exhausted.
+
+WHY IT AVOIDS BIG-INTEGER ARITHMETIC: the array can be thousands of digits long.
+Only the running carry ever holds a real number, and it stays small once the
+array's digits are consumed.
+
+WHAT PEOPLE GET WRONG: stopping when the array runs out; and building the result
+front-to-back with insertions instead of appending and reversing.
+""".strip("\n")
+
+_PLAIN_ALGO["Alternating Digit Sum"] = r"""
+IN ONE SENTENCE: walk the digits from the most significant, adding and
+subtracting alternately, starting with a plus.
+
+STEPS
+1. Convert the number to a string so the digits are in most-significant-first
+   order.
+2. Keep a sign starting at +1 and a total at 0.
+3. For each digit, add the sign times the digit, then flip the sign.
+4. Return the total.
+
+WHY THE STRING CONVERSION: extracting digits arithmetically with mod 10 gives them
+in REVERSE order, and the sign pattern is defined from the leading digit. You
+would then need to know the digit count in advance to work out the first sign.
+Converting to a string sidesteps that entirely.
+
+IF YOU MUST DO IT ARITHMETICALLY: extract the digits into a list with mod and
+divide, then walk it backwards - or count the digits first and set the initial
+sign from whether the count is odd or even.
+
+WHY THE FLIP IS AFTER THE ADD: the leading digit must be positive, so the sign is
+used before it is changed. Flipping first makes the leading digit negative.
+
+WHAT PEOPLE GET WRONG: starting the alternation from the least significant digit,
+which reverses every sign when the digit count is even - and coincidentally gives
+the right answer when it is odd, making it hard to spot.
+""".strip("\n")
+
+_PLAIN_ALGO["Apply Operations to an Array"] = r"""
+IN ONE SENTENCE: do the merge pass strictly left to right, then compact the
+non-zero values forward and pad with zeros.
+
+STEPS
+1. Walk positions 0 to n-2. If a value equals the next one, double it and set the
+   next to zero.
+2. Then compact: collect all the non-zero values in order, and pad the rest of
+   the array with zeros.
+
+WHY THE MERGE MUST BE LEFT TO RIGHT AND SEQUENTIAL: the operations are defined as
+happening in index order, and an earlier merge changes what a later comparison
+sees. On [1,1,1] the first merge gives [2,0,1] and the second comparison is 0
+against 1, which does nothing. Doing the merges in a different order, or all at
+once from a snapshot, gives a different and wrong answer.
+
+WHY THE ZEROING IS NOT OPTIONAL: setting the second element to zero is what stops
+it merging again with the element after it. It is the mechanism that makes each
+value participate in at most one merge.
+
+WHY COMPACTION IS A SEPARATE PASS: the problem specifies all merges first, then
+the shift. Interleaving them would let a value that has moved be merged again.
+
+THE COMPACTION PATTERN: this is the read/write two-pointer idiom from Move
+Zeroes - collect the keepers in order, then fill the tail.
+
+WHAT PEOPLE GET WRONG: comparing against the ORIGINAL array while modifying a
+copy; and shifting zeros during the merge pass rather than after it.
+""".strip("\n")
+
 for _e in ENTRIES:
     if not _e.get("plain_algo") and _e["title"] in _PLAIN_ALGO:
         _e["plain_algo"] = _PLAIN_ALGO[_e["title"]]
