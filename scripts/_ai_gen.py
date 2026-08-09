@@ -16,255 +16,315 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Number of Provinces",
-         answer="Given an adjacency matrix of cities, count connected components (provinces). UNION-FIND: union directly-connected cities, then count distinct roots.",
-         tags=["number-of-provinces","union-find","dsu","graph","connected-components","dsa"],
-         code='''# Count connected components (provinces) via union-find.
-def find_circle_num(is_connected):
-    n = len(is_connected)
-    parent = list(range(n))
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]   # path compression
-            x = parent[x]
-        return x
-    def union(a, b):
-        parent[find(a)] = find(b)
-    for i in range(n):
-        for j in range(i + 1, n):
-            if is_connected[i][j] == 1:
-                union(i, j)
-    return len({find(i) for i in range(n)})  # distinct roots''',
-         complexity="Time O(n^2 * alpha), space O(n).",
-         pitfalls="Counting parents instead of roots (find each first); iterating the full matrix twice unnecessarily.",
-         example="find_circle_num([[1,1,0],[1,1,0],[0,0,1]]) -> 2."),
-    dict(cat="dsa", title="Redundant Connection",
-         answer="A tree had one extra edge added forming a cycle; return that edge. UNION-FIND: process edges; the first edge whose two endpoints already share a root is the redundant one.",
-         tags=["redundant-connection","union-find","dsu","cycle","graph","dsa"],
-         code='''# Find the edge that creates a cycle (union-find).
-def find_redundant_connection(edges):
-    parent = list(range(len(edges) + 1))
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-    for a, b in edges:
-        ra, rb = find(a), find(b)
-        if ra == rb:
-            return [a, b]                # already connected -> this closes a cycle
-        parent[ra] = rb                  # union
-    return []''',
-         complexity="Time O(n * alpha), space O(n).",
-         pitfalls="Returning the wrong (earliest vs last) edge; 1-indexed node ids needing size n+1.",
-         example="find_redundant_connection([[1,2],[1,3],[2,3]]) -> [2,3]."),
-    dict(cat="dsa", title="Word Ladder (shortest transformation)",
-         answer="Shortest transformation from beginWord to endWord changing one letter at a time, each intermediate in the word list. BFS over words: neighbors are words differing by one letter; the level count is the answer.",
-         tags=["word-ladder","bfs","shortest-path","graph","dsa"],
-         code='''# Length of the shortest word-ladder transformation (BFS).
+    dict(cat="dsa", title="Pacific Atlantic Water Flow",
+         answer="Cells with heights; water flows to a lower-or-equal neighbor. Find cells from which water can reach BOTH oceans (top/left = Pacific, bottom/right = Atlantic). Reverse the flow: DFS/BFS INWARD from each ocean's border cells (going to higher-or-equal neighbors); answer is the intersection of the two reachable sets.",
+         tags=["pacific-atlantic","dfs","bfs","grid","multi-source","dsa"],
+         code='''# Cells that can drain to both oceans (reverse flow from borders).
+def pacific_atlantic(heights):
+    if not heights:
+        return []
+    rows, cols = len(heights), len(heights[0])
+    pacific, atlantic = set(), set()
+    def dfs(r, c, visited, prev):
+        if (r < 0 or r >= rows or c < 0 or c >= cols or
+                (r, c) in visited or heights[r][c] < prev):
+            return
+        visited.add((r, c))              # water can climb from here to the ocean
+        for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
+            dfs(r + dr, c + dc, visited, heights[r][c])
+    for c in range(cols):
+        dfs(0, c, pacific, heights[0][c])            # top row -> Pacific
+        dfs(rows - 1, c, atlantic, heights[rows-1][c])  # bottom -> Atlantic
+    for r in range(rows):
+        dfs(r, 0, pacific, heights[r][0])            # left col -> Pacific
+        dfs(r, cols - 1, atlantic, heights[r][cols-1])  # right -> Atlantic
+    return sorted(pacific & atlantic)''',
+         complexity="Time O(rows*cols), space O(rows*cols).",
+         pitfalls="Simulating forward flow from every cell (too slow); using < instead of >= for the reverse climb.",
+         example="pacific_atlantic([[1,2,2,3,5],[3,2,3,4,4],[2,4,5,3,1],[6,7,1,4,5],[5,1,1,2,4]]) includes (0,4),(1,3),(2,2),(3,0),(3,1),(4,0)."),
+    dict(cat="dsa", title="Surrounded Regions",
+         answer="Flip all 'O's fully surrounded by 'X' to 'X'; 'O's connected to a BORDER survive. Mark border-connected 'O's (DFS from edges), then flip everything else.",
+         tags=["surrounded-regions","dfs","grid","flood-fill","dsa"],
+         code='''# Capture regions of 'O' not connected to any border.
+def solve(board):
+    if not board:
+        return board
+    rows, cols = len(board), len(board[0])
+    def mark(r, c):
+        if r < 0 or r >= rows or c < 0 or c >= cols or board[r][c] != 'O':
+            return
+        board[r][c] = 'S'                # survives (border-connected)
+        mark(r+1, c); mark(r-1, c); mark(r, c+1); mark(r, c-1)
+    for r in range(rows):
+        mark(r, 0); mark(r, cols - 1)    # left/right borders
+    for c in range(cols):
+        mark(0, c); mark(rows - 1, c)    # top/bottom borders
+    for r in range(rows):
+        for c in range(cols):
+            if board[r][c] == 'O':
+                board[r][c] = 'X'        # surrounded -> capture
+            elif board[r][c] == 'S':
+                board[r][c] = 'O'        # restore survivor
+    return board''',
+         complexity="Time O(rows*cols), space O(rows*cols).",
+         pitfalls="Flipping border-connected regions; not restoring the survivor marker.",
+         example="solve([['X','X','X'],['X','O','X'],['X','X','X']]) -> the inner O becomes X (surrounded)."),
+    dict(cat="dsa", title="01 Matrix",
+         answer="For each cell, the distance to the nearest 0. MULTI-SOURCE BFS from all 0-cells at once, filling distances outward.",
+         tags=["01-matrix","bfs","multi-source","grid","dsa"],
+         code='''# Distance from each cell to the nearest 0 (multi-source BFS).
 from collections import deque
 
-def ladder_length(begin_word, end_word, word_list):
-    words = set(word_list)
-    if end_word not in words:
-        return 0
-    queue = deque([(begin_word, 1)])
+def update_matrix(mat):
+    rows, cols = len(mat), len(mat[0])
+    dist = [[-1] * cols for _ in range(rows)]
+    queue = deque()
+    for r in range(rows):
+        for c in range(cols):
+            if mat[r][c] == 0:
+                dist[r][c] = 0
+                queue.append((r, c))     # all zeros are sources
     while queue:
-        word, steps = queue.popleft()
-        if word == end_word:
-            return steps
-        for i in range(len(word)):
-            for c in 'abcdefghijklmnopqrstuvwxyz':
-                candidate = word[:i] + c + word[i + 1:]
-                if candidate in words:
-                    words.remove(candidate)   # mark visited
-                    queue.append((candidate, steps + 1))
-    return 0''',
-         complexity="Time O(N * L * 26), space O(N * L).",
-         pitfalls="Not removing visited words (revisits/loops); returning steps off by one.",
-         example="ladder_length('hit','cog',['hot','dot','dog','lot','log','cog']) -> 5."),
-    dict(cat="dsa", title="Network Delay Time (Dijkstra)",
-         answer="Time for a signal from node k to reach all nodes in a weighted directed graph; -1 if unreachable. DIJKSTRA with a min-heap: relax edges by shortest known distance; the answer is the max finalized distance.",
-         tags=["network-delay","dijkstra","shortest-path","heap","graph","dsa"],
-         code='''# Min time to reach all nodes from k (Dijkstra).
-import heapq
-from collections import defaultdict
-
-def network_delay_time(times, n, k):
-    graph = defaultdict(list)
-    for u, v, w in times:
-        graph[u].append((v, w))
-    dist = {}
-    heap = [(0, k)]                      # (distance, node)
-    while heap:
-        d, node = heapq.heappop(heap)
-        if node in dist:
-            continue                     # already finalized
-        dist[node] = d
-        for nei, w in graph[node]:
-            if nei not in dist:
-                heapq.heappush(heap, (d + w, nei))
-    return max(dist.values()) if len(dist) == n else -1''',
-         complexity="Time O(E log V), space O(V + E).",
-         pitfalls="Not skipping already-finalized nodes; returning a sum instead of the max distance.",
-         example="network_delay_time([[2,1,1],[2,3,1],[3,4,1]], 4, 2) -> 2."),
-    dict(cat="dsa", title="Subsets (power set)",
-         answer="Generate all subsets of a distinct-element list. Backtracking: at each index choose to include or skip; append a copy of the current subset at every node.",
-         tags=["subsets","backtracking","power-set","recursion","dsa"],
-         code='''# All subsets (the power set) via backtracking.
-def subsets(nums):
-    result = []
-    def backtrack(start, current):
-        result.append(current[:])        # record this subset
-        for i in range(start, len(nums)):
-            current.append(nums[i])      # include nums[i]
-            backtrack(i + 1, current)
-            current.pop()                # undo (skip nums[i])
-    backtrack(0, [])
-    return result''',
-         complexity="Time O(n * 2^n), space O(n) recursion.",
-         pitfalls="Appending the list by reference (must copy); revisiting earlier indices (start prevents duplicates).",
-         example="subsets([1,2,3]) has 8 subsets including [], [1], [1,2], [1,2,3]."),
-    dict(cat="dsa", title="Permutations",
-         answer="Generate all orderings of distinct numbers. Backtracking with a used marker (or swapping): build a permutation position by position, choosing each unused element.",
-         tags=["permutations","backtracking","recursion","dsa"],
-         code='''# All permutations of distinct numbers via backtracking.
-def permute(nums):
-    result = []
-    used = [False] * len(nums)
-    def backtrack(current):
-        if len(current) == len(nums):
-            result.append(current[:])    # a complete permutation
-            return
-        for i in range(len(nums)):
-            if not used[i]:
-                used[i] = True
-                current.append(nums[i])
-                backtrack(current)
-                current.pop()            # undo
-                used[i] = False
-    backtrack([])
-    return result''',
-         complexity="Time O(n * n!), space O(n).",
-         pitfalls="Forgetting to reset the used flag on backtrack; appending by reference.",
-         example="permute([1,2,3]) -> 6 permutations including [1,2,3] and [3,2,1]."),
-    dict(cat="dsa", title="Combination Sum",
-         answer="All unique combinations of candidates (reusable) summing to a target. Backtracking: at each step try candidates from the current index onward (allowing reuse), subtracting from the remaining target; prune when it goes negative.",
-         tags=["combination-sum","backtracking","recursion","dsa"],
-         code='''# All combinations (with reuse) summing to target, via backtracking.
-def combination_sum(candidates, target):
-    result = []
-    def backtrack(start, remaining, current):
-        if remaining == 0:
-            result.append(current[:])    # exact hit
-            return
-        for i in range(start, len(candidates)):
-            if candidates[i] <= remaining:
-                current.append(candidates[i])
-                backtrack(i, remaining - candidates[i], current)  # i (reuse allowed)
-                current.pop()
-    backtrack(0, target, [])
-    return result''',
-         complexity="Time exponential in target/candidates, space O(target).",
-         pitfalls="Passing i+1 (forbids reuse); not pruning when candidate exceeds remaining (dupes/slow).",
-         example="combination_sum([2,3,6,7], 7) -> [[2,2,3],[7]]."),
-    dict(cat="dsa", title="Generate Parentheses",
-         answer="Generate all valid combinations of n pairs of parentheses. Backtracking with counts: add '(' while open < n, add ')' while close < open; record when the string reaches length 2n.",
-         tags=["generate-parentheses","backtracking","recursion","dsa"],
-         code='''# All valid parenthesizations of n pairs via backtracking.
-def generate_parenthesis(n):
-    result = []
-    def backtrack(current, open_count, close_count):
-        if len(current) == 2 * n:
-            result.append(current)       # a complete valid string
-            return
-        if open_count < n:
-            backtrack(current + '(', open_count + 1, close_count)
-        if close_count < open_count:
-            backtrack(current + ')', open_count, close_count + 1)
-    backtrack('', 0, 0)
-    return result''',
-         complexity="Time O(4^n / sqrt(n)) (Catalan), space O(n) recursion.",
-         pitfalls="Allowing ')' when close >= open (invalid); wrong termination length.",
-         example="generate_parenthesis(3) -> ['((()))','(()())','(())()','()(())','()()()']."),
-    dict(cat="dsa", title="Product of Array Except Self",
-         answer="Return an array where each element is the product of all others, WITHOUT division and in O(n). Two passes: prefix products left-to-right, then multiply by suffix products right-to-left.",
-         tags=["product-except-self","prefix-suffix","array","dsa"],
-         code='''# Product of all elements except self, no division, O(n).
-def product_except_self(nums):
-    n = len(nums)
-    result = [1] * n
-    prefix = 1
-    for i in range(n):
-        result[i] = prefix              # product of everything to the left
-        prefix *= nums[i]
-    suffix = 1
-    for i in range(n - 1, -1, -1):
-        result[i] *= suffix             # multiply by product to the right
-        suffix *= nums[i]
-    return result''',
-         complexity="Time O(n), space O(1) (output aside).",
-         pitfalls="Using division (fails on zeros); an extra array when the output can hold prefixes.",
-         example="product_except_self([1,2,3,4]) -> [24,12,8,6]."),
-    dict(cat="dsa", title="Longest Substring Without Repeating Characters",
-         answer="Length of the longest substring with all distinct characters. SLIDING WINDOW with a last-seen map: expand the right edge; when a repeat is inside the window, jump the left edge past its previous position.",
-         tags=["longest-substring-no-repeat","sliding-window","hash-map","string","dsa"],
-         code='''# Longest substring with all-unique characters (sliding window).
-def length_of_longest_substring(s):
-    last_seen = {}
-    left = 0
-    best = 0
-    for right, ch in enumerate(s):
-        if ch in last_seen and last_seen[ch] >= left:
-            left = last_seen[ch] + 1     # shrink past the previous occurrence
-        last_seen[ch] = right
-        best = max(best, right - left + 1)
-    return best''',
-         complexity="Time O(n), space O(min(n, alphabet)).",
-         pitfalls="Not checking last_seen >= left (stale positions outside the window); recomputing the window length wrong.",
-         example="length_of_longest_substring('abcabcbb') -> 3  ('abc')."),
-    dict(cat="dsa", title="Subarray Sum Equals K",
-         answer="Count contiguous subarrays summing to k. PREFIX SUM + hash map: as you sweep, the number of earlier prefix sums equal to (current_prefix - k) is how many subarrays ending here sum to k.",
-         tags=["subarray-sum-k","prefix-sum","hash-map","array","dsa"],
-         code='''# Count subarrays summing to k via prefix sums.
-def subarray_sum(nums, k):
-    from collections import defaultdict
-    counts = defaultdict(int)
-    counts[0] = 1                        # empty prefix
-    prefix = 0
-    total = 0
+        r, c = queue.popleft()
+        for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols and dist[nr][nc] == -1:
+                dist[nr][nc] = dist[r][c] + 1
+                queue.append((nr, nc))
+    return dist''',
+         complexity="Time O(rows*cols), space O(rows*cols).",
+         pitfalls="BFS from each 1 separately (too slow); not seeding ALL zeros before expanding.",
+         example="update_matrix([[0,0,0],[0,1,0],[1,1,1]]) -> [[0,0,0],[0,1,0],[1,2,1]]."),
+    dict(cat="dsa", title="Unique Paths II (with obstacles)",
+         answer="Count paths from top-left to bottom-right moving only right/down, where some cells are blocked (1). DP grid: a blocked cell contributes 0 paths; otherwise dp[i][j] = dp[i-1][j] + dp[i][j-1].",
+         tags=["unique-paths","dynamic-programming","grid","obstacles","dp","dsa"],
+         code='''# Count right/down paths avoiding obstacles, DP.
+def unique_paths_with_obstacles(grid):
+    if not grid or grid[0][0] == 1:
+        return 0
+    rows, cols = len(grid), len(grid[0])
+    dp = [[0] * cols for _ in range(rows)]
+    dp[0][0] = 1
+    for i in range(rows):
+        for j in range(cols):
+            if grid[i][j] == 1:
+                dp[i][j] = 0             # blocked: no paths through here
+                continue
+            if i > 0:
+                dp[i][j] += dp[i-1][j]   # from above
+            if j > 0:
+                dp[i][j] += dp[i][j-1]   # from the left
+    return dp[rows-1][cols-1]''',
+         complexity="Time O(rows*cols), space O(rows*cols).",
+         pitfalls="Not zeroing the start when it's blocked; adding neighbors through an obstacle cell.",
+         example="unique_paths_with_obstacles([[0,0,0],[0,1,0],[0,0,0]]) -> 2."),
+    dict(cat="dsa", title="Decode Ways",
+         answer="Count ways to decode a digit string where 1->A ... 26->Z. DP: dp[i] = dp[i-1] if the single digit is valid (1-9) + dp[i-2] if the two-digit number is 10-26.",
+         tags=["decode-ways","dynamic-programming","string","dp","dsa"],
+         code='''# Count decodings of a digit string (1..26 -> A..Z), DP.
+def num_decodings(s):
+    if not s or s[0] == '0':
+        return 0
+    n = len(s)
+    prev2, prev1 = 1, 1                  # dp[-1]=1, dp[0]=1
+    for i in range(1, n):
+        curr = 0
+        if s[i] != '0':
+            curr += prev1                # single digit 1-9
+        two = int(s[i-1:i+1])
+        if 10 <= two <= 26:
+            curr += prev2                # valid two-digit
+        prev2, prev1 = prev1, curr
+    return prev1''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Mishandling '0' (only valid as part of 10/20); not rejecting leading zero.",
+         example="num_decodings('226') -> 3  ('2 2 6','22 6','2 26'); num_decodings('06') -> 0."),
+    dict(cat="dsa", title="Partition Equal Subset Sum",
+         answer="Can the array be split into two subsets with equal sum? Equivalent to a subset summing to total/2 (0/1 knapsack). DP boolean set of reachable sums.",
+         tags=["partition-equal-subset","dynamic-programming","knapsack","subset-sum","dp","dsa"],
+         code='''# True if the array splits into two equal-sum subsets (subset-sum DP).
+def can_partition(nums):
+    total = sum(nums)
+    if total % 2 == 1:
+        return False                     # odd total can't split evenly
+    target = total // 2
+    reachable = {0}
     for x in nums:
-        prefix += x
-        total += counts[prefix - k]      # earlier prefixes that complete a sum of k
-        counts[prefix] += 1
-    return total''',
+        reachable |= {s + x for s in reachable if s + x <= target}
+        if target in reachable:
+            return True
+    return target in reachable''',
+         complexity="Time O(n * target), space O(target).",
+         pitfalls="Forgetting the odd-total early exit; growing the set without the <= target cap (slow).",
+         example="can_partition([1,5,11,5]) -> True  ([1,5,5] and [11]); can_partition([1,2,3,5]) -> False."),
+    dict(cat="dsa", title="Word Search (grid DFS backtracking)",
+         answer="Determine if a word exists in a grid by moving to 4-adjacent cells without reusing a cell. DFS/backtracking from each cell matching the first letter, marking cells visited and restoring on backtrack.",
+         tags=["word-search","backtracking","dfs","grid","dsa"],
+         code='''# True if word can be traced in the grid (DFS backtracking).
+def exist(board, word):
+    rows, cols = len(board), len(board[0])
+    def dfs(r, c, i):
+        if i == len(word):
+            return True                  # matched all letters
+        if (r < 0 or r >= rows or c < 0 or c >= cols or board[r][c] != word[i]):
+            return False
+        tmp, board[r][c] = board[r][c], '#'   # mark visited
+        found = (dfs(r+1, c, i+1) or dfs(r-1, c, i+1) or
+                 dfs(r, c+1, i+1) or dfs(r, c-1, i+1))
+        board[r][c] = tmp                # restore
+        return found
+    for r in range(rows):
+        for c in range(cols):
+            if dfs(r, c, 0):
+                return True
+    return False''',
+         complexity="Time O(rows*cols*4^L), space O(L) recursion.",
+         pitfalls="Not restoring the cell on backtrack (blocks other paths); reusing a cell within one path.",
+         example="exist([['A','B','C','E'],['S','F','C','S'],['A','D','E','E']], 'ABCCED') -> True."),
+    dict(cat="dsa", title="Longest Consecutive Sequence",
+         answer="Length of the longest run of consecutive integers, in O(n). Put nums in a set; for each value that is a SEQUENCE START (no value-1 present), count upward -- each element is visited at most twice.",
+         tags=["longest-consecutive","hash-set","array","dsa"],
+         code='''# Longest run of consecutive integers in O(n) using a set.
+def longest_consecutive(nums):
+    num_set = set(nums)
+    best = 0
+    for x in num_set:
+        if x - 1 not in num_set:         # x starts a new sequence
+            length = 1
+            while x + length in num_set:
+                length += 1
+            best = max(best, length)
+    return best''',
          complexity="Time O(n), space O(n).",
-         pitfalls="Forgetting counts[0]=1 (misses subarrays starting at index 0); adding to the map before querying.",
-         example="subarray_sum([1,1,1], 2) -> 2; subarray_sum([1,2,3], 3) -> 2."),
-    dict(cat="ml_system_design", title="Design a YouTube-style Video Recommendation System",
-         answer="Recommend the next videos to watch to maximize long-term engagement (watch time / satisfaction), personalized, at massive scale. Six-step frame below.",
-         tags=["ml-system-design","recommendations","youtube","ranking","retrieval"],
-         example="1) PROBLEM: rank a personalized set of videos to maximize long-term user satisfaction, proxied by expected WATCH TIME and explicit signals (likes, 'not interested'), NOT just clicks (avoid clickbait). Constraints: billions of videos, hundreds of millions of users, <a few hundred ms, constant fresh content and cold-start. 2) DATA & LABELS: implicit feedback (watch time, completion rate, skips), explicit (like/dislike/subscribe), context (time, device, prior session). Beware feedback loops (the model shapes what's watched) and position/popularity bias. 3) TWO-STAGE ARCHITECTURE: (a) CANDIDATE GENERATION -- from billions to hundreds via cheap retrieval: two-tower (user tower, item tower) producing embeddings + approximate nearest neighbor (ANN) search, plus collaborative-filtering and subscription/trending sources; (b) RANKING -- a heavier model (deep network with rich cross features) scores the few hundred candidates on predicted watch time / multi-objective. 4) FEATURES/MODEL: user and video embeddings, watch history sequences (often a transformer/RNN over recent watches), video metadata, freshness; multi-task heads (watch time, like, share) combined with tuned weights. 5) EVALUATION: offline -- ranking metrics (nDCG, recall@k for retrieval, AUC/watch-time-weighted loss for ranking); ONLINE A/B on watch time, session length, next-day retention, with guardrails against clickbait and diversity collapse. 6) SERVING & MONITORING: precomputed item embeddings + ANN index refreshed continuously, real-time user features, candidate/ranker model versioning; monitor for staleness, popularity bias, filter bubbles, and freshness of new uploads. Follow-ups: cold-start (content features/exploration), diversity and fairness re-ranking, and exploration via bandits to avoid rich-get-richer."),
-    dict(cat="ml_concepts", title="Class Imbalance Strategies",
-         answer="When one class vastly outnumbers others, models trivially favor the majority and the minority (often the important one) is ignored. Strategies span four levels. DATA: oversample the minority (random or SMOTE-synthetic), undersample the majority, or combine. ALGORITHM: class-weighted loss (penalize minority errors more), focal loss (down-weight easy examples), threshold moving. EVALUATION: use PR-AUC/F1/recall not accuracy (which is misleading), and pick the operating threshold from the business cost of FP vs FN. ENSEMBLE: balanced bagging/boosting. Also reframe extreme cases as anomaly detection. Always evaluate on the ORIGINAL imbalanced distribution and re-calibrate probabilities if you resampled.",
-         tags=["class-imbalance","smote","class-weights","focal-loss","ml-concepts"],
-         example="Fraud at 0.2%: a model predicting 'never fraud' scores 99.8% accuracy but is useless; class-weighting + threshold tuning to maximize recall at acceptable precision, evaluated by PR-AUC, actually catches fraud -- and if you oversampled, you re-calibrate the output probabilities before using them for expected-loss decisions."),
-    dict(cat="ml_concepts", title="Attention Mechanism Intuition",
-         answer="Attention lets a model DYNAMICALLY focus on the most relevant parts of its input when producing each output, instead of compressing everything into one fixed vector. Each position emits a QUERY, KEY, and VALUE; the query is compared (dot product) to all keys to get relevance SCORES, which are softmax-normalized into weights, and the output is the weighted sum of VALUES. So each token 'looks at' every other token and pulls in information proportional to relevance -- resolving long-range dependencies a fixed-window/RNN struggles with. SELF-attention (queries/keys/values from the same sequence) is the core of Transformers; scaling by sqrt(d_k) keeps the softmax stable, and MULTI-HEAD attention runs several attentions in parallel to capture different relation types.",
-         tags=["attention","transformers","self-attention","query-key-value","ml-concepts"],
-         example="Translating 'the animal didn't cross the street because it was tired', self-attention lets 'it' attend strongly to 'animal' (not 'street'), pulling that meaning into its representation -- a dynamic, content-based link no fixed positional rule could reliably capture."),
-    dict(cat="glossary", title="Count-min sketch",
-         answer="A probabilistic structure for approximate FREQUENCY counts in a stream using sublinear memory. A 2-D array of counters with d hash functions (one row each); to add an item, increment counters[i][hash_i(item)] for all rows; to query, take the MINIMUM of those counters (min reduces the effect of hash collisions, which only ever INFLATE counts). It OVERESTIMATES (never underestimates) with a bounded error. Used for heavy-hitters, streaming analytics, and rate limiting where exact counts are too memory-heavy.",
-         tags=["count-min-sketch","probabilistic","streaming","frequency","heavy-hitters"],
-         example="Tracking approximate hit counts for billions of URLs in a stream: a fixed-size count-min sketch answers 'roughly how many times this URL appeared' in KBs instead of storing every URL, taking the min across rows to limit collision inflation."),
-    dict(cat="conceptual", title="Why do recommendation and ad systems use a two-stage retrieval-then-ranking architecture instead of one big model?",
-         answer="The fundamental tension is between SCALE and QUALITY. A recommender or ad system must select a handful of items to show from a CORPUS of millions to billions (videos, products, ads), and it must do so in tens of milliseconds per request at enormous QPS. You cannot run a rich, accurate scoring model over the entire corpus per request: even a modest deep model at, say, 1ms per item would take hours to score a billion items -- utterly infeasible online. But you also don't want a cheap model making the final decision, because ranking quality (the precise ordering of what the user sees) directly drives revenue and satisfaction and benefits from heavy models with many cross features. The two-stage architecture resolves this by SPLITTING the problem into two sub-problems with opposite optimization targets. STAGE 1, CANDIDATE GENERATION (retrieval), optimizes for RECALL AND SPEED: from the billion-item corpus it must cheaply narrow to a few hundred plausible candidates without missing good ones. It uses lightweight methods -- typically a TWO-TOWER model that embeds the user and each item independently into the same vector space, so item embeddings can be PRECOMPUTED offline and indexed; at request time you embed only the user and do an APPROXIMATE NEAREST NEIGHBOR search over the index, which is sublinear (not per-item scoring). It doesn't need precise ordering, just a high-recall shortlist. STAGE 2, RANKING, optimizes for PRECISION: now that the set is only a few hundred items, you can afford an expensive model with rich features -- user-item CROSS features (interactions the two-tower deliberately avoided so it could precompute), full histories, real-time context, multi-task heads -- to score and order them accurately. The key architectural insight is WHY the towers must be separate in stage 1 but can be joined in stage 2: precomputation. A two-tower model keeps user and item encoders independent precisely so item vectors don't depend on the user and can be indexed ahead of time (enabling ANN); a ranking model can use joint user-item features because it only runs on a few hundred candidates, where per-item compute is affordable. The trade-off is that stage 1 sacrifices some accuracy (no cross features) for the ability to search billions fast, and stage 2 recovers accuracy on the small set -- together achieving both scale and quality that neither could alone. Systems often add more stages (a cheap pre-ranker between them, and a final re-ranker for diversity/business rules). The same pattern appears in web search (cheap retrieval then learning-to-rank) and is the standard answer to 'select-few-from-enormous under latency'. A subtlety: the stages must be co-designed -- if retrieval systematically misses items the ranker would love, no amount of ranking quality recovers them (recall is an upper bound on the final quality), which is why stage-1 recall and candidate-source diversity matter enormously.",
-         tags=["two-stage","retrieval-ranking","two-tower","recommendations","why"],
-         example="YouTube can't score a billion videos with a deep ranker in 200ms; a two-tower retrieval embeds the user and ANN-searches a precomputed video index to ~500 candidates (fast, high recall), then a heavy multi-task ranker with user-video cross features orders those 500 by predicted watch time (accurate) -- the split is what makes both the latency and the quality achievable."),
-    dict(cat="behavioral", title="STAR: Insisting on the right long-term solution over a quick hack (Are Right, A Lot / Insist on Highest Standards)",
-         answer="Amazon LPs: ARE RIGHT, A LOT (leaders have strong judgment and seek diverse perspectives to disconfirm their beliefs) and INSIST ON THE HIGHEST STANDARDS. Show you resisted a tempting quick fix, sought data/other views to check yourself, and drove the durable solution -- with a result that validated the judgment.",
-         tags=["behavioral","star","are-right-a-lot","highest-standards","amazon-lp"],
-         example="SITUATION: A high-severity bug -- duplicate charges under a race condition -- was hitting a small number of customers, and the pressure was to ship a quick guard (a short client-side lock) to stop the bleeding before a big sale. TASK: I owned the payments path and had to both stop the immediate harm AND not entrench a fix that would fail under real concurrency. ACTION: I shipped the quick mitigation to stop customer impact immediately -- but I flagged clearly that it was a band-aid, not the fix, because the real race was server-side and the client lock wouldn't hold under retries or multiple devices. To check my own judgment rather than assume, I pulled the actual failure traces and asked two engineers to poke holes in my analysis; the data confirmed the duplicates came from non-idempotent server writes. I then drove the durable solution: an idempotency key on the charge API with a uniqueness constraint so a retry could never double-charge, plus a test reproducing the concurrency. I made the case to the PM with the trace data that skipping this would just reintroduce the bug at higher volume during the sale. RESULT: We shipped the idempotency fix before the sale; duplicate charges went to zero and stayed there through the peak traffic that would have broken the client-side hack. Seeking the traces and disconfirming views kept me from being confidently wrong, and insisting on the real fix -- while still stopping the bleeding fast -- protected customers when load spiked."),
+         pitfalls="Sorting (O(n log n)) when a set gives O(n); counting from non-start values (O(n^2)).",
+         example="longest_consecutive([100,4,200,1,3,2]) -> 4  ([1,2,3,4])."),
+    dict(cat="dsa", title="Min Stack",
+         answer="Design a stack with push/pop/top and getMin all O(1). Keep an auxiliary stack of running minimums (or store pairs), so the current min is always the top of the min stack.",
+         tags=["min-stack","stack","design","dsa"],
+         code='''# Stack supporting O(1) getMin via a parallel min stack.
+class MinStack:
+    def __init__(self):
+        self.stack = []
+        self.mins = []                   # running minimums
+
+    def push(self, x):
+        self.stack.append(x)
+        # track the min so far (duplicate the current min if x is larger)
+        self.mins.append(x if not self.mins else min(x, self.mins[-1]))
+
+    def pop(self):
+        self.mins.pop()
+        return self.stack.pop()
+
+    def top(self):
+        return self.stack[-1]
+
+    def get_min(self):
+        return self.mins[-1]''',
+         complexity="Time O(1) per op, space O(n).",
+         pitfalls="Recomputing min on each call (O(n)); forgetting to pop the min stack in lockstep.",
+         example="push 3, push 1, push 2; get_min -> 1; pop; get_min -> 1; pop; get_min -> 3."),
+    dict(cat="dsa", title="Implement Trie (Prefix Tree)",
+         answer="Design a trie supporting insert, search (full word), and startsWith (prefix). Each node holds a children map and an end-of-word flag; walk/create nodes char by char.",
+         tags=["trie","prefix-tree","design","string","dsa"],
+         code='''# Trie with insert / search / startsWith.
+class Trie:
+    def __init__(self):
+        self.children = {}
+        self.is_end = False
+
+    def insert(self, word):
+        node = self
+        for ch in word:
+            node = node.children.setdefault(ch, Trie())  # create if missing
+            node = node
+        node.is_end = True
+
+    def _find(self, prefix):
+        node = self
+        for ch in prefix:
+            if ch not in node.children:
+                return None
+            node = node.children[ch]
+        return node
+
+    def search(self, word):
+        node = self._find(word)
+        return node is not None and node.is_end
+
+    def starts_with(self, prefix):
+        return self._find(prefix) is not None''',
+         complexity="Time O(L) per op, space O(total chars).",
+         pitfalls="Not marking end-of-word (search would match prefixes); mutating during traversal incorrectly.",
+         example="insert 'apple'; search 'apple' -> True; search 'app' -> False; starts_with 'app' -> True."),
+    dict(cat="dsa", title="LRU Cache (design)",
+         answer="Design a cache with O(1) get and put that evicts the LEAST-RECENTLY-USED key at capacity. Hash map for O(1) lookup + doubly linked list for O(1) recency reordering (or an ordered dict).",
+         tags=["lru-cache","design","hash-map","ordered-dict","dsa"],
+         code='''# LRU cache with O(1) get/put via an ordered dict.
+from collections import OrderedDict
+
+class LRUCache:
+    def __init__(self, capacity):
+        self.cache = OrderedDict()
+        self.capacity = capacity
+
+    def get(self, key):
+        if key not in self.cache:
+            return -1
+        self.cache.move_to_end(key)      # mark most-recently-used
+        return self.cache[key]
+
+    def put(self, key, value):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        self.cache[key] = value
+        if len(self.cache) > self.capacity:
+            self.cache.popitem(last=False)   # evict least-recently-used''',
+         complexity="Time O(1) per op, space O(capacity).",
+         pitfalls="Not updating recency on get; evicting the wrong end (last=False is the oldest).",
+         example="cap 2: put(1,1),put(2,2),get(1)->1,put(3,3) evicts 2, get(2)->-1."),
+    dict(cat="dsa", title="Kth Largest Element in a Stream",
+         answer="Design a class that returns the k-th largest element after each add, over a growing stream. Maintain a MIN-HEAP of size k: the root is always the k-th largest; on add, push and pop when size exceeds k.",
+         tags=["kth-largest-stream","heap","design","streaming","dsa"],
+         code='''# Kth largest in a stream via a size-k min-heap.
+import heapq
+
+class KthLargest:
+    def __init__(self, k, nums):
+        self.k = k
+        self.heap = nums[:]
+        heapq.heapify(self.heap)
+        while len(self.heap) > k:
+            heapq.heappop(self.heap)     # keep only the k largest
+
+    def add(self, val):
+        heapq.heappush(self.heap, val)
+        if len(self.heap) > self.k:
+            heapq.heappop(self.heap)     # drop the smallest
+        return self.heap[0]              # root = kth largest''',
+         complexity="Time O(log k) per add, space O(k).",
+         pitfalls="Keeping all elements (O(n log n)); returning the max instead of the heap root.",
+         example="k=3, nums=[4,5,8,2]; add(3)->4, add(5)->5, add(10)->5, add(9)->8, add(4)->8."),
+    dict(cat="ml_system_design", title="Design a Fraud Detection System",
+         answer="Flag fraudulent transactions in real time to block/deny or send for review, minimizing losses while limiting false positives (customer friction). Six-step frame below.",
+         tags=["ml-system-design","fraud-detection","anomaly-detection","imbalanced","classification"],
+         example="1) PROBLEM: binary classification (fraud vs legit) with an asymmetric cost -- a missed fraud (FN) costs the chargeback, a false positive (FP) blocks a good customer; optimize expected COST, not accuracy. Constraints: <100ms decision at auth time, extreme imbalance (<0.1% fraud), adversarial (fraudsters adapt), and label DELAY (chargebacks arrive weeks later). 2) DATA & LABELS: transaction (amount, merchant, time), account history, device/IP, velocity/aggregate features (spend in last hour/day), graph features (shared cards/devices). Labels from chargebacks/confirmed fraud -- noisy and delayed; use provisional labels + rules for cold start. 3) MODEL: gradient-boosted trees (XGBoost) are a strong tabular baseline; add graph-based features or a GNN for ring detection; anomaly detection (isolation forest/autoencoder) for novel patterns unseen in labels. Class weighting/focal loss for imbalance. 4) TRAINING & EVAL: time-based splits (never shuffle -- avoid leakage from future), evaluate with PR-AUC, precision@recall for the operating point, and dollar-weighted loss; monitor for concept drift and retrain frequently. 5) SERVING: real-time feature store with streaming aggregates (velocity), low-latency model, plus a RULES layer (hard blocks) and human-review queue for medium-risk. Decisions feed a case-management system. 6) MONITORING: track approval/decline rates, fraud loss, FP complaints, feature drift, and adversarial shifts; use champion/challenger and delayed-label backtesting. Follow-ups: feedback loops (blocked frauds never get labels), explainability for declines (regulatory), and threshold tuning per segment/cost."),
+    dict(cat="ml_concepts", title="Why Residual (Skip) Connections Enable Very Deep Networks",
+         answer="A residual connection adds a layer's INPUT to its output: y = F(x) + x, so the block learns a RESIDUAL F(x) = y - x rather than the full mapping. This solves the DEGRADATION problem where naively stacking many layers made training error WORSE (not just overfitting). Two mechanisms: (1) GRADIENT FLOW -- the +x identity path gives backprop a direct route, so gradients reach early layers without vanishing through many multiplications, enabling 100+ layer nets; (2) EASIER OPTIMIZATION -- if the optimal transform is near-identity, F just needs to learn ~0, which is easy, so extra layers never hurt. ResNets rely on this; it also underpins Transformer blocks (each sublayer is x + Sublayer(x)).",
+         tags=["residual-connections","resnet","vanishing-gradients","deep-networks","ml-concepts"],
+         example="A 56-layer plain net had HIGHER training error than a 20-layer one (degradation); adding skip connections (ResNet-56) fixed it -- the identity path let gradients flow and let redundant layers learn the identity (F=0) instead of corrupting the signal."),
+    dict(cat="glossary", title="HyperLogLog",
+         answer="A probabilistic algorithm for approximate CARDINALITY (count of DISTINCT elements) in a stream using tiny, fixed memory (~KBs for billions of items). It hashes each element and tracks the maximum number of leading zeros seen across buckets; long runs of leading zeros are rare, so they imply many distinct values (harmonic-mean averaging across buckets reduces variance). Gives ~2% error for a few KB, versus storing every unique id. Used for unique-visitor counts, distinct queries, and analytics at scale (Redis PFCOUNT).",
+         tags=["hyperloglog","cardinality","probabilistic","streaming","approximation"],
+         example="Counting unique visitors to a site with billions of hits: HyperLogLog estimates the distinct count within ~2% using ~12KB, instead of a set holding every visitor id (gigabytes)."),
+    dict(cat="conceptual", title="Why must you use time-based splits (not random shuffling) when evaluating models on temporal data like fraud or forecasting?",
+         answer="The core principle of honest model evaluation is that your test set must simulate how the model will actually be used: predicting the FUTURE from the PAST. Standard k-fold cross-validation SHUFFLES all data and randomly assigns rows to folds, which implicitly assumes examples are independent and identically distributed with no time ordering. For temporal data -- fraud, demand forecasting, click prediction, anything where the world evolves -- that assumption is false and shuffling introduces LOOKAHEAD LEAKAGE: the model gets trained on examples that occurred AFTER the ones it's tested on, effectively letting it 'see the future.' Concretely, several leaks happen. (1) DIRECT temporal leakage: if a fraud ring operated on a single day and you shuffle, some of that day's transactions land in train and some in test; the model memorizes the ring's fingerprint from the training half and trivially 'predicts' the test half -- inflating metrics for a pattern it could never have known in real deployment (the ring didn't exist yet when the model was trained). (2) FEATURE leakage via aggregates: many features are rolling statistics (spend in last 7 days, account's historical fraud rate). Computed over a shuffled dataset, a 'past' aggregate can incorporate future transactions, encoding the answer. (3) DISTRIBUTION drift masking: shuffling mixes old and new regimes so the test set looks like the train set, hiding the fact that the real future distribution has drifted (new fraud tactics, seasonality) -- so your offline metric is optimistic and collapses in production. The FIX is time-based (a.k.a. forward-chaining / walk-forward) splitting: train on data up to time T, validate on (T, T+delta], and slide the window forward, so every evaluation only uses information available at prediction time -- exactly the deployment condition. For cross-validation you use expanding or rolling time windows rather than random folds. You must also compute all features with a strict as-of cutoff (point-in-time correctness) so no feature peeks past its timestamp, and account for LABEL delay (in fraud, chargeback labels arrive weeks later, so a fair backtest must respect when the label would actually have been known, not when the event occurred). The consequence of getting this wrong is the most dangerous kind of error: a model that looks excellent offline (because leakage handed it the answers) and fails silently in production, which is worse than a model that looks mediocre but is honestly evaluated. The general rule: your validation protocol must reproduce the information boundary of real use -- for temporal problems that boundary is time, so the split must respect time.",
+         tags=["time-based-split","data-leakage","cross-validation","temporal-data","why"],
+         example="A fraud model random-shuffled scored 0.95 PR-AUC offline but ~0.60 in production; a fraud ring's transactions had been split across train/test so the model 'recognized' test frauds it had trained on. Re-evaluated with a walk-forward split (train on weeks 1-8, test week 9), the honest offline score matched production and revealed the real gap to fix."),
+    dict(cat="behavioral", title="STAR: Acting decisively with incomplete information (Bias for Action)",
+         answer="Amazon LP: BIAS FOR ACTION -- speed matters in business; many decisions are reversible and don't need extensive study; calculated risk-taking is valued. Show you moved fast with imperfect information on a REVERSIBLE (two-way-door) decision, de-risked it cheaply, and got a result -- distinguishing it from the few one-way doors that do warrant caution.",
+         tags=["behavioral","star","bias-for-action","two-way-door","amazon-lp"],
+         example="SITUATION: Mid-incident, our API latency spiked and we suspected a recently-deployed caching change, but we didn't have conclusive data and full root-causing would take hours while customers suffered. TASK: As on-call I had to decide whether to wait for certainty or act. ACTION: I classified the decision: rolling back the caching change was a REVERSIBLE two-way door (we could redeploy it in minutes if it wasn't the cause), so it didn't warrant the delay of full analysis. I rolled it back immediately behind a feature flag while simultaneously keeping the investigation running, and I set a clear success signal (latency returns to baseline within 10 minutes) and a revert-the-revert plan if it didn't help. Latency recovered within minutes, confirming the hypothesis. I explicitly noted that had the action been a one-way door -- say, a schema migration or deleting data -- I would NOT have rushed it and would have taken the time to be sure. RESULT: We cut the customer impact from a potential multi-hour outage to about 15 minutes, then did the thorough root cause calmly afterward and shipped a proper fix with a regression test. The judgment that mattered was recognizing a cheap, reversible action and taking it fast instead of over-indexing on certainty -- while still respecting that irreversible decisions deserve more caution."),
 ]
 
 
