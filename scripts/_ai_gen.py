@@ -16,310 +16,354 @@ sys.path.insert(0, os.getcwd())   # so `import ai_sde_bank` works from here
 
 # ── The batch to add this iteration. ──
 BATCH = [
-    dict(cat="dsa", title="Spiral Matrix",
-         answer="Return all elements of an m x n matrix in spiral (clockwise) order. Maintain four boundaries (top, bottom, left, right); walk right, down, left, up, shrinking a boundary after each pass, until they cross.",
-         tags=["spiral-matrix","matrix","boundaries","simulation","dsa"],
-         code='''# Traverse a matrix in clockwise spiral order.
-def spiral_order(matrix):
-    if not matrix:
-        return []
-    top, bottom = 0, len(matrix) - 1
-    left, right = 0, len(matrix[0]) - 1
-    result = []
-    while top <= bottom and left <= right:
-        for c in range(left, right + 1):
-            result.append(matrix[top][c])      # top row, left to right
-        top += 1
-        for r in range(top, bottom + 1):
-            result.append(matrix[r][right])    # right column, top to bottom
-        right -= 1
-        if top <= bottom:
-            for c in range(right, left - 1, -1):
-                result.append(matrix[bottom][c])   # bottom row, right to left
-            bottom -= 1
-        if left <= right:
-            for r in range(bottom, top - 1, -1):
-                result.append(matrix[r][left])     # left column, bottom to top
-            left += 1
-    return result''',
-         complexity="Time O(m * n), space O(1) (output aside).",
-         pitfalls="Re-walking a row/column when boundaries meet (the two inner ifs guard this); wrong shrink order.",
-         example="spiral_order([[1,2,3],[4,5,6],[7,8,9]]) -> [1,2,3,6,9,8,7,4,5]."),
-    dict(cat="dsa", title="Rotate Image (90 degrees)",
-         answer="Rotate an n x n matrix 90 degrees clockwise IN PLACE. Transpose (swap across the diagonal), then reverse each row.",
-         tags=["rotate-image","matrix","transpose","in-place","dsa"],
-         code='''# Rotate an n x n matrix 90 degrees clockwise, in place.
-def rotate(matrix):
-    n = len(matrix)
-    for i in range(n):
-        for j in range(i + 1, n):
-            matrix[i][j], matrix[j][i] = matrix[j][i], matrix[i][j]  # transpose
-    for row in matrix:
-        row.reverse()                          # reverse each row
-    return matrix''',
-         complexity="Time O(n^2), space O(1).",
-         pitfalls="Transposing the full matrix (double-swaps back to start) -- only iterate j>i; forgetting the row reverse.",
-         example="rotate([[1,2,3],[4,5,6],[7,8,9]]) -> [[7,4,1],[8,5,2],[9,6,3]]."),
-    dict(cat="dsa", title="Search a 2D Matrix",
-         answer="Rows are sorted and each row's first value exceeds the previous row's last -- so the matrix is a sorted 1-D array folded into m x n. Binary search over [0, m*n) mapping mid to (mid//n, mid%n).",
-         tags=["search-2d-matrix","binary-search","matrix","dsa"],
-         code='''# Binary search a row-wise sorted matrix treated as one sorted array.
-def search_matrix(matrix, target):
-    if not matrix or not matrix[0]:
-        return False
-    m, n = len(matrix), len(matrix[0])
-    lo, hi = 0, m * n - 1
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        val = matrix[mid // n][mid % n]        # map flat index to 2-D
-        if val == target:
-            return True
-        if val < target:
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    return False''',
-         complexity="Time O(log(m*n)), space O(1).",
-         pitfalls="Wrong flat-to-2D index math; using m instead of n as the divisor.",
-         example="search_matrix([[1,3,5,7],[10,11,16,20],[23,30,34,60]], 3) -> True; target 13 -> False."),
-    dict(cat="dsa", title="Flipping an Image",
-         answer="For each row, reverse it then invert each bit (0<->1). Reverse-then-invert equals: for a row, new[i] = 1 - row[n-1-i]; a two-pointer pass does both at once.",
-         tags=["flipping-image","matrix","two-pointers","bit","dsa"],
-         code='''# Horizontally flip each row then invert bits.
-def flip_and_invert_image(image):
-    for row in image:
-        i, j = 0, len(row) - 1
-        while i <= j:
-            # reverse-then-invert: swap ends and flip both bits
-            row[i], row[j] = 1 - row[j], 1 - row[i]
-            i += 1
-            j -= 1
-    return image''',
-         complexity="Time O(m * n), space O(1).",
-         pitfalls="Inverting without reversing (or vice versa); missing the middle element when i == j.",
-         example="flip_and_invert_image([[1,1,0],[1,0,1],[0,0,0]]) -> [[1,0,0],[0,1,0],[1,1,1]]."),
-    dict(cat="dsa", title="Count Negative Numbers in a Sorted Matrix",
-         answer="A matrix is sorted non-increasing along rows and columns; count negatives efficiently. Start at the bottom-left; if the value is negative, all cells to its right in that row are negative (add them and go up), else move right.",
-         tags=["count-negatives","sorted-matrix","staircase","matrix","dsa"],
-         code='''# Count negatives in a row/col non-increasing matrix (staircase walk).
-def count_negatives(grid):
-    m, n = len(grid), len(grid[0])
-    row, col = m - 1, 0                          # start bottom-left
-    count = 0
-    while row >= 0 and col < n:
-        if grid[row][col] < 0:
-            count += n - col                    # rest of this row is negative
-            row -= 1                            # move up
-        else:
-            col += 1                            # move right
-    return count''',
-         complexity="Time O(m + n), space O(1).",
-         pitfalls="Scanning every cell (O(m*n)); starting from a corner that doesn't give the monotonic decision.",
-         example="count_negatives([[4,3,2,-1],[3,2,1,-1],[1,1,-1,-2],[-1,-1,-2,-3]]) -> 8."),
-    dict(cat="dsa", title="Toeplitz Matrix",
-         answer="A matrix is Toeplitz if every top-left-to-bottom-right diagonal has the same value. Check each cell equals the one diagonally up-left (matrix[i-1][j-1]).",
-         tags=["toeplitz-matrix","matrix","diagonal","dsa"],
-         code='''# True if every descending diagonal is constant.
-def is_toeplitz(matrix):
-    for i in range(1, len(matrix)):
-        for j in range(1, len(matrix[0])):
-            if matrix[i][j] != matrix[i - 1][j - 1]:   # compare up-left neighbor
-                return False
-    return True''',
-         complexity="Time O(m * n), space O(1).",
-         pitfalls="Comparing along the wrong diagonal; indexing out of bounds at row/col 0 (start loops at 1).",
-         example="is_toeplitz([[1,2,3,4],[5,1,2,3],[9,5,1,2]]) -> True."),
-    dict(cat="dsa", title="Robot Return to Origin",
-         answer="Given a string of moves U/D/L/R, decide if the robot ends at the origin. Track x,y deltas; it returns iff net horizontal and vertical displacement are both zero.",
-         tags=["robot-origin","simulation","string","dsa"],
-         code='''# True if the move sequence returns the robot to (0,0).
-def judge_circle(moves):
-    x = y = 0
-    for m in moves:
-        if m == 'U':
-            y += 1
-        elif m == 'D':
-            y -= 1
-        elif m == 'L':
-            x -= 1
-        elif m == 'R':
-            x += 1
-    return x == 0 and y == 0''',
-         complexity="Time O(n), space O(1).",
-         pitfalls="Only checking counts of one axis; miscounting opposite directions.",
-         example="judge_circle('UD') -> True; judge_circle('LL') -> False."),
-    dict(cat="dsa", title="Count Odd Numbers in an Interval Range",
-         answer="Count odd integers in [low, high] inclusive without looping. Count odds in [0, x] is (x+1)//2; answer is f(high) - f(low-1).",
-         tags=["count-odds-interval","math","counting","dsa"],
-         code='''# Count odd numbers in [low, high] inclusive, in O(1).
-def count_odds(low, high):
-    def odds_up_to(x):
-        return (x + 1) // 2                      # count of odds in [0, x]
-    return odds_up_to(high) - odds_up_to(low - 1)''',
-         complexity="Time O(1), space O(1).",
-         pitfalls="Off-by-one at the endpoints; looping the whole range (too slow for large bounds).",
-         example="count_odds(3, 7) -> 3  (3,5,7); count_odds(8, 10) -> 1."),
-    dict(cat="dsa", title="Invert Binary Tree",
-         answer="Mirror a binary tree by swapping every node's left and right children. Recurse (or BFS/DFS) swapping children at each node. Example uses a tiny local Node class so it runs standalone.",
-         tags=["invert-binary-tree","tree","recursion","dfs","dsa"],
-         code='''# Mirror a binary tree by swapping children everywhere.
+    dict(cat="dsa", title="Diameter of Binary Tree",
+         answer="The diameter is the longest path (in edges) between any two nodes, which may not pass through the root. Bottom-up DFS returns each node's height while updating a running best = left_height + right_height (edges through that node).",
+         tags=["diameter-binary-tree","tree","dfs","height","dsa"],
+         code='''# Longest path (edges) between any two nodes in a binary tree.
 class Node:
     def __init__(self, val, left=None, right=None):
         self.val = val
         self.left = left
         self.right = right
 
-def invert_tree(root):
-    if root is None:
-        return None
-    root.left, root.right = invert_tree(root.right), invert_tree(root.left)  # swap
-    return root
-
-def inorder(root):
-    # helper to read the tree out for checking
-    if root is None:
-        return []
-    return inorder(root.left) + [root.val] + inorder(root.right)''',
-         complexity="Time O(n), space O(h) recursion.",
-         pitfalls="Swapping values instead of subtrees; forgetting the null base case.",
-         example="invert of tree [4,(2,1,3),(7,6,9)] has inorder [9,7,6,4,3,2,1]."),
-    dict(cat="dsa", title="Maximum Depth of Binary Tree",
-         answer="Return the number of nodes along the longest root-to-leaf path. Recurse: depth = 1 + max(depth(left), depth(right)); null is depth 0.",
-         tags=["max-depth-tree","tree","recursion","dfs","dsa"],
-         code='''# Height (max depth) of a binary tree.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def max_depth(root):
-    if root is None:
-        return 0
-    return 1 + max(max_depth(root.left), max_depth(root.right))''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Returning edges vs nodes inconsistently; missing the null base case.",
-         example="max_depth(Node(3, Node(9), Node(20, Node(15), Node(7)))) -> 3."),
-    dict(cat="dsa", title="Same Tree",
-         answer="Check two binary trees are structurally identical with equal values. Recurse: both null -> equal; one null or values differ -> not; else compare left and right subtrees.",
-         tags=["same-tree","tree","recursion","dfs","dsa"],
-         code='''# True if two binary trees are identical in structure and values.
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def is_same_tree(p, q):
-    if p is None and q is None:
-        return True
-    if p is None or q is None or p.val != q.val:
-        return False
-    return is_same_tree(p.left, q.left) and is_same_tree(p.right, q.right)''',
-         complexity="Time O(n), space O(h).",
-         pitfalls="Comparing only values not structure; not handling one-null-one-not.",
-         example="is_same_tree(Node(1,Node(2)), Node(1,Node(2))) -> True; vs Node(1,None,Node(2)) -> False."),
-    dict(cat="dsa", title="Balanced Binary Tree",
-         answer="A tree is height-balanced if every node's two subtrees differ in height by at most 1. Bottom-up: return each subtree's height, propagating -1 as a sentinel once any imbalance is found (short-circuits to O(n)).",
-         tags=["balanced-tree","tree","recursion","height","dsa"],
-         code='''# True if the binary tree is height-balanced (bottom-up, O(n)).
-class Node:
-    def __init__(self, val, left=None, right=None):
-        self.val = val
-        self.left = left
-        self.right = right
-
-def is_balanced(root):
+def diameter_of_binary_tree(root):
+    best = [0]
     def height(node):
         if node is None:
             return 0
         lh = height(node.left)
-        if lh == -1:
-            return -1                           # left subtree already unbalanced
         rh = height(node.right)
-        if rh == -1:
-            return -1
-        if abs(lh - rh) > 1:
-            return -1                           # this node is unbalanced
+        best[0] = max(best[0], lh + rh)      # path through this node (edges)
         return 1 + max(lh, rh)
-    return height(root) != -1''',
+    height(root)
+    return best[0]''',
          complexity="Time O(n), space O(h).",
-         pitfalls="Recomputing height top-down (O(n^2)); forgetting to propagate the -1 sentinel.",
-         example="is_balanced(Node(1, Node(2, Node(3)), None)) depends on shape; a full tree of depth 2 -> True."),
-    dict(cat="glossary", title="Forward proxy vs reverse proxy",
-         answer="A FORWARD PROXY sits in front of CLIENTS and forwards their outbound requests to the internet -- it represents the client (used for egress control, caching, anonymity, corporate filtering). A REVERSE PROXY sits in front of SERVERS and receives inbound requests on their behalf -- it represents the server (used for load balancing, TLS termination, caching, request routing, hiding backend topology). Same 'intermediary' idea, opposite side: forward proxies protect/serve clients, reverse proxies protect/serve servers.",
-         tags=["forward-proxy","reverse-proxy","load-balancer","networking","architecture"],
-         example="A company forward proxy filters and logs employees' outbound web traffic; nginx as a reverse proxy terminates TLS and load-balances inbound requests across app servers -- clients only ever see the reverse proxy, not the backends."),
-    dict(cat="glossary", title="API gateway vs load balancer",
-         answer="A LOAD BALANCER distributes traffic across identical backend instances at L4/L7, focused on availability and throughput (health checks, connection distribution) -- it doesn't understand your API. An API GATEWAY is an application-aware entry point for (micro)services that adds cross-cutting API concerns: authentication/authorization, rate limiting, request routing by path/version, request/response transformation, aggregation, and API-key/quota management. They compose: a load balancer often sits in front of gateway instances, and the gateway routes to services (each possibly behind its own load balancer). Gateway = API smarts; LB = traffic spreading.",
-         tags=["api-gateway","load-balancer","routing","microservices","architecture"],
-         example="Requests hit an LB that spreads them across API-gateway nodes; the gateway authenticates the JWT, rate-limits the caller, and routes /orders to the order service and /users to the user service -- routing/auth the LB alone couldn't do."),
-    dict(cat="glossary", title="North-south vs east-west traffic",
-         answer="Data-center traffic directions. NORTH-SOUTH is traffic between clients OUTSIDE the data center and services inside (ingress/egress) -- what API gateways, WAFs, and edge load balancers handle. EAST-WEST is traffic BETWEEN services WITHIN the data center/cluster (service-to-service) -- which has exploded with microservices and is what service meshes secure (mTLS) and observe. The distinction matters for security (east-west needs zero-trust too, not just a hardened perimeter) and for capacity planning (east-west often dwarfs north-south).",
-         tags=["north-south","east-west","traffic","service-mesh","networking"],
-         example="A user's request to the API is north-south; the fan-out where that request calls the auth, catalog, pricing, and inventory services internally is east-west -- a mesh applies mTLS to the east-west hops that never leave the cluster."),
-    dict(cat="glossary", title="Anycast",
-         answer="A network addressing method where the SAME IP address is advertised from MULTIPLE locations, and BGP routing delivers each client to the TOPOLOGICALLY NEAREST one. Used by CDNs, DNS (e.g. 8.8.8.8), and DDoS scrubbing to cut latency (nearest PoP), balance load geographically, and absorb attacks (traffic is spread across many sites). Contrast unicast (one address, one host). Failover is automatic: if a site withdraws its route, clients reroute to the next nearest.",
-         tags=["anycast","bgp","cdn","dns","networking"],
-         example="Google DNS at 8.8.8.8 is anycast: a user in Tokyo and one in Paris both query 8.8.8.8 but reach different nearby data centers, so each gets a low-latency answer and an outage at one site reroutes to another automatically."),
-    dict(cat="ml_coding", title="Huber loss (numpy)",
-         answer="Huber loss is quadratic for small errors and linear for large ones, making it ROBUST to outliers (unlike MSE) while staying smooth near zero (unlike MAE). For |error| <= delta it's 0.5*error^2; beyond delta it's delta*(|error| - 0.5*delta).",
-         tags=["huber-loss","robust-regression","outliers","loss-function","ml-coding"],
-         code='''# Huber loss: quadratic near zero, linear in the tails. ast.parse-only.
+         pitfalls="Counting nodes instead of edges; assuming the diameter passes through the root.",
+         example="diameter_of_binary_tree(Node(1, Node(2, Node(4), Node(5)), Node(3))) -> 3."),
+    dict(cat="dsa", title="Sum of Left Leaves",
+         answer="Sum the values of all LEFT leaves (a left child that has no children). DFS carrying a flag for whether the current node is a left child; add its value if it is a leaf.",
+         tags=["sum-left-leaves","tree","dfs","recursion","dsa"],
+         code='''# Sum values of all left leaves in a binary tree.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def sum_of_left_leaves(root):
+    def dfs(node, is_left):
+        if node is None:
+            return 0
+        if node.left is None and node.right is None:
+            return node.val if is_left else 0    # count only left leaves
+        return dfs(node.left, True) + dfs(node.right, False)
+    return dfs(root, False)''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Counting all leaves (must be left children); treating a left internal node as a leaf.",
+         example="sum_of_left_leaves(Node(3, Node(9), Node(20, Node(15), Node(7)))) -> 24  (9 + 15)."),
+    dict(cat="dsa", title="Path Sum (root to leaf)",
+         answer="Determine if any root-to-leaf path sums to a target. DFS subtracting each node's value; at a leaf, success iff the remaining target equals the leaf value.",
+         tags=["path-sum","tree","dfs","recursion","dsa"],
+         code='''# True if some root-to-leaf path sums to target.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def has_path_sum(root, target):
+    if root is None:
+        return False
+    if root.left is None and root.right is None:
+        return target == root.val            # leaf: check remaining target
+    remaining = target - root.val
+    return has_path_sum(root.left, remaining) or has_path_sum(root.right, remaining)''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Returning True at a null child (over-counts); not requiring a LEAF (path must end at a leaf).",
+         example="has_path_sum(Node(5, Node(4, Node(11, Node(7), Node(2))), Node(8)), 22) -> True."),
+    dict(cat="dsa", title="Minimum Depth of Binary Tree",
+         answer="The minimum depth is the fewest nodes from root to the NEAREST leaf. Careful: a node with only one child is not a leaf, so take the child's depth (not min with 0). BFS finds the first leaf fastest.",
+         tags=["min-depth-tree","tree","bfs","dfs","dsa"],
+         code='''# Minimum root-to-leaf depth (nodes) of a binary tree.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def min_depth(root):
+    if root is None:
+        return 0
+    if root.left is None:
+        return 1 + min_depth(root.right)     # only right subtree exists
+    if root.right is None:
+        return 1 + min_depth(root.left)      # only left subtree exists
+    return 1 + min(min_depth(root.left), min_depth(root.right))''',
+         complexity="Time O(n), space O(h).",
+         pitfalls="Using min(left,right) blindly counts a missing child as depth 0 (wrong); a single-child node is not a leaf.",
+         example="min_depth(Node(2, None, Node(3, None, Node(4)))) -> 3."),
+    dict(cat="dsa", title="Merge Two Binary Trees",
+         answer="Overlay two trees: where both nodes exist, sum values; otherwise take whichever exists. Recurse on both children.",
+         tags=["merge-binary-trees","tree","recursion","dfs","dsa"],
+         code='''# Merge two binary trees by summing overlapping nodes.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def merge_trees(t1, t2):
+    if t1 is None:
+        return t2
+    if t2 is None:
+        return t1
+    merged = Node(t1.val + t2.val)           # overlap: sum the values
+    merged.left = merge_trees(t1.left, t2.left)
+    merged.right = merge_trees(t1.right, t2.right)
+    return merged
+
+def preorder(node):
+    if node is None:
+        return []
+    return [node.val] + preorder(node.left) + preorder(node.right)''',
+         complexity="Time O(min(n1, n2)), space O(h).",
+         pitfalls="Returning None when one side is null (should return the other); mutating inputs unintentionally.",
+         example="merge of [1,3,2] and [2,1,3] has preorder [3,4,5] at the roots/children overlap."),
+    dict(cat="dsa", title="Range Sum of BST",
+         answer="Sum values in a BST within [low, high]. Exploit the BST order: if node.val < low, skip the left subtree; if > high, skip the right; otherwise include the node and recurse both ways.",
+         tags=["range-sum-bst","bst","dfs","pruning","dsa"],
+         code='''# Sum BST node values within [low, high], pruning out-of-range subtrees.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def range_sum_bst(root, low, high):
+    if root is None:
+        return 0
+    if root.val < low:
+        return range_sum_bst(root.right, low, high)   # whole left is too small
+    if root.val > high:
+        return range_sum_bst(root.left, low, high)    # whole right is too big
+    return root.val + range_sum_bst(root.left, low, high) + range_sum_bst(root.right, low, high)''',
+         complexity="Time O(n) worst, better with pruning; space O(h).",
+         pitfalls="Not pruning (visits every node); wrong comparison direction for the BST invariant.",
+         example="range_sum_bst(BST of [10,5,15,3,7,18], 7, 15) -> 32  (7+10+15)."),
+    dict(cat="dsa", title="Search in a Binary Search Tree",
+         answer="Find the subtree rooted at the node equal to a value, using the BST property: go left if the target is smaller, right if larger, until found or null.",
+         tags=["search-bst","bst","binary-search","dsa"],
+         code='''# Return the subtree whose root equals val, using BST ordering.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def search_bst(root, val):
+    while root is not None and root.val != val:
+        root = root.left if val < root.val else root.right   # BST-guided descent
+    return root''',
+         complexity="Time O(h), space O(1).",
+         pitfalls="Scanning like a plain tree (O(n)); wrong branch direction.",
+         example="search_bst(BST of [4,2,7,1,3], 2).val -> 2; searching 5 -> None."),
+    dict(cat="dsa", title="Lowest Common Ancestor of a BST",
+         answer="In a BST, the LCA of p and q is the first node where the paths diverge. Walk from the root: if both values are smaller go left, if both larger go right; otherwise the current node is the split point = LCA.",
+         tags=["lca-bst","bst","ancestor","dsa"],
+         code='''# Lowest common ancestor of two values in a BST.
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+def lowest_common_ancestor(root, p, q):
+    while root:
+        if p < root.val and q < root.val:
+            root = root.left            # both in the left subtree
+        elif p > root.val and q > root.val:
+            root = root.right           # both in the right subtree
+        else:
+            return root                 # split point (or one equals root)
+    return None''',
+         complexity="Time O(h), space O(1).",
+         pitfalls="Using a general-tree LCA (ignores the BST shortcut); mishandling when one value equals the node.",
+         example="lowest_common_ancestor(BST of [6,2,8,0,4,7,9], 2, 8).val -> 6."),
+    dict(cat="dsa", title="Reverse Linked List",
+         answer="Reverse a singly linked list iteratively by re-pointing each node's next to its predecessor, advancing three pointers (prev, curr, next).",
+         tags=["reverse-linked-list","linked-list","pointers","dsa"],
+         code='''# Reverse a singly linked list in place.
+class ListNode:
+    def __init__(self, val, next=None):
+        self.val = val
+        self.next = next
+
+def reverse_list(head):
+    prev = None
+    curr = head
+    while curr:
+        nxt = curr.next             # remember the rest
+        curr.next = prev            # flip the pointer
+        prev = curr                 # advance prev
+        curr = nxt                  # advance curr
+    return prev
+
+def to_list(head):
+    out = []
+    while head:
+        out.append(head.val)
+        head = head.next
+    return out
+
+def build(vals):
+    head = None
+    for v in reversed(vals):
+        head = ListNode(v, head)
+    return head''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Losing the rest of the list by overwriting next before saving it; returning head instead of prev.",
+         example="to_list(reverse_list(build([1,2,3,4,5]))) -> [5,4,3,2,1]."),
+    dict(cat="dsa", title="Middle of the Linked List",
+         answer="Return the middle node (second middle if even length). Fast/slow pointers: fast moves two steps per one of slow; when fast reaches the end, slow is at the middle.",
+         tags=["middle-linked-list","linked-list","fast-slow-pointers","dsa"],
+         code='''# Middle node of a linked list via fast/slow pointers.
+class ListNode:
+    def __init__(self, val, next=None):
+        self.val = val
+        self.next = next
+
+def middle_node(head):
+    slow = fast = head
+    while fast and fast.next:
+        slow = slow.next            # one step
+        fast = fast.next.next       # two steps
+    return slow
+
+def build(vals):
+    head = None
+    for v in reversed(vals):
+        head = ListNode(v, head)
+    return head''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Wrong loop condition returns the first middle on even lengths; null-deref if you skip the fast.next check.",
+         example="middle_node(build([1,2,3,4,5])).val -> 3; for [1,2,3,4,5,6] -> 4."),
+    dict(cat="dsa", title="Merge Two Sorted Lists",
+         answer="Merge two sorted linked lists into one sorted list. Use a dummy head; repeatedly attach the smaller of the two front nodes, then append the remaining tail.",
+         tags=["merge-sorted-lists","linked-list","two-pointers","dsa"],
+         code='''# Merge two sorted linked lists into one sorted list.
+class ListNode:
+    def __init__(self, val, next=None):
+        self.val = val
+        self.next = next
+
+def merge_two_lists(l1, l2):
+    dummy = ListNode(0)
+    tail = dummy
+    while l1 and l2:
+        if l1.val <= l2.val:
+            tail.next = l1          # take from l1
+            l1 = l1.next
+        else:
+            tail.next = l2          # take from l2
+            l2 = l2.next
+        tail = tail.next
+    tail.next = l1 or l2            # attach whatever remains
+    return dummy.next
+
+def to_list(head):
+    out = []
+    while head:
+        out.append(head.val)
+        head = head.next
+    return out
+
+def build(vals):
+    head = None
+    for v in reversed(vals):
+        head = ListNode(v, head)
+    return head''',
+         complexity="Time O(n + m), space O(1).",
+         pitfalls="Forgetting to attach the leftover tail; not using a dummy head (messy first-node logic).",
+         example="to_list(merge_two_lists(build([1,2,4]), build([1,3,4]))) -> [1,1,2,3,4,4]."),
+    dict(cat="dsa", title="Linked List Cycle",
+         answer="Detect whether a linked list has a cycle. Floyd's tortoise and hare: a slow and a fast pointer; if they ever meet there's a cycle, if fast reaches null there isn't.",
+         tags=["linked-list-cycle","floyd","fast-slow-pointers","dsa"],
+         code='''# Detect a cycle in a linked list (Floyd's algorithm).
+class ListNode:
+    def __init__(self, val, next=None):
+        self.val = val
+        self.next = next
+
+def has_cycle(head):
+    slow = fast = head
+    while fast and fast.next:
+        slow = slow.next
+        fast = fast.next.next
+        if slow is fast:            # pointers met -> cycle
+            return True
+    return False''',
+         complexity="Time O(n), space O(1).",
+         pitfalls="Using a visited-set (O(n) space) when Floyd is O(1); missing the fast.next null check.",
+         example="has_cycle on a 3-node list whose tail links back to head -> True; a plain list -> False."),
+    dict(cat="glossary", title="Split-brain",
+         answer="A failure in a distributed/clustered system where a NETWORK PARTITION splits nodes into groups that each believe they're the sole authority (e.g. two primaries), so both accept writes and DIVERGE -- causing conflicting data and corruption when the partition heals. Prevented by QUORUM (a majority must agree, so a minority partition can't act), fencing tokens, and witness/tiebreaker nodes. Split-brain is the concrete danger CAP's 'partition' branch forces you to design against.",
+         tags=["split-brain","network-partition","quorum","consensus","distributed-systems"],
+         example="A 2-node DB cluster partitions; each node promotes itself to primary and takes writes, so the same row gets different values on each side -- a quorum requirement (need majority of 3+ nodes) would have kept the minority side read-only."),
+    dict(cat="glossary", title="Fencing token",
+         answer="A monotonically increasing number handed out with a LOCK or leadership grant so a stale holder can't cause damage after it's been superseded. If a client acquires a lock, pauses (GC/network), and its lease expires and is granted to another (with a higher token), the resource REJECTS the paused client's later write because it carries an OLD, lower token. Fencing turns 'I think I still hold the lock' into a checkable, ordered claim -- essential because leases alone can't stop a delayed process.",
+         tags=["fencing-token","distributed-lock","lease","split-brain","distributed-systems"],
+         example="Client A gets lock with token 33, stalls; its lease expires and B gets token 34 and writes. A wakes and writes with token 33 -- the storage sees 33 < 34 (last accepted) and rejects it, preventing corruption from the zombie lock holder."),
+    dict(cat="glossary", title="Gossip protocol",
+         answer="A decentralized, epidemic-style communication method where each node periodically exchanges state with a few RANDOM peers, so information spreads exponentially through the cluster without any central coordinator. Used for membership/failure detection and metadata dissemination (Cassandra, DynamoDB, Consul, Serf). Benefits: scalable, robust to failures, no single point of failure, eventually consistent view. Costs: eventual (not instant) convergence and some redundant messages. Convergence time is logarithmic in cluster size.",
+         tags=["gossip-protocol","epidemic","membership","failure-detection","distributed-systems"],
+         example="In Cassandra each node gossips with a few random peers every second; when one dies, that fact propagates cluster-wide within seconds via the exponential spread -- no central registry needed."),
+    dict(cat="glossary", title="Read repair and anti-entropy",
+         answer="Two mechanisms Dynamo-style stores use to converge replicas after eventual-consistency divergence. READ REPAIR: on a read that queries multiple replicas, detect stale ones (by version/timestamp) and asynchronously push the newest value to them -- cheap, fixes hot data on access. ANTI-ENTROPY: a background process compares replicas wholesale using MERKLE TREES (hash trees) to find differing key ranges efficiently and sync only those -- catches cold data never read. Together they repair the inconsistency that quorum writes/hinted handoff can leave behind.",
+         tags=["read-repair","anti-entropy","merkle-tree","eventual-consistency","distributed-systems"],
+         example="Cassandra compares replicas' Merkle trees during repair; only the subtrees whose hashes differ are streamed, so two 1M-key replicas that differ on 100 keys exchange those ranges instead of the whole dataset."),
+    dict(cat="ml_coding", title="Focal loss (numpy)",
+         answer="Focal loss addresses extreme class imbalance (e.g. object detection) by DOWN-WEIGHTING easy, well-classified examples so training focuses on hard ones. It multiplies cross-entropy by (1 - p_t)^gamma, where p_t is the predicted prob of the true class: easy examples (p_t near 1) get a tiny weight; hard ones (p_t low) keep near full weight.",
+         tags=["focal-loss","class-imbalance","object-detection","loss-function","ml-coding"],
+         code='''# Binary focal loss. ast.parse-only.
 import numpy as np
 
-def huber_loss(y_true, y_pred, delta=1.0):
-    error = y_true - y_pred
-    abs_error = np.abs(error)
-    quadratic = np.minimum(abs_error, delta)      # the quadratic-region part
-    linear = abs_error - quadratic                # the linear-region overflow
-    return np.mean(0.5 * quadratic ** 2 + delta * linear)''',
+def focal_loss(y_true, p, gamma=2.0, alpha=0.25, eps=1e-9):
+    p = np.clip(p, eps, 1 - eps)                  # avoid log(0)
+    p_t = np.where(y_true == 1, p, 1 - p)         # prob of the true class
+    alpha_t = np.where(y_true == 1, alpha, 1 - alpha)
+    loss = -alpha_t * (1 - p_t) ** gamma * np.log(p_t)   # down-weight easy ones
+    return np.mean(loss)''',
          complexity="Time O(n), space O(n).",
-         pitfalls="A hard if/else instead of the min-split (breaks vectorization/gradients); wrong delta scaling in the linear part.",
-         example="huber_loss(np.array([1.,10.]), np.array([1.,1.]), 1.0) -> small robust value (the 9-unit outlier is penalized linearly, not squared)."),
-    dict(cat="ml_coding", title="Softmax + cross-entropy combined gradient (numpy)",
-         answer="When softmax feeds cross-entropy, the gradient of the loss w.r.t. the LOGITS simplifies beautifully to (softmax_probs - one_hot_labels)/N -- no need to backprop through softmax and log separately. This numerically stable combined form is why frameworks fuse them.",
-         tags=["softmax-cross-entropy","gradient","logits","backpropagation","ml-coding"],
-         code='''# Combined softmax+cross-entropy gradient w.r.t. logits. ast.parse-only.
+         pitfalls="Forgetting the (1-p_t)^gamma modulating factor (reduces to weighted CE); not clipping p (log(0)); wrong p_t for negatives.",
+         example="focal_loss(y, p, gamma=2) makes a confident-correct example (p_t=0.99) contribute ~0.0001x its CE, so rare hard positives dominate the gradient."),
+    dict(cat="ml_coding", title="He / Xavier weight initialization (numpy)",
+         answer="Good initialization keeps activation variance stable across layers. XAVIER/Glorot (for tanh/sigmoid) scales by sqrt(1/fan_in) (or 2/(fan_in+fan_out)); HE (for ReLU) scales by sqrt(2/fan_in) to compensate for ReLU zeroing half the activations. Wrong scale -> vanishing or exploding activations.",
+         tags=["weight-initialization","he-init","xavier-init","variance","ml-coding"],
+         code='''# He and Xavier initializers. ast.parse-only (rng passed in).
 import numpy as np
 
-def softmax_ce_grad(logits, y_onehot):
-    shifted = logits - np.max(logits, axis=1, keepdims=True)   # stability
-    exp = np.exp(shifted)
-    probs = exp / np.sum(exp, axis=1, keepdims=True)           # softmax
-    n = logits.shape[0]
-    return (probs - y_onehot) / n                             # elegant gradient''',
-         complexity="Time O(n * classes), space O(n * classes).",
-         pitfalls="Backpropagating softmax and log separately (loses the cancellation and stability); forgetting to average by N.",
-         example="softmax_ce_grad(logits, y_onehot) returns probs-minus-labels over N; if a class prob is 0.7 and it's the true label, that logit's grad is (0.7-1)/N < 0 (push it up)."),
-    dict(cat="ml_coding", title="Adam optimizer update (numpy)",
-         answer="Adam combines momentum (1st moment m) and RMSProp (2nd moment v) with bias correction. Per step: m = b1*m + (1-b1)*g; v = b2*v + (1-b2)*g^2; bias-correct both; w -= lr * m_hat / (sqrt(v_hat) + eps). Adaptive per-parameter learning rates.",
-         tags=["adam","optimizer","momentum","rmsprop","ml-coding"],
-         code='''# One Adam update step. ast.parse-only.
-import numpy as np
+def he_init(fan_in, fan_out, rng):
+    std = np.sqrt(2.0 / fan_in)                   # ReLU: keep variance stable
+    return rng.standard_normal((fan_in, fan_out)) * std
 
-def adam_step(w, g, m, v, t, lr=1e-3, b1=0.9, b2=0.999, eps=1e-8):
-    m = b1 * m + (1 - b1) * g                     # 1st moment (mean of grads)
-    v = b2 * v + (1 - b2) * (g * g)               # 2nd moment (uncentered var)
-    m_hat = m / (1 - b1 ** t)                     # bias correction
-    v_hat = v / (1 - b2 ** t)
-    w = w - lr * m_hat / (np.sqrt(v_hat) + eps)   # adaptive step
-    return w, m, v''',
-         complexity="Time O(size of w), space O(size of w).",
-         pitfalls="Omitting bias correction (slow early steps); using t=0 (division by zero in 1-b1^t); eps inside vs outside the sqrt.",
-         example="adam_step(w, g, m0, v0, t=1) takes a bias-corrected adaptive step; early steps rely on correction since m,v start at 0."),
-    dict(cat="conceptual", title="Why does the softmax+cross-entropy gradient simplify to (probs - labels), and why fuse them?",
-         answer="Take the softmax p_i = exp(z_i)/sum_j exp(z_j) over logits z, and cross-entropy loss L = -sum_i y_i log(p_i) for one-hot labels y. You'd expect the gradient dL/dz to be messy because it chains through the log and through softmax's normalization (every logit affects every probability via the shared denominator). But when you actually compute dL/dz_k, two things happen. First, the log and the exp partly cancel. Second -- the key -- the derivative of softmax has a specific structure: dp_i/dz_k = p_i*(1[i=k] - p_k). Plugging that in and using that the labels sum to 1 (one-hot), the whole sum collapses to the strikingly simple dL/dz_k = p_k - y_k. So the gradient of the loss with respect to the logits is just 'predicted probability minus true label' -- for the correct class it's p_true - 1 (negative, pushing that logit up), and for wrong classes it's p_wrong - 0 (positive, pushing them down), scaled by how confident the mistake was. Intuitively the network is nudged exactly in proportion to its error on each class. WHY FUSE THEM in code (a single softmax_cross_entropy op rather than a softmax layer then a separate cross-entropy layer): (1) NUMERICAL STABILITY -- computing log(softmax) naively means exponentiating possibly-large logits then taking a log, which overflows/underflows; the fused log-sum-exp form (log p_i = z_i - max - log sum exp(z_j - max)) stays stable, and you never materialize a probability that rounds to 0 and then take log(0) = -inf. (2) EFFICIENCY AND ACCURACY of the BACKWARD pass -- you emit the closed-form (p - y) directly instead of backpropagating through a division and a log, which both saves compute and avoids the catastrophic cancellation those steps can introduce (e.g. dividing by a tiny p). (3) SIMPLICITY -- one clean gradient. This is why every framework provides a combined cross_entropy_with_logits that takes RAW logits, and why you should NOT put a softmax on your output layer and then apply a separate cross-entropy: you'd lose the stability and risk NaNs. The lesson generalizes: when a loss composes with a final activation, the pair often has a simpler, more stable joint form than either piece alone.",
-         tags=["softmax","cross-entropy","gradient","numerical-stability","why"],
-         example="With logits giving p=[0.7,0.2,0.1] and true class 0, the fused gradient is [0.7-1, 0.2, 0.1]=[-0.3,0.2,0.1] -- directly usable, whereas a split softmax-then-CE would backprop through log and a division and risk log(0) if a prob underflowed."),
-    dict(cat="conceptual", title="Why does Adam need bias correction, and what goes wrong without it?",
-         answer="Adam maintains two running exponential moving averages: m (the first moment, an estimate of the mean of the gradients) and v (the second moment, an estimate of the uncentered variance / mean of squared gradients). Both are INITIALIZED TO ZERO. The update is m = b1*m + (1-b1)*g and v = b2*v + (1-b2)*g^2, with b1 around 0.9 and b2 around 0.999. The problem is that because they start at zero, these estimates are BIASED TOWARD ZERO during the early steps, and severely so for v because b2 is very close to 1. Concretely, after the first step m = (1-b1)*g1 = 0.1*g1 -- only a tenth of the actual gradient, even though the best estimate of the mean gradient so far is just g1. For v it's worse: v = (1-b2)*g1^2 = 0.001*g1^2, a thousandth of the true magnitude. If you used these raw, the effective step size lr * m/(sqrt(v)) would be wildly off early in training: the tiny v makes sqrt(v) tiny, so the step could BLOW UP, or the mismatch between under-estimated m and v distorts the direction. Bias correction fixes this exactly: dividing by (1 - b1^t) and (1 - b2^t) rescales the estimates to be UNBIASED. You can derive that the expected value of the raw m_t equals (1 - b1^t) times the true first moment (assuming stationary gradients), so dividing by (1 - b1^t) cancels the bias precisely. Early on, when t is small, (1 - b1^t) is small (e.g. at t=1, 1 - 0.9 = 0.1), so the division multiplies m by 10, undoing the 0.1 attenuation and recovering the right magnitude. As t grows, b1^t -> 0, the correction factor -> 1, and it smoothly becomes a no-op -- it only matters for the first tens/hundreds of steps. WITHOUT correction the symptoms are: overly small and erratic effective learning rates at the start (because v is under-estimated inconsistently with m), slow or unstable early convergence, and sensitivity to the initialization transient. The correction is essentially free (two scalar powers per step) and makes Adam's early steps well-scaled, which is a big part of why Adam works robustly out of the box. A related practical note: some implementations instead warm up the learning rate to achieve a similar effect, and 'AdamW' changes how weight decay interacts, but the bias-correction terms specifically address the zero-initialization transient of the moment estimates.",
-         tags=["adam","bias-correction","optimizer","moment-estimates","why"],
-         example="At t=1 with b2=0.999 and g=2, raw v=0.001*4=0.004 so sqrt(v)=0.063 -- a huge, wrong step; bias-corrected v_hat=v/(1-0.999)=4 gives sqrt=2, the correct scale -- so without correction the first step would be ~30x too large."),
-    dict(cat="behavioral", title="STAR: Thinking big and influencing beyond your team (Think Big)",
-         answer="Amazon LP: THINK BIG -- leaders create and communicate a bold direction that inspires results, think differently, and look around corners for ways to serve customers. Show you proposed and drove something bigger than your immediate mandate, aligning others, with a measurable outcome.",
-         tags=["behavioral","star","think-big","amazon-lp","influence"],
-         example="SITUATION: My team owned one service's logging, but I noticed every team was reinventing observability differently -- inconsistent formats, no shared tracing -- so debugging cross-service incidents took hours of manual correlation. TASK: Nobody owned the org-wide problem; I chose to define a bolder vision than my team's remit: unified structured logging and distributed tracing across all services. ACTION: I wrote a one-page vision doc framing the customer/business cost (slow incident resolution, poor reliability) and a phased path, then socialized it with peer leads and my manager to build a coalition rather than mandating anything. I built a small reference library and instrumented two services end-to-end as a lighthouse example so the value was concrete, not theoretical, and I presented the cross-service trace of a real past incident to show minutes-not-hours debugging. I recruited volunteers from three teams and set a lightweight standard everyone could adopt incrementally. RESULT: Over two quarters the standard spread to most services; mean time to diagnose cross-service incidents dropped substantially because engineers could follow a single trace ID across the system, and the tracing library became an org-supported platform with a real owner. The win came from looking beyond my team's box, articulating a vision compelling enough that others opted in, and de-risking it with a working example before asking for buy-in."),
+def xavier_init(fan_in, fan_out, rng):
+    std = np.sqrt(2.0 / (fan_in + fan_out))       # tanh/sigmoid
+    return rng.standard_normal((fan_in, fan_out)) * std''',
+         complexity="Time O(fan_in * fan_out), space O(fan_in * fan_out).",
+         pitfalls="Using Xavier with ReLU (activations shrink -- He compensates for the halving); initializing all weights equal (symmetry never breaks).",
+         example="he_init(256, 128, rng) gives weights with std sqrt(2/256) ~ 0.088, keeping ReLU activation variance roughly constant layer-to-layer."),
+    dict(cat="conceptual", title="Why does minimum depth of a binary tree need special handling for single-child nodes?",
+         answer="The maximum-depth problem has a clean recurrence: depth(node) = 1 + max(depth(left), depth(right)), with depth(null) = 0. It's tempting to write minimum depth by analogy as 1 + min(depth(left), depth(right)) -- but this is WRONG, and the reason exposes a subtle definitional point. Minimum depth is defined as the number of nodes on the shortest path from the root to a LEAF, and a leaf is a node with NO children. Now consider a node that has only ONE child -- say a left child but no right child. Its right subtree is empty, so depth(right) = 0. The naive min formula computes 1 + min(depth(left), 0) = 1 + 0 = 1, claiming this node is at minimum depth 1 as if it were a leaf. But it is NOT a leaf -- it has a left child -- so there is no root-to-leaf path that stops here. The formula has effectively invented a path that ends at a missing child, which isn't allowed. The correct rule: minimum depth must only take the min over children that ACTUALLY EXIST. So if one child is null, you must recurse into the non-null child (1 + depth(existing child)), NOT take min with the null side's 0. Only when BOTH children exist do you take 1 + min(left, right); when both are null (a true leaf) you return 1. Maximum depth doesn't suffer this because max naturally IGNORES the shorter (null) side -- max(depth(left), 0) = depth(left) whenever the left side is deeper -- so the missing child's 0 never wins and never fabricates a false path. The asymmetry is that min is 'attracted' to the zero from a missing subtree while max is repelled by it. The general lesson: when a recurrence's base case value (0 for null) can be spuriously selected by the aggregation (min picks small values), you must guard the base case so it only applies at genuine terminals -- here, genuine leaves. A BFS solution sidesteps the trap naturally: do a level-order traversal and return the depth of the FIRST node with no children, which is by construction the nearest leaf, and it's also faster because it stops as soon as it finds the shallowest leaf rather than exploring the whole tree.",
+         tags=["min-depth","binary-tree","recursion","edge-cases","why"],
+         example="For a right-skewed tree 1 -> 2 -> 3 (each only a right child), the true minimum depth is 3 (the only leaf is node 3); the naive 1+min(left,right) would return 1 at the root because the missing left child contributes depth 0 -- a path that doesn't end at a leaf."),
+    dict(cat="conceptual", title="Why does focal loss help with class imbalance where weighted cross-entropy alone falls short?",
+         answer="Extreme class imbalance -- like object detection where a single image has a handful of true objects and tens of thousands of easy background locations -- breaks naive training because the loss is dominated by the SHEER NUMBER of easy negatives. Even if each easy background example contributes a tiny individual loss (the model is already confident it's background, p near the correct value), there are so many of them that their SUM overwhelms the gradient signal from the rare, hard, informative positives; the model converges to 'predict background everywhere' and the useful examples get drowned out. The first fix people reach for is WEIGHTED (or balanced) cross-entropy: multiply the loss of the rare positive class by a large alpha and the common class by a small one, to rebalance their total contributions. This helps with the class-frequency imbalance -- it corrects for how MANY of each class there are -- but it has a blind spot: it weights every example of a class the SAME regardless of whether the model already gets it right. It does NOT distinguish EASY examples from HARD ones. So a mountain of easy, already-correct negatives still each carry the full (down-weighted) loss, and a well-classified example contributes as much per-example signal as a misclassified one of the same class. FOCAL LOSS adds the missing ingredient: a modulating factor (1 - p_t)^gamma, where p_t is the model's predicted probability of the TRUE class. When the model is confident and correct (p_t near 1), (1 - p_t)^gamma is tiny, so that example's loss is scaled down toward zero -- it's already learned, stop letting it dominate. When the model is wrong or unsure (p_t low), (1 - p_t)^gamma stays near 1, preserving the full loss -- keep focusing on it. Gamma controls the strength (gamma=0 recovers cross-entropy; gamma=2 is typical). The crucial difference from weighted CE is that focal loss re-weights by DIFFICULTY (a per-example, dynamic property that changes as the model learns), not by class membership (a static property). This automatically shifts the training focus onto the hard examples over time and stops the legion of easy negatives from swamping the gradient, even though there are vastly more of them. In practice focal loss is often combined with an alpha class-weight too (the paper's alpha-balanced focal loss), getting both effects: alpha handles the raw frequency imbalance, and the focal term handles the easy/hard imbalance -- and it was exactly this combination that let single-stage detectors like RetinaNet match two-stage ones. The broader principle: 'imbalance' can mean imbalance in COUNT (fixed by class weighting) or imbalance in DIFFICULTY/contribution (fixed by focal-style down-weighting of easy examples), and they need different tools.",
+         tags=["focal-loss","class-imbalance","weighted-cross-entropy","hard-example-mining","why"],
+         example="In detection with 100 hard positives and 100,000 easy backgrounds, weighted CE still lets the 100k easy examples (each already correct) sum to a dominating loss; focal loss with gamma=2 scales a p_t=0.99 background's loss by (0.01)^2=1e-4, so the hard positives finally drive the gradient."),
+    dict(cat="behavioral", title="STAR: Being frugal / doing more with less (Frugality)",
+         answer="Amazon LP: FRUGALITY -- accomplish more with less; constraints breed resourcefulness, self-sufficiency, and invention; no extra points for headcount, budget, or fixed expense. Show you delivered a meaningful outcome without throwing money/people at it, turning a constraint into a smarter solution.",
+         tags=["behavioral","star","frugality","amazon-lp","resourcefulness"],
+         example="SITUATION: Our analytics pipeline's cloud bill was climbing fast -- we were running a large always-on managed cluster to process nightly batch jobs, and the easy ask was to buy a bigger cluster to fix growing runtimes. TASK: I wanted to cut both cost and runtime WITHOUT more spend, treating the budget constraint as a design prompt. ACTION: Instead of scaling up, I profiled the jobs and found two things: the cluster sat idle ~20 hours a day, and 80% of the runtime came from a few unpartitioned full-table scans. I moved the batch jobs to ephemeral spot instances that spin up only for the nightly window and terminate after (paying for ~4 hours, not 24, at spot discounts), and I added partitioning and columnar formats so the heavy queries scanned a fraction of the data. I validated correctness against the old outputs before cutting over. RESULT: The monthly bill dropped by roughly two-thirds AND the nightly runtime got faster because of the query fixes -- a better result than the bigger-cluster proposal would have given, at lower cost. The frugality constraint forced me to actually understand the workload instead of masking inefficiency with more hardware, and the partitioning work kept paying off as data grew."),
 ]
 
 
