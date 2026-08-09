@@ -6758,3 +6758,144 @@ preorder = [3,9,20,15,7]   inorder = [9,3,15,20,7]
 for _e in ENTRIES:
     if not _e.get("diagram") and _e["title"] in _DIAGRAM:
         _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ── More DSA diagrams (batch 5) ────────────────────────────────────────────
+_DIAGRAM.update({
+    "Top K Frequent Elements": r"""
+nums=[1,1,1,2,2,3], k=2   count -> bucket by frequency:
+ counts {1:3, 2:2, 3:1}
+ buckets[freq]:  1:[3]  2:[2]  3:[1]     (index = frequency)
+read from highest freq down -> [1, 2]
+""".strip("\n"),
+    "Word Break (DP)": r"""
+s="leetcode", dict={leet,code}   dp[i]=True if s[:i] is splittable
+ i:  0 1 2 3 4 5 6 7 8
+dp:  T . . . T . . . T    dp[i] = any j<i with dp[j] and s[j:i] in dict
+dp[8]=True  ("leet"+"code")
+""".strip("\n"),
+    "Coin Change II (count ways)": r"""
+coins {1,2,5}, amount 5   dp[a] = number of ways to make a
+ process each coin, add its contribution:
+ after 1:  1 1 1 1 1 1
+ after 2:  1 1 2 2 3 3
+ after 5:  1 1 2 2 3 4   -> dp[5] = 4 ways
+""".strip("\n"),
+    "Single Number (XOR)": r"""
+[4,1,2,1,2]   XOR everything; equal pairs cancel (a^a=0):
+ 4 ^ 1 ^ 2 ^ 1 ^ 2
+ = 4 ^ (1^1) ^ (2^2) = 4 ^ 0 ^ 0 = 4
+the lonely value is left standing.
+""".strip("\n"),
+    "Missing Number": r"""
+[3,0,1] n=3   expected sum 0+1+2+3 = n(n+1)/2 = 6
+ actual sum = 3+0+1 = 4
+ missing = 6 - 4 = 2      (or XOR indices with values)
+""".strip("\n"),
+    "Jump Game II (fewest jumps)": r"""
+nums=[2,3,1,1,4]   greedy BFS by 'level' (farthest reach each jump):
+ jump1 covers idx 1..2 (from 0, reach 2)
+ jump2 covers idx 3..4 (best reach from 1..2 = 4)
+reached last in 2 jumps.
+""".strip("\n"),
+    "Gas Station (greedy circuit)": r"""
+gas-cost diff = [-2,-2,-2,3,3]   total = 0 >= 0 -> answer exists
+ run a tank; whenever it drops below 0, the start must be AFTER here
+ tank dips through idx 0..2, recovers -> start = 3
+""".strip("\n"),
+    "Task Scheduler (cooldown)": r"""
+tasks AAABBB, n=2 (cooldown)   most frequent fills a frame of width n+1:
+ A _ _ A _ _ A     put other tasks/idle in the gaps
+ A B _ A B _ A B   -> 8 slots
+answer = (maxCount-1)*(n+1) + (#tasks with maxCount)
+""".strip("\n"),
+    "Partition Equal Subset Sum": r"""
+[1,5,11,5] total=22 -> target 11   subset-sum DP (reachable sums):
+ start {0}; add 1 -> {0,1}; add 5 -> {0,1,5,6};
+ add 11 -> includes 11 -> TRUE  ([11] and [1,5,5])
+""".strip("\n"),
+    "Combination Sum (reusable candidates)": r"""
+candidates {2,3,6,7}, target 7   backtrack, reuse allowed (stay at i):
+        7
+      -2 \-3 \-7
+   5      4     (7) FOUND
+ -2 -3
+ 3(-2->1x) ... [2,2,3] FOUND        result: [2,2,3], [7]
+choose -> recurse (same index) -> un-choose
+""".strip("\n"),
+    "Subsets II (with duplicates)": r"""
+[1,2,2]  sort first, then skip duplicate siblings at the same depth:
+              []
+           /  |   \
+         [1] [2]  (skip 2nd 2 at top level)
+         /|
+     [1,2][1,2,2]   -> [],[1],[1,2],[1,2,2],[2],[2,2]
+""".strip("\n"),
+    "Palindrome Partitioning (backtracking)": r"""
+"aab"   cut after each prefix that is a palindrome, recurse on the rest:
+ "a" | "ab"...   "a"|"a"|"b" -> [a,a,b]
+ "aa"| "b"       "aa"|"b"    -> [aa,b]
+ "aab" not a palindrome -> skip
+result: [[a,a,b],[aa,b]]
+""".strip("\n"),
+    "Quickselect (kth largest)": r"""
+find kth largest = partition like quicksort but recurse into ONE side:
+ [3,2,1,5,6,4] pivot -> [.. < p ..] p [.. > p ..]
+ if pivot lands on the kth position -> done
+ else recurse only the side containing k    avg O(n)
+""".strip("\n"),
+    "Cheapest Flights Within K Stops (Bellman-Ford)": r"""
+relax edges at most K+1 times (K stops = K+1 flights):
+ dist[src]=0; repeat K+1 rounds:
+   for each edge (u->v, w): dist2[v] = min(dist2[v], dist[u]+w)
+use a SNAPSHOT of dist per round so one round = one extra hop.
+""".strip("\n"),
+    "Redundant Connection (Union-Find)": r"""
+edges [1,2][1,3][2,3]   union each; the edge whose endpoints are
+ ALREADY connected closes a cycle:
+ union(1,2) ok   union(1,3) ok   union(2,3): find(2)==find(3) -> CYCLE
+answer = [2,3]
+""".strip("\n"),
+    "Decode String (stack)": r"""
+"3[a2[c]]"   push counts and partial strings on a stack:
+ see 3[ -> push (3, "")   see a   see 2[ -> push (2, "a")
+ see c -> "c"   ] -> "a"+"c"*2 = "acc"   ] -> ""+"acc"*3 = "accaccacc"
+brackets nest -> a stack unwinds them.
+""".strip("\n"),
+    "Pow(x, n) - fast exponentiation": r"""
+x^13, 13 = 1101 in binary   square-and-multiply:
+ x^13 = x^8 * x^4 * x^1   (the set bits)
+ keep squaring x (x, x^2, x^4, x^8...), multiply in when the bit is 1
+O(log n) multiplications instead of n.
+""".strip("\n"),
+    "Sqrt(x) - integer square root (binary search)": r"""
+sqrt(17)   binary search r in [0..17] for largest r with r*r <= 17:
+ mid=8 -> 64>17 hi=7 ... mid=4 -> 16<=17 keep, lo=5 ... mid=5 ->25>17
+converge -> 4   (since 4*4=16 <= 17 < 25)
+""".strip("\n"),
+    "Number of 1 Bits (popcount)": r"""
+n = 11 = 1011   Brian Kernighan: n &= n-1 clears the LOWEST set bit
+ 1011 -> 1010 -> 1000 -> 0000    (3 clears)
+count = 3    loops only as many times as there are 1s.
+""".strip("\n"),
+    "Reverse Bits": r"""
+build the answer bit by bit from the low end of n:
+ for 32 steps:  result = (result << 1) | (n & 1);  n >>= 1
+ in:  0000...0011   out: 1100...0000   (mirror the 32 bits)
+""".strip("\n"),
+    "Hamming Distance": r"""
+x=1 (001), y=4 (100)   count differing bit positions = popcount(x XOR y):
+ 001 XOR 100 = 101  -> two 1s  -> distance 2
+""".strip("\n"),
+})
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
+
+
+# ── Fix em-dash-titled diagram keys (batch 5b) ─────────────────────────────
+_DIAGRAM["Pow(x, n) — fast exponentiation"] = _DIAGRAM["Pow(x, n) - fast exponentiation"]
+_DIAGRAM["Sqrt(x) — integer square root (binary search)"] = _DIAGRAM["Sqrt(x) - integer square root (binary search)"]
+for _e in ENTRIES:
+    if not _e.get("diagram") and _e["title"] in _DIAGRAM:
+        _e["diagram"] = _DIAGRAM[_e["title"]]
