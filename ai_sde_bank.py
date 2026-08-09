@@ -5760,3 +5760,54 @@ _CAT_MNEMONIC = {
 for _e in ENTRIES:
     if not _e.get("mnemonic"):
         _e["mnemonic"] = _CAT_MNEMONIC.get(_e["cat"], "")
+
+
+# ── Plain-English lead-ins ─────────────────────────────────────────────────
+# Some answers are precise but abstract. For the FOUNDATIONAL terms a student
+# meets first, we prepend one plain sentence ("In plain words: ...") so the idea
+# lands before the formal wording. Non-destructive: the original precise text
+# still follows. Only prepended once, and never if already present.
+_PLAIN = {
+    "Gradient": "the gradient is just an arrow that says which way makes the error go UP the fastest (and how steeply). We then step the opposite way to make the error go down.",
+    "Gradient Descent": "it's how a model learns - take a tiny step 'downhill' on the error, over and over, until the error can't get much lower.",
+    "Gradient Descent (batch, SGD, mini-batch)": "three speeds of the same 'walk downhill' idea - use all data per step (batch, smooth but slow), one example (SGD, fast but jumpy), or a small group (mini-batch, the practical default).",
+    "How gradient descent works (batch vs SGD vs mini-batch)": "three speeds of learning - all the data per step (batch), one example at a time (SGD), or a small group (mini-batch, the everyday choice).",
+    "Learning rate": "it's your step size while walking downhill - too big and you overshoot the valley, too small and you crawl forever.",
+    "Loss (cost) function": "it's the model's 'how wrong am I?' score - training just tries to make this number as small as possible.",
+    "Epoch": "one full pass through all your training data. Ten epochs = the model has seen the whole dataset ten times.",
+    "Batch (mini-batch)": "the small handful of examples the model looks at before making one learning update (e.g. 32 at a time).",
+    "Backpropagation": "it's how the network figures out which knobs (weights) caused the mistake, by passing the error backwards from the answer to each weight.",
+    "Neural network": "a stack of simple layers where early layers spot simple things (edges) and later layers combine them into complex things (a face).",
+    "Activation function": "the little 'bend' added after each layer so the network can learn curves, not just straight lines.",
+    "Tensor": "just a fancy word for a grid of numbers - a list is 1-D, a table is 2-D, a colour image is 3-D.",
+    "Embedding": "a way to turn words/items into lists of numbers so that 'similar' things end up close together.",
+    "Softmax": "it turns a bunch of raw scores into percentages that add up to 100%, so the model can say 'I'm 70% sure it's a cat.'",
+    "Sigmoid": "an S-curve that squashes any number into a 0-to-1 'probability.'",
+    "ReLU (Rectified Linear Unit)": "a simple rule - keep positive numbers, turn negatives into 0. That's it, and it makes deep nets train well.",
+    "Precision": "when the model says 'yes,' how often is it right? High precision = few false alarms.",
+    "Recall (sensitivity)": "of all the real 'yes' cases out there, how many did the model catch? High recall = few misses.",
+    "F1 score": "a single score that balances precision and recall - it stays low if EITHER one is bad.",
+    "Confusion matrix": "a 2x2 scoreboard of right/wrong for each class - every accuracy metric is computed from its four boxes.",
+    "Cross-entropy (log loss)": "a loss that punishes confident wrong answers hard - it makes the model 'own it' when it's unsure.",
+    "Overfitting": "the model memorized the practice questions instead of learning the idea, so it aces training but flops on new data.",
+    "Underfitting": "the model is too simple to capture the pattern, so it's wrong on both training and new data.",
+    "Regularization": "a gentle penalty that stops weights getting huge, keeping the model simple so it generalizes.",
+    "Big-O notation": "a way to describe how much SLOWER a program gets as the input grows - the trend, not the exact time.",
+    "Recursion": "solving a problem by having it call a smaller version of itself until it hits a simple stopping case.",
+    "Dynamic programming": "solve small pieces once, save each answer, and reuse them instead of recomputing - a huge speed-up when pieces repeat.",
+    "Hash table (hash map)": "a structure that jumps straight to where a key's value lives, so lookups are basically instant.",
+    "Stack vs Queue": "a Stack is last-in-first-out (like a stack of plates); a Queue is first-in-first-out (like a line at a shop).",
+    "BFS vs DFS": "BFS explores level-by-level (nearest first - good for shortest path); DFS dives deep down one path then backtracks (good for exploring everything).",
+    "Normalization vs Standardization": "both just rescale numbers so features are comparable - so a big-numbered feature (income) doesn't drown out a small one (age).",
+    "The Transformer & self-attention (the big one)": "the model reads all the words at once and lets each word 'pay attention' to the others to figure out meaning - it's the engine inside ChatGPT.",
+    "Attention": "a mechanism that lets each word focus on the other words that matter most for its meaning.",
+    "What is an embedding?": "turning words or items into number-lists so similar things sit close together, letting maths measure 'similarity.'",
+    "Vanishing gradient": "in very deep nets the 'learning signal' shrinks to almost nothing by the time it reaches the early layers, so they barely learn - ReLU and skip-connections fix it.",
+    "Batch normalization": "it re-centres each layer's numbers during training so the network learns faster and more stably.",
+    "Dropout": "randomly switching off some neurons each step so the network can't over-rely on any one and generalizes better.",
+    "Bias-Variance Decomposition": "error comes from two enemies - being too simple (bias/underfit) and being too jumpy (variance/overfit); the art is balancing them.",
+}
+for _e in ENTRIES:
+    _intro = _PLAIN.get(_e["title"])
+    if _intro and not _e.get("answer", "").startswith("In plain words:"):
+        _e["answer"] = f"In plain words: {_intro} " + _e.get("answer", "")
