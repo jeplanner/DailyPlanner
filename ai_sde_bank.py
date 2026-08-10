@@ -31994,6 +31994,244 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1L[_e["title"]]
 
 
+_EX_P1M = {}
+
+_EX_P1M["Sum of Unique Elements"] = [
+    """The definition, which is narrower than it sounds.
+'Unique' here means appearing EXACTLY ONCE - not 'distinct values'.
+nums = [1,2,3,2]: counts are 1:1, 2:2, 3:1. The values appearing once are 1 and
+3 -> sum 4. The 2s contribute NOTHING, not even one copy.
+Under the other reading - sum the distinct values - the answer would be
+1+2+3 = 6. That gap is the entire problem, and it is worth restating the rule
+before writing code because both readings are natural English.""",
+
+    """Why you sum the KEYS, not the values.
+`sum(n for n, c in counts.items() if c == 1)` adds the numbers themselves,
+filtered by their count. Accidentally summing `c` adds the counts (which would
+be the number of unique elements) - a plausible-looking one-character mistake.
+A quick sanity check on [1,2,3,2]: summing keys gives 4, summing counts gives 2.
+If your answer looks suspiciously like a count rather than a total, this is
+why.""",
+
+    """The one-pass alternative, and why two passes is fine here.
+You cannot decide 'appears exactly once' until the whole array is seen, so the
+count must complete first - this is inherently two passes, exactly like First
+Unique Character.
+A neat single-structure variant tracks a running sum and a seen-twice set:
+add each new value, and the first time you see a repeat, SUBTRACT it once.
+    total, seen, dup = 0, set(), set()
+    for n in nums:
+        if n in dup: continue
+        if n in seen: total -= n; dup.add(n)
+        else: total += n; seen.add(n)
+Same O(n), and it works on a stream where you cannot re-read the input.""",
+
+    """Edge cases.
+Empty array -> sum of nothing -> 0.
+All duplicates [1,1,2,2] -> nothing appears once -> 0.
+All unique [1,2,3] -> 6.
+Single element [5] -> 5.
+Negative numbers work unchanged, and note the answer can be negative - so
+initialising a running total to 0 is right but initialising a 'best' to 0 would
+not be, if the problem were a maximum instead of a sum.
+Zeros: 0 appearing once contributes 0, which is invisible in the total but
+correct.""",
+
+    """Complexity.
+O(n) time for both passes, O(k) space for k distinct values.
+There is no way to do better in general: you must observe every element to know
+whether any value repeats, and you must remember what you have seen. If the
+values were bounded small integers you could swap the hash map for a fixed
+array - the usual counting-sort trade - but the asymptotics are unchanged.""",
+
+    """The family: count-then-filter.
+Single Number (XOR works only because everything else appears exactly TWICE -
+a much stronger constraint that buys O(1) space), Find All Duplicates in an
+Array, First Unique Character, Kth Distinct String, Majority Element.
+The habit these build: when a prompt says 'exactly once', 'more than once', or
+'appears k times', build the frequency map first and think afterwards. The only
+time to look for something cleverer is when the constraints are unusually tight
+- which is precisely the signal that XOR or Boyer-Moore is intended.""",
+]
+
+_EX_P1M["Summary Ranges"] = [
+    """The sweep, traced.
+nums = [0,1,2,4,5,7]. i=0: start 0, extend while the next is +1 -> i reaches 2
+(value 2). start 0 != nums[2] = 2 -> append '0->2'. i becomes 3.
+i=3: start 4, extend -> i reaches 4 (value 5) -> append '4->5'. i becomes 5.
+i=5: start 7, cannot extend (i+1 is out of range). start == nums[5] -> append
+'7'.
+Result ['0->2','4->5','7'].
+The inner while does the extending and the outer i += 1 steps past the finished
+run - two pointers collapsed into one index.""",
+
+    """Why the single-element case needs its own branch.
+A run of length 1 must print as '7', not '7->7'. The test `start == nums[i]`
+after the inner loop distinguishes them: if the inner loop never advanced, the
+run is a single number.
+Forgetting this produces output that is structurally right and formatted wrong
+on every isolated element - which is the kind of failure that passes a
+hand-trace on [0,1,2] and fails on the real test set. Any input with an isolated
+value catches it.""",
+
+    """The overflow trap hiding in `nums[i+1] == nums[i] + 1`.
+The values can reach the 32-bit maximum, and adding 1 to INT_MAX overflows in
+C++ or Java - so the comparison silently misbehaves at the very top of the
+range. The safe form is `nums[i+1] - nums[i] == 1`, which cannot overflow
+because the difference of two in-range values is in range.
+Python is immune, so this is a footnote rather than a bug here - but it is
+exactly the sort of detail an interviewer with a C++ background will probe, and
+knowing it costs nothing.""",
+
+    """Why sorted-and-unique is load-bearing.
+'Consecutive' is decided by comparing NEIGHBOURS, which only works because the
+array is sorted; and the +1 test assumes no duplicates, since [1,1,2] would
+break the run at the repeated 1 rather than extending it.
+If the input were unsorted you would sort first at O(n log n); if duplicates
+were allowed you would deduplicate as you go. Stating that dependency shows you
+noticed the precondition rather than absorbing it silently.""",
+
+    """Edge cases.
+Empty array -> the outer loop never runs -> [].
+Single element [3] -> ['3'].
+All consecutive [1,2,3,4] -> one range ['1->4'].
+No two consecutive [1,3,5] -> ['1','3','5'], three single-element runs.
+Negative numbers -> [-3,-2,-1] gives ['-3->-1'], and the string concatenation
+handles the minus signs without any special care.
+A run at the very end is closed by the loop exiting rather than by a break,
+which is why no post-loop flush is needed - a common source of bugs in
+run-detection code written with a for loop instead.""",
+
+    """Complexity and the family.
+O(n) time - i only ever advances - and O(1) extra space beyond the output.
+The family is run detection: Longest Consecutive Sequence (unsorted, so a set
+plus 'only start counting at a run's beginning' gives O(n)), Missing Ranges
+(the complement of this problem), Merge Intervals (runs over intervals rather
+than integers), and the gaps-and-islands SQL trick which is the same idea in a
+different notation.
+Cue: 'consecutive', 'run', 'streak' or 'range' over a sorted sequence means a
+single sweep with a start marker.""",
+]
+
+_EX_P1M["Two Sum IV - Input is a BST"] = [
+    """The seen-set traversal, traced.
+BST 5 -> (3 -> (2,4), 6 -> (None,7)), k = 9.
+Visit 5: 9-5 = 4 not in seen -> add 5.
+Visit 3: 9-3 = 6 not in seen (only 5 so far) -> add 3.
+Visit 2: 7 not seen -> add 2. Visit 4: 5 IS in seen -> True (4 + 5 = 9).
+Answer True. Note this is exactly Two Sum on an array, with the traversal
+supplying the elements one at a time - the tree structure is incidental to this
+solution, which is both its strength and the reason it is not the intended
+answer.""",
+
+    """Why this ignores the BST property, and what that costs.
+The seen-set approach works on ANY binary tree - it never compares values to
+decide where to go. That is O(n) time and O(n) space, and it is the right first
+answer because it is obviously correct.
+But the input is a BST, and an interviewer who specified that expects you to
+notice. The follow-up is always 'can you use the ordering?', so have the next
+two solutions ready rather than stopping here.""",
+
+    """Solution 2: inorder to a sorted array, then two pointers.
+Inorder traversal of a BST yields values in SORTED order. Flatten to a list,
+then run the classic converging two-pointer scan: if the sum is too small
+advance the left pointer, too large retreat the right.
+O(n) time, O(n) space - the same asymptotics as the set, but it USES the
+ordering and it is the answer most interviewers are looking for. It also
+generalises: any 'find a pair with property X' question on a BST becomes the
+sorted-array version of itself.""",
+
+    """Solution 3: O(h) space with two BST iterators.
+Build a forward inorder iterator (a stack descending left) and a backward one
+(descending right), then advance whichever side needs to move - exactly the
+two-pointer walk, but without materialising the array. Space drops to O(h) for
+the two stacks, which is O(log n) on a balanced tree.
+This is the genuinely optimal answer and the reason the problem exists at
+Medium rather than Easy. Even describing it without coding it scores well.""",
+
+    """Edge cases.
+Empty tree -> False.
+Single node with k = 2 * that value -> must be FALSE: the two elements must be
+DISTINCT NODES. The seen-set version gets this right for free, because a node's
+complement is checked BEFORE the node is added to the set - so it can never
+match itself.
+Getting the order wrong (add first, then check) makes [5] with k = 10 return
+True, which is the classic bug in every Two Sum variant.
+Duplicates: standard BSTs have distinct values, so the pair is two different
+values; if duplicates were allowed, two equal nodes summing to k would be
+valid and the add-before-check ordering would matter differently.""",
+
+    """Complexity summary, and the family.
+Seen-set: O(n) time, O(n) space, ignores the BST. Inorder + two pointers: O(n)
+time, O(n) space, uses the ordering. Two iterators: O(n) time, O(h) space,
+optimal.
+The family: Two Sum (array), Two Sum II (sorted array - the two-pointer core
+here), 3Sum, Two Sum BSTs (two separate trees), and Binary Search Tree Iterator
+- which is literally the stack-based iterator this problem's best solution
+needs, so the two are worth learning together.""",
+]
+
+_EX_P1M["Valid Mountain Array"] = [
+    """The walk, traced on a valid mountain.
+arr = [0,3,2,1]. Climb: 0 < 3 -> i = 1. 3 < 2 is false, so the climb stops at
+i = 1.
+Peak checks: i is neither 0 nor n-1 = 3, so it is a legal peak.
+Descend: 3 > 2 -> i = 2. 2 > 1 -> i = 3. i + 1 < n fails, loop ends.
+Return i == n-1 -> 3 == 3 -> True.
+The final check is the important one: it verifies the descent ran all the way
+to the end rather than stopping at a plateau or a second climb.""",
+
+    """The two guards, and the input each one rejects.
+`i == 0` means the array never rose - it starts by falling or is flat at the
+front, e.g. [3,2,1]. There is no up-slope, so it is not a mountain.
+`i == n-1` means it rose all the way to the last element with no descent, e.g.
+[0,1,2,3].
+Both are strictly-increasing-or-decreasing arrays, which are the two most
+common wrong answers people accept. Test both explicitly; a solution that only
+checks one passes half the test set.""",
+
+    """Why the final `i == n-1` check cannot be skipped.
+Consider [0,3,2,1,4]. The climb stops at index 1, the peak guards pass, the
+descent runs to index 3 (value 1) and then stops because 1 > 4 is false. i is
+3, not 4 -> False. Correct: the array climbs again, so it has two peaks.
+Without that final comparison you would return True after any descent of any
+length, accepting every zig-zag. This single line is what enforces 'exactly one
+peak'.""",
+
+    """Why the comparisons must be STRICT.
+A mountain strictly increases then strictly decreases, so plateaus are illegal.
+[0,1,1,0] -> the climb stops at index 1 (since 1 < 1 is false), the peak guards
+pass, then the descent: 1 > 1 is false immediately, so i stays 1 and the final
+check 1 == 3 fails -> False. Correct.
+Using <= or >= would accept plateaus and change the answer on exactly this
+input. Whenever a prompt says 'strictly', the comparison operator IS the
+specification.""",
+
+    """Edge cases.
+Length < 3 -> False by the guard: you need at least one up, one peak and one
+down. [0,1] and [2,1] are both rejected.
+All equal [2,2,2] -> the climb never starts, i == 0 -> False.
+Peak at position 1 with a long descent, [1,5,4,3,2] -> valid.
+Peak at the second-to-last, [1,2,3,4,3] -> valid.
+Two equal peaks [1,2,2,1] -> rejected by strictness, as above.
+Empty array -> caught by n < 3.""",
+
+    """Complexity and the family.
+O(n) time - the index only advances, so the two loops together traverse the
+array once - and O(1) space. It is a single pass despite looking like two.
+The family: Peak Index in a Mountain Array (binary search for the peak in
+O(log n), since the mountain property makes the array 'sorted' in a usable
+sense), Find in Mountain Array (binary search the peak, then binary search each
+side), Longest Mountain in Array (find every mountain, not just check one), and
+Find Peak Element. Recognising a mountain as 'two monotone runs' is what makes
+all of them approachable.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1M:
+        _e["examples"] = _EX_P1M[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
