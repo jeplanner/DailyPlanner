@@ -30172,6 +30172,124 @@ fact; it also solves Kth Smallest Element, Validate BST, and Convert BST to a
 sorted list.""",
 ]
 
+_EX_P1I["Count Number of Pairs With Absolute Difference K"] = [
+    """The one-pass trick, traced.
+nums = [1,2,2,1], k = 1.
+n=1: counts has nothing -> add counts[0] + counts[2] = 0. Record 1 -> {1:1}.
+n=2: add counts[1] + counts[3] = 1 + 0 = 1. Total 1. Record 2 -> {1:1, 2:1}.
+n=2: add counts[1] + counts[3] = 1. Total 2. Record -> {1:1, 2:2}.
+n=1: add counts[0] + counts[2] = 0 + 2 = 2. Total 4.
+Answer 4, matching the pairs (0,1), (0,2), (1,3), (2,3).
+The key is that you count against numbers already SEEN, which is what enforces
+i < j without ever comparing indices.""",
+
+    """Why both n-k and n+k, and why that does not double count.
+The current number can be the LARGER of the pair (partner n-k) or the SMALLER
+(partner n+k), so both must be checked. It does not double count because each
+pair is counted exactly once - at the moment its SECOND element is processed,
+looking backwards. The first element contributed nothing when it was seen,
+because its partner had not appeared yet.
+Contrast the naive `for each n: result += counts[n-k] + counts[n+k]` computed
+over a FULLY built frequency map, which counts every pair twice and needs a
+division by two - and breaks for k = 0.""",
+
+    """The k = 0 case, which is where most variants of this problem go wrong.
+With k = 0, n-k and n+k are both n, so a full-map solution would count each
+element against itself and against its duplicates, needing the pairs formula
+c*(c-1)/2 per value.
+The one-pass version handles it correctly with no special case: when processing
+the second '2', counts[2] is 1 (only the earlier one), so it adds 1 - exactly
+the number of valid partners before it. Walking through k = 0 is a good way to
+convince yourself the incremental version is the safer formulation.""",
+
+    """Edge cases.
+Empty or single-element array -> 0 pairs.
+No matching pairs, e.g. [1,3,5] with k = 1 -> counts never contain a complement
+-> 0.
+All identical [3,3,3] with k = 0 -> 0 + 1 + 2 = 3 pairs, which is C(3,2).
+Negative numbers work unchanged - the map is keyed by value, not by index, so
+n-k and n+k are just arithmetic.
+Note k is typically constrained positive; if k could be negative you would take
+abs(k) first, since |a-b| is symmetric.""",
+
+    """Complexity, and why brute force is the wrong instinct.
+One pass with O(1) hash operations: O(n) time, O(n) space for the map.
+Brute force is the double loop over all pairs, O(n^2) - fine at n = 200 (the
+usual constraint here) and hopeless at n = 100,000. The reason to learn the map
+version on an easy problem is that the SAME transformation upgrades Two Sum,
+Subarray Sum Equals K and Count Nice Pairs - the constraint here is small
+enough that either passes, which makes it a cheap place to practise the
+pattern.""",
+
+    """The family: complement lookup.
+Two Sum (complement target - n), this problem (complements n-k and n+k),
+Subarray Sum Equals K (complement running - k over prefix sums), Contiguous
+Array, and 4Sum II (split into two halves and match sums).
+The recognition cue is any question of the form 'how many pairs satisfy a
+relation between their VALUES'. If you can rearrange the relation to express
+one element as a function of the other, a hash map turns O(n^2) into O(n) -
+which is exactly the rearrangement |a - b| = k into b = a +/- k.""",
+]
+
+_EX_P1I["Degree of an Array"] = [
+    """The definition and a trace.
+The DEGREE is the maximum frequency of any element. The task is the shortest
+contiguous subarray having that same degree.
+nums = [1,2,2,3,1,4,2]. Frequencies: 1 -> 2, 2 -> 3, 3 -> 1, 4 -> 1. Degree 3,
+achieved only by the value 2. The subarray must contain all three 2s, so it
+spans from the first 2 (index 1) to the last (index 6) -> length 6.
+nums = [1,2,2,3,1]: degree 2, achieved by both 1 and 2. For 1 the span is
+index 0 to 4 -> 5; for 2 it is 1 to 2 -> 2. Answer 2 - the SHORTEST among the
+tied values, which is why ties must be handled rather than ignored.""",
+
+    """Why the answer is always first-to-last occurrence of some value.
+A subarray achieving the degree must contain every occurrence of at least one
+maximum-frequency value. The shortest such subarray for a given value is
+exactly from its first index to its last - you cannot trim either end without
+dropping an occurrence, and you gain nothing by extending.
+So the whole problem reduces to: for each value at maximum frequency, compute
+last_index - first_index + 1, and take the minimum. Stating that reduction is
+the insight; the code is bookkeeping.""",
+
+    """Why the single pass works, and the two-branch update.
+`if count[n] > degree` means this value has set a NEW maximum, so the best
+length resets to this value's current span - previous candidates are no longer
+at the degree and are irrelevant.
+`elif count[n] == degree` means this value has TIED the maximum, so it is a
+candidate and you take the smaller span.
+Getting this wrong in either direction is the standard bug: using only `>`
+misses ties (the [1,2,2,3,1] case above), and using `>=` without resetting
+keeps stale candidates from a lower degree.""",
+
+    """The two-pass alternative, which some find clearer to defend.
+Pass 1: build first-index, last-index and count maps. Pass 2: find the maximum
+count, then over the values achieving it take min(last - first + 1).
+Same O(n) time and space, and noticeably easier to explain under pressure
+because the reduction and the bookkeeping are separated. The one-pass version
+is tighter but the update logic is where mistakes live - if you are unsure in
+the room, write the two-pass version and mention the one-pass exists.""",
+
+    """Edge cases.
+Single element [5] -> degree 1, span 1 -> answer 1.
+All distinct [1,2,3] -> degree 1, and every value ties, so the answer is 1 -
+any single element is a subarray of degree 1.
+All identical [2,2,2] -> degree 3, span 3.
+Two values tied at the maximum with different spans -> the elif branch is what
+picks the shorter, and this is the case an interviewer will construct.
+Note that with all distinct values the FIRST element sets degree 1 and best 1,
+and no later element can improve it - so the answer falls out without a special
+case.""",
+
+    """Complexity and the family.
+One pass, three hash maps: O(n) time, O(n) space.
+The family is 'first and last occurrence' bookkeeping: Partition Labels (extend
+the current partition to the last occurrence of every character seen), Maximum
+Number of Occurrences of a Substring, and Minimum Window Substring in spirit.
+The shared idea is that for problems about containing ALL copies of something,
+the relevant quantity is the interval between its first and last appearance -
+recognising that turns a search over subarrays into a scan over values.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1I:
         _e["examples"] = _EX_P1I[_e["title"]]
