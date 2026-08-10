@@ -30290,6 +30290,185 @@ the relevant quantity is the interval between its first and last appearance -
 recognising that turns a search over subarrays into a scan over values.""",
 ]
 
+_EX_P1I["Find Center of Star Graph"] = [
+    """Why two edges are enough - the entire problem.
+In a star graph one centre connects to every other node, so the centre appears
+in EVERY edge and no other node appears in more than one. Take any two edges:
+their only possible shared endpoint is the centre.
+edges = [[1,2],[2,3],[4,2]] -> first edge (1,2), second (2,3). Is 1 in (2,3)?
+No. So the answer is 2. Correct, and we never looked at the third edge.
+That is why this is O(1) rather than O(n) - a graph problem with no traversal
+at all, which is the point being tested.""",
+
+    """The degree-counting solution, and why it is worse here.
+The obvious approach counts how many times each node appears across all edges
+and returns the one with degree n-1. It is correct, O(n) time and O(n) space,
+and it is what most people write first.
+It is not wrong to say it - but following it with 'though since the input is
+guaranteed to be a star, two edges suffice' is the answer that shows you used
+the CONSTRAINT rather than ignoring it. Interviewers include the guarantee
+deliberately; noticing it is the signal.""",
+
+    """The ordering detail in the return.
+`return a if a in (c, d) else b` relies on the guarantee: if a is not shared,
+then b must be, because one of the two endpoints of edge 0 IS the centre. No
+third case exists.
+Without the star guarantee that logic is unsound - two arbitrary edges might
+share nothing, and returning b would be a silent wrong answer. So the one-liner
+is correct only BECAUSE of the precondition, which is worth saying out loud
+rather than leaving as an assumption a reader has to reconstruct.""",
+
+    """Edge cases.
+The minimum star has n = 3 nodes and 2 edges, e.g. [[1,2],[2,3]] -> centre 2.
+The algorithm needs exactly two edges, so n >= 3 is required - with n = 2 there
+is one edge and 'centre' is ambiguous, which is why the constraints exclude it.
+Order within an edge does not matter: [[2,1],[3,2]] still yields 2, because the
+membership test checks both endpoints of the second edge.
+Node labels need not be 1..n contiguous; nothing in the logic depends on the
+values, only on the sharing.""",
+
+    """Complexity, and what makes it unusual.
+O(1) time and O(1) space - it reads exactly four integers regardless of whether
+the graph has 10 nodes or 10 million. Most graph problems are at least O(V+E)
+because you must look at the input; here the structural guarantee means you do
+not.
+That is the transferable lesson: before writing a traversal, ask what the
+problem GUARANTEES about the shape. A guarantee about structure often collapses
+the algorithm entirely - the same way 'the array is sorted' collapses a search
+from O(n) to O(log n).""",
+
+    """The family: problems where a constraint replaces the algorithm.
+Missing Number (use the n(n+1)/2 sum rather than sorting), Single Number (XOR
+rather than a hash map), Find the Duplicate Number (Floyd's cycle detection,
+exploiting the value range), Majority Element (Boyer-Moore, exploiting the
+guarantee that a majority exists). In each case a naive correct solution exists
+and a stated constraint enables a far cheaper one.
+When a prompt volunteers an unusual guarantee, it is nearly always the intended
+route rather than incidental colour.""",
+]
+
+_EX_P1I["Find Pivot Index"] = [
+    """The identity that makes it one pass.
+right_sum = total - left_sum - nums[i]. So once you know the total, you never
+need to compute the right side separately - it falls out of what you have
+already accumulated.
+nums = [1,7,3,6,5,6], total 28.
+i=0: left 0, right 28-0-1 = 27. No. left becomes 1.
+i=1: left 1, right 28-1-7 = 20. No. left becomes 8.
+i=2: left 8, right 28-8-3 = 17. No. left becomes 11.
+i=3: left 11, right 28-11-6 = 11. MATCH -> return 3.
+Note the check happens BEFORE adding nums[i] to left, because the pivot itself
+belongs to neither side.""",
+
+    """The ordering bug that this problem exists to catch.
+`left += n` must come AFTER the comparison. Add first and you have included the
+pivot in the left sum, so the test becomes wrong at every index - and it fails
+in a way that still returns an index on some inputs, which is worse than
+crashing.
+A quick self-check: at i = 0 the left sum must be 0 (nothing is to the left of
+the first element). If your code has already added nums[0] by the time it
+compares, the ordering is wrong.""",
+
+    """Why 'leftmost' matters and the early return handles it.
+The prompt asks for the LEFTMOST valid index, and returning inside the loop
+gives that for free - you stop at the first match. A solution that collects all
+matches and returns max() or the last one is wrong on inputs with several
+pivots.
+Test: [0,0,0] has pivots at 0, 1 and 2; the answer is 0. That input also checks
+the empty-side convention below.""",
+
+    """The empty-side convention, which must be confirmed.
+At index 0 the left side is EMPTY, and the sum of an empty list is defined as
+0 - so [ -1, -1, -1, -1, -1, 0 ] and [2, 1, -1] both have valid pivots at
+positions the naive reading might reject.
+[2,1,-1]: i=0, left 0, right 2-0-2 = 0 -> MATCH, return 0. The right side sums
+1 + (-1) = 0, and the left side is empty. If a prompt instead required both
+sides to be non-empty, the loop would start at 1 and end at n-2 - so ask, since
+the same code gives different answers.""",
+
+    """Edge cases.
+Single element [5] -> i=0, left 0, right 5-0-5 = 0 -> return 0. Both sides
+empty, both sum to 0.
+No pivot [1,2,3] -> loop completes -> -1.
+Negative numbers work unchanged; the identity is arithmetic, not order-based -
+which is why this cannot be done with two pointers converging, a common wrong
+instinct.
+All zeros -> returns 0, the leftmost.""",
+
+    """Complexity and the family.
+O(n) time with two passes conceptually (one for the total, one to scan) but
+O(1) extra space. The alternative - build a full prefix-sum array - is also
+O(n) time but O(n) space, and it is the version to reach for when you need many
+range queries rather than one scan.
+The family: Running Sum of 1d Array, Range Sum Query - Immutable (prefix array
+built once, queries O(1)), Subarray Sum Equals K (prefix sums plus a hash map),
+Product of Array Except Self (prefix and suffix products). The unifying idea is
+that a running accumulation plus a total answers questions about both sides of
+a position without a second loop.""",
+]
+
+_EX_P1I["Find Words That Can Be Formed by Characters"] = [
+    """The example, checked word by word.
+words = ['cat','bt','hat','tree'], chars = 'atach' -> available = {a:2, t:1,
+c:1, h:1}.
+'cat': needs c:1 <= 1, a:1 <= 2, t:1 <= 1 -> spellable, add 3.
+'bt': needs b:1, but available['b'] is 0 -> rejected.
+'hat': h:1, a:1, t:1 -> all fit, add 3.
+'tree': needs t:1 (ok), r:1 -> available['r'] is 0 -> rejected.
+Total 6. Note 'cat' and 'hat' are each checked against the FULL pool - the
+characters are not consumed between words, which is the detail to confirm with
+the interviewer.""",
+
+    """Why the characters are not consumed, and why that matters.
+Each word is tested independently against the original pool. If chars were
+consumed, the answer would depend on the ORDER you process words in - 'cat'
+then 'hat' would leave no 't' for the second - and the problem would become a
+much harder assignment question.
+This is exactly the sort of ambiguity to restate before coding: 'I'm assuming
+each word is checked against the full set independently, not that they share a
+consumable pool.' One sentence, and it prevents solving the wrong problem.""",
+
+    """Why Counter comparison beats manual bookkeeping.
+`all(wc[c] <= available[c] for c in wc)` iterates only the DISTINCT letters of
+the word, and Counter returns 0 for a missing key rather than raising - so
+there is no membership check to forget. The common manual version decrements a
+copy of the pool and restores it afterwards, which works and is easy to get
+wrong (forgetting to restore leaks state into the next word).
+Python also allows `wc <= available` directly on Counters in 3.10+, which is
+the tidiest form - worth knowing, though spelling out the comprehension shows
+the logic more clearly in an interview.""",
+
+    """Edge cases.
+Empty words list -> total 0.
+An empty string in words -> its Counter is empty, `all()` over nothing is True,
+so it contributes len('') = 0. Harmless, and worth knowing that all() on an
+empty iterable is True rather than False.
+chars = '' -> available is empty, so only empty words qualify -> 0.
+A word longer than chars -> some letter must exceed, so it is rejected by the
+count check without needing a separate length guard.
+Repeated letters are the real test: word 'aa' with chars 'a' -> wc['a'] is 2 >
+1 -> rejected. A set-based solution (checking only that each letter APPEARS)
+gets this wrong, which is the trap.""",
+
+    """Complexity.
+Time O(total characters across all words + len(chars)) - each word is counted
+once and compared over at most 26 distinct letters. Space O(alphabet), so O(1)
+by the bounded-alphabet argument.
+Rebuilding a Counter per word is fine; the micro-optimisation for very many
+words is a fixed 26-integer array reused and cleared per word, avoiding
+allocation. Not needed at interview scale, but a reasonable thing to mention
+if asked to optimise.""",
+
+    """The family: multiset containment.
+Ransom Note (can note be built from magazine - the same check for one word),
+Valid Anagram (equality rather than containment), Find All Anagrams in a String
+(sliding-window equality), Minimum Window Substring (the hard version, where
+you slide a window until containment holds and then shrink).
+The shared question is always 'does multiset A fit inside multiset B?', and the
+answer is always a frequency comparison. Recognising it turns each of these
+into a five-minute problem.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1I:
         _e["examples"] = _EX_P1I[_e["title"]]
