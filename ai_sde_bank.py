@@ -32379,73 +32379,413 @@ for _e in ENTRIES:
 _EX_P0D = {}
 
 _EX_P0D["Pacific Atlantic Water Flow"] = [
-    """The textbook 5x5 grid, traced.
-    1  2  2  3  5
-    3  2  3  4  4
-    2  4  5  3  1
-    6  7  1  4  5
-    5  1  1  2  4
-Pacific touches the top row and left column; Atlantic the bottom row and right
-column. Run the DFS INWARD from each border, only stepping to cells that are
-HIGHER OR EQUAL (that is water flowing backwards, uphill).
-Pacific reaches the whole top row and left column, then climbs inward wherever
-the next cell is higher or equal - e.g. (0,1)=2 -> (1,1)=2 is allowed because
-equal heights count as reachable.
-The intersection is [(0,4),(1,3),(1,4),(2,2),(3,0),(3,1),(4,0)].
-Sanity-check one: (2,2)=5. Going up: 5 -> (1,2)=3 -> (0,2)=2 downhill all the
-way to the Pacific. Going right: 5 -> (2,3)=3 -> (2,4)=1 downhill to the
-Atlantic. Both oceans, so it belongs in the answer.""",
+    """1. THE GOAL, in plain English.
 
-    """A 2x2 grid where almost everything qualifies.
-    1  2
-    4  3
-Pacific = top row + left column = {(0,0),(0,1),(1,0)} as starting cells;
-Atlantic = bottom row + right column = {(1,0),(1,1),(0,1)}.
-Climbing from the Pacific border: (0,0)=1 can climb to (0,1)=2 and (1,0)=4, and
-from (1,0)=4 to (1,1)=3? No - 3 < 4, so that branch stops. But (0,1)=2 climbs to
-(1,1)=3. So Pacific reaches all four.
-Atlantic reaches (1,0),(1,1),(0,1) and from (1,0)=4 cannot climb to (0,0)=1.
-Intersection = [(0,1),(1,0),(1,1)]. Cell (0,0)=1 is the lowest corner: water
-sitting there can never climb to the Atlantic side.""",
+You are given a grid of heights - a map of land, where each square's number is how
+high that square is. Water sits on every square and flows downhill.
 
-    """The single-cell grid.
-[[1]]. That one cell is simultaneously on the top row (Pacific) and the bottom
-row (Atlantic), so it is seeded into both sets by the border loops.
-Answer [(0,0)]. Worth checking because the border loops add corner cells to BOTH
-sets - a common source of confusion when you first read the code.""",
+The Pacific ocean touches the TOP edge and the LEFT edge. The Atlantic touches the
+BOTTOM edge and the RIGHT edge.
 
-    """The plateau/pit case that breaks a strict '<' comparison.
-    3  3  3
-    3  1  3
-    3  3  3
-Every border cell is 3. Climbing from a 3 to another 3 must be ALLOWED
-(heights[r][c] < prev is the stop test, so equal heights pass), otherwise the
-outer ring would never expand and you would return only the seed cells.
-The centre 1 is a pit: reverse flow cannot climb 3 -> 1, so it is excluded -
-correctly, since real water at the centre is surrounded by higher walls and
-reaches no ocean.
-Answer: the whole ring, 8 cells, centre excluded.""",
+Water flows from a square to a neighbouring square - up, down, left or right - if
+that neighbour is at the same height or LOWER. Never uphill. From an edge square,
+water flows straight into whichever ocean that edge belongs to.
 
-    """Why reversing the flow is the whole trick.
-The naive reading is: for each of the R x C cells, run a DFS downhill and see
-which oceans it reaches. That is R x C separate traversals, each up to R x C
-cells - O((R x C)^2), roughly 10^8 operations on a 200x200 grid.
-Reversing it, you run exactly TWO traversals (one seeded from every Pacific
-border cell, one from every Atlantic border cell) and each visits a cell at most
-once: O(R x C).
-The rule flips with the direction: forward flow goes to LOWER-or-equal
-neighbours, so reverse flow goes to HIGHER-or-equal ones. Getting that
-inequality backwards is the single most common bug here.""",
+Find every square from which water can reach BOTH oceans.
 
-    """The family of 'multi-source, reverse the question' problems.
-Rotting Oranges: instead of asking each fresh orange how far the nearest rotten
-one is, seed the BFS with all rotten oranges at once.
-01 Matrix (distance to nearest 0): seed with every 0.
-Walls and Gates: seed with every gate.
-Word Ladder II: BFS from both ends.
-The recognition cue is identical - the question asks something about MANY
-sources or MANY targets, and answering it per-cell would repeat work. Seed the
-traversal with the whole set and let one sweep answer for everybody.""",
+Our map:
+
+        col:    0    1    2    3    4
+    row 0:      1    2    2    3    5
+    row 1:      3    2    3    4    4
+    row 2:      2    4    5    3    1
+    row 3:      6    7    1    4    5
+    row 4:      5    1    1    2    4
+
+              Pacific is above and to the left
+              Atlantic is below and to the right
+
+Take the square at row 0, column 4, holding 5. It is on the top edge, so it
+already touches the Pacific. It is also on the right edge, so it touches the
+Atlantic. It qualifies without any flowing at all.
+
+Take row 3, column 0, holding 6. It is on the left edge - Pacific, straightaway.
+For the Atlantic it can flow down to row 4 column 0 (height 5, lower), which is on
+the bottom edge. Qualifies.
+
+The full answer for this map is the squares
+(0,4), (1,3), (1,4), (2,2), (3,0), (3,1), (4,0).""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. For each square in turn, set off from it and see where the water
+can get to, following downhill-or-level steps. If the walk reaches the top or left
+edge, mark Pacific; if it reaches the bottom or right edge, mark Atlantic. Keep the
+squares that got both.
+
+That is correct and easy to picture. It is also slow: one full exploration per
+square, so about (rows x cols) explorations each costing up to (rows x cols) steps.
+For a 200 x 200 map that is 1.6 billion steps.
+
+The waste is obvious once you see it. Two neighbouring squares almost always flow
+into the same places, and the slow version rediscovers that from scratch every
+time.
+
+THE UPGRADE - turn the question round and flow BACKWARDS from the oceans.
+
+Instead of asking "from this square, can water get to the ocean?", ask "from the
+ocean, which squares could water have come from?"
+
+Water flows downhill, so going backwards means going UPHILL or level. Start on
+every square along the Pacific edges and walk inland, only ever stepping to
+neighbours that are the same height or HIGHER. Every square reached this way is a
+square whose water could have flowed down to the Pacific.
+
+Do the same from the Atlantic edges. Then the answer is every square reached by
+BOTH walks.
+
+Two walks over the grid instead of one walk per square. The cost drops from
+(rows x cols) squared to just (rows x cols).
+
+This reversal - "instead of asking who can reach the target, ask what the target
+can reach when you invert the rule" - is worth recognising. It turns up whenever a
+problem has many sources and few destinations.""",
+
+    """3. WHY REVERSING IS EXACTLY EQUIVALENT - and the comparison flips.
+
+It is worth being sure the reversal answers the same question, because it is easy
+to accept on faith and then get the comparison backwards.
+
+Forwards, water flows from square A to neighbour B when height(B) is less than or
+equal to height(A) - downhill or level.
+
+So B is a square that water COULD HAVE COME FROM when you are standing at A going
+backwards. Rearranged: standing at B and stepping to A backwards requires
+height(A) to be greater than or equal to height(B).
+
+In other words, walking backwards from the ocean, you may step to a neighbour that
+is HIGHER OR EQUAL. The inequality flips direction, and the "or equal" stays -
+because level ground flows both ways.
+
+Every square the backward walk reaches has a genuine downhill-or-level route to
+the ocean, traced in reverse. And every square with such a route is reached, since
+the walk explores all of them. Same set, computed from the other end.
+
+The code says this in one line, and it is the line to get right:
+
+    keep going only if the neighbour's height is at least the height we came from
+
+Written as "if the next square is LOWER than where I came from, stop". Get that
+backwards and you compute which squares the ocean could flood, which is a
+different and rather odd question.
+
+TWO SETS, NOT ONE. The two walks must record their reached squares SEPARATELY -
+one set for the Pacific, one for the Atlantic. Sharing a single set would make a
+square reachable from either ocean look reachable from both, and almost every
+square would qualify.
+
+The answer is the INTERSECTION: squares present in both sets.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - forgetting that edge squares already touch their ocean. A square on the
+top row touches the Pacific with no flowing required. That is why the walks START
+on the edges rather than trying to reach them.
+
+CASE 2 - corners. The top-right square is on the top edge (Pacific) AND the right
+edge (Atlantic), so it always qualifies. Likewise the bottom-left. Both fall out
+naturally, because both walks are started from every edge square.
+
+CASE 3 - flat regions. Water flows across level ground in BOTH directions, which
+is why the comparison is "greater than or equal" and not "strictly greater". Use
+strict and you cut off every plateau. But note the consequence: on flat ground the
+walk could revisit squares forever, which is why a visited check is essential -
+see case 4.
+
+CASE 4 - forgetting the visited check. Because level steps are allowed in both
+directions, two neighbouring squares of equal height would send the walk bouncing
+between them until the stack dies. Recording each square as it is reached, and
+refusing to re-enter it, is what makes the walk terminate.
+
+CASE 5 - a single row or single column. A 1 x 5 map: every square is on both the
+top and bottom edge, so every square touches both oceans, and the answer is all of
+them. The code handles this without a special case, because the walks are started
+from every edge and the edges overlap.
+
+CASE 6 - the empty grid. Guarded at the top, because the next line reads the first
+row to count the columns.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+DFS - DEPTH-FIRST SEARCH: explore as far as you can in one direction before
+backing up. Used for both walks. BFS with a queue would work identically here,
+because we only care WHICH squares are reachable, not how far away they are.
+
+RECURSION: a function that solves a problem by calling itself on smaller pieces -
+here, "mark everything reachable from this square" is done by marking this square
+and then saying the same thing about its four neighbours.
+
+CALL STACK: the pile of paused calls when a function calls itself. It is what lets
+the walk back up when it reaches a dead end.
+
+SET: a bag of items where "is this in here?" is answered instantly. Two of them
+here, one per ocean, holding the squares each walk reached.
+
+TUPLE, written (r, c): a small fixed pair of values, used as the identity of a
+square so it can go into a set. Lists cannot go into sets; tuples can.
+
+prev: the height of the square we just stepped FROM. It is passed down so the next
+square can check whether stepping there would have been downhill in the forward
+direction. Starting each edge walk with prev set to that edge square's own height
+is what lets the walk begin there - a square is always at least as high as itself.
+
+pacific & atlantic: Python's set intersection - the items present in both. This
+one operator is the final answer.
+
+O(R x C): the cost, where R is rows and C columns. In plain words the work grows in
+step with the number of squares - each is visited a constant number of times per
+walk, and there are two walks.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: instead of asking which squares can reach the
+ocean, start at each ocean and walk inland uphill, then keep the squares both
+walks reached.
+
+The mechanism, since this is recursion. When the walk is called on a square, it
+records it and then calls itself on the square below. That call pauses the current
+one; the new call records its square and calls itself further on; and so on. When a
+call hits the edge of the map, or an already-visited square, or a square too low
+to have flowed here, it returns immediately - and the paused call above wakes up
+and tries its NEXT direction. So the walk runs deep in one direction first, then
+unwinds trying the rest.
+
+It stops because every square is recorded the first time it is reached and refused
+thereafter, and the map is finite.
+
+The steps:
+
+  1. If the grid is empty, return an empty list.
+
+  2. Make two empty sets, one for each ocean, to record which squares each walk
+     reaches.
+
+  3. Write the walk. Given a row, a column, the set to fill, and the height of the
+     square we came FROM:
+
+     a. If the position is off the map, return. Check this before reading the
+        square - a negative index reads the wrong edge rather than failing.
+     b. If this square is already in the set, return. Without this, level ground
+        sends the walk back and forth forever.
+     c. If this square is LOWER than where we came from, return - water could not
+        have flowed from here to there.
+     d. Otherwise record this square in the set, and call the walk on all four
+        neighbours, passing THIS square's height as the new "came from".
+
+  4. Start the Pacific walk from every square on the top row and every square in
+     the left column. Start the Atlantic walk from every square on the bottom row
+     and every square in the right column.
+
+     Start each one with "came from" set to that square's own height, so the very
+     first check always passes.
+
+  5. The answer is every square in both sets.
+
+Step (c) is the reversal from section 3. It is the whole correctness of the method
+and it is one comparison.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The natural way to attack this is from each square, asking where its water ends up
+- but that means exploring the whole map once per square, and neighbouring squares
+keep rediscovering the same answers.
+
+So the code turns the question inside out. It starts at the oceans and works
+inland, asking not "where does this water go?" but "where could this water have
+come from?"
+
+Because water only ever flows downhill or across level ground, coming from
+somewhere means that somewhere was higher or equal. So walking backwards from the
+sea means only ever stepping to squares at least as high as the one just left. Any
+square reached that way is a square whose water genuinely has a downhill route to
+that ocean.
+
+It does this twice. First it starts on every square along the top and left edges -
+the ones already touching the Pacific - and walks inland, noting every square it
+reaches in one collection. Then it does the same from the bottom and right edges
+for the Atlantic, noting those in a second, separate collection.
+
+Keeping the two collections apart matters: mixing them would make a square
+reachable from either ocean look reachable from both.
+
+Each walk records a square the moment it arrives and refuses to enter it again.
+That is not just for speed - because water crosses flat ground in either
+direction, two equal-height neighbours would otherwise send the walk bouncing
+between them forever.
+
+Finally it reports the squares that appear in both collections - the ones that
+drain to the Pacific and to the Atlantic.""",
+
+    """8. THE CODE, line by line.
+
+Keep the 5 x 5 map from section 1 beside you.
+
+    if not heights:
+        return []
+The empty-map guard, needed because the next line reads heights[0] to count the
+columns.
+
+    rows, cols = len(heights), len(heights[0])
+The map's dimensions.
+
+    pacific, atlantic = set(), set()
+Two SEPARATE records, one per ocean. Sharing one set would destroy the whole
+method - see section 3.
+
+    def dfs(r, c, visited, prev):
+The backward walk. visited is whichever ocean's set we are filling, so the same
+function serves both walks. prev is the height of the square we stepped FROM, which
+is what the uphill test compares against.
+
+    if (r < 0 or r >= rows or c < 0 or c >= cols or
+            (r, c) in visited or heights[r][c] < prev):
+        return
+Three base cases in one condition, and the ORDER matters.
+
+  The four bounds tests come first. Python stops evaluating an "or" chain at the
+  first true condition, so heights[r][c] is only read once the position is known
+  to be on the map. Put the height test first and a row of -1 would quietly read
+  the LAST row.
+
+  "(r, c) in visited" - already reached by this walk. This is what makes the walk
+  terminate on flat ground, where level steps go both ways.
+
+  "heights[r][c] < prev" - THE REVERSAL from section 3. We are walking backwards,
+  so we may only step to a square at least as high as the one we came from. If
+  this square is lower, water could not have flowed from here to there, so stop.
+
+  Note it is "<" and not "<=": equal heights are allowed through, because water
+  crosses level ground.
+
+    visited.add((r, c))
+Record this square as reachable from this ocean. A tuple, because sets need
+something unchangeable as a key.
+
+    for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
+        dfs(r + dr, c + dc, visited, heights[r][c])
+The four neighbours: down, up, right, left, written as offsets so the four calls
+collapse into a loop. Each call is passed THIS square's height as its prev, which
+is what the next square's uphill test will compare against.
+
+No bounds checking here - the guard at the top handles anything off the map.
+
+    for c in range(cols):
+        dfs(0, c, pacific, heights[0][c])
+        dfs(rows - 1, c, atlantic, heights[rows-1][c])
+Start the Pacific walk from every square on the TOP row, and the Atlantic walk from
+every square on the BOTTOM row. Each starts with prev set to that square's OWN
+height, so the very first comparison always passes - a square is never lower than
+itself.
+
+    for r in range(rows):
+        dfs(r, 0, pacific, heights[r][0])
+        dfs(r, cols - 1, atlantic, heights[r][cols-1])
+The same for the LEFT column (Pacific) and the RIGHT column (Atlantic). Corners get
+started twice, once by each loop, which is harmless - the visited check makes the
+second start return immediately.
+
+    return sorted(pacific & atlantic)
+The "&" is set intersection: the squares present in BOTH records. Those are the
+squares that drain to both oceans. sorted() puts them in a predictable order for
+comparison against an expected answer.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+The full 5 x 5 map produces seven answers, so let us trace a small map completely
+and then check one square on the big one.
+
+SMALL MAP, 3 x 3:
+
+        col:   0   1   2
+    row 0:     1   2   3
+    row 1:     8   9   4
+    row 2:     7   6   5
+
+PACIFIC WALK (top row and left column), stepping only to equal-or-higher squares:
+
+  Start (0,0) height 1, prev 1.  1 < 1? No -> record (0,0).
+    down to (1,0) height 8, prev 1.  8 < 1? No -> record (1,0).
+      down to (2,0) height 7, prev 8.  7 < 8? YES -> return. Water cannot have
+        flowed from 7 up to 8.
+      right to (1,1) height 9, prev 8.  9 < 8? No -> record (1,1).
+        ... from 9 the neighbours are 2 (lower, stop), 6 (lower, stop),
+            4 (lower, stop), and 8 which is already visited.
+      up to (0,0) already visited -> return.
+    right to (0,1) height 2, prev 1.  2 < 1? No -> record (0,1).
+      right to (0,2) height 3, prev 2 -> record (0,2).
+        down to (1,2) height 4, prev 3 -> record (1,2).
+          down to (2,2) height 5, prev 4 -> record (2,2).
+            left to (2,1) height 6, prev 5 -> record (2,1).
+              left to (2,0) height 7, prev 6 -> record (2,0).
+              up to (1,1) already visited.
+      down from (0,1) to (1,1) already visited.
+
+  pacific = {(0,0),(0,1),(0,2),(1,0),(1,1),(1,2),(2,0),(2,1),(2,2)} - all nine.
+
+ATLANTIC WALK (bottom row and right column):
+
+  Start (2,0) height 7, prev 7 -> record. up to (1,0) height 8, prev 7 -> record.
+    up to (0,0) height 1, prev 8 -> 1 < 8, return. right to (1,1) 9 -> record,
+    and from 9 everything around is lower except the visited 8.
+  Start (2,1) 6 -> record; (2,2) 5 -> record; (1,2) 4, prev 5 -> 4 < 5? YES,
+    return... but (1,2) is also a START square for the right column, with prev 4:
+    4 < 4? No -> record. From there up to (0,2) 3, prev 4 -> 3 < 4, return.
+  Start (0,2) height 3, prev 3 -> record.
+
+  atlantic = {(2,0),(2,1),(2,2),(1,0),(1,1),(1,2),(0,2)}
+
+INTERSECTION: everything in atlantic is also in pacific, so the answer is those
+seven squares. Sorted: (0,2),(1,0),(1,1),(1,2),(2,0),(2,1),(2,2).
+
+The two squares missing are (0,0) and (0,1) - heights 1 and 2, tucked in the
+top-left corner with the high ridge of 8 and 9 between them and the Atlantic. They
+reach the Pacific trivially but cannot climb the ridge, which is exactly what the
+"< prev, return" line encodes.
+
+NOW ONE SQUARE ON THE BIG MAP: (3,0), height 6. Pacific - it is on the left edge,
+so the Pacific walk records it as a starting square. Atlantic - the Atlantic walk
+starts at (4,0), height 5, and steps up to (3,0) because 6 is not lower than 5. In
+both sets, so it qualifies. Matches the expected answer.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(R x C) - proportional to the number of squares. Each of the two walks
+records every square at most once and looks at each square's four neighbours a
+constant number of times. Compare with the slow version from section 2 at
+O((R x C) squared): on a 200 x 200 map that is 40,000 steps instead of 1.6 billion.
+
+SPACE: O(R x C). The two sets hold up to one entry per square each, and the call
+stack can go as deep as the number of squares on a map that is one long uphill
+snake. Python's recursion limit of about 1,000 would stop it there, and the cure is
+the same walk driven by an explicit stack or a queue instead of recursion.
+
+THE #1 MISTAKE - getting the comparison the wrong way round. Because we are
+walking BACKWARDS from the ocean, we step to squares that are HIGHER or equal, and
+stop when a square is lower. Writing it as though we were walking forwards - stop
+when higher - computes which squares the ocean could flood, which is a different
+question with a different answer. Say the sentence out loud as you write the line:
+"I am walking backwards, so uphill is allowed."
+
+A close second: using a single visited set for both walks. A square reached from
+either ocean then looks reached from both, and almost the whole map qualifies. Two
+oceans, two sets.
+
+A third: using strict "greater than" instead of "greater than or equal", which cuts
+off every flat region - water does cross level ground.
+
+ONE-SENTENCE TAKEAWAY: do not ask which squares reach the ocean; start at each
+ocean and walk inland uphill, keep one record per ocean, and the answer is the
+squares that appear in both.""",
 ]
 
 _EX_P0D["Graphs — BFS, DFS, and when to use each"] = [
@@ -34578,73 +34918,417 @@ saves.""",
 ]
 
 _EX_P0D["Binary Tree Maximum Path Sum"] = [
-    """The textbook tree, traced bottom-up.
-       -10
-       /  \\
-      9    20
-          /  \\
-        15    7
-gain(9): children None -> left=right=0. best = max(-inf, 9) = 9. Returns 9.
-gain(15): best = max(9,15) = 15. Returns 15.
-gain(7): best stays 15 (7 < 15). Returns 7.
-gain(20): left=15, right=7. best = max(15, 20+15+7) = 42. Returns 20+15 = 35.
-gain(-10): left=max(9,0)=9, right=max(35,0)=35. best = max(42, -10+9+35=34) = 42.
-Returns -10+35 = 25 (unused - it is the root).
-Answer 42, the path 15 -> 20 -> 7. The best path never touched the root.""",
+    """1. THE GOAL, in plain English.
 
-    """Why a node returns ONE child but scores TWO.
-A path is a simple line through the tree. At node 20 the line may TURN: come up
-from 15, pass through 20, go down to 7. That turn is a valid path (42) so it is
-eligible for `best`.
-But the value RETURNED to node 20's parent must be usable as part of a longer
-line going up - and a line that already turned cannot continue upward without
-branching. So gain() returns node.val + max(left, right): one child only.
-Those two different quantities in one function is the entire difficulty of this
-problem. If you return node.val+left+right you will get answers that are too
-large and impossible to trace.""",
+You are given a tree whose nodes hold numbers, and some of those numbers may be
+negative. Find the path with the largest total, and report that total.
 
-    """All-negative tree - why you cannot initialise best to 0.
-       -3
-       / \\
-     -2   -1
-gain(-2): best = -2, returns -2. gain(-1): best = max(-2,-1) = -1, returns -1.
-gain(-3): left = max(-2,0) = 0, right = max(-1,0) = 0, best = max(-1, -3) = -1.
-Answer -1 - the single node -1, since the path must contain at least one node.
-If you had started best at 0 you would return 0, which is not a path at all.
-Starting at float('-inf') is not decoration; it is correctness.""",
+A PATH here means: pick a starting node, walk along connections to neighbouring
+nodes without ever revisiting one, and stop wherever you like. It does NOT have to
+start at the top, and it does NOT have to end at a dead end. It may go up one
+branch, over a node, and back down another.
 
-    """A negative subtree that must be CUT, not carried.
-        10
-       /  \\
-     -50    20
-gain(-50) returns -50, but at node 10 we take left = max(-50, 0) = 0, so that
-subtree contributes nothing.
-best at node 10 = 10 + 0 + 20 = 30, not -20.
-That `max(..., 0)` clamp is how the algorithm decides to abandon a branch: a
-negative gain can only hurt, so treat it as 'do not extend that way'. Note it
-does not delete the branch - gain(-50) still ran and still updated `best` with
--50 as a candidate, which matters in the all-negative case above.""",
+The path must contain at least one node - you cannot pick nothing and score zero.
+That matters when every number is negative.
 
-    """A single node, and a straight-line tree.
-Single node [5]: gain(5) sets best=5 and returns 5. Answer 5.
-Straight line 1 -> 2 -> 3 (each node has only a left child):
-gain(3)=3, best=3. gain(2): left=3, right=0, best = max(3, 2+3) = 5, returns 5.
-gain(1): left=5, best = max(5, 1+5) = 6, returns 6. Answer 6.
-With no branching, the 'turn' case degenerates to the straight-down case and the
-answer is just the best suffix sum - which is Kadane's algorithm on a path. That
-is not a coincidence; see the next example.""",
+Here is the tree we will use:
 
-    """The family: this IS Kadane's, lifted onto a tree.
-On an array, Kadane keeps `cur = max(x, cur + x)` - the clamp at 0 is the same
-'do not carry a negative prefix' decision - and a running `best`.
-On a tree, 'the running sum so far' becomes 'the best downward gain from this
-node', and `best` gains one extra candidate: the path that turns.
-Same skeleton, different combine:
-- Diameter of a binary tree: return 1 + max(left, right), score left+right.
-- Longest ZigZag path: return per-direction, score the turn.
-- Longest Univalue Path: same, gated on equal values.
-Recognising 'postorder DFS that returns one thing and scores another' turns four
-Hard problems into one pattern.""",
+           -10
+           /  \\
+          9    20
+              /  \\
+            15    7
+
+Vocabulary, defined as it appears:
+- Each item is a NODE, holding a number. -10 sits at the top; the top node is the
+  ROOT.
+- The nodes hanging directly below a node are its CHILDREN. -10's children are 9
+  and 20.
+- A node with no children is a dead end, called a LEAF - here 9, 15 and 7.
+- The SUBTREE at a node means that node plus everything hanging below it.
+
+Try some paths by hand:
+
+    just 9                 total 9
+    15 -> 20 -> 7          total 42
+    15 -> 20 -> -10 -> 9   total 34
+    9 -> -10 -> 20 -> 7    total 26
+
+The best is 42, from 15 up to 20 and back down to 7. Notice it never touches the
+root - the -10 would only drag it down.""",
+
+    """2. THE INTUITION - every path has a highest point.
+
+The set of possible paths looks enormous. One observation shrinks it to something
+manageable.
+
+Take any path and walk along it. It goes up for a while, reaches a highest node,
+then goes down. It can only turn around ONCE - turning twice would mean revisiting
+a node, and in a tree there is exactly one route between any two nodes.
+
+So every path has a single TOPMOST node, the point where it turns.
+
+That lets us organise the search by that node:
+
+    for each node, what is the best path whose highest point is THIS node?
+
+And that question is answerable. A path turning at node X consists of X itself,
+plus the best downward run into its left side, plus the best downward run into its
+right side:
+
+    best path turning at X = X's value
+                           + best downward run from X's left child
+                           + best downward run from X's right child
+
+Check it at node 20: its value 20, plus the best run down the left (just 15), plus
+the best run down the right (just 7) - total 42. That is the answer.
+
+So the plan is: compute this at every node and keep the largest. No path is
+missed, because every path turns at exactly one node.
+
+What remains is defining "best downward run", and that is where the negatives bite
+- section 3.""",
+
+    """3. THE TRICK - a negative branch is worth ZERO, not its value.
+
+A DOWNWARD RUN from a node means: start at that node and walk strictly downwards,
+never turning. So a downward run from node 20 is either "20", or "20 then 15", or
+"20 then 7".
+
+Now the crucial question. Suppose a child's best downward run comes to a NEGATIVE
+total. Should the parent include it?
+
+No. It should skip that side entirely - because a path is allowed to stop
+anywhere. There is no rule saying you must extend into a branch. Adding a negative
+total only makes things worse, and refusing costs nothing.
+
+So the rule is:
+
+    contribution from a child = the LARGER of (that child's best downward run, 0)
+
+Reading 0 as "I choose not to go that way at all".
+
+Watch it matter. Take this tree:
+
+            5
+           / \\
+        -100   3
+
+At node 5: the left child's best run is -100, the right child's is 3.
+
+  Without the trick: 5 + (-100) + 3 = -92.
+  With the trick:    5 + max(-100, 0) + max(3, 0) = 5 + 0 + 3 = 8.
+
+And 8 is right - the path 5 -> 3 exists and totals 8. The -100 branch is simply
+not entered.
+
+That single max against 0 is what makes the whole solution work, and it is the
+line people forget.
+
+ONE THING IT MUST NOT DO. Clamping at 0 applies to what a CHILD contributes, never
+to the node's own value. A node must always include itself, because a path turning
+here contains this node by definition. On an all-negative tree the answer is the
+single largest (least negative) number, and clamping the node's own value would
+wrongly produce 0 - see case 1 in section 4.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - every number is negative. Tree of just [-3]. The answer is -3: you must
+pick at least one node, and that is the only one. This is why the running best
+starts at NEGATIVE INFINITY rather than 0. Starting at 0 would report 0, which is
+not the total of any real path.
+
+Test with [-3] and with a tree of -2, -1, -5: the answer is -1, the least bad
+single node.
+
+CASE 2 - clamping the node's own value. Writing "max(node.val + left + right, 0)"
+looks symmetric with the child clamping and is wrong for exactly the reason above.
+Clamp what comes UP from children; never clamp the node itself.
+
+CASE 3 - the two different quantities, and mixing them up. The function computes
+two things at each node and returns only one of them:
+
+    the best path TURNING here      = value + left + right     -> compared to best
+    the best run going straight DOWN = value + max(left, right) -> returned
+
+The second must use max, not the sum, because a run that goes down BOTH sides is
+not a straight run - your parent could not extend it without revisiting this node.
+Returning the sum instead is the classic bug, and it produces totals that are far
+too large.
+
+CASE 4 - computing the answer only at the root. On our tree the best path turns at
+node 20, not at the root, and never touches the root at all. The comparison must
+happen at every node.
+
+CASE 5 - an empty tree. There are no paths, so there is no answer. Most versions
+of the problem promise at least one node. If yours does not, decide what to return
+and say so.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+PATH, DOWNWARD RUN: defined in sections 1 and 3. Keep them separate in your head -
+the whole solution rests on the difference.
+
+float('-inf'): Python's negative infinity, a value smaller than every real number.
+Used as the starting point for the running best so that the FIRST real total, no
+matter how negative, replaces it. Choosing a sentinel that the true answer can
+never collide with is the same idea as -1 in the balanced-tree problem; here 0
+would be a terrible choice, because 0 is a plausible answer.
+
+nonlocal: a Python keyword meaning "the variable named here belongs to the
+enclosing function, not to me - so when I assign to it, change THAT one". Without
+it, assigning to best inside the inner function would silently create a fresh
+local variable and every update would be discarded when the call returned. It is
+what lets one running total survive across every recursive call.
+
+RECURSION, CALL STACK, BASE CASE: a function calling itself on smaller pieces; the
+pile of paused calls each waiting on the one below; and the case answered
+immediately without recursing - here, an empty spot returning 0.
+
+Why does an empty spot return 0 rather than negative infinity? Because that 0 is
+immediately fed into a max against 0, so it means "no contribution from this
+side" - which is exactly right for a branch that does not exist.
+
+O(n) and O(h): the costs, where n is the number of nodes and h the tree's height.
+O(n) means the work grows in step with the number of nodes - each is visited once.
+O(h) describes the extra memory: the call stack holds one paused call per level.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: every path turns at exactly one node, so at each
+node add its value to the best downward run on each side - counting a negative
+side as zero - keep the largest total anywhere, and return the best straight-down
+run so the parent can do the same.
+
+The mechanism, since this is recursion. When the function is called on the root, it
+cannot do anything until it knows about its two children. So it calls itself on the
+left child, and the root's call PAUSES right there, half-finished. That call may
+pause in turn while asking about ITS children. The paused calls pile up on the call
+stack. When a call finally returns a number, the call above wakes exactly where it
+stopped, takes the number, and carries on - and does its own comparison at the
+moment both children's answers have arrived. So questions travel DOWN and gains
+travel back UP.
+
+It stops because every route down eventually reaches an empty spot, which answers
+0 without asking anything further.
+
+The steps:
+
+  1. Keep one variable outside the recursion for the best total seen anywhere.
+     Start it at negative infinity, so the first real total always replaces it -
+     including a negative one.
+
+  2. Write a function taking a node and returning the best DOWNWARD run starting
+     at it.
+
+  3. BASE CASE. If the node is empty, return 0 - meaning "no contribution".
+
+  4. Ask the function for the left child's best downward run, then take the larger
+     of that and 0. Zero means "do not go this way".
+
+  5. Do the same for the right child.
+
+  6. THE COMPARISON. This node's value plus both contributions is the best path
+     turning here. If it beats the running best, record it.
+
+  7. THE RETURN. Hand back this node's value plus the LARGER of the two
+     contributions - not their sum. A parent can only extend a run that goes
+     straight down one side.
+
+  8. Run the function on the root, discard what it returns, and report the running
+     best.
+
+Steps 6 and 7 sit next to each other, use the same two numbers, and combine them
+differently. That is the whole problem in two lines.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the tree once, and at every node it does two different things with
+the same pair of numbers.
+
+Standing on a node, it first asks each child the same question it was asked: if
+you walk straight downwards from yourself, never turning, what is the best total
+you can reach? Each child answers with a number.
+
+Before using either answer, it applies one rule: if a child's answer is negative,
+treat it as zero instead. A path is allowed to stop anywhere, so there is never
+any obligation to walk into a branch that would only reduce the total. Refusing
+costs nothing; accepting a negative costs something.
+
+Now it does the two things.
+
+First, it checks for a record. This node's own value plus both contributions is
+the best possible path that turns around at this exact node - down one side, up
+through here, down the other. If that beats the best total found anywhere in the
+tree so far, it is written into a running best that lives outside the recursion so
+it survives after this call ends.
+
+Second, it answers the question it was actually asked. It reports its own value
+plus whichever single contribution was larger - not both. Its parent can only
+extend a run that travels straight down one side; a run that has already spread
+into both branches cannot be extended without revisiting this node.
+
+Checking at every node rather than only at the top is essential, because the best
+path is very often buried in the middle of the tree and never touches the root at
+all.
+
+When the walk ends, what the function returns is thrown away. The answer is the
+running best gathered along the way.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you: -10 on top, 9 and 20 below, 15 and 7
+below 20. The answer is 42.
+
+    best = float('-inf')
+The running answer, living OUTSIDE the recursive function so it survives every
+call. Negative infinity, not 0 - so that on an all-negative tree the first real
+total replaces it. Starting at 0 would report 0 for a tree of [-3], and 0 is not
+the total of any path.
+
+    def gain(node):
+The recursive worker. Its NAME tells you what it returns: the best downward
+"gain" from this node, walking straight down without turning. Its hidden second
+job is updating best.
+
+    nonlocal best
+Tells Python that assignments to best here change the OUTER variable rather than
+creating a new local one. Without this line every update is thrown away and the
+function always reports negative infinity.
+
+    if node is None:
+        return 0
+The BASE CASE. An empty spot contributes nothing. Returning 0 rather than negative
+infinity is deliberate: the value is immediately fed into a max against 0 on the
+line below, where 0 correctly means "no contribution from this side".
+
+    left = max(gain(node.left), 0)
+Ask the left child for its best downward run, then apply the trick from section 3:
+if it is negative, use 0 instead - meaning do not walk that way at all. This is
+the single most important line in the solution, and the one most often omitted.
+
+    right = max(gain(node.right), 0)
+The same for the right side.
+
+    best = max(best, node.val + left + right)
+THE COMPARISON. node.val + left + right is the best path TURNING at this node -
+down the left, up through here, down the right. Note node.val is added without any
+clamping: a path turning here contains this node by definition, so it must be
+included even when negative.
+
+This line must run at every node, not just the root, which is what finds a best
+path buried in the middle - see case 4 in section 4.
+
+    return node.val + max(left, right)
+THE RETURN, and note it uses max where the line above used the sum. This is the
+best run going straight DOWN from here, which is what a parent can extend. A run
+that went into both branches is not straight and could not be continued upwards
+without revisiting this node.
+
+Returning the sum instead is the classic bug: it lets the parent count both
+branches again and produces totals that are far too large.
+
+    gain(root)
+    return best
+Run the walk, DISCARD what it returns - the root's downward gain is not the answer
+- and report the running best gathered during the walk.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+           -10
+           /  \\
+          9    20
+              /  \\
+            15    7
+
+best = -inf. Indentation shows the depth of the call stack.
+
+gain(-10)
+  left = max(gain(9), 0)
+        gain(9):
+          left  = max(gain(None), 0) = max(0, 0) = 0
+          right = max(gain(None), 0) = 0
+          best = max(-inf, 9 + 0 + 0) = 9          <- first real total
+          return 9 + max(0, 0) = 9
+  left = max(9, 0) = 9
+  right = max(gain(20), 0)
+        gain(20):
+          left = max(gain(15), 0)
+                gain(15): both children empty -> 0 and 0
+                          best = max(9, 15 + 0 + 0) = 15
+                          return 15 + 0 = 15
+          left = 15
+          right = max(gain(7), 0)
+                gain(7): both children empty -> 0 and 0
+                         best = max(15, 7) = 15
+                         return 7
+          right = 7
+          best = max(15, 20 + 15 + 7) = 42         <- the answer, found HERE
+          return 20 + max(15, 7) = 35
+  right = max(35, 0) = 35
+  best = max(42, -10 + 9 + 35) = max(42, 34) = 42  <- the root's own path is 34,
+                                                      so best is NOT overwritten
+  return -10 + max(9, 35) = 25
+
+gain(root) returned 25, which is discarded.
+return best = 42.  Correct - the path 15 -> 20 -> 7.
+
+Two things to read off that trace. The answer was born at node 20 and the root's
+own calculation of 34 was correctly discarded by the max. And the returned value
+25 has nothing to do with the answer - it is the root's best straight-down run,
+which is exactly why it is thrown away.
+
+NOW THE NEGATIVE-BRANCH CASE, tree 5 with children -100 and 3:
+
+gain(5)
+  left = max(gain(-100), 0)
+        gain(-100): both children empty -> 0 and 0
+                    best = max(-inf, -100) = -100
+                    return -100 + 0 = -100
+  left = max(-100, 0) = 0        <- the branch is refused
+  right = max(gain(3), 0)
+        gain(3): best = max(-100, 3) = 3;  return 3
+  right = 3
+  best = max(3, 5 + 0 + 3) = 8
+  return 5 + max(0, 3) = 8
+
+return 8. Correct - the path 5 -> 3. Without the max against 0, the comparison
+would have been 5 + (-100) + 3 = -92 and the answer would have been 3.
+
+ALL NEGATIVE, tree of just [-3]:
+  gain(-3): left = max(0,0) = 0, right = 0
+            best = max(-inf, -3 + 0 + 0) = -3
+            return -3
+  return best = -3. Correct - and only because best started at negative infinity.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is visited exactly once and does a
+fixed amount of work - two max operations, an addition and a comparison. You
+cannot do better, since every node might be part of the best path.
+
+SPACE: O(h), where h is the HEIGHT of the tree - the call stack holds one paused
+call per level as the recursion descends. For a bushy tree that is about log n; for
+a long chain it is n, and Python's recursion limit of roughly 1,000 would stop it.
+
+THE #1 MISTAKE - returning node.val + left + right instead of
+node.val + max(left, right). The two lines sit next to each other and use the same
+numbers, which is exactly why they get confused. The sum is the best path turning
+HERE; the max is the best run a parent can extend. Returning the sum lets ancestors
+count both branches all over again and produces wildly inflated totals - and it
+often still passes small all-positive test cases, which makes it worse.
+
+A close second: starting best at 0 instead of negative infinity. That silently
+turns every all-negative tree into an answer of 0, which is not the total of any
+path. Test with a single negative node.
+
+A third, equally common: forgetting the max against 0 on the children, so a deeply
+negative branch drags down a path that should simply have avoided it.
+
+ONE-SENTENCE TAKEAWAY: every path turns at one node, so at each node add its value
+to the best downward run on each side - counting a negative side as zero - record
+that total as a candidate answer, and return the value plus only the BETTER side,
+because that is all a parent can extend.""",
 ]
 
 _EX_P0D["Dijkstra's Shortest Path (min-heap)"] = [
