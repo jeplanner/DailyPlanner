@@ -27593,51 +27593,405 @@ position is joined to it by a single dictionary word.""",
 ]
 
 _EX_P0C["Word Search (backtracking)"] = [
-    """The textbook case, traced.
-board = ABCE / SFCS / ADEE, word = "ABCCED".
-Start at (0,0)='A' matches word[0]. Mark it '#'.
-  Try (0,1)='B' = word[1]. Mark. Try (0,2)='C' = word[2]. Mark.
-  Try (1,2)='C' = word[3]. Mark. Try (2,2)='E' = word[4]. Mark.
-  Try (2,1)='D' = word[5]. Mark. i reaches len(word) -> True.
-Every cell restores its letter on the way back out.""",
+    """1. THE GOAL, in plain English.
 
-    """A near-miss requiring backtrack and retry.
-Same board, word = "ABCB".
-A,B,C match at (0,0),(0,1),(0,2). Now looking for 'B': neighbours of (0,2) are
-(0,1) which is '#' (already on the path), (1,2)='C', and out-of-bounds.
-Fails, so the path unwinds - restoring '#' back to letters - and other starts
-are tried. Answer False.
-The letter 'B' exists on the board but cannot be reused, which is exactly what
-the marking enforces.""",
+You are given a grid of letters and one word. Can you trace the word through
+the grid by stepping from letter to letter?
 
-    """The bug that only shows on later starting cells.
-Forget the restore line and run "SEE" on the same board.
-The first failed attempt leaves '#' scattered across the board permanently. A
-later start that would have succeeded now walks into '#' cells and fails.
-The result is a False that is correct for some inputs and wrong for others -
-the worst kind of bug, because small tests pass.""",
+The rules for tracing:
+- Each step must go to a square directly beside the last one - up, down, left or
+  right. No diagonals.
+- You may not use the same square twice in one tracing.
+- You may start anywhere.
 
-    """Single-cell and single-letter cases.
-board = [['A']], word = "A" -> the helper is called with i=0, the letter
-matches, then i reaches len(word)=1 immediately at the next call -> True.
-word = "AA" on the same board -> after marking, no neighbour exists, so False.
-Correct: you cannot reuse the single cell.""",
+Answer yes or no.
 
-    """The pruning that makes it fast in practice.
-Before searching at all, count the letters on the board and compare with the
-letters the word needs - if the board lacks a letter, return False instantly.
-Second trick: if the word's LAST letter is rarer on the board than its first,
-search for the reversed word. Both are cheap and can cut a pathological input
-from seconds to milliseconds.
-Worth naming, because the naive version is exponential in the worst case.""",
+Our grid, and the word "ABCCED":
 
-    """Complexity, stated honestly.
-O(m x n x 4^L) where L is the word length - every cell is a potential start and
-each step branches four ways (three after the first, since you never immediately
-go back).
-Space is O(L) for the recursion. The in-place marking is what keeps the space
-from being O(mn) for a visited grid, at the cost of mutating the caller's
-board - a trade worth mentioning.""",
+        col:  0   1   2   3
+    row 0:    A   B   C   E
+    row 1:    S   F   C   S
+    row 2:    A   D   E   E
+
+Trace it by hand. Start at A, row 0 column 0. Step right to B (0,1). Right again
+to C (0,2). Now we need another C - look at the neighbours of (0,2): E to the
+right, C below at (1,2). Step down to that C. Now we need E - the neighbours of
+(1,2) are C above (used), S right, E below at (2,2). Step down to E. Now we need
+D - neighbours of (2,2) are E right, E above (used), D left at (2,1). Step left.
+
+Word complete. The answer is YES, and the path was:
+
+    A(0,0) -> B(0,1) -> C(0,2) -> C(1,2) -> E(2,2) -> D(2,1)
+
+Now try "ABCB" on the same grid. A, B, C - fine. Then we need another B, and the
+only B in the grid is the one at (0,1) that we have already used. Rule two
+forbids reusing it. Answer NO.
+
+That second example is the whole difficulty of this problem in one line: you
+must remember which squares the CURRENT path has used, and you must forget them
+again when you back out.""",
+
+    """2. THE INTUITION - a search that can take back its steps.
+
+There is no clever formula here. You genuinely have to try tracings until one
+works or you run out.
+
+The method is BACKTRACKING: build a partial answer one step at a time; at each
+step try every legal next move; when a move leads nowhere, UNDO it and try the
+next one. It is exploring a maze with chalk - walk down a corridor, and when it
+dead-ends, walk back and take a different one.
+
+Here the partial answer is a path through the grid, and the moves are the four
+neighbours.
+
+Standing on a square, matching the i-th letter of the word, the question is
+always the same:
+
+  Have I matched the whole word? Then success - stop, and report it all the way
+  up.
+
+  Am I off the grid, or is this letter not the one I need? Then this route
+  fails. Report failure and let whoever called me try something else.
+
+  Otherwise this letter is right. Mark this square as used, then try all four
+  neighbours for the NEXT letter. If any of them succeeds, this route succeeds.
+  Whatever happens, unmark this square before reporting back.
+
+And because you may start anywhere, the outer part of the solution simply tries
+launching that search from every square in the grid.
+
+There is no simpler-but-slower version to show first - the alternatives are
+worse rather than simpler. Generating every possible path in the grid and then
+checking whether any spells the word would explore vastly more routes, because
+it would not abandon a path the moment its letter stopped matching. Checking the
+letter first, and giving up immediately when it is wrong, is called PRUNING and
+it is what makes this workable at all.""",
+
+    """3. THE TRICK - marking with a character, and why it must be UNDONE.
+
+We need to record "this square is part of the path I am currently walking". The
+usual way is a separate grid of true/false the same size as the board.
+
+This solution does something cheaper: it temporarily overwrites the letter with
+'#', a character that appears in no word. Any later step landing on that square
+compares '#' against the letter it needs, sees they differ, and refuses - so the
+square is effectively invisible for the rest of this path.
+
+Now the crucial part, and it is what separates this problem from Number of
+Islands. There, sinking land was PERMANENT - once counted, an island should
+never be visited again. Here, marking must be TEMPORARY.
+
+Why? Because a square that is unusable on one path may be essential on another.
+Look at the grid in section 1 and the word "ABCCED". The path used (0,2) - the
+first C. Now imagine a different word whose successful path also needs to go
+through (0,2), but arrives there from a different direction. If the first
+attempt had permanently defaced (0,2), that second path could never be found,
+and the code would report NO for a word that is actually present.
+
+So the pattern is three beats, and the third is not optional:
+
+    save the letter
+    write '#' in its place
+    explore the four neighbours
+    write the saved letter back
+
+That restore line is the "backtrack" in backtracking. It runs whether the
+exploration succeeded or failed, because either way the board must be handed
+back to the caller exactly as it was found. Leave it out and the board is
+progressively destroyed, and answers become wrong in ways that depend on the
+order squares were tried - the worst kind of bug to reproduce.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - forgetting to restore. Covered in section 3. The failure is subtle: it
+often still finds words that happen to be discovered on the first attempt, and
+misses ones that need a square previously touched by a failed attempt.
+
+CASE 2 - restoring only on failure. A tempting optimisation: "if we succeeded,
+who cares about the board?" It usually works, because a success unwinds
+immediately. But it leaves the board defaced on the success path, which breaks
+anything that runs afterwards - and if the caller reuses the board for a second
+word, that word can silently fail. Restore unconditionally.
+
+CASE 3 - checking the letter before the bounds. The guard tests must run in the
+right order: off the grid first, letter second. A row of -1 in Python does NOT
+fail - it quietly reads the LAST row. So a missing or misordered bounds check
+does not crash, it wraps around and can match letters from the opposite edge of
+the grid.
+
+CASE 4 - the success check placed after the bounds check. The "have I matched
+every letter?" test must come FIRST, before anything reads the board. When the
+final letter has just been matched, i equals the length of the word, and word[i]
+would be off the end of the word. Testing for completion first means that never
+happens.
+
+CASE 5 - a single-letter word. word = "A" on our grid. The search starts at
+(0,0), and the very first thing it checks is whether i equals the length - it
+does not, i is 0 and the length is 1. It compares board[0][0] = 'A' against
+word[0] = 'A' - match. It marks, then recurses with i = 1, which immediately
+hits "i equals the length" and returns success. Correct, and no special case
+needed.
+
+CASE 6 - the empty board. Guarded at the top, because the next line reads
+board[0] to count the columns.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+BACKTRACKING: defined in section 2 - build, try, undo, try the next.
+
+RECURSION: a function that solves a problem by calling itself on a smaller piece
+of the same problem. Here "can I match the rest of the word starting from this
+square?" is answered by matching one letter and then asking the same question of
+each neighbour for the remaining letters. The word left to match gets shorter by
+one at every level, which is what makes the pieces smaller.
+
+CALL STACK: when the function calls itself, the outer call pauses exactly where
+it is and the inner one runs. Those paused calls pile up, each waiting on the
+one below. That pile is the call stack, and it is what makes "backing out" work
+- when a call returns false, the one above wakes on the very next line and tries
+its next direction.
+
+BASE CASE: the situation where the function answers immediately instead of
+calling itself again. This solution has two: "the whole word is matched" returns
+true, and "off the grid or wrong letter" returns false. Without them, recursion
+never ends.
+
+SHORT-CIRCUIT "or": Python evaluates a chain of "or" left to right and stops at
+the first true one. In the four-direction line that matters for speed - the
+moment one direction succeeds, the other three are never even tried.
+
+O(R x C x 4^L): the cost, where R and C are the grid dimensions and L is the
+length of the word. In plain words: you may start from any of the R x C squares,
+and from each square the search can branch four ways at every one of the L
+letters. Section 10 explains why the real behaviour is far better than that
+worst case sounds.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: from every square in turn, try to walk the word
+one letter at a time, marking each square as you stand on it and unmarking it as
+you step back off.
+
+The mechanism, since this is recursion. When the search is standing on a square
+matching letter i, it asks each neighbour "can you match letter i+1 and
+everything after it?" Asking pauses the current call and starts a new one. If
+that neighbour eventually reports false, the paused call wakes up on the very
+next line and asks the NEXT neighbour. When all four have reported false, this
+call reports false to whoever asked IT - and that is what "backing out of a dead
+end" looks like from the inside.
+
+It stops because the letter index only ever goes up, so after at most as many
+levels as the word is long, the completion check fires.
+
+The steps:
+
+  1. If the board is empty, answer no.
+
+  2. Write a search function that takes a row, a column, and which letter of the
+     word it is trying to match. It answers true or false.
+
+     a. FIRST base case: if the letter index has reached the length of the word,
+        every letter has already been matched - answer true. This must be
+        checked before anything reads the board, or you would look up a letter
+        past the end of the word.
+
+     b. SECOND base case: if the position is off the grid, or the letter on the
+        board is not the one needed, answer false. Check the bounds before
+        reading the square - a negative index reads the wrong edge rather than
+        failing.
+
+     c. Save the letter that is on this square, then write a marker character in
+        its place so nothing else on this path can use it.
+
+     d. Ask all four neighbours whether they can match the next letter. If any
+        of them says yes, the answer here is yes.
+
+     e. Put the saved letter back, ALWAYS - success or failure. Then report the
+        answer from step d.
+
+  3. Try the search from every square in the grid with a letter index of 0. If
+     any of them returns true, answer yes.
+
+  4. If none did, answer no.
+
+Step (e) is the beat people forget. Its position matters as much as its
+existence: it must come after the exploring and before the reporting.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code tries to walk the word through the grid, starting from every square in
+turn until one of them works.
+
+A single walk goes like this. Standing on a square, it first asks whether there
+is any word left to match - if not, the walk has succeeded and it says so. Then
+it checks whether it has stepped off the edge of the grid, or whether the letter
+under its feet is the wrong one; either way this route is dead and it says so.
+
+If the letter is right, it does something temporary and important: it replaces
+that letter on the board with a marker. From that moment, any later step of this
+same walk that tries to come back to this square will see the marker instead of
+a letter, decide it is the wrong letter, and refuse - which is exactly the rule
+that a square cannot be used twice in one tracing.
+
+Then it tries all four neighbours in turn, asking each whether it can match the
+next letter and everything after it. The moment one says yes, the answer is yes
+and the rest are not even tried.
+
+Whatever the outcome, before reporting back it puts the original letter back on
+the board. That is the part that makes this different from permanently marking
+squares: a square that was in the way of one failed route may be essential to a
+different route, so the board must be handed back exactly as it was found.
+
+The outer part of the code simply launches this walk from every square, and
+answers yes if any launch succeeds.""",
+
+    """8. THE CODE, line by line.
+
+Keep the 3 x 4 grid from section 1 and the word "ABCCED" beside you.
+
+    if not board:
+        return False
+The empty-board guard, needed because the next line reads board[0] to count the
+columns.
+
+    rows, cols = len(board), len(board[0])
+The grid dimensions - how many rows, and how many squares per row.
+
+    def backtrack(r, c, i):
+The search. r and c are where we are standing; i is which letter of the word we
+are trying to match here. It returns True or False.
+
+    if i == len(word):
+        return True
+The success base case, and it MUST come first. When the previous call matched
+the last letter, it recursed with i one past the end - so this test fires and
+reports success before anything tries to read word[i], which would be off the
+end of the word. See case 4 in section 4.
+
+    if r < 0 or r >= rows or c < 0 or c >= cols or board[r][c] != word[i]:
+        return False
+The failure base case, doing two jobs in one line, and the ORDER is
+load-bearing. The four bounds tests come first; Python stops evaluating an "or"
+chain at the first true condition, so board[r][c] is only read once the position
+is known to be on the grid. Put the letter comparison first and a row of -1
+would silently read the last row instead of failing.
+
+The letter comparison also covers the visited check, because a marked square
+holds '#', which never equals a letter of the word.
+
+    tmp = board[r][c]
+    board[r][c] = '#'
+CHOOSE. Save the real letter, then mark the square as part of the current path.
+'#' is used because no word contains it, so any step returning here is
+guaranteed to fail the letter test above.
+
+    found = (backtrack(r+1, c, i+1) or backtrack(r-1, c, i+1) or
+             backtrack(r, c+1, i+1) or backtrack(r, c-1, i+1))
+EXPLORE. Ask the four neighbours - down, up, right, left - whether they can
+match the NEXT letter, i+1. The "or" chain short-circuits: as soon as one
+direction returns True, the remaining directions are not even called. No bounds
+checking here, because the guard at the top of backtrack handles anything off
+the grid.
+
+    board[r][c] = tmp
+UN-CHOOSE, and this line is the heart of the problem. Put the real letter back
+so this square is available to any other path that might need it. It runs
+unconditionally - on success as well as failure - which is what leaves the board
+exactly as it was found. See section 3.
+
+    return found
+Report whether any direction worked.
+
+    for r in range(rows):
+        for c in range(cols):
+            if backtrack(r, c, 0):
+                return True
+Try launching the walk from every square, always starting at letter 0. The first
+launch that succeeds ends everything.
+
+    return False
+No starting square worked, so the word is not in the grid.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    row 0:  A  B  C  E
+    row 1:  S  F  C  S
+    row 2:  A  D  E  E
+
+word = "ABCCED" (6 letters). The outer loop starts at (0,0).
+
+backtrack(0,0,0)   i=0, need 'A', board is 'A' -> match
+  save 'A', board(0,0)='#'
+  try DOWN (1,0,1): need 'B', board is 'S' -> False
+  try UP (-1,0,1): r is -1, off the grid -> False
+  try RIGHT (0,1,1): need 'B', board is 'B' -> match
+    save 'B', board(0,1)='#'
+    try DOWN (1,1,2): need 'C', board is 'F' -> False
+    try UP: off grid -> False
+    try RIGHT (0,2,2): need 'C', board is 'C' -> match
+      save 'C', board(0,2)='#'
+      try DOWN (1,2,3): need 'C', board is 'C' -> match
+        save 'C', board(1,2)='#'
+        try DOWN (2,2,4): need 'E', board is 'E' -> match
+          save 'E', board(2,2)='#'
+          try DOWN (3,2,5): r is 3, off the grid -> False
+          try UP (1,2,5): board is '#' (we are standing on that path) -> False
+                          <- the marker doing its job: refusing to reuse a
+                             square already on this path
+          try RIGHT (2,3,5): need 'D', board is 'E' -> False
+          try LEFT (2,1,5): need 'D', board is 'D' -> match
+            save 'D', board(2,1)='#'
+            i+1 = 6 = len(word) on the first call below...
+            try DOWN (3,1,6): i is 6 = len(word) -> TRUE immediately
+            found = True
+            restore board(2,1)='D'
+            return True
+          found = True, restore board(2,2)='E', return True
+        found = True, restore board(1,2)='C', return True
+      found = True, restore board(0,2)='C', return True
+    found = True, restore board(0,1)='B', return True
+  found = True, restore board(0,0)='A', return True
+
+The outer loop sees True at (0,0) and returns True.
+
+Read the restores on the way back up: every single square that was marked has
+been put back, so the board is byte-for-byte what it was at the start. That is
+what makes it safe to call this function again.
+
+Note the completion check firing at i = 6 inside a call to (3,1) - a position
+off the grid. It does not matter, because the completion test runs BEFORE the
+bounds test. That ordering is exactly case 4 in section 4.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(R x C x 4^L) in the worst case - R x C starting squares, and from each
+one the search can branch four ways at each of the L letters. That number looks
+frightening and is almost never reached, because the letter check prunes a
+branch the instant it stops matching. A more honest description: it is 3^L
+rather than 4^L after the first step, since one of the four neighbours is always
+the square you just came from and is marked; and in practice the word's letters
+eliminate almost every branch within two or three steps. What makes it slow in
+reality is a grid of one repeated letter with a long word of that same letter -
+which is the standard adversarial test case.
+
+SPACE: O(L) - the call stack, which goes as deep as the word is long. The board
+itself needs no extra memory, because the visited marker is written into it and
+then removed.
+
+THE #1 MISTAKE - not restoring the letter, or restoring it only when the search
+failed. The board is then progressively destroyed, and which words are found
+depends on the order squares happened to be tried. It passes small tests and
+fails inexplicably on bigger ones. Restore unconditionally, immediately after
+exploring and before returning.
+
+A close second: putting the completion check after the bounds check. When the
+last letter has just been matched, i equals the word's length, and reading
+word[i] is off the end. Completion first, always.
+
+ONE-SENTENCE TAKEAWAY: try to walk the word from every square, marking each
+square as you stand on it so the same path cannot reuse it - and always put the
+letter back as you step off, because a square that blocked one route may be
+essential to another.""",
 ]
 
 _EX_P0C["Partition Equal Subset Sum"] = [
