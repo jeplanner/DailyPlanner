@@ -22951,10 +22951,23 @@ proportional to the number of nodes - written O(n).""",
 ]
 
 _EX_P0["Balanced Binary Tree"] = [
-    """First, let us make sure the picture and the words are clear.
+    """1. THE GOAL, in plain English.
 
-A BINARY TREE is a diagram where each item can have up to two items hanging
-below it. Here is the one we will work with:
+You are given a tree, and you must answer one yes-or-no question: is it
+BALANCED - meaning does it lean over too far anywhere?
+
+Why would anyone care? Because a tree is useful precisely when it is short and
+bushy. Searching a bushy tree of a million items takes about 20 steps, because
+each step throws away half of what is left. But a tree that has degenerated into
+a long single-file chain is really just a list, and searching it takes a million
+steps. "Is this tree balanced?" is really asking "is this tree still fast, or
+has it quietly turned into a list?"
+
+So: yes or no, does any part of this tree lean over too far.""",
+
+    """2. THE INTUITION - the picture, and the words for what is in it.
+
+Here is the tree we will work with all the way through:
 
         3
        / \\
@@ -22962,51 +22975,58 @@ below it. Here is the one we will work with:
           / \\
         15   7
 
-The vocabulary, defined as it appears:
-- 3 sits at the very top. The top item is called the ROOT.
-- Each item is called a NODE. The things hanging below a node are its CHILDREN.
-- 9 has nothing below it - a dead end. A node with no children is a LEAF.
-- 15 and 7 are also leaves. 20 is not, because it has two children.
+A BINARY TREE is a diagram where each item can have up to two items hanging
+below it. "Binary" just means "at most two".
 
-That is the whole vocabulary you need. Now the actual question: is this tree
-BALANCED?""",
+The vocabulary, defined the moment it appears:
+- Each item is a NODE. There are five nodes here: 3, 9, 20, 15 and 7.
+- 3 sits at the very top. The top node is called the ROOT. (Trees in computing
+  are drawn upside down - the root is at the top and the branches grow
+  downwards. Everyone finds this odd at first.)
+- The nodes hanging directly below a node are its CHILDREN. 3's children are 9
+  and 20.
+- 9 has nothing below it - a dead end. A node with no children is a LEAF. 15 and
+  7 are leaves too. 20 is not, because it has two children.
+- The SUBTREE at a node means that node plus everything hanging below it. The
+  subtree at 20 is {20, 15, 7}.
 
-    """What HEIGHT means, counted on the picture above.
+That is the whole vocabulary. Now the actual question: is THIS tree balanced?""",
 
-The HEIGHT of a node is how many levels tall the tree is if you start counting
-at that node.
+    """3. DEFINING "HEIGHT" AND "BALANCED", counted on that picture.
 
-- A leaf has height 1. It is just itself - one level, nothing below.
+HEIGHT of a node = how many levels tall the tree is if you start counting at
+that node and look downwards.
+
+- A leaf has height 1. It is just itself - one level, nothing below it.
   So height(9) = 1, height(15) = 1, height(7) = 1.
 - A node with children is 1 + the height of its TALLER child.
   So height(20) = 1 + (the taller of 15 and 7, both height 1) = 1 + 1 = 2.
-- And height(3) = 1 + (the taller of 9 and 20) = 1 + 2 = 3.
+- And height(3) = 1 + (the taller of 9 and 20) = 1 + max(1, 2) = 1 + 2 = 3.
+- An empty spot - where a child is missing - has height 0. Nothing there, zero
+  levels.
 
-Read that once more against the picture: the tree really is 3 levels tall, so
-the root's height of 3 makes sense. Height is just 'how many levels are below
-me, including me'.""",
+Check that against the drawing: the tree really is 3 levels tall, so the root's
+height of 3 is right. Height is simply "how many levels are below me, counting
+myself".
 
-    """What BALANCED means, and checking our tree.
+BALANCED means: AT EVERY NODE, the left side and the right side are roughly the
+same height - specifically, their heights differ by no more than 1.
 
-A tree is BALANCED if, AT EVERY NODE, the left side and the right side are
-roughly the same height - specifically, their heights differ by no more than 1.
+Written with symbols: |left height - right height| <= 1, where the two upright
+bars mean "ignore any minus sign, just tell me the size of the gap".
 
-Written with symbols: |left height - right height| <= 1, where the two vertical
-bars mean 'ignore the minus sign, just give me the size of the gap'.
+Now check our tree at the root: the left side is node 9, height 1; the right
+side is node 20, height 2; the gap is |1 - 2| = 1, which is not more than 1. The
+root passes.
 
-Now check our tree at the root:
-- Left side is the node 9, height 1.
-- Right side is the node 20, height 2.
-- The gap is |1 - 2| = 1. Is 1 more than 1? No. So this node is fine.
+But we must check every OTHER node too. Node 20 has children of height 1 and 1,
+gap 0 - passes. The leaves have nothing below them, so nothing to compare -
+they pass trivially. Every node passes, so the answer is TRUE.""",
 
-We must check every OTHER node too. Node 20 has children of height 1 and 1, gap
-0 - fine. The leaves have nothing below them, so nothing to compare. Every node
-passes, so the answer is TRUE: the tree is balanced.""",
+    """4. THE CASE THAT CATCHES MOST PEOPLE - checking only the root is not enough.
 
-    """The case that catches most people: checking only the root is not enough.
-
-It is tempting to write code that measures the root's two sides and stops. That
-is wrong, and here is a tree that proves it:
+It is very tempting to write code that measures the root's two sides, compares
+them, and stops. Here is a tree that proves it is wrong:
 
             1
            / \\
@@ -23016,170 +23036,323 @@ is wrong, and here is a tree that proves it:
        /         \\
       4           4
 
-At the ROOT: the left side is 3 levels tall and so is the right side. Gap 0 -
-looks perfectly balanced! A root-only check happily returns true.
+At the ROOT: the left side is 3 levels tall (2 -> 3 -> 4) and so is the right
+side (2 -> 3 -> 4). Gap 0. It looks perfectly balanced, and a root-only check
+happily returns true.
 
-But look at node 2 on the left. Its left child leads down two more levels; its
-right side is empty (height 0). The gap there is |2 - 0| = 2, which is more
-than 1. So the tree is NOT balanced.
+Now look at node 2 on the left. Its LEFT child is 3, which leads down two more
+levels, so that side has height 2. Its RIGHT child is missing, so that side has
+height 0. The gap there is |2 - 0| = 2, which IS more than 1.
 
-This is why the rule says 'at EVERY node' and why the check has to live inside
-the recursion, not at the top.""",
+So the tree is NOT balanced, even though the root looked fine. The lopsidedness
+is hiding one level down.
 
-    """The '-1 flag' trick, and why it exists.
+This is exactly why the rule says "at EVERY node", and why the check has to live
+inside the walk that visits every node, not at the top of it.""",
 
-Here is the obvious way to write this: for every node, call a height() function
-on its left side and on its right side, compare them, then recurse. That works -
-but it is slow, because height() walks the whole subtree, and you call it again
-at every node. The same nodes get measured over and over. For a long spindly
-tree of n nodes this becomes roughly n x n steps.
+    """5. THE SIMPLE-BUT-SLOW VERSION FIRST, then the upgrade.
 
-The trick: write ONE function that walks the tree and returns each node's
-height - but give it a secret second job. If it ever discovers a node that is
-unbalanced, instead of returning a real height it returns -1, meaning
-'imbalance found, stop looking'.
+THE SLOW VERSION. Write a function height(node) that measures a subtree's
+height, then write a second function that visits every node and, at each one,
+calls height on its left side and on its right side and compares.
 
-That -1 then travels back up the tree. Any node that sees -1 from a child
-immediately returns -1 itself, without bothering to compare anything. So the
-first problem found short-circuits the whole check.
+That is correct, and it is what most people write first. It is worth writing
+first. But it is slow, and here is why: height() walks an entire subtree to
+produce its answer, and you call it fresh at every node. The nodes near the
+bottom of the tree get measured over and over - once for their own check, again
+for their parent's, again for their grandparent's. For a long spindly tree of n
+nodes the total work comes to roughly n x n steps, written O(n^2).
 
-Why -1 specifically? Because a real height is never negative - the smallest
-possible is 0 for an empty spot. So -1 is a value the answer can never
-legitimately be, which makes it safe to use as a signal. That idea - pick an
-impossible value to carry a second message - is worth remembering; it comes up
-often.
+THE UPGRADE - one walk that carries a secret. Write ONE function that walks the
+tree and returns each node's height. Now give it a second job: if it ever finds
+a node whose two sides differ by more than 1, instead of returning a real height
+it returns -1, meaning "imbalance found down here, stop looking".
 
-In our first tree nothing was ever unbalanced, so the -1 was never triggered.""",
+That -1 then travels back up the tree. Any node that sees -1 come back from a
+child immediately returns -1 itself, without comparing anything. So the first
+problem found short-circuits the entire rest of the check.
 
-    """The small cases, and the speed.
+Why -1 in particular? Because a real height can never be negative - the smallest
+possible height is 0, for an empty spot. So -1 is a value the true answer can
+never take, which makes it safe to use as a signal. A value reserved to mean
+"something special happened" is called a SENTINEL, and picking one that the real
+answers can never collide with is the whole art of it.
 
-An EMPTY tree (no nodes at all): height 0, and it is balanced - there is
-nothing that could be lopsided. This falls out of the base case; if your code
-crashes on an empty tree, the base case is missing.
+The upgrade visits every node exactly once, so it is O(n) instead of O(n^2).""",
 
-A SINGLE node: its two sides are both empty (height 0 each), the gap is 0, so
-it is balanced and its own height is 1.
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
 
-Speed: the -1 version visits each node exactly once, so it takes about n steps
-for n nodes - written O(n). The naive version that re-measures heights takes
-about n x height steps, which for a long thin tree is n x n. On a tree of
-10,000 nodes that is the difference between 10,000 steps and 100 million.
+The whole idea in one sentence: walk the tree once, have every node report its
+own height, and let any node that finds its two sides too far apart report -1
+instead, which every node above it passes straight up.
 
-One last thing worth asking in an interview: this problem uses the definition
-'every node's two subtrees differ in height by at most 1'. Other definitions of
-'balanced' exist for other kinds of tree, so confirming which one is meant takes
-five seconds and occasionally changes the answer.""",
+First, RECURSION, because this solution is built on it and the word explains
+nothing on its own.
 
-    """What the code does, in plain language - read this before the line-by-line.
+Recursion is when a function solves a big problem by calling ITSELF on smaller
+pieces of the same problem. Here the big problem is "how tall is the tree at
+node 3?" - and node 3 cannot answer without first knowing how tall the tree is
+at node 9, and how tall it is at node 20. Those are the same question, asked
+about smaller trees. So the function calls itself on each child.
 
-Imagine you are the person standing at a node in the tree, and someone asks you
-one question: "how tall are you, and is everything below you tidy?"
+What is actually happening in the machine: when node 3's call asks about node 9,
+node 3's call PAUSES exactly where it is, half-finished, and node 9's call
+starts. If node 9 had children, its call would pause too. These paused calls
+pile up, each waiting for the one below it to hand back an answer - that pile is
+called the CALL STACK. When a call finally returns a number, the call above it
+wakes up exactly where it paused, takes that number, and carries on. So the
+questions travel DOWN the tree and the answers travel back UP.
 
-You cannot answer on your own. So you turn to your left child and ask the same
+What makes it stop? The BASE CASE - a situation the function can answer
+immediately without calling itself again. Here it is "the node is empty":
+height of nothing is 0, full stop. Every path down the tree eventually runs out
+of nodes and hits that case, so the pile always unwinds. Without a base case a
+recursive function calls itself forever until the machine runs out of room.
+
+Now the steps.
+
+  1. Write one helper function that takes a node and returns a number. That
+     number means two things at once: a value of 0 or more is the node's real
+     height AND a promise that everything below it is balanced; a value of -1
+     means "something below here is unbalanced".
+
+  2. BASE CASE first. If the node is empty, return 0 - an empty spot is zero
+     levels tall, and it is trivially balanced.
+
+  3. Ask the LEFT child the same question, by calling the helper on it. Keep
+     the number it gives back.
+
+  4. Check that number straight away. If it is -1, the left side is already
+     broken, so return -1 immediately - do not even look at the right side.
+     There is nothing to compare and no reason to spend the work.
+
+  5. Now ask the RIGHT child, the same way, and keep its number.
+
+  6. If that one is -1 too, return -1 for the same reason.
+
+  7. Both children gave real heights. Compare them: if the gap between them is
+     more than 1, THIS node is the unbalanced one - return -1.
+
+  8. Otherwise everything here is fine, so return this node's own height: one
+     more than the taller of the two numbers.
+
+  9. Finally, the outer function runs the helper on the root and returns True if
+     what came back is anything other than -1.
+
+Now the trick, from scratch. Why is -1 safe to use as the "something is wrong"
+signal? Because a genuine height can never be negative. The smallest real answer
+this function can ever produce is 0, for an empty spot. So -1 is a value the
+truth can never take, which means seeing -1 is unambiguous - it can only have
+been put there deliberately. A value reserved to mean "something special
+happened", chosen so it cannot collide with a real answer, is called a SENTINEL.
+
+And how does it travel? Look at steps 4 and 6. The moment any node returns -1,
+its parent sees -1, and step 4 or 6 makes the parent return -1 too - without
+comparing, without measuring. That parent's parent then does the same. So a
+single -1 born deep in the tree climbs all the way to the root untouched, and
+the answer is settled the moment the first problem is found. That is why this
+is one walk and not many.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+Imagine you are the person standing at one node of the tree, and someone asks
+you a single question: "how tall are you, and is everything below you tidy?"
+
+You cannot answer alone. So you turn to your left child and ask the same
 question, then to your right child and ask the same question. Once both have
-answered with their heights, you do three small things:
+answered, you do three small things:
 
   1. If either child answered "there is a problem down here", you do not even
-     bother comparing - you just pass that same message up to whoever asked you.
-  2. Otherwise you compare the two heights. If they differ by more than 1, YOU
-     are the problem, so you answer "there is a problem here".
+     bother comparing - you pass that same message straight up to whoever asked
+     you.
+  2. Otherwise you compare the two heights they gave you. If they differ by more
+     than 1, then YOU are the problem, so you answer "there is a problem here".
   3. If everything is fine, you answer with your own height: one more than the
      taller of your two children.
 
-Every node in the tree does exactly that, and the question ripples all the way
-down to the leaves, who answer instantly because they have no children.
+Every node does exactly that. The question ripples all the way down to the
+leaves, who answer instantly because they have no children to ask.
 
 The clever part is that ONE answer carries TWO pieces of information. Normally
-you would need one function to measure height and another to check balance. Here
-a single number does both: any number from 0 upwards is a real height and means
-"all tidy below me", while -1 is a special value meaning "something down here is
-unbalanced, stop looking". A real height can never be negative, so -1 can never
-be confused with a genuine answer.
+you would need one function to measure height and another to check balance.
+Here a single number does both: any number from 0 upwards is a genuine height
+and quietly also means "everything below me is tidy", while -1 means "something
+below me is not". A real height is never negative, so the two can never be
+confused.
 
-That is why the last line of the whole function is simply "did the root answer
-something other than -1?" If no -1 ever bubbled up, every node passed its check,
-and the tree is balanced.
+That is why the very last line is simply "did the root answer anything other
+than -1?" If no -1 ever bubbled up, every node passed its own check, and the
+tree is balanced.
 
 In one sentence: each node asks its children how tall they are, refuses to
 answer properly if they disagree by more than one level, and passes that refusal
 straight up to the top.""",
 
-    """Now the code, line by line, against the tree we drew at the start.
+    """8. THE CODE, line by line.
 
-Keep the first tree beside you: 3 at the top, 9 and 20 below it, and 15 and 7
-below 20. Remember the heights we worked out: 9, 15 and 7 are height 1; 20 is
-height 2; the root 3 is height 3.
+Keep the first tree beside you: 3 on top, 9 and 20 below it, 15 and 7 below 20.
+Remember the heights: 9, 15 and 7 are height 1; 20 is height 2; the root is 3.
 
     def is_balanced(root):
-The outer function - the one the world calls. It takes the top node of the tree
-and gives back True or False. All the real work happens in the helper below.
+The outer function - the one the world calls. It takes the top node and gives
+back True or False. All the real work happens in the helper inside it.
 
     def height(node):
-The helper, defined inside so it can be called recursively by name. Its job is
-the "how tall are you, and is everything below you tidy?" question from the
-previous example. Reading its name as just "height" is slightly misleading -
-give it the fuller name "height, or -1 if broken" in your head.
+The helper, doing the "how tall are you, and is everything below you tidy?" job.
+It is defined INSIDE is_balanced so it can call itself by name and be kept
+private. Read its name in your head as the fuller "height, or -1 if broken" -
+the short name is slightly misleading about the second job.
+
+A function that calls itself is using RECURSION. Each nested call waits on the
+one below it, and those paused calls stack up on what is called the CALL STACK -
+literally a pile of unfinished calls, each one waiting for its answer.
 
     if node is None:
         return 0
-The BASE CASE - the point where the recursion stops. An empty spot is zero
-levels tall. This is what makes a leaf come out as height 1: a leaf asks both of
-its empty children, gets 0 from each, and returns 1 + max(0, 0) = 1. Exactly the
-"a leaf has height 1" rule we started with, falling out of the code rather than
-being written in specially.
+The BASE CASE - the point where the recursion stops instead of going deeper.
+Without one, a recursive function calls itself forever. An empty spot is zero
+levels tall, so return 0.
+
+This one line is also what makes a leaf come out as height 1: a leaf asks both
+of its (empty) children, gets 0 and 0 back, and returns 1 + max(0, 0) = 1.
+Exactly the "a leaf has height 1" rule from section 3, falling out of the code
+rather than being written in specially.
 
     lh = height(node.left)
-Ask the left child. For the root, this call goes down to node 9, which asks its
-two empty children, gets 0 and 0, and returns 1. So lh = 1.
+Ask the left child. lh is short for "left height". For the root, this call goes
+down to node 9, which asks its two empty children, gets 0 and 0, and returns 1.
+So lh = 1.
 
     if lh == -1:
         return -1
-The SHORT-CIRCUIT. If the left side already reported a problem, there is nothing
-to compare and no point measuring the right side at all - just pass the bad news
-upwards unchanged. On our balanced tree this never fires. On the lopsided tree
-from the earlier example it fires at node 2, and then again at the root, so the
-final answer is decided without any further measuring.
+The SHORT-CIRCUIT. If the left side has already reported a problem, there is
+nothing worth comparing and no point measuring the right side at all - just pass
+the bad news upward unchanged. On our balanced tree this never fires; on the
+lopsided tree from section 4 it fires at node 2 and then again at the root, and
+the answer is settled without measuring anything else.
 
     rh = height(node.right)
-Now ask the right child. For the root, this goes down to node 20, which asks 15
+Now ask the right child. For the root this goes down to node 20, which asks 15
 and 7, gets 1 and 1, and returns 1 + max(1,1) = 2. So rh = 2.
 
-Notice the deliberate ordering: the left result is CHECKED before the right one
-is even requested. That is what makes the short-circuit save work rather than
-just save a comparison.
+Notice the deliberate ordering: the LEFT result is checked before the right one
+is even requested. That is what makes the short-circuit save real work rather
+than just skipping a comparison.
 
     if abs(lh - rh) > 1:
         return -1
-This node's own balance check. abs() means "ignore the minus sign, just give me
-the size of the gap". At the root, abs(1 - 2) = 1, which is not more than 1, so
-we carry on. At node 2 of the lopsided tree, abs(2 - 0) = 2, which IS more than
-1, so that node returns -1 and the whole answer is settled.
+This node's own balance check. abs() is Python's "ignore the minus sign" - it
+turns -2 into 2 and leaves 2 as 2, which is exactly the |...| notation from
+section 3. At the root, abs(1 - 2) = 1, not more than 1, so we carry on. At node
+2 of the lopsided tree, abs(2 - 0) = 2, which IS more than 1, so it returns -1.
 
-This is the line that makes the check happen at EVERY node instead of only at
+This is the line that makes the check happen at EVERY node rather than only at
 the root - because every node runs this same function.
 
     return 1 + max(lh, rh)
 The normal answer: I am one level taller than my taller child. For the root that
 is 1 + max(1, 2) = 3, matching the height we counted by hand. Reaching this line
 also quietly means "and everything below me is fine", because any problem would
-have returned -1 further up the function.
+have returned -1 higher up in the function.
 
     return height(root) != -1
 The outer function's single line. Run the helper on the root and ask one
-question: did anything come back other than -1? If a real height came back, no
-node anywhere ever failed its check, so the answer is True. If -1 came back,
-some node failed and passed the message all the way up.
+question: did it come back with anything other than -1? A real height means no
+node anywhere failed, so True. A -1 means some node failed and the message
+travelled all the way up, so False.
 
-Why -1 rather than, say, returning a pair of (height, is_balanced)? Because a
-pair works perfectly well and is arguably clearer - it is a completely
-acceptable answer to give. The -1 version is just shorter and avoids allocating
-a tuple at every node. Being able to explain BOTH, and why they are equivalent,
-is better than defending one of them.
+Why -1 rather than returning a pair like (height, is_it_balanced)? A pair works
+perfectly well and is arguably clearer - it is a completely acceptable answer to
+give in an interview. The -1 version is just shorter and avoids building a tuple
+at every node. Being able to explain BOTH, and why they are equivalent, is
+better than defending only one.""",
 
-Cost: every node is visited once and does a fixed amount of work, so O(n) time
-for n nodes. The extra memory is the call stack, which goes as deep as the tree
-is tall - O(h), which is O(log n) for a bushy tree and O(n) for a long spindly
-one.""",
+    """9. TRACING THE CODE, variable by variable.
+
+Tree:      3
+          / \\
+         9   20
+             / \\
+           15   7
+
+Calls go downwards; answers come back upwards. Indentation shows the depth of
+the call stack.
+
+height(3)
+  lh = height(9)
+        height(9): lh = height(None) = 0
+                   0 is not -1, carry on
+                   rh = height(None) = 0
+                   abs(0 - 0) = 0, not more than 1, carry on
+                   return 1 + max(0, 0) = 1
+  lh = 1.  Is lh == -1? No, so do not short-circuit.
+  rh = height(20)
+        height(20): lh = height(15)
+                          height(15): both children empty -> 0 and 0
+                                      abs(0-0)=0 fine -> return 1
+                    lh = 1, not -1, carry on
+                    rh = height(7)
+                          height(7): same as 15 -> return 1
+                    rh = 1
+                    abs(1 - 1) = 0, not more than 1, carry on
+                    return 1 + max(1, 1) = 2
+  rh = 2
+  abs(lh - rh) = abs(1 - 2) = 1.  Is 1 > 1? No. Carry on.
+  return 1 + max(1, 2) = 3
+
+Back in is_balanced: height(root) returned 3.  3 != -1 is True.
+Answer: True.
+
+Now the same trace on the LOPSIDED tree from section 4, showing the -1
+travelling upward. Left branch only:
+
+height(1)
+  lh = height(2)
+        height(2): lh = height(3)
+                         height(3): lh = height(4) = 1 (a leaf)
+                                    rh = height(None) = 0
+                                    abs(1 - 0) = 1, fine
+                                    return 1 + max(1,0) = 2
+                   lh = 2, not -1, carry on
+                   rh = height(None) = 0
+                   abs(2 - 0) = 2.  Is 2 > 1?  YES -> return -1
+  lh = -1
+  Is lh == -1?  YES -> return -1 immediately.
+        The right half of the tree is NEVER measured. That is the
+        short-circuit doing its job.
+
+is_balanced: height(root) returned -1.  -1 != -1 is False.
+Answer: False.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is visited exactly once and does a
+fixed amount of work there - two comparisons, a max, an addition. Compare that
+with the slow version from section 5, which re-measured the same subtrees over
+and over and came to O(n^2). On a chain of 10,000 nodes that is 10,000 steps
+versus 100 million.
+
+SPACE: O(h), where h is the HEIGHT of the tree - because the call stack holds
+one paused call per level as the recursion descends. For a bushy tree that is
+about log n (a tree of a million nodes is only about 20 levels deep), and for a
+long chain-like tree it is n. Python stops at roughly 1,000 nested calls, so a
+chain of 10,000 nodes would need an iterative version rather than recursion.
+
+MISTAKE 1 - checking only the root. Covered in section 4, and it is the single
+most common wrong answer to this problem. The tree with two 3-level sides looks
+balanced from the top and is not. The fix is not a bigger check at the root; it
+is running the same small check at every node.
+
+MISTAKE 2 - measuring height separately from checking balance. Writing a
+height() function and then calling it inside a second recursive check is
+correct but quadratic. If you notice yourself calling a function that walks a
+subtree from INSIDE a walk over the same subtree, that is almost always a sign
+the two walks should be merged into one. Merging them is what the -1 sentinel
+makes possible.
+
+ONE-SENTENCE TAKEAWAY: one walk that returns each node's height, but returns -1
+the moment it finds a node whose sides differ by more than one - and any node
+seeing -1 passes it straight up, so the first problem found ends the search.""",
 ]
 
 _EX_P0["Diameter of a Binary Tree"] = [
@@ -25049,54 +25222,282 @@ The finished list, ["(())", "()()"] for n = 2.""",
 ]
 
 _EX_P0B["Longest Substring Without Repeating Characters"] = [
-    """The textbook case, traced.
-s = "abcabcbb". left=0, best=0.
-  r=0 'a': last={a:0}, width 1, best 1
-  r=1 'b': width 2, best 2
-  r=2 'c': width 3, best 3
-  r=3 'a': 'a' last seen at 0, which is >= left, so left=1. width 3.
-  r=4 'b': last 1 >= left(1), left=2. width 3.
-  r=5 'c': last 2 >= left(2), left=3. width 3.
-  r=6 'b': last 4 >= 3, left=5. width 2.
-  r=7 'b': last 6 >= 5, left=7. width 1.
-Answer 3 ("abc").""",
+    """1. THE GOAL, in plain English.
 
-    """The case that requires the 'at or after left' check.
-s = "abba".
-  r=0 'a': left=0, last={a:0}, best 1
-  r=1 'b': best 2 ("ab")
-  r=2 'b': 'b' last at 1 >= left(0) -> left=2. width 1.
-  r=3 'a': 'a' last at 0. Without the check you would set left = 1, moving it
-           BACKWARDS and reporting a window "bba" that contains a repeat.
-           With the check, 0 < left(2), so 'a' is stale - ignore it. width 2.
-Answer 2. This input is precisely why the stale-index test exists.""",
+You are given a piece of text. Find the longest stretch of it, taken as one
+unbroken run of characters, in which no character repeats. You only have to
+report HOW LONG that stretch is, not what it says.
 
-    """All identical, and all distinct.
-s = "bbbb": every character repeats immediately, left chases right, best 1.
-s = "abcdef": no repeats ever, left never moves, best 6.
-These two bracket the behaviour and are worth running as a sanity check after
-any edit.""",
+The word for "an unbroken run taken out of a string" is a SUBSTRING. It has to
+be contiguous - the characters must sit next to each other in the original. So
+in "abcabcbb", "abc" is a substring, and so is "cab", but "acb" is not, because
+those three letters are not next to each other in that order.
 
-    """The empty string and a single character.
-"" -> 0, the loop never runs.
-"a" -> 1.
-Both handled with no special casing, which is a sign the width formula
-(right - left + 1) is correct.""",
+Try our example by hand: s = "abcabcbb".
 
-    """Why it is O(n) despite looking like nested scanning.
-The left edge only ever moves FORWARD. Across the whole run, right advances n
-times and left advances at most n times, so the total pointer movement is
-bounded by 2n.
-Count total movement rather than reading loop nesting - the same argument
-applies to every sliding-window and monotonic-stack problem.""",
+    a b c a b c b b
+    0 1 2 3 4 5 6 7
 
-    """The jump versus the shrink-loop variant.
-An alternative removes characters from a set one at a time in an inner while
-loop until the duplicate is gone. That is also O(n) amortised and slightly
-easier to reason about.
-The last-seen-index jump moves left in one step instead of several. Both are
-accepted; the jump requires the staleness check, the shrink loop does not.
-Knowing why the jump needs an extra guard is the interesting part.""",
+Starting at position 0: a, b, c - all different so far. Next comes 'a' at
+position 3, but we already have an 'a', so this run has to stop. Length 3.
+Starting at position 1: b, c, a - fine - then 'b' at position 4 repeats. Length
+3 again. Starting at position 2: c, a, b then 'c' repeats. Length 3.
+
+The answer is 3. And notice something useful: the answer is 3 several times
+over, from several different starting points.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION, so you can see what we are speeding up. Try every possible
+substring. Pick a start, pick an end, then check whether that stretch has any
+repeats. For a string of length n there are about n x n / 2 substrings, and
+checking each one for repeats costs up to n more steps. That is roughly n-cubed
+work, written O(n^3). For a 1,000-character string that is a billion steps. It
+is correct, and it is unusable.
+
+THE UPGRADE - a SLIDING WINDOW. Picture a window cut out of a piece of card,
+laid over the text so that you can only see part of it:
+
+    a b c a b c b b
+    [     ]              <- the window currently shows "abc"
+    ^     ^
+   left  right
+
+The window has a left edge and a right edge. The rule we enforce is simple: the
+characters inside the window are always all different. Then:
+
+  Move the RIGHT edge one step right, taking in a new character.
+  If that character is already inside the window, the rule is broken - so drag
+  the LEFT edge rightwards, just far enough to leave the old copy behind.
+  Whatever the window's width is now, if it is the widest we have ever seen,
+  remember it.
+
+Neither edge ever moves backwards. The right edge walks the string once, and the
+left edge walks it at most once. So the total work is about 2n steps - O(n).
+From a billion steps down to two thousand, on the same input.
+
+That is the whole idea. The only thing left is to make the "drag the left edge
+far enough" step fast, and that is what the next section is for.""",
+
+    """3. DEFINING THE TERMS this solution uses.
+
+WINDOW: the stretch of the string between the two edges, left to right
+inclusive. If left = 1 and right = 3 the window covers positions 1, 2 and 3, so
+its WIDTH is right - left + 1 = 3. That "+1" catches people out; check it on a
+window where left and right are the same position - one character, and
+3 - 3 + 1 = 1. Correct.
+
+HASH MAP (also called a dictionary, and written {} in Python): a set of pairs
+where you look something up by a key and instantly get its value. Ours is called
+last_seen, and it stores "character -> the most recent position where I saw it".
+After reading "abca", last_seen holds {'a': 3, 'b': 1, 'c': 2} - note 'a' says 3,
+not 0, because we overwrite it with the newest position every time.
+
+Why a hash map rather than searching the window? Because looking a character up
+in a hash map takes the same tiny amount of time no matter how big the map is -
+this is what "O(1) lookup" means. Searching the window character by character
+would cost as much as the window is wide, and would drag us back toward the slow
+version.
+
+Now the important consequence of storing POSITIONS rather than just "yes I have
+seen this". When the right edge takes in a character we have seen before, we do
+not need to shuffle the left edge along one step at a time checking as we go. We
+already know exactly where the old copy sits, so we can JUMP the left edge to
+one position past it, in a single move.
+
+One catch, and it is the subtle line in the code. The map remembers every
+character ever seen, including ones the left edge has already slid past - those
+are outside the window and must be ignored. So before jumping, we check that the
+remembered position is at or after the left edge. If it is behind the left edge,
+that copy is no longer in the window and is not a repeat at all.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - a stale position in the map.
+
+s = "abba". Watch what happens if you jump the left edge without checking
+whether the old position is still inside the window.
+
+  right = 0, 'a': not seen. Map {'a':0}. left = 0. Width 1. best = 1.
+  right = 1, 'b': not seen. Map {'a':0,'b':1}. Width 2. best = 2.
+  right = 2, 'b': seen at 1, and 1 >= left(0), so it IS in the window. Jump
+    left to 1 + 1 = 2. Map {'a':0,'b':2}. Window is just "b". Width 1.
+  right = 3, 'a': seen at 0. Now the question that matters. Is 0 >= left(2)?
+    NO - position 0 is behind the left edge, so that 'a' was left behind long
+    ago and is not in the window. Do NOT move the left edge.
+    Window becomes "ba", width 2. best stays 2.
+
+Answer 2, which is right: "ab", "bb" is invalid, "ba" - the longest is 2.
+
+Now the bug. Drop the "and last_seen[ch] >= left" check, and at right = 3 you
+would jump left to 0 + 1 = 1. The left edge would move BACKWARDS, from 2 to 1,
+the window would become "bba" which contains two b's, and the width would come
+out as 3. Wrong answer, and worse, the left edge going backwards breaks the
+guarantee that makes this O(n) at all.
+
+The rule to remember: the left edge must never move backwards. Every jump must
+be forward-only, so many implementations write it as
+left = max(left, last_seen[ch] + 1), which says the same thing in one line
+instead of two.""",
+
+    """5. THE SMALL INPUTS, and a second look at the width formula.
+
+Empty string "". The loop never runs, best stays 0, answer 0. Correct.
+
+All the same character, "bbbb". right = 0 gives width 1. right = 1 sees 'b' at
+0, which is inside the window, so left jumps to 1 - the window is just that one
+'b', width 1. Same at every step. Answer 1. Correct: the longest run with no
+repeats is a single character.
+
+All different, "abcdef". No character is ever seen twice, so the left edge never
+moves at all. The window just grows: 1, 2, 3, 4, 5, 6. Answer 6, the whole
+string.
+
+One character, "a". Width 1 - 0 + 1... careful, left = 0 and right = 0, so
+0 - 0 + 1 = 1. Answer 1.
+
+Two things worth saying about the answer. First, we track best as we go rather
+than only at the end, because the window at the END of the run is not
+necessarily the widest one we ever had - in "abcabcbb" the final window is only
+"b". Second, we never need to know WHAT the best substring said; if the question
+asked for the text rather than the length, you would also record the left edge
+at the moment best was updated, and slice the string at the end.""",
+
+    """6. WHAT THE CODE DOES, in plain language.
+
+The code walks a single pointer along the string from left to right. That
+pointer is the RIGHT edge of the window. Alongside it, it keeps two other
+things: a LEFT edge, which only ever moves right, and a small lookup table
+recording, for every character it has met, the most recent position it appeared
+at.
+
+For each new character it reads, it asks one question: "have I seen you before,
+and was that inside the stretch I am currently holding?" There are two answers.
+
+If NO - either the character is brand new, or its only previous appearance is
+behind the left edge and therefore no longer in the window - it does nothing to
+the edges. The window simply got one character wider.
+
+If YES - the character really is a repeat inside the window - then the window is
+no longer valid, so it drags the left edge forward to sit one position past that
+earlier copy. Everything up to and including the old copy is thrown out of the
+window in one jump, and the window is valid again.
+
+Either way, it then records this character's new position in the lookup table
+(overwriting any older position), measures how wide the window is now, and keeps
+the measurement if it beats the best so far.
+
+When the right edge runs off the end of the string, the best measurement it ever
+took is the answer.
+
+The reason this is fast is that neither edge ever goes backwards. Each one
+travels the length of the string at most once, so the total work is proportional
+to the length of the string, not to the number of substrings in it.""",
+
+    """7. THE CODE, line by line.
+
+Keep "abba" beside you from section 4.
+
+    last_seen = {}
+The lookup table: character -> the most recent position it was seen at. It
+starts empty because we have not read anything yet.
+
+    left = 0
+The left edge of the window, starting at the front of the string.
+
+    best = 0
+The widest valid window seen so far. Starting at 0 is what makes the empty
+string return 0 without any special case.
+
+    for right, ch in enumerate(s):
+enumerate walks the string handing back BOTH the position and the character at
+once, so right is the position and ch is the character sitting there. right is
+the right edge of the window, and it moves one step per loop - it is the only
+thing driving the whole process forward.
+
+    if ch in last_seen and last_seen[ch] >= left:
+The two-part question from section 6, and both halves are essential.
+"ch in last_seen" asks whether we have ever seen this character.
+"last_seen[ch] >= left" asks whether that sighting is still INSIDE the window.
+In the "abba" trace, at right = 3 the first half was true ('a' was seen) but the
+second was false (position 0 is behind left = 2), so the whole condition was
+false and the left edge correctly stayed put.
+
+    left = last_seen[ch] + 1
+The jump. Move the left edge to just past the old copy, throwing that copy and
+everything before it out of the window in one move. This is what a hash map
+storing POSITIONS buys us - without it we would have to shuffle the left edge
+forward one character at a time.
+
+    last_seen[ch] = right
+Record where this character is NOW, overwriting any older position. This line
+sits outside the if, because it must happen whether or not we jumped - every
+character read has to have its position updated.
+
+    best = max(best, right - left + 1)
+Measure the current window and keep it if it is the widest yet. The "+1" is
+because both edges are included: a window from position 2 to position 3 holds
+two characters, and 3 - 2 + 1 = 2. Measuring on EVERY step, not just at the end,
+is what catches a wide window that appears in the middle and is later destroyed.
+
+    return best
+The widest window ever measured.""",
+
+    """8. TRACING THE CODE, variable by variable.
+
+s = "abcabcbb". Start: last_seen = {}, left = 0, best = 0.
+
+right=0, ch='a'  'a' not in map -> no jump.
+                 map = {'a':0}.  width = 0-0+1 = 1.  best = 1.
+right=1, ch='b'  not in map.  map = {'a':0,'b':1}.  width = 1-0+1 = 2. best = 2.
+right=2, ch='c'  not in map.  map = {'a':0,'b':1,'c':2}. width = 3. best = 3.
+right=3, ch='a'  in map at 0, and 0 >= left(0) -> it IS in the window. JUMP:
+                 left = 0+1 = 1.  map['a'] = 3.
+                 window is now positions 1..3 = "bca". width = 3-1+1 = 3.
+                 best stays 3.
+right=4, ch='b'  in map at 1, and 1 >= left(1) -> in the window. JUMP:
+                 left = 1+1 = 2.  map['b'] = 4.
+                 window = positions 2..4 = "cab". width = 3. best stays 3.
+right=5, ch='c'  in map at 2, and 2 >= left(2) -> in window. JUMP: left = 3.
+                 map['c'] = 5. window = "abc". width = 3. best stays 3.
+right=6, ch='b'  in map at 4, and 4 >= left(3) -> in window. JUMP: left = 5.
+                 map['b'] = 6. window = positions 5..6 = "cb". width = 2.
+                 best stays 3.
+right=7, ch='b'  in map at 6, and 6 >= left(5) -> in window. JUMP: left = 7.
+                 map['b'] = 7. window = position 7 only = "b". width = 1.
+                 best stays 3.
+
+Loop ends. return best = 3.
+
+Read the left column: right went 0,1,2,3,4,5,6,7 and never went back. Read the
+left edge: 0,0,0,1,2,3,5,7 - it only ever went forward too. That is the whole
+efficiency argument, visible in the trace.""",
+
+    """9. COMPLEXITY, COMMON MISTAKES, and the takeaway.
+
+TIME: O(n). The right edge takes exactly n steps. The left edge only ever moves
+forward, so across the whole run it also takes at most n steps in total - not n
+steps per character. Adding those together is still proportional to n. Every
+other operation inside the loop - a map lookup, a map write, a comparison - takes
+a fixed amount of time regardless of input size.
+
+SPACE: O(k), where k is the number of DIFFERENT characters that can appear. For
+lowercase English letters that is at most 26 entries in the map, no matter
+whether the string is a hundred characters or a million; people often write this
+as O(1) for that reason, and say O(min(n, alphabet size)) to be exact.
+
+MISTAKE 1 - letting the left edge move backwards. Forgetting the
+"last_seen[ch] >= left" half of the condition lets a stale position drag the
+left edge back, which both gives wrong answers (as we saw on "abba") and
+destroys the O(n) guarantee. Writing left = max(left, last_seen[ch] + 1) makes
+the forward-only rule impossible to get wrong.
+
+MISTAKE 2 - measuring the window as right - left instead of right - left + 1,
+which reports every answer as one too small. Test it on a single character: a
+window from 0 to 0 holds one character, and only the "+1" version says so.
+
+ONE-SENTENCE TAKEAWAY: slide a window along the string, and whenever the new
+character is a repeat that is still inside the window, jump the left edge past
+its previous position - because the edges never move backwards, the whole thing
+costs one pass.""",
 ]
 
 _EX_P0B["Lowest Common Ancestor of a Binary Tree"] = [
