@@ -22229,54 +22229,131 @@ for _e in ENTRIES:
 _EX_P0 = {}
 
 _EX_P0["Climbing Stairs"] = [
-    """The textbook case, traced.
-n = 5. prev=1 (ways to reach step 1), curr=2 (ways to reach step 2).
-  i=3: new = 1+2 = 3   -> prev=2, curr=3
-  i=4: new = 2+3 = 5   -> prev=3, curr=5
-  i=5: new = 3+5 = 8   -> prev=5, curr=8
-Answer 8. Enumerating to check: 11111, 1112, 1121, 1211, 2111, 122, 212, 221 -
-eight routes. The sequence 1,2,3,5,8 is Fibonacci shifted by one, which is the
-fastest way to sanity-check your implementation.""",
+    """Let us actually count them by hand first, with no code and no theory.
 
-    """The base cases, which the loop never touches.
-n = 1: one way (a single step). n = 2: two ways (1+1, or 2).
-These are returned before the loop starts, and they are what the whole
-recurrence is built on. If you seed prev and curr wrongly - say both at 1 -
-you compute Fibonacci from the wrong offset and every answer is one place out.
-Trace n=3 by hand after any change: it must give 3, not 2.""",
+There is a staircase. You can take either ONE step or TWO steps at a time. The
+question is: how many different ways can you get to the top?
 
-    """The edge case that breaks a naive recursive version.
-Writing it as plain recursion - climb(n) = climb(n-1) + climb(n-2) - is correct
-and takes exponential time, because climb(30) recomputes climb(28) twice,
-climb(27) three times, and so on. At n=40 that is over a billion calls.
-Adding memoisation drops it to O(n). The iterative two-variable version is the
-same thing with the recursion unrolled, which is why it needs no cache at all.""",
+A staircase with 1 stair. Only one way: take one step. -> 1 way
+A staircase with 2 stairs. Either two small steps (1 then 1), or one big step
+(2). -> 2 ways
+A staircase with 3 stairs. Write them all out:
+    1+1+1
+    1+2
+    2+1
+-> 3 ways
+A staircase with 4 stairs:
+    1+1+1+1,  1+1+2,  1+2+1,  2+1+1,  2+2
+-> 5 ways
 
-    """Why two variables rather than an array - the space case.
-n = 1,000,000. An array solution allocates a million integers, about 8 MB in
-Python and much more with object overhead. The two-variable version uses two
-integers regardless of n.
-Each step only ever looks back two positions, so nothing older is needed. That
-same observation - "the transition reaches back a fixed distance, so keep only
-that window" - is what turns a large class of DP problems from O(n) space into
-O(1).""",
+So far the counts are 1, 2, 3, 5. Look at those four numbers for a moment
+before reading on - is there a pattern?""",
 
-    """The variant that shows you understood the recurrence.
-If you could climb 1, 2 OR 3 steps at a time, the recurrence becomes
-ways(n) = ways(n-1) + ways(n-2) + ways(n-3), and you carry three variables.
-For n = 5: 1,2,4 seeds -> i=4: 1+2+4=7 -> i=5: 2+4+7=13.
-Nothing about the method changes; only the number of terms you sum and the
-number of variables you slide. Interviewers ask this immediately after the base
-version, so have the shape ready.""",
+    """The pattern, and WHY it is true (this is the important bit).
 
-    """The real-world framing this problem stands in for.
-It is the counting form of "how many distinct paths reach this state?", which
-appears as: how many ways to make change with ordered coins, how many binary
-strings of length n avoid two consecutive ones (same recurrence), and how many
-routes a robot can take on a 1-D track.
-The tell is always the same - the answer at position n is a fixed-size sum of
-answers at earlier positions, and no choice needs to be remembered beyond that
-window.""",
+1, 2, 3, 5 - each number is the two before it added together. 1+2 = 3, and
+2+3 = 5. If that is real, the next one should be 3+5 = 8.
+
+Here is why it must be true. Think about the very LAST move you made to arrive
+at stair number 4. There are only two possibilities:
+  - Your last move was a 1-step. Then just before it you were standing on
+    stair 3.
+  - Your last move was a 2-step. Then just before it you were standing on
+    stair 2.
+There is no third option, because you can only step 1 or 2.
+
+So every route to stair 4 is either "some route to stair 3, then a small step"
+or "some route to stair 2, then a big step". Nothing is counted twice (the two
+groups end differently) and nothing is missed. Therefore:
+
+    ways(4) = ways(3) + ways(2) = 3 + 2 = 5.
+
+That reasoning works for any stair, which gives the general rule:
+    ways(n) = ways(n-1) + ways(n-2)
+
+A rule that defines an answer using SMALLER versions of the same answer is
+called a RECURRENCE. That is all the word means.""",
+
+    """Turning the rule into code, one line at a time.
+
+To work out ways(5) we need ways(4) and ways(3). To get those we need ways(3)
+and ways(2), and so on. Rather than jumping around, we build UPWARDS from the
+small cases we already counted by hand.
+
+We only ever need the two most recent answers, so we keep two variables:
+    prev = 1     <- ways to reach stair 1
+    curr = 2     <- ways to reach stair 2
+
+Now walk up the staircase, one stair at a time. At each new stair, the answer
+is prev + curr; then both variables shift forward one place:
+
+    stair 3:  new = 1 + 2 = 3     now prev = 2, curr = 3
+    stair 4:  new = 2 + 3 = 5     now prev = 3, curr = 5
+    stair 5:  new = 3 + 5 = 8     now prev = 5, curr = 8
+
+Answer for 5 stairs: 8.
+
+And we can check it by hand, because 8 is small enough to list:
+    11111, 1112, 1121, 1211, 2111, 122, 212, 221
+Eight routes. The code agrees with the counting.""",
+
+    """The starting values, which are the easiest thing to get wrong.
+
+The loop above never computes ways(1) or ways(2) - it ASSUMES them. Those two
+starting values are called the BASE CASES: the smallest answers you know
+outright and build everything else from.
+
+ways(1) = 1 and ways(2) = 2, exactly as we counted at the start.
+
+If you set them wrongly - say prev = 1 and curr = 1 - then stair 3 comes out as
+1 + 1 = 2 instead of 3, and every single answer after it is wrong too, because
+each one is built from the last. Nothing crashes; the numbers are simply
+quietly incorrect.
+
+So after any change, test n = 3 by hand. It must give 3. That one check catches
+almost every mistake in this problem.""",
+
+    """Why not just write it the obvious recursive way?
+
+The rule ways(n) = ways(n-1) + ways(n-2) can be written as a function that
+calls itself:
+
+    def climb(n):
+        if n <= 2: return n
+        return climb(n-1) + climb(n-2)
+
+This is CORRECT, and it is unusably slow for large n. Here is why. To work out
+climb(5) it computes climb(4) and climb(3). But climb(4) itself computes
+climb(3) and climb(2) - so climb(3) is calculated TWICE. Further down, climb(2)
+gets recalculated five times.
+
+The waste doubles with every extra stair. At n = 40 it makes over a billion
+calls and takes minutes; at n = 50 you would wait about an hour.
+
+Two ways to fix it. MEMOISATION means keeping a note of each answer the first
+time you compute it and reusing the note afterwards ("memo" as in memorandum).
+Or - what we did above - build upwards with two variables, which never
+recomputes anything because it only ever moves forward. Same answers, and it
+finishes instantly even for n = 1,000,000.""",
+
+    """One extra thing worth knowing, and where else this shows up.
+
+If the rules changed so you could climb 1, 2 OR 3 stairs at a time, nothing
+about the method changes - only the number of possibilities for your last move.
+Now the last step could have come from stair n-1, n-2 or n-3, so:
+    ways(n) = ways(n-1) + ways(n-2) + ways(n-3)
+and you carry three variables instead of two. Interviewers ask this immediately
+after the basic version, so it is worth having seen it once.
+
+Two more notes:
+- The sequence 1, 2, 3, 5, 8, 13 is the FIBONACCI sequence (each number is the
+  sum of the two before it), just started one place along. If your code
+  produces Fibonacci numbers that are shifted, your base cases are off by one.
+- The same "count the routes into this position" idea appears in: how many ways
+  a robot can cross a grid, how many ways to make change from a set of coins,
+  and how many binary strings of a given length contain no two 1s in a row.
+  Once you recognise "the answer here is the sum of a few earlier answers", you
+  are looking at this exact pattern.""",
 ]
 
 _EX_P0["Flood Fill"] = [
@@ -22552,59 +22629,124 @@ entirely, is the useful thing here.""",
 ]
 
 _EX_P0["Balanced Binary Tree"] = [
-    """The textbook balanced case.
-      3
-    9   20
-       15  7
-height(9) = 1. height(15) = height(7) = 1, so height(20) = 2.
-At the root: |1 - 2| = 1, which is allowed, so height(3) = 3 and the answer is
-true. No node ever returns the -1 flag.""",
+    """First, let us make sure the picture and the words are clear.
 
-    """The unbalanced case, showing the flag propagate.
-      1
-    2   2
-  3   3
- 4 4
-height(4)=1, height(3)=2, height(2 on the left)=3, height(2 on the right)=1.
-At the root: |3 - 1| = 2 > 1, so the root returns -1 and the answer is false.
-Note the imbalance is AT the root here; the next example shows the case that
-catches naive solutions.""",
+A BINARY TREE is a diagram where each item can have up to two items hanging
+below it. Here is the one we will work with:
 
-    """The case that breaks a root-only check.
-        1
-      2   2
-    3
-  4
-The root's two subtrees have heights 3 and 1 - already unbalanced, so this one
-is caught. But consider a tree whose root subtrees are both height 3 while a
-node three levels down has children of heights 2 and 0. A solution that only
-compares the root's two heights returns true; the correct answer is false.
-Balance must hold at EVERY node, which is why the check lives inside the
-recursion rather than at the top.""",
+        3
+       / \\
+      9   20
+          / \\
+        15   7
 
-    """The empty and single-node cases.
-Empty -> height 0, balanced by definition.
-Single node -> heights 0 and 0, difference 0, height 1, balanced.
-These fall out of the base case with no special handling. If your code raises on
-an empty tree, the base case is missing.""",
+The vocabulary, defined as it appears:
+- 3 sits at the very top. The top item is called the ROOT.
+- Each item is called a NODE. The things hanging below a node are its CHILDREN.
+- 9 has nothing below it - a dead end. A node with no children is a LEAF.
+- 15 and 7 are also leaves. 20 is not, because it has two children.
 
-    """Why the -1 flag makes it O(n) instead of O(n^2).
-The naive version calls a separate height() at each node. For a tree of n nodes
-with height h, that is O(n x h) - O(n^2) on a degenerate chain.
-The flag version computes each subtree's height exactly once on the way up, and
-carries the failure signal in the same return value. One traversal, O(n).
-The trick generalises: when you want two answers from one traversal, look for a
-value the real answer can never take and use it as the second channel. Here
-heights are always non-negative, so -1 is free.""",
+That is the whole vocabulary you need. Now the actual question: is this tree
+BALANCED?""",
 
-    """The definition to confirm before coding.
-This problem defines balanced as "the heights of every node's two subtrees
-differ by at most 1" - the AVL definition.
-Other definitions exist: red-black trees guarantee the longest path is at most
-twice the shortest, which is a weaker condition. A tree can satisfy that and
-fail the AVL test.
-Asking which definition is meant takes five seconds and occasionally changes the
-answer.""",
+    """What HEIGHT means, counted on the picture above.
+
+The HEIGHT of a node is how many levels tall the tree is if you start counting
+at that node.
+
+- A leaf has height 1. It is just itself - one level, nothing below.
+  So height(9) = 1, height(15) = 1, height(7) = 1.
+- A node with children is 1 + the height of its TALLER child.
+  So height(20) = 1 + (the taller of 15 and 7, both height 1) = 1 + 1 = 2.
+- And height(3) = 1 + (the taller of 9 and 20) = 1 + 2 = 3.
+
+Read that once more against the picture: the tree really is 3 levels tall, so
+the root's height of 3 makes sense. Height is just 'how many levels are below
+me, including me'.""",
+
+    """What BALANCED means, and checking our tree.
+
+A tree is BALANCED if, AT EVERY NODE, the left side and the right side are
+roughly the same height - specifically, their heights differ by no more than 1.
+
+Written with symbols: |left height - right height| <= 1, where the two vertical
+bars mean 'ignore the minus sign, just give me the size of the gap'.
+
+Now check our tree at the root:
+- Left side is the node 9, height 1.
+- Right side is the node 20, height 2.
+- The gap is |1 - 2| = 1. Is 1 more than 1? No. So this node is fine.
+
+We must check every OTHER node too. Node 20 has children of height 1 and 1, gap
+0 - fine. The leaves have nothing below them, so nothing to compare. Every node
+passes, so the answer is TRUE: the tree is balanced.""",
+
+    """The case that catches most people: checking only the root is not enough.
+
+It is tempting to write code that measures the root's two sides and stops. That
+is wrong, and here is a tree that proves it:
+
+            1
+           / \\
+          2   2
+         /     \\
+        3       3
+       /         \\
+      4           4
+
+At the ROOT: the left side is 3 levels tall and so is the right side. Gap 0 -
+looks perfectly balanced! A root-only check happily returns true.
+
+But look at node 2 on the left. Its left child leads down two more levels; its
+right side is empty (height 0). The gap there is |2 - 0| = 2, which is more
+than 1. So the tree is NOT balanced.
+
+This is why the rule says 'at EVERY node' and why the check has to live inside
+the recursion, not at the top.""",
+
+    """The '-1 flag' trick, and why it exists.
+
+Here is the obvious way to write this: for every node, call a height() function
+on its left side and on its right side, compare them, then recurse. That works -
+but it is slow, because height() walks the whole subtree, and you call it again
+at every node. The same nodes get measured over and over. For a long spindly
+tree of n nodes this becomes roughly n x n steps.
+
+The trick: write ONE function that walks the tree and returns each node's
+height - but give it a secret second job. If it ever discovers a node that is
+unbalanced, instead of returning a real height it returns -1, meaning
+'imbalance found, stop looking'.
+
+That -1 then travels back up the tree. Any node that sees -1 from a child
+immediately returns -1 itself, without bothering to compare anything. So the
+first problem found short-circuits the whole check.
+
+Why -1 specifically? Because a real height is never negative - the smallest
+possible is 0 for an empty spot. So -1 is a value the answer can never
+legitimately be, which makes it safe to use as a signal. That idea - pick an
+impossible value to carry a second message - is worth remembering; it comes up
+often.
+
+In our first tree nothing was ever unbalanced, so the -1 was never triggered.""",
+
+    """The small cases, and the speed.
+
+An EMPTY tree (no nodes at all): height 0, and it is balanced - there is
+nothing that could be lopsided. This falls out of the base case; if your code
+crashes on an empty tree, the base case is missing.
+
+A SINGLE node: its two sides are both empty (height 0 each), the gap is 0, so
+it is balanced and its own height is 1.
+
+Speed: the -1 version visits each node exactly once, so it takes about n steps
+for n nodes - written O(n). The naive version that re-measures heights takes
+about n x height steps, which for a long thin tree is n x n. On a tree of
+10,000 nodes that is the difference between 10,000 steps and 100 million.
+
+One last thing worth asking in an interview: this problem uses the definition
+'every node's two subtrees differ in height by at most 1'. Other definitions of
+'balanced' exist for other kinds of tree, so confirming which one is meant takes
+five seconds and occasionally changes the answer.""",
 ]
 
 _EX_P0["Diameter of a Binary Tree"] = [
@@ -37192,6 +37334,284 @@ monitor, stated openly rather than pretending the statistics worked out.""",
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AD:
         _e["examples"] = _EX_P1AD[_e["title"]]
+
+
+# ── First-time-learner register ───────────────────────────────────────────
+# From here on, every example set starts with an everyday situation before any
+# technical word, and defines each term in plain language the moment it is
+# used. The reader is meeting most of this for the first time.
+_EX_P1AE = {}
+
+_EX_P1AE["Array Partition I"] = [
+    """Start with the actual situation, no jargon yet.
+You have 4 coins: 1p, 4p, 3p, 2p. You must split them into 2 PAIRS. From each
+pair you are only allowed to keep the SMALLER coin. You want to keep as much
+money as possible.
+Try the pairings by hand:
+  (1,4) and (3,2) -> you keep 1 and 2 -> total 3
+  (1,3) and (4,2) -> you keep 1 and 2 -> total 3
+  (1,2) and (3,4) -> you keep 1 and 3 -> total 4  <- best
+So the answer is 4. Notice what the best pairing did: it put the two SMALL
+coins together and the two BIG coins together. That is the whole idea, and we
+have not used a single technical word yet.""",
+
+    """Why putting similar numbers together wins.
+In every pair, the bigger coin is thrown away. So the question is really: how
+do I throw away as little as possible?
+If you pair 1 with 4, you throw away the 4 - a big loss. If you pair 3 with 4,
+you throw away the 4 as well, but now the 1 is paired with the 2, so you only
+throw away the 2. The waste went from 4 to (4 and 2)... let us count properly:
+  (1,4)+(3,2): thrown away = 4 and 3 = 7 wasted
+  (1,2)+(3,4): thrown away = 2 and 4 = 6 wasted
+Less waste means more kept. And the way to waste least is to pair each big
+number with the number just below it, so the gap between them is as small as
+possible.""",
+
+    """Turning that into a rule you can code.
+'Pair each number with the one closest to it' is exactly what happens if you
+SORT the numbers (put them in order from smallest to largest) and then pair
+them up two at a time, left to right.
+[1,4,3,2] sorted becomes [1,2,3,4]. Pair them as (1,2) and (3,4).
+Now, in each pair, which one do you keep? The smaller one - which is always the
+FIRST of the two. In the sorted list those are the ones at positions 0 and 2.
+Positions 0, 2, 4, 6... are called the EVEN positions (a position is just the
+slot number, counting from 0). So the answer is: sort, then add up everything
+at an even position.""",
+
+    """Reading the one line of code.
+    nums.sort()
+    return sum(nums[::2])
+`nums.sort()` puts the list in order, smallest first.
+`nums[::2]` is Python's way of saying 'start at the beginning and take every
+SECOND item' - so from [1,2,3,4] it gives [1,3]. Those are exactly the smaller
+member of each pair.
+`sum(...)` adds them up: 1 + 3 = 4, matching what we worked out by hand.
+Two lines, and both of them came directly from the coin example.""",
+
+    """Checking the odd cases, so you trust it.
+Two numbers only, [5,9]: sorted [5,9], one pair, you keep 5. Answer 5.
+All the same, [2,2,2,2]: every pair keeps a 2, answer 4. Nothing to optimise
+when the numbers are identical.
+Negative numbers, [-1,-5,2,4]: sorted [-5,-1,2,4], pairs (-5,-1) and (2,4), you
+keep -5 and 2, total -3. Still correct - the rule never assumed the numbers
+were positive.
+A single pair of equal numbers [7,7]: keep 7.""",
+
+    """How fast is it, and what problem family is this?
+The slow part is the SORT. Sorting a list of n items takes about n x log(n)
+steps - for 1,000 items that is roughly 10,000 steps rather than the 1,000,000
+you would need to try every possible pairing. Adding up the even positions is
+then just one quick walk through the list.
+This belongs to a family called GREEDY problems - 'greedy' means you make the
+obviously-best local choice (here: pair neighbours) and it happens to give the
+best overall answer. Not every problem works that way, which is why we checked
+by hand with the coins first. Related ones you will meet: Assign Cookies, Boats
+to Save People, and Minimum Number of Arrows - all 'sort first, then take the
+obvious choice'.""",
+]
+
+_EX_P1AE["Largest Perimeter Triangle"] = [
+    """First, the real-world fact this problem rests on.
+Take three drinking straws of lengths 2cm, 3cm and 10cm. Try to make a triangle.
+You cannot - the 2 and the 3 together are only 5cm long, so they can never
+stretch far enough to meet across the 10cm straw. They fall short.
+Now try 4cm, 5cm and 6cm. The 4 and 5 together are 9cm, which is more than 6,
+so there is slack and they meet above the 6cm base. A triangle forms.
+That is the whole rule: THE TWO SHORTER SIDES ADDED TOGETHER MUST BE LONGER
+THAN THE LONGEST SIDE. Mathematicians call this the triangle inequality, but
+you just discovered it with straws.""",
+
+    """What the problem is asking for.
+PERIMETER means the distance all the way around the shape - just the three side
+lengths added together. So a triangle with sides 4, 5 and 6 has a perimeter of
+15.
+You are given a pile of straws and asked: pick any three that CAN form a
+triangle, and make the perimeter as big as possible.
+Your instinct is probably 'just take the three longest straws'. That is the
+right instinct, but it does not always work - the three longest might fail the
+straw test. So the real question is what to do when that happens.""",
+
+    """Why you sort from LARGEST to smallest, and check neighbours.
+Sort the straws longest-first: say [10, 6, 5, 4, 3].
+Check the first three: 10, 6, 5. Is 6 + 5 (= 11) bigger than 10? Yes -> they
+form a triangle, and since these are the three longest straws available, no
+other combination can beat their perimeter. Answer 10 + 6 + 5 = 21. Stop.
+If they had FAILED - say the list were [20, 6, 5, 4, 3], where 6 + 5 = 11 is
+not more than 20 - then you slide down one and try 6, 5, 4. Keep sliding until
+a triple works.""",
+
+    """Why you only need to check CONSECUTIVE triples.
+This is the part worth slowing down on. Suppose 20, 6, 5 fails. Could 20, 6, 4
+work? No - you swapped the 5 for a SMALLER straw, so the two short sides add up
+to even less. Every other triple containing the 20 is worse than the one you
+already tried.
+So once a straw fails as the longest side with the two best partners it could
+possibly have, that straw can be discarded entirely. That is why sliding down
+one position at a time is enough, and why you never need to test every
+combination.""",
+
+    """Reading the code, line by line.
+    nums.sort(reverse=True)          # longest straw first
+    for i in range(len(nums) - 2):   # stop 2 early, we need 3 straws
+        if nums[i] < nums[i+1] + nums[i+2]:   # the straw test
+            return nums[i] + nums[i+1] + nums[i+2]
+    return 0                          # no triple worked at all
+`reverse=True` sorts big-to-small. `len(nums) - 2` stops the loop before it runs
+off the end, because at position i you also need i+1 and i+2 to exist.
+The `if` is exactly the straw rule: the longest side (nums[i]) must be SHORTER
+than the other two added together.""",
+
+    """The cases to test, and how fast it is.
+Fewer than 3 straws -> no triangle possible, return 0.
+No valid triple at all, like [1, 2, 50] -> the loop finishes without returning,
+so you return 0.
+Straws of equal length [5,5,5] -> 5 < 5 + 5 is true, so a perimeter of 15.
+Two equal and one different [5,5,9] -> 9 < 5 + 5 = 10, valid, perimeter 19.
+Speed: the sort dominates at about n x log(n) steps; the scan afterwards is a
+single walk. Checking every possible triple instead would take about n^3 steps -
+for 1,000 straws that is a billion checks versus about 10,000. That gap is why
+sorting first is worth it.""",
+]
+
+_EX_P1AE["Embeddings for recommendation systems"] = [
+    """Start with a map, not with maths.
+Imagine pinning every film you own onto a huge noticeboard. You pin them so
+that films people tend to enjoy together end up CLOSE to each other. All the
+gentle romantic comedies drift into one corner; the loud action films cluster
+somewhere else; the documentaries form their own patch.
+Now someone tells you 'I loved this film' and points at a pin. To recommend
+something, you just look at what is pinned NEARBY.
+That noticeboard is the whole idea. Everything below is about how to place the
+pins automatically, and how to search near a pin quickly.""",
+
+    """What an 'embedding' actually is.
+The noticeboard has two directions - left/right and up/down - so each pin's
+position is just two numbers, like (3.5, 7.1). An EMBEDDING is exactly that:
+a list of numbers giving something's position.
+Real systems use far more than two directions - often 64, 128 or 768 of them.
+You cannot picture 128 directions, and you do not need to; the maths of
+'which pins are close together' works the same no matter how many numbers are
+in the list. Each number is called a DIMENSION, which is just a fancy word for
+'one of the directions on the board'.
+So: an embedding is a list of numbers representing an item, chosen so that
+similar items have similar lists.""",
+
+    """How the pins get placed - two different sources.
+CONTENT-BASED: place a film using facts about the film itself - its genre, its
+description, its cast. Two films with similar descriptions get similar numbers.
+The advantage is you can place a brand-new film immediately, because you only
+need its description.
+BEHAVIOUR-BASED (also called collaborative filtering, meaning 'using the crowd's
+behaviour'): place films based on who watched what. If the same people watch
+film A and film B, push A and B closer together - even if their descriptions
+look nothing alike. This often works better, because it captures taste rather
+than surface features.
+Most real systems use both, because each covers the other's weakness.""",
+
+    """Measuring 'close', and the small detail that matters.
+The usual measure is COSINE SIMILARITY. Forget the name for a second: it asks
+'do these two lists of numbers point in the same DIRECTION?', ignoring how long
+they are. It gives 1 for 'same direction' (very similar), 0 for 'unrelated',
+and -1 for 'opposite'.
+Why ignore length? Because in a lot of systems a popular film ends up with
+bigger numbers simply from having more data, and you do not want popularity to
+masquerade as similarity. Comparing direction only strips that out.
+The alternative, plain straight-line distance, DOES care about length, which is
+sometimes what you want - so this is a genuine choice, not a formality.""",
+
+    """Why you cannot compare against every item, and what to do instead.
+Suppose you have 10 million films and each embedding has 768 numbers. Comparing
+a user against every film means 10 million comparisons of 768 numbers each -
+around 8 billion multiplications for ONE recommendation. That is seconds of
+work, and a web page needs an answer in milliseconds.
+So real systems use an APPROXIMATE NEAREST NEIGHBOUR index - 'approximate'
+meaning it might occasionally miss the true closest item, in exchange for being
+about a thousand times faster. HNSW is the common one: it builds a network of
+shortcuts between pins so you can hop toward the right region instead of
+checking everything.
+Losing perhaps 2% of the true best matches to gain 1000x speed is a trade
+almost every product makes.""",
+
+    """The problem this approach cannot solve on its own: COLD START.
+A brand-new user has watched nothing, so there is no behaviour to place them
+with. A brand-new film has no viewers, so the crowd cannot position it either.
+This is called the cold-start problem - the system is 'cold' because it has no
+history to warm it up.
+The usual fixes: fall back to content-based placement for new items (you always
+have a description), show new users popular-in-your-country items until they
+click a few things, or ask three quick onboarding questions. Being able to name
+cold start and give a fallback is what separates a real design answer from a
+description of embeddings.""",
+]
+
+_EX_P1AE["Design a customer-support copilot"] = [
+    """Picture the job before designing anything.
+A support agent has a customer asking 'why was I charged twice in March?'. The
+agent currently: searches the help docs, skims three old tickets that look
+similar, checks the billing system, then writes a reply. That takes eight
+minutes.
+The copilot's job is to do the searching and the drafting so the agent spends
+those eight minutes on judgement instead. Note what it is NOT doing: it is not
+deciding to refund anyone. Keeping that boundary clear is the whole design.""",
+
+    """The core piece: answering FROM YOUR DOCUMENTS, not from memory.
+A language model on its own only knows what it read during training - it has
+never seen your refund policy, and if you ask it anyway it will invent
+something plausible. That inventing is called HALLUCINATION.
+The fix is RAG - Retrieval-Augmented Generation. In plain steps: (1) RETRIEVE
+the few most relevant paragraphs from your own help docs and past tickets,
+(2) AUGMENT the question by pasting those paragraphs in alongside it,
+(3) GENERATE the answer from that material.
+Because the model is now reading your actual policy, it can quote it and link
+to it - and if the policy changes tomorrow you update the document, with no
+retraining involved.""",
+
+    """Why past TICKETS matter as much as the help docs.
+Help docs describe how things are supposed to work. Old resolved tickets show
+what actually gets said to customers - the phrasing, the exceptions, the
+workaround for the known bug in the March billing run.
+So index both, but tag them: a doc is authoritative policy, a ticket is
+precedent. When they disagree, the policy wins, and the copilot should say so
+rather than repeating what one agent improvised in 2023. Storing that tag
+alongside each chunk of text is a small decision that prevents a whole class of
+wrong answers.""",
+
+    """Actions, and the line you do not cross.
+Beyond answering, the copilot can be given TOOLS - small functions it may call,
+like look_up_order(order_id) or check_refund_eligibility(customer_id).
+Split them into two groups. READ-ONLY tools (looking things up) can run
+automatically; the worst case is a wrong answer. WRITE tools (issue a refund,
+cancel a subscription, email the customer) must never run on the model's own
+judgement - they get drafted for a human to approve with one click.
+The reason is simple: a language model can be talked into things by the text it
+reads, including text a customer wrote. If it can issue refunds, then so, in
+effect, can the customer.""",
+
+    """Knowing when to hand over - the feature that earns trust.
+The copilot must be able to say 'I do not know'. Two triggers: the retrieved
+documents are all weakly related (the similarity score is below a threshold you
+set), or the question touches a category you have marked sensitive - billing
+disputes, account closure, anything legal or medical.
+In those cases it escalates to a human instead of guessing. Counter-intuitively
+this makes agents trust it MORE, because a tool that is confidently wrong once
+gets switched off, while a tool that admits its limits gets used daily.""",
+
+    """How you tell whether it is working.
+Measure the two halves separately. RETRIEVAL: on a set of real past questions
+with the correct source document labelled, how often is that document in the
+top 5? If that number is 60%, four questions in ten are unanswerable no matter
+how good the writing is - and no amount of prompt-tweaking will fix it.
+GENERATION: is every claim supported by the retrieved text (faithfulness), and
+does it answer what was asked?
+Then the numbers the business cares about: average handling time, how often
+agents send the draft unedited, escalation rate, and customer satisfaction. A
+copilot that saves two minutes per ticket but raises escalations is not a
+win.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AE:
+        _e["examples"] = _EX_P1AE[_e["title"]]
 
 
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
