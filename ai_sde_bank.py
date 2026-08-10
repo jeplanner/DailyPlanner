@@ -25877,50 +25877,320 @@ top.""",
 ]
 
 _EX_P0B["Merge Intervals"] = [
-    """The textbook case, traced.
-[[1,3],[2,6],[8,10],[15,18]] - already sorted by start.
-  merged=[[1,3]].
-  [2,6]: 2 <= 3, overlap -> extend end to max(3,6)=6. merged=[[1,6]].
-  [8,10]: 8 > 6, gap -> append. merged=[[1,6],[8,10]].
-  [15,18]: 15 > 10 -> append.
-Answer [[1,6],[8,10],[15,18]].""",
+    """1. THE GOAL, in plain English.
 
-    """The swallowed interval - why max() on the end matters.
-[[1,10],[2,3]] sorted by start.
-  merged=[[1,10]]. Then [2,3]: 2 <= 10 so they overlap.
-  With max: end stays max(10,3)=10 -> [[1,10]]. Correct.
-  Without max (assigning 3 blindly): [[1,3]] - you have silently shrunk the
-  interval and lost coverage from 3 to 10.
-This is the single most common bug in the problem.""",
+You are given a list of time slots - each one just a start and an end, like
+"9 to 12" or "11 to 15". Some of them overlap. Squash every group of
+overlapping slots into a single slot that covers the whole group, and hand back
+the tidied-up list.
 
-    """Touching intervals - the ambiguity to raise.
-[[1,4],[4,5]]. With <= they merge into [1,5]. With strict < they stay separate.
-Both are defensible depending on whether the intervals are closed or half-open.
-Ask. For meeting rooms, a meeting ending at 4 and another starting at 4 usually
-do NOT conflict; for numeric ranges they usually do merge.""",
+Think of a diary. You have blocks written down as:
 
-    """Unsorted input, which is what makes sorting mandatory.
-[[8,10],[1,3],[2,6]] - without sorting, the sweep compares [1,3] against
-merged's last [8,10], sees no overlap, and appends - producing three intervals
-when the answer is two.
-Sorting by start is what guarantees that anything capable of overlapping the
-current interval comes next, which is what collapses O(n^2) pairwise comparison
-into one pass.""",
+    9-12,  11-15,  16-18
 
-    """Edge cases.
-Empty input -> empty output, guarded before indexing.
-One interval -> returned unchanged.
-Identical intervals [[1,4],[1,4]] -> merge into one, since 1 <= 4.
-All disjoint -> every interval appended, output equals input.""",
+The first two touch each other, so really you are busy from 9 straight through
+to 15 with no gap. The third one is separate. So the tidy answer is:
 
-    """The family, and when to sort by END instead.
-Insert Interval: three phases over an already-sorted list.
-Meeting Rooms II: sort by start, min-heap of end times; the heap size is the
-rooms needed.
-Non-overlapping Intervals and Minimum Arrows: sort by END and greedily keep -
-because when you want to KEEP the most intervals, finishing earliest leaves the
-most room.
-Rule of thumb: sort by start to MERGE, sort by end to SELECT.""",
+    9-15,  16-18
+
+Each of those pairs is called an INTERVAL - just a start value and an end value,
+written [start, end], meaning everything from start to end inclusive.
+
+Two intervals OVERLAP if they share any point at all. [1, 5] and [4, 9] overlap
+because 4 and 5 are in both. [1, 5] and [6, 9] do not - there is a gap between
+them. (Whether [1, 5] and [5, 9] count as overlapping is a decision the problem
+has to make; almost always yes, they touch at 5, so they merge. Ask, or state
+your assumption.)""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Take every pair of intervals and check whether they overlap;
+whenever a pair does, replace the two of them with one merged interval, then
+start over, because the new bigger interval may now overlap something it did not
+touch before. Repeat until a full pass finds nothing to merge.
+
+That is correct and it is how most people first think about it. It is also slow:
+each pass compares every interval with every other one, which is about n x n / 2
+comparisons, and you may need many passes. Roughly n-cubed work in the worst
+case, written O(n^3).
+
+THE UPGRADE - sort them first, and the problem almost solves itself.
+
+Sort the intervals by their START value. Now walk through them left to right,
+keeping one interval in your hand - the one you are currently building.
+
+For each new interval you meet, there are only two possibilities, and this is
+the crucial claim:
+
+  Its start is at or before the end of the one in your hand. Then they overlap,
+  so stretch the one in your hand to reach the further of the two ends.
+
+  Its start is after the end of the one in your hand. Then there is a genuine
+  gap. Put the one in your hand down as finished, and pick up this new one.
+
+Why is that enough? Because after sorting, every interval you have not looked at
+yet starts at or after the current one - so once you find a gap, nothing later
+can possibly reach back across it. You never have to reconsider anything you
+have already put down. One sort plus one pass.
+
+That is the payoff of sorting, and it is the same payoff as in 3Sum: sorting
+turns "compare everything with everything" into "compare each thing with its
+neighbour".""",
+
+    """3. WHY "start <= current end" IS THE WHOLE OVERLAP TEST.
+
+This deserves a moment, because the test looks too simple.
+
+You might expect an overlap check to need several comparisons - does A start
+inside B, does B start inside A, does one contain the other, and so on. After
+sorting, all of that collapses.
+
+Because the list is sorted by start, the new interval's start is guaranteed to
+be at or after the current one's start. So there is only one question left: does
+the new one begin before the current one has ended?
+
+    current:   [1 ................. 6]
+    new:            [4 ......... 9]        start 4 <= end 6  -> overlap
+    new:                            [7 ...] start 7 > end 6  -> gap
+
+And when they do overlap, why take the LARGER of the two ends rather than just
+the new one? Because of the "one swallows the other" case:
+
+    current:   [1 ......................... 10]
+    new:            [4 ..... 6]
+
+Here the new interval sits entirely inside the current one. Its start, 4, is
+before 10, so they overlap - but blindly setting the end to 6 would SHRINK the
+merged interval and lose everything from 6 to 10. Taking max(10, 6) = 10 keeps
+it correct. This is the single most common bug in this problem, and it only
+shows up when a short interval is fully contained in a long one.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - one interval swallowing another, covered in section 3. Input
+[[1,10], [2,3], [4,5]] must come out as [[1,10]]. If you assign the end instead
+of taking the maximum, you get [[1,5]] - silently wrong.
+
+CASE 2 - unsorted input that looks sorted. [[8,10], [1,3], [2,6], [15,18]].
+Without the sort, the walk compares 1-3 against 8-10, sees a "gap", and starts a
+new interval - producing four separate blocks instead of the correct
+[[1,6], [8,10], [15,18]]. The sort is not a tidy-up step; it is what makes the
+one-pass logic valid at all.
+
+CASE 3 - touching but not really overlapping. [[1,4], [4,5]]. They share exactly
+the point 4. With "start <= end" they merge into [1,5]. With "start < end" they
+stay separate. Both are defensible; the problem decides. LeetCode's version
+merges them. State which you assumed.
+
+CASE 4 - the empty list. No intervals in, empty list out. The code checks for
+this first, because the very next line reads intervals[0], which would fail on
+an empty list.
+
+CASE 5 - modifying the input. Sorting happens in place, so the caller's list is
+reordered. The code also copies intervals[0] with [:] rather than putting the
+original object in the output - because it then goes on to change that
+interval's end, and without the copy it would be scribbling on the caller's
+data. Small detail, real bug.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SORT BY A KEY: sorting by something other than the whole item. "key=lambda
+x: x[0]" tells Python "when comparing two intervals, compare their position-0
+values" - that is, their starts. A LAMBDA is just a tiny unnamed function; that
+line means "given x, hand back x[0]".
+
+merged[-1]: Python's way of writing "the last item in the list called merged".
+Negative indexing counts from the end, so [-1] is the last, [-2] the second-to-
+last. In this code merged[-1] is the interval currently being built - the one
+"in your hand" from section 2.
+
+merged[-1][1]: the END of that last interval - item 1 of the pair [start, end].
+So merged[-1][0] is its start and merged[-1][1] is its end.
+
+TUPLE UNPACKING: "for start, end in intervals[1:]" pulls each interval's two
+values straight into two named variables, instead of writing interval[0] and
+interval[1] everywhere. Purely for readability.
+
+O(n log n) - the cost of a good sort. In plain words: a little more than
+proportional to the size of the list. The "log n" part is roughly how many times
+you can halve n before reaching 1 - about 20 for a million items. So sorting a
+million intervals costs about twenty million steps, not a million times a
+million. It is the reason sorting is considered cheap enough to reach for.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: sort the intervals by start time, then walk
+through them keeping one interval "in your hand", stretching it whenever the
+next one overlaps and putting it down whenever there is a gap.
+
+No recursion here, so nothing stacks up and there is no base case - just a sort
+followed by one loop. What takes the place of a base case is the SEEDING: the
+output list starts out holding a copy of the first interval, so there is always
+something in your hand when the loop begins.
+
+The steps:
+
+  1. If the list is empty, hand back an empty list and stop. Everything below
+     assumes there is at least one interval.
+
+  2. Sort the intervals by their start value. This is the step the whole method
+     depends on - without it, the single pass below is simply wrong.
+
+  3. Make an output list containing a COPY of the first interval. A copy, not
+     the original, because you are about to modify its end and you must not
+     scribble on the caller's data.
+
+  4. Walk through the remaining intervals, one at a time.
+
+  5. For each one, compare its start with the end of the last interval in the
+     output list - the one in your hand.
+
+  6. If the new start is at or before that end, the two overlap. Stretch the one
+     in your hand: set its end to the LARGER of its current end and the new end.
+     Larger, not just the new one - otherwise a swallowed interval shrinks it.
+
+  7. Otherwise there is a real gap. Add the new interval to the output list as
+     a fresh one. It automatically becomes "the one in your hand" for the next
+     comparison, because it is now the last item.
+
+  8. When the walk ends, the output list is the answer.
+
+Notice step 7 needs no extra bookkeeping: appending to the list is what changes
+which interval is in your hand, because "in your hand" was defined as "the last
+one in the output list" all along.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first puts the intervals in order of when they start. That single step
+is what makes everything afterwards easy, because it guarantees that as you walk
+forwards, you never meet an interval that begins earlier than one you have
+already dealt with.
+
+Then it walks the sorted list holding one interval at a time - the one it is
+currently building up. It keeps that interval as the last item of the output
+list, which is a neat trick: it never needs a separate variable for "the one I
+am working on", because the last item of the output IS the one it is working on.
+
+For each interval it meets, it asks one question: does this one start before the
+one I am holding has finished? If yes, the two are part of the same continuous
+block, so it stretches the held interval's end - taking whichever end is further
+along, so a short interval sitting entirely inside a long one cannot shrink it.
+If no, there is a real gap, so the held interval is complete; it adds the new
+one to the output, which automatically becomes the new held interval.
+
+When it reaches the end of the list, the output already contains exactly the
+merged intervals, in order, with nothing left to do.""",
+
+    """8. THE CODE, line by line.
+
+Keep [[1,3], [2,6], [8,10], [15,18]] beside you.
+
+    if not intervals:
+        return []
+The empty-input guard. It has to come first because the line after the sort
+reads intervals[0], which would fail on an empty list.
+
+    intervals.sort(key=lambda x: x[0])
+Sort by start value. lambda x: x[0] means "compare intervals by their first
+number". Everything below is only correct BECAUSE of this line - see case 2 in
+section 4. Note this sorts the caller's list in place; if that matters, sort a
+copy instead.
+
+    merged = [intervals[0][:]]
+Start the output holding a COPY of the first interval. The [:] is Python for
+"make a shallow copy of this list". Without it, the next few lines would modify
+the caller's original interval when they stretch the end - a real bug that only
+bites when the caller looks at their data afterwards.
+
+    for start, end in intervals[1:]:
+Walk the rest of the sorted list, unpacking each interval into two named
+variables. intervals[1:] skips the first one, which is already in the output.
+
+    if start <= merged[-1][1]:
+The overlap test from section 3, in full. merged[-1] is the interval currently
+being built; [1] is its end. So this asks: "does the new one start at or before
+the held one ends?" Because the list is sorted, that single comparison is the
+entire overlap check.
+
+    merged[-1][1] = max(merged[-1][1], end)
+Stretch the held interval. The max() is the line that handles a swallowed
+interval: for [1,10] followed by [2,3], this computes max(10, 3) = 10 and
+correctly leaves the end alone. Writing "= end" instead is the most common bug
+in this problem.
+
+    else:
+        merged.append([start, end])
+A genuine gap, so the held interval is finished. Append the new one - and
+because merged[-1] means "the last item", this new interval automatically
+becomes the one in hand for the next comparison. No extra bookkeeping needed.
+
+    return merged
+The merged list, already in sorted order because the input was sorted and we
+only ever appended to the end.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Input: [[1,3], [2,6], [8,10], [15,18]] - already sorted by start, so the sort
+changes nothing here.
+
+merged = [[1,3]]                     (a copy of the first interval)
+
+interval [2,6]:  start = 2, end = 6
+  merged[-1] is [1,3], its end is 3.
+  Is 2 <= 3?  YES -> overlap.
+  merged[-1][1] = max(3, 6) = 6
+  merged = [[1,6]]
+
+interval [8,10]: start = 8, end = 10
+  merged[-1] is [1,6], its end is 6.
+  Is 8 <= 6?  NO -> gap.
+  append [8,10].
+  merged = [[1,6], [8,10]]
+
+interval [15,18]: start = 15, end = 18
+  merged[-1] is [8,10], its end is 10.
+  Is 15 <= 10? NO -> gap.
+  append [15,18].
+  merged = [[1,6], [8,10], [15,18]]
+
+return [[1,6], [8,10], [15,18]].
+
+Now the swallowing case, input [[1,10], [2,3], [4,5]]:
+
+merged = [[1,10]]
+
+[2,3]:  is 2 <= 10?  YES.  merged[-1][1] = max(10, 3) = 10.  merged = [[1,10]]
+[4,5]:  is 4 <= 10?  YES.  merged[-1][1] = max(10, 5) = 10.  merged = [[1,10]]
+
+return [[1,10]]. Written with "= end" instead of max(), this would have returned
+[[1,5]] - a silently wrong answer that most simple test cases would miss.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log n), and the sort is the whole cost. The walk afterwards touches
+each interval exactly once, which is O(n), and O(n log n) plus O(n) is still
+O(n log n) - when adding two costs you keep the bigger one, because for large n
+it dominates. If the input arrived already sorted, the whole thing would be O(n).
+
+SPACE: O(n) for the output list, which has to exist. If you do not count the
+output - and many people do not, since you have to return it - the extra working
+space is O(1), because the only other thing being tracked is "the last item of
+the list I am already building".
+
+THE #1 MISTAKE - writing merged[-1][1] = end instead of
+merged[-1][1] = max(merged[-1][1], end). It gives the right answer on every
+example where the intervals step forward neatly, and the wrong answer the moment
+one interval sits entirely inside another. Because the common test cases do not
+contain that shape, it often survives until someone tries [[1,10],[2,3]].
+
+A close second: forgetting to sort, or sorting by end instead of start. Sorting
+by end breaks the guarantee in section 3, and the one-pass logic stops being
+valid.
+
+ONE-SENTENCE TAKEAWAY: sort by start time, then sweep once holding a single
+interval - stretch its end to the further of the two whenever the next one
+starts before it finishes, and put it down and pick up a new one whenever it
+does not.""",
 ]
 
 _EX_P0B["Number of Islands (DFS flood-fill)"] = [
@@ -26326,56 +26596,344 @@ sequence costs bookkeeping.""",
 ]
 
 _EX_P0C["Maximum Product Subarray"] = [
-    """The textbook case, traced.
-nums = [2,3,-2,4]. best=cur_max=cur_min=2.
-  3:  candidates (3, 2*3=6, 2*3=6) -> max 6, min 3.  best=6
-  -2: candidates (-2, 6*-2=-12, 3*-2=-6) -> max -2, min -12. best stays 6
-  4:  candidates (4, -2*4=-8, -12*4=-48) -> max 4, min -48. best stays 6
-Answer 6, from [2,3].""",
+    """1. THE GOAL, in plain English.
 
-    """The case the minimum exists for.
-nums = [-2,3,-4].
-  start: best=max=min=-2
-  3:  candidates (3, -6, -6) -> max 3, min -6.  best=3
-  -4: candidates (-4, 3*-4=-12, -6*-4=24) -> max 24, min -12. best=24
-Without tracking the minimum you would never see 24. The -6 looked worthless at
-the time and became the answer one step later. That is the entire reason for the
-second variable.""",
+You are given a list of numbers. Pick an unbroken run of them - one next to
+another, no gaps - and multiply that run together. Out of every run you could
+possibly pick, which one gives the LARGEST answer?
 
-    """Zeros, and why 'the number alone' is a candidate.
-nums = [-2,0,-1].
-  -2: best=-2
-  0:  candidates (0, 0, 0) -> max 0, min 0. best=0
-  -1: candidates (-1, 0*-1=0, 0) -> max 0, min -1. best stays 0
-Answer 0. The standalone candidate is what lets the run RESTART after a zero -
-without it, a zero would poison every subsequent product.""",
+An unbroken run taken out of a list is called a SUBARRAY. "Contiguous" is the
+word usually attached to it, and it just means the items must sit side by side
+in the original list. So in [2, 3, -2, 4], the runs [2, 3] and [3, -2] are
+subarrays, but [2, -2] is not, because 3 sits between them and you are not
+allowed to skip it.
 
-    """All negatives.
-nums = [-1,-2,-3].
-  -1: best=-1
-  -2: candidates (-2, 2, 2) -> max 2, min -2. best=2
-  -3: candidates (-3, -6, 6) -> max 6, min -6. best=6
-Answer 6, which comes from the subarray [-2,-3], not from all three - the full
-product is -6 because three negatives give a negative.
-That is the general rule: with an odd count of negatives you must drop one from
-an end, and the running min/max pair discovers which end automatically. Sign
-parity is what makes this problem error-prone, so trace it rather than
-reasoning about it in your head.""",
+You must pick at least one number - an empty run is not allowed.
 
-    """The bug that passes half the tests.
-Computing the new max first and then using it to compute the new min:
-    cur_max = max(n, cur_max*n, cur_min*n)
-    cur_min = min(n, cur_max*n, cur_min*n)   # cur_max is already updated
-On [-2,3,-4] this gives the wrong min and the answer comes out as 3 rather than
-24. Build all three candidates from the OLD pair first, then assign both.""",
+Try it by hand on nums = [2, 3, -2, 4]:
 
-    """Contrast with Maximum Subarray (Kadane).
-Kadane needs one variable because addition is monotonic - adding a bigger number
-always helps.
-Multiplication is not: multiplying by a negative REVERSES the order, so the
-worst becomes the best. That single fact is why this problem needs two running
-values and Kadane needs one. If asked "why can't you just use Kadane here?",
-that is the answer.""",
+    [2]           = 2
+    [2, 3]        = 6
+    [2, 3, -2]    = -12
+    [2, 3, -2, 4] = -48
+    [3]           = 3
+    [3, -2]       = -6
+    [3, -2, 4]    = -24
+    [-2]          = -2
+    [-2, 4]       = -8
+    [4]           = 4
+
+The biggest is 6, from [2, 3]. That is the answer.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION is exactly the table you just filled in by hand. Pick a
+starting position, then extend the run one item at a time, multiplying as you
+go, keeping the largest product you ever see. That is a loop inside a loop:
+roughly n x n / 2 runs for a list of n numbers, so about n-squared work, written
+O(n^2). For a list of 100,000 numbers that is five billion multiplications. Too
+slow, but completely correct - and it is what you should describe first, because
+it shows you understand the question before you optimise it.
+
+THE UPGRADE - walk the list once, carrying a running product. The natural idea
+is: at each number, either extend the run you already had, or start a fresh run
+right here. Keep whichever is bigger.
+
+For a list of positive numbers that works perfectly. Watch it on [2, 3, 4]:
+
+    at 2:  best run ending here = 2
+    at 3:  extend (2 x 3 = 6) or start fresh (3)?  6 wins.
+    at 4:  extend (6 x 4 = 24) or start fresh (4)? 24 wins.
+    answer 24.
+
+Now try the same idea on [-2, 3, -4] and watch it fail:
+
+    at -2: best run ending here = -2
+    at 3:  extend (-2 x 3 = -6) or start fresh (3)? 3 wins, so we throw the -6
+           away.
+    at -4: extend (3 x -4 = -12) or start fresh (-4)? -4 wins.
+    it would report 3.
+
+But the true answer is 24, from the whole list: -2 x 3 x -4 = 24. The idea threw
+away the -6 for looking bad - and the -6 was the most valuable thing we had,
+because one more negative number was about to turn it into the biggest product
+in the list.
+
+That failure is the entire problem, and section 3 fixes it.""",
+
+    """3. THE FIX, and why it works - keep the WORST as well as the best.
+
+The trouble is caused by one fact about multiplication: a negative number FLIPS
+the order. Multiply by -1 and the biggest number becomes the smallest, and the
+smallest becomes the biggest.
+
+    3 is bigger than -6.
+    Multiply both by -4:
+    3 x -4  = -12
+    -6 x -4 =  24    <- the one that looked worthless is now the best
+
+So a very negative running product is not rubbish - it is a large positive
+product waiting for one more negative number. Which means you cannot decide what
+to throw away, because you do not yet know what is coming.
+
+The fix is to stop choosing. At every position, carry TWO running values:
+
+    cur_max = the largest product of any run ENDING at this position
+    cur_min = the smallest product of any run ending at this position
+
+When you meet a new number n, the best run ending at n must be one of exactly
+three things:
+    n by itself                (start fresh here)
+    cur_max x n                (extend the previously-best run)
+    cur_min x n                (extend the previously-worst run - which wins
+                                when n is negative)
+Take the largest of those three for the new cur_max, and the smallest of the
+same three for the new cur_min.
+
+Why only three candidates, and not more? Because any run ending at position i
+is some run ending at position i-1 with n stuck on the end, or it is just n
+alone. Of all the runs ending at i-1, only the largest and the smallest can ever
+become the largest after multiplying by n - anything in between stays in
+between. So two values are enough to remember, no matter how long the list is.
+
+That is the whole trick, and it is why the code looks strangely short for a
+problem that seemed to need a table.""",
+
+    """4. THE CASES THAT CATCH PEOPLE - zeros, and single numbers.
+
+ZERO resets everything. nums = [2, 3, 0, 4, 5].
+
+Any run that includes the 0 has a product of 0. So the answer must come entirely
+from before the zero, or entirely from after it - here that is 6 from [2,3], or
+20 from [4,5], so 20 wins.
+
+Does the code need a special case for it? No, and this is worth seeing. At the
+zero, the three candidates are 0, 6x0 = 0 and 6x0 = 0, so cur_max and cur_min
+both become 0. Then at the next number 4, the candidates are 4, 0x4 = 0 and
+0x4 = 0, so cur_max becomes 4 - the "start fresh here" candidate rescues it.
+The zero wipes the history and the run restarts by itself.
+
+ALL NEGATIVE, odd count. nums = [-2, -3, -4]. The whole list multiplies to -24,
+which is negative, so the answer must come from a run of even length: [-2,-3]
+gives 6, [-3,-4] gives 12. Answer 12. Carrying cur_min is what finds it.
+
+A SINGLE NUMBER. nums = [-5]. The loop never runs, and best was seeded to
+nums[0] = -5. Answer -5. This is why the seeding matters: an answer of 0 or 1
+would be wrong here, because you are required to pick at least one number, even
+if every choice is bad.
+
+THE #1 SEEDING BUG: starting best, cur_max and cur_min at 0 or 1 instead of at
+nums[0]. On [-5] that reports 0 or 1, neither of which is a product of any
+allowed run. Seed all three from the first element, then loop over the REST of
+the list.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBARRAY: an unbroken run of items from the list, defined in section 1.
+
+TUPLE, written with round brackets like (a, b, c): a small fixed group of
+values. The code builds the three candidates as a tuple purely so it can hand
+the same three values to both max() and min() without writing them out twice.
+
+max() and min(): given several values, hand back the largest, or the smallest.
+Note both are applied to the SAME three candidates - that is deliberate, and it
+is what keeps cur_max and cur_min in step with each other.
+
+O(n) - "order n": a way of describing how the work grows as the input grows.
+O(n) means the work grows in step with the size of the list: double the list,
+roughly double the time. O(n^2) means the work grows with the SQUARE of the
+size: double the list and the time goes up four times. The notation ignores
+constant factors on purpose, because what matters is the shape of the growth.
+That is why the slow version at O(n^2) is hopeless on a big list while the fast
+one at O(n) is instant.
+
+One real-world detail worth knowing: in most languages these products would
+overflow - multiply enough numbers and you exceed what the number type can hold,
+and the answer silently becomes nonsense. Python's integers grow as large as
+they need to, so this code is safe; in Java or C++ you would have to think about
+it. Mentioning that is a good signal in an interview.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: walk the list once carrying both the best and
+the worst product of any run ending where you are standing, because one negative
+number swaps which of them is valuable.
+
+There is no recursion here - it is a single loop from left to right - so nothing
+piles up on the call stack and nothing needs a base case. What takes the place
+of a base case is the SEEDING: before the loop starts, all three variables are
+set from the first number, which is the answer for a list of length one.
+
+The steps:
+
+  1. Set three variables to the first number of the list: best (the answer so
+     far), cur_max (the largest product of a run ending at where I am), and
+     cur_min (the smallest product of a run ending at where I am).
+
+  2. Walk through the REST of the list, one number at a time. Call the number
+     you are standing on n.
+
+  3. Work out the three candidates for a run ending at n:
+       n on its own,
+       cur_max multiplied by n,
+       cur_min multiplied by n.
+
+  4. IMPORTANT - work out both new values from the OLD pair before storing
+     either. The new cur_max is the largest of those three; the new cur_min is
+     the smallest of the same three. If you overwrite cur_max first and then use
+     it to compute cur_min, you have used the new value where the old one was
+     needed, and the answer will be wrong on any list containing a negative.
+
+  5. Compare the new cur_max with best, and keep whichever is larger.
+
+  6. When the walk ends, best is the answer.
+
+Why keep best separately rather than just returning cur_max at the end? Because
+cur_max only describes runs ending at the LAST position, and the winning run may
+have finished in the middle - as it did in section 1, where the answer 6 came
+from [2, 3] and everything after it made things worse. Recording the best as you
+go is what catches it.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the list from left to right just once, and at every step it holds
+three numbers in its head.
+
+Two of them describe runs that END exactly where it is standing: the best
+product any such run can have, and the worst. It keeps the worst one because
+multiplication is peculiar - the moment a negative number turns up, the worst
+becomes the best and vice versa, so throwing away the worst would mean throwing
+away the eventual winner.
+
+The third number is simply the best product it has seen anywhere so far, which
+is the thing it will eventually report.
+
+At each new number, it asks: what is the best run that ends right here? There
+are only three possibilities - this number alone, or the previous best run
+extended by it, or the previous worst run extended by it. It takes the largest
+of those three as the new best-ending-here, and the smallest of the same three
+as the new worst-ending-here. Then it checks whether the new best-ending-here
+beats the best it has ever seen, and keeps the winner.
+
+Zeros need no special handling: they crush both running values to zero, and the
+"this number alone" candidate restarts the run at the next number all by itself.
+
+When it runs out of numbers, the best it ever saw is the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [2, 3, -2, 4] beside you, answer 6.
+
+    best = cur_max = cur_min = nums[0]
+All three seeded from the FIRST number, in one line. This is the step that makes
+a one-element list work, and it is why the loop below starts at the second
+element. Seeding with 0 or 1 instead is the classic bug - see section 4.
+
+    for n in nums[1:]:
+Walk the rest of the list. nums[1:] is Python for "everything from position 1
+onwards", so the first number is skipped because it has already been used to
+seed the three variables. n is the number currently being considered.
+
+    candidates = (n, cur_max * n, cur_min * n)
+The three possibilities from section 3, built as one tuple.
+  n           - abandon everything before this and start a fresh run here.
+  cur_max * n - extend the best run that ended at the previous position.
+  cur_min * n - extend the WORST run that ended at the previous position. This
+                is the candidate that wins whenever n is negative, and it is the
+                whole reason cur_min exists.
+Building them once and reusing them is not just tidy: it guarantees max and min
+are chosen from exactly the same three numbers.
+
+    cur_max = max(candidates)
+    cur_min = min(candidates)
+The new pair. Because both are computed from the tuple that was built BEFORE
+either assignment, the "use the old values for both" rule from step 4 is
+satisfied automatically. Written the naive way -
+cur_max = max(n, cur_max*n, cur_min*n) followed by
+cur_min = min(n, cur_max*n, cur_min*n) - the second line would use the brand-new
+cur_max and quietly give wrong answers on any list with a negative in it. The
+tuple is what makes that mistake impossible.
+
+    best = max(best, cur_max)
+Record the running answer. This has to happen inside the loop, not after it,
+because the winning run may end in the middle of the list.
+
+    return best
+The largest product found anywhere - 6 for our input.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [2, 3, -2, 4]
+
+Seed:  best = 2, cur_max = 2, cur_min = 2      (all from nums[0])
+
+n = 3
+  candidates = (3, 2*3, 2*3) = (3, 6, 6)
+  cur_max = max(3,6,6) = 6        best run ending at 3 is [2,3]
+  cur_min = min(3,6,6) = 3        worst run ending at 3 is [3] alone
+  best = max(2, 6) = 6
+
+n = -2
+  candidates = (-2, 6*-2, 3*-2) = (-2, -12, -6)
+  cur_max = max(-2,-12,-6) = -2   best run ending at -2 is [-2] alone; every
+                                  other option is worse because multiplying a
+                                  positive by a negative makes it negative
+  cur_min = min(-2,-12,-6) = -12  worst is [2,3,-2] - and note we KEEP this,
+                                  even though it looks useless
+  best = max(6, -2) = 6           unchanged
+
+n = 4
+  candidates = (4, -2*4, -12*4) = (4, -8, -48)
+  cur_max = max(4,-8,-48) = 4     best run ending at 4 is [4] alone
+  cur_min = min(4,-8,-48) = -48
+  best = max(6, 4) = 6            unchanged
+
+Loop ends. return best = 6, from [2,3]. Matches the hand-worked table.
+
+Now the trace that shows why cur_min earns its place - nums = [-2, 3, -4]:
+
+Seed:  best = -2, cur_max = -2, cur_min = -2
+
+n = 3
+  candidates = (3, -2*3, -2*3) = (3, -6, -6)
+  cur_max = 3        cur_min = -6      best = max(-2, 3) = 3
+  The -6 looks worthless here. Keep it anyway.
+
+n = -4
+  candidates = (-4, 3*-4, -6*-4) = (-4, -12, 24)
+  cur_max = 24       <- the "worthless" -6 just became the winner
+  cur_min = -12
+  best = max(3, 24) = 24
+
+return 24. Without cur_min, this would have returned 3.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). One pass over the list, doing a fixed amount of work at each number
+- three multiplications, a max and a min. Double the list and you double the
+time. Compare with the slow version's O(n^2): on 100,000 numbers that is 100,000
+steps instead of five billion.
+
+SPACE: O(1) - "constant space". Three variables, no matter how long the list is.
+Nothing is stored per element; there is no table, no copy of the list. This is
+the cheapest a solution can be.
+
+THE #1 MISTAKE - updating cur_max and cur_min in the wrong order. Writing
+cur_max = max(...) on one line and then cur_min = min(...) on the next, each
+recomputing the products, means the second line uses the brand-new cur_max where
+it needed the old one. It passes every all-positive test case and fails the
+moment a negative appears, which makes it a nasty bug to find. Compute both from
+values captured before either assignment - building the candidates tuple first
+is the tidiest way to guarantee that.
+
+A close second: seeding best at 0 or 1 rather than at nums[0]. That reports 0
+for [-5], which is not the product of any allowed run, because you must pick at
+least one number.
+
+ONE-SENTENCE TAKEAWAY: carry both the best AND the worst product of any run
+ending where you stand, because a negative number swaps which of the two is
+valuable - and the best run ending here is always one of three things: this
+number alone, the old best times it, or the old worst times it.""",
 ]
 
 _EX_P0C["Word Break (DP)"] = [
