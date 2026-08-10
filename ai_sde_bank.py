@@ -9327,66 +9327,377 @@ problem.""",
 ]
 
 _EXAMPLES["Subarray Sum Equals K"] = [
-    """The textbook case, fully traced.
-nums = [1,2,3], k = 3  ->  answer 2
-  start: seen = {0:1}, prefix = 0, count = 0
-  x=1: prefix 1. need seen[1-3] = seen[-2] = 0. count 0. seen {0:1, 1:1}
-  x=2: prefix 3. need seen[3-3] = seen[0]  = 1. count 1. seen {0:1, 1:1, 3:1}
-       -> this found the stretch [1,2]
-  x=3: prefix 6. need seen[6-3] = seen[3]  = 1. count 2. seen {..., 6:1}
-       -> this found the stretch [3]
-The two stretches are [1,2] and [3].""",
+    """1. THE GOAL, in plain English.
 
-    """Overlapping stretches are counted separately.
-nums = [1,1,1], k = 2  ->  answer 2
-  x=1: prefix 1, need seen[-1] = 0, count 0
-  x=1: prefix 2, need seen[0]  = 1, count 1   -> stretch [1,1] at indices 0-1
-  x=1: prefix 3, need seen[1]  = 1, count 2   -> stretch [1,1] at indices 1-2
-They share the middle element, and that is fine - the question asks HOW MANY
-subarrays, not how many disjoint ones. Any solution that greedily consumes
-elements after a match will report 1 here and be wrong.""",
+You are given a list of numbers and a target k. Count how many unbroken stretches
+of the list add up to exactly k.
 
-    """Negative numbers - why sliding window cannot be used.
-nums = [1,-1,0], k = 0  ->  answer 3
-  seen {0:1}, prefix 0
-  x=1 : prefix 1, need seen[1] = 0, count 0, seen {0:1, 1:1}
-  x=-1: prefix 0, need seen[0] = 1, count 1, seen {0:2, 1:1}
-  x=0 : prefix 0, need seen[0] = 2, count 3, seen {0:3, 1:1}
-The three stretches are [1,-1], [0] and [1,-1,0].
-A sliding window relies on the sum rising when you extend and falling when you
-shrink. Here extending by -1 makes the sum FALL, so the window has no idea
-which edge to move. Prefix sums do not care about sign at all.
-Notice too that seen[0] reached 2 and the lookup added BOTH occurrences at
-once - storing a boolean instead of a count would have reported fewer.""",
+An unbroken stretch is a SUBARRAY - the numbers must sit next to each other in the
+original. That is different from a SUBSEQUENCE, which is allowed to skip.
 
-    """Why seen[0] = 1 must be there before the loop starts.
-nums = [3], k = 3  ->  answer 1
-  x=3: prefix 3. need seen[3-3] = seen[0].
-If seen was initialised empty, that lookup returns 0 and the answer comes out
-as 0 - wrong, because the whole array [3] obviously sums to 3.
-seen[0] = 1 represents the EMPTY prefix: the state before any element was
-added, where the running total was 0. It is what allows a stretch that starts
-at index 0 to be found. This one line is the most commonly forgotten part of
-the whole solution.""",
+Our example: nums = [1, 2, 3], k = 3.
 
-    """No match at all, and a bigger count than you expect.
-nums = [1,2,3], k = 100  ->  answer 0. Every lookup misses; count stays 0.
-nums = [1,0,1], k = 1    ->  answer 4
-  x=1: prefix 1, need seen[0] = 1, count 1        -> [1] at index 0
-  x=0: prefix 1, need seen[0] = 1, count 2        -> [1,0]
-  x=1: prefix 2, need seen[1] = 2, count 4        -> [1] at index 2 and [0,1]
-Four stretches from a three-element array. Zeros multiply the count because
-they create repeated prefix sums, and each repeat is a separate valid start.""",
+    1  2  3
+    0  1  2
 
-    """The same machinery, three other problems.
-Once you see 'subarray sum = difference of two prefix sums', these all fall:
-  - Subarray sums divisible by K: store prefix % k in the map instead of the
-    raw prefix. On nums = [4,5,0,-2,-3,1], k = 5 the answer is 7.
-  - Longest subarray summing to k: store the FIRST index each prefix appeared
-    at instead of a count, then track the biggest index gap.
-  - Path Sum III on a binary tree: carry the same prefix map down each
-    root-to-node path, adding on the way down and removing on the way back up.
-Learn the pattern once, recognise it four times.""",
+Try every stretch by hand:
+
+    [1]        = 1
+    [1,2]      = 3     <- yes
+    [1,2,3]    = 6
+    [2]        = 2
+    [2,3]      = 5
+    [3]        = 3     <- yes
+
+Two of them hit 3, so the answer is 2.
+
+Notice we are COUNTING, not listing. That matters: counting lets us add numbers
+together, which is what makes a fast solution possible.
+
+And note the numbers may be NEGATIVE in the general problem. That single fact rules
+out the sliding-window technique that solves so many other "find a stretch" problems
+- section 3 explains why, and it is the most important thing in this entry.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Pick a start, then extend the stretch one item at a time, keeping
+a running total, and count every time the total equals k. Two nested loops over n
+items, so about n x n / 2 stretches - O(n^2). For 100,000 numbers that is five
+billion steps.
+
+Correct, easy to describe, and the right thing to say first.
+
+THE UPGRADE - PREFIX SUMS.
+
+Write down the running total from the start of the list up to each position:
+
+    nums:            1   2   3
+    running total:   1   3   6
+
+That running total is called a PREFIX SUM: prefix(i) is the sum of everything from
+the beginning up to position i.
+
+Here is the key identity. The sum of a stretch from position i+1 to position j is:
+
+    prefix(j) - prefix(i)
+
+Because the longer running total includes the shorter one, and subtracting cancels
+everything before position i+1.
+
+Now rearrange the question. We want stretches whose sum is k:
+
+    prefix(j) - prefix(i) = k
+    which rearranges to
+    prefix(i) = prefix(j) - k
+
+So, standing at position j with a running total of prefix(j), the question becomes:
+HOW MANY EARLIER POSITIONS HAD A RUNNING TOTAL OF EXACTLY prefix(j) - k?
+
+Each such earlier position marks the start of a stretch ending here that sums to k.
+
+And "how many earlier things equalled this value?" is answered instantly by a hash
+map that counts how often each running total has been seen.
+
+One pass, one lookup per number: O(n).""",
+
+    """3. WHY NOT A SLIDING WINDOW - the negatives.
+
+This is the most valuable thing in the entry, because the instinct is so strong.
+
+"Find a stretch summing to k" looks exactly like a sliding-window problem: grow the
+window on the right, and when the sum gets too big, shrink from the left.
+
+That works ONLY when every number is positive. The reason is that a sliding window
+needs a MONOTONIC relationship: extending the window must always increase the sum,
+and shrinking must always decrease it. Then "too big" reliably means "shrink" and
+"too small" reliably means "grow".
+
+With negative numbers, that breaks completely. Extending the window might make the
+sum go DOWN. So a sum that has overshot k might come back to k after taking in more
+numbers - and shrinking would have thrown away a valid answer.
+
+    nums = [1, -1, 0], k = 0
+
+    Stretches summing to 0: [1,-1], [-1,0]... wait, -1 + 0 = -1. Let us list them:
+        [1] = 1, [1,-1] = 0 yes, [1,-1,0] = 0 yes,
+        [-1] = -1, [-1,0] = -1, [0] = 0 yes.
+    Three answers.
+
+A sliding window would have shrunk the moment the sum reached 0 at [1,-1] and
+missed the longer stretch that also sums to 0.
+
+The prefix-sum method has no such problem, because it never assumes anything about
+direction. It just asks "have I seen this running total before?", which is a
+question about equality, not about ordering.
+
+THE RULE WORTH CARRYING AWAY: sliding window needs all-positive (or otherwise
+monotonic) values. Prefix sums plus a hash map handle negatives, zeros, anything.
+When a problem mentions negative numbers, that is the signal to abandon the window.""",
+
+    """4. THE SEED - why the map starts with {0: 1}.
+
+The map counts how often each running total has been seen. Before processing any
+numbers, the code puts one entry in it:
+
+    seen[0] = 1
+
+That says: "a running total of 0 has been seen once."
+
+Why? Because of the EMPTY PREFIX - the stretch of nothing before the list starts,
+whose sum is 0. It is a genuine starting point.
+
+Without it, any stretch that begins at position 0 would be missed. Take
+nums = [3], k = 3:
+
+    Processing the 3: the running total becomes 3. We ask how many earlier positions
+    had a total of 3 - 3 = 0.
+
+    With the seed, the answer is 1 - the empty prefix - so we count the stretch [3].
+    Correct.
+
+    Without the seed, the answer is 0, and we would report no stretches at all,
+    missing the obvious one.
+
+So the seed is not a fudge to make a test pass; it encodes the real fact that the
+sum of no numbers is zero, and that a stretch may legitimately start at the very
+beginning.
+
+This is the same convention that makes dp[0] = 0 in Coin Change and [""] the seed in
+Letter Combinations: "there is exactly one way to have taken nothing, and it
+contributes nothing."
+
+THE ORDER INSIDE THE LOOP MATTERS TOO. The code counts BEFORE recording the current
+prefix. If it recorded first, then when k is 0 the current prefix would match itself
+and every position would count a zero-length stretch that does not exist. Count
+first, then record - section 8 returns to this.""",
+
+    """5. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - reaching for a sliding window. Section 3. It is the natural instinct and it
+is wrong whenever negatives are possible.
+
+CASE 2 - recording the current prefix before counting. With k = 0 that makes every
+position match itself, inflating the count by n. Count first, record second.
+
+CASE 3 - forgetting the {0: 1} seed. Every stretch starting at position 0 is missed.
+Test with a single-element list whose value equals k - it catches this immediately.
+
+CASE 4 - counting occurrences, not just presence. The map stores HOW MANY times each
+running total appeared, not merely whether it did. On nums = [0, 0, 0] with k = 0,
+the total 0 is seen repeatedly, and each earlier occurrence marks a distinct valid
+stretch. Storing a set instead of counts would undercount badly.
+
+CASE 5 - returning the stretches rather than the count. The question asks how many.
+Recovering the actual stretches would need extra bookkeeping, and the count is what
+allows the whole thing to be one pass.
+
+CASE 6 - the empty list. The loop never runs and the count stays 0. Correct.
+
+CASE 7 - assuming all subarrays are distinct positions. Two different stretches can
+have the same values, like the two [3]-summing stretches in section 1. They are
+counted separately because they occupy different positions, which is what the
+problem intends.""",
+
+    """6. DEFINING THE TERMS the code uses.
+
+SUBARRAY: an unbroken stretch. Contrast with a SUBSEQUENCE, which may skip.
+
+PREFIX SUM: the running total from the start of the list up to a position. The
+identity that makes everything work is
+    sum of a stretch = (running total at its end) - (running total just before it
+    starts).
+
+HASH MAP / DICTIONARY: a structure where looking up a key takes the same tiny amount
+of time however many keys there are. That is what turns "how many earlier positions
+had this total?" from a scan into a single lookup.
+
+defaultdict(int): a dictionary that invents a zero for a missing key, so you can read
+or increment a count without first checking whether the key exists. That is why
+seen[prefix - k] is safe even for a total never seen before - it quietly returns 0.
+
+prefix: the running total so far.
+
+seen: how many times each running total has occurred, INCLUDING the empty prefix of
+0 recorded before the loop starts.
+
+count: the running answer.
+
+O(n) and O(n): the costs, where n is the length of the list. O(n) time means one pass
+with a fixed amount of work per number. O(n) space is the map, which in the worst
+case holds one entry per position - unavoidable, since any running total might recur
+later.""",
+
+    """7. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a running total, and at each position ask how
+many earlier positions had a running total exactly k smaller - each one marks a
+stretch ending here that sums to k.
+
+There is no recursion here - one loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Start a count at zero, a running total at zero, and a table that records how
+     many times each running total has been seen.
+
+  2. Put one entry in that table before starting: a running total of zero, seen
+     once. That is the empty prefix - the stretch of nothing before the list begins -
+     and without it any stretch starting at the very first position is missed.
+
+  3. Take each number in turn and add it to the running total.
+
+  4. Look up how many earlier positions had a running total of (current total minus
+     k). Add that number to the count.
+
+     Each of those earlier positions is the point just before a stretch that ends
+     here and sums to k. If none have been seen, the lookup gives zero and nothing
+     is added.
+
+  5. Record the current running total in the table - increasing its count by one.
+
+  6. When every number has been processed, the count is the answer.
+
+The ORDER of steps 4 and 5 is not interchangeable. Counting before recording is what
+stops a position matching itself, which would otherwise invent a zero-length stretch
+whenever k is zero.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [1, 2, 3] and k = 3 beside you; the answer is 2.
+
+    from collections import defaultdict
+A dictionary that returns zero for a missing key rather than failing. That is what
+makes the lookup below safe for a running total never seen before.
+
+    count = 0
+The running answer.
+
+    prefix = 0
+The running total from the start of the list up to where we are.
+
+    seen = defaultdict(int)
+How many times each running total has occurred so far.
+
+    seen[0] = 1
+The seed from section 4: a running total of zero has been seen once, representing the
+empty prefix before the list starts. Without this, every stretch beginning at
+position 0 is missed - test with nums = [3], k = 3 and it fails immediately.
+
+    for x in nums:
+Take each number in turn. Note the position is never needed - only the running
+totals - which is why there is no index.
+
+    prefix += x
+Extend the running total to include this number.
+
+    count += seen[prefix - k]
+The heart of it. A stretch ending here sums to k exactly when some earlier position
+had a running total of prefix - k, because the difference of the two running totals
+is the stretch's sum.
+
+seen[prefix - k] is how many such earlier positions there were, and every one of them
+is a distinct valid stretch - which is why the map counts occurrences rather than
+just recording presence. If none were seen, defaultdict returns 0 and nothing is
+added.
+
+    seen[prefix] += 1
+Record the current running total for future positions to find.
+
+THE ORDER MATTERS. This line comes AFTER the counting line. If it came first, then
+when k is 0 the lookup would be seen[prefix - 0] = seen[prefix], which now includes
+the entry just added - so every position would count itself as a zero-length stretch
+that does not exist. Count first, record second.
+
+    return count
+The number of stretches summing to k - 2 for our input.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [1, 2, 3], k = 3.
+
+Start:  count = 0, prefix = 0, seen = {0: 1}
+
+x = 1
+    prefix = 0 + 1 = 1
+    Look up seen[1 - 3] = seen[-2].  Never seen -> 0.  count stays 0.
+    Record: seen[1] = 1.
+    seen = {0:1, 1:1}
+
+x = 2
+    prefix = 1 + 2 = 3
+    Look up seen[3 - 3] = seen[0].  That is 1 - the empty prefix.
+    count = 0 + 1 = 1.
+    Meaning: a stretch ending here, starting right at the beginning, sums to 3.
+    That is [1,2].  Correct.
+    Record: seen[3] = 1.
+    seen = {0:1, 1:1, 3:1}
+
+x = 3
+    prefix = 3 + 3 = 6
+    Look up seen[6 - 3] = seen[3].  That is 1 - recorded after the previous step.
+    count = 1 + 1 = 2.
+    Meaning: a stretch ending here, starting just after the position where the
+    running total was 3, sums to 3.  That is [3].  Correct.
+    Record: seen[6] = 1.
+
+return count = 2.  Matching the two stretches found by hand in section 1.
+
+A CASE WITH NEGATIVES AND REPEATS, nums = [1, -1, 0], k = 0:
+
+Start:  count = 0, prefix = 0, seen = {0: 1}
+
+x = 1     prefix = 1.  seen[1-0] = seen[1] = 0.  count stays 0.
+          seen[1] = 1.
+x = -1    prefix = 0.  seen[0-0] = seen[0] = 1.  count = 1.   (the stretch [1,-1])
+          seen[0] = 2.
+x = 0     prefix = 0.  seen[0-0] = seen[0] = 2.  count = 3.   (two more stretches:
+          [1,-1,0] and [0])
+          seen[0] = 3.
+
+return 3.  Correct - and note the count jumped by 2 in one step, because the running
+total 0 had been reached twice before. That is exactly why the map stores counts
+rather than a set.
+
+It is also the case a sliding window gets wrong, for the reason in section 3.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). One pass, with a constant amount of work per number - one addition, one
+lookup, one update. Compare with the brute-force O(n^2): on 100,000 numbers that is
+100,000 steps against five billion.
+
+SPACE: O(n) for the map, which in the worst case holds one entry per position. That
+is a genuine cost, and it is the price of handling negatives - the sliding-window
+approach would be O(1) space but is simply wrong here.
+
+WHEN THE SLIDING WINDOW IS FINE: if the problem promises all numbers are positive,
+a window gives the same answer in O(1) space. So the right answer to "which should I
+use?" is "does the input allow negatives?" - and asking that question out loud is
+worth more than either technique.
+
+THE #1 MISTAKE - reaching for a sliding window without checking for negatives. It
+is the natural instinct because so many nearby problems use one, and it produces
+plausible wrong answers rather than obvious failures. The signal is in the problem
+statement: the moment negatives are possible, monotonicity is gone and the window
+cannot be trusted.
+
+A close second: recording the current running total before counting. With k = 0
+every position then matches itself and the count is inflated by n. Count first,
+record second.
+
+A third: omitting the {0: 1} seed, which silently drops every stretch that starts at
+the beginning of the list.
+
+WHERE ELSE THIS PATTERN APPEARS: prefix sums plus a hash map solve a whole family -
+the longest subarray summing to k, subarrays divisible by k (store the remainder
+rather than the sum), and binary subarrays with equal zeros and ones (treat 0 as -1
+and look for a sum of 0). Recognising "difference of two running totals" is the
+transferable idea.
+
+ONE-SENTENCE TAKEAWAY: the sum of a stretch is the difference of two running totals,
+so keep a count of every running total seen and ask at each position how many earlier
+ones were exactly k smaller - which works with negatives, where a sliding window
+does not.""",
 ]
 
 _EXAMPLES["Largest Rectangle in Histogram (monotonic stack)"] = [
@@ -43594,73 +43905,398 @@ finishing early frees the timeline for everything that follows.""",
 ]
 
 _EX_P0F["Rotting Oranges (multi-source BFS)"] = [
-    """The textbook case, traced minute by minute.
-grid = [[2,1,1],
-        [1,1,0],
-        [0,1,1]]
-Seed: (0,0) is rotten -> queue [(0,0,0)]. fresh = 6.
-Minute 1: (0,0) rots (0,1) and (1,0). fresh = 4.
-Minute 2: (0,1) rots (0,2); (1,0) rots (1,1). fresh = 2.
-Minute 3: (1,1) rots (2,1). fresh = 1.
-Minute 4: (2,1) rots (2,2). fresh = 0.
-minutes = 4, fresh == 0 -> return 4.
-The cell (2,0) is empty (0) and is never touched - empty cells are walls, not
-oranges.""",
+    """1. THE GOAL, in plain English.
 
-    """The impossible case - an unreachable fresh orange.
-grid = [[2,1,1],
-        [0,1,1],
-        [1,0,1]]
-The orange at (2,0) is isolated: its neighbours are (1,0)=0 (empty) and
-(2,1)=0 (empty). Rot spreads everywhere else, but fresh never reaches 0.
-Return -1.
-This is why the fresh COUNTER exists. Without it you would have to re-scan the
-grid at the end - correct, but an extra O(R x C) pass, and easy to forget
-entirely (returning `minutes` and calling it done is the standard wrong
-answer).""",
+You have a crate of oranges laid out in a grid. Each square holds one of three
+things:
 
-    """Two sources at once - why multi-source BFS is the right frame.
-grid = [[2,1,1,1,2]] (a single row).
-BOTH rotten oranges are seeded at time 0. Minute 1 rots (0,1) and (0,3); minute
-2 rots (0,2). Answer 2.
-Running BFS from each source separately and taking a minimum would need two
-traversals and a per-cell minimum. Seeding them together lets one sweep compute
-'distance to the NEAREST source' for every cell - which is exactly what the
-question asks.
-Same idea as 01 Matrix, Walls and Gates, and Pacific Atlantic: many starts, one
-sweep.""",
+    0 = empty        1 = a fresh orange        2 = a rotten orange
 
-    """Edge cases: no fresh oranges, and no rotten ones.
-[[0,2]]: fresh = 0 from the start. The BFS runs, minutes stays 0, fresh == 0 ->
-return 0. Correct - nothing needs to rot.
-[[0,0]]: no oranges at all -> 0.
-[[1]]: one fresh orange, no source. The queue is empty, the loop never runs,
-fresh = 1 != 0 -> return -1. Correct.
-That first case is the one people break: initialising minutes to -1 or returning
-`minutes - 1` to 'fix' an off-by-one makes the all-empty grid return the wrong
+Every minute, any fresh orange that is directly beside a rotten one - up, down,
+left or right, not diagonally - becomes rotten itself.
+
+How many minutes until no fresh oranges are left? If some fresh orange can never
+rot, report -1.
+
+Our crate:
+
+        col:  0  1  2
+    row 0:    2  1  1
+    row 1:    1  1  0
+    row 2:    0  1  1
+
+Work it through by hand, minute by minute.
+
+    START      minute 1      minute 2      minute 3      minute 4
+    2 1 1      2 2 1         2 2 2         2 2 2         2 2 2
+    1 1 0      2 1 0         2 2 0         2 2 0         2 2 0
+    0 1 1      0 1 1         0 1 1         0 2 1         0 2 2
+
+At minute 1 the two oranges touching the original rotten one turn. At minute 2 their
+neighbours turn. And so on until the last orange, in the bottom-right corner, turns
+at minute 4.
+
+So the answer is 4.
+
+Two things to notice. The rot spreads from ALL rotten oranges simultaneously, not
+one at a time. And an orange walled off by empty squares can never rot - which is
+what the -1 case is for.""",
+
+    """2. THE INTUITION - this is BFS from many starting points at once.
+
+The rot spreading outward one step per minute is exactly BREADTH-FIRST SEARCH: visit
+everything one step away, then everything two steps away, and so on. The number of
+steps IS the number of minutes.
+
+The twist is that BFS normally starts from ONE place. Here every rotten orange
+starts spreading at the same moment.
+
+That turns out to need no new machinery at all. Just put ALL the rotten oranges into
+the waiting line before you begin, each marked as being at minute 0.
+
+Why does that work? Because BFS serves the line in order, and everything starting at
+minute 0 is served before anything at minute 1. So the wave still advances one
+minute at a time - it just has several origins. This is called MULTI-SOURCE BFS, and
+"put all the sources in the queue at the start" is the whole technique.
+
+Think of it as several drops of ink hitting the water at once. Each spreads
+outwards, and the rings simply meet. An orange rots at the moment the nearest wave
+reaches it, which is precisely what BFS's guarantee gives you: the FIRST time you
+reach a square is by the shortest route.
+
+There is no simpler-but-slower version worth showing first. Simulating minute by
+minute - scanning the whole grid each minute to find which oranges rot next - is
+correct and costs a full grid scan per minute, so grid size times number of minutes.
+The queue does the same work in one pass.""",
+
+    """3. TWO THINGS THAT MUST BE COUNTED - and why.
+
+The code does two pieces of bookkeeping, and both are essential.
+
+FIRST, the minute each orange rots. Each entry in the queue carries not just its
+position but the minute it rotted. When it spreads to a neighbour, the neighbour is
+queued with one minute later. The answer is the largest minute ever recorded.
+
+Carrying the minute inside the queue entry is simpler than tracking levels
+separately, and it means no frozen-size bookkeeping is needed.
+
+SECOND, a count of the fresh oranges. Before starting, the code counts how many
+fresh oranges there are. Each time one rots, the count drops by one.
+
+Why bother? Because that is how the -1 case is detected. If the queue empties while
+fresh oranges remain, those oranges were unreachable - walled off by empty squares -
+and no amount of waiting will rot them.
+
+    2 0 1        the fresh orange on the right is cut off by the empty square
+
+Without the count, the code would happily return the minute at which the reachable
+oranges finished and never notice the survivor.
+
+AND THE MARKING RULE, which is the same one as in every flood-fill. When a fresh
+orange is reached, it is turned into a rotten one IMMEDIATELY, at the moment it is
+queued - not when it is later taken out. If you wait, several neighbours can each
+queue the same orange before any of them processes it, and the same orange rots
+several times, corrupting both the count and the queue.
+
+Marking on entry to the queue, not on exit, is the rule to remember.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - no fresh oranges at the start. The grid is all empty and rotten. The
+correct answer is 0 minutes - nothing needs to rot. The code handles this because
+the fresh count starts at 0, so the final check passes and it returns whatever
+minutes reached, which is 0 for an all-empty grid and 0 for a grid of only rotten
+oranges too, since those entries carry minute 0.
+
+CASE 2 - no rotten oranges but some fresh ones. Nothing can ever start rotting, so
+the answer is -1. The queue starts empty, the loop never runs, and fresh is
+non-zero, so -1 is returned. Correct with no special case.
+
+CASE 3 - an unreachable fresh orange. The whole reason for the fresh count. Without
+it the answer would wrongly be the time the reachable ones finished.
+
+CASE 4 - marking on exit instead of on entry. Section 3. The same orange gets
+queued several times, the fresh count goes negative, and the answer is wrong.
+
+CASE 5 - counting minutes as the number of queue rounds rather than reading the
+recorded minute. Since each entry carries its own minute, taking the maximum is
+simple and reliable. Tracking levels separately is possible but needs the
+frozen-queue-size trick and is easier to get wrong.
+
+CASE 6 - diagonal neighbours. Rot spreads only up, down, left and right. Adding
+diagonals would change the answer, so check what the problem says.
+
+CASE 7 - modifying the caller's grid. This code writes 2s into the input grid as
+oranges rot, so the caller's crate comes back fully rotted. If that matters, copy the
+grid first - and say so out loud, because "does your solution modify the input?" is a
+question interviewers ask.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+BFS - BREADTH-FIRST SEARCH: exploring in rings, everything one step away before
+anything two steps away. Its guarantee is that the first time you reach a square is
+by the shortest route - which here means the earliest minute.
+
+MULTI-SOURCE BFS: the same thing with several starting points, achieved by putting
+all of them in the queue before starting. Section 2.
+
+QUEUE: a waiting line - join at the back, leave from the front. deque is Python's
+ready-made one; popleft() takes from the front. An ordinary list would work but
+removing from its front is slow.
+
+The queue entries here are TRIPLES (row, column, minute) - the position plus when
+that orange rotted. Carrying the minute inside the entry is what removes the need
+for separate level bookkeeping.
+
+fresh: how many fresh oranges remain. Counted before the spread starts and
+decremented as each one rots. It is the only way to detect the unreachable case.
+
+minutes: the largest minute recorded so far - the running answer.
+
+the four offsets ((1,0),(-1,0),(0,1),(0,-1)): down, up, right, left, written as
+number pairs so the four neighbours collapse into a loop.
+
+0 <= nr < rows and 0 <= nc < cols: the bounds check, verifying a position is on the
+grid before reading it.
+
+O(R x C): the cost, where R is rows and C columns. In plain words the work grows in
+step with the number of squares - each is queued at most once.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: put every rotten orange into the queue at minute
+zero, spread outwards one step at a time, and check at the end that no fresh orange
+was left behind.
+
+There is no recursion here - BFS is driven by a queue - so nothing piles up on the
+call stack.
+
+The steps:
+
+  1. Scan the whole grid once. Put every ROTTEN orange into the queue, each marked
+     as being at minute 0. Count every FRESH orange as you go.
+
+     Putting all the rotten ones in before starting is the multi-source trick - it
+     is the only difference from ordinary BFS.
+
+  2. Start a record of the largest minute seen at zero.
+
+  3. While the queue is not empty:
+
+     a. Take the entry at the front - a position and the minute that orange rotted.
+
+     b. Update the largest-minute record if this one is later.
+
+     c. Look at the four neighbours: down, up, right and left.
+
+     d. For each neighbour that is on the grid AND holds a fresh orange: turn it
+        rotten immediately, reduce the fresh count by one, and add it to the back of
+        the queue marked as one minute later.
+
+        Turn it rotten as you QUEUE it, not when you later take it out - otherwise
+        several neighbours can queue the same orange before any of them handles it.
+
+  4. When the queue empties, check the fresh count. If it is zero, every orange
+     rotted and the largest minute is the answer. If any remain, they were walled
+     off and could never rot, so report -1.
+
+Step 4 is the one people leave out, and without it an unreachable orange is silently
+ignored.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first walks the whole crate once, noting two things: where every rotten
+orange is, and how many fresh ones there are altogether.
+
+All the rotten oranges go into a waiting line together, each labelled with minute
+zero. That is the one thing that makes this different from an ordinary spreading
+search - the rot does not start from a single place, it starts everywhere at once,
+so every source joins the line before anything begins.
+
+Then it works through the line. It takes the orange at the front, notes what minute
+that one rotted, and looks at the four squares beside it. Any of those holding a
+fresh orange is going to rot one minute later - so the code turns it rotten there
+and then, reduces the count of fresh oranges, and adds it to the back of the line
+labelled with that later minute.
+
+Turning it rotten at the moment it joins the line, rather than when it is later
+taken out, matters: otherwise two neighbours could each add the same orange before
+either had handled it, and it would be counted twice.
+
+Because the line is served in the order things joined it, everything from one minute
+is handled before anything from the next, so the rot really does advance a minute at
+a time.
+
+When the line finally empties, the code checks whether any fresh oranges are left. If
+none are, the latest minute it recorded is the answer. If some remain, they were
+sealed off behind empty squares and could never have rotted, so it reports that the
+task is impossible.""",
+
+    """8. THE CODE, line by line.
+
+Keep the 3 x 3 crate from section 1 beside you; the answer is 4.
+
+    from collections import deque
+Python's ready-made waiting line, which removes from the front in one step.
+
+    rows, cols = len(grid), len(grid[0])
+The crate's dimensions.
+
+    queue = deque()
+    fresh = 0
+The waiting line, and the count of fresh oranges still to rot.
+
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] == 2:
+                queue.append((r, c, 0))
+            elif grid[r][c] == 1:
+                fresh += 1
+The one scan that sets everything up. EVERY rotten orange goes into the queue, each
+marked minute 0 - that is the multi-source trick from section 2, and it is the only
+structural difference from ordinary BFS.
+
+Each entry is a triple: row, column, and the minute that orange rotted. Carrying the
+minute inside the entry removes the need for separate level bookkeeping.
+
+Meanwhile every fresh orange is counted, because that count is the only way to detect
+the unreachable case later.
+
+    minutes = 0
+The largest minute recorded so far - the running answer.
+
+    while queue:
+Keep going while anything is still spreading.
+
+    r, c, t = queue.popleft()
+    minutes = max(minutes, t)
+Take the front entry and note its minute. Because entries are served in the order
+they joined, minutes only ever increases - but taking the maximum is the clearest way
+to say what is meant.
+
+    for dr, dc in ((1,0),(-1,0),(0,1),(0,-1)):
+        nr, nc = r + dr, c + dc
+The four neighbours - down, up, right, left - written as offsets so the four cases
+collapse into a loop. Adding diagonals would be four more pairs here and nothing
+else.
+
+    if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == 1:
+Two checks, in this order. The bounds first, so the grid is only read once the
+position is known to be valid - Python stops evaluating "and" at the first false
+condition, which is what makes that safe. Then: is there a fresh orange here?
+
+Note this single test also handles "have I already rotted this one", because a rotted
+orange holds 2, not 1.
+
+    grid[nr][nc] = 2
+    fresh -= 1
+    queue.append((nr, nc, t + 1))
+Rot it NOW, at the moment it is queued - not when it is later taken out. That is the
+marking rule from section 3: waiting would let several neighbours queue the same
+orange before any of them handled it, corrupting both the count and the queue.
+
+The fresh count drops, and the orange joins the line marked one minute later than the
+one that rotted it.
+
+    return minutes if fresh == 0 else -1
+The check people forget. If any fresh orange survived, it was walled off and could
+never rot, so the task is impossible. Otherwise the latest minute recorded is the
 answer.""",
 
-    """Marking rotten at PUSH time, not at pop time.
-The code sets grid[nr][nc] = 2 and decrements fresh at the moment it enqueues.
-If you deferred that to when the cell is POPPED, two different rotten neighbours
-could each enqueue the same fresh orange, it would be counted twice, fresh would
-go negative, and the queue would hold duplicates.
-This is the same rule as every other BFS: mark visited when you push. Say it out
-loud - it is the difference between an implementation that works and one that
-works only on the examples.""",
+    """9. TRACING THE CODE, variable by variable.
 
-    """Cost, and the pattern to name in an interview.
-O(R x C) time - every cell is enqueued at most once - and O(R x C) space for the
-queue in the worst case (a grid that starts entirely rotten).
-The label to say: 'multi-source BFS on a grid, where the BFS level IS the
-elapsed time'.
-Same shape elsewhere:
-- 01 Matrix: distance from every cell to the nearest 0.
-- Walls and Gates: distance to the nearest gate.
-- Shortest Bridge: BFS out from one island to reach the other.
-- Fire/flood spread simulations and epidemic-style diffusion models.
-Whenever 'time' advances uniformly for everything at once, BFS levels are your
-clock.""",
+        col:  0  1  2
+    row 0:    2  1  1
+    row 1:    1  1  0
+    row 2:    0  1  1
+
+SETUP SCAN.
+    (0,0) is 2 -> queue it at minute 0.
+    (0,1), (0,2), (1,0), (1,1), (2,1), (2,2) are 1 -> fresh = 6.
+    (1,2) and (2,0) are 0 -> ignored.
+
+    queue = [(0,0,0)]     fresh = 6     minutes = 0
+
+ROUND 1.  pop (0,0,0).  minutes = 0.
+    Neighbours: (1,0) is fresh -> rot it, fresh = 5, queue (1,0,1).
+                (-1,0) off the grid.
+                (0,1) is fresh -> rot it, fresh = 4, queue (0,1,1).
+                (0,-1) off the grid.
+    queue = [(1,0,1), (0,1,1)]
+
+ROUND 2.  pop (1,0,1).  minutes = 1.
+    Neighbours: (2,0) is 0 -> skip.  (0,0) is now 2 -> skip.
+                (1,1) is fresh -> rot it, fresh = 3, queue (1,1,2).
+                (1,-1) off the grid.
+    queue = [(0,1,1), (1,1,2)]
+
+ROUND 3.  pop (0,1,1).  minutes = 1.
+    Neighbours: (1,1) is now 2 -> skip.   <- already rotted when queued, which is
+                                             the marking rule doing its job
+                (-1,1) off the grid.
+                (0,2) is fresh -> rot it, fresh = 2, queue (0,2,2).
+                (0,0) is 2 -> skip.
+    queue = [(1,1,2), (0,2,2)]
+
+ROUND 4.  pop (1,1,2).  minutes = 2.
+    Neighbours: (2,1) is fresh -> rot it, fresh = 1, queue (2,1,3).
+                (0,1) is 2, (1,2) is 0, (1,0) is 2 -> all skipped.
+    queue = [(0,2,2), (2,1,3)]
+
+ROUND 5.  pop (0,2,2).  minutes = 2.
+    Neighbours: (1,2) is 0, (-1,2) off grid, (0,3) off grid, (0,1) is 2. Nothing.
+    queue = [(2,1,3)]
+
+ROUND 6.  pop (2,1,3).  minutes = 3.
+    Neighbours: (3,1) off grid.  (1,1) is 2.
+                (2,2) is fresh -> rot it, fresh = 0, queue (2,2,4).
+                (2,0) is 0.
+    queue = [(2,2,4)]
+
+ROUND 7.  pop (2,2,4).  minutes = 4.
+    Neighbours: all off-grid, empty, or already rotten.
+    queue = []  -> loop ends.
+
+fresh == 0, so return minutes = 4.  Matching the hand-worked answer.
+
+THE UNREACHABLE CASE, grid = [[2, 0, 1]]:
+    Setup: (0,0) queued at minute 0.  (0,2) is fresh -> fresh = 1.
+    Round 1: pop (0,0,0). Neighbour (0,1) is 0 -> skip. Others off the grid.
+    queue empties.  fresh is 1, not 0 -> return -1.  Correct.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(R x C) - proportional to the number of squares. The setup scan visits each
+once. Each orange is queued at most once, because it is turned rotten the moment it
+is queued and the check only admits fresh ones. Each queued entry looks at four
+neighbours, which is a fixed amount of work.
+
+SPACE: O(R x C) for the queue, which in the worst case - a crate that is entirely
+rotten at the start - holds every square at once.
+
+WHY BFS RATHER THAN DFS: the question asks for the time until everything rots, which
+is a shortest-distance question in disguise - each orange rots at the moment the
+nearest wave reaches it. BFS's guarantee is exactly that the first arrival is the
+earliest. A depth-first walk would reach oranges by arbitrary routes and record
+minutes that are too large.
+
+THE #1 MISTAKE - forgetting to count the fresh oranges and check at the end. Without
+that check, a crate containing an orange sealed off behind empty squares returns the
+minute the reachable ones finished, which looks entirely plausible and is wrong. The
+count is the only thing that distinguishes "finished" from "gave up".
+
+A close second: marking an orange rotten when it is taken OUT of the queue rather
+than when it is put in. Several neighbours then queue the same orange before any of
+them handles it, the fresh count goes past zero, and the answer is wrong. This is the
+same rule as in Number of Islands and Word Ladder - mark on entry, always.
+
+Also worth saying: this code rots the caller's grid as it goes, so the input comes
+back modified.
+
+ONE-SENTENCE TAKEAWAY: put every rotten orange in the queue at minute zero so the
+waves spread together, carry each orange's minute inside its queue entry, mark
+oranges rotten as you queue them - and count the fresh ones so you can tell
+"finished" from "impossible".""",
 ]
 
 _EX_P0F["Search a 2D Matrix"] = [
