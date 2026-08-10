@@ -22679,129 +22679,376 @@ proportional to the number of cells - written O(rows x columns).""",
 ]
 
 _EX_P0["Invert a Binary Tree"] = [
-    """What 'invert' actually means - hold the picture up to a mirror.
+    """1. THE GOAL, in plain English.
 
-Start with this tree. (A BINARY TREE is a diagram where each item, called a
-NODE, has at most two items hanging below it, called its CHILDREN. The node at
-the top is the ROOT.)
+You are given a tree and must produce its MIRROR IMAGE - what it would look like
+reflected in a mirror held beside it.
 
-         4
-       /   \\
-      2     7
-     / \\   / \\
-    1   3 6   9
+Here is the tree we will use:
 
-Inverting it means producing its mirror image - as if you held it up to a
-mirror, so everything that was on the left is now on the right:
+            4
+          /   \\
+         2     7
+        / \\   / \\
+       1   3 6   9
 
-         4
-       /   \\
-      7     2
-     / \\   / \\
-    9   6 3   1
+And here is the answer:
 
-Read the bottom row of each: 1 3 6 9 became 9 6 3 1. Exactly reversed.""",
+            4
+          /   \\
+         7     2
+        / \\   / \\
+       9   6 3   1
 
-    """How to do it: one swap, repeated everywhere.
+Vocabulary, defined as it appears:
+- Each item is a NODE. 4 is at the very top; the top node is the ROOT.
+- The nodes hanging directly below a node are its CHILDREN. 4's children are 2
+  and 7.
+- A node with no children is a dead end, called a LEAF - here 1, 3, 6 and 9.
+- The SUBTREE at a node means that node plus everything hanging below it. The
+  subtree at 2 is {2, 1, 3}.
 
-Look at what actually changed. At the root, the whole left branch and the whole
-right branch traded places. At node 7, its children 6 and 9 traded places. At
-node 2, its children 1 and 3 traded places.
+Look carefully at what changed between the two pictures. At the root, 2 and 7
+have swapped sides. But so have 1 and 3 underneath, and 6 and 9 underneath. Every
+single node's two children have traded places.
 
-That is the entire algorithm: AT EVERY NODE, SWAP ITS TWO CHILDREN.
+That is the whole task, and stating it that way is the solution: swap every
+node's left and right children.
 
-So the function is:
-    1. If there is no node here, stop. (This is the BASE CASE - the simplest
-       situation, answered outright, which stops the function calling itself
-       forever.)
-    2. Swap this node's left and right children.
-    3. Do the same thing to the left child, and to the right child.
+The values themselves never move between nodes - node 4 is still node 4. Only the
+arrows pointing downwards get crossed over.""",
 
-Step 3 is the function calling itself on a smaller piece of the problem, which
-is called RECURSION. Each node does one tiny job and trusts the smaller calls
-to handle everything below.""",
+    """2. THE INTUITION - swapping only at the top is not enough.
 
-    """The bug that destroys the tree, and why.
+The tempting first idea is to swap the root's two children and be done:
 
-You must swap the two children in ONE step. In Python:
+            4
+          /   \\
+         7     2          <- 2 and 7 swapped
+        / \\   / \\
+       6   9 1   3        <- but these came along unchanged
 
-    node.left, node.right = node.right, node.left        # correct
+Compare that against the real answer in section 1. The top level is right, but
+underneath, 6 and 9 are still in their original order and so are 1 and 3. In the
+true mirror they should read 9, 6, 3, 1.
 
-Here is what happens if you write it as two separate lines instead:
+So one swap at the top is not a mirror - it is only half a mirror. A real
+reflection flips every level, all the way down.
 
-    node.left = node.right      # left now points at the right child
-    node.right = node.left      # ...but 'node.left' has ALREADY changed!
+Which gives the method: swap this node's children, then go and do exactly the
+same thing to each of them. And to each of theirs. The instruction is identical
+at every node; only the tree it is applied to gets smaller.
 
-The second line reads the value you just overwrote, so BOTH sides end up
-pointing at the original right child, and the original left branch is lost
-forever.
+That is RECURSION - solving a big problem by giving the identical instruction to
+smaller pieces of it. The pieces here are subtrees.
 
-Test it on this lopsided tree:
+There is no simpler-but-slower version worth showing first. The alternative is
+the same work driven by an explicit stack or queue instead of recursion, which is
+the same speed and is described in section 10 as the version to reach for when
+the tree is very deep.""",
 
-    1
-   /
-  2
- /
-3
+    """3. THE BASE CASE - where the instruction stops.
 
-Node 1 has a left child (2) and no right child. The buggy version sets left to
-'nothing', then sets right to that same 'nothing' - and the entire tree below
-vanishes, leaving just the node 1. The correct version gives
-1 with 2 hanging on its RIGHT, and 3 hanging on 2's right.
+"Swap your children, then tell each child to do the same" cannot go on forever.
+Something has to refuse to pass the instruction on.
 
-Whenever you swap two things in one statement, remember Python evaluates the
-whole right-hand side FIRST, using the old values. That is what makes the
-one-line version safe.""",
+That something is the empty spot. When a node has no left child, the instruction
+is being given to nothing - and there is nothing there to swap. So the rule is:
 
-    """Does the order matter? A pleasant surprise: no.
+    if the node is empty, do nothing and return
 
-You could swap the children first and then recurse into them, or recurse first
-and swap on the way back up. Both give exactly the same mirrored tree.
+That is the BASE CASE - the situation the function answers immediately instead of
+recursing further. Without one, the function would keep calling itself past the
+bottom of the tree and eventually crash.
 
-Why? Because the swap at one node and the swap at a node below it are
-completely independent - neither one changes WHICH nodes the other touches. It
-just relabels which side they sit on.
+Watch how it makes leaves work with no special handling. Take leaf 1. It has no
+children, so both of its child slots are empty. The code swaps them - swapping
+nothing for nothing, which is harmless - and then gives the instruction to each,
+and both immediately return because they are empty. So a leaf costs two trivial
+calls and changes nothing, which is exactly right.
 
-This is not always true. In some tree problems each step destroys the structure
-the next step needs, and then the order is critical. Being able to say WHY the
-order is safe here - rather than just observing that it works - is the kind of
-reasoning interviewers listen for.""",
+You could add an explicit "if this is a leaf, stop" check, and some people do.
+It is redundant: the base case already covers it, and the extra check is one more
+thing that can drift out of step with the rest of the code.
 
-    """The version that survives a very deep tree.
+One more thing worth noticing about this problem: unlike most tree questions, the
+answer is not a number. The function CHANGES the tree it was given and hands back
+the same root. If the caller needs the original tree preserved, they must copy it
+first - say so out loud, because "does your solution modify the input?" is a
+question interviewers like.""",
 
-Every time the function calls itself, the unfinished call is held in memory.
-That pile of paused calls is the CALL STACK, and Python refuses to go deeper
-than about 1,000 of them.
+    """4. THE CASES THAT CATCH PEOPLE.
 
-A neat bushy tree of 100,000 nodes is only ~17 levels deep, so recursion is
-fine. But a tree that is one long chain of 100,000 nodes is 100,000 levels
-deep, and the recursive version crashes with 'RecursionError'.
+CASE 1 - swapping the values instead of the children. It is tempting to write
+"swap node.left.val and node.right.val", moving the numbers rather than the
+branches. On a tree only two levels deep that gives the right answer, so it
+passes the obvious test. On our four-level tree it does not: swapping just the
+values 2 and 7 leaves their subtrees behind, so 1 and 3 stay under the node now
+labelled 7. You must swap the CHILD LINKS, which carries each entire subtree
+along with it.
 
-The fix uses your own stack instead of Python's:
-    put the root on a stack
-    while the stack is not empty:
-        take a node off it
-        swap its two children
-        put its children (if any) on the stack
-Same swaps, same answer, no recursion limit. And because the order does not
-matter (previous point), you could use a queue instead of a stack and it would
-still be correct.""",
+CASE 2 - swapping only at the root. Covered in section 2 - it produces a
+half-mirrored tree that looks right at a glance.
 
-    """Why this famously easy question is still asked.
+CASE 3 - the empty tree. The very first call hits the base case and returns
+immediately. Correct, and it means the caller needs no guard.
 
-In 2015 the author of Homebrew - software on millions of Macs - was turned down
-by Google after being unable to invert a binary tree at the whiteboard. The
-story went everywhere, and the problem became the symbol of 'easy thing, hard
-moment'.
+CASE 4 - a single node. Its two empty child slots are swapped - nothing for
+nothing - and the two recursive calls both return at once. The tree is unchanged,
+which is right: a single node is its own mirror.
 
-Which tells you what is really being graded. The code is four lines; everyone
-knows the interviewer expects them. What is being watched is whether you stay
-calm, whether you ask a clarifying question ('should I modify the tree in place
-or return a new one?'), and whether you volunteer the deep-tree variant.
+CASE 5 - swapping without a simultaneous assignment. In a language without
+Python's tuple assignment you must use a temporary variable:
 
-Speed: each node is visited once and does one swap, so the time is proportional
-to the number of nodes - written O(n). Memory is proportional to the tree's
-depth, since that is how many paused calls stack up.""",
+    tmp = node.left
+    node.left = node.right
+    node.right = tmp
+
+Writing it as two lines WITHOUT the temporary - node.left = node.right followed
+by node.right = node.left - loses the original left subtree entirely, and both
+sides end up pointing at the same branch. That is a genuine bug and a genuine
+memory leak in languages that need one.
+
+CASE 6 - recursing before swapping. Interestingly, this one still works. Swapping
+first and then recursing into the (already swapped) children, or recursing first
+and then swapping, both produce the correct mirror - because every node gets
+swapped exactly once either way. That is unusual: in most tree problems the
+order matters a great deal. Worth mentioning if asked, but do not go looking for
+a reason it should matter here.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+RECURSION: a function that solves a problem by calling itself on smaller pieces
+of the same problem. Defined in section 2.
+
+CALL STACK: when the function calls itself, the outer call PAUSES exactly where
+it is, half-finished, and the inner one runs. Those paused calls pile up, each
+waiting for the one below it to finish. That pile is the call stack, and it is
+what lets execution return to exactly the right place when a call ends.
+
+BASE CASE: the situation the function answers immediately without calling itself
+again. Defined in section 3.
+
+node.left and node.right: the links a node holds to its two children. Assigning
+to them is what physically rearranges the tree. Note the difference from a
+variable assignment: setting a local variable moves your own bookmark, while
+setting node.left changes the tree itself.
+
+a, b = b, a - Python's simultaneous assignment. The whole right-hand side is
+worked out FIRST, using the old values, and only then are both assignments made.
+That is what makes a swap possible in one line with no temporary variable, and
+why case 5 in section 4 is a trap in other languages.
+
+IN PLACE: changing the original structure rather than building a new one. This
+solution is in place - it rearranges the tree it was given.
+
+O(n) and O(h): the two costs, where n is the number of nodes and h the height of
+the tree. O(n) means the work grows in step with the number of nodes. O(h)
+describes the extra memory: it grows with how DEEP the tree is, because that is
+how many paused calls can be stacked up at once.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: swap every node's two children, and to do that,
+swap this node's children and then give the same instruction to each of them.
+
+The mechanism, since this is recursion. When the function is called on node 4, it
+swaps 4's two children and then calls itself on the left child. At that moment
+node 4's call PAUSES, half-finished - it has done its swap but not yet dealt with
+the right child. The inner call runs, doing the same thing one level down, and
+may pause in turn. These half-finished calls stack up. When one finishes and
+returns, the call above it wakes up exactly where it stopped and carries on to
+its next line - which is the call on the right child.
+
+What makes it stop: every path down the tree eventually reaches an empty spot,
+and an empty spot returns immediately without calling anything further. That is
+the base case, and it is what lets the whole pile unwind.
+
+The steps:
+
+  1. Write one function that takes a node.
+
+  2. BASE CASE first. If the node is empty, return immediately - there is nothing
+     here to swap.
+
+  3. Swap this node's left and right children. Use a simultaneous assignment, or
+     a temporary variable if your language needs one - assigning one side and
+     then the other without saving the original loses a whole subtree.
+
+  4. Call the same function on the left child.
+
+  5. Call the same function on the right child.
+
+  6. Return the node, so the caller gets the root of the mirrored tree back.
+
+Note step 3 swaps the LINKS, not the values. Moving a link carries the entire
+subtree hanging beneath it, which is what makes a genuine mirror rather than a
+relabelling - see case 1 in section 4.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code mirrors the tree by giving every node the same tiny instruction and
+letting it spread downwards.
+
+Standing on a node, it does one thing: it crosses over the two branches hanging
+beneath it, so the left one now hangs on the right and the right one hangs on the
+left. Crucially, each branch travels as a whole - everything beneath it comes
+along - so this is a genuine reflection rather than a shuffling of labels.
+
+Then it passes the same instruction to each of those two branches in turn, and
+each of them does the same thing to its own two branches, and so on down the
+tree. Every node ends up having crossed over its own children exactly once, which
+is precisely what a mirror image is.
+
+The spreading stops on its own. When the instruction reaches a spot where there
+is no node at all - just below a leaf - there is nothing to swap and nothing to
+pass on, so that branch of the work simply ends. Because every path down the tree
+runs out of nodes eventually, the whole process finishes.
+
+One thing to be aware of: the code rearranges the tree it was handed rather than
+producing a new one. When it finishes, the original tree no longer exists in its
+old shape. It returns the same top node, now sitting at the head of the mirrored
+version.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you: 4 on top, 2 and 7 below, then 1, 3, 6, 9.
+
+    def invert_tree(root):
+root is the node currently being worked on - not necessarily the root of the
+whole tree. The same function handles the whole tree and every subtree inside it,
+which is what makes the recursion work.
+
+    if root is None:
+        return None
+The BASE CASE. An empty spot has nothing to swap, so return at once. This is what
+stops the recursion running past the bottom of the tree, and it is also what
+makes leaves work without any special code - a leaf's two child slots are both
+None, so the two calls below return immediately.
+
+Returning None rather than nothing keeps the function's promise consistent: it
+always hands back the top of the piece it was asked about, and for an empty piece
+that is None.
+
+    root.left, root.right = root.right, root.left
+The entire operation, in one line. Python works out the whole right-hand side
+first, using the OLD values of both links, and only then assigns - so the swap
+needs no temporary variable.
+
+This swaps the LINKS, which means each child's entire subtree comes with it. That
+is the difference between mirroring the tree and merely relabelling two nodes -
+see case 1 in section 4.
+
+In a language without simultaneous assignment you would need three lines and a
+temporary; writing it as two lines without one destroys the left subtree.
+
+    invert_tree(root.left)
+Give the same instruction to the left child. Note this runs AFTER the swap, so
+root.left is now what used to be the right child - which does not matter, because
+every node gets swapped exactly once regardless of the order.
+
+The return value is deliberately ignored. This function's useful effect is the
+rearrangement it performs, not the value it hands back.
+
+    invert_tree(root.right)
+The same for the other child. Between these two calls, every node below this one
+gets its turn.
+
+    return root
+Hand back the top of this piece, now mirrored. For the outermost call, that is
+the root of the whole mirrored tree - which is the same node object the caller
+passed in, since nothing was copied.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Starting tree:
+
+            4
+          /   \\
+         2     7
+        / \\   / \\
+       1   3 6   9
+
+Indentation shows the depth of the call stack.
+
+invert_tree(4)
+  4 is not None
+  swap 4's children:  left was 2, right was 7  ->  left = 7, right = 2
+
+            4
+          /   \\
+         7     2
+        / \\   / \\
+       6   9 1   3          <- lower levels not yet touched
+
+  invert_tree(4.left) which is now node 7
+        7 is not None
+        swap 7's children:  left was 6, right was 9  ->  left = 9, right = 6
+        invert_tree(9)
+              9 is not None
+              swap 9's two children: both None - harmless
+              invert_tree(None) -> base case, return
+              invert_tree(None) -> base case, return
+              return 9
+        invert_tree(6)
+              same: two empty slots swapped, two base-case calls, return 6
+        return 7
+  invert_tree(4.right) which is now node 2
+        swap 2's children:  left was 1, right was 3  ->  left = 3, right = 1
+        invert_tree(3) -> leaf, nothing happens
+        invert_tree(1) -> leaf, nothing happens
+        return 2
+  return 4
+
+Final tree:
+
+            4
+          /   \\
+         7     2
+        / \\   / \\
+       9   6 3   1
+
+Which is exactly the answer from section 1.
+
+Count the swaps: one at node 4, one at node 7, one at node 2, and one at each of
+the four leaves - seven swaps for seven nodes. Every node swapped exactly once,
+which is the invariant that makes the order of the two recursive calls
+irrelevant.
+
+At the deepest point - inside invert_tree(9) - there are three paused calls
+stacked up (4, 7, 9). That is the O(h) memory from section 10, visible.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is visited exactly once and does a
+fixed amount of work - one swap. You cannot do better, because every node's
+children have to be crossed over and that means touching every node.
+
+SPACE: O(h), where h is the HEIGHT of the tree - the call stack holds one paused
+call per level as the recursion descends. For a bushy, well-balanced tree that is
+about log n (a million nodes is only about 20 levels), so the memory is tiny. For
+a long chain-like tree it is n, and on a chain of 10,000 nodes Python's recursion
+limit of roughly 1,000 stops the program with a RecursionError.
+
+The cure for that is to do the same work with an explicit waiting list instead of
+the call stack: put the root in a queue, then repeatedly take a node out, swap its
+children, and put both children in. Same nodes, same swaps, same O(n) time - but
+the memory is a queue you control rather than the call stack, so it survives any
+depth.
+
+THE #1 MISTAKE - swapping the values instead of the child links. Writing
+node.left.val, node.right.val = node.right.val, node.left.val moves the numbers
+but leaves the subtrees where they were, so anything below the swapped pair stays
+put. On a two-level tree it produces the correct answer, which is exactly why it
+survives casual testing. Swap the links; the subtrees come along for free.
+
+A close second: doing the swap without a simultaneous assignment or a temporary
+variable, which overwrites the left link before it has been read and leaves both
+sides pointing at the same subtree.
+
+ONE-SENTENCE TAKEAWAY: a mirror image is just every node's two children crossed
+over, so swap this node's child links - which carries each whole subtree with it -
+and then give the same instruction to both children.""",
 ]
 
 _EX_P0["Maximum Depth of Binary Tree"] = [
@@ -23930,104 +24177,363 @@ contribution, record the bent one', all three stop being separate.""",
 ]
 
 _EX_P0["Merge Two Sorted Lists"] = [
-    """Two tidy piles of cards, and one tidy pile out.
+    """1. THE GOAL, in plain English.
 
-Imagine two piles of numbered cards on the table. Each pile is already sorted -
-smallest on top. You want ONE sorted pile.
+You are given two chains of numbers, each already sorted from smallest to
+largest. Weave them into a single chain that is also sorted.
 
-You do not need to think hard. Just look at the top card of each pile, take the
-smaller one, put it face-down on your new pile, and repeat. When one pile runs
-out, drop the whole remaining pile on the end.
+Each chain is a LINKED LIST. Picture a train: each carriage holds a number and is
+coupled to exactly one carriage behind it. To reach carriage 4 you must walk
+through 1, 2 and 3 - there is no jumping ahead.
 
-That is the entire algorithm, and you have probably done it with real cards
-without calling it anything.
+    list one:   [1] -> [2] -> [4] -> None
+    list two:   [1] -> [3] -> [4] -> None
 
-Our two piles, written as LINKED LISTS (a chain where each item holds a value
-and an arrow pointing to the next item; the arrow is written ->):
+    answer:     [1] -> [1] -> [2] -> [3] -> [4] -> [4] -> None
 
-    pile A:  1 -> 2 -> 4
-    pile B:  1 -> 3 -> 4""",
+Vocabulary as it appears:
+- Each carriage is a NODE, holding a value and a link to the next node.
+- HEAD is the first node of a chain - the only one you are handed.
+- The last node's link points at NOTHING, written None, which is how you know the
+  chain has ended.
 
-    """Doing it card by card.
+Two things to notice about the answer. Every value from both inputs appears
+exactly once - nothing is dropped and nothing is invented, so the two 4s both
+survive. And the result is sorted, which is the point.
 
-Compare the two tops each time and take the smaller:
+The standard version of this problem asks you to build the answer by RE-LINKING
+the existing nodes rather than creating new ones. So no new carriages are built;
+the couplings between the existing ones are simply rearranged.""",
 
-    tops are 1 and 1  -> tie; take A's 1        result: 1
-    tops are 2 and 1  -> take B's 1             result: 1 1
-    tops are 2 and 3  -> take 2                 result: 1 1 2
-    tops are 4 and 3  -> take 3                 result: 1 1 2 3
-    tops are 4 and 4  -> tie; take A's 4        result: 1 1 2 3 4
-    pile A is now empty -> drop the rest of B (the 4) on the end
+    """2. THE INTUITION - it is the merge from a card game.
 
-    final: 1 -> 1 -> 2 -> 3 -> 4 -> 4
+Imagine two piles of cards face up, each pile already sorted with the smallest on
+top. You want one sorted pile.
 
-Notice the last step. You do NOT keep comparing once one pile is empty - you
-attach everything that is left in one move, because it is already sorted.""",
+You do not need to look through either pile. You only ever look at the two TOP
+cards. Whichever is smaller goes onto your output pile, and you turn over the next
+card in whichever pile you just took from. Repeat.
 
-    """The DUMMY node - a small trick that removes a whole class of bugs.
+Why is only looking at the tops enough? Because each pile is sorted, so the top
+card of a pile is the smallest thing left in that pile. The smallest card overall
+must therefore be the smaller of the two tops - it cannot be hiding further down,
+because everything further down is larger.
 
-You are building a new chain. The awkward moment is the very first card,
-because there is nothing yet to attach it to. Without a trick you would need a
-special case on every single step: 'if this is the first card, start the chain;
-otherwise attach to the end'.
+That single observation is the whole algorithm, and it is worth being able to
+state it: the smallest remaining value is always one of the two front values, so
+you never have to search.
 
-The trick: before you start, create one throwaway node that holds nothing -
-call it the DUMMY. Now you always have something to attach to, from card one.
-At the end, the real answer is whatever the dummy points at.
+Trace it on our lists:
 
-    dummy -> [ ] -> 1 -> 1 -> 2 -> 3 -> 4 -> 4
-              ^ the fake one, ignored at the end
+    one: 1 2 4      two: 1 3 4      output: (empty)
+    fronts are 1 and 1 -> tie, take from list one
+    one:   2 4      two: 1 3 4      output: 1
+    fronts are 2 and 1 -> take the 1 from list two
+    one:   2 4      two:   3 4      output: 1 1
+    fronts are 2 and 3 -> take 2
+    one:     4      two:   3 4      output: 1 1 2
+    fronts are 4 and 3 -> take 3
+    one:     4      two:     4      output: 1 1 2 3
+    fronts are 4 and 4 -> tie, take from list one
+    one: (empty)    two:     4      output: 1 1 2 3 4
+    one pile is empty -> everything left in the other is already sorted,
+                         so attach it in one go
+    output: 1 1 2 3 4 4
 
-So you `return dummy.next`, not `return dummy`. Returning the dummy itself
-leaves a stray empty node stuck on the front, and that is the single most common
-slip in this problem.""",
+Each value is looked at once. No sorting, no searching - one pass down both
+lists.""",
 
-    """Why the comparison uses 'less than or equal' and not just 'less than'.
+    """3. THE TRICK - the DUMMY HEAD, and the problem it removes.
 
-When both tops are 1, which do you take? The code says take from pile A
-(`if a.val <= b.val`). Using strict 'less than' would take from B instead.
+Building a chain by attaching to the end has an awkward first step: the very
+first node has nothing to attach TO. So the naive code needs a special case -
+"if the output is still empty, this node becomes the head; otherwise attach it to
+the last node" - and that check has to sit inside the loop, running every single
+time to handle something that only matters once.
 
-For plain numbers nobody can tell the difference - a 1 is a 1. But suppose each
-card is a person's record and you are merging by surname. If two people share a
-surname and A's list had them in a particular order, taking from A first keeps
-that order; taking from B first silently swaps them.
+The fix is delightfully cheap. Invent one throwaway node and start the output
+with it:
 
-Preserving the original order of equal items is called being STABLE. It is one
-character of code - `<=` instead of `<` - and it is exactly the same decision
-that makes Merge Sort a stable sort. Worth saying out loud in an interview.""",
+    [dummy] -> ...
 
-    """The small and lopsided cases.
+Now the output is never empty. The first real node is attached to the dummy, just
+like every later node is attached to its predecessor. One piece of code handles
+every position, and the special case disappears entirely.
 
-ONE PILE EMPTY: pile A is empty, pile B is 1 -> 3. The comparison loop never
-runs even once, and the final 'attach whatever is left' line hands over the
-whole of B in one step. Answer 1 -> 3.
+Two details make it work:
+- Keep a separate marker, usually called tail, on the LAST node of the output so
+  far. It starts on the dummy and moves along as nodes are attached, so you never
+  have to walk the output to find its end.
+- At the very end, return dummy.next - the node after the throwaway - not the
+  dummy itself. Forgetting this returns a chain with a stray 0 at the front.
 
-BOTH EMPTY: the loop does not run, nothing is attached, and dummy.next is
-empty - the correct empty answer, with no special handling.
+The dummy's value is never read, so it can be anything; 0 is conventional.
 
-NO OVERLAP AT ALL: A is 1 -> 2 -> 3 and B is 10 -> 11 -> 12. Every comparison
-takes from A until A is exhausted, then the whole of B is attached in ONE move.
-That is three comparisons, not six - which shows the work is driven by
-whichever pile empties first, not by the total number of cards.""",
+This is worth remembering far beyond this problem. Any time a linked-list
+operation has an awkward special case at the front - inserting before the head,
+deleting the head, building a list from empty - a throwaway node in front usually
+makes the special case vanish.""",
 
-    """Speed, and why this small function matters more than it looks.
+    """4. THE CASES THAT CATCH PEOPLE.
 
-Every card is looked at once and moved once, so the time is proportional to the
-total number of cards - written O(n + m) for piles of size n and m. No extra
-storage is needed beyond the dummy, because you are re-pointing the existing
-arrows rather than copying anything.
+CASE 1 - one list runs out before the other. This is not an edge case; it happens
+on nearly every input, and it is why the loop condition requires BOTH lists to be
+non-empty. The moment one is exhausted, the loop stops and the remainder of the
+other is attached in a single move.
 
-Why it matters: this two-pile merge is the engine inside MERGE SORT, which
-sorts by splitting a list in half, sorting each half, and merging them back
-with exactly this routine.
+Why can it be attached in one move? Because that remainder is already sorted, and
+every value in it is at least as large as everything already placed. There is
+nothing left to compare it against, so no further weaving is needed. Attaching it
+node by node would give the same answer, more slowly.
 
-It also scales up. 'Merge k sorted lists' can be done by repeatedly merging
-pairs - use this function log(k) times - or by keeping the k current tops in a
-structure called a heap that always hands you the smallest. And the same idea
-sorts files far too big to fit in memory: sort chunks, write them out, then
-merge the sorted chunks by streaming their fronts. So this is not really a
-question about two lists; it is the primitive several bigger things are built
-from.""",
+CASE 2 - forgetting to attach the remainder. If the code stops when the loop
+stops, the output ends where the shorter list ended and the tail of the longer
+list is silently lost. On our example you would get 1, 1, 2, 3, 4 and lose the
+final 4.
+
+CASE 3 - one list empty from the start. The loop never runs, and the remainder
+step attaches the whole non-empty list. The answer is that list. Correct with no
+special case.
+
+CASE 4 - both lists empty. The loop never runs, the remainder step attaches
+nothing, and dummy.next is None. An empty answer. Correct.
+
+CASE 5 - ties, and STABILITY. When the two front values are equal, which do you
+take? Either gives a correctly sorted answer. Taking from the first list keeps
+equal values in their original relative order, which is called being STABLE, and
+it is the conventional choice - which is why the comparison is written "less than
+or equal" rather than "less than".
+
+CASE 6 - returning dummy instead of dummy.next. The answer comes out with a
+spurious 0 at the front. Easy to write, easy to spot once you print the result.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+LINKED LIST, NODE, HEAD, None: defined in section 1.
+
+node.next: the link a node holds - "the node after this one". Assigning to it is
+what physically re-couples the chain; reading it is how you walk along.
+
+DUMMY HEAD (or sentinel node): a throwaway node placed at the front so the real
+first node has a predecessor. Defined and motivated in section 3.
+
+TAIL: a marker resting on the last node of the output so far, so that attaching
+the next node is one assignment rather than a walk to the end.
+
+IN PLACE / RE-LINKING: the answer is built from the existing nodes by changing
+their links, not by creating new ones. That is what keeps the extra memory
+constant.
+
+"a or b" in Python: this does not produce true or false here. It hands back the
+first value that is not empty, or the second if the first is empty. So
+"l1 or l2" means "whichever of these two is not None" - and if both are None it
+gives None. That is exactly the "attach whatever remains" step in one expression.
+
+O(n + m) and O(1): the costs, where n and m are the two list lengths. O(n + m)
+means the work grows in step with the total number of nodes - each is looked at
+once. O(1) means the extra memory does not grow at all, because only a couple of
+markers and one dummy node are ever created.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: repeatedly take whichever of the two front nodes
+is smaller and attach it to the end of the output, and when one list runs out,
+attach all of the other in a single move.
+
+No recursion here - one loop - so nothing piles up on the call stack. The dummy
+node takes the place of a special case.
+
+The steps:
+
+  1. Make a throwaway node to be the front of the output, and put a marker called
+     tail on it. The marker always rests on the last node placed so far.
+
+  2. While BOTH lists still have a node at the front:
+
+     a. Compare the two front values.
+     b. Attach whichever node is smaller to the end of the output, by pointing
+        the tail's link at it. On a tie, take from the first list - that keeps
+        equal values in their original order.
+     c. Step forward in whichever list you just took from.
+     d. Move the tail marker onto the node just attached, so it is ready for the
+        next one.
+
+  3. When the loop ends, one list is empty and the other may still have nodes.
+     Attach whatever remains in ONE move - point the tail's link at it. No
+     walking, no comparing: that remainder is already sorted and every value in
+     it is at least as large as everything already placed.
+
+     If both lists are empty, this attaches nothing, which is also correct.
+
+  4. Return the node AFTER the throwaway - that is the real head of the merged
+     list.
+
+The thing worth holding onto: step 3 is not a tidy-up. It is a genuine part of
+the algorithm, and it is the step that gets forgotten most often.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code weaves the two chains together by only ever looking at their two front
+items.
+
+That is enough, because each chain is already sorted - so the item at the front
+of a chain is the smallest thing left in it, and the smallest item overall must
+be one of those two. There is never any need to look further along either chain.
+
+It builds the answer by attaching nodes to the end of a growing output chain,
+keeping a marker on the last node it placed so it always knows where the end is.
+To avoid the awkwardness of attaching the very first node to an empty chain, it
+starts the output with one throwaway node that is discarded at the end - so there
+is always something to attach to, and the first node is handled by exactly the
+same code as every other node.
+
+Each turn of the loop compares the two front values, unhooks the smaller node
+from its chain, hooks it onto the end of the output, and steps that chain forward.
+On a tie it takes from the first chain, which keeps equal values in the order they
+originally had.
+
+Sooner or later one chain runs out. At that moment the remaining chain is already
+sorted, and everything in it is at least as large as everything placed so far - so
+there is nothing left to decide. The code attaches the whole remainder in one
+move rather than continuing node by node.
+
+Finally it hands back the node just after the throwaway, which is the real start
+of the merged chain. No new nodes were created; the same nodes have simply been
+re-coupled into a single sorted order.""",
+
+    """8. THE CODE, line by line.
+
+Keep list one = [1,2,4] and list two = [1,3,4] beside you.
+
+    dummy = ListNode(0)
+The throwaway node from section 3. Its value is never read - 0 is just a
+convention. Its whole job is to be something the first real node can be attached
+to, so the loop needs no "is the output empty yet?" check.
+
+    tail = dummy
+The marker resting on the last node of the output so far. It starts on the dummy
+because that is currently the only node in the output. Keeping this marker is
+what makes attaching a node one assignment instead of a walk to the end of the
+list.
+
+    while l1 and l2:
+Keep weaving only while BOTH lists still have something. The moment either
+becomes None, the comparison inside would be meaningless - and more importantly,
+there is nothing left to weave against, so the remainder can be attached wholesale
+by the line after the loop.
+
+    if l1.val <= l2.val:
+Compare the two front values. Note "<=" rather than "<": on a tie this takes from
+l1, which keeps equal values in their original relative order. That property is
+called stability, and it is the conventional choice - see case 5 in section 4.
+
+    tail.next = l1
+Attach l1's front node to the end of the output. This is the line that re-couples
+the chain; no new node is created.
+
+    l1 = l1.next
+Step forward in l1, since its front node has now been taken. Note this moves a
+marker; it does not change any chain.
+
+    else:
+        tail.next = l2
+        l2 = l2.next
+The mirror image for the other list. Exactly one of the two branches runs per
+turn, so exactly one node is attached and exactly one list advances.
+
+    tail = tail.next
+Move the marker onto the node just attached, ready for the next one. This line
+sits OUTSIDE the if/else because it must happen whichever branch ran - a common
+slip is to write it twice inside the branches, or to forget it entirely, which
+leaves tail stuck on the dummy and every attachment overwriting the last.
+
+    tail.next = l1 or l2
+The remainder step, and the whole of section 4's case 1 in one line. Python's
+"or" here hands back whichever of the two is not None - and None if both are. So
+this attaches everything left in the surviving list in a single move, or attaches
+nothing when both are exhausted.
+
+It works because that remainder is already sorted and every value in it is at
+least as large as everything already placed. Leaving this line out silently drops
+the tail of the longer list.
+
+    return dummy.next
+Return the node AFTER the throwaway - the real head of the merged list. Returning
+dummy itself puts a stray 0 at the front of the answer.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+l1 = [1] -> [2] -> [4]      l2 = [1] -> [3] -> [4]
+
+Start:  dummy -> None,  tail = dummy
+
+ROUND 1.  l1.val = 1, l2.val = 1.  Is 1 <= 1?  Yes -> take from l1.
+  tail.next = l1's node 1.   l1 advances to node 2.   tail moves onto that 1.
+  output: dummy -> 1
+  l1 = [2,4]   l2 = [1,3,4]
+
+ROUND 2.  l1.val = 2, l2.val = 1.  Is 2 <= 1?  No -> take from l2.
+  tail.next = l2's node 1.   l2 advances to node 3.   tail moves onto it.
+  output: dummy -> 1 -> 1
+  l1 = [2,4]   l2 = [3,4]
+
+ROUND 3.  l1.val = 2, l2.val = 3.  Is 2 <= 3?  Yes -> take from l1.
+  output: dummy -> 1 -> 1 -> 2
+  l1 = [4]   l2 = [3,4]
+
+ROUND 4.  l1.val = 4, l2.val = 3.  Is 4 <= 3?  No -> take from l2.
+  output: dummy -> 1 -> 1 -> 2 -> 3
+  l1 = [4]   l2 = [4]
+
+ROUND 5.  l1.val = 4, l2.val = 4.  Is 4 <= 4?  Yes -> take from l1.
+  output: dummy -> 1 -> 1 -> 2 -> 3 -> 4
+  l1 = None   l2 = [4]
+
+CHECK THE LOOP: l1 is None -> stop.
+
+REMAINDER:  tail.next = l1 or l2.  l1 is None, so this is l2 - the node 4.
+  output: dummy -> 1 -> 1 -> 2 -> 3 -> 4 -> 4
+
+return dummy.next = the first 1.  Answer [1,1,2,3,4,4]. Correct.
+
+Notice round 5: the tie was broken toward l1, and one of the two 4s came from
+each list, in list-one-first order. And notice the remainder step attached the
+final node without a comparison - there was nothing left to compare it to.
+
+ONE LIST EMPTY FROM THE START:  l1 = None, l2 = [5,6]
+  The loop condition fails immediately, so no rounds run.
+  tail is still the dummy.  tail.next = l1 or l2 = l2.
+  return dummy.next = node 5.  Answer [5,6]. Correct, and with no special case.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n + m), where n and m are the lengths of the two lists. Each node is
+looked at exactly once, and each turn of the loop does one comparison and a
+couple of link assignments. The remainder step is a single assignment no matter
+how long the remainder is - it does not walk it.
+
+SPACE: O(1) - constant. One throwaway node and two markers, regardless of how
+long the lists are. No new nodes are created for the answer; the existing ones are
+re-coupled. That is the point of doing this with links rather than by copying
+values into a new list, which would be O(n + m) space.
+
+WHY THIS PROBLEM MATTERS beyond itself: this is the merge step of MERGE SORT. Sort
+each half of something, then weave the two sorted halves together with exactly
+this routine. It is also the core of "merge k sorted lists", where you either
+merge them in pairs or keep the k front values in a small structure that always
+hands you the smallest.
+
+THE #1 MISTAKE - forgetting the remainder line. The loop stops when the shorter
+list runs out, so without that line the output simply ends there and the tail of
+the longer list is lost. It is easy to miss because the first part of the answer
+looks perfectly correct, and a test that only checks the first few values passes.
+
+A close second: returning dummy instead of dummy.next, which leaves a stray 0 at
+the front of the answer.
+
+ONE-SENTENCE TAKEAWAY: because both lists are sorted, the smallest remaining
+value is always one of the two front nodes - so take the smaller, attach it to the
+end of the output, and when one list runs out attach all of the other in one move.""",
 ]
 
 _EX_P0["Subtree of Another Tree"] = [
