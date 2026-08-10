@@ -36955,6 +36955,245 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AC[_e["title"]]
 
 
+_EX_P1AD = {}
+
+_EX_P1AD["Spiral Matrix"] = [
+    """The four-boundary method, traced.
+matrix = [[1,2,3],[4,5,6],[7,8,9]]. top=0, bottom=2, left=0, right=2.
+Top row left->right: 1,2,3. top becomes 1.
+Right column top->bottom: 6,9. right becomes 1.
+Bottom row right->left: 8,7. bottom becomes 1.
+Left column bottom->top: 4. left becomes 1.
+Now top=1, bottom=1, left=1, right=1 -> one more lap emits 5, and the
+boundaries cross.
+Result [1,2,3,6,9,8,7,4,5]. Four directions, four boundary updates, repeat.""",
+
+    """The two guards that non-square matrices need.
+After the top row and right column, you must re-check `top <= bottom` before
+the bottom row, and `left <= right` before the left column - otherwise a single
+remaining row or column is emitted TWICE.
+matrix = [[1,2,3]] (one row): the top pass emits 1,2,3 and top becomes 1 >
+bottom = 0. Without the guard, the bottom pass would emit 3,2,1 again.
+This is the bug that makes Spiral Matrix harder than it looks, and it only
+appears on non-square inputs - so test a 1xN and an Nx1 deliberately.""",
+
+    """Why boundaries beat a visited matrix.
+Marking cells visited works and costs O(m*n) extra space. The four boundaries
+carry the same information in four integers, because the unvisited region is
+always a RECTANGLE - that is the structural fact the spiral gives you.
+Direction-vector solutions (turn right when you hit an edge or a visited cell)
+are also correct and need the visited grid. The boundary version is O(1) extra
+and, once traced, easier to reason about.""",
+
+    """Edge cases.
+Empty matrix or empty first row -> [].
+Single element [[1]] -> the first pass emits it, boundaries cross.
+Single row [[1,2,3]] -> [1,2,3], needing the top<=bottom guard.
+Single column [[1],[2],[3]] -> [1,2,3], needing the left<=right guard.
+2x2 -> [1,2,4,3].
+A wide 2x5 and a tall 5x2 exercise both guards in different orders; together
+with the 1xN cases they cover every branch.""",
+
+    """The sibling worth knowing: Spiral Matrix II.
+Given n, GENERATE an n x n matrix filled 1..n^2 in spiral order. Identical
+boundary walk - you write instead of read. Because it is always square, the two
+guards are unnecessary there, which is a neat illustration of why they exist in
+this one.
+Spiral Matrix III adds a starting position and an unbounded walk, which needs a
+different (step-length) pattern.""",
+
+    """Complexity and the family.
+O(m*n) time - each cell emitted once - and O(1) extra space beyond the output.
+The family: Spiral Matrix II and III, Rotate Image (layer-by-layer thinking),
+Diagonal Traverse, Set Matrix Zeroes, and Game of Life (in-place with encoded
+states).
+The transferable idea: matrix traversal problems are usually about maintaining
+a shrinking REGION rather than tracking individual visited cells - which turns
+O(m*n) space into O(1).""",
+]
+
+_EX_P1AD["String to Integer (atoi)"] = [
+    """The four phases, in strict order.
+1. Skip leading whitespace. 2. Read at most ONE optional sign. 3. Consume
+consecutive digits, stopping at the first non-digit. 4. Clamp to the 32-bit
+signed range.
+'   -42abc' -> skip spaces, sign = -1, digits '42', stop at 'a' -> -42.
+The order is the specification: a sign AFTER a digit ('4-2') is not a sign, and
+whitespace after the sign ('- 42') means the parse fails and returns 0.
+This is a specification-reading problem more than an algorithm problem, which is
+exactly why it is asked - it tests whether you clarify before coding.""",
+
+    """The clamp, and why you must not overflow to detect overflow.
+The 32-bit signed range is [-2147483648, 2147483647]. Out-of-range input clamps
+to the nearest bound rather than wrapping or raising.
+In C++/Java you cannot build the number and then check, because the build
+itself overflows. The standard check is BEFORE each digit:
+if result > (INT_MAX - digit) / 10, it will overflow -> clamp and stop.
+Python has no overflow, so you can build then clamp - and saying that you know
+the difference is the point of raising it.""",
+
+    """Edge cases, which are the whole problem.
+'' or all whitespace -> 0.
+'+' or '-' alone -> 0 (a sign with no digits is not a number).
+'  0000000123' -> 123; leading zeros are consumed normally.
+'words and 987' -> 0, because parsing stops at the FIRST non-digit and there
+were no digits before it.
+'-91283472332' -> clamps to -2147483648.
+'3.14' -> 3, stopping at the dot. '  +-12' -> 0, since only one sign is
+allowed.
+Working through these out loud before writing code is what the interviewer is
+grading.""",
+
+    """Why it is asked at all.
+There is no clever algorithm here - it is a single linear scan. What is being
+tested is whether you enumerate the edge cases FIRST, whether you ask
+clarifying questions (what about '+-'? what about overflow? leading zeros?),
+and whether your code structure mirrors the spec cleanly rather than becoming a
+tangle of nested ifs.
+That makes it a good proxy for real work, where most bugs are specification
+misreadings rather than algorithmic errors.""",
+
+    """The structure that keeps it clean.
+Four sequential blocks, each doing one phase and each with an early return
+where the parse can legitimately end. Resist merging them into one loop with
+mode flags - that is where the tangles come from, and it is much harder to
+argue correct.
+A regex (`^\\s*([+-]?\\d+)`) is a legitimate one-liner and worth mentioning,
+but write the manual version: the exercise is the case analysis, and the regex
+hides it.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space.
+The family is other spec-heavy parsing problems: Valid Number (notoriously
+fiddly - decimals, exponents, signs), Compare Version Numbers, Multiply
+Strings, Add Binary, Roman to Integer and Integer to Roman, and Basic
+Calculator.
+All share the same lesson: enumerate the cases before you code, and let the
+structure of the code follow the structure of the specification.""",
+]
+
+_EX_P1AD["Valid Sudoku"] = [
+    """The box index formula, which is the only real trick.
+Cell (r, c) belongs to box (r // 3, c // 3). Row 4, column 7 -> box (1, 2).
+Integer division collapses each group of three consecutive indices to the same
+value, which is exactly the 3x3 grouping.
+Some solutions use a single number `(r // 3) * 3 + c // 3` giving boxes 0..8 -
+identical information, and either is fine as long as you can say why it
+works.""",
+
+    """One set, three constraint types - the encoding trick.
+Rather than nine row sets, nine column sets and nine box sets, put TAGGED tuples
+into a single set: (val, 'r', r), (val, 'c', c), (val, 'b', r//3, c//3).
+A '5' in row 0 produces (5,'r',0), and a second '5' in row 0 produces the same
+tuple -> collision detected. The tags stop a row constraint colliding with a
+column constraint that happens to share numbers.
+It is one pass, one data structure, and it generalises: any 'no duplicates
+across several groupings' problem can be encoded this way.""",
+
+    """What this problem does NOT ask.
+It checks only that the CURRENT board has no duplicates. It does NOT check
+solvability - a board can be perfectly valid by this definition and have no
+solution at all.
+Empty cells ('.') are simply skipped; a board of all dots is valid.
+Misreading this as 'is this solvable' turns an easy problem into a hard one, so
+restate the definition before starting. That distinction is the most common
+clarification an interviewer is waiting for.""",
+
+    """Why the complexity is O(1), stated honestly.
+The board is always 9x9, so the work is at most 81 cells times 3 constraint
+insertions - a constant, regardless of input. Calling it O(1) is correct but
+sounds evasive unless you add the reason.
+The generalised version - an n^2 x n^2 board with n x n boxes - is O(n^4) time
+and space, which is the honest way to express the scaling and a fair follow-up
+to raise yourself.""",
+
+    """Edge cases.
+Entirely empty board (all '.') -> valid.
+A duplicate in a row but not a column, or vice versa -> each must be caught
+independently, which the tagged tuples handle.
+The subtle one: a duplicate within a BOX that is neither in the same row nor
+the same column - e.g. 5 at (0,0) and 5 at (1,1). Row and column checks both
+pass; only the box check catches it. That input is the specific test for the
+box logic and is worth constructing deliberately.
+Non-digit characters are excluded by the problem's guarantees.""",
+
+    """Complexity and the family.
+O(1) time and space for the fixed 9x9 board (O(n^4) generalised).
+The family: Sudoku Solver (this validity check plus backtracking - try 1-9 in
+each empty cell, recurse, undo on failure), N-Queens (the same
+constraint-checking-plus-backtracking shape with diagonals instead of boxes),
+and Word Search.
+Valid Sudoku is worth doing first precisely because the solver reuses this
+check as its pruning test - and an efficient solver keeps the sets incrementally
+rather than re-scanning, which is the natural optimisation to mention.""",
+]
+
+_EX_P1AD["A/B testing an ML / LLM feature"] = [
+    """Why offline metrics are not enough, with the standard disagreement.
+A new ranking model improves offline NDCG by 4%. The A/B test shows flat clicks
+and a 3% DROP in sessions - because the model favours long-form content, which
+takes longer to consume, so users see fewer items per session.
+Neither measurement was wrong; they measured different things. Offline metrics
+tell you the model RANKS better, the experiment tells you the PRODUCT got
+better, and only the second is what the business is paying for. That gap is the
+entire reason A/B tests exist.""",
+
+    """The setup that keeps a result interpretable.
+Randomise by USER, not by request - the same person must get a consistent
+experience or you cannot attribute anything, and their sessions become
+correlated noise.
+Pre-register ONE primary metric plus a handful of guardrails. Compute the
+required sample size BEFORE starting. Fix the duration in advance.
+Everything after this is defending against ways to fool yourself, which is what
+the discipline is for.""",
+
+    """The three statistical failures, in order of frequency.
+PEEKING: checking daily and stopping at the first significant result pushes the
+real false-positive rate past 20%, because each look is a fresh chance for
+noise to favour you. Fix the duration, or use a sequential test.
+MULTIPLE COMPARISONS: testing twenty metrics at p < 0.05 produces about one
+spurious 'win' by construction. Hence one primary metric.
+SAMPLE RATIO MISMATCH: you asked for 50/50 and got 48/52 - the assignment or
+logging is broken and the result is uninterpretable. Check this BEFORE any
+analysis.""",
+
+    """The LLM-specific difficulties, which are worse than for a classifier.
+NO SINGLE CORRECT OUTPUT, so 'accuracy' does not exist - you need human
+ratings, an LLM judge with a rubric, or downstream proxies (did the user
+rephrase? did they escalate to a human? did they copy the answer?).
+COST AND LATENCY are first-class metrics, not footnotes: a better model that
+doubles cost per query may be a net loss.
+NOVELTY EFFECTS are strong with a visibly new feature, so run at least one full
+weekly cycle.
+And the model's own outputs can shift user behaviour, which changes the data
+you next train on - a feedback loop no classifier A/B test has to worry
+about.""",
+
+    """Guardrails, decided before you see results.
+p99 latency must not rise more than ~10%. Error and refusal rates must not rise.
+Revenue per user must not fall. Escalation-to-human rate must not rise for a
+support feature.
+A copilot that lifts self-service resolution 8% while adding 200ms and raising
+escalations is a LOSS. Writing the guardrails down in advance is what stops the
+post-hoc argument where whoever built the model decides which metrics
+counted.""",
+
+    """When you cannot randomise by user, which happens more than you expect.
+Marketplace effects mean treatment can change what control users see through
+shared inventory - the arms are not independent. Use SWITCHBACK tests (alternate
+the whole system between variants over time windows) or GEO-based splits.
+Delayed feedback (a conversion arriving days later) means a short test
+undercounts the effect; extend the window or model the delay.
+And for very low-traffic surfaces, the honest answer is that the experiment
+would take months - which is a legitimate reason to ship on judgement and
+monitor, stated openly rather than pretending the statistics worked out.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AD:
+        _e["examples"] = _EX_P1AD[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
