@@ -29615,6 +29615,256 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1G[_e["title"]]
 
 
+_EX_P1H = {}
+
+_EX_P1H["Reorganize String (greedy heap)"] = [
+    """The feasibility condition, which you should state before writing code.
+A rearrangement exists exactly when the most frequent character appears at most
+ceil(n/2) times. Reason: place that character in alternating slots - positions
+0, 2, 4, ... - and there are ceil(n/2) of them. Any more and two copies must
+touch, by pigeonhole.
+'aab' (n=3, max count 2, ceil(3/2)=2) -> possible, giving 'aba'.
+'aaab' (n=4, max count 3, ceil(4/2)=2) -> impossible, return ''.
+Saying that condition up front means the greedy is a construction, not a
+gamble, and it gives you the early-exit check for free.""",
+
+    """A trace on 'aaabbc'.
+counts a:3, b:2, c:1. Heap (negated) [(-3,a), (-2,b), (-1,c)].
+Pop a -> result 'a', prev = (-2, a) held aside.
+Pop b -> result 'ab', push prev (-2,a) back, prev = (-1, b).
+Pop a -> result 'aba', push (-1,b), prev = (-1, a).
+Pop b -> 'abab', push (-1,a), prev = (0, b) - count exhausted, so it is NOT
+pushed back.
+Pop a -> 'ababa', prev = (0,a). Pop c -> 'ababac'. Heap empty. Done.
+The 'hold the previous character aside for exactly one turn' mechanic is the
+whole algorithm: it makes repeating impossible by construction.""",
+
+    """Why the MOST frequent first, rather than any valid character.
+The scarce resource is slots for the dominant character. If you place rare
+characters early, you arrive at the end holding several copies of the frequent
+one with nowhere to put them. Placing the most frequent whenever it is legal
+keeps its remaining count as low as possible relative to the remaining length -
+which is the invariant that keeps the feasibility condition true all the way
+down.
+This is the same exchange-argument shape as Task Scheduler, and the two
+problems are worth learning as a pair.""",
+
+    """The cooldown detail that is easy to get wrong.
+`prev` holds the character just placed, with its count already decremented, and
+it is pushed back only AFTER the next character is popped - and only if its
+count is still non-zero (`prev[0] < 0` in negated form). Push it back before
+popping and it can be selected twice in a row, which is exactly the thing being
+forbidden. Push it back when exhausted and you get phantom characters in the
+output.
+If your answer produces a string with two identical neighbours, this ordering
+is where to look first.""",
+
+    """Edge cases.
+'' -> nothing to do; return ''. Single char 'a' -> 'a'.
+'aa' -> n=2, max count 2 > ceil(2/2)=1 -> impossible, ''.
+All distinct 'abcd' -> any order works; the heap happens to produce one.
+The classic failure input is 'vvvlo': counts v:3, l:1, o:1, n=5, ceil(5/2)=3,
+so it IS possible ('vlvov'), and a solution that bails too eagerly on the
+feasibility check gets it wrong. Test that the condition uses ceil, not floor.""",
+
+    """Complexity and the family.
+Time O(n log k) where k is the number of distinct characters - n pops and
+pushes, each log k. Space O(k).
+The counting-sort alternative is O(n): sort characters by frequency, then fill
+even indices 0,2,4,... with the most frequent characters and odd indices with
+the rest. Faster and cleverer; the heap version is easier to defend under
+pressure. The family: Task Scheduler (same greedy with an explicit cooldown of
+n), Rearrange String k Distance Apart (the general version), and Distant
+Barcodes (identical problem, different wording).""",
+]
+
+_EX_P1H["Sum Root to Leaf Numbers"] = [
+    """The example, traced.
+Tree 4 -> (9 -> (5, 1), 0).
+dfs(4, 0): current = 0*10 + 4 = 4, not a leaf, recurse both sides.
+  dfs(9, 4): current = 4*10 + 9 = 49, not a leaf.
+    dfs(5, 49): current = 495, leaf -> return 495.
+    dfs(1, 49): current = 491, leaf -> return 491.
+  returns 986.
+  dfs(0, 4): current = 40, leaf -> return 40.
+Total 1026.
+The one-line idea: `current * 10 + node.val` builds the number digit by digit
+on the way DOWN, and a leaf is where a number is complete.""",
+
+    """Why the accumulator is passed DOWN, not built up.
+The digits are ordered root-first, so the number depends on the path from the
+root - information that flows downward. Trying to return numbers upward means
+each subtree returns a value that must then be shifted by the depth of the
+node above it, which needs the height and is far messier.
+The general rule this illustrates: a ROOT-TO-NODE property means state travels
+down as a parameter (Count Good Nodes, Path Sum, this); a SUBTREE property
+means results travel up as a return value (Diameter, Maximum Path Sum). Naming
+which kind you are facing decides the shape before you write anything.""",
+
+    """The leaf test, and the single-child trap again.
+A node with one child is not a leaf, so the check must be
+`left is None and right is None`. Test only one side and a node with a lone
+child returns a partial number AND recurses, double counting.
+Concretely on 1 -> (2, None): the correct answer is 12. A one-sided leaf check
+returns 1 (from treating node 1 as a leaf because its right is None) plus 12,
+giving 13 - a wrong answer that looks close enough to survive a casual test.""",
+
+    """Why returning 0 for None is the right base case.
+`if node is None: return 0` means an absent subtree contributes nothing to the
+sum, which composes correctly with the addition at every internal node. It also
+means the function is safe to call on an empty tree.
+Note the interaction with the leaf check: because leaves return before
+recursing, the None branch is only ever reached from a node with exactly one
+child - so the two base cases are doing different jobs and you need both.""",
+
+    """Edge cases and overflow.
+Empty tree -> 0. Single node 7 -> 7.
+A left-skewed chain 1 -> 2 -> 3 spells 123 from ONE path, so the answer is 123,
+not 1+12+123. Only complete root-to-leaf paths count, which is what the leaf
+check enforces.
+Depth matters for overflow: a tree 20 deep spells a 20-digit number, which
+exceeds 64-bit range. Python is fine; in Java or C++ you would need long or big
+integers, and LeetCode constrains the depth to about 10 precisely to avoid it.
+Worth naming - it is the kind of detail that shows you thought past Python.""",
+
+    """Complexity and the family.
+Time O(n), one visit per node. Space O(h) for the recursion - O(log n)
+balanced, O(n) skewed, which is the usual argument for an explicit stack of
+(node, current) pairs if depth is a concern.
+Family: Binary Tree Paths (collect the strings instead of summing), Path Sum
+(compare against a target instead of accumulating digits), Smallest String
+Starting From Leaf (same accumulation, reversed and compared), and Sum of Root
+To Leaf Binary Numbers (current * 2 + val instead of * 10). All are the same
+three lines with a different accumulator.""",
+]
+
+_EX_P1H["Unique Paths II (grid with obstacles)"] = [
+    """The example, row by row.
+grid = [[0,0,0],
+        [0,1,0],
+        [0,0,0]]
+dp starts [1,0,0].
+Row 0: c=0 no obstacle, dp stays 1. c=1: dp[1] += dp[0] -> 1. c=2: dp[2] +=
+dp[1] -> 1.  dp = [1,1,1]
+Row 1: c=0 fine, dp[0] stays 1. c=1 is an OBSTACLE -> dp[1] = 0. c=2: dp[2] +=
+dp[1] = 1 + 0 = 1.  dp = [1,0,1]
+Row 2: c=0 -> 1. c=1: dp[1] += dp[0] -> 0 + 1 = 1. c=2: dp[2] += dp[1] ->
+1 + 1 = 2.
+Answer 2, which matches the two routes around the obstacle.""",
+
+    """Why the rolling row works, and what dp[c] means mid-loop.
+The recurrence is paths[r][c] = paths[r-1][c] + paths[r][c-1]. Scanning left to
+right, dp[c] still holds the value from the row ABOVE while dp[c-1] already
+holds this row's - so `dp[c] += dp[c-1]` is exactly 'from above plus from the
+left' with one array.
+Reverse the scan direction and dp[c-1] is stale, silently computing something
+else. This is the same rolling-row argument as Minimum Path Sum, and it drops
+space from O(rows*cols) to O(cols).""",
+
+    """The obstacle line is an assignment, not an addition.
+`dp[c] = 0` overwrites, killing every path that would have passed through the
+cell - and it must happen BEFORE the addition, which the if/elif ordering
+guarantees. Writing `dp[c] += 0` or handling obstacles after the accumulation
+lets paths leak through the wall.
+The zero then propagates naturally: cells to the right of the obstacle in the
+same row inherit a smaller dp[c-1], and cells below inherit dp[c] = 0. No extra
+bookkeeping is needed, which is the elegance of this formulation.""",
+
+    """The two guards that are genuinely required.
+A blocked START (grid[0][0] == 1) means zero paths, and the code returns early -
+without that, dp[0] would be initialised to 1 and you would count paths from a
+cell you cannot stand on.
+A blocked END is handled automatically: the last cell's dp becomes 0 in the
+obstacle branch, so dp[-1] is 0. Worth checking explicitly in the interview, as
+interviewers often supply exactly that input to see whether you special-cased
+one end and forgot the other.""",
+
+    """Edge cases.
+A single cell [[0]] -> dp = [1], no additions, answer 1. [[1]] -> the guard
+returns 0.
+A fully blocked row anywhere -> every dp becomes 0 on that row and stays 0
+thereafter, correctly reporting no route.
+A one-column grid with an obstacle partway -> dp[0] is zeroed and never
+recovers, since there is no dp[c-1] to add. Correct: in one column you cannot
+go around anything.
+Note dp[0] is only ever updated by the obstacle branch, never by the addition -
+column 0 is reachable solely from above.""",
+
+    """Complexity and the family.
+Time O(rows * cols), space O(cols). Both optimal - you must look at every cell
+at least once.
+Family: Unique Paths (the no-obstacle original, which also has the closed-form
+binomial C(m+n-2, m-1)), Minimum Path Sum (min instead of sum), Triangle,
+Cherry Pickup (two paths at once, so the state gains a dimension), and Dungeon
+Game - which is the instructive one, because it must be solved BACKWARDS from
+the destination since the constraint is on the running minimum rather than on
+a total. Same grid, different direction, for a reason worth understanding.""",
+]
+
+_EX_P1H["Wiggle Subsequence (greedy)"] = [
+    """A trace on [1,7,4,9,2,5].
+up = down = 1.
+i=1: 7 > 1 -> up = down + 1 = 2.
+i=2: 4 < 7 -> down = up + 1 = 3.
+i=3: 9 > 4 -> up = down + 1 = 4.
+i=4: 2 < 9 -> down = up + 1 = 5.
+i=5: 5 > 2 -> up = down + 1 = 6.
+Answer 6 - the whole array already alternates.
+The two variables mean 'longest wiggle subsequence so far that ENDS with a rise
+/ ends with a fall'. A rise can only extend something that ended with a fall,
+which is exactly what `up = down + 1` says.""",
+
+    """Why it works on an array with runs, which is the real test.
+[1,17,5,10,13,15,10,5,16,8]: the run 10,13,15 is monotonically rising.
+i at 13: 13 > 10 -> up = down + 1, but down has not changed since the 5, so up
+is recomputed to the same value it would have had - the middle of a run costs
+nothing and adds nothing.
+That is the elegance: within a monotone run only the LAST element matters, and
+the greedy handles it without any explicit run detection, because up is
+overwritten rather than incremented.""",
+
+    """Why equal neighbours must do nothing.
+The code has `if >` and `elif <`, with no else - so a flat step leaves both
+variables untouched. That is deliberate: the differences must be STRICTLY
+alternating, so a zero difference is not a wiggle in either direction and must
+not extend anything.
+[1,1,1] -> neither branch ever fires -> answer 1. Adding an else that
+incremented something would return 3, which is wrong. Interviewers include a
+flat array precisely to catch this.""",
+
+    """The O(n^2) DP, and why the greedy is preferable.
+The DP formulation is up[i] = max(down[j] + 1) over all j < i with nums[j] <
+nums[i], and symmetrically for down - correct, and quadratic. The greedy
+collapses it because you only ever need the BEST value so far, not per-index
+values: any earlier down-ending subsequence can be extended by the current
+rise, so the maximum is all you must carry.
+Being able to state the DP first and then explain why two scalars suffice is a
+stronger answer than producing the greedy alone, because it shows the greedy is
+derived rather than remembered.""",
+
+    """Edge cases.
+[] -> len < 2 -> 0. [3] -> 1. [3,3] -> neither branch fires -> max(1,1) = 1,
+which is right: a flat pair is not a wiggle.
+[1,2] -> up = 2 -> answer 2. [2,1] -> down = 2 -> 2.
+A strictly increasing array [1,2,3,4,5] -> up is repeatedly set to down + 1 = 2
+and down never moves -> answer 2. Correct: the longest wiggle is any two
+elements, since one rise is a valid (trivial) alternating sequence.""",
+
+    """Complexity and the family.
+Time O(n), space O(1) - one pass, two integers.
+The family is 'two rolling states, each extending the other': Best Time to Buy
+and Sell Stock II and its cooldown variant (hold/sold/rest), House Robber
+(take/skip), and Maximum Product Subarray (max/min, because a negative flips
+them). The recognition cue is that the answer depends on WHICH KIND of step you
+just took - the moment you find yourself wanting two answers instead of one,
+carry two variables rather than an array.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1H:
+        _e["examples"] = _EX_P1H[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
