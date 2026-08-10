@@ -36715,6 +36715,246 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AB[_e["title"]]
 
 
+_EX_P1AC = {}
+
+_EX_P1AC["Pow(x, n) — fast exponentiation"] = [
+    """Why squaring beats multiplying n times.
+x^10 = x^8 * x^2. Rather than ten multiplications, square repeatedly - x, x^2,
+x^4, x^8 - and multiply in the powers whose bit is set in n. 10 in binary is
+1010, so bits 1 and 3 are set -> x^2 * x^8.
+Four squarings and two multiplications instead of ten multiplications. For
+n = 10^9 that is about 30 operations instead of a billion, which is the whole
+point.""",
+
+    """The bit walk, traced for x^10.
+n = 10 (1010). result = 1.
+Bit 0 (0): skip. Square x -> x^2.
+Bit 1 (1): result = x^2. Square -> x^4.
+Bit 2 (0): skip. Square -> x^8.
+Bit 3 (1): result = x^2 * x^8 = x^10. Square -> x^16 (unused).
+n reaches 0, return x^10.
+The invariant: at each step `x` holds x^(2^k) for the current bit position, and
+`result` accumulates the powers whose bits were set.""",
+
+    """Negative exponents, and the trap in them.
+x^-n = 1 / x^n, so flip x to 1/x and negate n. The code does this up front,
+which keeps the main loop dealing only with positive exponents.
+The trap in C++/Java: n = INT_MIN cannot be negated (its positive counterpart
+overflows the type). The fix is to convert to a long first. Python's
+arbitrary-precision integers make this a non-issue - which is exactly why it is
+worth raising, since the interviewer may be thinking in another language.""",
+
+    """Edge cases.
+n = 0 -> 1 for any x, including x = 0 by convention (0^0 = 1 here).
+x = 1 or -1 with a huge n -> the loop still runs ~30 times; no shortcut needed,
+though noticing that |x| = 1 could short-circuit is a fair remark.
+x = 0 with negative n -> division by zero; the problem usually excludes it.
+Floating-point drift: repeated squaring accumulates error, so x^-2147483648
+will not be bit-exact. That is inherent to floats, not a bug in the algorithm.""",
+
+    """The recursive form, and why the iterative one is preferred.
+    def pow(x, n):
+        if n == 0: return 1
+        half = pow(x, n // 2)
+        return half * half if n % 2 == 0 else half * half * x
+Clean and obviously correct, but O(log n) stack frames. The iterative bit walk
+is O(1) space and just as short. Present either; if you write the recursion,
+mention the stack cost so the choice looks deliberate.""",
+
+    """Complexity and the family.
+O(log n) time, O(1) space iteratively.
+The family: Super Pow (exponent given as a digit array, with modular
+arithmetic), Modular Exponentiation (the same loop with `% m` after each
+multiply - the backbone of RSA and Diffie-Hellman), Matrix Exponentiation
+(replace multiply with matrix multiply and you get the nth Fibonacci in
+O(log n)), and Count Primes / number-theory problems generally.
+The transferable idea: any associative operation can be exponentiated this way,
+not just multiplication.""",
+]
+
+_EX_P1AC["Quickselect (kth largest)"] = [
+    """Why it beats sorting, in one sentence.
+Sorting arranges everything - O(n log n) - when you only need ONE position.
+Quickselect partitions around a pivot and then recurses into only the SIDE that
+contains the target index, discarding the other half of the work.
+The cost is n + n/2 + n/4 + ... = 2n, so O(n) average. That geometric series is
+the whole complexity argument and it is worth stating explicitly rather than
+just quoting O(n).""",
+
+    """The index translation, which is where people slip.
+'kth LARGEST' in an array sorted ascending sits at index len(nums) - k. For
+[3,2,1,5,6,4] with k = 2, target = 6 - 2 = 4, and the sorted array
+[1,2,3,4,5,6] indeed has 5 at index 4.
+Getting this backwards returns the kth SMALLEST, which is a plausible-looking
+wrong answer. Write the translation down before the loop; it is the one line
+that is easy to get right and easy to skip.""",
+
+    """The partition, traced.
+[3,2,1,5,6,4], pivot = 4 (last element), p = 0.
+3 < 4 -> swap with itself, p=1. 2 < 4 -> p=2. 1 < 4 -> p=3. 5 not <. 6 not <.
+Place the pivot: swap index 3 with the last -> [3,2,1,4,6,5], and 4 is now at
+index 3 - its FINAL sorted position.
+Since target 4 > 3, recurse right on [6,5]. Next partition puts 5 at index 4 ->
+return 5. Correct: the 2nd largest is 5.""",
+
+    """Why a RANDOM pivot is not optional.
+With the last element as pivot, an already-sorted array partitions into an
+empty side and everything else, every time - O(n^2). And that is precisely the
+input someone will hand you.
+Choosing the pivot uniformly at random makes the worst case depend on luck
+rather than on input order, so no adversary can force it and the EXPECTED time
+is O(n) for every input. One line - `swap(random index, hi)` before
+partitioning - and it converts a fragile algorithm into a robust one.
+Median-of-medians gives a guaranteed O(n) but nobody implements it in an
+interview; naming it is enough.""",
+
+    """The trade against a heap, since the interviewer will ask.
+Quickselect: O(n) average, O(1) extra space, MUTATES the input, O(n^2) worst
+case.
+Heap of size k: O(n log k), O(k) space, does not mutate, works on a STREAM.
+So: whole array in memory and k possibly large -> quickselect. Data arriving
+over time, or k tiny relative to n -> heap. If k = n/2 (the median) the heap
+degenerates to O(n log n) and quickselect clearly wins.
+Also note quickselect destroys the caller's ordering - worth saying, and worth
+copying the array first if that matters.""",
+
+    """Edge cases and the family.
+k = 1 -> the maximum. k = len(nums) -> the minimum.
+Single element with k = 1 -> that element.
+Duplicates: [3,3,3] with k = 2 -> 3. 'kth largest' counts POSITIONS, not
+distinct values, which is the convention to confirm.
+The family: Kth Largest Element in an Array (this), Kth Largest in a Stream
+(heap - no array to partition), K Closest Points to Origin (quickselect on
+distance), Top K Frequent Elements, Wiggle Sort II, and Sort Colors - which is
+the three-way partition that also fixes quickselect's many-duplicates
+weakness.""",
+]
+
+_EX_P1AC["Rotate Image (90 degrees, in place)"] = [
+    """Transpose then reverse, traced.
+matrix = [[1,2,3],
+          [4,5,6],
+          [7,8,9]]
+TRANSPOSE (swap across the main diagonal) -> [[1,4,7],
+                                              [2,5,8],
+                                              [3,6,9]]
+REVERSE each row -> [[7,4,1],
+                     [8,5,2],
+                     [9,6,3]]
+Which is the original rotated 90 degrees clockwise. Two simple passes replace
+any reasoning about where each element lands.""",
+
+    """Why `for j in range(i + 1, n)` - the upper triangle only.
+Transposing swaps matrix[i][j] with matrix[j][i]. If you loop over the FULL
+square you swap every pair TWICE, which returns the matrix to its original
+state - and the bug is invisible on a symmetric matrix.
+Starting j at i+1 visits each unordered pair exactly once. That single index is
+the whole correctness of the transpose step, and it is worth testing on a
+non-symmetric 3x3 where a double swap would show.""",
+
+    """Anticlockwise, which is the follow-up.
+Clockwise = transpose, then reverse each ROW.
+Anticlockwise = transpose, then reverse each COLUMN (equivalently: reverse the
+rows' ORDER first, then transpose).
+Both are two passes; only the second step differs. Deriving it rather than
+memorising it: a 90-degree anticlockwise turn is three clockwise turns, but it
+is far easier to note that the transpose gives you a reflection and you choose
+which axis to un-reflect along.""",
+
+    """The four-way cycle alternative.
+You can rotate directly by moving four elements at a time around each ring:
+temp = top-left; top-left = bottom-left; bottom-left = bottom-right;
+bottom-right = top-right; top-right = temp - looping over rings and offsets.
+It is one pass instead of two, marginally faster, and much easier to get wrong
+(the index arithmetic for `n - 1 - i` appears four times). The
+transpose-then-reverse version is the one to write under pressure and the cycle
+version is the one to mention.""",
+
+    """Edge cases.
+1x1 -> no swaps, unchanged.
+2x2 [[1,2],[3,4]] -> transpose [[1,3],[2,4]] -> reverse rows [[3,1],[4,2]].
+Correct.
+Empty matrix -> both loops are empty.
+NON-SQUARE matrices cannot be rotated in place at all - the dimensions change,
+so an m x n becomes n x m and needs a new matrix. The problem guarantees
+square; if it did not, the in-place requirement would be impossible, which is a
+good thing to point out.""",
+
+    """Complexity and the family.
+O(n^2) time - every element is touched a constant number of times - and O(1)
+extra space, which is the constraint that makes the problem interesting.
+The family: Spiral Matrix (traverse in layers), Set Matrix Zeroes (use the
+first row and column as marker storage for O(1) space), Transpose Matrix,
+Flipping an Image (reverse then invert, fused), Rotate Array (the 1-D analogue -
+reverse the whole thing, then reverse the two parts), and Diagonal Traverse.
+The recurring theme in matrix problems: express the transformation as a
+composition of simple reflections rather than computing destination indices
+directly.""",
+]
+
+_EX_P1AC["Set Matrix Zeroes (O(1) space)"] = [
+    """Why the naive approach is wrong, not just slow.
+Zeroing rows and columns AS YOU FIND zeros corrupts the scan: the zeros you
+write are indistinguishable from the zeros that were there originally, so they
+cascade and the whole matrix ends up zeroed.
+So you must first RECORD which rows and columns need clearing, then apply.
+The obvious fix is two sets - O(m + n) space. The problem asks for O(1), which
+forces the trick below.""",
+
+    """The trick: use row 0 and column 0 as the marker storage.
+Scan the interior (from row 1, column 1). When matrix[r][c] == 0, write a 0 into
+matrix[r][0] and matrix[0][c] - the first cell of that row and column becomes
+the flag.
+Then make a second pass over the interior and zero any cell whose row flag or
+column flag is set. You have stored m + n bits of information inside the matrix
+itself, which is where the O(1) extra space comes from.""",
+
+    """Why the first row and column need SEPARATE flags.
+matrix[0][0] is shared - it is both 'row 0 needs clearing' and 'column 0 needs
+clearing', and one cell cannot hold two independent bits.
+Hence the two booleans captured BEFORE anything is modified:
+first_row_zero and first_col_zero. Without them the two conditions collide and
+one of the edges is cleared wrongly.
+This is the part of the problem that is actually hard, and it is where almost
+every incorrect solution fails.""",
+
+    """The ORDER of the final passes, which is the second trap.
+Zero the interior FIRST, using the flags, and only then zero row 0 and column 0
+if their booleans were set.
+Do it the other way round and you destroy the flags before you have finished
+reading them - every interior cell would then see a zeroed row 0 and clear
+itself. Direction matters for the same reason as in the rolling-array DP
+problems: you must not overwrite state you still need to read.""",
+
+    """A trace.
+[[1,1,1],
+ [1,0,1],
+ [1,1,1]]
+first_row_zero = False, first_col_zero = False.
+Interior scan finds the 0 at (1,1) -> set matrix[1][0] = 0 and matrix[0][1] = 0.
+Matrix now [[1,0,1],[0,0,1],[1,1,1]].
+Second pass: (1,1) has row flag 0 -> zero. (1,2) has row flag 0 -> zero.
+(0,1)/(2,1) have column flag 0 -> zero.
+Result [[1,0,1],[0,0,0],[1,0,1]]. Row 0 and column 0 untouched because both
+booleans were False. Correct.""",
+
+    """Edge cases and complexity.
+A zero in row 0 or column 0 originally -> caught by the booleans, and this is
+the case to test deliberately.
+A single row or single column -> the interior is empty and the booleans do all
+the work.
+An all-zero matrix -> everything clears, trivially.
+No zeros -> nothing changes.
+Time O(m*n) with two passes; space O(1) extra. The O(m+n) two-sets version is
+worth presenting FIRST as the obviously-correct solution, then improving - the
+in-place version is fiddly enough that leading with it risks a muddle.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AC:
+        _e["examples"] = _EX_P1AC[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
