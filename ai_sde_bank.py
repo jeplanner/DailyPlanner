@@ -31581,6 +31581,235 @@ singly linked list - and the recurring question is always whether the head can
 disappear, because that is what decides the dummy.""",
 ]
 
+_EX_P1L["Remove Linked List Elements"] = [
+    """Why the dummy head exists here - the contrast with the previous problem.
+Remove Duplicates from Sorted List never deletes the head, so it needs no
+sentinel. THIS problem can: removing 6 from 6 -> 1 -> 2 means the head itself
+disappears, and without a dummy you would need a special case before the loop
+plus a way to return the new head.
+The dummy is a fake node in front whose .next is the real head. Every deletion,
+including the first node's, becomes the same uniform `prev.next = curr.next`,
+and you return `dummy.next` - which is the new head whether or not the original
+survived.""",
+
+    """The consecutive-match case, traced.
+list 1 -> 2 -> 6 -> 6 -> 3, val = 6. dummy -> 1.
+curr 1: keep, prev = 1. curr 2: keep, prev = 2.
+curr first 6: match -> prev.next = the second 6 (prev stays at 2). curr moves
+to the second 6.
+curr second 6: match -> prev.next = 3 (prev still 2). curr moves to 3.
+curr 3: keep, prev = 3.
+Result 1 -> 2 -> 3.
+The key is that prev does NOT advance on a match - it stays anchored at the
+last kept node, so a run of matches is unlinked in one continuous relink.""",
+
+    """Why `curr = curr.next` sits outside the if/else.
+Every iteration advances curr exactly once, whether the node was kept or
+removed - so the advance belongs after both branches. Only `prev` is
+conditional.
+Putting the advance inside only the else branch loops forever on a match;
+duplicating it inside both branches works but is noisier. This
+one-pointer-always-advances, one-pointer-conditionally shape is the standard
+skeleton for filtering a linked list.""",
+
+    """Edge cases.
+Empty list -> dummy.next is None, loop does not run -> None.
+All nodes match, 6 -> 6 -> 6 with val 6 -> everything unlinked, dummy.next is
+None -> None. This is the case that most needs the dummy.
+Head matches, 6 -> 1 -> handled uniformly, returns 1.
+Tail matches -> prev.next becomes None naturally.
+No match -> the list is returned unchanged, with prev walking the whole way.""",
+
+    """Complexity, and the garbage-collection footnote.
+O(n) time, O(1) extra space - one dummy node regardless of input size.
+The unlinked nodes are unreachable and collected automatically in Python and
+Java. In C or C++ you would free() each removed node, and forgetting to is a
+leak - which is why the C version needs a temporary pointer to the doomed node
+before relinking past it. Worth a sentence if the interviewer works in a
+non-managed language.""",
+
+    """The family: the dummy-head pattern.
+Any list operation where the HEAD may change wants a dummy: Remove Nth Node
+From End, Remove Duplicates from Sorted List II, Merge Two Sorted Lists (the
+dummy collects the output), Partition List, Insertion Sort List, Reverse Nodes
+in k-Group.
+The rule to carry: ask 'can the first node be removed or replaced?' If yes,
+allocate a dummy and return dummy.next; if no (as in Remove Duplicates I), skip
+it. That single question decides the shape before you write anything.""",
+]
+
+_EX_P1L["Reverse String (in place)"] = [
+    """The swap, traced.
+s = ['h','e','l','l','o']. left 0, right 4 -> swap h and o -> ['o','e','l','l',
+'h']. left 1, right 3 -> swap e and l -> ['o','l','l','e','h']. left 2, right 2
+-> loop ends (left < right is false).
+Odd length means the middle element is already in place and needs no swap -
+which is why the condition is `left < right` here, unlike Flipping an Image
+where the middle still needed inverting and required `<=`.
+Comparing those two problems is the fastest way to remember which condition
+goes where: swap-only wants <, transform-too wants <=.""",
+
+    """Why in place, and what the constraint is really testing.
+`s[::-1]` and `list(reversed(s))` both allocate a new list - O(n) extra space -
+and `s.reverse()` mutates in place but is a library call that skips the
+exercise. The prompt says O(1) extra space precisely to force the two-pointer
+swap.
+The tuple assignment `s[left], s[right] = s[right], s[left]` does the swap
+without a temporary variable, because the right-hand side is evaluated fully
+before either assignment. In C you would need `char tmp = s[left]; ...`.""",
+
+    """The distinction that makes this problem exist in Python at all.
+Python strings are IMMUTABLE, so you cannot reverse a str in place - which is
+why the input is a LIST of characters. If the interviewer hands you a string
+and asks for O(1) space, the honest answer is that it is impossible without
+converting to a mutable sequence, and the conversion is itself O(n).
+In C, Java (char[]) or C++ the input genuinely is a mutable buffer and the
+constraint is meaningful. Naming that language difference is a small,
+credible-sounding observation.""",
+
+    """Edge cases.
+Empty list -> left 0, right -1, loop never runs.
+Single element -> left 0, right 0, `0 < 0` false -> unchanged.
+Two elements -> exactly one swap.
+Even length -> pointers cross without meeting; odd length -> they meet on the
+untouched middle.
+Unicode: reversing a list of code points can break grapheme clusters (an
+accented letter written as base + combining mark reverses into nonsense), which
+is why real text reversal is harder than this exercise suggests - a good
+throwaway remark if the interviewer is interested in text handling.""",
+
+    """Complexity.
+O(n) time - n/2 swaps, each O(1) - and O(1) extra space, two integers.
+You cannot do better than n/2 swaps: every element except a middle one must
+move, and each swap relocates two of them. That lower-bound argument is worth
+stating when asked 'can it be faster?', because the answer is genuinely no
+rather than 'I do not know a better way'.""",
+
+    """The family: converging two pointers.
+Valid Palindrome (compare instead of swap), Reverse Vowels of a String (swap
+only on matching characters), Flipping an Image (swap and transform), Sort
+Colors (three pointers, Dutch National Flag), Container With Most Water (move
+the limiting side), Two Sum II on a sorted array.
+The cue is any operation defined symmetrically about the centre, or any search
+where you can prove one end is safe to discard. Both reduce an O(n^2) pairwise
+consideration to a single O(n) pass.""",
+]
+
+_EX_P1L["Running Sum of 1d Array"] = [
+    """The accumulation, traced.
+nums = [1,2,3,4]. total 0 -> +1 = 1, append. +2 = 3, append. +3 = 6, append.
++4 = 10, append. Result [1,3,6,10].
+Each output element is the sum of everything up to and including that index,
+which is the definition of a prefix sum. That is all this problem is - and its
+value is entirely in being the primitive that a dozen harder problems build
+on.""",
+
+    """The in-place version, and why it is the expected follow-up.
+    for i in range(1, len(nums)): nums[i] += nums[i-1]
+    return nums
+O(1) extra space instead of O(n). It works because each element only needs the
+element immediately before it, which has already been updated to its own prefix
+sum - so the array transforms itself left to right.
+The trade to state: it DESTROYS the input. If the caller still needs the
+original values, the extra array is not waste, it is correctness. Asking
+'may I mutate the input?' is the right move rather than assuming either way.""",
+
+    """The library one-liner, and when to use it.
+`list(itertools.accumulate(nums))` is exactly this function and is what you
+would write in production. In an interview, write the loop - the question is
+testing whether you understand the accumulation, and reaching for the library
+skips the thing being examined. Mention accumulate exists afterwards; that
+combination reads as someone who knows the tool and the mechanism.""",
+
+    """Why this primitive matters so much.
+The point of a prefix-sum array P is that the sum of any range [i, j] becomes
+P[j] - P[i-1] in O(1), after an O(n) build. That single identity converts
+repeated range queries from O(n) each to O(1) each.
+Concretely: 10,000 range-sum queries over an array of 10,000 elements is 100
+million operations naively, and 10,000 operations plus a 10,000-element build
+with prefix sums. That is the whole reason to learn a problem this simple.""",
+
+    """Edge cases.
+Empty input -> empty output; the loop never runs.
+Single element -> [x].
+Negative numbers work unchanged - the running total can decrease, which is
+exactly what makes Kadane's problem non-trivial and what breaks any assumption
+that prefix sums are monotonic.
+All zeros -> all zeros.
+Very long arrays with large values can overflow a 32-bit accumulator in other
+languages while Python is immune; the running total grows to the sum of the
+whole array.""",
+
+    """The family this unlocks.
+Range Sum Query - Immutable (build once, query O(1)), Find Pivot Index, Left
+and Right Sum Difference, Subarray Sum Equals K (prefix sums plus a hash map of
+counts), Continuous Subarray Sum (prefix sums modulo k), Maximum Subarray
+(Kadane, which is a running sum with a reset), Product of Array Except Self
+(the multiplicative twin needing prefix AND suffix passes), and the 2-D version
+for submatrix sums.
+Whenever a prompt asks about sums over ranges or subarrays, prefix sums are the
+first thing to reach for - and this problem is where the reflex is built.""",
+]
+
+_EX_P1L["Search Insert Position"] = [
+    """Both outcomes, traced on the same array.
+nums = [1,3,5,6].
+target 5: lo 0, hi 4 -> mid 2, nums[2] = 5, not < 5 -> hi = 2. mid 1, nums[1] =
+3 < 5 -> lo = 2. lo == hi -> return 2. Found at index 2.
+target 2: mid 2, 5 not < 2 -> hi = 2. mid 1, 3 not < 2 -> hi = 1. mid 0, 1 < 2
+-> lo = 1. Return 1 - the position where 2 would go, between 1 and 3.
+target 7: everything is < 7, so lo climbs to 4 -> return 4, one past the end.
+One code path handles all three, which is the point.""",
+
+    """Why the half-open bounds, and why `hi = len(nums)` not `len(nums) - 1`.
+The answer can legitimately be n - inserting past the last element - so hi must
+be able to reach n. Initialising hi to n-1 caps the answer at n-1 and gets
+target 7 above wrong.
+The loop is `while lo < hi` with `hi = mid` (not mid - 1), which is the
+lower-bound template: the search space is the half-open interval [lo, hi), and
+it shrinks until empty with lo sitting at the answer. Mixing this template with
+the closed-interval one (`while lo <= hi`, `hi = mid - 1`) is where binary
+search bugs come from - pick one and use it consistently.""",
+
+    """What this actually computes: lower_bound.
+It returns the index of the FIRST element not less than target - which is
+`bisect.bisect_left(nums, target)` exactly. Recognising that means you can
+answer a whole family instantly rather than re-deriving bounds each time.
+The sibling is bisect_right / upper_bound, the first element strictly GREATER
+than target, obtained by changing the comparison to `nums[mid] <= target`. With
+duplicates present the two differ, and knowing which one a problem wants is
+usually the entire difficulty of the harder variants.""",
+
+    """Edge cases.
+Empty array -> lo 0, hi 0, loop does not run -> 0. Insert at the front.
+Target smaller than everything -> 0. Larger than everything -> len(nums).
+Target present -> its index, because bisect_left stops at the first
+not-less-than element.
+Single element [1] with target 1 -> 0; with target 0 -> 0; with target 2 -> 1.
+Duplicates are excluded by the 'distinct' constraint here, but if they existed
+this returns the LEFTMOST occurrence - which is worth stating since it is the
+behaviour that makes the template reusable.""",
+
+    """The overflow footnote.
+`mid = (lo + hi) // 2` can overflow a 32-bit int in C++ or Java when lo and hi
+are both near the maximum - the famous bug that sat in the JDK's binary search
+for nine years. The fix is `lo + (hi - lo) // 2`.
+Python's integers are arbitrary precision so it cannot happen here, which is
+exactly why it is worth saying: it shows you know the algorithm beyond the
+language you are writing in.""",
+
+    """Complexity and the family.
+O(log n) time - the interval halves each iteration - and O(1) space with the
+iterative form. The recursive version is O(log n) stack for no benefit.
+The family: Binary Search (exact match), First and Last Position of Element in
+Sorted Array (bisect_left and bisect_right together), Find Smallest Letter
+Greater Than Target (upper bound with wraparound), Search in Rotated Sorted
+Array (one half is always sorted), and every 'binary search on the answer'
+problem - Koko Eating Bananas, Capacity to Ship Packages, Arranging Coins.
+This entry is the template the rest are variations of, so it is worth being
+able to write from memory without hesitation.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1L:
         _e["examples"] = _EX_P1L[_e["title"]]
