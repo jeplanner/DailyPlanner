@@ -22564,118 +22564,389 @@ upward from the two known answers and you only ever need to remember two numbers
 ]
 
 _EX_P0["Flood Fill"] = [
-    """You already know this tool: the paint bucket.
+    """1. THE GOAL, in plain English.
 
-Open any drawing program, pick the paint-bucket icon, click inside a shape, and
-the whole connected area of that colour turns into your new colour. It stops at
-the edges. That is exactly this problem.
+This is the paint bucket tool from any drawing program. You click on a pixel, and
+the colour spreads outwards through every touching pixel of the SAME colour,
+stopping wherever the colour changes or the picture ends.
 
-Now on a grid of numbers, where each number is a colour:
+You are given a grid of colours, a starting position, and a new colour. Repaint
+the region containing that starting position.
 
-        column:  0  1  2
-    row 0:       1  1  1
-    row 1:       1  1  0
-    row 2:       1  0  1
+Our picture, with colours written as numbers:
 
-You click on row 1, column 1 - written (1,1) - and choose colour 2. The cell
-you clicked currently holds 1, so 1 is the OLD colour: every 1 connected to
-your click should become a 2.""",
+        col:  0  1  2
+    row 0:    1  1  1
+    row 1:    1  1  0
+    row 2:    1  0  1
 
-    """What 'connected' means, and doing it by hand.
+Click at row 1, column 1 - which holds a 1 - and paint with colour 2.
 
-Connected means you can walk from one cell to the other stepping only UP, DOWN,
-LEFT or RIGHT - not diagonally. Those four are called the cell's NEIGHBOURS.
+Which pixels change? Start at (1,1). It is a 1. Its neighbours up, down, left and
+right: (0,1) is 1 - included. (2,1) is 0 - different colour, stop. (1,0) is 1 -
+included. (1,2) is 0 - stop. And from those newly included pixels, their
+neighbours too: (0,0) and (0,2) are 1s reachable from (0,1), and (2,0) is a 1
+reachable from (1,0).
 
-Start at (1,1), which holds 1. Paint it 2. Then look at its four neighbours:
-    up    (0,1) holds 1 -> paint it, and look at ITS neighbours
-    down  (2,1) holds 0 -> different colour, stop here
-    left  (1,0) holds 1 -> paint it, and continue from there
-    right (1,2) holds 0 -> stop
+The result:
 
-Keep spreading. The final grid:
+    row 0:    2  2  2
+    row 1:    2  2  0
+    row 2:    2  0  1
 
-    row 0:       2  2  2
-    row 1:       2  2  0
-    row 2:       2  0  1
+Note the 1 at (2,2) did NOT change. It is the same colour as where we clicked,
+but you cannot walk to it - the 0s at (1,2) and (2,1) block the way, and diagonal
+steps do not count. Being the right colour is not enough; it must be CONNECTED.
 
-Look at the bottom-right cell - it still holds 1. It touches the painted region
-only at a CORNER, and corners do not count as neighbours. That single cell is
-the thing to check in any test.""",
+That distinction is the whole problem: this is about reachability, not about
+matching a colour.""",
 
-    """The trick that saves you a whole extra grid.
+    """2. THE INTUITION - one instruction, passed from pixel to pixel.
 
-Normally when you explore a grid you must remember which cells you have already
-been to, or you will walk in circles forever - cell A sends you to B, and B
-sends you back to A.
+The whole algorithm is a single instruction that a pixel carries out on itself
+and then hands to its four neighbours:
 
-Here you get that for free. Once a cell is repainted from 1 to 2, it no longer
-matches the old colour, so any later visit looks at it, sees the wrong colour,
-and stops immediately. THE REPAINTING IS THE MEMORY.
+    "If I am off the picture, or I am not the old colour, do nothing.
+     Otherwise: paint myself the new colour, then give this same instruction to
+     the pixel above me, below me, to my left and to my right."
 
-Picture a 3x3 block of 1s. The middle cell can be reached from all four of its
-neighbours. The first one paints it 2; the other three arrive, see a 2 rather
-than the 1 they are looking for, and turn back.
+That is it. Start by giving that instruction to the clicked pixel, and the paint
+spreads outward all by itself - through every connected pixel of the old colour,
+and no further.
 
-This trick - change the data itself instead of keeping a separate list of
-visited places - shows up again in Number of Islands, where you 'sink' land
-into water as you count it. Worth carrying.""",
+Why does it stop in the right places? Because the "do nothing" half handles both
+kinds of boundary. Reach the edge of the picture and the position is off the
+grid, so nothing happens. Reach a pixel of a different colour and the colour test
+fails, so nothing happens. The region's own shape is what stops the spread; you
+never have to work out where its border is.
 
-    """The one input that hangs forever, and why.
+And why does it never get stuck going round in circles? Because a pixel repaints
+itself BEFORE handing the instruction on. Once repainted it is no longer the old
+colour, so if a neighbour later hands the instruction back to it, the colour test
+fails and it stops. That is the same idea as marking a square visited, done
+without any extra storage - and section 3 is about the one case where it goes
+wrong.
 
-Try this: the grid is already all 0s, you click a 0, and you ask for the new
-colour to be... 0.
+This shape of exploring - go as far as you can in one direction, then back up and
+try another - is called DEPTH-FIRST SEARCH, or DFS. It is like exploring a cave by
+always taking the first tunnel you see, and only retracing your steps at a dead
+end.""",
 
-Now the trick above breaks. You paint a cell 0, which changes nothing, so it
-still matches the old colour. You move to a neighbour, paint it 0, move back to
-the first cell - which STILL matches - and round you go, forever. The program
-does not crash; it just never finishes.
+    """3. THE TRAP - painting with the colour that is already there.
 
-The fix is two lines at the very top:
+Here is the one input that breaks the beautiful mechanism above.
 
-    if old_colour == new_colour:
-        return image        # nothing to do
+Suppose you click on a pixel holding colour 1 and ask to paint it colour 1. The
+new colour and the old colour are the same.
 
-That guard is not defensive tidying - it is the reason the program terminates
-at all. It is the single most common bug in this problem.""",
+Now walk the instruction through. Pixel (1,1) is the old colour, so it paints
+itself... colour 1, which it already was. Then it hands the instruction to (0,1),
+which is the old colour, so it paints itself 1 and hands the instruction on -
+including back to (1,1). And (1,1) is STILL the old colour, because painting it
+changed nothing. So it does it all again.
 
-    """What happens on a really big picture.
+The two pixels bounce the instruction back and forth forever, until the program
+runs out of stack space and crashes.
 
-Every time the function calls itself, the unfinished call is parked in memory.
-That pile of parked calls is the CALL STACK, and Python refuses to stack more
-than about 1,000 of them.
+The cause is subtle and worth naming precisely: the repaint is doing double duty
+as the visited marker, and when the new colour equals the old one, the marker
+never actually marks anything. The mechanism that normally guarantees
+termination silently stops working.
 
-Now imagine a 1000 x 1000 image that is entirely one colour - a million cells,
-all connected. The fill will try to go a million calls deep and the program
-stops with a 'RecursionError'. Note that this is not a wrong answer; it is a
-crash.
+The fix is one line at the very top:
 
-The fix is to keep your own list of cells still to visit instead of relying on
-Python's call stack:
+    if the old colour is the same as the new colour, return immediately
 
-    put the starting cell in a list
-    while the list is not empty:
-        take a cell out
-        if its colour is wrong, skip it
-        paint it, and add its four neighbours to the list
+That is not a shortcut for speed - it is a correctness guard. Without it, this
+specific input hangs. It is the single most commonly forgotten line in this
+problem, and it is the thing an interviewer is most likely to probe.
 
-Identical result, no depth limit. Mentioning this before you are asked is the
-thing that separates someone who has run this on a real image from someone who
-has only seen the exercise.""",
+Note also that the answer for that input is genuinely "the picture, unchanged" -
+so returning early gives the right answer as well as avoiding the crash.""",
 
-    """Where this is actually used, and the one-line variant.
+    """4. THE OTHER CASES THAT CATCH PEOPLE.
 
-Besides the paint bucket: the magic-wand selection tool, counting separate
-regions in a medical or satellite image, working out which territory a move
-captures in a board game, and finding connected blobs in computer vision.
+CASE 1 - reading off the edge of the grid. From row 0 the spread will try to step
+to row -1. In Python, image[-1] does NOT fail - it quietly returns the LAST row.
+So a missing bounds check does not crash; it silently wraps around to the far
+side of the picture and can paint a region that is nowhere near where you
+clicked. This is why the bounds must be tested BEFORE the pixel is read, and why
+the order of the conditions in that one line matters.
 
-The magic wand is a nice variant to mention because it needs only one change.
-Instead of 'is this cell EXACTLY the old colour?', ask 'is this cell's colour
-CLOSE ENOUGH to the one I clicked?' - a tolerance. Everything else about the
-algorithm is untouched, which shows that the spreading structure, not the
-colour test, is the real content here.
+CASE 2 - capturing the old colour too late. The code must read the starting
+pixel's colour into a variable BEFORE any painting begins. If instead you
+compared each pixel against image[sr][sc] as you went, then the moment the
+starting pixel is repainted, that comparison starts asking about the NEW colour,
+and the spread stops after one pixel.
 
-Speed: every cell is looked at a small fixed number of times, so the time is
-proportional to the number of cells - written O(rows x columns).""",
+CASE 3 - diagonal neighbours. In our picture the 1 at (2,2) touches the region
+only diagonally, and it correctly stays unpainted. If a problem wanted diagonals
+included you would add four more calls - (r+1,c+1) and so on - and change nothing
+else. Ask which is wanted.
+
+CASE 4 - the clicked pixel is already a different colour from its surroundings. If
+you click on a lone pixel with no same-coloured neighbours, only that one pixel
+changes. The spread stops immediately at all four sides. Correct with no special
+case.
+
+CASE 5 - a very large region. A 1000 x 1000 picture that is all one colour makes
+the spread go a million levels deep in recursion. Python gives up at around 1,000
+nested calls and raises a RecursionError. Section 10 has the fix.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+DFS - DEPTH-FIRST SEARCH: explore as far as you can down one path before backing
+up and trying another. Defined in section 2. The alternative, BFS, spreads in
+rings using a waiting line; for this problem either works, because we only care
+WHICH pixels are reachable, not how far away they are.
+
+RECURSION: a function that solves a problem by calling itself on smaller pieces
+of the same problem. Here "paint everything connected to this pixel" is done by
+painting this pixel and then saying the same thing about its four neighbours -
+same instruction, one step further out each time.
+
+CALL STACK: when the function calls itself, the outer call PAUSES exactly where it
+is and the inner one runs. Those paused calls pile up, each waiting for the one
+below it to finish; that pile is the call stack. It is what lets the spread "back
+up" when it reaches the edge of the region.
+
+BASE CASE: the situation where the function returns immediately instead of
+calling itself again - without one, recursion never ends. Here it is the single
+guard line at the top: off the grid, or not the old colour. Every path eventually
+hits it, because each visit permanently changes one more pixel away from the old
+colour and the picture is finite.
+
+IN PLACE: the picture is modified directly rather than a new one being built. The
+caller's grid is changed, which is worth mentioning out loud.
+
+O(R x C): the cost, where R is the number of rows and C the number of columns. In
+plain words: the work grows in step with the number of pixels. Double the picture
+and you roughly double the work. That is the best possible, since in the worst
+case every pixel is part of the region.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: paint the clicked pixel and then tell its four
+neighbours to do exactly the same thing, stopping wherever the colour is wrong or
+the picture ends.
+
+The mechanism, since this is recursion. When the spread is called on a pixel, it
+paints that pixel and then calls itself on the pixel below. That call pauses the
+current one; the new call paints its pixel and calls itself on the pixel below
+that; and so on. When a call finally hits the edge or a wrong colour, it returns
+immediately, and the call that was waiting wakes up and tries its NEXT direction.
+So the paint runs deep in one direction first and then unwinds back through every
+pixel trying the remaining directions.
+
+It stops because every visit permanently repaints one more pixel out of the old
+colour, and there are only finitely many pixels - so the supply of pixels that
+pass the colour test runs out.
+
+The steps:
+
+  1. Note how many rows and columns the picture has.
+
+  2. Read the colour of the clicked pixel into a variable, and call it the old
+     colour. Do this BEFORE any painting, or the comparison will start asking
+     about the new colour partway through.
+
+  3. If the old colour is the same as the new colour, return the picture
+     unchanged and stop. This is a correctness guard, not an optimisation -
+     without it the spread never terminates. See section 3.
+
+  4. Write the spreading instruction. Given a row and a column:
+       a. If the position is off the picture - row below 0, column below 0, row
+          at or past the number of rows, column at or past the number of columns
+          - return. Check this BEFORE reading the pixel, because a negative index
+          reads the wrong edge rather than failing.
+       b. If the pixel is not the old colour, return. This covers both pixels
+          that were always a different colour and pixels this spread has already
+          painted.
+       c. Paint this pixel the new colour. Do it BEFORE the next step - it is
+          what stops the spread walking back the way it came.
+       d. Give the same instruction to the four neighbours: below, above, right,
+          left. No bounds checking here - step (a) handles anything off the edge.
+
+  5. Start the spread at the clicked pixel, then return the picture.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first looks at the pixel you clicked and remembers what colour it was.
+That remembered colour is the thing it will be hunting for - every pixel it
+repaints has to match it.
+
+Before doing anything else it checks one awkward possibility: what if you asked
+to paint with the colour that is already there? In that case there is genuinely
+nothing to do, and worse, carrying on would send the code into an endless loop -
+so it hands the picture straight back.
+
+Then it starts spreading. The spreading is a small instruction that a pixel
+carries out on itself and passes on: if I am off the edge of the picture, or I am
+not the colour we are hunting for, do nothing; otherwise paint myself the new
+colour and tell the pixels above, below, left and right of me to do the same.
+
+Because each neighbour passes the instruction on in turn, the paint flows outward
+through the whole connected region, and it stops by itself at the region's
+border - either where the colour changes or where the picture runs out. Nobody
+ever has to work out where the border is.
+
+Repainting each pixel before passing the instruction on is what keeps the spread
+from going in circles: a pixel that has been painted no longer matches the colour
+being hunted, so if a neighbour hands the instruction back to it, it declines.
+
+When everything reachable has been painted, the picture - which was modified
+directly rather than copied - is handed back.""",
+
+    """8. THE CODE, line by line.
+
+Keep the 3 x 3 picture from section 1 beside you, clicking at (1,1) with colour 2.
+
+    rows, cols = len(image), len(image[0])
+The picture's dimensions. len(image) counts the rows; len(image[0]) counts the
+columns by measuring the first row. Both are 3 for our picture.
+
+    old_color = image[sr][sc]
+Remember the colour of the clicked pixel BEFORE anything is painted. This is the
+colour the spread will hunt for. Capturing it here rather than re-reading
+image[sr][sc] later is essential - see case 2 in section 4.
+
+    if old_color == new_color:
+        return image
+The correctness guard from section 3. If the pixel is already the target colour,
+there is nothing to do - and crucially, carrying on would loop forever, because
+the repaint would never actually change anything and so would never stop the
+spread from revisiting. This is the line people forget.
+
+    def dfs(r, c):
+The spreading instruction. It returns nothing; its only effect is painting.
+Defined inside so it can see image, rows, cols, old_color and new_color directly.
+
+    if r < 0 or r >= rows or c < 0 or c >= cols or image[r][c] != old_color:
+        return
+The base case, doing two jobs in one line, and the ORDER is load-bearing.
+
+  The four bounds tests come first. Python evaluates an "or" chain left to right
+  and stops at the first true condition, so image[r][c] is only read once the
+  position is known to be on the grid. Put the colour test first and a row of -1
+  would silently read the last row - see case 1 in section 4.
+
+  The colour test covers two situations at once: pixels that were never the old
+  colour, and pixels this spread has already painted. That second meaning is what
+  stops the spread revisiting.
+
+    image[r][c] = new_color
+Paint this pixel. This is both the actual work AND the visited marker - and it
+must happen BEFORE the calls below, or a neighbour would look back at this pixel,
+still see the old colour, and start spreading from it again.
+
+    dfs(r+1, c); dfs(r-1, c); dfs(r, c+1); dfs(r, c-1)
+The four neighbours: below, above, right, left. No bounds checking here, because
+the guard at the top handles anything off the picture - which is what lets these
+four calls be written so plainly. Add four more calls here if diagonals should
+count.
+
+    dfs(sr, sc)
+    return image
+Start the spread at the clicked pixel, then hand back the picture. The picture was
+modified in place, so returning it is a convenience for the caller rather than a
+necessity.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    row 0:  1  1  1
+    row 1:  1  1  0
+    row 2:  1  0  1
+
+Click at (1,1), new colour 2.
+
+    rows = 3, cols = 3
+    old_color = image[1][1] = 1
+    old_color == new_color?  1 == 2?  No - carry on.
+
+dfs(1,1): on the grid, colour is 1 = old -> paint it 2.
+    row 1 is now  1 2 0
+  dfs(2,1): colour is 0, not the old colour -> return.
+  dfs(0,1): colour is 1 = old -> paint it 2.
+      row 0 is now  1 2 1
+    dfs(1,1): colour is now 2, not 1 -> return.
+              <- the repaint doing its job: refusing to spread back into a pixel
+                 already painted. Without it, this is where it would loop.
+    dfs(-1,1): r is -1, off the top -> return.
+    dfs(0,2): colour is 1 = old -> paint it 2.
+        row 0 is now  1 2 2
+      dfs(1,2): colour is 0 -> return.
+      dfs(-1,2): off the grid -> return.
+      dfs(0,3): c is 3, past the right edge -> return.
+      dfs(0,1): now 2 -> return.
+    dfs(0,0): colour is 1 = old -> paint it 2.
+        row 0 is now  2 2 2
+      dfs(1,0): colour is 1 = old -> paint it 2.
+          row 1 is now  2 2 0
+        dfs(2,0): colour is 1 = old -> paint it 2.
+            row 2 is now  2 0 1
+          dfs(3,0): r is 3, off the bottom -> return.
+          dfs(1,0): now 2 -> return.
+          dfs(2,1): colour is 0 -> return.
+          dfs(2,-1): c is -1 -> return.
+        dfs(0,0): now 2 -> return.
+        dfs(1,1): now 2 -> return.
+        dfs(1,-1): off the left edge -> return.
+      dfs(-1,0): off the top -> return.
+      dfs(0,1): now 2 -> return.
+      dfs(0,-1): off the left edge -> return.
+  dfs(1,0): now 2 -> return.
+  dfs(1,2): colour is 0 -> return.
+
+Final picture:
+
+    row 0:  2  2  2
+    row 1:  2  2  0
+    row 2:  2  0  1
+
+Exactly the answer from section 1. Note the 1 at (2,2) was never reached - every
+route to it is blocked by a 0, and the spread only ever moves through pixels of
+the old colour.
+
+Count the "return" lines: most of the work is the spread bumping into edges and
+into pixels it has already painted. That is normal and it is what makes the total
+work proportional to the number of pixels rather than to the number of calls.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(R x C) - proportional to the number of pixels. Each pixel is painted at
+most once, and each painted pixel makes four calls that do a fixed amount of work
+before returning. In the worst case the whole picture is one region and every
+pixel is visited. On a 1000 x 1000 picture that is a million steps - fast.
+
+SPACE: O(R x C) in the worst case, and this is the surprising part. The picture
+needs no extra memory, because the repaint doubles as the visited marker. But the
+CALL STACK does: a picture that is entirely one colour forces the spread as deep
+as there are pixels before it can unwind. Python stops at about 1,000 nested
+calls, so a large single-colour picture crashes with a RecursionError.
+
+The cure is the same algorithm with a QUEUE (a waiting line) instead of
+recursion: put the clicked pixel in a queue and paint it, then repeatedly take a
+pixel off the front and, for each neighbour that is on the grid and holds the old
+colour, paint it and add it to the queue. Paint it AS YOU ADD IT, not when you
+take it out - otherwise the same pixel can be added several times by different
+neighbours before it is processed, and the queue balloons. Same O(R x C) time, but
+the memory is a queue you control rather than the call stack, so it survives any
+picture size.
+
+THE #1 MISTAKE - omitting the "old colour equals new colour" guard. This is the
+mistake this problem exists to test. Without it, painting a region with the colour
+it already has sends the spread bouncing between two neighbouring pixels forever
+until the stack dies. Every other input works perfectly, which is what makes it
+easy to miss.
+
+A close second: painting the pixel AFTER the four recursive calls instead of
+before. Then a neighbour looks back, still sees the old colour, and spreads into
+this pixel again - the same infinite loop by a different route.
+
+ONE-SENTENCE TAKEAWAY: paint a pixel and tell its four neighbours to do the same,
+stopping wherever the colour is wrong or the picture ends - and paint BEFORE you
+pass the instruction on, because the repaint is what stops the spread walking back
+into itself.""",
 ]
 
 _EX_P0["Invert a Binary Tree"] = [
@@ -24061,119 +24332,412 @@ seeing -1 passes it straight up, so the first problem found ends the search.""",
 ]
 
 _EX_P0["Diameter of a Binary Tree"] = [
-    """What 'diameter' means here - it is not what the word suggests.
+    """1. THE GOAL, in plain English.
 
-Forget circles. In a tree, the DIAMETER is simply the LONGEST PATH between any
-two nodes - and that path does not have to pass through the top of the tree.
+You are given a tree. Find the LONGEST path between any two nodes in it, and
+report its length.
 
-Here is our tree. (Reminder of the words: each item is a NODE, the top one is
-the ROOT, the ones hanging below a node are its CHILDREN, and a node with no
-children is a LEAF.)
+The path may run between any two nodes at all - it does NOT have to start at the
+top. It may go up one branch, over a node, and back down another.
 
-        1
-       / \\
-      2   3
-     / \\
-    4   5
+Here is the tree we will use:
 
-Walk the longest journey you can find between any two nodes. Try
-4 -> 2 -> 1 -> 3. How long is it? We measure in EDGES - the lines between
-nodes, not the nodes themselves. That journey crosses 3 lines, so its length is
-3. Nothing longer exists here, so the diameter is 3.""",
+            1
+           / \\
+          2   3
+         / \\
+        4   5
 
-    """The shape of the answer: every path has one highest point.
+Vocabulary, defined as it appears:
+- Each item is a NODE. There are five here: 1, 2, 3, 4 and 5.
+- 1 sits at the very top; the top node is the ROOT.
+- The nodes hanging directly below a node are its CHILDREN. 2's children are 4
+  and 5.
+- A node with no children is a dead end, called a LEAF - here 4, 5 and 3.
+- An EDGE is one of the lines joining a node to a child. The path from 4 to 2 is
+  one edge long.
+- The SUBTREE at a node means that node plus everything hanging below it.
 
-Here is the observation the whole solution rests on. Take any path in a tree
-and follow it with your finger. It goes UP for a while, reaches a highest
-point, then goes DOWN. It can never go up twice, because there is only one way
-up from any node.
+Now find the longest path by hand. Try 4 up to 2, then down to 5: that is edges
+4-2 and 2-5, so length 2. Try 4 up to 2, up to 1, down to 3: edges 4-2, 2-1, 1-3
+- length 3. Try 5 to 3 the same way: also 3.
 
-So every possible path 'bends' at exactly one node - its highest point. In our
-example, the path 4 -> 2 -> 1 -> 3 bends at node 1.
+The answer is 3.
 
-That means: if we visit every node and ask 'what is the longest path that bends
-HERE?', then take the best answer across all nodes, we have the diameter. And
-the longest path bending at a node is easy - it is
-    (how far down the left side goes) + (how far down the right side goes).""",
+One thing to settle up front: length is counted in EDGES, not nodes. The path
+4-2-1-3 touches four nodes and crosses three lines, and the answer is 3. Some
+problems count nodes instead, which would give 4. Say which you are using - it is
+the commonest source of off-by-one confusion here.""",
 
-    """Doing it on the picture.
+    """2. THE INTUITION - every path has a highest point.
 
-First we need DEPTH: how many nodes deep the tree goes below and including a
-given node. A leaf has depth 1 (just itself).
+The set of possible paths looks huge. But there is one observation that shrinks it
+to something manageable.
 
-    depth(4) = 1, depth(5) = 1, depth(3) = 1     (all leaves)
-    depth(2) = 1 + the deeper of its children = 1 + 1 = 2
-    depth(1) = 1 + the deeper of 2 and 3 = 1 + 2 = 3
+Take any path in a tree and walk along it. It goes up for a while, reaches a
+highest node, and then goes down. It can only turn around ONCE - because turning
+twice would mean revisiting a node, and in a tree there is exactly one route
+between any two nodes.
 
-Now the bend at each node - left depth plus right depth:
-    at node 4: 0 + 0 = 0     (no children)
-    at node 5: 0 + 0 = 0
-    at node 3: 0 + 0 = 0
-    at node 2: depth(4) + depth(5) = 1 + 1 = 2
-    at node 1: depth(2) + depth(3) = 2 + 1 = 3    <- the biggest
+So every path has a single TOPMOST node, the point where it turns around.
 
-Answer 3, matching the path we traced by hand. Notice we did not search for
-paths at all; we just asked one small question at every node.""",
+That means we can organise the search by that top node:
 
-    """The example that proves you cannot only check the root.
+    for each node, what is the longest path whose highest point is THIS node?
 
-It is tempting to compute left depth + right depth at the ROOT and stop. Here
-is a tree where that gives the wrong answer:
+And that question is easy. A path turning at node X goes down the left side as
+far as it can and down the right side as far as it can. So:
 
-          1
-         /
-        2
-       / \\
-      3   4
-     /     \\
-    5       6
+    longest path turning at X = (depth of X's left subtree)
+                              + (depth of X's right subtree)
 
-The root (1) has nothing on its right, so at the root the sum is 2 + 0. But the
-genuine longest path is 5 -> 3 -> 2 -> 4 -> 6, which is 4 edges long and never
-touches node 1 at all.
+measured in edges.
 
-The best path bends at node 2, not at the root. This is exactly why the bend
-must be measured at EVERY node and the best kept - and it is the single most
-common way this problem is got wrong.""",
+Check it on our tree at node 1: the left side (the subtree at 2) is 2 levels deep,
+the right side (the subtree at 3) is 1 level deep. So 2 + 1 = 3. That matches the
+answer we found by hand.
 
-    """The part that confuses everyone: two different numbers.
+And at node 2: left side 1, right side 1, giving 2 - the path 4-2-5.
 
-The helper function does two jobs at once, and they return DIFFERENT numbers.
-Keeping them straight is the whole problem.
+So the whole problem becomes: work this out at every node, and keep the biggest.
+No path is missed, because every path turns at exactly one node and that node's
+calculation covers it.""",
 
-It RETURNS the depth: 1 + the deeper of the two sides.
-It RECORDS (into a running best) the bend: left depth + right depth.
+    """3. THE SIMPLE-BUT-SLOW VERSION FIRST, then the upgrade.
 
-Why not return the bend? Because of what a parent can do with it. A parent can
-only continue a path through ONE of its children - a path is a line, it cannot
-fork into both directions and still be a path. So the parent needs to know 'how
-far can I go if I come through you', which is the one-sided depth.
+THE SLOW VERSION. Write a function depth(node) that measures how deep a subtree
+goes. Then visit every node and, at each one, call depth on its left child and on
+its right child and add the two together, keeping the largest total.
 
-The bend, meanwhile, is a finished candidate answer - it uses both sides, so
-nobody above can extend it. Hence: return one, record the other. If you return
-the bend by mistake, a parent will happily build a forked, impossible path and
-your answers come out too large.""",
+That is correct, and it is exactly section 2 written out. It is also slow, and the
+reason is worth seeing: depth() walks an ENTIRE subtree to produce its answer, and
+you call it fresh at every node. Nodes near the bottom get measured over and over
+- once for their own calculation, again for their parent's, again for their
+grandparent's. For a long spindly tree of n nodes the total comes to roughly n x n
+steps, written O(n^2).
 
-    """Small cases, speed, and the family.
+THE UPGRADE - one walk that does both jobs at once.
 
-EMPTY tree: no nodes, no edges, diameter 0.
-SINGLE node: it has no edges at all, so 0. (If the problem had asked for the
-number of NODES on the longest path the answer would be 1 - both definitions
-exist, so confirm which is meant. This one counts edges.)
-A straight chain 1 -> 2 -> 3 -> 4: the best bend rises 1, 2, 3 as you come back
-up; the diameter is 3.
+Notice that the slow version computes depths repeatedly, and that a single
+bottom-up walk could compute every depth exactly once. So write ONE function that
+returns a node's depth - and give it a side job: while it is there, and while it
+happens to know both children's depths, let it also work out the best path
+turning at this node and compare that against the best seen anywhere so far.
 
-Speed: every node is visited once and does a fixed amount of work, so the time
-is proportional to the number of nodes - written O(n).
+Each node then does two things with the two numbers it already has:
 
-The family, all built from the same trick of returning one thing and recording
-another:
-    Diameter                     -> return depth,      record left + right
-    Binary Tree Tilt             -> return subtree sum, record |left - right|
-    Binary Tree Maximum Path Sum -> return value + best one side,
-                                    record value + both sides
-Three problems, one template. Once you see 'return the straight-line
-contribution, record the bent one', all three stop being separate.""",
+    best = the largest of (best so far) and (left + right)     <- the side job
+    return 1 + the larger of (left, right)                     <- its real job
+
+The running best is kept in a variable outside the function, so every call can
+update it. The walk visits each node once, so this is O(n).
+
+That pattern - a recursive function that returns one thing while quietly
+accumulating a different thing in an outer variable - is worth recognising. It
+turns up constantly in tree problems.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the answer often does NOT pass through the root.
+
+The single most common wrong solution is to compute the depth of the root's left
+side plus the depth of its right side, and return that. On our tree that gives
+2 + 1 = 3, which is correct - so the mistake survives the obvious test.
+
+Now try this tree:
+
+              1
+             /
+            2
+           / \\
+          4   5
+         /     \\
+        6       7
+
+At the ROOT: the left side is 3 levels deep, the right side is empty, 0 levels.
+Root-only answer: 3 + 0 = 3.
+
+But look at node 2. Its left side goes 4 then 6 - 2 edges down. Its right side
+goes 5 then 7 - also 2 edges down. So the path 6-4-2-5-7 has length 4, and it
+never touches the root at all.
+
+The true answer is 4. The root-only method reports 3.
+
+That is why the calculation has to happen at EVERY node, and why the running best
+is compared at every node rather than just returned from the top. The tree's
+longest path can be buried anywhere inside it.
+
+Two more small traps in the same family:
+- A single node has diameter 0, because there are no edges at all. Counting nodes
+  instead of edges would give 1.
+- A tree that is one long chain has diameter equal to its number of edges, and
+  the path runs from one end to the other, turning at the root.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+DEPTH of a subtree, measured in NODES: how many levels tall it is. An empty spot
+is 0; a leaf is 1; a node with children is 1 plus the taller child. This is what
+the inner function returns.
+
+Now the arithmetic that confuses people. If the left subtree has depth L nodes and
+the right has depth R nodes, the longest path turning here is L + R EDGES - not
+L + R - 2, and not L + R + 1. Why? Because going down the left side through L
+levels crosses exactly L edges when you count the edge from this node into that
+subtree. So L + R is already an edge count, even though L and R are node counts.
+Check it on a leaf: both sides are 0, so 0 + 0 = 0 edges, which is right - a
+single node has no path.
+
+nonlocal: a Python keyword meaning "the variable named here belongs to the
+enclosing function, not to me - so when I assign to it, change THAT one". Without
+it, assigning to best inside the inner function would quietly create a brand-new
+local variable and every update would be thrown away when the call returned. It is
+the mechanism that lets one running total survive across every recursive call.
+
+RECURSION, CALL STACK, BASE CASE: a function calling itself on smaller pieces;
+the pile of paused calls each waiting on the one below; and the situation
+answered immediately without recursing - here, an empty spot returning 0.
+
+O(n) and O(h): the costs, where n is the number of nodes and h the height of the
+tree. O(n) means the work grows in step with the number of nodes. O(h) describes
+the extra memory - the call stack holds one paused call per level.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: every path turns around at exactly one node, so
+at each node add its two subtree depths together, keep the biggest total you ever
+see, and return the node's own depth so its parent can do the same.
+
+The mechanism, since this is recursion. When the depth function is called on node
+1, it cannot do anything until it knows about node 2 and node 3. So it calls
+itself on node 2 - and node 1's call PAUSES right there, half-finished. Node 2's
+call runs and pauses in turn while asking about node 4. These half-finished calls
+pile up on the call stack. When a call finally returns a number, the call above
+wakes up exactly where it stopped, takes that number, and carries on. So the
+questions travel DOWN the tree and the depths travel back UP - and each node does
+its own comparison on the way up, at the moment both its children's answers have
+arrived.
+
+It stops because every path down the tree eventually reaches an empty spot, which
+answers 0 without asking anything further.
+
+The steps:
+
+  1. Keep one variable outside the recursion to hold the best path length seen so
+     far. Start it at 0 - the answer for a single node or an empty tree.
+
+  2. Write a function that takes a node and returns its subtree's depth.
+
+  3. BASE CASE. If the node is empty, return 0 - no levels, nothing below.
+
+  4. Ask the same function for the depth of the left child, and keep the number.
+
+  5. Ask it for the depth of the right child, and keep that number.
+
+  6. THE SIDE JOB. Add those two numbers together - that is the length, in edges,
+     of the longest path turning at this node. If it beats the best seen so far,
+     record it.
+
+  7. THE REAL JOB. Return this node's own depth: one more than the larger of the
+     two children's depths.
+
+  8. Run the function on the root, ignore what it returns, and report the running
+     best.
+
+Step 6 must sit between steps 5 and 7 - after both children have reported and
+before this node's own depth is returned. That is the only moment when both
+numbers are available.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the whole tree once, and at every node it does two separate things
+with the same pair of numbers.
+
+Standing on a node, it first asks each of its two children the same question it
+was asked: how deep does the tree below you go? Once both have answered, it holds
+two numbers - how far down it can travel on the left, and how far down on the
+right.
+
+The first thing it does with them is check for a record. Adding the two together
+gives the length of the longest path that turns around at this exact node - down
+one side as far as possible, back up, and down the other side as far as possible.
+If that beats the longest path found anywhere in the tree so far, it is written
+into a running best that lives outside the recursion, so it survives after this
+call finishes.
+
+The second thing it does is answer the question it was actually asked: it reports
+its own depth, which is one more than whichever child reached deeper. That number
+goes back to its parent, which will use it in exactly the same way.
+
+Checking at every node - rather than only at the top - is the whole point. Every
+possible path turns around at exactly one node, so by asking the question at every
+node, no path can be missed. And the longest one is very often buried in the
+middle of the tree, nowhere near the root.
+
+When the walk finishes, the value the function returns is discarded. The answer is
+the running best that was accumulated along the way.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you: 1 on top, 2 and 3 below, 4 and 5 below 2.
+
+    best = 0
+The running answer, living OUTSIDE the recursive function so it survives across
+every call. Starting at 0 is also the correct answer for an empty tree or a single
+node, which is why no special case is needed for either.
+
+    def depth(node):
+The recursive worker. Its stated job is to return a node's depth; its hidden job
+is to update best on the way. Defined inside so it can see best.
+
+    nonlocal best
+Tells Python that assignments to best inside this function should change the
+OUTER variable, not create a new local one. Without this line, every update would
+be written to a fresh local variable and thrown away when the call returned - and
+the function would always report 0. See section 5.
+
+    if node is None:
+        return 0
+The BASE CASE. An empty spot has no levels. This is what stops the recursion, and
+it is also what makes a leaf return 1 - a leaf asks both of its empty children,
+gets 0 and 0, and returns 1 + max(0, 0).
+
+    left = depth(node.left)
+Ask the left child. This call runs the ENTIRE left subtree to completion, updating
+best wherever it finds something better, before returning a single number.
+
+    right = depth(node.right)
+The same for the right child.
+
+    best = max(best, left + right)
+THE SIDE JOB, and the heart of the problem. left + right is the length in edges of
+the longest path turning at THIS node - down the left as far as possible, back up
+through here, down the right as far as possible. Compare it with the best seen
+anywhere so far and keep the larger.
+
+This line must sit here, after both children have reported and before the return
+below, because this is the only moment when both numbers exist.
+
+And it must run at every node, not just the root - that is what catches the buried
+path from section 4.
+
+    return 1 + max(left, right)
+THE REAL JOB. Report this node's own depth: one more than whichever child reached
+deeper. Note this uses max, not the sum - depth is about the single deepest route
+downwards, whereas the diameter calculation above needed both sides. Confusing the
+two is easy; they are on adjacent lines and they mean different things.
+
+    depth(root)
+    return best
+Run the walk, DISCARD what it returns - the root's depth is not the answer - and
+report the running best that was accumulated during the walk.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Tree:        1
+            / \\
+           2   3
+          / \\
+         4   5
+
+best = 0. Indentation shows the depth of the call stack.
+
+depth(1)
+  left = depth(2)
+        depth(2)
+          left = depth(4)
+                depth(4): both children empty -> 0 and 0
+                          best = max(0, 0 + 0) = 0
+                          return 1 + max(0,0) = 1
+          left = 1
+          right = depth(5)
+                depth(5): same as 4 -> best stays 0, return 1
+          right = 1
+          best = max(0, 1 + 1) = 2        <- the path 4-2-5, length 2
+          return 1 + max(1,1) = 2
+  left = 2
+  right = depth(3)
+        depth(3): both children empty -> 0 and 0
+                  best = max(2, 0 + 0) = 2   (no improvement)
+                  return 1
+  right = 1
+  best = max(2, 2 + 1) = 3                 <- the path 4-2-1-3, length 3
+  return 1 + max(2,1) = 3
+
+depth(root) returned 3 - which is the root's DEPTH, and is discarded.
+return best = 3.  Correct.
+
+Notice the two moments best changed: once at node 2 and once at node 1. And
+notice the returned value 3 and the answer 3 happen to coincide here, which is a
+coincidence of this particular tree - the next trace shows them differing.
+
+THE BURIED-PATH TREE from section 4:
+
+              1
+             /
+            2
+           / \\
+          4   5
+         /     \\
+        6       7
+
+depth(1)
+  left = depth(2)
+        left = depth(4)
+              left = depth(6) -> leaf, best = 0, returns 1
+              right = depth(None) -> 0
+              best = max(0, 1 + 0) = 1
+              return 1 + max(1,0) = 2
+        left = 2
+        right = depth(5)
+              left = depth(None) -> 0
+              right = depth(7) -> leaf, returns 1
+              best = max(1, 0 + 1) = 1
+              return 1 + max(0,1) = 2
+        right = 2
+        best = max(1, 2 + 2) = 4          <- the path 6-4-2-5-7, length 4
+        return 1 + max(2,2) = 3
+  left = 3
+  right = depth(None) -> 0
+  best = max(4, 3 + 0) = 4                <- the root's own path is only 3;
+                                             best is NOT overwritten
+  return 1 + max(3,0) = 4
+
+return best = 4.
+
+Here the answer 4 came from node 2, not from the root - and the root's own
+calculation of 3 was correctly discarded because max kept the larger value. That
+is exactly the case a root-only solution gets wrong.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is visited exactly once and does a
+fixed amount of work - two comparisons, an addition and a max. Compare with the
+slow version from section 3 at O(n^2), which re-measured the same subtrees from
+every ancestor. On a chain of 10,000 nodes that is 10,000 steps versus 100
+million.
+
+SPACE: O(h), where h is the HEIGHT of the tree - the call stack holds one paused
+call per level as the recursion descends. For a bushy tree that is about log n (a
+million nodes is only about 20 levels); for a long chain it is n, and Python's
+recursion limit of roughly 1,000 would stop it.
+
+THE #1 MISTAKE - computing the answer only at the root. Taking the root's left
+depth plus its right depth looks like the definition and is correct on plenty of
+trees, which is exactly why it survives casual testing. It fails on any tree whose
+longest path is buried below the root, like the one in section 4. The fix is not a
+cleverer calculation at the top; it is running the same small calculation at every
+node and keeping the best.
+
+A close second: mixing up the two lines at the bottom - returning left + right
+instead of 1 + max(left, right). The sum is the diameter through this node; the
+max-plus-one is this node's depth. They sit next to each other and mean completely
+different things, and swapping them produces numbers that grow far too fast.
+
+Also worth checking: whether the problem counts edges or nodes. This version
+counts edges, so a single node has diameter 0.
+
+ONE-SENTENCE TAKEAWAY: every path turns around at exactly one node, so at each
+node add its two subtree depths to get the best path turning there, keep a running
+maximum across the whole tree, and return one more than the deeper side so the
+parent can do the same.""",
 ]
 
 _EX_P0["Merge Two Sorted Lists"] = [
