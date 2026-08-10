@@ -29252,6 +29252,350 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1F[_e["title"]]
 
 
+# ══ Amazon LP / STAR worked examples ══════════════════════════════════════
+# Correcting _freq_tier (see the note there) moved 19 behavioural entries into
+# P0, where they hit the five-worked-examples bar. These are the STAR prompts:
+# each gets a full student-scale answer, the weak version for contrast, the
+# probes the interviewer will actually push on, and how to re-angle the same
+# story for Google.
+_EX_P0LP = {}
+
+_EX_P0LP["STAR: Acting decisively with incomplete information (Bias for Action)"] = [
+    """A full student-scale answer.
+SITUATION: Two weeks into a six-week internship, my task was 'improve the
+recommendations' and the product owner who could define 'better' was on leave.
+TASK: Waiting two weeks would have left four weeks to build, test and ship.
+ACTION: I separated what was genuinely unknown (the target metric) from what
+was not (the data, the model, the serving path). I asked the two engineers on
+the team what users complained about - the answer was repetitive results, not
+irrelevant ones - so I made the assumption explicit: 'better means more
+diverse', wrote it at the top of a one-page doc, and messaged the product owner
+so it was on the record. Then I built the smallest thing that would test it: a
+diversity re-ranker behind a feature flag, measuring both diversity and
+click-through offline.
+RESULT: Three days of work instead of six weeks of exposure. She confirmed the
+priority on her return; category coverage rose 40% with click-through flat, and
+it shipped behind the flag.""",
+
+    """The two-way door, which is the concept the LP is built on.
+Amazon splits decisions into ONE-WAY doors (hard to reverse - a data model, a
+public API, a vendor contract) and TWO-WAY doors (cheap to undo - a feature
+behind a flag, an experiment, an internal script). Bias for Action says move
+fast on two-way doors and reserve the careful analysis for one-way ones.
+So the sentence that scores is: 'this was reversible - the flag meant backing
+it out was a config change, so the cost of being wrong was about three days,
+which was worth it against two weeks of waiting.' You have shown you SIZED the
+risk rather than merely tolerated it, and that is the difference between bias
+for action and recklessness.""",
+
+    """The weak version, for contrast.
+'The requirements weren't clear so I asked my manager, and once she got back
+from leave I started building.' Everything in that sentence is defensible and
+it scores nothing: the candidate was blocked for two weeks, took no risk, made
+no decision, and produced no result. Asking for clarification is the FIRST half
+of the answer - the graded half is what you did when the answer was 'nobody
+knows yet'.
+Equally weak in the other direction: 'I just started building what I thought
+was right.' No stated assumption, no record, nothing checked - that is not bias
+for action, it is not listening.""",
+
+    """What the interviewer will probe, and the answers to have ready.
+'What if your assumption had been wrong?' - this is the whole point of the
+story, so answer with a COST: 'three days of work, and the flag meant nothing
+shipped to users.' 'How did you decide it was safe to proceed?' - reversibility
+plus the cheap test. 'Why not just ask someone else?' - say who you did ask and
+what you learned from them, because a story where you consulted nobody reads as
+a lone wolf. 'What would you do differently?' - 'I'd have written the
+assumption down on day one rather than day two.'""",
+
+    """Where the LP flips into a negative signal.
+Bias for Action does NOT mean skipping review, ignoring a migration plan, or
+pushing to production on a Friday. If your story involves a one-way door taken
+fast - deleting data, changing a schema, publishing an API - the interviewer
+will hear recklessness, and the LP bar-raiser is specifically listening for
+whether you can tell the two apart. If the only fast decision you can think of
+was genuinely risky, say so and frame it as a lesson: 'I moved fast on
+something I should have treated as a one-way door, and here is what it cost.'
+A failure story told with that insight beats a success story without it.""",
+
+    """The same story at Google, re-angled.
+Amazon wants the decision and the number: 'I decided X, it was reversible, it
+cost three days, here is the 40%.' Google wants the reasoning and the people:
+'I couldn't get the requirement, so I framed the ambiguity as a testable
+assumption rather than a blocker - and I checked it against the two engineers
+who talk to users, because they had information the spec didn't.' Same events,
+same three days. Prepare both openings; the body of the story does not
+change.""",
+]
+
+_EX_P0LP["STAR: Being frugal / doing more with less (Frugality)"] = [
+    """A full student-scale answer.
+SITUATION: Our capstone needed to fine-tune a model, and the department GPU
+queue had a three-day wait; the team wanted to expense cloud GPU time we did
+not have a budget for.
+TASK: I had four days before the checkpoint demo.
+ACTION: Instead of buying compute, I attacked the requirement. I checked
+whether we needed full fine-tuning at all - LoRA on a smaller base model gave
+us 95% of the quality at about 3% of the trainable parameters, which fit on the
+free Colab tier. I also cut the training set to a stratified 20% sample and
+confirmed on a holdout that the accuracy difference was inside the noise band.
+RESULT: Trained in 40 minutes on free hardware, demo hit its date, and the
+team's cloud spend stayed at zero. The 20% sample also made our iteration loop
+fast enough that we tried six configurations instead of two.""",
+
+    """What frugality actually means at Amazon, which is not stinginess.
+The LP is 'constraints breed resourcefulness, self-sufficiency and invention -
+there are no extra points for growing headcount, budget size or fixed expense'.
+So the story is not 'I saved money by working harder' or 'I did without'. It is
+'the constraint made me find a better solution'. In the example above, the
+sampling did not just save compute - it made the iteration loop faster, which
+produced a better result. That second-order benefit is the signal.
+If your story ends with 'so it took me longer but we spent nothing', that is
+not frugality, that is a bad trade.""",
+
+    """The weak version.
+'We didn't have money for cloud GPUs so I waited for the department queue and
+started training three days later.' No invention, no ownership, no result -
+the constraint simply happened to the candidate.
+Equally weak: 'I worked nights and weekends to avoid asking for help.' Amazon
+does not reward burning yourself as a substitute for resources; that reads as
+poor judgement about when to escalate, and it is the opposite of the
+self-sufficiency the LP means.""",
+
+    """Student-scale material that works, since nobody expects a budget story.
+Using free tiers deliberately rather than by accident (Colab, a student cloud
+credit) and designing the work to fit them. Cutting a dataset intelligently
+rather than randomly. Replacing a paid API with a small local model where the
+quality difference did not matter. Reusing an existing internal tool instead of
+building one. Finding that a 30-line script replaced a service someone proposed
+building. The common thread: you questioned the RESOURCE REQUIREMENT itself,
+rather than accepting it and finding a way to pay for it.""",
+
+    """The probe to expect, and the trap in it.
+'What would you have done with an unlimited budget?' The trap is answering 'the
+same thing' (which sounds like you cannot use resources well) or 'I'd have
+bought the GPUs' (which concedes the frugal solution was worse). The honest
+answer names what money would genuinely have bought and what it would not:
+'I'd have run the full fine-tune in parallel to check the sample was
+representative - but I'd still have started with the small version, because the
+fast loop is what got us six configurations.'
+Second probe: 'did the cheaper approach cost quality?' Have the number - 'inside
+the noise band on a holdout' - or admit the trade honestly.""",
+
+    """How this LP pairs with others in the same story.
+Frugality rarely stands alone; interviewers accept one story mapped to two or
+three principles as long as you are explicit. The example above is also INVENT
+AND SIMPLIFY (LoRA instead of full fine-tuning) and BIAS FOR ACTION (started
+in hours rather than waiting three days). When asked for frugality, lead with
+the constraint and the invention; when asked for invent-and-simplify, lead with
+the technique and mention the constraint as context. That is the story-bank
+re-angling skill applied to the LP set.""",
+]
+
+_EX_P0LP["STAR: Customer obsession -- starting from the customer and working backward"] = [
+    """A full student-scale answer, where the customer is a real user.
+SITUATION: I built a document Q&A bot over my university's 400-page course
+handbook and put it in front of eight classmates.
+TASK: My instinct was to improve the model; I wanted to know what actually made
+it useless to them.
+ACTION: I sat with four of them while they used it rather than sending a
+survey. Every one of them stopped trusting it the moment it gave a confident
+answer with no source - not because it was wrong more often than they expected,
+but because they had no way to CHECK it. That was not the problem I had
+planned to solve. So I worked backward from 'I need to verify this in ten
+seconds': citations with section links on every answer, and an explicit 'I
+could not find this in the handbook' rather than a guess.
+RESULT: Repeat use went from two of eight to six of eight over the following
+fortnight, on the same underlying model.""",
+
+    """'Working backward' is the actual technique being tested.
+Amazon's method is to start from the customer experience and reason back to the
+build - famously by writing the press release and FAQ before writing code. The
+story must show that direction of travel: customer pain -> desired experience ->
+what to build. The failure mode is the reverse, where you build something and
+then look for a customer benefit to justify it.
+In the example, the giveaway sentence is 'that was not the problem I had
+planned to solve'. It proves the customer changed the plan, which is the whole
+LP in six words.""",
+
+    """The weak version.
+'I wanted users to have a better experience, so I improved the model's accuracy
+from 68% to 91%.' It sounds strong and it is not a customer-obsession story -
+it is a technical-improvement story with the word 'users' attached. Nobody was
+observed, no pain was identified, and the metric is internal.
+The tell an interviewer listens for: does the candidate name a SPECIFIC
+customer behaviour they observed, or do they only talk in aggregates? 'Four of
+eight stopped using it after one wrong answer' is customer obsession.
+'Engagement was low' is a dashboard.""",
+
+    """When there is no external customer - which is most student work.
+Your customer can be internal and the LP still applies: the teammates who
+consume your module, the TA who marks the submission, the next student who
+inherits the repo. A genuine example: 'the three people using my data loader
+kept hitting the same setup failure, so I watched one of them do it, found the
+undocumented environment variable, and wrote a ten-line SETUP.md - onboarding
+went from days to an hour.' Small, real, and it demonstrates observing a user
+rather than guessing at one.""",
+
+    """The probes, and what they are checking.
+'How did you know that was what customers wanted?' - they are testing whether
+you have evidence or a hunch; name the method (sat with four users, read the
+forum, logged the drop-off point). 'What did you have to say no to?' - customer
+obsession implies choosing the customer's priority over your own preferred
+work, so have the thing you dropped. 'How did you measure the outcome?' - the
+number should be a CUSTOMER behaviour (repeat use, task completion, complaints)
+rather than a model metric.""",
+
+    """The distinction Amazon draws explicitly, and expects you to draw.
+The LP says leaders 'pay attention to competitors, but they obsess over
+customers'. So an answer built on 'the competing product had this feature so we
+added it' scores badly - it is competitor-led. The same feature reached by
+'three users asked how to do X and could not' scores well. If your story
+involves matching something another product does, reframe it around the
+underlying customer need that product happened to be serving, and say why you
+believed the need was real.""",
+]
+
+_EX_P0LP["STAR: Delivering under a hard deadline with scope trade-offs (Deliver Results / Bias for Action)"] = [
+    """A full student-scale answer.
+SITUATION: Our five-person capstone had a fixed demo date, and with ten days
+left the model, the API and the web UI were all half-finished.
+TASK: I owned the API and had become the de facto integrator.
+ACTION: I ranked the three by what the EXAMINERS were actually grading - the
+rubric weighted the technical approach and the evaluation, not the interface.
+So I proposed cutting the UI to a single hard-coded query page and moving that
+person onto evaluation. I said it out loud on day two rather than day eight, so
+the person losing scope had time to re-plan rather than being told their work
+was binned. I also froze the API contract that morning so the front end and the
+model could finish against a stable interface instead of a moving one.
+RESULT: Demoed on time with a plain UI and a genuinely strong evaluation
+section, which is what the rubric rewarded. We scored higher than the previous
+year's group that shipped a polished UI and thin evaluation.""",
+
+    """Cutting scope beats slipping the date - and why that is the LP.
+Deliver Results is 'focus on the key inputs and deliver them with the right
+quality and in a timely fashion; despite setbacks, rise to the occasion and
+never settle'. The graded behaviour is that you protected the DATE by choosing
+what not to build, rather than protecting the SCOPE by moving the date.
+So every strong answer here contains an explicit list of what was dropped and
+the reason. If your story has nothing dropped, it is a 'we worked hard and
+finished' story, which is common and unremarkable.""",
+
+    """Communicating early is the half candidates skip.
+The sentence 'I said it on day two rather than day eight' is worth more than
+the technical decision, because the failure that damages a real team is not
+missing a date - it is missing it SILENTLY. A manager told on day two has
+options; told on day eight they have none.
+The pattern to state: escalate early, with the trade and a recommendation, not
+an apology. 'Here are the two options - a partial result Friday or the full one
+Monday; I recommend the partial because the rubric weights evaluation' is what
+a manager wants to hear. It also transfers directly to the workplace, which is
+what the interviewer is extrapolating to.""",
+
+    """The weak version.
+'We were behind so I worked late every night for a week and we finished
+everything.' No prioritisation, no trade-off, no communication - and it quietly
+signals that your response to a slipping plan is to absorb it personally, which
+does not scale and hides the problem from the people who could help.
+Also weak: 'we agreed to move the deadline.' Sometimes correct in life, but it
+is not this LP, and if the date is genuinely fixed (a demo, a launch, an exam)
+it is not available.""",
+
+    """The probes.
+'What did you cut, and how did you decide?' - name the criterion, ideally an
+external one like the rubric, not your own preference. 'How did the person
+losing their work take it?' - this is really a collaboration probe hiding
+inside a delivery question; the answer should involve talking to them first,
+not announcing it. 'What if you couldn't cut anything?' - then the honest
+answer is escalate with options, and say who you would tell and when. 'Did
+quality suffer?' - Deliver Results says the RIGHT quality, so name what you
+held the bar on and what you deliberately let be rough.""",
+
+    """Why the two LPs pair, and how to signal both.
+Deliver Results is about hitting the date with the right quality; Bias for
+Action is about the speed of the DECISIONS inside that. The story above hits
+both: the scope call was made in a day on incomplete information (bias for
+action) and the date held (deliver results). Saying 'I made that call on day
+two with imperfect information because the cost of being wrong was one person's
+two days, while waiting cost everyone the demo' explicitly hits both principles
+in one sentence, which is efficient in a round where you have four stories and
+forty-five minutes.""",
+]
+
+_EX_P0LP["STAR: Disagreeing with a decision then fully committing (Have Backbone; Disagree and Commit)"] = [
+    """A full student-scale answer with BOTH halves.
+SITUATION: My project group voted to build our classifier on a transformer
+because it would 'look better to the examiners'. I thought a gradient-boosted
+baseline was the right call.
+TASK: I was outvoted three to one.
+ACTION (the disagree half): I did not argue from preference - I spent two hours
+building the boosted baseline and brought numbers: one point of F1 ahead, 40
+seconds to train against 25 minutes, and no dependence on the shared GPU we
+could not reliably book. I said my concern plainly, once, to the whole group.
+ACTION (the commit half): They still chose the transformer, judging that the
+report needed a deep-learning component. So I owned the training pipeline for
+it, and I did not re-litigate the decision in later meetings or tell the
+supervisor I had disagreed.
+RESULT: It shipped and scored well. I kept my baseline as the comparison row in
+the evaluation table, which the examiners specifically praised - so the dissent
+turned into a contribution rather than a grievance.""",
+
+    """Both halves are required, and most answers only have one.
+Half the candidates tell a disagreement story where they WON, which does not
+test commitment at all. The other half tell a compliance story - 'I disagreed
+but I went along with it' - which is not backbone, it is acquiescence.
+The LP wants: you challenged respectfully, with reasoning, even though it was
+uncomfortable; and then, once the decision was made, you committed GENUINELY -
+no foot-dragging, no 'I told you so', no quietly building your version on the
+side. The example above earns it by having the candidate lose and then do real
+work for the winning option.""",
+
+    """What 'disagreeing well' looks like mechanically.
+Disagree with DATA, not with taste - 'I built it and here are the numbers'
+beats 'I don't think that will work'. Do it ONCE and to the right audience;
+raising it in four separate meetings is not backbone, it is attrition. Separate
+the decision from the person. And state what would change your mind, which both
+proves you are reasoning and gives the other side a path.
+The uncomfortable part is required: if your story is 'I disagreed with a
+peer about a variable name', the LP is not being demonstrated. It should have
+cost you something to say.""",
+
+    """What 'committing' actually requires, since this is where people fail.
+Committing means arguing FOR the decision afterwards, including to people who
+were not in the room. It means not building a shadow version of your preferred
+approach. It means that if it fails, you do not say 'well, I did warn you' -
+you help fix it.
+The interviewer's probe is usually exactly this: 'how did you behave
+afterwards?' A candidate who cannot name a concrete pro-decision action has
+told a disagreement story, not a disagree-and-commit story. 'I owned the
+training pipeline for the approach I had argued against' is the kind of
+sentence that settles it.""",
+
+    """The probes, including the hardest one.
+'What if you had been right and it failed?' - the answer is that you help
+recover and run a blameless retrospective; the LP does not license
+I-told-you-so. 'When would you escalate instead of committing?' - the honest
+line is that commitment applies to reversible, judgement-call decisions, and
+that ethical, legal or safety concerns are a different category where you
+escalate rather than commit. Being able to draw that boundary is a maturity
+signal. 'Give me one where you disagreed with your MANAGER' - have it ready,
+because the peer version is considered easier.""",
+
+    """The Google framing of the same story.
+Google reads this as intellectual humility plus collaboration rather than as a
+named principle, so lead differently: 'I thought the baseline was right and I
+went and built it rather than arguing from opinion - and when the group weighed
+the report criteria differently, I could see that was a reasonable call I
+hadn't weighted properly, so I took on the pipeline.' Amazon wants backbone and
+commitment as distinct beats; Google wants to hear that you updated and that
+the team functioned. Same events, different emphasis.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0LP:
+        _e["examples"] = _EX_P0LP[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
