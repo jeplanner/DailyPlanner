@@ -31117,6 +31117,231 @@ the array). The unifying move is spotting a function of the index that is
 monotonic even though the raw data does not look searchable.""",
 ]
 
+_EX_P1K["Last Stone Weight (max-heap)"] = [
+    """The example, smashed step by step.
+stones = [2,7,4,1,8,1]. Max-heap holds all six.
+Pop 8 and 7 -> unequal, push back 8-7 = 1. Heap now {2,4,1,1,1}.
+Pop 4 and 2 -> push 2. Heap {2,1,1,1}.
+Pop 2 and 1 -> push 1. Heap {1,1,1}.
+Pop 1 and 1 -> EQUAL, both destroyed, nothing pushed. Heap {1}.
+One stone left -> return 1.
+Note the equal case pushes nothing, which is what makes the heap shrink by two
+in that step and by one otherwise.""",
+
+    """The negation trick, and why it is needed.
+Python's heapq is a MIN-heap only - there is no max-heap in the standard
+library. Negating every value inverts the ordering, so the smallest negative is
+the largest original. You negate on the way in and negate again on the way out.
+The two places to get it wrong: pushing the difference as `-(first - second)`
+rather than `first - second` (you must re-negate), and reading the final answer
+as `-heap[0]`. If your answer comes out negative, one of those two is missing.
+In Java you would pass Collections.reverseOrder() to the PriorityQueue instead,
+which is cleaner - worth mentioning that the trick is a Python-specific wart.""",
+
+    """Why a heap rather than sorting each round.
+You need the two largest repeatedly, and after each smash the multiset changes.
+Re-sorting every round is O(n log n) per round and O(n^2 log n) overall. The
+heap gives each pop and push in O(log n), and there are at most n-1 rounds -
+each round removes at least one stone - so O(n log n) total.
+That 'each round removes at least one stone' argument is also the termination
+proof, and it is worth saying: the loop cannot run forever because the heap
+strictly shrinks.""",
+
+    """Edge cases.
+Empty input -> `while len(heap) > 1` never runs, heap is empty -> the guard
+`if heap else 0` returns 0.
+Single stone [5] -> loop does not run -> 5.
+Two equal stones [3,3] -> both destroyed, heap empty -> 0. This is the case
+that needs the empty-heap guard, and omitting it gives an IndexError rather
+than a wrong answer - so it fails loudly, which is at least kind.
+All equal, even count [2,2,2,2] -> everything cancels -> 0. Odd count
+[2,2,2] -> 2.""",
+
+    """Complexity, and the alternative for a bounded value range.
+O(n log n) time - heapify is O(n) and there are at most n rounds of O(log n).
+O(n) space.
+If the stone weights were small integers (say <= 1000), a counting-sort bucket
+approach could find the two largest in O(range) per round without a heap -
+usually not worth it, but it is the same 'bounded values beat comparisons'
+observation that shows up in How Many Numbers Are Smaller.""",
+
+    """The follow-up that changes everything: Last Stone Weight II.
+Version II asks for the SMALLEST possible remaining weight when you may choose
+which stones to smash. The greedy here is useless - it is actually a
+partition problem: split the stones into two groups with sums as close as
+possible, and the answer is the difference. That is subset-sum DP over
+total/2, O(n * sum).
+Knowing that the sequel is a completely different algorithm - greedy heap
+versus knapsack DP - is the real value of studying this pair, and interviewers
+who ask version I often follow with it.""",
+]
+
+_EX_P1K["Left and Right Sum Difference"] = [
+    """The example, traced.
+nums = [10,4,8,3], total 25.
+i=0: left 0, right 25-0-10 = 15 -> |0-15| = 15. left becomes 10.
+i=1: left 10, right 25-10-4 = 11 -> |10-11| = 1. left becomes 14.
+i=2: left 14, right 25-14-8 = 3 -> |14-3| = 11. left becomes 22.
+i=3: left 22, right 25-22-3 = 0 -> |22-0| = 22.
+Answer [15,1,11,22].
+Same identity as Find Pivot Index - right = total - left - current - and here
+you emit the absolute difference at every index instead of testing for zero.""",
+
+    """Why this is Find Pivot Index with the output changed.
+Pivot Index asks WHERE left equals right; this asks for the difference at every
+position. Identical scan, identical identity, different return.
+Noticing that out loud is worth doing: it tells the interviewer you are
+recognising a pattern rather than deriving from scratch, and it means you can
+state the complexity and the edge cases immediately because you have already
+reasoned about them once.""",
+
+    """The ordering, which is the same trap as Pivot Index.
+`left += n` must come AFTER computing right and appending. The current element
+belongs to NEITHER side - it is the pivot position - so folding it into left
+too early shifts every subsequent answer.
+Self-check: the first result must use left = 0, since nothing lies to the left
+of index 0. If your first output already includes nums[0] on the left, the
+increment is in the wrong place.""",
+
+    """Edge cases.
+Single element [7] -> left 0, right 7-0-7 = 0 -> |0-0| = 0 -> [0]. Both sides
+empty.
+Two elements [1,2] -> [|0-2|, |1-0|] = [2,1].
+All zeros -> all zeros.
+Negative numbers work unchanged, and this is where abs() earns its place: the
+difference can be negative in either direction, so the answer is symmetric
+around the balance point.
+Empty input -> [], with the loop never running.""",
+
+    """Complexity, and the space caveat.
+O(n) time with two passes (one to total, one to scan), O(1) extra space beyond
+the output array - which is the honest phrasing, since the result itself is
+O(n) and unavoidable.
+The prefix-array alternative builds explicit left and right sum arrays: also
+O(n) time but O(n) extra space, and it is the version to prefer when you need
+random access to the sums repeatedly rather than a single sweep.""",
+
+    """The family.
+Find Pivot Index (where the difference is zero), Running Sum of 1d Array,
+Product of Array Except Self (the multiplicative twin, needing prefix and
+suffix products because there is no division shortcut when zeros are present),
+and Range Sum Query - Immutable.
+The unifying move: maintain a running accumulation and a known total, and the
+'rest of the array' falls out by subtraction instead of a second loop.""",
+]
+
+_EX_P1K["Maximum Score After Splitting a String"] = [
+    """The example, traced.
+s = '011101', total_ones = 4.
+Split after i=0 ('0'): left_zeros 1, left_ones 0 -> score 1 + (4-0) = 5.
+After i=1 ('1'): zeros 1, ones 1 -> 1 + 3 = 4.
+After i=2 ('1'): zeros 1, ones 2 -> 1 + 2 = 3.
+After i=3 ('1'): zeros 1, ones 3 -> 1 + 1 = 2.
+After i=4 ('0'): zeros 2, ones 3 -> 2 + 1 = 3.
+Best 5. Correct - splitting into '0' and '11101' gives one zero on the left and
+four ones on the right.""",
+
+    """Why the loop stops at len(s) - 1.
+Both sides must be NON-EMPTY, so the last legal split is after index n-2,
+leaving one character on the right. `range(len(s) - 1)` gives exactly
+i = 0..n-2.
+Use `range(len(s))` and you also consider the split that leaves the right side
+empty - which scores left_zeros + 0 and can wrongly win on an all-zeros string
+like '000', reporting 3 instead of the correct 2. That input is the fastest
+check that your bounds are right.""",
+
+    """Why right_ones is total_ones - left_ones rather than a second count.
+Counting the right side directly at each split would be O(n) per split and
+O(n^2) overall. Since the ones are partitioned between the two sides, the right
+count is simply the total minus what you have accumulated - the same
+total-minus-running identity as the prefix-sum problems, applied to a character
+count instead of a sum.
+That substitution is the whole optimisation, and it is why one pass suffices
+after one initial count.""",
+
+    """Edge cases.
+All ones '111' -> left_zeros is always 0; best score is 0 + right_ones, maximal
+at the earliest split -> 2.
+All zeros '000' -> right_ones is always 0; best is left_zeros, maximal at the
+latest legal split -> 2.
+Two characters '01' -> one split: zeros 0... actually s[0] is '0' so zeros 1,
+ones 0 -> 1 + 1 = 2, the maximum possible.
+'10' -> split after '1': zeros 0, ones 1 -> 0 + (1-1) = 0. Answer 0, which is
+correct and a good reminder that the score can legitimately be 0.
+Minimum length is 2 by the non-empty constraint.""",
+
+    """Complexity.
+O(n) time - one count plus one sweep - and O(1) space, three integers.
+You could avoid the initial count by sweeping from the right first, but that
+needs an array of suffix counts and is strictly worse. Two linear passes with
+constant space is the floor here.""",
+
+    """The family: best split point.
+Maximum Score After Splitting a String, Find Pivot Index, Split Array with
+Equal Sum, Partition Array for Maximum Sum, and the harder Best Time to Buy and
+Sell Stock III (which is 'best split' with a maximisation on each side).
+The recipe is always: precompute a total or a suffix aggregate, then sweep the
+split point maintaining the prefix aggregate, evaluating each position in O(1).
+Whenever a prompt says 'split into two parts', reach for that shape before
+thinking about anything cleverer.""",
+]
+
+_EX_P1K["Minimum Common Value"] = [
+    """The two-pointer merge, traced.
+nums1 = [1,2,3], nums2 = [2,4]. i=0, j=0: 1 < 2 -> i=1. Now 2 == 2 -> return 2.
+nums1 = [1,2,3,6], nums2 = [2,3,4,5]: 1 < 2 -> i=1. 2 == 2 -> return 2.
+No common value, nums1 = [1,3], nums2 = [2,4]: 1<2 -> i=1. 3>2 -> j=1. 3<4 ->
+i=2, out of range -> loop ends -> -1.
+Because both arrays are sorted and you always advance the smaller side, the
+FIRST match you encounter is necessarily the smallest common value - no need to
+collect all matches and take a minimum.""",
+
+    """Why advancing the smaller side is correct.
+If nums1[i] < nums2[j], then nums1[i] cannot appear anywhere in the remainder
+of nums2 - everything left there is >= nums2[j] > nums1[i]. So nums1[i] can be
+discarded safely. Symmetrically for the other side.
+That is the invariant of every merge-style two-pointer walk, and it is the
+justification interviewers want rather than 'it works'. It is also why the
+sortedness is load-bearing: without it, discarding an element is unsound.""",
+
+    """Why not a set intersection.
+`min(set(nums1) & set(nums2), default=-1)` is correct and takes one line - but
+it costs O(n + m) SPACE, while the two-pointer walk is O(1). When the inputs
+are already sorted, spending linear memory to re-discover what the ordering
+already gives you is the wrong trade.
+Present both: the set version as the obvious answer, the pointers as the one
+that uses the stated precondition. Choosing to exploit 'sorted' is the signal
+the problem is testing.""",
+
+    """Edge cases.
+Either array empty -> the loop never runs -> -1.
+No overlap -> -1.
+Identical arrays -> the first element matches immediately.
+Duplicates within an array, nums1 = [1,1,2] and nums2 = [2] -> 1<2 twice, then
+2 == 2 -> 2. Duplicates cause no trouble because you only ever compare current
+heads.
+All of nums1 smaller than all of nums2 -> i runs off the end -> -1.
+Negative values are fine; only the ordering matters.""",
+
+    """Complexity.
+O(n + m) time - each pointer advances at most once per element and never moves
+backwards - and O(1) space.
+The binary-search alternative, iterating the shorter array and binary-searching
+each value in the longer, is O(min * log max). That wins when one array is much
+smaller than the other, e.g. 10 elements against 10 million: 10 * log(10^7) is
+about 230 operations versus 10 million. Worth naming as the better choice under
+that asymmetry - the two-pointer walk is not universally optimal.""",
+
+    """The family: merge-style two pointers over sorted inputs.
+Merge Two Sorted Lists, Merge Sorted Array, Intersection of Two Arrays I and
+II, Squares of a Sorted Array, and Find Median of Two Sorted Arrays (the hard
+one, which binary-searches the partition instead of walking).
+The cue is two or more SORTED sequences plus a question about their
+combination. The default tool is the lockstep walk; escalate to binary search
+only when the sizes are wildly different or the question is about a rank rather
+than a match.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1K:
         _e["examples"] = _EX_P1K[_e["title"]]
