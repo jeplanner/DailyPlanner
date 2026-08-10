@@ -29347,7 +29347,10 @@ _CAT_RANK_WEIGHT = {
     "cs_fundamentals": 2.4,
     "ml_system_design": 1.9,
     "lld": 2.5,
-    "behavioral": 1.9,
+    # Behavioural is half the loop for a new grad (Amazon runs LP questions in
+    # every round, and a bar-raiser round that is nothing else), so 1.9 was
+    # undervaluing it relative to a mid-tier DSA problem.
+    "behavioral": 2.4,
     "company": 1.3,
     "mindset": 1.1,
 }
@@ -29366,11 +29369,21 @@ _FOUNDATION_TAGS = {
 
 
 def _freq_tier(entry):
-    """3 = asked in almost every loop, 2 = common, 1 = occasional."""
+    """3.4 = asked in EVERY loop, 3 = almost every, 2 = common, 1 = occasional.
+
+    The 3.4 tier exists because "always asked" outranks "very commonly asked" -
+    obvious in words, and previously not true in the code: the behavioural
+    entries say "Always asked - every loop has behavioral rounds" and fell
+    through every branch to the 1.6 default, which buried "Tell me about
+    yourself" at #279 of 285 despite it opening literally every interview.
+    """
     f = (entry.get("frequency") or "").lower()
+    if ("always asked" in f or "applies to every" in f or "every loop" in f
+            or "every interview" in f):
+        return 3.4
     if f.startswith("very commonly") or "almost every" in f or "extremely" in f:
         return 3.0
-    if "commonly asked" in f or "frequently" in f:
+    if "commonly asked" in f or "frequently" in f or "often asked" in f:
         return 2.0
     if "occasionally" in f or "rarely" in f or "less common" in f:
         return 1.0
@@ -29536,12 +29549,13 @@ def _rank_score(entry):
     # equal. Capped, or the 5-minute glossary terms would sweep the top of the
     # list purely for being short.
     score += min(1.5, 25.0 / max(5, entry.get("prep_minutes", 15)))
-    # Entries that already carry a full walkthrough + worked examples are the
-    # ones that will actually teach you something in that time.
-    if entry.get("walkthrough"):
-        score += 0.4
-    if len(entry.get("examples") or []) >= 5:
-        score += 0.4
+    # NOTE: this deliberately does NOT reward having a walkthrough or a full
+    # worked-example set. Those measure how much of the CONTENT we have
+    # written, not how important the topic is to study - and letting them
+    # score created a feedback loop: an enriched entry rose, an un-enriched one
+    # sank, so the topics still waiting for examples drifted to the bottom of
+    # their band and would have been done last. Study order should describe the
+    # interview, not our own backlog.
     return score
 
 
