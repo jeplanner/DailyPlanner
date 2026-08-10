@@ -38129,68 +38129,366 @@ second lands one past the block, so subtract one.""",
 ]
 
 _EX_P0E["K Closest Points to Origin (heap)"] = [
-    """The textbook case, traced.
-points = [[1,3],[-2,2]], k = 1.
-(1,3): d = 1 + 9 = 10, push (-10,1,3). Heap size 1, not > k.
-(-2,2): d = 4 + 4 = 8, push (-8,-2,2). Heap size 2 > 1, so pop the SMALLEST
-tuple - and because distances are negated, the smallest is -10, i.e. the
-FARTHEST point (1,3). Gone.
-Heap holds (-8,-2,2). Answer [[-2,2]].
-The negation is the whole trick: Python only has a min-heap, so store -d to make
-`heappop` remove the largest distance.""",
+    """1. THE GOAL, in plain English.
 
-    """A larger case where the heap churns.
-points = [[3,3],[5,-1],[-2,4]], k = 2. Distances 18, 26, 20.
-Push (-18): heap [(-18,..)].
-Push (-26): heap size 2, still <= k.
-Push (-20): size 3 > 2 -> pop the smallest key, which is -26 (distance 26, the
-point [5,-1]). Correct - it is the farthest of the three.
-Remaining: distances 18 and 20 -> [[3,3],[-2,4]].
-Note the OUTPUT ORDER is heap order, not sorted-by-distance order. If the
-problem wants them sorted you must sort the k survivors afterward - cheap, since
-k is small.""",
+You are given a set of points on a flat map, and a number k. Return the k points
+nearest to the origin - the point (0, 0).
 
-    """Edge cases: k equals n, and duplicate distances.
-k = len(points): the heap never exceeds k, nothing is ever popped, and you
-return every point. Correct, though you did n pushes for nothing - a real
-implementation might short-circuit.
-Duplicates: [[1,0],[0,1],[-1,0]] with k=2 all have distance 1. The heap keeps
-whichever two survive the pops; ANY two are valid answers, and LeetCode accepts
-them in any order. Say that out loud - a candidate who asks 'are ties broken
-arbitrarily?' looks careful, not pedantic.""",
+Our example: points = [[1, 3], [-2, 2], [5, 8], [0, 1]], k = 2.
 
-    """Why no square root.
-The true distance is sqrt(x^2 + y^2), but sqrt is monotonically increasing, so
-comparing sqrt(a) with sqrt(b) always gives the same answer as comparing a with
-b.
-Dropping it removes n floating-point operations AND removes floating-point
-error, which matters when two points are nearly equidistant - with sqrt, two
-mathematically equal distances can compare unequal.
-Generalise the habit: whenever you only need the ORDER, strip any monotone
-transformation (sqrt, log, division by a positive constant). Interviewers look
-for exactly this observation on this problem.""",
+Work out how far each one is from the origin. The distance from (0,0) to (x, y) is
+found with Pythagoras - the square root of x squared plus y squared:
 
-    """Heap vs sort vs quickselect - the real trade-off.
-Sort everything by distance and take k: O(n log n), two lines, perfectly
-acceptable if k is close to n.
-Size-k heap (this code): O(n log k). With n = 10^6 and k = 10, log k is ~3
-instead of ~20 - about 6x fewer comparisons. It also uses only O(k) memory,
-which is what makes it the STREAMING answer: points can arrive one at a time and
-you never hold them all.
-Quickselect (nth_element): O(n) average, O(n^2) worst case, and it needs the
-whole array in memory. Fastest on a fixed in-memory array; useless on a stream.
-Name all three and say which the constraints favour.""",
+    (1, 3):   square root of (1 + 9)  = square root of 10, about 3.16
+    (-2, 2):  square root of (4 + 4)  = square root of 8,  about 2.83
+    (5, 8):   square root of (25 + 64) = square root of 89, about 9.43
+    (0, 1):   square root of (0 + 1)  = 1
 
-    """The Top-K family, all the same skeleton.
-- Kth Largest Element: a size-k MIN-heap; the root is the answer.
-- Top K Frequent Elements: count with a dict, then size-k heap on the counts.
-- Merge k Sorted Lists: size-k heap of list heads.
-- Find Median from Data Stream: two heaps facing each other.
-- 'Top 10 trending searches this hour' in a real system: a size-k heap per
-  shard, then merge the shard heaps.
-The rule: k SMALLEST -> max-heap of size k; k LARGEST -> min-heap of size k. It
-feels backwards, and it is worth writing on a card: you keep the heap whose root
-is the WORST survivor, so you can evict it in O(log k).""",
+Nearest first: (0,1), then (-2,2), then (1,3), then (5,8). So the two closest are
+(0, 1) and (-2, 2).
+
+Two things worth noting straight away.
+
+NEGATIVE COORDINATES DO NOT MEAN FAR AWAY. The point (-2, 2) is only 2.83 from the
+origin. Squaring removes the sign, which is exactly what distance should do.
+
+AND THE ORDER OF THE ANSWER USUALLY DOES NOT MATTER - most versions of this problem
+accept the k points in any order. Check, but do not assume you must sort them.
+
+The obvious approach - work out every distance, sort by it, take the first k - is
+correct and is where to start. The rest of this entry is about not sorting the
+points you are going to throw away, and about one small simplification that removes
+the square roots entirely.""",
+
+    """2. THE FIRST SIMPLIFICATION - never take the square root.
+
+Before any algorithm, one observation removes a whole layer of work.
+
+We never need the actual distances. We only need to know which points are CLOSER
+than others - we are ranking, not measuring.
+
+And squaring preserves ranking for non-negative numbers. If one distance is smaller
+than another, its square is also smaller, and vice versa. So comparing
+x squared plus y squared gives exactly the same ordering as comparing the square
+roots of those values.
+
+Check it on our points:
+
+    (0, 1):   0 + 1  = 1        square root about 1.00
+    (-2, 2):  4 + 4  = 8        square root about 2.83
+    (1, 3):   1 + 9  = 10       square root about 3.16
+    (5, 8):   25 + 64 = 89      square root about 9.43
+
+Both columns rank the points in the same order. So we may drop the square root
+entirely.
+
+Why bother? Three reasons. Square roots are relatively slow to compute. They
+produce floating-point numbers, which carry rounding error and can make two points
+that should tie compare unequal. And squared distances of whole-number coordinates
+stay whole numbers, which compare exactly.
+
+This is a small idea with a general name worth knowing: if you only need the
+ORDER, you may apply any function that preserves order - a MONOTONIC transformation
+- and pick whichever is cheapest to compute. Dropping the square root here is the
+same instinct as comparing logarithms instead of products elsewhere.
+
+Say this out loud when presenting the solution. It is a small thing that signals you
+are thinking about what the problem actually requires.""",
+
+    """3. THE TRICK - a MAX-heap for the k CLOSEST, and how to fake one.
+
+Now the algorithm. Keep a holding pen of the k best points seen so far, and for
+each new point ask one question: does it beat the worst point currently in the pen?
+
+For that question to be cheap, the pen must give instant access to its WORST
+member - here, the FARTHEST point, since we want the closest ones.
+
+So we want a MAX-heap: largest distance on top, ready to be evicted.
+
+THE RULE, which is the mirror of the Top-K entry:
+
+    K LARGEST  -> keep a MIN-heap, evict the smallest
+    K CLOSEST  -> keep a MAX-heap, evict the largest
+
+You always keep the OPPOSITE kind, because you need instant access to the member
+most at risk of being replaced.
+
+THE PROBLEM: Python's heapq provides a MIN-heap only. There is no max-heap.
+
+THE STANDARD FIX: store NEGATED distances. If you push -d instead of d, then the
+smallest negative corresponds to the largest original. So the min-heap's top - its
+smallest stored value - is the point with the largest true distance, which is
+exactly the one we want to evict.
+
+    true distances   1,   8,   10,  89
+    stored as       -1,  -8,  -10, -89
+    the min-heap's top is -89, which is the point at distance 89. Correct.
+
+It is an ugly but universal trick, and it is worth stating plainly when you use it:
+"Python only has a min-heap, so I negate to simulate a max-heap."
+
+The entries also carry the coordinates alongside the negated distance, so that when
+a point is evicted or returned we still know which point it was.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - forgetting to negate, or negating only half the time. Push the plain
+distance and the heap will evict the CLOSEST point every time, so the answer comes
+out as the k farthest - a confident, exactly-wrong result that still returns k
+points.
+
+CASE 2 - taking the square root anyway. Not wrong, just slower and less exact.
+Floating-point rounding can also make two genuinely equal distances compare
+unequal, which changes which of two tied points survives.
+
+CASE 3 - ties in distance. Points at the same distance are interchangeable, and
+which one survives depends on heap internals. Most versions of the problem accept
+any valid answer; if yours demands a specific tie-break, you need an explicit rule
+rather than relying on the heap.
+
+CASE 4 - comparison failing on equal distances. When two entries have the same
+first element, Python compares the NEXT element to break the tie - here the x
+coordinate, then y. Since those are numbers, that works fine. But if the entries
+carried something non-comparable in that position, the whole thing would fail at
+runtime with a type error. Putting plain numbers after the distance is what keeps
+this safe.
+
+CASE 5 - k larger than the number of points. The pen never exceeds the number of
+points available and every point is returned. Reasonable, but if the problem does
+not promise k is at most the number of points, say what you assume.
+
+CASE 6 - assuming the result must be sorted. The heap's contents are in no
+particular order beyond the top being the farthest. If the problem wants the k
+points ordered by distance, sort those k at the end - a tiny sort of k items, not
+n.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+ORIGIN: the point (0, 0).
+
+SQUARED DISTANCE: x squared plus y squared. Section 2 explains why the square root
+is unnecessary.
+
+MONOTONIC TRANSFORMATION: a change that preserves order. Squaring is one for
+non-negative values, which is what licenses dropping the square root.
+
+MAX-HEAP / MIN-HEAP: largest on top, or smallest on top. Python provides only a
+min-heap, so a max-heap is simulated by negating - section 3.
+
+heapq.heappush(h, item) / heapq.heappop(h): add an item; remove and return the
+SMALLEST. Each about log of the heap's size.
+
+TUPLE (-d, x, y): a small fixed group of values used as one heap entry. Python
+compares tuples element by element, so entries are ordered by the first element -
+the negated distance - which is why it is written FIRST. The x and y ride along so
+we know which point an entry refers to.
+
+for x, y in points: unpacking each two-element point straight into two named
+variables, rather than writing point[0] and point[1] throughout.
+
+[[x, y] for _, x, y in heap]: a list comprehension that unpacks each heap entry into
+three parts and rebuilds just the coordinates. The underscore means "I do not need
+this value" - here the negated distance, which was only ever bookkeeping.
+
+O(n log k) and O(k): the costs, where n is the number of points. The pen never holds
+more than k entries, so each operation is about log k, and the memory is fixed
+regardless of how many points arrive.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a pen of the k closest points so far, arranged
+so the FARTHEST of them is instantly available, and evict that one whenever the pen
+overflows.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Start with an empty pen.
+
+  2. Take each point in turn.
+
+  3. Work out its squared distance from the origin: x times x plus y times y. Do
+     NOT take the square root - it changes nothing about the ranking and costs both
+     time and exactness.
+
+  4. Put the point into the pen, stored as a group of three values: the NEGATED
+     distance first, then the two coordinates.
+
+     Negated, because the pen is a min-heap and we need the farthest point on top.
+     Negating turns "largest true distance" into "smallest stored value", which is
+     what a min-heap surfaces.
+
+     Distance first, because entries are compared by their first element.
+
+  5. If the pen now holds MORE than k points, remove the top one. On a min-heap of
+     negated distances, that is the point with the largest true distance - the
+     farthest, and therefore the right one to lose.
+
+  6. When every point has been processed, the pen holds exactly the k closest.
+
+  7. Rebuild the answer as a list of coordinate pairs, discarding the negated
+     distances - they were bookkeeping, not part of the answer.
+
+Note the push-then-trim shape: adding first and removing afterwards needs no
+special case while the pen is still filling up, because the size cannot exceed k
+until k points have arrived.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+For each point, the code works out how far it is from the origin - but it
+deliberately stops one step short of the real distance, leaving it as the squared
+value. That is enough, because it only ever needs to compare points against one
+another, and squaring does not change which of two points is nearer. It also keeps
+the numbers exact and avoids a slow operation.
+
+It then keeps a holding pen containing the closest points it has seen so far, never
+more than k of them. The pen is arranged so that the FARTHEST of its occupants is
+the one instantly available - because that is the one at risk of being replaced,
+and the only one a newcomer ever needs to be measured against.
+
+There is a wrinkle. The container Python provides always surfaces its SMALLEST
+item, not its largest. So the code stores each distance as a negative number. The
+smallest negative then corresponds to the largest real distance, and the container
+surfaces exactly the point we want to discard. The coordinates travel alongside the
+negated distance so that the point can still be identified.
+
+Each new point is dropped into the pen, and if that pushes the population above k,
+whoever is now farthest is immediately evicted. That eviction is always safe: at
+that moment the pen holds the k closest seen so far plus one newcomer, so the
+farthest of those cannot be among the k closest overall.
+
+When the last point has been handled, the pen holds precisely the k closest. The
+code then strips the bookkeeping distances back off and returns just the
+coordinates.""",
+
+    """8. THE CODE, line by line.
+
+Keep points = [[1,3], [-2,2], [5,8], [0,1]] and k = 2 beside you; the answer is the
+points (0,1) and (-2,2).
+
+    import heapq
+Python's heap module - a MIN-heap only, which is why the negation below is needed.
+
+    heap = []
+The holding pen, starting empty. It will never exceed k + 1 entries momentarily, and
+k between iterations.
+
+    for x, y in points:
+Take each point, unpacking its two coordinates straight into named variables.
+
+    d = x * x + y * y
+The SQUARED distance - no square root, for the reasons in section 2. Ranking is
+unchanged, the numbers stay exact whole numbers, and a slow operation is avoided.
+
+    heapq.heappush(heap, (-d, x, y))
+Push a three-part entry. Two deliberate choices here.
+
+  The distance is NEGATED, because heapq is a min-heap and we need the FARTHEST
+  point on top. Negating turns "largest true distance" into "smallest stored
+  value", which is what the min-heap surfaces. Push d instead of -d and the code
+  evicts the closest point every time, returning the k FARTHEST - see case 1 in
+  section 4.
+
+  The distance comes FIRST in the tuple, because Python compares tuples element by
+  element. Putting a coordinate first would order the heap by position rather than
+  by distance.
+
+The coordinates ride along so that when an entry surfaces we still know which point
+it is.
+
+    if len(heap) > k:
+        heapq.heappop(heap)
+Trim back to k. heappop removes the smallest STORED value, which is the largest TRUE
+distance - the farthest point, exactly the right one to drop. At this moment the pen
+holds the k closest seen so far plus one newcomer, so the farthest of those k + 1
+cannot be among the k closest overall.
+
+Pushing first and trimming afterwards is what removes the need for a special case
+while the pen is still filling up.
+
+    return [[x, y] for _, x, y in heap]
+Rebuild the answer from the surviving entries, unpacking each into three parts and
+keeping only the coordinates. The underscore means "I do not need this value" - the
+negated distance was bookkeeping and is not part of the answer.
+
+Note the result is in no particular order. If the problem wants the points sorted by
+distance, sort these k entries here - a sort of k items, not n.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+points = [[1,3], [-2,2], [5,8], [0,1]], k = 2.
+
+I write each entry as (stored, x, y), and mark the top - the smallest stored value,
+which is the farthest point.
+
+    heap = []
+
+point (1, 3):   d = 1 + 9 = 10.  push (-10, 1, 3).
+                heap = {(-10,1,3)}.  size 1, not > 2 -> nothing dropped.
+                top = -10, meaning the farthest so far is at distance 10.
+
+point (-2, 2):  d = 4 + 4 = 8.  push (-8, -2, 2).
+                heap = {(-10,1,3), (-8,-2,2)}.  size 2, not > 2.
+                top = -10  (the smaller stored value), so the point at distance 10
+                is the farthest. Correct.
+
+point (5, 8):   d = 25 + 64 = 89.  push (-89, 5, 8).
+                heap = {(-89,5,8), (-10,1,3), (-8,-2,2)}.  size 3 > 2 -> pop the
+                top, which is -89 - the point at distance 89.
+                heap = {(-10,1,3), (-8,-2,2)}.  top = -10.
+                The farthest point was correctly discarded the moment it arrived.
+
+point (0, 1):   d = 0 + 1 = 1.  push (-1, 0, 1).
+                heap = {(-10,1,3), (-8,-2,2), (-1,0,1)}.  size 3 > 2 -> pop the top,
+                which is -10 - the point at distance 10.
+                heap = {(-8,-2,2), (-1,0,1)}.  top = -8.
+
+Loop ends. The pen holds the points at squared distances 8 and 1 - that is (-2,2)
+and (0,1).
+
+return [[-2, 2], [0, 1]] (in whatever order the heap happens to hold them).
+
+Correct: the two closest points are (0,1) at distance 1 and (-2,2) at distance
+about 2.83.
+
+Two things to read off that trace. The negation did its job every time - each pop
+removed the point with the LARGEST true distance, even though heappop removes the
+smallest stored value. And the pen never held more than three entries momentarily,
+so the memory stayed fixed regardless of how many points arrived.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log k). Each of the n points costs a push and possibly a pop, each about
+log k because the pen never holds more than k entries. Computing a squared distance
+is a couple of multiplications - negligible.
+
+Compare with sorting all the points by distance at O(n log n). For a million points
+and k = 10, that is roughly n x 3.3 against n x 20.
+
+SPACE: O(k). The pen holds k entries whatever the number of points, which means this
+works on a STREAM of points too large to hold in memory at all. That is the more
+important advantage.
+
+THE OTHER APPROACH WORTH NAMING: QUICKSELECT partitions the points around a pivot
+and recurses into only the side containing position k, giving O(n) on average.
+Faster on average than the heap, but O(n squared) in the worst case, and it needs
+all the points in memory at once. The heap is steadier and works on streams.
+
+THE #1 MISTAKE - forgetting to negate the distance. The code then evicts the
+CLOSEST point at every step and returns the k FARTHEST - a result that is
+well-formed, the right length, and exactly backwards. Because it looks like a valid
+answer, it survives casual testing. Say the sentence as you write the push:
+"Python only has a min-heap, so I negate to get the farthest on top."
+
+A close second: taking the square root. Harmless in principle, but slower and less
+exact - and failing to mention that you do not need it misses a small chance to show
+you understood what the problem actually requires.
+
+ONE-SENTENCE TAKEAWAY: compare squared distances rather than real ones, and keep a
+pen of k points with the FARTHEST instantly available - which in Python means
+storing negated distances so the min-heap surfaces the point you want to throw
+away.""",
 ]
 
 _EX_P0E["Binary Search — including 'search on the answer'"] = [
@@ -40808,63 +41106,352 @@ or count) and the key follows.""",
 ]
 
 _EX_P0F["Kth Largest Element"] = [
-    """The textbook case, traced.
-nums = [3,2,1,5,6,4], k = 2.
-heap = first k = [3,2] -> heapify -> [2,3], root 2.
-x=1: 1 > 2? No -> ignore.
-x=5: 5 > 2 -> heapreplace: pop 2, push 5 -> [3,5], root 3.
-x=6: 6 > 3 -> replace -> [5,6], root 5.
-x=4: 4 > 5? No -> ignore.
-Return heap[0] = 5. Sorted descending the array is [6,5,4,3,2,1], and the 2nd
-largest is indeed 5.""",
+    """1. THE GOAL, in plain English.
 
-    """Why heapreplace and not push-then-pop.
-heapreplace pops the root and pushes the new value in ONE sift-down. push
-followed by pop does two operations and briefly grows the heap to k+1.
-Same answer, roughly half the work, and it makes the invariant explicit: the
-heap size is pinned at exactly k from start to finish.
-There is a subtle correctness point too - heapreplace is only safe because we
-already checked `x > heap[0]`. Call it unconditionally and you could evict a
-value larger than the one you insert.""",
+You are given an unsorted list of numbers and a number k. Return the k-th largest
+value.
 
-    """Duplicates - kth largest is by POSITION, not by distinct value.
-nums = [3,3,3,3], k = 3 -> answer 3.
-nums = [5,5,4], k = 2 -> the sorted-descending order is [5,5,4], so the 2nd
-largest is 5, not 4.
-If the question wanted the 2nd largest DISTINCT value the answer would be 4, and
-you would dedupe first. LeetCode 215 means positional; ask, because the phrasing
-is genuinely ambiguous and interviewers use it to see whether you clarify.""",
+"k-th largest" counts DOWN from the top: the 1st largest is the maximum, the 2nd
+largest is the next one down, and so on.
 
-    """Edge cases: k = 1, k = n, and k > n.
-k=1: the heap holds one element and ends up holding the maximum. Correct, though
-max(nums) is obviously better.
-k=n: the heap is the whole array, nothing is ever replaced, root = the minimum -
-which is indeed the nth largest.
-k > n: `nums[:k]` silently returns the whole list and you get the minimum back
-instead of an error. Guard it, or state the precondition. Silent wrong answers
-on out-of-range input are exactly what code review catches.""",
+Our example: nums = [3, 2, 1, 5, 6, 4], k = 2.
 
-    """Quickselect - the O(n) average alternative, worked.
-Partition like quicksort, but recurse into ONLY the side containing the answer.
-nums = [3,2,1,5,6,4], k=2 -> we want index 1 in descending order, i.e. index
-n-k = 4 in ascending order.
-Pick pivot 4: partition to [3,2,1] | 4 | [5,6]. The pivot lands at index 3.
-We want index 4 > 3, so recurse right on [5,6] looking for index 4.
-Pivot 5: [5] | 6? partition puts 5 at index 4 - hit. Answer 5.
-Average O(n) because the work halves each round: n + n/2 + n/4 ... = 2n.
-Worst case O(n^2) on adversarial input (always picking the extreme as pivot);
-random pivot selection makes that vanishingly unlikely.""",
+Sort them mentally, largest first: 6, 5, 4, 3, 2, 1. The 2nd largest is 5. So the
+answer is 5.
 
-    """Choosing between heap, quickselect, and sort - say the trade-off out loud.
-Sort: O(n log n), one line (`sorted(nums)[-k]`), always acceptable as a first
-answer.
-Heap: O(n log k) time, O(k) space, handles STREAMS, deterministic.
-Quickselect: O(n) average, O(1) extra space, but reorders the input, has an
-O(n^2) worst case, and cannot handle a stream.
-The interview-winning answer is not picking one - it is naming all three and
-then saying which the constraints favour. 'The array fits in memory and k is
-small, so I would use the heap; if I could mutate the input and wanted the best
-average time, quickselect.'""",
+Two things to be clear about, because both catch people.
+
+IT IS BY POSITION, NOT BY DISTINCT VALUE. With nums = [3, 3, 3] and k = 2, the
+sorted-descending list is 3, 3, 3 and the 2nd entry is 3. The answer is 3, not
+"there is no second largest". Duplicates occupy positions like anything else.
+
+AND THE ANSWER IS ONE NUMBER, not a list. This is the close cousin of "give me the
+K largest" - that one returns k values, this one returns the single value sitting
+at position k. The code is nearly the same and the return line differs, which is
+exactly where the confusion lives.
+
+The obvious approach - sort the whole list and read position k - is correct and is
+where you should start. The rest of this entry is about doing it without sorting
+the numbers you are going to throw away.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SIMPLE VERSION. Sort the list descending and return the item at position k - 1
+(counting from zero). Two lines, obviously correct, and O(n log n).
+
+Say this first in an interview. It shows you have solved the problem before you
+start optimising it, and for a short list it is genuinely the right code to write.
+
+THE UPGRADE - keep only the top k, and never sort the rest.
+
+Here is the observation that makes it work: to know the k-th largest, you do not
+need to know anything about the numbers below it. You only need to know WHICH k
+numbers are the biggest, and then which of those k is the smallest.
+
+So keep a holding pen of exactly k numbers - the best k seen so far. As each new
+number arrives, ask one question: is it bigger than the weakest number currently in
+the pen? If not, it cannot belong in the top k at all, so discard it. If yes, evict
+the weakest and let the newcomer in.
+
+When every number has been processed, the pen holds the k largest. And the ANSWER
+is the smallest of those k - because the smallest of the top k IS the k-th largest.
+Read that sentence twice; it is the entire trick.
+
+To make "the weakest in the pen" instantly available, the pen is a MIN-HEAP - a
+container whose only promise is that its smallest item is always on top. Adding and
+removing cost about log k; peeking at the top is free.
+
+That is why a MIN-heap finds a MAXIMUM. The top of the pen is the boundary - the
+number a newcomer must beat - and it is also the final answer.""",
+
+    """3. THE SEEDING TRICK - fill the pen first, then compare.
+
+There is a small design decision in this code worth understanding, because it
+differs from the more common push-then-trim pattern.
+
+Instead of starting with an empty pen and letting it grow, this version takes the
+FIRST k numbers as the starting pen, arranges them into a heap in one go, and only
+then walks the rest of the list.
+
+Two words for what that does:
+
+    heapify - take a list you already have and rearrange it in place into a valid
+    heap. It costs O(k), which is cheaper than pushing k items one at a time
+    (O(k log k)). A small saving, but it is free and it reads well.
+
+    heapreplace - pop the smallest and push a new item in ONE operation. Cheaper
+    than a pop followed by a push, because the heap only rearranges itself once
+    instead of twice.
+
+And the comparison "if x > heap[0]" is what makes it faster still: a number that
+cannot make the cut costs a single comparison and nothing else. No push, no pop, no
+rearranging at all.
+
+Compare with the simpler push-then-trim version:
+
+    push every number, then drop the smallest if the pen now holds more than k
+
+That is easier to get right because it needs no special handling while the pen
+fills up. But it performs a push for EVERY number, including the losers - and on
+data where most numbers lose, that is a lot of wasted rearranging.
+
+So this version trades a little setup complexity for less work per losing number.
+Both are O(n log k); the difference is a constant factor. Being able to explain why
+you chose one is worth more than the choice itself.
+
+The cost of the trick: it assumes k is at most the length of the list. Section 4
+covers what happens if it is not.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - returning the wrong thing. The pen holds the k LARGEST numbers, and the
+answer is the SMALLEST of them - which is heap[0], the top of a min-heap. Returning
+the maximum of the pen would give the 1st largest every time, whatever k is. Say it
+as you write the line: "the smallest of the top k is the k-th largest."
+
+CASE 2 - reaching for a max-heap. Same confusion as in the Top-K entry, and just as
+common. You keep a MIN-heap so the weakest survivor is on top, because that is both
+the entry requirement for newcomers and the final answer.
+
+CASE 3 - assuming distinct values. With nums = [3, 3, 3] and k = 2 the answer is 3.
+The heap fills with the first two 3s, the third 3 is not strictly greater than
+heap[0] which is 3, so it is discarded - and heap[0] is 3. Correct. Nothing here
+assumes uniqueness.
+
+CASE 4 - k bigger than the list. nums[:k] simply gives the whole list, nums[k:] is
+empty, and heap[0] is the minimum of everything - which is the answer only if k
+equals the length. For k larger than that, the question has no answer, and this
+code returns something plausible rather than complaining. If a problem does not
+promise 1 <= k <= n, guard it explicitly.
+
+CASE 5 - using ">=" instead of ">" in the comparison. With ">=", a number equal to
+the current boundary would evict an equal number - pointless work with no effect on
+the answer. Harmless but wasteful; ">" is right.
+
+CASE 6 - confusing this with the K largest. That problem returns k values; this
+returns one. The code is nearly identical up to the final line, which is precisely
+why the mistake is easy to make and easy to miss.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+HEAP / MIN-HEAP: a container whose only promise is that the smallest item is
+instantly available at the top. It does NOT keep everything sorted. Adding and
+removing cost about log of its size; peeking costs nothing.
+
+heapq: Python's heap module. It provides a min-heap only, operating on an ordinary
+list.
+
+heapq.heapify(h): rearrange an existing list in place into a valid heap, in O(k).
+Cheaper than pushing the items one by one.
+
+heapq.heapreplace(h, x): pop the smallest AND push x in a single operation - one
+rearrangement instead of two.
+
+heap[0]: the smallest item, read directly as a list index because the heap is
+stored as a list with the smallest at position 0. Peeking is O(1) and needs no
+method call.
+
+nums[:k] and nums[k:]: Python slicing. The first gives the first k items, the
+second gives everything from position k onwards. Together they split the list with
+no overlap and no gap.
+
+O(n log k) and O(k): the costs, where n is the list length. O(n log k) means each of
+the n numbers costs at most about log k work. O(k) is the memory - the pen holds k
+numbers regardless of how long the list is, which is what makes this work on a
+stream too large to hold in memory.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a pen holding the k largest numbers seen so
+far, arranged so its smallest is always on top - and when the list runs out, that
+smallest IS the k-th largest.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Take the first k numbers of the list as the starting pen. They are not
+     necessarily the largest, but they are k numbers, which is what matters for
+     now.
+
+  2. Rearrange them into a heap in one operation, so the smallest of them sits on
+     top. This is cheaper than adding them one at a time.
+
+  3. Walk through the REST of the list, one number at a time.
+
+  4. Compare each number against the top of the pen - the weakest current
+     survivor.
+
+     a. If the newcomer is NOT bigger, it is smaller than or equal to all k
+        numbers in the pen, so it cannot belong in the top k. Discard it. This
+        costs one comparison and nothing else.
+
+     b. If it IS bigger, it deserves a place: remove the weakest and insert the
+        newcomer, in a single operation.
+
+  5. When the walk ends, the pen holds exactly the k largest numbers.
+
+  6. Return the top of the pen - the smallest of those k - because the smallest of
+     the top k is the k-th largest.
+
+Step 6 is the one to hold on to. It looks like you are returning the wrong end, and
+you are not: the pen contains positions 1 through k of the descending order, and
+the top of a min-heap is position k.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code keeps a small holding pen containing the best numbers it has seen so far -
+exactly k of them, never more.
+
+The pen has one useful property: it always knows which of its occupants is the
+weakest, without having to look through them. Not a sorted list, not an ordered
+queue - just instant knowledge of the current worst.
+
+It starts by grabbing the first k numbers of the list, whatever they happen to be,
+and arranging them into that form in one go. From then on the pen is always full,
+so every new number faces a straight contest.
+
+As each remaining number arrives, the code compares it against the weakest
+occupant. If the newcomer does not beat it, the newcomer is smaller than every
+single one of the k already inside, so it cannot possibly be one of the k largest -
+and it is dropped with nothing more than that one comparison. No shuffling, no
+bookkeeping. That cheapness for losers is the point, and it is what a full sort
+never gives you.
+
+If the newcomer does beat the weakest, it takes that occupant's place: the weakest
+is evicted and the newcomer joins, in a single operation.
+
+When the last number has been handled, the pen holds precisely the k largest
+numbers of the whole list. And the answer is the weakest of those - because if
+those k are the top k, the smallest among them is sitting at position k in the
+descending order, which is exactly what was asked for.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [3, 2, 1, 5, 6, 4] and k = 2 beside you; the answer is 5.
+
+    import heapq
+Python's heap module, providing a MIN-heap - smallest item always at position 0.
+
+    heap = nums[:k]
+Take the first k numbers as the starting pen. For our input that is [3, 2]. They
+are not the largest yet; they are simply the first k, and the loop below will
+replace them as better numbers turn up.
+
+    heapq.heapify(heap)
+Rearrange that list in place into a valid heap, so its smallest is on top. This
+costs O(k) - cheaper than pushing k items one at a time, which would be
+O(k log k). After this, heap[0] is 2.
+
+    for x in nums[k:]:
+Walk the REST of the list - everything from position k onwards. For our input that
+is [1, 5, 6, 4]. The first k were already used to seed the pen, so starting here
+avoids counting them twice.
+
+    if x > heap[0]:
+The one comparison that decides everything. heap[0] is the weakest survivor - the
+boundary of the current top k. If the newcomer does not beat it, the newcomer is
+smaller than or equal to all k numbers in the pen, so it cannot be in the top k.
+
+Note this is where the saving lives: a losing number costs exactly this comparison
+and nothing else - no push, no pop, no rearranging.
+
+Strictly greater, not "greater or equal": an equal newcomer would displace an equal
+survivor, changing nothing while doing work.
+
+    heapq.heapreplace(heap, x)
+The newcomer beat the boundary, so evict the weakest and insert the newcomer - in
+ONE operation. heapreplace pops the smallest and pushes x with a single
+rearrangement, rather than the two a separate pop and push would need.
+
+    return heap[0]
+THE LINE PEOPLE GET WRONG. The pen now holds the k largest numbers, and the top of a
+min-heap is the SMALLEST of them - which is the k-th largest overall. Returning the
+largest of the pen would give the 1st largest every time, regardless of k.
+
+Say it out loud: the smallest of the top k is the k-th largest.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [3, 2, 1, 5, 6, 4], k = 2. I write the heap as a set of values, marking the
+top, since the internal arrangement beyond that does not matter.
+
+    heap = nums[:2] = [3, 2]
+    heapify -> {2, 3}, top = 2
+
+Now walk nums[2:] = [1, 5, 6, 4].
+
+x = 1    Is 1 > 2?  No -> discard. One comparison, nothing else.
+         heap = {2, 3}, top = 2
+
+x = 5    Is 5 > 2?  Yes -> heapreplace: the 2 leaves, the 5 joins.
+         heap = {3, 5}, top = 3
+         The pen now holds the two largest seen so far, 5 and 3. Correct.
+
+x = 6    Is 6 > 3?  Yes -> heapreplace: the 3 leaves, the 6 joins.
+         heap = {5, 6}, top = 5
+         The two largest seen so far are 6 and 5. Correct.
+
+x = 4    Is 4 > 5?  No -> discard.
+         heap = {5, 6}, top = 5
+
+Loop ends. The pen holds {5, 6} - the two largest numbers in the whole list.
+
+return heap[0] = 5.  Correct: sorted descending the list is 6, 5, 4, 3, 2, 1, and
+the 2nd largest is 5.
+
+Two things to read off that trace. The pen never held more than two numbers, so the
+memory was fixed no matter how long the list was. And the numbers 1 and 4 were
+discarded after a single comparison each - they were never ordered against each
+other, which is precisely the work a full sort would have done for nothing.
+
+THE DUPLICATE CASE, nums = [3, 3, 3] with k = 2:
+
+    heap = [3, 3], heapify -> top = 3
+    x = 3: Is 3 > 3?  No -> discard.
+    return heap[0] = 3.  Correct - the 2nd entry of 3, 3, 3 is 3.
+
+THE k EQUALS 1 CASE, nums = [3, 2, 1, 5, 6, 4] with k = 1:
+
+    heap = [3], top = 3
+    x = 2: no.  x = 1: no.  x = 5: yes -> heap = {5}.  x = 6: yes -> heap = {6}.
+    x = 4: no.
+    return 6 - the maximum, which is indeed the 1st largest.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log k). Seeding the pen costs O(k). Each of the remaining numbers costs
+one comparison, and only the winners pay a further log k for the replacement. On
+data where most numbers lose - which is typical when k is small - the real cost is
+close to n comparisons plus a little.
+
+Compare with sorting everything at O(n log n). For n = 1,000,000 and k = 10 that is
+roughly n x 3.3 against n x 20. The gain grows as k shrinks relative to n, and
+disappears when k approaches n - at which point just sort.
+
+SPACE: O(k). The pen holds k numbers whatever the length of the list, which means
+this works on a STREAM too large to hold in memory. That is the more important
+advantage, and the one to lead with if an interviewer says the numbers arrive one at
+a time.
+
+THE OTHER APPROACH WORTH NAMING: QUICKSELECT. It is a variant of quicksort that
+recurses into only the half containing position k, giving O(n) on average - better
+than O(n log k). Its drawbacks are a worst case of O(n squared) on unlucky pivots,
+and that it modifies the list. The heap is slower on average, steadier in the worst
+case, and works on streams. Mentioning both, and why you picked one, is a stronger
+answer than either alone.
+
+THE #1 MISTAKE - returning the wrong end of the heap. The pen holds the k largest,
+and the answer is the SMALLEST of them. Returning max(heap) gives the 1st largest
+for every k, which passes the k = 1 test and fails everything else.
+
+A close second: confusing this with "return the K largest". That problem returns a
+list of k values; this returns one number. The code is identical up to the last
+line.
+
+ONE-SENTENCE TAKEAWAY: keep a min-heap of the k largest numbers so far, discard any
+newcomer that cannot beat the top, and return that top at the end - because the
+smallest of the top k IS the k-th largest.""",
 ]
 
 _EX_P0F["Letter Combinations of a Phone Number"] = [
