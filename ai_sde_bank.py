@@ -30044,6 +30044,145 @@ _LP_DUPLICATES = {
         "(Are Right, A Lot / Insist on Highest Standards)",
 }
 
+_EX_P0LP["STAR: Thinking big and influencing beyond your team (Think Big)"] = [
+    """A full student-scale answer.
+SITUATION: My department ran a yearly project showcase where every group demoed
+in isolation, and nobody could tell which approaches actually worked because no
+two groups measured anything the same way.
+TASK: Nothing about this was my assignment - I was one student with a capstone
+to finish.
+ACTION: I proposed a shared evaluation harness for the four groups working on
+text classification: one held-out test set, one metric definition, one results
+table. I could not mandate anything, so I built the harness first, ran my own
+group's results through it, and took the table to the other three with an offer
+to convert their code myself. Two joined immediately; the third joined once
+they saw the comparison in the showcase draft.
+RESULT: The showcase had, for the first time, a like-for-like comparison across
+four projects. The supervisor kept the harness for the following year's cohort,
+and it is what the next intake now starts from.""",
+
+    """What 'big' means for a new grad, which is the anxiety this question causes.
+Think Big is 'thinking small is a self-fulfilling prophecy; leaders create and
+communicate a bold direction that inspires results; they think differently and
+look around corners'. It does NOT require a company-wide initiative - it
+requires scope beyond your own mandate and a direction others followed.
+The test is not headcount or budget, it is: did you see past the task you were
+given, and did the thing outlive your involvement? A shared harness four groups
+adopted and a cohort inherited clears that bar; 'I made my own project better'
+does not, however good the project was.""",
+
+    """Influence without authority is the mechanism the story needs.
+You had no power to make three other groups do anything, so the answer must
+show HOW they came along: you built the first slice yourself so it was concrete
+rather than a proposal; you made adoption free by offering to convert their
+code; you let the visible artefact (the comparison table) do the arguing.
+'I suggested we should all standardise' is the version that scores nothing,
+because the mechanism is missing and the outcome is usually 'and eventually
+everyone agreed', which hides whether anything happened.""",
+
+    """The weak version, and the over-claimed version.
+Weak: 'I always try to think about the bigger picture and how my work fits into
+the company strategy.' No action, no artefact, no outcome - an attitude
+described rather than demonstrated.
+Over-claimed: 'I redesigned how the entire department runs projects.' A new
+grad claiming institutional change invites disbelief and a probe that will
+expose the gap. Understate and evidence it: name exactly who adopted it, what
+changed, and what you personally built. The modest, specific version is far
+more convincing than the grand, vague one.""",
+
+    """The probes.
+'Who did you have to convince, and how?' - name them and the objection each
+had; a story where nobody resisted is suspiciously frictionless. 'What did it
+cost you?' - Think Big usually means time taken from your own graded work, and
+saying so shows you weighed it. 'How did you know it was worth doing?' - the
+pain you observed (four incomparable demos), not a hunch. 'What happened
+after?' - the strongest ending is that it outlived you, which is why the
+following year's cohort matters more than the showcase itself.""",
+
+    """Where Think Big becomes a negative signal.
+Proposing something bold that you never started, or that nobody adopted, and
+having no reflection on why. Amazon reads a grand unexecuted idea as the
+opposite of the principle - the LP is paired in practice with Deliver Results
+and Bias for Action, so 'bold direction' without 'inspires RESULTS' is a
+half-answer. If your ambitious idea genuinely failed to land, tell it as a
+learning story with the diagnosis ('I pitched the vision before building
+anything, so there was nothing for people to react to'), which recovers most of
+the credit.""",
+]
+
+_EX_P0LP["STAR method + a strong student example"] = [
+    """The four parts, with the time budget most people get wrong.
+SITUATION (~15%): just enough context to make the stakes legible - two
+sentences, not a project history. TASK (~10%): what YOU were responsible for,
+which is what makes the rest attributable. ACTION (~60%): the bulk, in first
+person singular, showing decisions and not just activity. RESULT (~15%): a
+NUMBER, plus what you learned.
+The typical failure is a 90-second Situation and a 15-second Action, which
+tells the interviewer everything about the project and nothing about you. Time
+one of your stories out loud; if Action is under half, cut the setup.""",
+
+    """'I' versus 'we', which is scored more literally than people expect.
+'We decided to cut the scope, we rebuilt the loader, we shipped on time' is
+unscoreable - the interviewer cannot tell what you did. Amazon interviewers are
+trained to interrupt and ask 'what did YOU do?', and needing to be asked costs
+you.
+The clean pattern: 'we' for the team's context, 'I' for every action you are
+claiming credit for, and named others for their contributions. 'The four of us
+owned the pipeline; I owned retrieval, and Priya's benchmark is what showed my
+first approach was wrong' reads as honest and confident at once.""",
+
+    """Quantifying when you think you have no numbers - the student's main blocker.
+You almost always have one, it is just not a revenue figure. Time (onboarding
+went from days to an hour; training from 25 minutes to 40 seconds). Counts
+(8 classmates interviewed; 3% of rows recovered; 4 groups adopted it). Quality
+(F1 0.72 -> 0.88; 55% -> 82% completion). Scale (400-page handbook; 12,000
+rows). Even a denominator helps: '2 of 8 became 6 of 8'.
+If you genuinely cannot measure the outcome, measure the INPUT you controlled
+and say so plainly - inventing a number is far worse than admitting the project
+had no instrumentation, and 'we never measured it, which is what I'd do
+differently' is itself a good answer.""",
+
+    """A full worked example, annotated.
+S: 'In my final-year capstone our disease-classification model was stuck at 72%
+accuracy with two weeks to the deadline.' (Two sentences, stakes clear.)
+T: 'I was the ML lead, so the model was mine.' (Attribution.)
+A: 'I stopped tuning and looked at 50 misclassified images by hand. Nearly all
+of them came from one of our three data sources, where the images were a
+different resolution and were being distorted by our resize step. I fixed the
+preprocessing to pad rather than stretch, and added an assertion on aspect
+ratio so it could not silently recur. I also cut two augmentations that were
+making the distortion worse.' (Decisions, first person, a systemic fix.)
+R: 'Accuracy went to 88% with no model change, and we submitted two days early.
+The lesson I took is to look at the data before touching the model.'""",
+
+    """Preparing the follow-ups, which is where thin stories collapse.
+Every STAR story attracts three predictable probes: 'why did you do it that
+way rather than X?', 'what did your team/manager think?', and 'what would you
+do differently?'. Prepare all three per story - the third is asked almost every
+time and 'nothing' is a failing answer.
+Also prepare the DEPTH direction: any technical claim inside the story is fair
+game two levels down. If your Action mentions a tool, you should be able to
+explain how it works and why you chose it over the alternative.""",
+
+    """Where students get their six stories from, since 'I have no experience' is
+the common worry. Coursework and capstone (the richest source - a full project
+with real constraints). Internships, even short ones. Hackathons (natural
+deadline pressure). Teaching, tutoring or TA work (excellent for
+develop-the-best and collaboration). Open-source contributions, however small.
+Clubs, societies and sport - a genuinely non-technical story is fine and often
+more memorable, because it is not the fourth capstone the interviewer has heard
+that day. What matters is that the story has a decision you made and an outcome
+you can measure, not that it happened at a company.""",
+]
+
+# Second pass: the two keys above were appended AFTER the loop that consumes
+# _EX_P0LP, so they need their own. (Adding a key below its patch loop is a
+# silent no-op - the entry simply keeps its empty examples list.)
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0LP:
+        _e["examples"] = _EX_P0LP[_e["title"]]
+
+
 _by_title = {_e["title"]: _e for _e in ENTRIES}
 _folded = []
 for _dup_title, _canon_title in _LP_DUPLICATES.items():
