@@ -41746,70 +41746,360 @@ smallest of the top k IS the k-th largest.""",
 ]
 
 _EX_P0F["Letter Combinations of a Phone Number"] = [
-    """The textbook case, traced.
-digits = "23".
-result starts as [''].
-Digit '2' maps to 'abc': result becomes ['a','b','c'] - every prefix ('') times
-every letter.
-Digit '3' maps to 'def': each of the three prefixes is extended by each of three
-letters -> ['ad','ae','af','bd','be','bf','cd','ce','cf'].
-9 = 3 x 3 combinations, in exactly the order LeetCode expects because the
-comprehension iterates prefixes in the outer loop and letters in the inner
-one.""",
+    """1. THE GOAL, in plain English.
 
-    """A digit with FOUR letters, and mixed sizes.
-digits = "79" -> '7' is 'pqrs' (4 letters), '9' is 'wxyz' (4 letters) -> 16
-results.
-digits = "27" -> 3 x 4 = 12 results: aw... no, 'ap','aq','ar','as','bp',...,'cs'.
-The count is the PRODUCT of the per-digit letter counts, which is why 7 and 9
-having four letters matters: a 4-digit number of all 7s and 9s gives 256
-combinations, not 81.
-Good sanity check to state before coding - it tells the interviewer you know the
-output size is exponential in the input length.""",
+On an old mobile phone keypad, each number key also carried some letters. Pressing
+2 could mean a, b or c; pressing 3 could mean d, e or f, and so on.
 
-    """The empty input - the guard that is actually required.
-digits = "": without the guard, result stays [''] and you return [''] - a list
-containing one EMPTY STRING. The expected answer is [], a list containing
-nothing.
-Those are different, and LeetCode fails you for the first. It is the single most
-common wrong submission on this problem.
-The guard exists because the iterative build starts from a seed [''] that is
-only meaningful once at least one digit extends it.""",
+Given a string of digits, list every word that string of key-presses could possibly
+spell.
 
-    """The backtracking version - same tree, different traversal.
-    def backtrack(i, path):
-        if i == len(digits):
-            result.append(''.join(path)); return
-        for ch in mapping[digits[i]]:
-            path.append(ch); backtrack(i+1, path); path.pop()
-This walks the SAME decision tree depth-first instead of level-by-level.
-Identical output and identical complexity; the iterative version is shorter, the
-recursive one generalises better when you need pruning (say, only return
-combinations that are real dictionary words - you can then abandon a prefix
-early, which the iterative build cannot do).""",
+The keypad:
 
-    """Complexity, and why nothing does better.
-O(4^n x n) where n is the number of digits: up to 4^n combinations, each costing
-O(n) to build the string.
-No algorithm can beat that because PRODUCING the output already takes that long
-- this is output-sensitive, so 'the answer is exponential' is not a failure, it
-is the specification.
-Memory: the iterative version holds the entire previous level, which is 4^(n-1)
-strings. The recursive version holds only one path plus the result list - the
-same total if you keep every answer, but far less if you stream them to the
-caller with `yield`.""",
+    2 -> a b c        6 -> m n o
+    3 -> d e f        7 -> p q r s
+    4 -> g h i        8 -> t u v
+    5 -> j k l        9 -> w x y z
 
-    """The Cartesian-product pattern elsewhere.
-This is `itertools.product(*[mapping[d] for d in digits])` in one line - say
-that, then write the loop, because the interviewer wants the mechanism.
-Same shape in:
-- Generating all combinations of feature flags or config options.
-- Expanding a glob or a brace pattern: {a,b}{1,2} -> a1,a2,b1,b2.
-- Enumerating test-matrix cells (3 OSes x 4 Python versions x 2 architectures).
-- Building all board states one move deep.
-Recognition cue: 'for each position, choose one of several options,
-independently'. Independent choices -> product; dependent choices -> full
-backtracking with pruning.""",
+Note 7 and 9 carry FOUR letters; the rest carry three. The digits 0 and 1 carry no
+letters at all, which is why they are absent from the table.
+
+Our example: digits = "23".
+
+The 2 could be a, b or c. The 3 could be d, e or f. Every pairing is possible:
+
+    a with d, e, f  ->  "ad", "ae", "af"
+    b with d, e, f  ->  "bd", "be", "bf"
+    c with d, e, f  ->  "cd", "ce", "cf"
+
+Nine combinations, and all nine are valid answers. So the result is
+["ad","ae","af","bd","be","bf","cd","ce","cf"].
+
+Count them: 3 letters times 3 letters is 9. For "234" it would be 3 x 3 x 3 = 27.
+For a string of seven digits it could be several thousand. The number of answers
+multiplies with every extra digit, which section 10 returns to - it means no
+algorithm can be fast, because the OUTPUT itself is large.""",
+
+    """2. THE INTUITION - build the words one digit at a time.
+
+Do not think about the whole string at once. Think about growing a set of partial
+words, one digit at a time.
+
+Start with a single empty word: [""]. It represents "nothing typed yet".
+
+Now process the first digit, 2. Each partial word so far must be extended by each
+letter that 2 can be. There is one partial word and three letters, so:
+
+    ""  +  a, b, c   ->   ["a", "b", "c"]
+
+Now process the second digit, 3. Each of those three partial words must be extended
+by each of d, e, f:
+
+    "a" + d, e, f  ->  "ad", "ae", "af"
+    "b" + d, e, f  ->  "bd", "be", "bf"
+    "c" + d, e, f  ->  "cd", "ce", "cf"
+
+Nine words, which is the answer.
+
+That is the whole algorithm. At each digit, replace the current list with a new
+list holding every existing word extended by every letter of that digit.
+
+Notice what the list length does: 1, then 3, then 9. It is multiplied by the number
+of letters on each digit as you go. That multiplication IS the combinatorial
+explosion, made visible.
+
+This shape has a name - it is building a CARTESIAN PRODUCT, the set of all ways to
+pick one item from each group.
+
+THE OTHER STANDARD APPROACH is backtracking: recurse down one letter at a time,
+building a single word, and record it when it reaches full length. Both are correct
+and both do the same total work. Section 5 compares them; the version here is
+chosen because it is shorter and needs no recursion at all.""",
+
+    """3. THE ONE-LINE ENGINE - a nested comprehension.
+
+The whole loop body is one line, and it packs two loops into it. Unpacked, it says:
+
+    new_result = []
+    for prefix in result:            # every word built so far
+        for ch in mapping[d]:        # every letter this digit can be
+            new_result.append(prefix + ch)
+    result = new_result
+
+Read the comprehension in the same order it is written: the FIRST "for" is the
+outer loop, the SECOND is the inner one. That ordering trips people up, because it
+is the opposite of how nested brackets usually read - but it is exactly the order
+you would write the loops out longhand.
+
+Two details worth pinning down.
+
+THE OLD LIST IS REPLACED, NOT MODIFIED. The comprehension builds a brand-new list
+from the old one, and then the name is rebound to it. That matters: if you tried to
+append to the list while iterating over it, you would be extending words you had
+only just created, and the run would never end.
+
+THE SEED MUST BE [""], NOT []. Starting from an empty list means there are no
+prefixes to extend, so the comprehension produces nothing and every subsequent digit
+also produces nothing - the answer comes back empty. Starting from a list containing
+one empty string means there is exactly one thing to extend, which is correct: before
+any digit is typed, there is one possible word so far, and it is the empty one.
+
+That is the same "one way to do nothing" convention that makes dp[0] = 1 in counting
+problems, and it is worth recognising as a recurring idea rather than a quirk.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the empty input. digits = "" must return an EMPTY list, not [""]. There
+are no key presses, so there are no words - and returning a list containing the
+empty string would claim there is one. The guard at the top handles this, and
+without it the seed [""] would be returned unchanged, which is the wrong answer.
+
+That is a genuine subtlety: [""] is the right SEED and the wrong ANSWER.
+
+CASE 2 - seeding with [] instead of [""]. Covered in section 3 - everything
+multiplies by nothing and the answer is empty.
+
+CASE 3 - digits 0 and 1. They carry no letters and are absent from the table, so
+looking one up would fail. Most versions of the problem promise they do not appear.
+If yours does not, decide what they mean - skip them, or treat them as an error -
+and say so.
+
+CASE 4 - a single digit. digits = "2" gives ["a", "b", "c"]. One pass, three words.
+Correct.
+
+CASE 5 - assuming a particular order. This method produces them in a natural order -
+all words starting with the first letter, then all starting with the second - but a
+test comparing against one exact list is testing an implementation detail. The right
+check is that the collection contains the same words.
+
+CASE 6 - forgetting that 7 and 9 have four letters. Hand-writing the table with
+three letters each gives wrong answers for those digits, and it is an easy slip when
+typing the mapping from memory.""",
+
+    """5. DEFINING THE TERMS the code uses, and the alternative approach.
+
+CARTESIAN PRODUCT: all the ways to pick one item from each of several groups.
+Section 2.
+
+mapping: a dictionary from a digit character to the string of letters it can be.
+Note the keys are characters like '2', not the number 2 - the input is a string, so
+its elements are characters.
+
+result: the list of partial words built so far. It starts as [""] and is REPLACED
+on every pass.
+
+LIST COMPREHENSION: Python's shorthand for building a list with loops.
+[prefix + ch for prefix in result for ch in mapping[d]] reads left to right as
+outer loop then inner loop - section 3 unpacks it.
+
+THE BACKTRACKING ALTERNATIVE, which is what many solutions use:
+
+    build one word character by character, recursing to add the next digit's letter,
+    and record the word when it reaches the full length - then undo the last letter
+    and try the next one.
+
+It does exactly the same total work and produces the same answers. Its advantages
+are that it uses O(length) working memory instead of holding the whole growing list,
+and that it generalises to problems where you want to abandon a partial answer
+early. Its disadvantages here are that it is longer and uses recursion for no gain,
+since nothing can be pruned - every partial word leads to real answers.
+
+Being able to name both, and say why you picked one, is a better answer than
+producing either alone.
+
+O(4^n x n) and O(4^n x n): the costs, where n is the number of digits. Section 10
+explains why both are unavoidable.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: hold a list of the words built so far, and for each
+digit replace that list with every existing word extended by every letter of that
+digit.
+
+There is no recursion here - one loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. If the input is empty, return an empty list. No key presses, no words.
+
+  2. Write down the keypad: which letters each digit can stand for. Remember 7 and 9
+     have four letters, not three.
+
+  3. Start the list of words with a single empty string. That represents "nothing
+     typed yet", and it is what gives the first digit something to extend.
+
+     A single empty string, not an empty list - see section 3.
+
+  4. Take each digit of the input in turn.
+
+  5. Build a brand-new list: for every word already in the list, and for every
+     letter that this digit can be, add that word with the letter stuck on the end.
+
+  6. Replace the old list with the new one and move to the next digit.
+
+  7. When every digit has been processed, the list holds every possible word.
+     Return it.
+
+The thing to keep hold of: the list is REPLACED each pass, not added to. Its length
+is multiplied by the number of letters on each digit, so it grows 1, 3, 9, 27 for
+digits that carry three letters each.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code builds the answers up one digit at a time, keeping a list of every partial
+word it has made so far.
+
+It starts that list with a single empty word, which stands for the state before any
+key has been pressed. That may look like an odd thing to keep, but it is what gives
+the first digit something to attach a letter to - without it there would be nothing
+to extend and the whole process would produce nothing.
+
+Then it takes each digit in turn and asks: what letters could this key have meant?
+For every partial word already in the list, and for every letter this key could be,
+it makes a new word by sticking the letter on the end. All of those new words
+together become the new list, entirely replacing the old one.
+
+So after the first digit the list holds one-letter words, after the second it holds
+two-letter words, and so on - and at every stage it holds every possible way the
+keys pressed so far could have been read.
+
+The list grows quickly. Each digit multiplies its length by the number of letters on
+that key, so three digits of three letters each already gives twenty-seven words.
+That growth is not a flaw in the method; it is the size of the true answer, and no
+approach can avoid it.
+
+When the last digit has been handled, the list holds every word the whole sequence
+could spell, and that is what gets returned.""",
+
+    """8. THE CODE, line by line.
+
+Keep digits = "23" beside you; the answer has nine words.
+
+    if not digits:
+        return []
+The empty-input guard, and it is not merely defensive. Without it the seed below
+would be returned unchanged, giving [""] - a list containing one empty string, which
+claims there is one possible word when there are none. See case 1 in section 4.
+
+    mapping = {'2':'abc', '3':'def', '4':'ghi', '5':'jkl',
+               '6':'mno', '7':'pqrs', '8':'tuv', '9':'wxyz'}
+The keypad. The keys are CHARACTERS - '2', not 2 - because the input is a string and
+iterating it yields characters.
+
+Note 7 has four letters and 9 has four letters; every other key has three. Writing
+three for all of them is an easy slip that produces wrong answers only for those two
+digits.
+
+0 and 1 are absent because they carry no letters; the problem normally promises they
+do not appear.
+
+    result = ['']
+The seed: a list containing ONE EMPTY STRING. This represents "nothing typed yet",
+and it is what gives the first digit something to extend.
+
+Seeding with [] instead would mean there are no prefixes at all, so the loop below
+would produce nothing and keep producing nothing - the answer would come back empty.
+This is the same "there is exactly one way to do nothing" convention that appears as
+dp[0] = 1 in counting problems.
+
+    for d in digits:
+Take each digit character in turn. For "23" that is '2' then '3'.
+
+    result = [prefix + ch for prefix in result for ch in mapping[d]]
+The entire algorithm in one line. Read it left to right: the first "for" is the
+OUTER loop over the words built so far, the second is the INNER loop over this
+digit's letters. For each pairing it makes a new word by joining them.
+
+Two things worth noticing.
+
+The old list is READ and a brand-new list is built from it, then the name is rebound.
+Nothing is appended to a list while it is being iterated - which would extend words
+that had only just been created and never terminate.
+
+And the list's length is multiplied by the number of letters on this digit. For "23"
+it goes 1, then 3, then 9.
+
+    return result
+Every word the digit string could spell.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+digits = "23"
+
+    digits is not empty, so we carry on.
+    result = ['']            one empty word - "nothing typed yet"
+
+DIGIT '2'.  mapping['2'] = 'abc'.
+
+    The comprehension pairs every word in result with every letter of 'abc':
+        prefix = ''  with ch = 'a'  ->  'a'
+        prefix = ''  with ch = 'b'  ->  'b'
+        prefix = ''  with ch = 'c'  ->  'c'
+
+    result = ['a', 'b', 'c']         length went from 1 to 3
+
+DIGIT '3'.  mapping['3'] = 'def'.
+
+    Every word in result paired with every letter of 'def':
+        prefix = 'a'  with d, e, f  ->  'ad', 'ae', 'af'
+        prefix = 'b'  with d, e, f  ->  'bd', 'be', 'bf'
+        prefix = 'c'  with d, e, f  ->  'cd', 'ce', 'cf'
+
+    result = ['ad','ae','af','bd','be','bf','cd','ce','cf']
+                                     length went from 3 to 9
+
+return that list.  Nine words, matching what we listed by hand in section 1.
+
+Read the outer loop's order in the trace: all the words starting with 'a', then all
+starting with 'b', then all starting with 'c'. That is the first "for" being the
+outer one.
+
+A SINGLE DIGIT, digits = "7":
+    result = ['']
+    mapping['7'] = 'pqrs' - FOUR letters.
+    result = ['p', 'q', 'r', 's']
+    return four words. The keys with four letters are exactly where a hand-typed
+    three-letter table would go wrong.
+
+THE EMPTY INPUT, digits = "":
+    The guard fires immediately and returns [].
+    Without it, the loop would never run and result would still be [''] - a list
+    containing one empty string, which is not the same as an empty list.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(4^n x n), where n is the number of digits. Each digit multiplies the number
+of words by 3 or 4, so after n digits there are up to 4 to the power n words, and
+each is n characters long to build. In practice most digits carry three letters, so
+3^n is closer to typical - but 4^n is the honest upper bound.
+
+To feel the scale: four digits gives at most 256 words, seven digits gives at most
+16,384, ten digits gives over a million.
+
+SPACE: O(4^n x n) for the output, which has to exist. This method also holds the
+whole growing list in memory as it works, so the working space matches the output
+size. The backtracking alternative from section 5 uses only O(n) working memory
+beyond the output, which is its one real advantage.
+
+AND THE HONEST POINT ABOUT COMPLEXITY HERE: this is optimal. The output itself
+contains that many words, so any algorithm must at minimum write them all down. When
+asked for the complexity, say that explicitly - "the cost is dominated by the size of
+the output, so this is as good as it gets" - rather than apologising for an
+exponential figure.
+
+THE #1 MISTAKE - seeding with [] instead of [""], or returning [""] for empty input.
+The two errors are mirror images and both come from the same confusion between "a
+list of no words" and "a list containing the empty word". The seed must be [""] so
+the first digit has something to extend; the empty-input answer must be [] because
+no keys were pressed. Getting one right and the other wrong is very common.
+
+A close second: writing the keypad with three letters for every digit, forgetting
+that 7 and 9 carry four.
+
+ONE-SENTENCE TAKEAWAY: grow the answers one digit at a time, replacing the list with
+every existing word extended by every letter of the new digit - and seed it with one
+EMPTY word, because before any key is pressed there is exactly one thing to
+extend.""",
 ]
 
 _EX_P0F["Longest Palindromic Substring (expand around center)"] = [
@@ -42936,67 +43226,371 @@ one, and the number of rooms you ended up opening is the peak overlap.""",
 ]
 
 _EX_P0F["Non-overlapping Intervals (min removals)"] = [
-    """The textbook case, traced.
-[[1,2],[2,3],[3,4],[1,3]] sorted by END -> [[1,2],[2,3],[1,3],[3,4]].
-prev_end = 2 (from [1,2]).
-[2,3]: start 2 < 2? No -> keep it, prev_end = 3.
-[1,3]: start 1 < 3 -> overlaps the kept one -> remove, removals = 1.
-[3,4]: start 3 < 3? No -> keep, prev_end = 4.
-Answer 1 removal. The kept set is [1,2],[2,3],[3,4] - three non-overlapping
-intervals, which is the maximum possible.""",
+    """1. THE GOAL, in plain English.
 
-    """Why sort by END and not by START - the counterexample.
-[[1,100],[2,3],[4,5]].
-Sorted by START, a greedy that keeps the first interval keeps [1,100] and then
-must remove BOTH of the others: 2 removals.
-Sorted by END -> [[2,3],[4,5],[1,100]]: keep [2,3], keep [4,5] (4 >= 3), remove
-[1,100]: 1 removal. Optimal.
-The intuition: finishing earliest leaves the most room for everything after it.
-A long interval is expensive no matter when it starts, and sorting by end is what
-exposes that.
-This is the classic ACTIVITY SELECTION greedy, and this counterexample is the
-proof sketch you should be able to produce on demand.""",
+You are given a list of intervals - each one a start and an end. Some of them
+overlap. Remove as FEW as possible so that none of the survivors overlap each other.
+Report how many you removed.
 
-    """No overlaps at all, and total overlap.
-[[1,2],[3,4],[5,6]]: each start is >= the previous end, nothing is removed.
-Answer 0.
-[[1,10],[2,10],[3,10]]: sorted by end (all 10, ties in any order). Keep the
-first; both others start before 10 -> removals = 2. You can only ever keep one
-of a mutually-overlapping group.
-Empty input -> guard returns 0. Single interval -> 0.""",
+Our example: [[1,2], [2,3], [3,4], [1,3]].
 
-    """Touching endpoints - and why this one uses strict `<`.
-[[1,2],[2,3]]: start 2 < prev_end 2 is FALSE, so both are kept and the answer is
-0.
-That is correct for this problem: [1,2] and [2,3] do not overlap, they merely
-touch. Using `<=` would remove one and report 1, which fails the LeetCode tests.
-Note this is the OPPOSITE convention from Merge Intervals, which merges touching
-intervals. Read the problem's definition of 'overlapping' every single time - the
-two problems live one click apart and use different rules.""",
+Draw them:
 
-    """The complementary framing: minimum removals = n - maximum kept.
-Instead of counting what you throw away, count what you keep: the greedy is
-'keep the earliest finisher whose start is not before the last kept end'. That
-count is the maximum number of non-overlapping intervals, and the removals are
-just n minus it.
-Same loop, and the 'maximum kept' phrasing is the one used by:
-- Maximum Number of Events That Can Be Attended,
-- Minimum Number of Arrows to Burst Balloons (which is literally 'count the
-  groups you keep'),
-- scheduling the most jobs on one machine.
-Recognising that removals and keeps are the same problem saves you re-deriving
-it under a new name.""",
+    1     2     3     4
+    |-----|-----|-----|
+    A: 1-----2
+    B:       2-----3
+    C:             3-----4
+    D: 1-----------3
 
-    """Where the earliest-deadline greedy shows up for real.
-- Scheduling the most non-conflicting jobs on a single machine or meeting room.
-- Choosing the most ads/segments to fit in a fixed break without overlap.
-- Bandwidth or licence allocation where each grant occupies a window.
-- Selecting the maximum set of compatible calendar invitations.
-The caveat worth naming: this greedy is optimal for MAXIMISING COUNT. If the
-intervals have different VALUES and you want maximum total value, greedy fails
-and you need weighted interval scheduling - sort by end, then DP with a binary
-search for the last compatible interval. Knowing where the greedy stops being
-correct is the senior-level answer.""",
+A, B and C step neatly along, touching but never overlapping. D runs from 1 all the
+way to 3, so it overlaps both A and B.
+
+Remove D and the remaining three - A, B, C - are all clear of each other. One
+removal. Could we do it with zero? No: D genuinely clashes with A, so at least one
+of them has to go. So the answer is 1.
+
+Two things to settle.
+
+TOUCHING IS NOT OVERLAPPING here. A ends at 2 and B starts at 2, and they are
+allowed to coexist - the shared point does not count as a clash. That shows up as a
+strict "less than" in the code, and section 4 covers what changes otherwise.
+
+AND THE QUESTION IS "HOW MANY REMOVED", not which ones or what survives. But
+notice the two are the same problem viewed from opposite ends: removing the fewest
+means KEEPING the most. That reframing is what makes the solution obvious, and it
+is section 2.""",
+
+    """2. THE INTUITION - flip it into "keep as many as possible".
+
+Trying to decide what to remove is awkward - you would be choosing among clashes
+without knowing which choice hurts later.
+
+Flip it. Removing the fewest is exactly the same as KEEPING the most. If there are
+n intervals and you can keep at most m of them without any overlap, then the answer
+is n - m.
+
+Now the question is: given a pile of intervals, how many can you keep with no two
+overlapping?
+
+That is a famous problem with a famous answer. Think of it as booking a room: you
+have a list of possible bookings and you want to fit in as many as you can. Which
+should you accept first?
+
+THE ANSWER: always take the one that FINISHES EARLIEST.
+
+Why finishing earliest? Because the resource - the room, the timeline - is freed
+soonest, leaving the most room for everything else. A booking that starts early but
+runs late is worse than one that starts a little later and finishes sooner, because
+what matters is when you get the room back.
+
+So the method is:
+
+    Sort the intervals by END time.
+    Walk through them. Keep the first. After that, keep an interval only if it
+    starts at or after the end of the last one you kept. Otherwise it clashes, so
+    remove it.
+
+The count of removals is the answer. Sorting is O(n log n), the walk is O(n).
+
+This is a GREEDY algorithm - it makes the locally best-looking choice at each step
+and never reconsiders. Greedy is usually wrong (Coin Change is the standard
+counterexample), so when it IS right the reason needs stating. Section 3 does that.""",
+
+    """3. WHY "EARLIEST FINISHER" IS PROVABLY OPTIMAL.
+
+Greedy algorithms are suspicious by default. This one is genuinely correct, and the
+argument is short enough to say aloud.
+
+Claim: there is always an optimal answer that includes the interval finishing
+earliest.
+
+Proof sketch. Take any optimal set of kept intervals. Look at the one in it that
+finishes earliest; call it X. Now let E be the interval that finishes earliest in
+the WHOLE list. If X is E, we are done. Otherwise E finishes at or before X does.
+
+Swap X out and E in. Does anything break? Everything else in the optimal set
+started at or after X's end - that is what "non-overlapping" meant. And E ends at or
+before X's end. So everything else also starts at or after E's end, meaning nothing
+clashes with E either.
+
+The set is still valid and still the same size, so it is still optimal - and now it
+contains E.
+
+Having fixed E as kept, throw away everything that clashes with E and repeat the
+same argument on what remains. Each step is safe, so the greedy run builds an
+optimal set.
+
+WHY SORTING BY START WOULD FAIL. Consider [[1,100], [2,3], [4,5]]. Sorted by start,
+the first is [1,100], which is kept - and it clashes with both of the others, so you
+would remove two. Sorted by end, [2,3] comes first, then [4,5], and only [1,100] is
+removed. One removal, which is right.
+
+That example is worth memorising: it is the fastest way to show why the sort key is
+not arbitrary.
+
+Compare with the Merge Intervals problem, which sorts by START. Different question,
+different key. In interval problems the sort key is the real decision, and it
+follows from what you are greedily choosing.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - sorting by start time. Covered in section 3. It gives 2 instead of 1 on
+[[1,100], [2,3], [4,5]] and is the single most common wrong answer.
+
+CASE 2 - the touching boundary. This code uses "start < prev_end", so an interval
+starting exactly when the previous one ends is KEPT. On [[1,2], [2,3]] that gives 0
+removals. If a problem counted touching as overlapping, the test would be
+"start <= prev_end" and the answer would be 1. Say which convention you assumed.
+
+CASE 3 - forgetting to advance the boundary only when keeping. When an interval is
+removed, prev_end must NOT change - the kept interval is still the one that matters
+for future comparisons. Advancing it on a removal effectively keeps the interval you
+just decided to discard.
+
+CASE 4 - nested intervals. [[1,10], [2,3]]. Sorted by end, [2,3] comes first and is
+kept; then [1,10] starts at 1, which is before 3, so it is removed. One removal, and
+correctly the short inner one is the survivor - which is exactly what "earliest
+finisher" buys you.
+
+CASE 5 - the empty list, or a single interval. Zero removals in both cases. The
+empty case is guarded at the top because the next line reads the first interval.
+
+CASE 6 - sorting the caller's list in place. This code does, so the caller's
+intervals come back reordered. Harmless for most callers, but worth stating: if it
+matters, sort a copy.
+
+CASE 7 - reporting the survivors instead of the count. The question asks how many
+were removed. Counting the kept ones and subtracting is equally valid but is one
+more step to get wrong.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+INTERVAL, OVERLAP, TOUCHING: defined in section 1.
+
+GREEDY ALGORITHM: one that makes the locally best-looking choice at each step and
+never reconsiders. Fast and simple, and usually wrong - which is why section 3
+bothers to prove that this particular greedy choice is safe.
+
+sort(key=lambda x: x[1]): sort by the SECOND element of each pair - the end time. A
+LAMBDA is a tiny unnamed function; this one says "given x, hand back x[1]". Compare
+with Merge Intervals, which uses x[0] - the start.
+
+prev_end: the end time of the most recently KEPT interval. It is the boundary
+everything after must clear. It changes only when an interval is kept, never when
+one is removed.
+
+removals: the running count, which is the answer.
+
+TUPLE UNPACKING: "for start, end in intervals[1:]" pulls each interval's two values
+straight into named variables rather than writing interval[0] and interval[1].
+
+O(n log n) and O(1): the costs, where n is the number of intervals. The sort
+dominates the time. The extra memory is O(1) - two variables - because the sort
+happens in place and nothing is copied.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: removing the fewest means keeping the most, and to
+keep the most you always take the interval that finishes earliest.
+
+There is no recursion here - a sort and one loop - so nothing piles up on the call
+stack.
+
+The steps:
+
+  1. If the list is empty, nothing needs removing. Answer zero.
+
+  2. Sort the intervals by their END time. Not their start - see section 3, which
+     is the whole correctness of the method.
+
+  3. Start a removal count at zero.
+
+  4. Keep the first interval automatically - after sorting, it is the one that
+     finishes earliest, and section 3 proves that is always safe. Remember its end
+     time as the boundary.
+
+  5. Walk through the remaining intervals in order.
+
+  6. For each, compare its start with the boundary.
+
+     a. If it starts BEFORE the boundary, it clashes with the interval you last
+        kept. Remove it: add one to the count, and leave the boundary alone - the
+        kept interval is still the one that matters.
+
+     b. Otherwise it clears the boundary, so keep it, and move the boundary forward
+        to this interval's end.
+
+  7. When the walk ends, the count is the answer.
+
+Step 6a is the one to be careful about: on a removal, nothing changes except the
+count. Advancing the boundary there would silently keep the interval you just
+decided to throw away.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code turns the question inside out. Rather than working out which intervals to
+throw away, it works out how many it can keep - because those are the same problem
+seen from opposite ends, and keeping is far easier to reason about.
+
+To keep as many as possible, it always favours whichever interval finishes soonest.
+The intuition is a room booking: if two bookings compete, accept the one that hands
+the room back earlier, because that leaves the most time available for everything
+else. A booking that finishes late blocks more of the day, whatever time it started.
+
+So the code sorts the intervals by when they FINISH, and walks through them in that
+order. It keeps the very first one - after sorting, that is the earliest finisher,
+and taking it is always safe.
+
+From then on it holds a boundary: the moment the last kept interval finished.
+Everything after must clear that boundary. If the next interval starts before it,
+the two clash, so this one is thrown away and the count goes up - and crucially the
+boundary does not move, because the interval that set it is still the one in place.
+If the next interval starts at or after the boundary, there is no clash, so it is
+kept and the boundary moves forward to its end.
+
+By the time the list runs out, every interval has been either kept or counted, and
+the count is the smallest number that could possibly have been removed.""",
+
+    """8. THE CODE, line by line.
+
+Keep [[1,2], [2,3], [3,4], [1,3]] beside you; the answer is 1.
+
+    if not intervals:
+        return 0
+The empty-list guard. Needed because the line below reads the first interval.
+
+    intervals.sort(key=lambda x: x[1])
+Sort by END time - x[1] is the second element of each pair. This is the line the
+whole method rests on, and it is what distinguishes this problem from Merge
+Intervals, which sorts by start. Sorting by start here gives 2 instead of 1 on the
+example in section 3.
+
+Note this sorts the caller's list in place, so their intervals come back reordered.
+If that matters, sort a copy.
+
+    removals = 0
+The running count, which will be the answer.
+
+    prev_end = intervals[0][1]
+Keep the first interval - after sorting, the earliest finisher - and record its end
+as the boundary everything after must clear. Section 3 proves that keeping the
+earliest finisher is always safe.
+
+    for start, end in intervals[1:]:
+Walk the rest of the sorted list, unpacking each interval's two values into named
+variables. The [1:] skips the first, which is already kept.
+
+    if start < prev_end:
+        removals += 1
+The clash test. If this interval starts BEFORE the boundary, it overlaps the last
+kept one, so it must go: add one to the count.
+
+Note what does NOT happen here - prev_end is untouched. The interval that set the
+boundary is still in place, so it is still the one future intervals must clear.
+Advancing the boundary on a removal would effectively keep the interval you just
+discarded - see case 3 in section 4.
+
+The comparison is STRICTLY less than, so an interval starting exactly at the
+boundary is kept - the touching convention from section 1. Using "<=" would treat
+touching as a clash.
+
+    else:
+        prev_end = end
+No clash, so this interval is kept, and the boundary moves forward to its end.
+Nothing is added to the count - keeping is the default, and only clashes are
+counted.
+
+    return removals
+The smallest number of intervals that had to be removed.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Input: [[1,2], [2,3], [3,4], [1,3]]
+
+SORT BY END TIME.  The ends are 2, 3, 4, 3, so sorted by end:
+
+    [[1,2], [2,3], [1,3], [3,4]]
+      end 2   end 3   end 3   end 4
+
+(The two intervals ending at 3 could appear in either order; the answer is the same
+because whichever is kept, the other clashes with something.)
+
+    removals = 0
+    prev_end = 2      (keeping [1,2], the earliest finisher)
+
+interval [2,3]:  start = 2, end = 3
+    Is 2 < 2?  No - it starts exactly when the boundary falls, which counts as
+    clear under the touching convention.
+    KEEP it.  prev_end = 3.
+
+interval [1,3]:  start = 1, end = 3
+    Is 1 < 3?  YES - it starts before the boundary, so it clashes with [2,3].
+    REMOVE it.  removals = 1.  prev_end stays 3.
+
+interval [3,4]:  start = 3, end = 4
+    Is 3 < 3?  No - touching, so clear.
+    KEEP it.  prev_end = 4.
+
+return removals = 1.  Correct - the survivors are [1,2], [2,3] and [3,4], which
+step along without overlapping.
+
+Note that [1,3] was the one removed, which matches the answer we found by eye in
+section 1 (there it was labelled D).
+
+NOW THE CASE THAT PROVES THE SORT KEY, input [[1,100], [2,3], [4,5]]:
+
+SORTED BY END: [[2,3], [4,5], [1,100]]
+
+    prev_end = 3      (keeping [2,3])
+    [4,5]:   Is 4 < 3?  No -> keep.  prev_end = 5.
+    [1,100]: Is 1 < 5?  YES -> remove.  removals = 1.
+    return 1.  Correct.
+
+SORTED BY START instead: [[1,100], [2,3], [4,5]]
+
+    prev_end = 100    (keeping [1,100])
+    [2,3]:  Is 2 < 100?  YES -> remove.  removals = 1.
+    [4,5]:  Is 4 < 100?  YES -> remove.  removals = 2.
+    return 2.  Wrong - one removal was enough.
+
+The long interval hogged the timeline and forced out two short ones that could
+happily have coexisted.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log n), where n is the number of intervals. The sort dominates; the walk
+afterwards touches each interval once, which is O(n), and when adding two costs you
+keep the bigger one.
+
+SPACE: O(1) beyond the input. Two variables - the count and the boundary. The sort
+happens in place, so nothing is copied.
+
+WHERE THIS SITS in the interval family, and the pattern worth carrying away:
+
+  Merge Intervals - sort by START, sweep, combine overlaps.
+  Insert Interval - sort by START (or exploit an already-sorted input).
+  Meeting Rooms - sort by START, check for any clash.
+  Meeting Rooms II - sort by START, track end times in a min-heap.
+  THIS PROBLEM - sort by END, greedily keep the earliest finisher.
+
+Four sort by start and one by end. The sort key is the real decision in interval
+problems, and it follows from what you are greedily choosing: if you are combining
+things you sort by start, and if you are choosing which to keep you sort by end.
+
+THE #1 MISTAKE - sorting by start time. It looks like the natural choice, it is
+what the neighbouring problems use, and it is wrong here. A long interval that
+begins early gets kept and then forces out several short ones that could all have
+coexisted - two removals where one would do. Keep the counterexample
+[[1,100], [2,3], [4,5]] in your head; it settles the question in ten seconds.
+
+A close second: advancing the boundary when an interval is removed. The kept
+interval is still the one in place, so the boundary must not move - otherwise you
+have silently kept the one you just discarded.
+
+ONE-SENTENCE TAKEAWAY: removing the fewest is keeping the most, and to keep the most
+you sort by END time and always take the interval that finishes earliest - because
+finishing early frees the timeline for everything that follows.""",
 ]
 
 _EX_P0F["Rotting Oranges (multi-source BFS)"] = [
