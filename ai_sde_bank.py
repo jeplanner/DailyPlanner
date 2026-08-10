@@ -30162,109 +30162,667 @@ LeetCode inputs from one who has thought about production data.""",
 ]
 
 _EX_P0D["Middle of the Linked List"] = [
-    """Odd length, traced.
-1->2->3->4->5. slow=fast=1.
-Check fast(1) and fast.next(2) exist -> slow=2, fast=3.
-Check fast(3), fast.next(4) -> slow=3, fast=5.
-Check fast(5): fast.next is None -> loop ends.
-slow is on 3, the exact middle of five nodes. Fast moved twice as fast, so when
-it has covered 4 edges slow has covered 2 - always half the distance.""",
+    """1. THE GOAL, in plain English.
 
-    """Even length - and why you get the SECOND middle.
-1->2->3->4->5->6. slow=1,fast=1.
--> slow=2, fast=3 -> slow=3, fast=5 -> fast(5) and fast.next(6) exist, so one
-more step: slow=4, fast=None. Loop ends.
-Return 4, the second of the two middles (3 and 4).
-If the problem wants the FIRST middle instead, start fast one node ahead
-(fast = head.next) - then the loop runs one fewer time and slow stops on 3.
-Interviewers do ask for this variant, so know which knob changes it.""",
+You are given a chain of items and must hand back the one in the middle.
 
-    """Single node and empty list.
-head = 1: fast=1, fast.next is None, loop never runs, return 1. Correct.
-head = None: slow=fast=None; `while fast` is falsy immediately; return None.
-The `while fast and fast.next` order matters - checking fast.next first would
-raise AttributeError on the empty list. Python short-circuits left to right,
-which is exactly why that order is written that way.""",
+The chain is a LINKED LIST. Picture a train: each carriage holds some cargo and
+is coupled to exactly one carriage behind it. To reach carriage 4 you must walk
+through 1, 2 and 3 - there is no way to jump straight there.
 
-    """The condition bug: `while fast.next and fast.next.next`.
-On 1->2->3->4 this gives slow=2 (the FIRST middle) instead of 3, and on the
-empty list it crashes. Both variants appear in tutorials, so decide which the
-problem wants and TRACE a length-4 case before you submit. One extra minute of
-tracing beats a wrong-answer submission.""",
+    head
+     |
+     v
+    [1] -> [2] -> [3] -> [4] -> [5] -> None
 
-    """Why not just count the length first?
-Two passes: walk once to get n=6, then walk n//2=3 steps to node 4. Same answer,
-O(n) time, O(1) space - and honestly it is easier to read.
-Fast/slow wins when you only get ONE pass over the data - a stream, an iterator
-you cannot rewind, or a list so long that a second traversal blows the cache.
-It is also the building block for the cycle problems, where you cannot compute a
-length at all because the walk never ends.""",
+Vocabulary as it appears:
+- Each carriage is a NODE. It holds a value and a link to the next node.
+- HEAD is the first node - the only one you are handed.
+- The last node's link points at NOTHING, written None. That is how you know the
+  chain has ended.
 
-    """The family this unlocks.
-Same two-pointer skeleton, different payload:
-- Detect a cycle: if fast ever equals slow, there is a loop.
-- Find the cycle START: after they meet, reset one pointer to head and advance
-  both one step at a time; they meet at the entry.
-- Palindrome linked list: find the middle here, reverse the second half, compare.
-- Reorder list / split in half: cut at slow.
-- Find the Duplicate Number: the same cycle logic on an array read as a
-  next-pointer function.
-Five well-known problems, one 4-line pattern.""",
+Five nodes, so the middle is the third: node 3. Two on its left, two on its
+right.
+
+Now the awkward case. What if there are SIX nodes?
+
+    [1] -> [2] -> [3] -> [4] -> [5] -> [6] -> None
+
+There is no single middle - both 3 and 4 have equal claim. The problem has to
+choose, and the standard version of this question asks for the SECOND middle,
+which is node 4. Say which one you are returning; "off by one middle" is the
+commonest way to get this wrong.
+
+The real difficulty: you do not know how long the chain is. You cannot count
+backwards, and you cannot jump. All you have is the head and a chain of
+forward-pointing links.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION - two passes. Walk the whole chain once, counting nodes; say
+there are L. The middle is at position L // 2 counting from 0 (whole-number
+division, which throws away any remainder). Walk again, stop there, return it.
+
+That is completely correct, and it is the answer you should describe first. It
+walks the list twice.
+
+THE UPGRADE - one pass with two pointers moving at DIFFERENT SPEEDS.
+
+A POINTER here just means a finger resting on a node. Put two fingers on the
+front of the chain. Move one finger one node per step, and the other TWO nodes
+per step. When the fast finger reaches the end, the slow one is at the middle -
+because in the same amount of time it covered exactly half the ground.
+
+This is called the TORTOISE AND HARE, and it is worth seeing why it must work.
+After k steps, slow has moved k nodes and fast has moved 2k. Fast finishes when
+2k reaches the end of the list, that is when 2k is about L. At that same moment
+slow is at k, which is about L/2. The halving is not a coincidence or an
+approximation - it is arithmetic, and it holds for any list length.
+
+    step 0:   [1] [2] [3] [4] [5]
+               S
+               F
+    step 1:   [1] [2] [3] [4] [5]
+                   S
+                       F
+    step 2:   [1] [2] [3] [4] [5]
+                       S
+                               F     fast is on the last node - stop
+                                     slow is on node 3, the middle
+
+One pass, two fingers, no counting, and no need to know the length in advance.""",
+
+    """3. THE TRICK - the loop condition decides WHICH middle you get.
+
+Everything hinges on one line: when does the walking stop?
+
+The condition is "fast exists AND fast has something after it". Both halves are
+needed, and each one handles a different list length.
+
+  "fast exists" catches the EVEN case. With six nodes, fast lands exactly past
+  the end and becomes None. Reading fast.next on a None would crash, so this
+  half stops us first.
+
+  "fast has something after it" catches the ODD case. With five nodes, fast
+  lands exactly ON the last node. It exists, but taking two more steps would run
+  off the end, so this half stops us.
+
+Now watch how that same condition produces the SECOND middle on an even list:
+
+    six nodes, [1..6]
+    start:  slow=1, fast=1
+    step:   slow=2, fast=3
+    step:   slow=3, fast=5
+    step:   slow=4, fast=None (fast tried to move two from 5, landing past 6)
+    check:  fast is None -> stop. slow = 4.
+
+Node 4 is the second of the two middles. If the problem wanted the FIRST middle
+(node 3), you would change the condition to "fast.next exists AND fast.next.next
+exists", which stops one step earlier.
+
+So there is no universally right condition - there is a condition for each
+answer. Read the problem, pick the matching one, and say out loud which middle
+your version returns. That single sentence is what separates someone who
+memorised this from someone who understands it.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the order of the two checks. The condition must be "fast and
+fast.next", in that order. Written the other way round as "fast.next and fast",
+Python evaluates left to right and would read fast.next while fast is None,
+which crashes. Python's "and" stops at the first false condition, so putting the
+existence check first is what protects the second one.
+
+CASE 2 - a single node. list = [1]. fast exists but fast.next is None, so the
+loop never runs and slow is still node 1. Correct - a one-node list is its own
+middle. No special case needed.
+
+CASE 3 - two nodes. list = [1,2]. fast exists and fast.next exists, so one step
+runs: slow moves to 2, fast moves to fast.next.next, which is None. The loop
+checks again, fast is None, stop. Return node 2 - the second of the two middles.
+Consistent with the rule from section 3.
+
+CASE 4 - the empty list. head is None. The condition checks "fast" first, which
+is None, so the loop never runs and we return None. That is a reasonable answer
+for an empty list, and again no special case.
+
+CASE 5 - moving fast by one step twice instead of using fast.next.next. Writing
+"fast = fast.next" twice inside the loop looks equivalent and is not: after the
+first of those two lines, fast may already be the last node, and the second line
+sets it to None - but you have not re-checked the condition in between, so a
+following line reading fast.next would crash. Move fast in a single expression,
+or re-check between the steps.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+LINKED LIST, NODE, HEAD: defined in section 1.
+
+node.next: the link a node holds - "the node after this one". So fast.next.next
+means "the node two after fast". Reading it is only safe when both fast and
+fast.next are known to exist, which is exactly what the loop condition
+guarantees.
+
+None: Python's word for "nothing here". A node's next being None is how the end
+of the chain is marked, and a variable being None is how you say it is not
+pointing at any node.
+
+TWO POINTERS: two positions in the same structure, moved under a rule. Here the
+rule is "different speeds". In other problems the rule is "keep a fixed gap"
+(Remove Nth Node From End) or "move toward each other" (3Sum). Recognising which
+rule a problem wants is most of the skill.
+
+TORTOISE AND HARE: the nickname for the different-speeds version, from the fable.
+Also called Floyd's algorithm when used for cycle detection - see section 10.
+
+O(L) and O(1): the two costs, where L is the number of nodes. O(L) means the
+work grows in step with the length of the list - double the list, double the
+work. O(1) means "constant" - the extra memory used does not grow at all,
+however long the list is, because it is only ever two variables.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: send two fingers along the chain, one moving
+twice as fast as the other, and when the fast one runs out of chain the slow one
+is standing on the middle.
+
+There is no recursion here - it is a single loop - so nothing piles up on the
+call stack and there is no base case to arrange. What ends the walk is the fast
+finger running out of room.
+
+The steps:
+
+  1. Put both fingers - call them slow and fast - on the head of the list.
+
+  2. Repeat for as long as BOTH of these are true:
+       - fast is pointing at an actual node (not None)
+       - that node has something after it
+
+     Checking them in that order matters: the second question is only safe to
+     ask once the first has been answered yes.
+
+  3. Inside the loop, move slow forward one node and fast forward two nodes.
+
+  4. When the loop stops, slow is on the middle. Hand it back.
+
+Why does stopping there give the middle? Because slow has always travelled
+exactly half as far as fast. Fast stops when it has run out of chain, having
+covered the whole list - so slow has covered half of it, which is the middle.
+
+And which middle? The condition in step 2 gives you the SECOND middle on an
+even-length list. To get the first middle instead, ask about fast.next and
+fast.next.next rather than fast and fast.next, which stops the walk one step
+sooner.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code cannot count the chain and then jump to the halfway point, because a
+linked list has no jumping - you can only follow one link at a time, and you do
+not know the length until you have walked it.
+
+So it does something neater. It sends two markers along the chain at once,
+starting both at the very front. One of them takes a single step at a time. The
+other takes two steps at a time.
+
+Because the fast marker covers ground exactly twice as quickly, it reaches the
+end of the chain at the moment the slow marker has covered exactly half of it.
+That is the whole mechanism - no counting, no second pass, no knowing the length
+in advance.
+
+The only care needed is knowing when to stop. The fast marker is about to take
+two steps, so before each move the code checks two things: that the fast marker
+is actually on a node, and that there is something after it. If either is false,
+there is not enough chain left for another double step, so the walk ends. On a
+list with an odd number of nodes the fast marker ends up exactly on the last
+node; on an even one it runs just past the end. Either way the slow marker has
+gone half as far, so it is standing on the middle.
+
+Then the code simply hands back whatever the slow marker is pointing at.""",
+
+    """8. THE CODE, line by line.
+
+Keep [1,2,3,4,5] beside you; the answer is node 3.
+
+    slow = fast = head
+Both markers start on the first node. Writing it as one line assigns the same
+starting node to both - they are two separate variables that happen to begin in
+the same place, and they immediately diverge once the loop runs.
+
+    while fast and fast.next:
+The stopping rule from section 3, and both halves are load-bearing.
+
+  "fast" asks: is the fast marker on an actual node? On an even-length list it
+  eventually becomes None, and this half stops us before anything reads from it.
+
+  "fast.next" asks: does that node have something after it? On an odd-length
+  list the fast marker lands exactly on the last node, and this half stops us
+  before it tries to step past the end.
+
+The ORDER is not optional. Python evaluates "and" left to right and stops at the
+first false condition, so "fast" being checked first is what makes it safe to
+read fast.next in the second half. Swap them and an empty list crashes.
+
+This is also the line that decides WHICH middle you get on an even-length list -
+this version returns the second one.
+
+    slow = slow.next
+One step. The slow marker advances by a single node per turn of the loop.
+
+    fast = fast.next.next
+Two steps, in one expression. Reading fast.next.next is only safe because the
+loop condition has just proved that both fast and fast.next exist. Writing this
+as two separate "fast = fast.next" lines would skip that guarantee halfway
+through - see case 5 in section 4.
+
+    return slow
+The slow marker is on the middle. Return the node itself, not its value - the
+problem asks for the node, and returning the node lets the caller read the rest
+of the list from there, which some follow-up questions rely on.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+ODD LENGTH: [1] -> [2] -> [3] -> [4] -> [5] -> None
+
+  start:            slow = 1, fast = 1
+  check: fast is node 1 (yes), fast.next is node 2 (yes) -> run
+    slow = 2
+    fast = fast.next.next = node 3
+  check: fast is node 3 (yes), fast.next is node 4 (yes) -> run
+    slow = 3
+    fast = node 5
+  check: fast is node 5 (yes), fast.next is None (no) -> STOP
+    This is the odd case: fast landed exactly on the last node.
+  return slow = node 3.
+
+  Count it by hand: 1 and 2 on the left, 4 and 5 on the right. Node 3 is the
+  middle. Correct.
+
+EVEN LENGTH: [1] -> [2] -> [3] -> [4] -> [5] -> [6] -> None
+
+  start:            slow = 1, fast = 1
+  check: yes, yes -> run.   slow = 2, fast = 3
+  check: yes, yes -> run.   slow = 3, fast = 5
+  check: fast is node 5 (yes), fast.next is node 6 (yes) -> run
+    slow = 4
+    fast = fast.next.next = node 6's next = None
+  check: fast is None (no) -> STOP
+    This is the even case: fast ran just past the end.
+  return slow = node 4.
+
+  The two middles are 3 and 4, and we returned the SECOND - exactly as section 3
+  predicted from the loop condition.
+
+SINGLE NODE: [1] -> None
+  start: slow = 1, fast = 1
+  check: fast is node 1 (yes), fast.next is None (no) -> STOP immediately
+  return node 1. Correct, and with no special case in the code.
+
+EMPTY LIST: head is None
+  start: slow = None, fast = None
+  check: "fast" is None -> STOP immediately, without ever reading fast.next
+  return None. Correct - and this is the case that would crash if the two halves
+  of the condition were written the other way round.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(L) where L is the number of nodes. The fast marker walks the whole list
+once; the slow one walks half of it. That is one and a half passes' worth of
+steps, which is still proportional to L. Honestly, the two-pass counting version
+is ALSO O(L) - the speed difference is a constant factor, not a change in
+growth. What the one-pass version genuinely buys is that it never needs to know
+the length in advance, which matters when the data arrives as a stream you can
+only read once.
+
+SPACE: O(1) - constant. Two variables, regardless of how long the list is.
+Nothing is copied and nothing is stored per node.
+
+THE #1 MISTAKE - the wrong loop condition, giving the wrong middle. "while fast
+and fast.next" returns the SECOND middle on an even list; "while fast.next and
+fast.next.next" returns the first. Neither is more correct in general - the
+problem decides. The mistake is not checking which one is wanted, and then being
+surprised when half the test cases fail by exactly one node. Draw six boxes,
+walk two fingers along them, and see which node you land on.
+
+A close second: writing the condition as "fast.next and fast", which reads
+fast.next before checking that fast exists and crashes on an empty list.
+
+WHERE ELSE THIS SHOWS UP - the same two markers, with the same speeds, detect a
+LOOP in a list. If the chain bends back on itself, fast can never run off the
+end; instead it laps slow. Each step fast gains exactly one node on slow, so the
+gap between them shrinks by one every time and therefore must hit exactly zero -
+the two markers land on the same node. That is Floyd's cycle detection, and it
+is the same four lines with a different stopping rule.
+
+ONE-SENTENCE TAKEAWAY: send one finger at twice the speed of the other, and when
+the fast one runs out of chain the slow one has covered exactly half - which is
+the middle, found in one pass with two variables.""",
 ]
 
 _EX_P0D["Move Zeroes"] = [
-    """The textbook case, traced.
-nums = [0,1,0,3,12], write = 0.
-x=0  -> skip.
-x=1  -> nums[0]=1, write=1  => [1,1,0,3,12]
-x=0  -> skip.
-x=3  -> nums[1]=3, write=2  => [1,3,0,3,12]
-x=12 -> nums[2]=12, write=3 => [1,3,12,3,12]
-The array now looks wrong - there is stale junk after index 2. The second loop
-fills indices 3..4 with zeros: [1,3,12,0,0].
-The stale tail is expected: the write pointer counts how many real values there
-are, and everything past it is garbage to be overwritten.""",
+    """1. THE GOAL, in plain English.
 
-    """No zeros at all - the array must come back unchanged.
-nums = [1,2,3]. Every element is non-zero, so write ends at 3 and each
-assignment nums[write]=x writes a value back onto ITSELF. The zero-fill loop
-`range(3,3)` is empty.
-Result [1,2,3]. Correct, though it does 3 redundant self-assignments. If that
-bothers you, guard with `if write != i`, but the branch usually costs more than
-the write.""",
+You are given a list of numbers, some of which are zero. Push every zero to the
+end, and keep all the other numbers in the order they were already in.
 
-    """All zeros, and the empty array.
-nums = [0,0,0]: write stays 0, the fill loop zeroes indices 0..2 (already zero).
-Result [0,0,0].
-nums = []: both loops are empty, returns []. No special-casing needed - the two
-loops degrade gracefully, which is a sign the invariant is right.""",
+You must do it IN PLACE - meaning you change the original list rather than
+building a new one and handing that back. In plain terms: no second list, no
+copy.
 
-    """The naive approach that breaks, and why.
-Tempting: iterate and `nums.remove(0)` then `nums.append(0)`.
-Two problems. First, mutating a list while iterating over it SKIPS elements -
-on [0,0,1] you remove index 0, the list shifts, and the loop's next index lands
-past the second zero. Second, remove() is O(n) each time, so the whole thing is
-O(n^2).
-The other tempting one - swapping every non-zero with nums[write] - is correct
-and also preserves order, but it does more writes than needed. Pack-then-fill is
-the cleanest statement of the invariant.""",
+    before:  [0, 1, 0, 3, 12]
+    after:   [1, 3, 12, 0, 0]
 
-    """The stable-partition invariant, stated properly.
-At every point in the first loop: nums[0:write] holds all non-zeros seen so far,
-IN THEIR ORIGINAL ORDER. That is the whole proof.
-'Stable' is the part people lose. If order did not matter you could do it with
-two pointers from both ends and fewer writes - but [0,1,0,3,12] would come back
-as [12,1,3,0,0], which fails the problem. Whenever a problem says 'preserving
-relative order', the write-pointer pack is the tool.""",
+Check the two requirements against that. The non-zero numbers are 1, 3, 12 -
+still in that relative order, which is what "preserving order" means. And the
+two zeros have been pushed to the back.
 
-    """Where the write-pointer shows up again.
-- Remove Element / Remove Duplicates from Sorted Array: same pack, different
-  skip condition.
-- Sort Colors (Dutch National Flag): three write pointers instead of one.
-- Partition a linked list around a value: same idea with node pointers.
-- Compacting a log or filtering a buffer in place before flushing it.
-Recognition cue: 'in place', 'O(1) extra space', 'preserve relative order'. When
-you see all three, reach for a write pointer.""",
+A tempting misreading: this is NOT sorting. If it were sorting, the answer would
+be [0, 0, 1, 3, 12]. Only the zeros move; everything else keeps its relative
+position.
+
+Another misreading worth naming: "in place" does not mean "swap things around
+until it looks right". It means the answer must end up in the original list
+without using extra storage that grows with the input.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION - build a new list. Walk the input, copying every non-zero
+number into a fresh list, then add as many zeros as you removed, then copy the
+whole thing back over the original.
+
+That is correct, easy to explain, and it is the version you should describe
+first because it makes the goal obvious. Its problem is the extra list: it costs
+memory proportional to the input, which is exactly what "in place" forbids.
+
+THE UPGRADE - two pointers moving through the SAME list, one reading and one
+writing.
+
+Picture the list as a row of boxes, and imagine two fingers on it. One finger,
+call it READ, walks along every box in turn looking at what is inside. The
+other, call it WRITE, marks the next slot where a non-zero number should be
+placed.
+
+    [0, 1, 0, 3, 12]
+     ^
+     write, read
+
+The rule is beautifully small:
+
+  If the box under READ holds a zero, do nothing at all - just move READ on.
+  If it holds anything else, copy it into the box under WRITE, then move WRITE
+  on by one.
+
+READ moves every step; WRITE only moves when something is written. So WRITE
+falls behind by exactly the number of zeros seen so far - which means it is
+always pointing at a slot whose original contents have already been read, or at
+the same slot READ is on. Nothing useful is ever overwritten.
+
+By the time READ reaches the end, every non-zero number has been packed toward
+the front in its original order, and WRITE is sitting exactly where the zeros
+should start. So the second half of the job is: fill from WRITE to the end with
+zeros.
+
+Two passes over the list, no extra memory.""",
+
+    """3. THE TRICK - why writing over the list cannot destroy anything.
+
+This is the step that deserves a moment, because copying into a list while you
+are still reading it looks dangerous.
+
+The safety comes from one fact: WRITE can never get ahead of READ.
+
+They start together. READ advances on every single step. WRITE advances only on
+some steps - the ones where a non-zero was found. So WRITE is always at or
+behind READ.
+
+    "at" happens when there have been no zeros yet. Then the copy writes a value
+    into the very box it was just read from - harmless, it writes the same value
+    back.
+
+    "behind" happens once a zero has been passed. Then WRITE is pointing at a
+    box READ has already moved past, so whatever was there has been dealt with.
+
+Either way, the box being written to holds nothing we still need. That is the
+whole safety argument, and it is worth being able to say in one sentence:
+WRITE never overtakes READ, so it only ever writes into boxes that have already
+been read.
+
+The gap between them has a meaning too, which is a nice thing to notice: at any
+moment, READ minus WRITE is exactly the number of zeros seen so far. That is why
+the final fill is so simple - when READ reaches the end, WRITE is sitting at
+"length minus the number of zeros", which is precisely the first slot that
+should become a zero.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - no zeros at all. [1, 2, 3]. Every step writes, so WRITE and READ move
+together and each value is written back into its own box. WRITE ends at 3, which
+is the length, so the second loop has nothing to do. The list is unchanged.
+Correct, and with no special case.
+
+CASE 2 - all zeros. [0, 0, 0]. Nothing is ever written, so WRITE stays at 0. The
+second loop then fills every position with zero - writing zeros over zeros,
+which is harmless. Correct.
+
+CASE 3 - the empty list. Both loops have nothing to iterate over. Nothing
+happens. Correct.
+
+CASE 4 - trying to do it in ONE pass with swaps. A popular variant swaps each
+non-zero with the value at WRITE instead of copying and then filling. That also
+works and is genuinely one pass. But it performs a swap on every non-zero even
+when WRITE and READ are the same box, which is a pointless write. The
+copy-then-fill version does fewer writes when the list is mostly non-zero.
+Either is acceptable; be able to say why you chose yours.
+
+CASE 5 - forgetting the second loop. If you only pack the non-zeros forward and
+stop, the tail of the list still holds its old values. [0,1,0,3,12] would become
+[1,3,12,3,12] - the front is right and the tail is stale garbage. The second
+loop is not tidying up; it is half the algorithm.
+
+CASE 6 - moving WRITE on every step instead of only on a write. Then WRITE and
+READ are always equal, every value gets written back to itself, and nothing
+moves at all. The list comes out unchanged.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+IN PLACE: changing the original list rather than producing a new one. The test
+is memory: an in-place algorithm uses a fixed amount of extra space no matter how
+big the input is - here, one integer.
+
+TWO POINTERS: two positions in the same list, moved under a rule. This variant
+is often called the READ/WRITE or FAST/SLOW pointer pattern: one index scans
+everything, the other marks where the next kept item goes. It is the standard
+shape for "remove or move items without a second list", and the same pattern
+solves Remove Duplicates from Sorted Array and Remove Element.
+
+INDEX: a position in the list, counting from 0. nums[0] is the first item.
+
+range(write, len(nums)): Python for "the numbers from write up to, but not
+including, the length". So if write is 3 and the list has 5 items, that is
+positions 3 and 4 - exactly the tail that needs zeroing.
+
+STABLE: an operation is stable if items that are not moved keep their relative
+order. This algorithm is stable for the non-zero values, which is precisely what
+the problem demands.
+
+O(n) and O(1): the costs, where n is the length of the list. O(n) means the work
+grows in step with the list - double the list, double the work. O(1) means the
+extra memory does not grow at all. Together they are the best possible here,
+since you must at least look at every item once.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: walk the list once copying every non-zero
+forward into the next free slot, then fill whatever is left over with zeros.
+
+No recursion here - two straight loops - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Keep one counter, call it write, starting at 0. It means "the next slot
+     where a kept value belongs". It is also, at any moment, a count of how many
+     non-zero values have been kept so far - those two readings are the same
+     number, which is a useful thing to hold in your head.
+
+  2. Walk through every value in the list, in order.
+
+  3. If the value is zero, do nothing. Skip it entirely - do not write it, do
+     not advance write.
+
+  4. If the value is not zero, put it into the slot at write, then move write on
+     by one.
+
+     This is safe because write can never be ahead of the position you are
+     reading - see section 3. At worst it writes a value back into its own box.
+
+  5. When the walk finishes, every kept value is packed at the front in its
+     original order, and write is sitting on the first slot that should become a
+     zero.
+
+  6. Walk from write to the end of the list, setting every slot to zero.
+
+  7. The list is now correct. Hand it back.
+
+Step 6 is the half people forget. Without it the front of the list is right and
+the tail still holds stale copies of values that have already been moved
+forward.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code does the job in two sweeps of the same list, using no extra storage
+beyond a single counter.
+
+In the first sweep it reads every value in turn and asks one question: is this a
+zero? If it is, it ignores it completely and moves on - zeros are simply not
+copied anywhere. If it is not a zero, the code places it into the next free slot
+at the front of the list and nudges its counter along.
+
+That counter is the whole bookkeeping. It always points at the next place a kept
+value should go, and it only moves when something is actually kept. Because of
+that, it always trails behind the reading position by exactly the number of
+zeros seen so far - so the slot it points at is one whose original contents have
+already been read and dealt with. Writing there can never destroy anything still
+needed.
+
+By the end of the first sweep, all the non-zero values sit at the front of the
+list in the same order they had originally, and the counter is resting on the
+first position that ought to be a zero.
+
+The second sweep is then trivial: fill everything from that position to the end
+with zeros. That is what turns the leftover stale values at the tail into the
+zeros the answer requires.""",
+
+    """8. THE CODE, line by line.
+
+Keep [0, 1, 0, 3, 12] beside you; the answer is [1, 3, 12, 0, 0].
+
+    write = 0
+The single counter. Read it two ways, both true at once: "the next slot where a
+kept value belongs", and "how many non-zero values I have kept so far". It
+starts at 0 because nothing has been kept yet.
+
+    for x in nums:
+Walk the values themselves rather than their positions. We never need the
+reading position as a number - only the values in order - so this is the
+simplest form. The reading position is implicit, and it advances on every single
+turn of the loop, which is exactly what makes the safety argument in section 3
+hold.
+
+    if x != 0:
+The only decision in the whole algorithm. A zero is simply skipped: no write, no
+advance. Nothing else is needed to "remove" it, because the second loop will
+write zeros back in the right place later.
+
+    nums[write] = x
+Place the kept value at the front. This writes into the SAME list being read,
+which is safe because write is at or behind the reading position - at worst it
+writes x back into the box it just came from. See section 3.
+
+    write += 1
+Advance the counter, but ONLY here, inside the if. Moving it on every turn of the
+loop instead would keep it level with the reading position, every value would be
+written back onto itself, and nothing would move at all - see case 6 in
+section 4.
+
+    for i in range(write, len(nums)):
+        nums[i] = 0
+The second half of the algorithm. When the first loop ended, write was sitting
+on the first slot that should be a zero, and everything from there to the end
+still holds stale values left over from before the packing. This loop overwrites
+all of them with zeros.
+
+Leaving this loop out gives [1, 3, 12, 3, 12] on our input - a right-looking
+front and a garbage tail. It is not tidying up; it is the other half of the job.
+
+    return nums
+The list has been changed in place, so returning it is a convenience for the
+caller rather than a necessity - the caller's own list is already correct.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [0, 1, 0, 3, 12],  write = 0
+
+FIRST LOOP - reading each value in turn:
+
+  x = 0   it IS zero -> skip entirely.
+          nums = [0, 1, 0, 3, 12]   write = 0
+
+  x = 1   not zero -> nums[0] = 1, then write = 1
+          nums = [1, 1, 0, 3, 12]   write = 1
+          Note position 1 still holds the old 1 - a stale copy. That is fine;
+          the reading position has already passed it.
+
+  x = 0   it IS zero -> skip.
+          nums = [1, 1, 0, 3, 12]   write = 1
+
+  x = 3   not zero -> nums[1] = 3, then write = 2
+          nums = [1, 3, 0, 3, 12]   write = 2
+
+  x = 12  not zero -> nums[2] = 12, then write = 3
+          nums = [1, 3, 12, 3, 12]  write = 3
+
+  Loop ends. The first three slots hold 1, 3, 12 - the kept values, in their
+  original order. Positions 3 and 4 hold stale copies. write = 3, which is
+  exactly where the zeros should begin.
+
+  Sanity check on the arithmetic from section 3: the list has 5 items and 2 of
+  them were zeros, and write ended at 5 - 2 = 3. Correct.
+
+SECOND LOOP - i runs from write (3) to the end:
+
+  i = 3:  nums[3] = 0   ->  [1, 3, 12, 0, 12]
+  i = 4:  nums[4] = 0   ->  [1, 3, 12, 0, 0]
+
+return [1, 3, 12, 0, 0]. Correct.
+
+Watch the write counter across the whole first loop: 0, 0, 1, 1, 2, 3. It stayed
+put on the two zeros and advanced on the three non-zeros - and it never once got
+ahead of the value being read.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) where n is the length of the list. The first loop looks at every item
+once. The second loop writes at most n items. Two passes, so about 2n steps -
+which is still O(n), because the notation deliberately ignores constant factors
+and cares only about how the work grows as the list grows.
+
+SPACE: O(1) - constant. One integer counter, no matter how long the list is.
+This is what satisfies the "in place" requirement; the new-list version from
+section 2 would be O(n) space and would fail it.
+
+THE #1 MISTAKE - forgetting the second loop. Packing the non-zeros forward is
+only half the job; without the zero-fill, the tail keeps stale copies and the
+output looks like [1, 3, 12, 3, 12]. It is easy to miss because the front of the
+answer looks perfectly right, and a test that only checks the first few values
+will pass.
+
+A close second: advancing write on every iteration rather than only when a value
+is kept. Then write and the reading position stay level, every value is written
+back onto itself, and the list comes out completely unchanged - which looks like
+the code did nothing rather than like a bug.
+
+ONE-SENTENCE TAKEAWAY: keep one counter for "where the next kept value goes",
+copy every non-zero into it as you scan, and fill the rest with zeros at the end
+- the counter can never overtake the scan, so writing into the same list is
+always safe.""",
 ]
 
 _EX_P0D["Palindrome Linked List"] = [
