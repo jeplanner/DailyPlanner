@@ -28702,6 +28702,315 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1D[_e["title"]]
 
 
+_EX_P1E = {}
+
+_EX_P1E["Boats to Save People"] = [
+    """The example, traced.
+people = [3,2,2,1], limit = 3 -> sorted [1,2,2,3].
+light=0 (1), heavy=3 (3): 1+3 = 4 > 3, so 3 rides ALONE. heavy=2, boats=1.
+light=0 (1), heavy=2 (2): 1+2 = 3 <= 3, they pair. light=1, heavy=1, boats=2.
+light=1, heavy=1: same person, 2+2 = 4 > 3, so rides alone. heavy=0, boats=3.
+Loop ends (light > heavy). Answer 3.
+Note `light <= heavy` rather than `<`: when the two pointers land on the same
+person, that person still needs a boat.""",
+
+    """Why the greedy is optimal, as an exchange argument.
+Claim: pairing the heaviest with the lightest is never worse than any other
+pairing. Suppose the heaviest person H can fit with the lightest L. In some
+optimal solution, if H is alone, then L is either alone or with someone else X.
+Swap so that H rides with L; X is no heavier than H, so whoever L was with can
+absorb X, and the boat count does not increase.
+And if H cannot fit with L, H cannot fit with anyone, so H must ride alone -
+which is exactly what the code does. Both branches are forced, which is why
+there is no DP here.""",
+
+    """Why `heavy` decrements unconditionally.
+Read the loop again: `heavy -= 1` sits OUTSIDE the if. That encodes the key
+insight - the heaviest remaining person boards a boat on every iteration, with
+or without a companion. Only `light` is conditional.
+A very common bug is putting both pointer moves inside the if/else, which
+double-counts or loops forever. The one-line version of the algorithm is: 'each
+boat takes the heaviest person, plus the lightest if there is room'.""",
+
+    """Edge cases.
+Single person [5], limit 5 -> light == heavy, 5+5 = 10 > 5, so alone -> 1 boat.
+Everyone pairs: [1,1,1,1], limit 2 -> pairs each time -> 2 boats.
+Nobody pairs: [3,3,3], limit 3 -> each alone -> 3 boats.
+The problem guarantees every individual weight is at most the limit, so no
+person is unrescuable. If that guarantee were removed you would need an
+explicit check, and returning -1 or raising would be the honest answer - worth
+asking about.""",
+
+    """Complexity, and the counting-sort follow-up.
+Sorting dominates: O(n log n) time, O(1) extra space (or O(n) depending on the
+sort). The two-pointer scan is O(n).
+Follow-up: 'weights are integers between 1 and 30,000' - then counting sort
+makes it O(n + W), effectively linear, which is the standard optimisation for
+bounded integer inputs. Mentioning that you can drop below n log n when the
+value range is bounded is a nice extra, and it applies to Sort Colors, H-Index
+and Top K Frequent as well.""",
+
+    """The family: sorted two-pointer greedy.
+The shape 'sort, then close in from both ends making a forced local choice'
+solves a cluster: Two Sum on a sorted array, 3Sum, Container With Most Water
+(move the shorter wall), Divide Players Into Teams of Equal Skill (pair
+smallest with largest), Assign Cookies, and Minimum Number of Arrows.
+The recognition cue is a problem about PAIRING or MATCHING elements under a
+constraint where the extremes are the constrained ones. If the greedy pairing
+has an exchange argument, you get O(n log n); if it does not, you are usually
+looking at DP or flow.""",
+]
+
+_EX_P1E["Count Good Nodes in a Binary Tree"] = [
+    """The standard example, traced with the running max.
+        3
+       / \\
+      1   4
+     /   / \\
+    3   1   5
+dfs(3, -inf): 3 >= -inf -> GOOD. new_max = 3.
+  dfs(1, 3): 1 < 3 -> not good. new_max stays 3.
+    dfs(3, 3): 3 >= 3 -> GOOD (note the >=, not >). new_max 3.
+  dfs(4, 3): 4 >= 3 -> GOOD. new_max = 4.
+    dfs(1, 4): not good.
+    dfs(5, 4): 5 >= 4 -> GOOD.
+Total 4 good nodes: the root, the 3 under 1, the 4, and the 5.""",
+
+    """Why >= and not >, which is the detail that decides the answer.
+'Good' means no node on the path is GREATER than this one - so an EQUAL value
+on the path is fine. In the trace above, the leaf 3 under the root 3 counts.
+Change the comparison to `node.val > max_so_far` and that node is silently
+dropped, giving 3 instead of 4. Whenever a prompt says 'no greater' rather than
+'all smaller', check whether ties count and restate it before coding; this
+problem exists partly to see whether you notice.""",
+
+    """Why the max is passed DOWN rather than returned up.
+The property depends on the path from the ROOT, so the information flows
+downward - each node needs to know what its ancestors held. That makes this a
+PREORDER pattern: act on the node using inherited state, then recurse.
+Contrast Diameter or Maximum Path Sum, where the answer depends on the
+SUBTREE, so information flows upward and the shape is postorder. Being able to
+say 'root-to-node property means state flows down; subtree property means
+results flow up' is the transferable idea, and it decides the shape of most
+tree problems.""",
+
+    """Edge cases.
+None -> 0.
+A single node -> its value is always >= -inf, so 1. The root is ALWAYS good, by
+definition, since its path contains only itself.
+A strictly decreasing chain 5 -> 4 -> 3 -> 2 -> only the root is good, answer 1.
+A strictly increasing chain 1 -> 2 -> 3 -> 4 -> every node is good, answer 4.
+All equal values [3,3,3] -> all good, because of the >=. These four cases
+between them exercise every branch.""",
+
+    """Why float('-inf') for the initial max.
+The initial sentinel must be smaller than any possible node value. Using 0 is a
+common shortcut that breaks the moment the tree contains negative values -
+a root of -5 would compare -5 >= 0 as false, and the root would not count,
+which is impossible by definition.
+The alternative that avoids sentinels entirely: seed with the root's own value,
+`dfs(root, root.val)`, which is also correct and arguably cleaner. Either way,
+state the assumption about the value range.""",
+
+    """Complexity and the iterative version.
+Time O(n): every node is visited once and does O(1) work. Space O(h) for the
+recursion stack - O(log n) balanced, O(n) skewed.
+Iteratively, push (node, max_so_far) pairs onto a stack:
+    stack, count = [(root, float('-inf'))], 0
+    while stack:
+        node, mx = stack.pop()
+        if node is None: continue
+        if node.val >= mx: count += 1
+        nm = max(mx, node.val)
+        stack.append((node.left, nm)); stack.append((node.right, nm))
+Carrying the inherited state INSIDE the stack entry is the general technique
+for converting any downward-flowing recursion into a loop.""",
+]
+
+_EX_P1E["House Robber II (circular street)"] = [
+    """Why the circle reduces to two linear problems.
+In a circle, house 0 and house n-1 are adjacent, so they can never BOTH be
+robbed. That means every valid solution falls into one of two cases: it
+excludes the last house, or it excludes the first. (A solution excluding both
+is covered by either.)
+So run the ordinary linear House Robber on nums[0..n-2] and on nums[1..n-1] and
+take the better result. The circular constraint has been removed by
+construction rather than handled inside the DP - which is the trick the problem
+is testing, and it takes one sentence to explain.""",
+
+    """A trace on [2,3,2].
+rob_line([2,3]) - excluding the last house:
+  money 2: prev,curr = 0, max(0, 0+2) = 2
+  money 3: prev,curr = 2, max(2, 0+3) = 3   -> 3
+rob_line([3,2]) - excluding the first house:
+  money 3: prev,curr = 0, 3
+  money 2: prev,curr = 3, max(3, 0+2) = 3   -> 3
+Answer max(3,3) = 3. Correct: robbing house 1 alone yields 3, while 2+2 = 4 is
+illegal because houses 0 and 2 are adjacent in the circle. Note that a solution
+which forgot the circularity would happily return 4.""",
+
+    """The linear recurrence, and the two-variable trick.
+dp[i] = max(dp[i-1], dp[i-2] + nums[i]) - 'skip this house' versus 'take it and
+add the best up to two houses back'.
+Because the recurrence reaches back only two steps, you do not need an array:
+`prev, curr = curr, max(curr, prev + money)` rolls the window in O(1) space.
+Read the tuple assignment carefully - the right-hand side is evaluated first,
+so `prev` in the expression is still the OLD prev. Splitting it into two
+statements is the classic bug.""",
+
+    """Edge cases, all of which are real test inputs.
+[5] -> the guard returns 5 immediately. Without it, nums[:-1] is empty and
+nums[1:] is empty, so both calls return 0 - a wrong answer of 0 for a single
+house. This guard is the most commonly missed line in the problem.
+[2,3] -> rob_line([2]) = 2, rob_line([3]) = 3 -> 3. Correct: with two houses in
+a circle they are adjacent both ways, so you take the larger.
+[1,2,3,1] -> excluding last: [1,2,3] -> 4; excluding first: [2,3,1] -> 3;
+answer 4 (houses 0 and 2).""",
+
+    """Complexity.
+Two linear passes, each O(n) time and O(1) space, so O(n) and O(1) overall.
+The slicing `nums[:-1]` and `nums[1:]` does allocate two O(n) copies; if the
+interviewer objects, pass start and end INDICES into rob_line instead of
+slices and the space really is O(1). That is a small point but a good one to
+volunteer - it shows you know what a slice costs in Python, which is exactly
+the kind of detail that distinguishes candidates on an easy problem.""",
+
+    """The family, and the general 'circular' technique.
+House Robber I is the linear base. House Robber III is the same idea on a TREE,
+where the recurrence becomes 'rob this node and skip children, or skip it and
+take the best of each child' - a postorder DFS returning a pair.
+More broadly, 'the array is circular' is nearly always handled by one of two
+tricks: (1) split into two linear cases, as here; or (2) concatenate the array
+with itself and slide a window of length n, as in Maximum Circular Subarray.
+Naming both options and picking the one that fits is a strong answer.""",
+]
+
+_EX_P1E["Jump Game II (fewest jumps)"] = [
+    """The example, traced level by level.
+nums = [2,3,1,1,4]. jumps=0, current_end=0, farthest=0.
+i=0: farthest = max(0, 0+2) = 2. i == current_end (0), so jump: jumps=1,
+     current_end=2.
+i=1: farthest = max(2, 1+3) = 4.
+i=2: farthest = max(4, 2+1) = 4. i == current_end (2), so jump: jumps=2,
+     current_end=4.
+i=3: loop ends (range stops at len-1 = 4, so i goes 0..3).
+Answer 2: jump 0 -> 1, then 1 -> 4.
+Notice we never decide WHICH index to jump to - only how many jumps are needed,
+which is what makes the greedy work.""",
+
+    """Why this is BFS in disguise.
+Think of the indices reachable in exactly k jumps as 'level k'. current_end is
+the last index of the current level, and farthest is the last index of the NEXT
+level, computed while scanning the current one. Hitting i == current_end means
+'the current level is exhausted, advance to the next' - which is exactly what
+incrementing jumps means.
+So this is breadth-first search with the queue replaced by two integers,
+because the reachable set from any level is always a contiguous RANGE. That
+observation is what turns an O(n) BFS with a queue into an O(1)-space scan.""",
+
+    """Why the loop stops at len(nums) - 1.
+If it included the last index, then arriving exactly at the final index would
+trigger one more `i == current_end` and count a phantom jump. You do not jump
+FROM the destination.
+Test it on [1,1]: with the correct range, i=0 only -> farthest=1, i==0==
+current_end -> jumps=1, answer 1. With an off-by-one range you would get 2.
+This is the single most common bug on this problem, and it produces answers
+that are exactly one too large - suspiciously plausible.""",
+
+    """Edge cases.
+[0] -> the loop body never executes, answer 0. You are already at the end.
+[2,1] -> i=0: farthest=2, i==current_end -> jumps=1. Answer 1.
+[1,1,1,1] -> jumps at i=0,1,2 -> 3.
+Note the problem GUARANTEES the end is reachable. If it did not, you would need
+a check that farthest > i at each step, otherwise a zero at index i strands you
+- and that check is exactly Jump Game I, the boolean version. Ask whether
+reachability is guaranteed; it changes the code.""",
+
+    """Complexity, versus the DP everyone writes first.
+Greedy: O(n) time, O(1) space, one pass.
+DP: dp[i] = 1 + min(dp[j]) over all j that can reach i - O(n^2) time and O(n)
+space. On n = 10,000 that is 100 million operations versus 10,000. Both are
+correct; only one passes.
+The reason greedy works here and not on every 'minimum steps' problem is that
+the reachable set is a contiguous prefix-extending range, so the farthest reach
+is always the best choice. If jumps had COSTS rather than uniform weight 1, the
+greedy would break and you would need Dijkstra or DP.""",
+
+    """The family and the recognition cue.
+Jump Game I (can you reach the end?) - same scan, just track farthest and fail
+if i > farthest. Jump Game III (arbitrary +/- jumps) - a real BFS, because the
+reachable set is no longer a range. Minimum Number of Taps to Water a Garden
+and Video Stitching are the same greedy-interval-covering algorithm in
+disguise: sort or bucket by reach, then extend the current window.
+Cue to remember: 'fewest steps' with UNIFORM cost and a CONTIGUOUS reachable
+range -> greedy level scan. Non-uniform cost or scattered reachability -> BFS
+or Dijkstra.""",
+]
+
+_EX_P1E["Longest Palindromic Subsequence"] = [
+    """A full trace on 'bbbab'.
+Fill by increasing interval, from the bottom-right upward.
+dp[i][i] = 1 for every i (a single character).
+i=3 ('a'), j=4 ('b'): differ -> max(dp[4][4], dp[3][3]) = 1.
+i=2 ('b'), j=3 ('a'): differ -> 1.  j=4 ('b'): s[2]==s[4] -> dp[3][3]+2 = 3.
+i=1 ('b'), j=2: match -> dp[2][1]+2 = 0+2 = 2.  j=3: differ -> max(1,2) = 2.
+     j=4: s[1]==s[4] -> dp[2][3]+2 = 1+2 = 3... and max with dp[2][4]=3 -> 4.
+i=0: eventually dp[0][4] = 4, the subsequence 'bbbb'.
+Answer 4. Note 'bbbb' is not contiguous - it skips the 'a'.""",
+
+    """Subsequence versus SUBSTRING, which changes the whole algorithm.
+Longest palindromic SUBSTRING must be contiguous, and the standard solution is
+expand-around-centre in O(n^2) time and O(1) space.
+Longest palindromic SUBSEQUENCE may skip characters, so expansion does not
+work and you need interval DP in O(n^2) time and O(n^2) space.
+On 'bbbab': the longest substring is 'bbb' (length 3) but the longest
+subsequence is 'bbbb' (length 4). Different answers on the same input - so the
+first thing to do is confirm which word the prompt used.""",
+
+    """Why the loops run in that order.
+dp[i][j] depends on dp[i+1][j-1], dp[i+1][j] and dp[i][j-1] - all of which have
+a LARGER i or a SMALLER j. So i must descend from n-1 to 0 while j ascends from
+i+1. Reverse either loop and you read cells that have not been filled yet, and
+the answer is silently wrong rather than crashing (the array is pre-zeroed).
+The general rule for interval DP: fill by increasing interval LENGTH, which the
+descending-i/ascending-j nesting achieves implicitly.""",
+
+    """The elegant alternative worth mentioning.
+The longest palindromic subsequence of s equals the Longest Common Subsequence
+of s and reverse(s). On 'bbbab', reverse is 'babbb', and their LCS is 'bbbb',
+length 4 - the same answer.
+It is a nice observation and it reuses a standard algorithm, but it is the same
+O(n^2) time and space, and it has a subtle failure to be aware of: the LCS
+found need not itself be a palindrome when there are repeated characters,
+though its LENGTH is still correct. Offer it as a second solution, not a
+first.""",
+
+    """Edge cases and space reduction.
+'' -> n=0, the loops never run; guard and return 0.
+'a' -> dp[0][0] = 1.
+'abcd' (no repeats) -> every comparison differs, so the answer is 1: any single
+character is a palindrome.
+'aaaa' -> 4, the whole string.
+Space: dp[i] depends only on dp[i+1], so two rows suffice, reducing O(n^2)
+space to O(n) - the standard follow-up. You cannot reduce the TIME below
+O(n^2) with any known general method.""",
+
+    """The interval-DP family.
+The skeleton 'dp over [i..j], ends match -> extend the inner interval, else take
+the best of dropping either end' recurs across: Longest Common Subsequence,
+Edit Distance, Palindromic Substrings (counting), Minimum Insertion Steps to
+Make a String Palindrome (which is simply n minus this answer), Burst Balloons
+and Matrix Chain Multiplication.
+Recognition cue: the subproblem is a CONTIGUOUS RANGE of the input and the
+decision is about its two ends. When you see that, reach for a 2-D table filled
+by increasing interval length.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1E:
+        _e["examples"] = _EX_P1E[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
