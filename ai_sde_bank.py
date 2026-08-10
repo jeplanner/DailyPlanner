@@ -22725,48 +22725,106 @@ because that is how many paused calls pile up.""",
 ]
 
 _EX_P0["Min Cost Climbing Stairs (DP)"] = [
-    """The textbook case, traced.
-cost = [10, 15, 20]. prev=0, curr=0 (both starting positions are free).
-  c=10: new = 10 + min(0,0) = 10  -> prev=0,  curr=10
-  c=15: new = 15 + min(0,10) = 15 -> prev=10, curr=15
-  c=20: new = 20 + min(10,15) = 30-> prev=15, curr=30
-Answer = min(15, 30) = 15. Check by hand: start on stair 1 (cost 15), then step
-two to the top. 15 is right.""",
+    """A staircase where every stair charges you a toll.
 
-    """The off-by-one at the very end, which is the whole difficulty.
-Returning curr instead of min(prev, curr) gives 30 above - you paid for the last
-stair when you did not have to.
-The top is NOT a stair; it has no price. You step onto it from either of the
-last two stairs, so the answer is a minimum over two values. Every wrong
-solution to this problem is this line.""",
+Same staircase as Climbing Stairs, with one change: standing on a stair costs
+money. You can still move 1 or 2 stairs at a time, and now you want to reach the
+top as CHEAPLY as possible, not in the most ways.
 
-    """A longer case where the cheap path is not the obvious one.
-cost = [1, 100, 1, 1, 1, 100, 1, 1, 100, 1]
-Walking the DP: the optimal route pays 1 at index 0, then hops the 100s by
-taking two-steps, landing on indices 0,2,3,4,6,7,9 for a total of 6.
-A greedy "always take the cheaper next stair" gets trapped: from index 0 it
-compares 100 against 1 and jumps to index 2, which is right here, but the same
-rule fails on other layouts. DP considers every arrival at every stair, so it
-cannot be tricked.""",
+Three important rules, and the third catches everyone:
+1. You may start on either the first stair OR the second - both starts are free
+   to choose, though you still pay whatever that stair costs.
+2. Stepping ONTO a stair means paying its toll.
+3. THE TOP IS NOT A STAIR. It is the floor above, and it costs nothing.
 
-    """The two-element edge case.
-cost = [5, 3]. prev=0, curr=0.
-  c=5: new = 5 + 0 = 5   -> prev=0, curr=5
-  c=3: new = 3 + 0 = 3   -> prev=5, curr=3
-Answer = min(5, 3) = 3. Correct: start on stair 1 (index 1, cost 3) and step
-one to the top, ignoring index 0 entirely.
-This confirms that both starting positions are genuinely free - a seeding error
-here shows up immediately.""",
+Take cost = [10, 15, 20], meaning stair 0 costs 10, stair 1 costs 15, stair 2
+costs 20.
 
-    """Why the two updates must be simultaneous.
-Writing it as two statements:
-    prev = curr
-    curr = c + min(prev, curr)
-now uses the NEW prev (which equals the old curr) on both sides of the min, so
-the recurrence collapses to c + curr and the answer drifts high.
-Do it as one tuple assignment, or save the old curr in a temporary first. This
-is the same trap as Climbing Stairs and House Robber - any two-variable rolling
-DP has it.""",
+Try the routes by hand:
+    start on stair 0 (pay 10), step to stair 2 (pay 20), step to the top
+        -> 30
+    start on stair 1 (pay 15), step two to the top
+        -> 15     <- cheaper
+Answer: 15.""",
+
+    """Building the rule, by asking the same question as before.
+
+To find the cheapest way to REACH a stair, ask: where did I come from? Only two
+possibilities - the stair just below, or the one two below. So:
+
+    cheapest_to_reach(stair) = its own toll
+                             + the smaller of
+                                 cheapest_to_reach(one below)
+                                 cheapest_to_reach(two below)
+
+The two starting stairs are free to arrive at (you begin there), so the
+cheapest way to reach stair 0 is just its own toll, and the same for stair 1.
+
+Now walk cost = [10, 15, 20] with two variables holding the last two answers.
+Both start at 0, meaning 'arriving here from outside costs nothing extra':
+
+    stair 0 (toll 10): 10 + smaller(0, 0)  = 10
+    stair 1 (toll 15): 15 + smaller(0, 10) = 15
+    stair 2 (toll 20): 20 + smaller(10,15) = 30
+
+So reaching stair 1 costs 15 and reaching stair 2 costs 30.""",
+
+    """The final line, which is where almost everyone loses this problem.
+
+You now know the cheapest cost to STAND ON each stair. But the goal is the TOP,
+which is not a stair and charges nothing.
+
+You can step onto the top from either of the last two stairs. So the answer is
+the cheaper of those two:
+
+    answer = smaller(15, 30) = 15
+
+If you instead return the last value (30), you have paid for the final stair
+when you never needed to stand on it. That single line - returning the minimum
+of the last TWO values rather than the last one - is the entire difficulty of
+this problem, and it is where nearly every wrong solution goes wrong.
+
+Sanity check against the routes we listed by hand: 15 matches.""",
+
+    """Why you cannot just always take the cheaper next stair.
+
+The tempting shortcut is: look at the next two stairs and step onto whichever
+is cheaper. That is called a GREEDY rule - decide using only what is right in
+front of you.
+
+It fails, because a cheap stair now can force an expensive one later. Look at:
+
+    cost = [1, 100, 1, 1, 1, 100, 1, 1, 100, 1]
+
+The cheapest route pays only 6 in total, by landing on the stairs holding 1 and
+hopping over every 100 with two-steps. To do that you sometimes have to pass up
+an immediately-cheaper option so that you land well two moves later.
+
+The method above never gets tricked, because it computes the best cost of
+reaching EVERY stair and lets the later stairs choose. That is what dynamic
+programming buys you over a greedy rule - and knowing which problems need it is
+more valuable than the code.""",
+
+    """The trap in the code itself: updating both variables at once.
+
+We carry two numbers, prev and curr, and slide them forward. It MUST be one
+simultaneous update:
+
+    prev, curr = curr, toll + min(prev, curr)          # correct
+
+Python works out the whole right-hand side first, using the OLD values, then
+assigns. Write it as two lines instead:
+
+    prev = curr                       # prev is now the old curr
+    curr = toll + min(prev, curr)     # ...and this min sees the NEW prev!
+
+Both sides of the min are now the same number, so the formula quietly collapses
+and every answer comes out too high. Nothing crashes; the numbers are just
+wrong.
+
+Check with cost = [5, 3]: correct answer is 3 (start on stair 1, step straight
+to the top, ignoring stair 0 completely). If your code says 5 or 8, this is
+why.""",
 
     """The contrast with Climbing Stairs, which shares the recurrence.
 Climbing Stairs COUNTS routes and sums the two predecessors. This MINIMISES cost
@@ -23070,52 +23128,104 @@ contribution, record the bent one', all three stop being separate.""",
 ]
 
 _EX_P0["Merge Two Sorted Lists"] = [
-    """The textbook case, traced.
-l1 = 1->2->4, l2 = 1->3->4.
-  compare 1 and 1 -> take l1's 1 (<= keeps it stable), tail advances
-  compare 2 and 1 -> take l2's 1
-  compare 2 and 3 -> take 2
-  compare 4 and 3 -> take 3
-  compare 4 and 4 -> take l1's 4
-  l1 exhausted -> attach the rest of l2 (4)
-Result 1->1->2->3->4->4.""",
+    """Two tidy piles of cards, and one tidy pile out.
 
-    """One list empty.
-l1 = empty, l2 = 1->3. The while loop never runs, and the final line
-tail.next = l1 or l2 attaches all of l2 in one step.
-Both empty -> the loop does not run, tail.next becomes nothing, and dummy.next
-is nothing, which is the correct empty result.
-That one-line tail attachment is what removes the need for two cleanup loops.""",
+Imagine two piles of numbered cards on the table. Each pile is already sorted -
+smallest on top. You want ONE sorted pile.
 
-    """Completely disjoint ranges - the case where the loop barely runs.
-l1 = 1->2->3, l2 = 10->11->12.
-Every comparison takes from l1 until it is exhausted, then the whole of l2 is
-attached in one operation. Three comparisons, not six.
-Worth noticing because it shows the merge cost is O(n + m) driven by the SHORTER
-list's exhaustion, not by the total length.""",
+You do not need to think hard. Just look at the top card of each pile, take the
+smaller one, put it face-down on your new pile, and repeat. When one pile runs
+out, drop the whole remaining pile on the end.
 
-    """Why the dummy node earns its place.
-Without it, the first node needs a special case: "if the result head is not yet
-set, set it; otherwise append". That branch runs on every iteration and is where
-the bugs live.
-With the dummy, you have something to attach to from step one, and you return
-dummy.next at the end. Returning dummy itself leaves a stray 0 at the front -
-the single most common slip in this problem.""",
+That is the entire algorithm, and you have probably done it with real cards
+without calling it anything.
 
-    """Why <= rather than < matters for stability.
-With equal values (the two 1s above), taking from l1 preserves their original
-relative order. Using strict less-than takes from l2 first and swaps them.
-For plain integers nobody notices. When the nodes carry records sorted by a key,
-that swap is a stability bug - and it is the same single-character decision that
-makes Merge Sort stable. Worth saying out loud.""",
+Our two piles, written as LINKED LISTS (a chain where each item holds a value
+and an arrow pointing to the next item; the arrow is written ->):
 
-    """The scaled-up version this is the building block of.
-Merge k Sorted Lists uses a min-heap of the k list heads, popping the global
-smallest and pushing that list's next node - O(N log k).
-The alternative is repeated pairwise merging in a tournament, which uses this
-exact function log k times over.
-So this problem is not really about two lists; it is the primitive that the
-k-way merge and external sorting are built from.""",
+    pile A:  1 -> 2 -> 4
+    pile B:  1 -> 3 -> 4""",
+
+    """Doing it card by card.
+
+Compare the two tops each time and take the smaller:
+
+    tops are 1 and 1  -> tie; take A's 1        result: 1
+    tops are 2 and 1  -> take B's 1             result: 1 1
+    tops are 2 and 3  -> take 2                 result: 1 1 2
+    tops are 4 and 3  -> take 3                 result: 1 1 2 3
+    tops are 4 and 4  -> tie; take A's 4        result: 1 1 2 3 4
+    pile A is now empty -> drop the rest of B (the 4) on the end
+
+    final: 1 -> 1 -> 2 -> 3 -> 4 -> 4
+
+Notice the last step. You do NOT keep comparing once one pile is empty - you
+attach everything that is left in one move, because it is already sorted.""",
+
+    """The DUMMY node - a small trick that removes a whole class of bugs.
+
+You are building a new chain. The awkward moment is the very first card,
+because there is nothing yet to attach it to. Without a trick you would need a
+special case on every single step: 'if this is the first card, start the chain;
+otherwise attach to the end'.
+
+The trick: before you start, create one throwaway node that holds nothing -
+call it the DUMMY. Now you always have something to attach to, from card one.
+At the end, the real answer is whatever the dummy points at.
+
+    dummy -> [ ] -> 1 -> 1 -> 2 -> 3 -> 4 -> 4
+              ^ the fake one, ignored at the end
+
+So you `return dummy.next`, not `return dummy`. Returning the dummy itself
+leaves a stray empty node stuck on the front, and that is the single most common
+slip in this problem.""",
+
+    """Why the comparison uses 'less than or equal' and not just 'less than'.
+
+When both tops are 1, which do you take? The code says take from pile A
+(`if a.val <= b.val`). Using strict 'less than' would take from B instead.
+
+For plain numbers nobody can tell the difference - a 1 is a 1. But suppose each
+card is a person's record and you are merging by surname. If two people share a
+surname and A's list had them in a particular order, taking from A first keeps
+that order; taking from B first silently swaps them.
+
+Preserving the original order of equal items is called being STABLE. It is one
+character of code - `<=` instead of `<` - and it is exactly the same decision
+that makes Merge Sort a stable sort. Worth saying out loud in an interview.""",
+
+    """The small and lopsided cases.
+
+ONE PILE EMPTY: pile A is empty, pile B is 1 -> 3. The comparison loop never
+runs even once, and the final 'attach whatever is left' line hands over the
+whole of B in one step. Answer 1 -> 3.
+
+BOTH EMPTY: the loop does not run, nothing is attached, and dummy.next is
+empty - the correct empty answer, with no special handling.
+
+NO OVERLAP AT ALL: A is 1 -> 2 -> 3 and B is 10 -> 11 -> 12. Every comparison
+takes from A until A is exhausted, then the whole of B is attached in ONE move.
+That is three comparisons, not six - which shows the work is driven by
+whichever pile empties first, not by the total number of cards.""",
+
+    """Speed, and why this small function matters more than it looks.
+
+Every card is looked at once and moved once, so the time is proportional to the
+total number of cards - written O(n + m) for piles of size n and m. No extra
+storage is needed beyond the dummy, because you are re-pointing the existing
+arrows rather than copying anything.
+
+Why it matters: this two-pile merge is the engine inside MERGE SORT, which
+sorts by splitting a list in half, sorting each half, and merging them back
+with exactly this routine.
+
+It also scales up. 'Merge k sorted lists' can be done by repeatedly merging
+pairs - use this function log(k) times - or by keeping the k current tops in a
+structure called a heap that always hands you the smallest. And the same idea
+sorts files far too big to fit in memory: sort chunks, write them out, then
+merge the sorted chunks by streaming their fronts. So this is not really a
+question about two lists; it is the primitive several bigger things are built
+from.""",
 ]
 
 _EX_P0["Subtree of Another Tree"] = [
