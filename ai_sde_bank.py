@@ -28195,6 +28195,513 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1B[_e["title"]]
 
 
+_EX_P1C = {}
+
+_EX_P1C["Find Right Interval"] = [
+    """The given example, traced.
+intervals = [[3,4],[2,3],[1,2]]
+starts sorted with their ORIGINAL indices: [(1,2),(2,1),(3,0)]
+start_values = [1,2,3]
+For [3,4]: bisect_left([1,2,3], 4) -> 3, which is past the end -> -1.
+For [2,3]: bisect_left([1,2,3], 3) -> 2 -> starts[2] is (3,0) -> index 0.
+For [1,2]: bisect_left([1,2,3], 2) -> 1 -> starts[1] is (2,1) -> index 1.
+Answer [-1, 0, 1]. Note the output is in the ORIGINAL order while the search
+happened in sorted order - carrying the index alongside the start is what makes
+that possible.""",
+
+    """Why bisect_left and not bisect_right.
+The requirement is the smallest start that is >= this end, so a start EQUAL to
+the end qualifies. bisect_left returns the first position where the value could
+be inserted while keeping order, which is exactly the first element >= the
+target. bisect_right would skip over an exact match and return the interval
+after it.
+Concretely with start_values = [1,2,3] and end = 2: bisect_left gives 1 (the
+start 2 itself, correct), bisect_right gives 2 (the start 3, wrong). One
+character, wrong answer - and this is the detail the problem exists to test.""",
+
+    """Why you must sort a COPY that carries indices.
+The answer must reference the original positions, but the binary search needs
+sorted order. Sorting `intervals` itself destroys the mapping. The trick is to
+sort tuples of (start, original_index), then keep a parallel list of just the
+start values for bisect to search - bisect cannot search a list of tuples by
+the first element alone without a key argument (added only in Python 3.10).
+An alternative is `sorted(range(n), key=lambda i: intervals[i][0])` and index
+through that, which some find clearer.""",
+
+    """Edge cases.
+Single interval [[1,2]]: starts = [(1,0)], bisect_left([1], 2) -> 1, past the
+end -> [-1]. An interval's right interval can be ITSELF only if its start >=
+its end, which for a valid interval means start == end (a point).
+[[1,1],[3,4]]: for [1,1], bisect_left([1,3], 1) -> 0 -> index 0, i.e. itself.
+That is correct by the definition, and a solution that explicitly excludes self
+gets it wrong.
+Duplicate starts: sorted() breaks ties by the second element (the index), so
+the smallest index wins - deterministic, and worth stating since the prompt
+usually allows any valid answer.""",
+
+    """Complexity and the alternative.
+Sorting is O(n log n) and each of the n binary searches is O(log n), so
+O(n log n) overall with O(n) space.
+The alternative without sorting: put every start in a balanced BST or a sorted
+container and query the successor - same complexity, more machinery. Brute
+force is O(n^2): for each interval scan all others for the smallest qualifying
+start. On n = 20,000 that is 400 million comparisons versus about 300,000 - the
+kind of gap that turns a passing solution into a timeout.""",
+
+    """The pattern, and where it recurs.
+This is 'sort one dimension, then binary-search into it' - the successor query.
+The same shape solves: Search Insert Position (bisect directly), Meeting Rooms
+II (binary search or heap over end times), Russian Doll Envelopes (sort by one
+dimension, LIS on the other), and any 'find the next event after time t'
+scheduling question.
+The recognition cue in the prompt is 'the smallest value that is at least X',
+which is literally the definition of bisect_left. When you hear it, reach for a
+sorted array plus binary search rather than a scan.""",
+]
+
+_EX_P1C["Integer Break (DP)"] = [
+    """Small values, computed by hand, which is how you find the pattern.
+n=2: only 1+1 -> product 1.
+n=3: 1+2 -> 2, or 1+1+1 -> 1. Best is 2.
+n=4: 2+2 -> 4, or 1+3 -> 3, or 1+1+2 -> 2. Best is 4.
+n=5: 2+3 -> 6. n=6: 3+3 -> 9. n=7: 3+4 = 3*2*2 -> 12. n=8: 3+3+2 -> 18.
+n=10: 3+3+4 -> 36.
+Notice what emerges: 3s dominate, with a 2 or two left over. Writing out these
+six lines in the interview is what lets you SEE the mathematical shortcut
+instead of guessing it.""",
+
+    """Why the DP has two candidates per split.
+dp[i] = max over j of max(j * (i-j), j * dp[i-j]).
+The two terms answer two different questions. j*(i-j) means 'split off j and
+leave the remainder WHOLE'. j*dp[i-j] means 'split off j and break the
+remainder optimally too'.
+Both are needed: for i=4, j=2 gives 2*2 = 4 from the first term, while
+2*dp[2] = 2*1 = 2 from the second - the unbroken remainder wins. For i=8, j=3
+gives 3*5 = 15 unbroken but 3*dp[5] = 3*6 = 18 broken. Drop either term and you
+get wrong answers on half the inputs.""",
+
+    """The mathematical shortcut, and why 3 is optimal.
+Compare how much 'product per unit' each piece buys: 2 gives 2^(1/2) = 1.414
+per unit, 3 gives 3^(1/3) = 1.442, 4 gives 4^(1/4) = 1.414. Three wins, and it
+is the integer closest to e = 2.718, which is the continuous optimum.
+So: use as many 3s as possible, and handle the remainder. If n mod 3 == 0, all
+3s. If n mod 3 == 1, replace one 3 with two 2s (since 2*2 = 4 beats 3*1 = 3).
+If n mod 3 == 2, one extra 2.
+That gives an O(log n) solution with fast exponentiation. Say the DP first
+(safe), then offer this - offering the maths without the DP is a risk if you
+misremember the remainder cases.""",
+
+    """The base cases, which are the usual failure point.
+dp[1] = 1 in the table, but the ANSWER for n=1 is undefined because the problem
+demands at least TWO parts. Similarly dp[2] computed by the loop gives 1
+(1*1), which is correct as an answer, but when 2 is used as a SUB-piece inside a
+larger break it should contribute 2, not 1.
+This is exactly why the recurrence carries the j*(i-j) term: it lets a piece
+stay unbroken, which is the case where 'the value of 2 is 2, not dp[2]'. Many
+buggy solutions use only j*dp[i-j] and then patch dp[2] = 2 and dp[3] = 3 by
+hand, which works but obscures why.""",
+
+    """Complexity.
+Time O(n^2): for each i up to n you try every j < i. Space O(n) for the table.
+For n = 58 (the usual constraint) that is about 1,700 operations - instantly
+fine, so the DP is never rejected for performance. The maths solution is
+O(log n) via fast exponentiation and is the answer to 'now n can be 10^9',
+where the DP table would not even fit in memory.
+Note the product itself grows enormously - 3^(n/3) - so in Java or C++ you
+would need modular arithmetic or big integers, while Python's arbitrary
+precision hides the issue.""",
+
+    """The family, and the recognition cue.
+'Break a number/rope/string into pieces to optimise something' is a partition
+DP, and the skeleton is always the same: dp[i] over prefixes, an inner loop
+over the split point, and a decision per split of 'stop here' versus 'recurse'.
+Siblings: Perfect Squares (fewest squares summing to n), Coin Change (fewest
+coins), Word Break (can a string be split into dictionary words), Palindrome
+Partitioning II (fewest cuts). All four are the same two nested loops with a
+different combine step - once you see that, the code writes itself and only the
+recurrence needs thought.""",
+]
+
+_EX_P1C["Maximum Length of Pair Chain"] = [
+    """The example, traced.
+pairs = [[1,2],[7,8],[4,5]] -> sorted BY END: [[1,2],[4,5],[7,8]]
+current_end = -inf. Take [1,2] (1 > -inf) -> count 1, end 2.
+Take [4,5] (4 > 2) -> count 2, end 5.
+Take [7,8] (7 > 5) -> count 3, end 8.
+Answer 3.
+Note the sort key is the END, not the start. That single choice is the whole
+algorithm, and getting it wrong is the most common failure on this problem.""",
+
+    """Why sorting by END is correct, and by START is not.
+pairs = [[1,100],[2,3],[4,5]]
+Sorted by START: [[1,100],[2,3],[4,5]]. Greedily take [1,100] first, and its
+end of 100 blocks everything else -> answer 1. WRONG.
+Sorted by END: [[2,3],[4,5],[1,100]]. Take [2,3], then [4,5], then [1,100] is
+blocked -> answer 2. CORRECT.
+The intuition: finishing EARLIEST leaves the most room for whatever comes next.
+That is the exchange argument behind all activity-selection greedy proofs - if
+an optimal solution does not start with the earliest-finishing pair, you can
+swap that pair in without making the solution worse.""",
+
+    """The proof sketch, which interviewers do ask for.
+Claim: there is an optimal chain containing the pair with the smallest end.
+Proof: take any optimal chain. If it already contains that pair, done. If not,
+replace its FIRST pair with the smallest-end pair. The new pair ends no later,
+so everything that followed the old first pair still fits. The chain length is
+unchanged, so it is still optimal - and it now contains our greedy choice.
+Induct on the remainder. Being able to give this three-sentence exchange
+argument is what separates 'I remember the trick' from 'I can justify it'.""",
+
+    """Edge cases.
+Single pair [[1,2]] -> 1 > -inf -> count 1.
+Overlapping duplicates [[1,2],[1,2]] -> after taking the first, end is 2 and
+the second needs start > 2, so 1 is fine but 1 > 2 is false -> count 1.
+Touching pairs [[1,2],[2,3]] -> the condition is STRICT (start > end), so 2 > 2
+is false and the answer is 1. If the prompt allowed touching (start >= end),
+the answer would be 2. Restate which convention applies before coding - the
+same input gives different answers.
+Negative values work unchanged, which is why current_end starts at -inf rather
+than 0.""",
+
+    """Complexity, and the DP alternative.
+Sorting is O(n log n) and the scan is O(n), so O(n log n) time and O(1) extra
+space beyond the sort.
+The DP version - dp[i] = longest chain ending at pair i, computed by scanning
+all j < i - is O(n^2) and gives the same answer. It is the right tool when the
+greedy exchange argument fails, e.g. if pairs had WEIGHTS and you wanted the
+maximum total weight rather than the maximum count. Knowing when greedy breaks
+is more valuable than knowing that it works here.""",
+
+    """The identical problem in three disguises.
+- Non-overlapping Intervals (minimum removals): the answer is n minus this
+  chain length. Same sort, same scan.
+- Meeting Rooms (can one person attend all): this chain length equals n.
+- Activity selection / Maximum number of events attended: literally this.
+- Minimum Number of Arrows to Burst Balloons: sort by end, shoot at each end -
+  same greedy, and the only difference is that touching counts as overlapping.
+When a prompt says 'maximum number of non-overlapping X' the answer is always
+sort-by-end plus a linear scan; when it says 'minimum removals', compute the
+same thing and subtract.""",
+]
+
+_EX_P1C["Triangle (Minimum Path Sum)"] = [
+    """The standard triangle, computed bottom-up.
+      2
+     3 4
+    6 5 7
+   4 1 8 3
+dp starts as the last row: [4,1,8,3].
+Row 2 [6,5,7]: dp[0] = 6 + min(4,1) = 7; dp[1] = 5 + min(1,8) = 6;
+               dp[2] = 7 + min(8,3) = 10  ->  dp = [7,6,10,3]
+Row 1 [3,4]:   dp[0] = 3 + min(7,6) = 9;  dp[1] = 4 + min(6,10) = 10
+               -> dp = [9,10,10,3]
+Row 0 [2]:     dp[0] = 2 + min(9,10) = 11
+Answer 11, the path 2 -> 3 -> 5 -> 1. The stale values left in the tail of dp
+are never read again, which is why one array suffices.""",
+
+    """Why bottom-up beats top-down here.
+Going TOP-DOWN, each cell has two parents and the edge cells have only one, so
+you need boundary special-cases for col == 0 and col == last, and at the end
+you must scan the final row for the minimum.
+Going BOTTOM-UP, every cell has exactly TWO children (dp[col] and dp[col+1])
+with no exceptions, and the answer lands in dp[0] with no final scan. Same
+complexity, noticeably less code and no off-by-one risk. When a DP has messy
+boundaries in one direction, try the other - that is the transferable lesson.""",
+
+    """Why greedy fails, with the counterexample to quote.
+      1
+     2 3
+   100 100 1
+Greedy from the top picks the smaller child each step: 1 -> 2 -> 100, total
+103. The optimal path is 1 -> 3 -> 1, total 5.
+A locally cheap step can commit you to an expensive subtree. This is exactly
+the difference between greedy and DP: greedy needs the exchange property, and
+here it does not hold, so you must consider both branches. Have this
+counterexample ready - 'why not greedy?' is the most common follow-up.""",
+
+    """The in-place variant, and why you might refuse it.
+You can write directly into the triangle: `triangle[row][col] += min(
+triangle[row+1][col], triangle[row+1][col+1])`, giving O(1) extra space. It is
+a legitimate answer, but say the trade out loud: it DESTROYS the caller's
+input. If the triangle is reused - and a caller has no way to know you mutated
+it - that is a real bug. Copying the last row costs O(n) and keeps the function
+pure, which is nearly always the right default.""",
+
+    """Edge cases and complexity.
+Single row [[5]] -> dp = [5], no rows above, return 5.
+Two rows [[1],[2,3]] -> dp = [2,3], then dp[0] = 1 + min(2,3) = 3.
+Negative numbers are fine - the recurrence never assumes positivity, which is
+worth checking because many path-sum problems do.
+Time is O(n^2) where n is the number of rows, because a triangle of n rows has
+n(n+1)/2 cells and each is touched once. Space is O(n) for the single dp row,
+down from O(n^2) for a full table - and that reduction is the point of the
+problem.""",
+
+    """The rolling-array idea, generalised.
+The reason one array works is that row r depends ONLY on row r+1. Whenever a DP
+depends on a fixed number of previous rows, you can drop the full table and
+keep just those rows. Siblings: Unique Paths and Minimum Path Sum on a grid
+(one row), Climbing Stairs and House Robber (two scalars), 0/1 Knapsack (one
+row, iterated BACKWARDS to avoid reusing an item), Edit Distance (two rows).
+'Can I reduce the space?' is a standard follow-up on every 2-D DP, and the
+answer is always: look at how far back the recurrence actually reaches.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1C:
+        _e["examples"] = _EX_P1C[_e["title"]]
+
+
+_EX_P1D = {}
+
+_EX_P1D["Longest Arithmetic Subsequence"] = [
+    """A full trace on a small array.
+nums = [3,6,9,12]
+i=1 (6): j=0, d=3 -> dp[1][3] = dp[0].get(3,1)+1 = 2. best 2.
+i=2 (9): j=0, d=6 -> dp[2][6] = 2.  j=1, d=3 -> dp[2][3] = dp[1][3]+1 = 3.
+i=3 (12): j=0, d=9 -> 2.  j=1, d=6 -> dp[1].get(6,1)+1 = 2.
+          j=2, d=3 -> dp[2][3]+1 = 4.  best 4.
+Answer 4, the whole array. Notice dp[i][d] answers a very specific question:
+'how long is the AP ending AT index i with difference d' - not 'the best AP
+ending at i', which is why the state needs both coordinates.""",
+
+    """Why the state must include the difference.
+A plain dp[i] = 'longest AP ending at i' is not enough, because whether index i
+can extend index j depends on WHICH difference j's chain was built with. In
+[1,7,10,13,14,19], index 3 (13) can extend the d=3 chain from 10, but the same
+index cannot extend a d=6 chain from 7 - the same j, different answers.
+So the state is two-dimensional: position AND difference. Using a dict per
+index rather than a 2-D array matters because differences can be negative and
+unbounded, so you cannot index an array by them without offsetting.""",
+
+    """The `.get(d, 1) + 1` idiom, which is the whole subtlety.
+If j already has a chain with difference d, extend it. If not, we are STARTING
+a new arithmetic progression consisting of exactly the pair (j, i), which has
+length 2 - hence the default of 1 plus 1.
+Getting this wrong in either direction is the standard bug: default 0 gives
+length-1 answers for genuine pairs, and defaulting to dp[j] without the get
+throws KeyError. Also note that ANY two elements form a valid AP, so for an
+array of length >= 2 the answer is never below 2.""",
+
+    """Edge cases.
+[1] -> the outer loop runs once, the inner never, best stays 0. Depending on
+the prompt's convention the answer should be 1 (a single element is trivially
+an AP) - so check whether the constraints guarantee n >= 2, and add
+`best = min(len(nums), max(best, 1))` if not.
+[5,5,5,5] -> every d is 0, so dp[i][0] grows 2,3,4 -> answer 4. Duplicates are
+handled naturally because the difference is simply zero.
+[9,4,7,2,10] -> the answer is 3 (4,7,10), and note the subsequence is NOT
+contiguous, which is exactly why this is O(n^2) rather than a linear scan.""",
+
+    """Complexity, and why you cannot do better easily.
+Time O(n^2) - every pair (j, i) is examined once. Space O(n^2) in the worst
+case, since each of the n dictionaries can hold up to n distinct differences.
+For n = 1,000 that is a million operations, which is fine; for n = 100,000 it
+is not, and there is no known general subquadratic algorithm - so O(n^2) IS the
+expected answer here.
+Contrast the CONTIGUOUS version (Arithmetic Slices), which is O(n) with two
+variables, because contiguity removes the need to remember every earlier index.
+Say that contrast out loud; interviewers often follow up with it.""",
+
+    """The family: pairwise DP over subsequences.
+The skeleton `for i: for j < i: dp[i] = f(dp[j])` covers a cluster of problems -
+Longest Increasing Subsequence (dp[i] = max over j with nums[j] < nums[i]),
+Longest Divisible Subset, Russian Doll Envelopes, Largest Divisible Subset, and
+this one. Only the CONDITION on j and the extra state differ.
+LIS is the one worth knowing has a better algorithm: patience sorting with
+binary search brings it to O(n log n). Longest Arithmetic Subsequence does not
+have an equivalent trick, and being able to say WHY (the difference is
+unbounded, so there is no single sorted structure to binary-search) is a good
+depth signal.""",
+]
+
+_EX_P1D["Best Time to Buy and Sell Stock with Cooldown"] = [
+    """A full trace, which is the only way this state machine becomes clear.
+prices = [1,2,3,0,2]. Start hold=-inf, sold=0, rest=0.
+day 1 (1): sold = -inf+1 = -inf; hold = max(-inf, 0-1) = -1; rest = max(0,0)=0
+day 2 (2): prev_sold=-inf; sold = -1+2 = 1; hold = max(-1, 0-2) = -1; rest = 0
+day 3 (3): prev_sold=1; sold = -1+3 = 2; hold = max(-1, 0-3) = -1; rest = max(0,1)=1
+day 4 (0): prev_sold=2; sold = -1+0 = -1; hold = max(-1, 1-0) = 1; rest = max(1,2)=2
+day 5 (2): prev_sold=-1; sold = 1+2 = 3; hold = max(1, 2-2) = 1; rest = max(2,-1)=2
+Answer max(sold, rest) = 3, from buy at 1, sell at 2, cooldown, buy at 0, sell
+at 2 - profit 1 + 2 = 3.""",
+
+    """What the three states mean, in one sentence each.
+HOLD: the best profit achievable while currently OWNING a share. It is negative
+early on because you have paid for the stock and not yet sold.
+SOLD: the best profit given that you sold TODAY - so tomorrow is a forced
+cooldown and you cannot buy.
+REST: the best profit while owning nothing and being FREE to buy - either you
+have been idle, or your cooldown has expired.
+The cooldown rule is expressed entirely by which state can flow into which,
+which is why no explicit day-counter or flag is needed anywhere.""",
+
+    """The transitions, and where the cooldown is encoded.
+sold = hold + price          -> you can only sell if you were holding
+hold = max(hold, rest - price) -> you can only buy from REST, never from SOLD
+rest = max(rest, prev_sold)  -> today's rest may come from yesterday's sale
+That middle line is the cooldown: buying reads `rest`, and `rest` can only
+receive a sale after a one-day delay through `prev_sold`. If you wrote
+`hold = max(hold, sold - price)` you would allow buying the same day you sold,
+which is the unconstrained problem (Stock II) - one variable's difference
+between two different LeetCode problems.""",
+
+    """Why prev_sold must be captured before sold is overwritten.
+The three updates are not independent: `rest` needs YESTERDAY's sold, but the
+line above has already replaced sold with today's value. Saving prev_sold at
+the top of the loop is what keeps the recurrence honest.
+Get this wrong and you allow a sale to become available for buying on the SAME
+day, silently inflating the profit. This is the same hazard as the tuple
+assignment in Fibonacci-style problems, and the general rule is: when several
+rolling variables update from each other, snapshot the ones you still need.""",
+
+    """Edge cases.
+[] -> guarded, return 0. [5] -> one day: hold = -5, sold = -inf+5, rest = 0 ->
+answer 0. You cannot profit from a single price.
+Monotonically decreasing [5,4,3,2,1] -> every sale loses money, so sold stays
+negative and rest stays 0 -> answer 0. The max(sold, rest) at the end is what
+guarantees you never report a loss: doing nothing is always available.
+Why hold starts at -inf rather than 0: hold = 0 would claim you can own a share
+having paid nothing, which fabricates profit on day one.""",
+
+    """The family, and how the states scale.
+Stock I (one transaction): track the minimum price so far. Stock II (unlimited):
+sum every positive difference. Stock with COOLDOWN: three states, as here.
+Stock with FEE: two states, subtracting the fee on sale. Stock III/IV (at most
+k transactions): 2k states, or a DP over (day, transactions used, holding).
+The unifying idea is that each variant is a small state machine, and the
+constraint is expressed purely as which edges exist. Drawing the three-node
+diagram - hold, sold, rest, with the arrows - takes twenty seconds and makes
+the code self-evident, so draw it before you write anything.""",
+]
+
+_EX_P1D["Binary Tree Zigzag Level-Order Traversal"] = [
+    """The standard example, level by level.
+        3
+       / \\
+      9   20
+         /  \\
+        15   7
+Level 0 (left_to_right = True): [3]. Flip.
+Level 1 (right-to-left): pop 9 then 20, but appendleft each -> deque becomes
+[9] then [20,9] -> [20,9]. Flip.
+Level 2 (left-to-right): pop 15 then 7, append -> [15,7].
+Result [[3],[20,9],[15,7]].
+The queue itself is ALWAYS processed left to right; only the order in which
+values are written into the level list alternates. Confusing those two is the
+main trap.""",
+
+    """Why appendleft rather than reversing afterwards.
+`level.appendleft(v)` on a deque is O(1), so building a reversed level costs
+the same as building a forward one. Calling `level.reverse()` or `level[::-1]`
+on a list is also O(k) per level and O(n) overall, so honestly both are fine -
+but the deque version reads better and avoids an extra allocation.
+What is NOT fine is reversing the QUEUE: the traversal order of the queue
+determines which children are enqueued and in what order, so flipping it
+corrupts the next level rather than the current one.""",
+
+    """The `for _ in range(len(queue))` idiom, which is the real technique.
+Capturing the queue length BEFORE the inner loop is what separates one level
+from the next: at that moment the queue contains exactly the current level's
+nodes, and the children appended during the loop belong to the next level.
+Write `while queue:` for the inner loop instead and you process the entire tree
+as one level. This single line is the level-order skeleton, and it also powers
+Level Order Traversal, Right Side View, Average of Levels, Maximum Width and
+Minimum Depth - learn it once, reuse it everywhere.""",
+
+    """The DFS alternative, which is a genuinely good follow-up answer.
+Recurse with a depth parameter, appending each value into result[depth],
+creating the sublist when depth == len(result). Then reverse the odd-indexed
+sublists at the end.
+    def dfs(node, depth):
+        if not node: return
+        if depth == len(result): result.append([])
+        result[depth].append(node.val)
+        dfs(node.left, depth+1); dfs(node.right, depth+1)
+Same O(n) time, O(h) space instead of O(w). Worth knowing because it shows the
+zigzag is a presentation detail, not a traversal one - and because on a very
+wide tree the BFS queue is the memory bottleneck.""",
+
+    """Edge cases.
+None -> [] by the guard. Single node -> [[5]].
+A left-skewed chain 1->2->3: levels are [1], [2], [3] - each level has one
+node, so direction never visibly matters, and this is a poor test. Use a tree
+with at least two nodes on level 1 to actually exercise the flip.
+A complete tree of 7 nodes gives [[1],[3,2],[4,5,6,7]] - note level 2 comes out
+forward again, because the flag flips every level rather than every other.""",
+
+    """Complexity, and the shape that hurts.
+Time O(n) - each node is enqueued and dequeued once and written once. Space
+O(w) where w is the maximum level width; for a complete tree the last level
+holds about n/2 nodes, so worst-case space is O(n).
+That is the trade against DFS, which is O(h) - O(log n) balanced, O(n) skewed.
+So BFS is expensive on wide bushy trees and DFS on deep skinny ones, which is
+the same trade as in Minimum Depth. If an interviewer constrains memory, ask
+which shape the input is.""",
+]
+
+_EX_P1D["Bipartite Graph Check (BFS 2-coloring)"] = [
+    """A bipartite graph, coloured.
+graph = {0:[1,3], 1:[0,2], 2:[1,3], 3:[0,2]}  (a 4-cycle)
+Start at 0, colour 0. Neighbours 1 and 3 get colour 1.
+From 1: neighbour 0 is already colour 0, which differs from 1's colour - fine.
+Neighbour 2 is uncoloured -> colour 0.
+From 3: neighbour 2 is already colour 0, and 3 is colour 1 - fine.
+No conflict, so it is bipartite: {0,2} on one side, {1,3} on the other.
+A 4-cycle is an EVEN cycle, and even cycles always 2-colour.""",
+
+    """The failing case, and the theorem behind it.
+graph = {0:[1,2], 1:[0,2], 2:[0,1]}  (a triangle)
+Colour 0 -> 0. Colour 1 and 2 -> 1. Now examine edge 1-2: both are colour 1,
+same colour across an edge -> return False.
+The theorem: a graph is bipartite if and only if it contains NO ODD-LENGTH
+CYCLE. Walking around an odd cycle forces alternating colours to collide when
+you return to the start. Stating that equivalence is what turns a coding answer
+into a graph-theory answer, and it is the standard follow-up.""",
+
+    """Why the OUTER loop over all nodes is mandatory.
+graph = {0:[1], 1:[0], 2:[3], 3:[2]} - two disconnected edges.
+A single BFS from node 0 colours only 0 and 1 and returns True, having never
+looked at the second component. If that component contained a triangle you
+would report bipartite for a graph that is not.
+So the loop `for start in range(len(graph)): if start in color: continue` is
+not boilerplate - it is correctness. The same requirement appears in Number of
+Connected Components, Course Schedule and any graph problem where the input is
+not promised to be connected.""",
+
+    """Colouring at ENQUEUE time, not at dequeue time.
+`color[nbr] = 1 - color[node]` happens when the neighbour is pushed. If you
+instead coloured nodes when popping them, a node could be enqueued twice by two
+different parents before either is processed - so it gets coloured twice,
+possibly inconsistently, and the conflict check is skipped.
+The `1 - color[node]` trick itself is worth noting: with colours 0 and 1, the
+opposite colour is one minus the current one, which avoids an if/else and makes
+the invariant obvious.""",
+
+    """Edge cases.
+An empty graph or a graph of isolated nodes -> trivially bipartite (True); each
+node is its own component and gets coloured with no edges to violate.
+A single self-loop (node 0 has itself as a neighbour) -> when processing 0, its
+neighbour 0 is already coloured the same, so it returns False. Correct: a
+self-loop is an odd cycle of length 1, and no graph with one is bipartite.
+A tree -> ALWAYS bipartite, because a tree has no cycles at all. Colour by
+depth parity and you are done, which is a nice sanity check.""",
+
+    """Complexity and the DFS variant.
+Time O(V + E) - each node is coloured once and each edge examined at most twice
+(once from each endpoint). Space O(V) for the colour map plus the queue.
+DFS works identically: recurse, colouring each neighbour with the opposite
+colour and returning False on a conflict. BFS is usually preferred because a
+deep graph can overflow the recursion stack, and because the level structure of
+BFS makes the colouring visibly a parity-of-distance argument - a node's colour
+is just the parity of its distance from the start.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1D:
+        _e["examples"] = _EX_P1D[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
