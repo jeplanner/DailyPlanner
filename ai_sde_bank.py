@@ -23069,6 +23069,117 @@ One last thing worth asking in an interview: this problem uses the definition
 'every node's two subtrees differ in height by at most 1'. Other definitions of
 'balanced' exist for other kinds of tree, so confirming which one is meant takes
 five seconds and occasionally changes the answer.""",
+
+    """What the code does, in plain language - read this before the line-by-line.
+
+Imagine you are the person standing at a node in the tree, and someone asks you
+one question: "how tall are you, and is everything below you tidy?"
+
+You cannot answer on your own. So you turn to your left child and ask the same
+question, then to your right child and ask the same question. Once both have
+answered with their heights, you do three small things:
+
+  1. If either child answered "there is a problem down here", you do not even
+     bother comparing - you just pass that same message up to whoever asked you.
+  2. Otherwise you compare the two heights. If they differ by more than 1, YOU
+     are the problem, so you answer "there is a problem here".
+  3. If everything is fine, you answer with your own height: one more than the
+     taller of your two children.
+
+Every node in the tree does exactly that, and the question ripples all the way
+down to the leaves, who answer instantly because they have no children.
+
+The clever part is that ONE answer carries TWO pieces of information. Normally
+you would need one function to measure height and another to check balance. Here
+a single number does both: any number from 0 upwards is a real height and means
+"all tidy below me", while -1 is a special value meaning "something down here is
+unbalanced, stop looking". A real height can never be negative, so -1 can never
+be confused with a genuine answer.
+
+That is why the last line of the whole function is simply "did the root answer
+something other than -1?" If no -1 ever bubbled up, every node passed its check,
+and the tree is balanced.
+
+In one sentence: each node asks its children how tall they are, refuses to
+answer properly if they disagree by more than one level, and passes that refusal
+straight up to the top.""",
+
+    """Now the code, line by line, against the tree we drew at the start.
+
+Keep the first tree beside you: 3 at the top, 9 and 20 below it, and 15 and 7
+below 20. Remember the heights we worked out: 9, 15 and 7 are height 1; 20 is
+height 2; the root 3 is height 3.
+
+    def is_balanced(root):
+The outer function - the one the world calls. It takes the top node of the tree
+and gives back True or False. All the real work happens in the helper below.
+
+    def height(node):
+The helper, defined inside so it can be called recursively by name. Its job is
+the "how tall are you, and is everything below you tidy?" question from the
+previous example. Reading its name as just "height" is slightly misleading -
+give it the fuller name "height, or -1 if broken" in your head.
+
+    if node is None:
+        return 0
+The BASE CASE - the point where the recursion stops. An empty spot is zero
+levels tall. This is what makes a leaf come out as height 1: a leaf asks both of
+its empty children, gets 0 from each, and returns 1 + max(0, 0) = 1. Exactly the
+"a leaf has height 1" rule we started with, falling out of the code rather than
+being written in specially.
+
+    lh = height(node.left)
+Ask the left child. For the root, this call goes down to node 9, which asks its
+two empty children, gets 0 and 0, and returns 1. So lh = 1.
+
+    if lh == -1:
+        return -1
+The SHORT-CIRCUIT. If the left side already reported a problem, there is nothing
+to compare and no point measuring the right side at all - just pass the bad news
+upwards unchanged. On our balanced tree this never fires. On the lopsided tree
+from the earlier example it fires at node 2, and then again at the root, so the
+final answer is decided without any further measuring.
+
+    rh = height(node.right)
+Now ask the right child. For the root, this goes down to node 20, which asks 15
+and 7, gets 1 and 1, and returns 1 + max(1,1) = 2. So rh = 2.
+
+Notice the deliberate ordering: the left result is CHECKED before the right one
+is even requested. That is what makes the short-circuit save work rather than
+just save a comparison.
+
+    if abs(lh - rh) > 1:
+        return -1
+This node's own balance check. abs() means "ignore the minus sign, just give me
+the size of the gap". At the root, abs(1 - 2) = 1, which is not more than 1, so
+we carry on. At node 2 of the lopsided tree, abs(2 - 0) = 2, which IS more than
+1, so that node returns -1 and the whole answer is settled.
+
+This is the line that makes the check happen at EVERY node instead of only at
+the root - because every node runs this same function.
+
+    return 1 + max(lh, rh)
+The normal answer: I am one level taller than my taller child. For the root that
+is 1 + max(1, 2) = 3, matching the height we counted by hand. Reaching this line
+also quietly means "and everything below me is fine", because any problem would
+have returned -1 further up the function.
+
+    return height(root) != -1
+The outer function's single line. Run the helper on the root and ask one
+question: did anything come back other than -1? If a real height came back, no
+node anywhere ever failed its check, so the answer is True. If -1 came back,
+some node failed and passed the message all the way up.
+
+Why -1 rather than, say, returning a pair of (height, is_balanced)? Because a
+pair works perfectly well and is arguably clearer - it is a completely
+acceptable answer to give. The -1 version is just shorter and avoids allocating
+a tuple at every node. Being able to explain BOTH, and why they are equivalent,
+is better than defending one of them.
+
+Cost: every node is visited once and does a fixed amount of work, so O(n) time
+for n nodes. The extra memory is the call stack, which goes as deep as the tree
+is tall - O(h), which is O(log n) for a bushy tree and O(n) for a long spindly
+one.""",
 ]
 
 _EX_P0["Diameter of a Binary Tree"] = [
