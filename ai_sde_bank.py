@@ -38383,120 +38383,729 @@ repeat while groups cannot appear in two different orders.""",
 ]
 
 _EX_P0E["Course Schedule (topological sort)"] = [
-    """The textbook case, traced.
-num_courses = 2, prerequisites = [[1,0]] (course 1 needs course 0).
-graph: 0 -> [1]. indegree: [0, 1].
-Queue starts with courses of indegree 0 -> [0].
-Pop 0, done=1. Its dependent 1 drops to indegree 0 -> push.
-Pop 1, done=2. Queue empty.
-done == num_courses -> True, the schedule is feasible. A valid order is [0,1].""",
+    """1. THE GOAL, in plain English.
 
-    """The cycle case - what failure looks like.
-num_courses = 2, prerequisites = [[1,0],[0,1]]. Course 1 needs 0 AND 0 needs 1.
-indegree = [1,1]. NO course has indegree 0, so the queue starts EMPTY, the loop
-body never runs, done stays 0.
-0 != 2 -> False.
-That is the whole cycle detection: a cycle's nodes can never reach indegree 0,
-because each is waiting on another member of the cycle. Nothing in the code says
-the word 'cycle' - it falls out of the counting.""",
+You have a list of courses and a list of prerequisites - "to take course A you
+must first take course B". Can you finish all of them, or is it impossible?
 
-    """A partial cycle - the case that catches a sloppy implementation.
-num_courses = 4, prerequisites = [[1,0],[2,1],[3,2],[1,3]].
-indegree: 0->0, 1->2 (needs 0 and 3), 2->1, 3->1.
-Queue starts [0]. Pop 0, done=1, indegree[1] drops to 1 - still not zero.
-Queue is now empty. done=1 != 4 -> False.
-Courses 1,2,3 form a cycle even though course 0 is perfectly schedulable. This
-is why the test is `done == num_courses` and not 'did we schedule anything' -
-partial progress is still failure.""",
+It is impossible only in one situation: when a set of courses depend on each other
+in a circle. If A needs B, B needs C, and C needs A, then none of them can ever be
+started, because each is waiting on another.
 
-    """No prerequisites at all, and duplicate edges.
-num_courses = 3, prerequisites = []: all three start at indegree 0, the queue
-holds all of them, done=3 -> True. Any order works.
-Duplicate pairs [[1,0],[1,0]] push indegree[1] to 2 while course 0 only
-decrements it once - result False, incorrectly. LeetCode guarantees distinct
-pairs, so this does not bite there, but in a real dependency graph you would
-dedupe the edges first. Worth one sentence in an interview; it is exactly the
-kind of input-validation question a senior interviewer probes.""",
+The input is the number of courses, numbered 0 upwards, and a list of pairs. Each
+pair [course, need] means "to take course, you must first take need".
 
-    """Returning the ORDER, not just the boolean (Course Schedule II).
-Change two lines: keep an `order` list and append each course as you pop it;
-return order if len(order) == num_courses else [].
-On [[1,0],[2,0],[3,1],[3,2]] one valid output is [0,1,2,3]; [0,2,1,3] is equally
-valid, since 1 and 2 are independent. Topological order is not unique, so tests
-either accept any valid order or check it programmatically.
-If you need a DETERMINISTIC order (say, lexicographically smallest), swap the
-deque for a min-heap - that is 'Alien Dictionary' and build-system territory.""",
+Our example: 4 courses, prerequisites [[1,0], [2,0], [3,1], [3,2]].
 
-    """The DFS alternative, and where this shows up for real.
-DFS version: three colours - white (unvisited), grey (on the current path),
-black (done). Hitting a GREY node means you looped back onto your own path, so
-there is a cycle. The reverse of the post-order finish times is a topological
-order.
-Kahn's BFS is usually easier to get right under pressure and gives the order
-directly, so lead with it.
-Real uses: build systems (make, bazel) ordering compilation units, package
-managers resolving dependencies, spreadsheet formula recalculation, task
-schedulers with 'runs after' constraints, and database migration ordering. In a
-system-design round, 'topological sort with cycle detection' is the correct
-answer to 'how do you order these dependent jobs?'""",
+Read them out: course 1 needs course 0. Course 2 needs course 0. Course 3 needs
+course 1 and also course 2.
+
+    Drawn with arrows pointing from a prerequisite to what it unlocks:
+
+            0
+           / \\
+          v   v
+          1   2
+           \\ /
+            v
+            3
+
+Can you finish? Yes: take 0 first, then 1 and 2 in either order, then 3. So the
+answer is TRUE.
+
+Now the impossible version, prerequisites [[1,0], [0,1]]: course 1 needs 0, and
+course 0 needs 1. Neither can be first. FALSE.
+
+Note the question asks only yes or no - not for the actual order. That is a
+sibling problem, and the same code answers it with one extra line.""",
+
+    """2. THE INTUITION - repeatedly take whatever has nothing left to wait for.
+
+This is exactly how you would plan it by hand.
+
+Look for a course with no unmet prerequisites. Take it. Cross it off. Now some
+other courses may have become available, because something they were waiting for
+is done. Look again, take another. Repeat until you cannot.
+
+If you get through all of them, it was possible. If you get stuck with courses
+remaining, those courses must be waiting on each other in a circle.
+
+That method is KAHN'S ALGORITHM, and it is a TOPOLOGICAL SORT - putting things in
+an order that never breaks a dependency.
+
+To make "has nothing left to wait for" cheap to check, count how many
+prerequisites each course is still waiting on. That count is called the IN-DEGREE,
+because it counts the arrows pointing IN to that course:
+
+    course 0:  in-degree 0    (nothing points at it)
+    course 1:  in-degree 1    (arrow from 0)
+    course 2:  in-degree 1    (arrow from 0)
+    course 3:  in-degree 2    (arrows from 1 and from 2)
+
+A course is available exactly when its count reaches zero. So:
+
+  Start by queueing every course whose count is already zero.
+  Take one out, count it as done, and for each course it unlocks, subtract one
+  from that course's count. If a count hits zero, queue that course.
+  Repeat until the queue is empty.
+
+There is no simpler-but-slower version worth showing. The naive alternative - scan
+all courses repeatedly looking for an available one - is the same idea done badly:
+a full scan per course, so courses times courses, instead of counting down as you
+go.""",
+
+    """3. HOW THE SAME ALGORITHM DETECTS THE CIRCLE - for free.
+
+Now the impossible case. Prerequisites [[1,0], [0,1]] - course 1 needs 0 and
+course 0 needs 1:
+
+    0 ---> 1
+    ^      |
+    |______|
+
+Both courses have in-degree 1, so nothing is available at the start. The queue
+begins empty, the loop never runs, and the count of finished courses stays at 0.
+
+That is the detection, and it costs nothing extra. Compare how many courses were
+finished against how many there are:
+
+  EQUAL - every course came out, so a valid order exists. Answer true.
+  FEWER - some courses never became available, which can only happen if they are
+  waiting on each other in a circle. Answer false.
+
+Why is that reasoning airtight? A course fails to appear only if its count never
+reached zero. Its count only goes down when one of its prerequisites is finished.
+So a course left behind is waiting on another course that was ALSO left behind.
+Follow that chain of "waiting on" through a finite set of courses and it must
+eventually revisit a course you have already seen - which is a circle.
+
+So one comparison at the end distinguishes "possible" from "impossible", with no
+separate cycle-detection pass at all.
+
+The general name for a graph with arrows and no circles is a DAG - a DIRECTED
+ACYCLIC GRAPH. Directed because arrows have a direction; acyclic because there are
+no loops. A topological order exists exactly when the graph is a DAG, which is
+precisely what that final comparison is testing.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - counting the wrong end of the arrow. For a pair [course, need], it is
+COURSE whose count goes up - it is the one waiting. Getting this backwards makes
+the algorithm process the graph in reverse, and it will pass any test whose
+dependencies happen to be symmetric while failing on real ones. Say it as you write
+it: "course is waiting on need, so course's count goes up."
+
+Note the pair order here is [course, need], which reads backwards compared with the
+arrow direction. That reversal is a genuine source of bugs - read the problem
+statement's field order carefully, because some versions use [need, course].
+
+CASE 2 - courses with no prerequisites at all and nothing depending on them. With
+4 courses and only [[1,0]], courses 2 and 3 are isolated. Their counts are zero, so
+they are queued at the start and counted as finished. That is why the in-degree
+list has one slot per course from 0 to n-1, rather than only for courses appearing
+in the prerequisite list.
+
+CASE 3 - no prerequisites at all. Every course is available immediately, all are
+finished, and the answer is true. Handled with no special case.
+
+CASE 4 - a self-dependency, [[0,0]]: course 0 requires itself. Its count is 1 and
+never drops, so it is never finished, and the answer is false. Correct - that is a
+circle of length one.
+
+CASE 5 - duplicate prerequisite pairs. If [[1,0], [1,0]] appears, course 1's count
+goes up twice but only comes down once when course 0 is finished, so course 1 is
+never released and the answer is wrongly false. If duplicates are possible, remove
+them first.
+
+CASE 6 - forgetting the final comparison. Without it there is nothing to
+distinguish success from a stuck graph, and the function has no answer to give.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+GRAPH, NODE, EDGE: a graph is things plus connections. Each course is a node; each
+prerequisite is a directed edge - an arrow with a direction.
+
+IN-DEGREE: how many arrows point AT a node - here, how many prerequisites a course
+is still waiting on. It is the whole bookkeeping of this algorithm.
+
+ADJACENCY LIST: a lookup table saying, for each course, which courses it unlocks.
+Built because the input arrives as a flat list of pairs, and answering "what does
+finishing course 0 release?" from a flat list would mean scanning every pair.
+
+defaultdict(list): a dictionary that invents an empty list the first time you touch
+a missing key, so you can append without checking whether the key exists yet. Handy
+here because courses with no dependents are never explicitly created.
+
+QUEUE: a waiting line - join at the back, leave from the front. deque is Python's
+ready-made one; popleft() takes from the front. An ordinary list would work but
+removing from its front is slow, since every remaining item shuffles along.
+
+BFS - BREADTH-FIRST SEARCH: exploring in waves rather than diving deep. Kahn's
+algorithm has that shape because it uses a queue; each "wave" here is "everything
+that became available at the same time".
+
+DAG - DIRECTED ACYCLIC GRAPH: arrows, no circles. Defined in section 3.
+
+O(V + E): the cost, where V is the number of courses and E the number of
+prerequisites. In plain words: the work grows in step with the size of the input -
+each course is queued once, each prerequisite examined once.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: count how many prerequisites each course is waiting
+on, start with the ones waiting on nothing, and every time you finish a course tick
+one off everything it unlocks.
+
+There is no recursion here - a loop driven by a queue - so nothing piles up on the
+call stack. The loop ends when nothing more can become available.
+
+The steps:
+
+  1. Make a lookup table saying, for each course, which courses it unlocks.
+
+  2. Make a counter for every course from 0 to n-1, all starting at zero. Every
+     course needs a slot, including ones that appear in no prerequisite at all -
+     otherwise isolated courses go missing.
+
+  3. For each prerequisite pair, record two things: that finishing the prerequisite
+     unlocks the dependent course, and that the dependent course is waiting on one
+     more thing. Be careful which of the pair is which.
+
+  4. Queue every course whose counter is already zero - the ones with no
+     prerequisites. If that queue starts out empty while courses exist, everything
+     is waiting on something and you already know the answer is no.
+
+  5. Keep a tally of how many courses have been finished, starting at zero.
+
+  6. While the queue is not empty:
+       a. Take the course at the front and add one to the finished tally.
+       b. For each course it unlocks, subtract one from that course's counter.
+       c. If a counter has just reached zero, that course is now available - put it
+          at the back of the queue.
+
+  7. When the queue empties, compare the finished tally against the total number of
+     courses. Equal means all of them could be taken. Fewer means the rest were
+     stuck waiting on each other in a circle.
+
+Step 6c is what drives everything: a course is queued at the exact moment its last
+prerequisite is satisfied, and never before - so nothing can ever be taken early.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first reorganises the prerequisites into something it can work with. They
+arrive as a loose list of pairs, so it builds two things in a single pass: a lookup
+saying which courses each course unlocks when finished, and a tally for each course
+of how many things it is still waiting on.
+
+Then it lines up every course that is waiting on nothing at all. Those are the ones
+that could be taken straight away.
+
+Now it works through that line. It takes the course at the front, counts it as
+taken, and then goes to everything that was waiting on it and ticks one off each of
+their tallies - because a prerequisite has just been satisfied. Any course whose
+tally has just reached zero now has nothing left to wait for, so it joins the back
+of the line.
+
+Nothing is ever searched for. A course appears in the line at precisely the moment
+it becomes available, and never before, so it can never be taken too early.
+
+That repeats until the line is empty. At that point the code compares how many
+courses it managed to take against how many there were. If the numbers match, every
+course was reachable and the answer is yes. If some are missing, those courses were
+waiting on each other in a circle that nothing could break into - so no order
+exists, and the answer is no.
+
+The circle detection needs no separate pass. It falls straight out of the count.""",
+
+    """8. THE CODE, line by line.
+
+Keep 4 courses with prerequisites [[1,0], [2,0], [3,1], [3,2]] beside you; the
+answer is True.
+
+    graph = defaultdict(list)
+The lookup: prerequisite -> the courses it unlocks. A defaultdict invents an empty
+list the first time a key is touched, so we can append without checking whether the
+key exists.
+
+    indegree = [0] * num_courses
+One tally per course, all starting at zero. A slot for EVERY course from 0 to n-1,
+including ones that appear in no prerequisite - which is what makes isolated
+courses work; see case 2 in section 4.
+
+    for course, need in prerequisites:
+        graph[need].append(course)
+        indegree[course] += 1
+Read each pair once and record both halves.
+
+  graph[need].append(course) - finishing "need" brings "course" one step closer.
+
+  indegree[course] += 1 - "course" is waiting on one more thing. It is COURSE that
+  gets the +1, never "need", because course is the one doing the waiting.
+
+Note the unpacking order: the pair is [course, need], so the FIRST element is the
+dependent and the second is the prerequisite - the opposite way round from how the
+arrow points. That reversal is a real source of bugs.
+
+After this line: graph = {0:[1,2], 1:[3], 2:[3]} and indegree = [0, 1, 1, 2].
+
+    queue = deque(c for c in range(num_courses) if indegree[c] == 0)
+Every course that is available right now - for us, just course 0. Built by scanning
+all n courses, which is what includes any isolated ones.
+
+If this comes out empty while courses exist, everything is waiting on something,
+and the loop below simply never runs.
+
+    done = 0
+How many courses have been taken.
+
+    while queue:
+Keep going while some course is available. The loop ends when nothing more can be
+released - either because everything is finished, or because the rest are stuck in
+a circle.
+
+    need = queue.popleft()
+    done += 1
+Take the front course and count it as taken. It is safe to commit because its tally
+reached zero, meaning every prerequisite has been satisfied.
+
+    for course in graph[need]:
+        indegree[course] -= 1
+Everything this course unlocks is now waiting on one thing fewer.
+
+    if indegree[course] == 0:
+        queue.append(course)
+The moment a tally hits zero, that course has nothing left to wait for, so it joins
+the back of the line. This is the line that drives the whole algorithm and the
+reason nothing ever needs searching for.
+
+    return done == num_courses
+The circle check from section 3, in one comparison. All courses taken means a valid
+order exists. Fewer means the remainder were stuck in a circle.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+4 courses, prerequisites [[1,0], [2,0], [3,1], [3,2]].
+
+BUILDING:
+    pair [1,0]: course 1 needs 0.  graph[0] = [1],   indegree = [0,1,0,0]
+    pair [2,0]: course 2 needs 0.  graph[0] = [1,2], indegree = [0,1,1,0]
+    pair [3,1]: course 3 needs 1.  graph[1] = [3],   indegree = [0,1,1,1]
+    pair [3,2]: course 3 needs 2.  graph[2] = [3],   indegree = [0,1,1,2]
+
+    graph = {0:[1,2], 1:[3], 2:[3]}
+    indegree = [0, 1, 1, 2]
+
+STARTING LINE: courses with indegree 0 -> just course 0.
+    queue = [0]     done = 0
+
+ROUND 1.  pop 0.  done = 1.
+    0 unlocks 1: indegree[1] goes 1 -> 0.  Zero -> queue it.
+    0 unlocks 2: indegree[2] goes 1 -> 0.  Zero -> queue it.
+    queue = [1, 2]     indegree = [0, 0, 0, 2]
+
+ROUND 2.  pop 1.  done = 2.
+    1 unlocks 3: indegree[3] goes 2 -> 1.  Not zero, so 3 stays out - correct,
+                 it is still waiting on course 2.
+    queue = [2]
+
+ROUND 3.  pop 2.  done = 3.
+    2 unlocks 3: indegree[3] goes 1 -> 0.  NOW it is available -> queue it.
+    queue = [3]
+
+ROUND 4.  pop 3.  done = 4.
+    3 unlocks nothing.
+    queue = []  -> loop ends.
+
+done is 4, num_courses is 4 -> equal, so return True.
+
+Check against the rules: 0 before 1 and 2, and both before 3. The order taken was
+0, 1, 2, 3. Valid.
+
+The moment to look at is round 2, where course 3's tally dropped to 1 and it was
+NOT queued. That is the algorithm correctly refusing to release a course that still
+has an outstanding prerequisite.
+
+NOW THE CIRCLE, prerequisites [[1,0], [0,1]] with 2 courses:
+    pair [1,0]: graph[0] = [1], indegree = [0,1]
+    pair [0,1]: graph[1] = [0], indegree = [1,1]
+    queue: no course has indegree 0 -> queue starts EMPTY.
+    The while loop never runs.  done = 0.
+    0 == 2?  No -> return False.  Correct, with no extra code.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(V + E) - V for the number of courses, E for the number of prerequisites.
+Building the tables reads each prerequisite once. Each course is queued at most
+once and taken out at most once. Each prerequisite is walked exactly once, when its
+source course is finished. Added together, the work is proportional to the size of
+the input, which is the best possible.
+
+SPACE: O(V + E). The lookup holds one entry per prerequisite, the tally list one
+number per course, and the queue at most all the courses at once. Note there is no
+recursion, so no call stack to worry about - this version works on dependency
+chains of any depth, unlike a DFS-based topological sort which can overflow the
+stack on a long chain.
+
+THE #1 MISTAKE - incrementing the wrong course's tally. For a pair [course, need],
+it is COURSE that is waiting, so course's count goes up. Doing it to "need" instead
+processes the graph backwards; it passes any test whose dependencies happen to be
+symmetric and fails quietly on real ones. Compounding it, the pair reads
+[course, need] while the arrow points need -> course, so the field order is the
+opposite of the mental picture. Read the problem statement's field order carefully
+and say the sentence as you type it.
+
+A close second: omitting the final comparison. Without it there is nothing that
+distinguishes a completed schedule from one that got stuck, and a graph with a
+circle silently looks like a success.
+
+THE SIBLING PROBLEM: Course Schedule II asks for the actual order, not just whether
+one exists. Same code - simply collect the courses into a list as they are taken,
+and return that list when the count matches, or an empty list when it does not.
+
+ONE-SENTENCE TAKEAWAY: count how many prerequisites each course is waiting on,
+start with those waiting on nothing, tick one off everything a finished course
+unlocks - and if fewer courses come out than went in, the rest were waiting on each
+other in a circle.""",
 ]
 
 _EX_P0E["Find Minimum in Rotated Sorted Array"] = [
-    """The textbook case, traced.
-nums = [4,5,6,7,0,1,2]. lo=0, hi=6.
-mid=3, nums[3]=7 > nums[6]=2 -> the array must 'wrap' somewhere to the right of
-mid, so lo=4.
-mid=5, nums[5]=1 <= nums[6]=2 -> the right part is already sorted, so the
-minimum is at mid or to its left: hi=5.
-mid=4, nums[4]=0 <= nums[5]=1 -> hi=4.
-lo==hi==4, return nums[4]=0.""",
+    """1. THE GOAL, in plain English.
 
-    """A NON-rotated array - the case that breaks a nums[mid] vs nums[lo] test.
-nums = [1,2,3,4,5]. lo=0, hi=4.
-mid=2, nums[2]=3 <= nums[4]=5 -> hi=2.
-mid=1, 2 <= 3 -> hi=1. mid=0, 1 <= 2 -> hi=0. Return nums[0]=1. Correct.
-Now imagine comparing against nums[lo] instead: nums[mid]=3 > nums[lo]=1 would
-suggest 'left half is sorted, go right' and you would walk away from the true
-minimum. Comparing to nums[hi] is what makes the non-rotated case fall out for
-free - which is why the code is written that way.""",
+You are given a list that WAS sorted from smallest to largest, but someone then
+picked it up and rotated it - took some chunk from the front and moved it to the
+back. Find the smallest number, using binary search rather than just scanning.
 
-    """Two elements, and a rotation by exactly one.
-nums = [2,1]: lo=0,hi=1, mid=0, nums[0]=2 > nums[1]=1 -> lo=1, loop ends, return
-1.
-nums = [1,2]: mid=0, 1 <= 2 -> hi=0, return 1.
-nums = [3,4,5,1,2]: mid=2, 5 > 2 -> lo=3; mid=3, 1 <= 2 -> hi=3; return 1.
-Single element [7]: lo==hi from the start, the loop never runs, return 7.
-Four shapes, one loop, no special cases.""",
+Here is the rotation happening:
 
-    """Why `while lo < hi` and `hi = mid` (not mid - 1).
-The loop is searching for a POSITION, not a value, so it must never discard the
-candidate it is standing on. nums[mid] <= nums[hi] means mid could BE the
-minimum, so hi = mid keeps it in range.
-Using `hi = mid - 1` can step past the answer; using `while lo <= hi` with
-`hi = mid` loops forever once lo == hi == mid.
-The three choices - `lo < hi`, `hi = mid`, `lo = mid + 1` - only work as a set.
-This is the boundary-search template, the same one behind bisect_left.""",
+    originally sorted:   [0, 1, 2, 4, 5, 6, 7]
+    rotate by 4:         [4, 5, 6, 7, 0, 1, 2]
+    position              0  1  2  3  4  5  6
 
-    """Duplicates break the O(log n) guarantee.
-nums = [2,2,2,0,2]. mid=2, nums[2]=2 which is NOT > nums[4]=2, so hi=2 - and you
-have just discarded the 0. Wrong answer.
-The fix (LeetCode 154) is a third branch: when nums[mid] == nums[hi], you cannot
-tell which side holds the minimum, so shrink by one with hi -= 1.
-That makes the worst case O(n) - on [2,2,2,2,2] you peel one element at a time -
-and it is provably unavoidable: with all-equal values there is no information to
-binary-search on. Being able to state that lower bound is the whole point of the
-follow-up.""",
+The smallest number is 0, at position 4.
 
-    """The related problem: SEARCH in a rotated sorted array.
-Same setup, but you want the index of a target. Two ways:
-1. Find the rotation point with this exact code, then binary-search the correct
-   half. Two clean searches.
-2. One modified search: at each step exactly one half is sorted (check
-   nums[lo] <= nums[mid]); test whether the target lies inside that sorted half
-   and go there, otherwise go the other way.
-Method 2 is what most interviewers want, but method 1 is easier to get right and
-you can build it directly on top of this function. Say both, implement whichever
-you can write bug-free under pressure.""",
+Look at the shape carefully, because everything depends on it. The list is in TWO
+sorted runs:
+
+    [4, 5, 6, 7] then [0, 1, 2]
+
+The left run is entirely larger than the right run. The minimum sits at the exact
+point where the list "drops" - the start of the second run.
+
+So the real question is: where is the drop?
+
+Scanning the list for it would take n steps and would not need the list to be
+sorted at all. The point of this problem is to find it in about log n steps by
+halving - which is only possible because of the two-run structure.
+
+One assumption to state: the problem normally promises the numbers are all
+DIFFERENT. Duplicates break the method, and section 4 explains exactly why.""",
+
+    """2. THE INTUITION - one comparison tells you which half holds the drop.
+
+Ordinary binary search works by comparing the middle against a TARGET. Here there
+is no target - we do not know what the smallest number is; that is what we are
+looking for.
+
+So we compare the middle against something else: the RIGHT END of the stretch we
+are still searching.
+
+    if nums[mid] > nums[hi]:   the drop is to the RIGHT of mid
+    otherwise:                 the drop is at mid, or to the LEFT
+
+Why does that work? Think about what it means for the middle to be BIGGER than the
+last element.
+
+In a properly sorted run, every element is smaller than the one at the end. So if
+the middle is BIGGER than the end, the middle and the end cannot be in the same
+sorted run - the list must drop somewhere between them. The minimum is therefore
+strictly to the right of mid.
+
+And if the middle is SMALLER than the end, then the middle and the end sit in the
+same run, rising smoothly. So there is no drop between them, and the minimum must
+be at mid itself or somewhere to its left.
+
+Check both on our list, [4, 5, 6, 7, 0, 1, 2] with lo = 0 and hi = 6:
+
+    mid = 3, nums[3] = 7, nums[6] = 2.  Is 7 > 2? Yes - so 7 and 2 are in
+    different runs, the drop is between them, and the minimum is to the right of
+    position 3. Correct: it is at position 4.
+
+That single comparison halves the search every time, which is the whole gain: about
+20 steps for a million numbers instead of a million.""",
+
+    """3. WHY COMPARE AGAINST hi AND NOT lo - the trap.
+
+It is natural to try comparing the middle against the LEFT end instead. It seems
+symmetric. It is not, and it is worth seeing why, because this is the detail that
+separates people who understand the problem from people who memorised it.
+
+Compare against lo, and consider a list that has NOT been rotated at all:
+
+    [0, 1, 2, 4, 5, 6, 7]      lo = 0, hi = 6, mid = 3
+
+    nums[mid] = 4, nums[lo] = 0.  Is 4 > 0? Yes.
+
+If you read that as "the drop is to the right", you would search the right half -
+and be wrong, because the minimum is at position 0, right where you started. The
+comparison against lo cannot distinguish "rotated, so the left half is the high
+run" from "not rotated, so the left half is simply the small numbers". Both give
+mid > lo.
+
+Comparing against hi has no such ambiguity. On the unrotated list:
+
+    nums[mid] = 4, nums[hi] = 7.  Is 4 > 7? No -> the minimum is at mid or left.
+
+which correctly keeps narrowing leftwards until it lands on position 0.
+
+The asymmetry comes from where the minimum can hide. Because of how rotation
+works, the LAST element is always in the run that contains the minimum (or is the
+minimum itself). The first element is not always in that run. So the right end is
+a reliable reference point and the left end is not.
+
+That is the one sentence worth remembering: compare against the right end, because
+the right end is always on the same side of the drop as the minimum.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - "while lo < hi", NOT "lo <= hi". This is the opposite of ordinary binary
+search, and it surprises people. Here we are not looking for a value that might be
+absent - we are narrowing a range that ALWAYS contains the answer. When lo and hi
+meet, that single position IS the minimum, so the loop should stop and we return
+it. Writing "<=" would run one more round with lo equal to hi, compute mid equal to
+both, and depending on the branch could loop forever.
+
+CASE 2 - "hi = mid", NOT "hi = mid - 1". Also opposite to ordinary binary search.
+When nums[mid] is not greater than nums[hi], the middle itself could BE the
+minimum, so we must not exclude it. Writing mid - 1 can skip straight past the
+answer. Meanwhile the other branch does use mid + 1, because when nums[mid] is
+greater than nums[hi], mid definitely is not the minimum - something to its right
+is smaller.
+
+So the two branches are deliberately asymmetric: mid + 1 on one side, plain mid on
+the other. That asymmetry is what keeps the answer inside the range at all times.
+
+CASE 3 - the list is not rotated at all. [0, 1, 2, 4, 5, 6, 7]. Every comparison
+sends us left, and we land on position 0. Correct, with no special case.
+
+CASE 4 - a single element. lo and hi are both 0, so the loop never runs and we
+return that element. Correct.
+
+CASE 5 - DUPLICATES break it. Consider [3, 3, 1, 3] with lo = 0, hi = 3. mid = 1,
+nums[1] = 3, nums[3] = 3. Is 3 > 3? No - so we go left, and the 1 is discarded.
+Wrong answer. When equal values appear, the comparison carries no information
+about which side the drop is on. The standard repair is to shrink hi by one when
+nums[mid] equals nums[hi], which is safe but degrades the worst case to O(n). If
+the problem allows duplicates, say this out loud.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+ROTATED SORTED ARRAY: a sorted list where a chunk from the front has been moved to
+the back, producing two sorted runs where the left run is entirely larger than the
+right run. Defined in section 1.
+
+BINARY SEARCH: finding something in a structured collection by repeatedly halving
+the range - look at the middle, decide which half to keep, discard the other.
+About 20 steps for a million items.
+
+THE DROP (or the pivot): the single place where the list stops rising and falls
+back down. The minimum sits immediately after it.
+
+lo and hi: the ends of the stretch still under consideration - the range in which
+the minimum is known to lie. Unlike ordinary binary search, this range always
+CONTAINS the answer, which is why the loop stops when they meet rather than when
+they cross.
+
+(lo + hi) // 2: the middle. The double slash is whole-number division, throwing
+away any fraction, so it rounds DOWN. That downward rounding matters here: it
+guarantees mid is never equal to hi when the range has two or more items, which is
+what stops "hi = mid" from leaving the range unchanged and looping forever.
+
+O(log n) and O(1): the costs, where n is the length of the list. O(log n) means the
+work grows like the number of times you can halve n before reaching 1 - about 20
+for a million. O(1) means the extra memory does not grow at all: three variables,
+whatever the input size.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: compare the middle against the RIGHT end - if the
+middle is bigger, the drop is to its right, otherwise the minimum is at the middle
+or to its left.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+The loop ends when the two markers meet, and because the range always contains the
+answer, wherever they meet IS the answer.
+
+The steps:
+
+  1. Put one marker at the first position and one at the last. Read them as "the
+     minimum is somewhere in this range, inclusive".
+
+  2. Repeat while the two markers have not MET. Not "have not crossed" - met. When
+     they are equal there is one position left, and that position is the answer, so
+     there is nothing more to decide.
+
+  3. Work out the middle position by adding the markers and halving, rounding down.
+
+  4. Compare the middle value against the value at the RIGHT marker.
+
+  5. If the middle is BIGGER, then the middle and the right end are in different
+     sorted runs, so the drop lies between them. The minimum is strictly to the
+     right of the middle, so move the left marker to just past it.
+
+  6. Otherwise the middle and the right end are in the same rising run, so there is
+     no drop between them. The minimum is at the middle or to its left, so move the
+     right marker TO the middle - not past it, because the middle itself might be
+     the answer.
+
+  7. When the markers meet, return the value there.
+
+Steps 5 and 6 are deliberately not mirror images. One excludes the middle, the
+other keeps it, and that asymmetry is exactly what guarantees the answer is never
+discarded. If you find yourself making them symmetric for tidiness, you have
+introduced a bug.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The list is really two sorted runs joined end to end, with every number in the
+first run larger than every number in the second. The smallest number sits right at
+the join - the point where the values suddenly drop.
+
+So the code is not hunting for a particular value. It is hunting for that join, and
+it narrows in on it by repeatedly asking one question about the middle of whatever
+stretch it is still considering.
+
+The question is: is the middle value bigger than the value at the far right end?
+
+If it is, then those two cannot belong to the same rising run - a rising run never
+ends lower than it started. So the join must lie somewhere between them, which puts
+the smallest number strictly to the right of the middle. The whole left half,
+including the middle itself, is discarded.
+
+If it is not, then the middle and the right end are rising smoothly together with
+no join between them, so the smallest number is at the middle or somewhere to its
+left. The right half is discarded - but the middle is KEPT, because the middle
+might itself be the smallest.
+
+Each round halves the stretch, so from a million numbers it takes about twenty
+rounds to narrow down to one. And because the smallest number is never discarded -
+that is what the careful asymmetry above guarantees - wherever the two markers
+finally meet is the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [4, 5, 6, 7, 0, 1, 2] beside you; the answer is 0 at position 4.
+
+    lo, hi = 0, len(nums) - 1
+The ends of the stretch that still contains the minimum. Unlike ordinary binary
+search, this range is guaranteed to contain the answer at all times - which is why
+the loop and the updates below differ from the standard pattern.
+
+    while lo < hi:
+Strictly less than, NOT "or equal". We are narrowing toward a position that is
+certainly the answer, so when the two markers meet there is nothing left to decide -
+that position is the minimum. Writing "<=" would run an extra round where mid
+equals both markers, and depending on the branch taken it can loop forever.
+
+    mid = (lo + hi) // 2
+The middle, rounding DOWN because of whole-number division. The rounding matters:
+it guarantees mid is never equal to hi when the stretch holds two or more items, so
+the "hi = mid" branch below always shrinks the range rather than leaving it
+unchanged.
+
+    if nums[mid] > nums[hi]:
+        lo = mid + 1
+THE COMPARISON, and note it is against hi, not lo - see section 3 for why the left
+end would be ambiguous.
+
+The middle is bigger than the right end, so they cannot be in the same rising run;
+the drop lies between them. That puts the minimum strictly to the RIGHT of mid, so
+mid itself can be excluded - hence mid + 1.
+
+    else:
+        hi = mid
+The middle is not bigger than the right end, so they rise smoothly together with no
+drop between them. The minimum is therefore at mid or to its left.
+
+Note this is "hi = mid", NOT "mid - 1". The middle itself might BE the minimum, so
+excluding it could throw the answer away. This asymmetry with the branch above is
+deliberate and is what keeps the answer inside the range - see case 2 in section 4.
+
+    return nums[lo]
+The markers have met, and the range always contained the answer, so this position
+holds the minimum. Returning nums[hi] would be equally correct at this point, since
+lo and hi are equal.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    nums = [4, 5, 6, 7, 0, 1, 2]
+    pos     0  1  2  3  4  5  6
+
+Start: lo = 0, hi = 6
+
+ROUND 1.  Is 0 < 6? Yes.
+    mid = (0 + 6) // 2 = 3.  nums[3] = 7, nums[6] = 2.
+    Is 7 > 2?  YES -> 7 and 2 are in different runs; the drop is between them.
+    lo = mid + 1 = 4.        stretch is now positions 4..6
+
+ROUND 2.  Is 4 < 6? Yes.
+    mid = (4 + 6) // 2 = 5.  nums[5] = 1, nums[6] = 2.
+    Is 1 > 2?  No -> both are in the same rising run; no drop between them.
+    hi = mid = 5.            stretch is now positions 4..5
+    Note hi became 5, not 4 - position 5 is kept because it could be the answer.
+
+ROUND 3.  Is 4 < 5? Yes.
+    mid = (4 + 5) // 2 = 4.  nums[4] = 0, nums[5] = 1.
+    Is 0 > 1?  No -> same run.
+    hi = mid = 4.            stretch is now position 4 only
+
+CHECK: is 4 < 4? No -> the loop ends.
+
+return nums[4] = 0.  Correct.
+
+Watch the stretch shrink: 7 positions, then 3, then 2, then 1. And notice round 3 -
+mid came out as 4, which is lo, not hi. That downward rounding is what made the
+range shrink from two positions to one rather than sticking.
+
+THE UNROTATED CASE, nums = [0, 1, 2, 4, 5, 6, 7]:
+
+  lo = 0, hi = 6.  mid = 3, nums[3] = 4, nums[6] = 7.  Is 4 > 7? No -> hi = 3.
+  lo = 0, hi = 3.  mid = 1, nums[1] = 1, nums[3] = 4.  Is 1 > 4? No -> hi = 1.
+  lo = 0, hi = 1.  mid = 0, nums[0] = 0, nums[1] = 1.  Is 0 > 1? No -> hi = 0.
+  lo = 0, hi = 0 -> loop ends.  return nums[0] = 0.  Correct.
+
+Every comparison sent it left, which is right - an unrotated list is one single
+run, so the minimum is at the very start. And this is the case that comparing
+against lo would have got wrong.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(log n). Each round halves the stretch, so it takes about the number of
+times you can halve n before reaching 1 - roughly 20 rounds for a million numbers,
+30 for a billion. A plain scan would be O(n), so on a million numbers this is
+twenty steps against a million.
+
+SPACE: O(1) - constant. Three variables, however long the list.
+
+THE #1 MISTAKE - writing "hi = mid - 1" to match the shape of ordinary binary
+search. In ordinary binary search you have just examined the middle and ruled it
+out, so excluding it is right. Here you have NOT ruled it out - when the middle is
+not greater than the right end, the middle might itself be the minimum. Excluding
+it can discard the answer and return a neighbouring value instead. The two branches
+are asymmetric on purpose: mid + 1 on one side, plain mid on the other.
+
+A close second: using "while lo <= hi". The range always contains the answer, so
+the moment the markers meet the search is over. The "or equal" version runs an
+extra round that can fail to shrink the range and hang.
+
+A third, and the most conceptually interesting: comparing the middle against lo
+instead of hi. It looks symmetric and is not - the last element is always on the
+same side of the drop as the minimum, while the first element is not. The unrotated
+list is the case that exposes it.
+
+ONE-SENTENCE TAKEAWAY: compare the middle against the RIGHT end - bigger means the
+drop is to the right so move past the middle, otherwise the minimum is at the
+middle or left so keep the middle - and stop when the two markers meet, because the
+range always held the answer.""",
 ]
 
 
