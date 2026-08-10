@@ -29490,6 +29490,76 @@ switch to a prefix-sum hash map for O(n). Knowing which sibling needs which
 tool is the point of studying them together.""",
 ]
 
+_EX_P1G["LLMs & RAG (Retrieval-Augmented Generation)"] = [
+    """The end-to-end pipeline, with a real question.
+Corpus: 5,000 internal HR PDFs. Question: "How many days of paternity leave do
+I get in Ireland?"
+OFFLINE: parse each PDF to text, chunk into ~500-token pieces with ~50 tokens of
+overlap, embed each chunk, store the vector plus metadata (doc id, title,
+country, effective date, URL).
+ONLINE: embed the question (~30ms), retrieve the top 20 by cosine similarity
+(~50ms), filter metadata to country = IE, re-rank those 20 with a cross-encoder
+and keep 5 (~100ms), build the prompt as system rules + the 5 chunks with
+citations + the question, generate (~1.5s), return the answer plus links.
+Note where the time goes: generation dominates, so optimise prompt size before
+optimising search.""",
+
+    """Why RAG rather than fine-tuning or a giant prompt - the comparison you will
+be asked for. FINE-TUNING teaches style and format well but is a poor way to
+install FACTS: the policy changes next quarter and you would retrain, and the
+model still cannot cite a source. STUFFING all 5,000 PDFs into context is
+impossible on cost and length, and attention degrades over very long contexts
+('lost in the middle'). RAG updates instantly (re-embed one changed document),
+cites sources, and enforces per-user access via metadata filters.
+The honest trade: RAG adds a retrieval failure mode. If the right chunk is not
+retrieved, no model quality saves the answer - which is why retrieval metrics
+matter more than generation metrics at the start.""",
+
+    """Chunking, and the failure each extreme causes.
+Too large (2,000 tokens): retrieval returns a wall of text with one relevant
+sentence, attention is diluted, and cost per query triples.
+Too small (100 tokens, no overlap): "Paternity leave is 2 weeks." lands in one
+chunk while "...for employees based in Ireland" lands in the next. Retrieved
+alone, the first chunk answers the question WRONGLY for every other country.
+Working default: 300-800 tokens with 10-15% overlap, split on structural
+boundaries (headings, paragraphs) rather than a fixed character count, and
+prepend the document title and section heading to every chunk so it is
+self-describing.""",
+
+    """Hybrid search - the case pure embeddings get wrong.
+Question: "What is the deductible on policy ACME-4471-B?"
+Dense vector search returns chunks semantically about deductibles from the
+WRONG policy, because an embedding does not preserve exact identifiers. BM25
+keyword search nails the exact token ACME-4471-B but misses the paraphrase
+'excess amount'.
+Hybrid: run both, fuse with Reciprocal Rank Fusion, then re-rank the union with
+a cross-encoder. In practice hybrid plus reranking is the single largest
+quality jump in most production RAG systems - larger than swapping the LLM,
+which is the counter-intuitive part worth saying.""",
+
+    """Grounding rules that actually reduce hallucination.
+System prompt: "Answer ONLY from the numbered context. Cite the number(s) you
+used, e.g. [3]. If the context does not contain the answer, reply exactly:
+I could not find this in the documents."
+Then VERIFY programmatically rather than trusting it: check the answer contains
+at least one citation, and that quoted spans actually appear in the retrieved
+chunks; if not, retry or fall back to the not-found reply. Also set a
+similarity floor - if the best chunk scores below a threshold, do not generate
+at all. An explicit 'I don't know' path is the single most valuable feature in
+an internal Q&A system, because a confident wrong answer destroys trust in the
+whole tool.""",
+
+    """How to evaluate it, since 'it seems good' is not an answer.
+Evaluate the two stages SEPARATELY. Retrieval: build 50-100 real questions with
+the correct source chunk labelled, and measure recall@k and MRR - if recall@5
+is 0.6, four in ten questions are unanswerable no matter what the model does,
+and that is where to spend your effort. Generation: faithfulness (is every
+claim supported by the retrieved context?), answer relevance, and citation
+correctness, scored by humans on a sample plus an LLM-judge on the rest.
+The common mistake is tuning the prompt for weeks when the real problem was
+retrieval - which is why you measure them apart before you touch either.""",
+]
+
 _EX_P1G["Path Sum III (prefix sum)"] = [
     """Why the naive answer is O(n^2) and this is O(n).
 The obvious solution runs a downward-sum DFS from EVERY node - n starting
@@ -29858,6 +29928,66 @@ and Sell Stock II and its cooldown variant (hold/sold/rest), House Robber
 them). The recognition cue is that the answer depends on WHICH KIND of step you
 just took - the moment you find yourself wanting two answers instead of one,
 carry two variables rather than an array.""",
+]
+
+_EX_P1H["Arranging Coins"] = [
+    """The closed form first, because it makes the search obvious.
+k complete rows use 1 + 2 + ... + k = k(k+1)/2 coins. So the question is the
+largest k with k(k+1)/2 <= n - a monotonic predicate, which is exactly what
+binary search is for.
+n = 5: k=1 uses 1, k=2 uses 3, k=3 uses 6 > 5. Answer 2, with one coin left
+over. n = 8: k=3 uses 6, k=4 uses 10 > 8. Answer 3.
+Stating the triangular-number formula before writing anything turns a
+fiddly simulation into three lines.""",
+
+    """Why the loop returns `hi` rather than -1.
+This is a search for a BOUNDARY, not for an exact match, so the standard
+'return -1 when not found' is wrong. When the loop exits, lo has moved past the
+answer and hi sits on the largest k whose cost is still within budget - so hi
+IS the answer.
+n = 5: lo=0,hi=5 -> mid 2 costs 3 < 5 -> lo=3. mid 4 costs 10 > 5 -> hi=3.
+mid 3 costs 6 > 5 -> hi=2. Now lo=3 > hi=2, exit, return hi = 2. Correct.
+Recognising 'largest k satisfying a predicate' as a binary-search-on-the-answer
+problem is the transferable idea; the exact-match template does not apply.""",
+
+    """The overflow trap, which is the real reason this problem exists.
+mid * (mid + 1) can exceed 32-bit range even when n does not: with n near 2^31,
+mid is around 65,000 and mid*(mid+1) is about 4.3 billion - overflowing a
+signed int in Java or C++ and producing a negative cost, which sends the search
+the wrong way.
+Fixes: use long/int64, or rearrange to compare mid <= (2*n)/(mid+1) to avoid
+the large product. Python's arbitrary-precision integers hide this entirely,
+which is exactly why it is worth saying out loud - it shows you are thinking
+about the algorithm rather than about your interpreter.""",
+
+    """The O(1) alternative, by solving the quadratic.
+k(k+1)/2 <= n rearranges to k^2 + k - 2n <= 0, so k = floor((-1 + sqrt(1 + 8n))
+/ 2). One line, constant time.
+The caveat to state: floating-point sqrt on very large n can be off by one at
+the boundary, so production code computes the candidate and then verifies
+k(k+1)/2 <= n < (k+1)(k+2)/2, adjusting by one if needed. Offering the formula
+WITH that caveat is stronger than offering it as if it were exact - and it is
+the same precision issue as integer square roots generally.""",
+
+    """Edge cases.
+n = 0 -> lo=0, hi=0, mid=0, cost 0 == 0 -> return 0. Zero rows.
+n = 1 -> row 1 costs 1 -> answer 1.
+n = 2 -> k=1 costs 1, k=2 costs 3 > 2 -> answer 1, with one coin spare.
+n = 3 -> exactly two full rows, and the `coins_used == n` branch returns 2
+directly.
+Large n near 2^31 - 1 -> about 65,535 rows, and the answer must still be
+computed without overflow. These five cover every branch.""",
+
+    """Complexity and the family.
+O(log n) time, O(1) space. The linear simulation - subtract 1, then 2, then 3
+until you run out - is O(sqrt n), which is also fast enough here but does not
+generalise.
+The family is binary-search-on-the-answer: Koko Eating Bananas (smallest speed
+that finishes in time), Capacity to Ship Packages Within D Days, Split Array
+Largest Sum, Minimum Number of Days to Make m Bouquets, Sqrt(x). The cue is
+always the same - a monotonic feasibility predicate over a numeric answer,
+where you can cheaply test 'is k good enough?' even though you cannot directly
+compute the best k.""",
 ]
 
 for _e in ENTRIES:
