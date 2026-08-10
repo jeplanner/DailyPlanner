@@ -33588,6 +33588,320 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1Q[_e["title"]]
 
 
+_EX_P1R = {}
+
+_EX_P1R["Subarray Product Less Than K"] = [
+    """The counting identity that IS the problem.
+When the window [left..right] is valid, every subarray ENDING at right and
+starting anywhere in that window is also valid - because dropping elements from
+the front of a positive-number product only makes it smaller. There are
+right - left + 1 such subarrays, so add that to the count each step.
+nums = [10,5,2,6], k = 100. right=0: window [10], add 1. right=1: [10,5]
+product 50 < 100, add 2 ([5] and [10,5]). right=2: product 100 not < 100, so
+shrink - divide out 10 -> product 10, left=1; add 3 ([2],[5,2],[10,5,2]... no,
+[2],[5,2] and the window is [5,2] so add 2). right=3: product 60, add 3.
+Total 8.""",
+
+    """Why `count += right - left + 1` and not `count += 1`.
+Adding 1 per valid window counts only the maximal window at each step and
+misses every shorter subarray ending there. The window length IS the number of
+new subarrays introduced by extending to `right`, because each start position
+in the window gives a distinct valid subarray.
+This is the single most common error on this problem, and it undercounts
+dramatically - on [10,5,2,6] with k=100 it would give 4 instead of 8. If your
+answer is roughly the array length, this is why.""",
+
+    """Why positivity is load-bearing.
+The shrink step divides the product, and the 'every suffix of a valid window is
+valid' argument both assume all numbers are POSITIVE. With a zero, the product
+collapses to 0 and the division breaks. With negatives, multiplying can DECREASE
+the product, so the window is no longer monotone and the sliding window is
+simply invalid.
+The constraint says nums[i] >= 1, which is what licenses the whole approach.
+Say that out loud - and note that if zeros were allowed you would split the
+array at each zero and solve the pieces independently.""",
+
+    """The k <= 1 guard.
+Every product of positive integers is at least 1, so nothing can be strictly
+less than 1 - and with k = 0 or k = 1 the answer is 0. Without the guard, the
+inner while loop would try to shrink an already-empty window and either divide
+by an out-of-range index or loop forever.
+It is one line, and it is the case an interviewer supplies to see whether you
+thought about the domain rather than only the algorithm.""",
+
+    """Edge cases.
+Single element less than k -> 1. Single element >= k -> the window shrinks to
+empty, right - left + 1 = 0, so 0. Note the window legitimately becomes empty
+(left passes right), and the arithmetic still gives the right answer without a
+special case.
+All elements >= k -> 0.
+k very large -> every subarray counts, n*(n+1)/2 of them.
+The count can be large: 50,000 elements gives over a billion subarrays, which
+overflows 32-bit in other languages.""",
+
+    """Complexity and the family.
+O(n) time - left and right each advance at most n times in total, so the inner
+while is amortised O(1) - and O(1) space.
+The family is the VARIABLE-size sliding window: Longest Substring Without
+Repeating Characters, Minimum Size Subarray Sum, Longest Repeating Character
+Replacement, Minimum Window Substring, Fruit Into Baskets.
+The shape is always: expand right, shrink from left while invalid, record
+something. What varies is what 'invalid' means and what you record - and here
+the recording step (window length rather than 1) is the whole difficulty.""",
+]
+
+_EX_P1R["Subsets II (with duplicates)"] = [
+    """The duplicate-skip rule, traced.
+nums = [1,2,2] after sorting.
+backtrack(0, []): record []. i=0 -> path [1].
+  backtrack(1, [1]): record [1]. i=1 -> [1,2].
+    backtrack(2, [1,2]): record [1,2]. i=2: i > start(2)? No, i == start -> do
+    NOT skip -> [1,2,2], record it.
+  back at depth 1, i=2: i > start(1) and nums[2] == nums[1] -> SKIP.
+i=1 at depth 0 -> [2] ... i=2 at depth 0: i > start(0) and nums[2]==nums[1] ->
+SKIP.
+Result [[], [1], [1,2], [1,2,2], [2], [2,2]] - six unique subsets, no
+duplicates generated and none filtered afterwards.""",
+
+    """Why the condition is `i > start` and not `i > 0`.
+`i == start` means this is the FIRST time at this depth that we are choosing a
+value - so even if it equals the previous element, it is a legitimate new
+branch (it is the second '2' being appended to a path that already contains the
+first). `i > start` means we are choosing an alternative SIBLING at the same
+depth, and picking an equal value there would regenerate a branch already
+explored.
+Using `i > 0` instead skips the [1,2,2] case entirely and silently loses valid
+subsets. This one comparison is the whole problem.""",
+
+    """Why sorting first is mandatory.
+The skip rule compares nums[i] to nums[i-1], which only identifies duplicates
+if equal values are ADJACENT. On unsorted [2,1,2] the two 2s are not neighbours,
+the rule never fires, and you generate [2],[2] as separate subsets.
+Sorting is O(n log n) and is dominated by the O(2^n) enumeration anyway, so it
+is free in practice. Any problem whose de-duplication compares neighbours needs
+this precondition - Combination Sum II and 3Sum have the identical
+requirement.""",
+
+    """Why every node records, with no base case.
+`result.append(path[:])` sits at the TOP of backtrack, not inside an
+`if` - because every prefix along every branch is itself a valid subset,
+including the empty one. There is no 'we have reached the bottom' condition;
+the recursion ends naturally when the for loop has no more indices.
+Contrast Permutations, where only complete paths count and the record happens
+at a base case. Knowing which shape a problem has - record everywhere vs record
+at leaves - decides where that line goes.""",
+
+    """The copy, again.
+`path[:]` must copy. `path` is one list mutated throughout the search, so
+appending it directly stores a reference and every recorded subset ends up
+identical (and empty at the end). Same failure as Path Sum II and Palindrome
+Partitioning: the right NUMBER of answers, all wrong.
+Paired with `path.pop()` after the recursive call, this is the standard
+backtracking triple - choose, explore, un-choose - and forgetting either half
+produces a distinctive, recognisable bug.""",
+
+    """Complexity and the family.
+O(n * 2^n) time - up to 2^n subsets, each costing O(n) to copy - and O(n) space
+for the recursion and path, excluding the output. You cannot beat exponential
+when the output is exponential.
+The family: Subsets (no duplicates, so no skip rule), Combination Sum II (same
+sort-and-skip with a target), Permutations II (duplicates in permutations,
+which needs a used[] array rather than the index comparison because order
+matters), and Palindrome Partitioning.
+The sort-then-skip-equal-siblings idiom is the reusable piece; it appears
+verbatim in three of those.""",
+]
+
+_EX_P1R["'Why this company / why you?'"] = [
+    """The test that separates a real answer from a generic one.
+Read your answer back and ask: would it still be true if I swapped in a
+different company name? If yes, it says nothing.
+GENERIC: 'Google is a great company with brilliant people working on
+world-changing problems.' True of twenty employers, and the interviewer has
+heard it forty times this month.
+SPECIFIC: 'You're building the serving infrastructure rather than the models,
+and in every project I've done the modelling was the easy part - the difficulty
+was keeping it working after week one.' That sentence only fits one team, and
+it connects their work to your evidence.""",
+
+    """The structure: one thing about THEM, one thing about YOU, and the join.
+THEM - something concrete and researched: a team's actual remit, a product
+decision, a paper, an engineering blog post, the fact that they run their own
+inference stack. One is enough; you are not reciting a dossier.
+YOU - the experience that makes that interesting: a project, a failure, a
+preference you can evidence.
+THE JOIN - why the two fit. 'You do X; I found in my project that X is where
+the difficulty actually lives; that is what I want to work on next.'
+Ninety seconds, three beats.""",
+
+    """The 'why you' half, which is not a list of adjectives.
+Weak: 'I'm hardworking, a fast learner, and a good team player.' Unfalsifiable,
+and every candidate says it.
+Strong: name two or three things you have EVIDENCE for and that match the role.
+'I'm comfortable in the messy part - my RAG project's win came from fixing the
+chunking, not the model. And I'd rather make something reliable than novel,
+which is why the infrastructure side appeals.'
+The rule: every claim about yourself should have a story attached that you are
+ready to be asked about.""",
+
+    """How to research in twenty minutes, since that is what people actually have.
+Read the team's job description properly - it usually names the systems. Skim
+the company's engineering blog for one recent post you can mention. Look up two
+or three products or papers from that specific org, not the company at large.
+Check the interviewer's background on LinkedIn if you have their name.
+Then pick ONE thing that genuinely interests you. Faked enthusiasm about a
+product you have not used is transparent and worse than honest neutrality
+about it.""",
+
+    """Adapting for Amazon versus Google.
+AMAZON: tie it to CUSTOMER OBSESSION and ownership. 'The thing that appeals is
+that SDE-1s own a service end to end including on-call - in my internship the
+part I learned most from was owning the pipeline after it shipped, not building
+it.' Their principles are published; using that vocabulary honestly is expected
+rather than sycophantic.
+GOOGLE: tie it to scale and curiosity. 'I want to work where the interesting
+problems come from the size of the system rather than from the algorithm.'
+Same underlying motivation, different framing.""",
+
+    """The traps.
+Money, prestige or visa sponsorship as the stated reason - all real, none of
+them the answer to this question. Criticising a competitor. Saying you want to
+work on something the team does not do (which reveals you did not check).
+Claiming a lifelong dream of working there, which is rarely true and easy to
+puncture with one follow-up.
+And the reverse trap: an answer so tailored it sounds rehearsed. A little
+hesitation while you find the honest words reads better than a polished
+paragraph.""",
+]
+
+_EX_P1R["Surrounded Regions"] = [
+    """The inversion that makes it easy.
+Finding regions that ARE surrounded is awkward - you would have to explore each
+region and prove it never touches an edge. Instead find the regions that are
+NOT surrounded: any 'O' reachable from a border 'O' survives. Everything else
+is captured.
+So: DFS inward from every border 'O', marking survivors; then sweep the whole
+board turning unmarked 'O' into 'X' and marked cells back to 'O'.
+Reframing 'find the enclosed' as 'find the escapees, then flip the rest' is the
+whole insight, and it turns an O(regions x area) search into two linear
+passes.""",
+
+    """The trace, on a board where one region survives.
+board = X X X X / X O O X / X X O X / X O X X
+Border scan: only the 'O' at row 3, column 1 is on an edge. DFS from it marks
+just that cell 'S' - its neighbours are all 'X'.
+Final sweep: the middle region (row1 col1-2, row2 col2) is unmarked -> becomes
+'X'. The 'S' becomes 'O' again.
+Result X X X X / X X X X / X X X X / X O X X.
+Note the middle region touched no border even though it was three cells and
+adjacent to the edge column - adjacency is not connectivity.""",
+
+    """Why a THIRD marker is needed.
+You cannot mark survivors as 'O' (they already are) or as 'X' (that is the
+capture value). A temporary sentinel - 'S', or '#' - distinguishes 'known
+survivor' from 'not yet examined', and the final pass translates it back.
+Two passes over the board then suffice: one to mark, one to flip. Without the
+sentinel you would need a separate boolean grid, which is the same idea with
+more memory - correct, and worth mentioning as the non-mutating alternative if
+the interviewer objects to writing sentinel values into the input.""",
+
+    """Why only the BORDER is seeded.
+An 'O' survives exactly when it is connected to the outside, and the only way
+to reach the outside is through a border cell. So seeding every border 'O'
+captures all escape routes in one sweep - there is no need to try interior
+cells at all.
+The border loop must cover all four edges: both full columns and both full
+rows. Missing one edge (commonly the bottom row or the last column) leaves real
+survivors unmarked, and they get wrongly captured - a bug that only appears on
+boards where the only escape is through the forgotten edge.""",
+
+    """Edge cases.
+A 1x1 board: the single cell is on the border, so an 'O' survives.
+Any board with fewer than 3 rows or columns: EVERY cell is on a border, so
+nothing can ever be captured - a useful sanity check and a legitimate early
+return.
+All 'X' -> nothing to do. All 'O' -> everything is border-connected, nothing
+captured.
+Recursion depth: a 200x200 board of all 'O' gives a DFS 40,000 frames deep,
+which exceeds Python's limit - so the iterative stack or BFS version is not
+optional at real sizes. That is the standard follow-up.""",
+
+    """Complexity and the family.
+O(rows * cols) time - each cell is visited a constant number of times across
+the two passes - and O(rows * cols) space for the recursion stack in the worst
+case.
+The family: Number of Islands (plain flood fill), Pacific Atlantic Water Flow
+(the same border-seeded inward search, run twice from two different borders and
+intersected), Number of Enclaves and Number of Closed Islands (literally this
+problem with a different output), and Flood Fill.
+The reusable idea: when a property is defined by REACHING the boundary, search
+inward from the boundary rather than outward from each candidate.""",
+]
+
+_EX_P1R["Swap Nodes in Pairs"] = [
+    """The three relinks, in the order that works.
+For a pair (first, second) hanging off prev:
+    first.next  = second.next   # first now points past the pair
+    second.next = first         # second points back at first
+    prev.next   = second        # prev adopts second as the new head of the pair
+Order matters: you must save what comes AFTER the pair before overwriting
+first.next, which the first line does by reading second.next while it is still
+intact. Doing prev.next = second first would lose your handle on first.
+Draw four boxes and three arrows before typing; this is a problem lost on paper,
+not on logic.""",
+
+    """The trace on 1 -> 2 -> 3 -> 4.
+dummy -> 1. prev = dummy, first = 1, second = 2.
+first.next = second.next -> 1 -> 3. second.next = first -> 2 -> 1. prev.next =
+second -> dummy -> 2.
+List is now dummy -> 2 -> 1 -> 3 -> 4. Advance prev to first (node 1).
+Next round: first = 3, second = 4. Same three relinks -> 3 -> ... wait, 1 -> 4
+-> 3.
+Final: 2 -> 1 -> 4 -> 3. Return dummy.next = 2.""",
+
+    """Why `prev = first` and not `prev = second`.
+After the swap the pair reads second -> first, so FIRST is now the second node
+of the pair and therefore the node preceding the next pair. Advancing to second
+would leave prev pointing at the pair's new head and re-swap the same nodes
+forever.
+A quick check: after processing, prev should sit immediately before the next
+untouched node. On 1->2->3->4 after the first swap, that is node 1, whose next
+is 3. Correct.""",
+
+    """Why the dummy head is required here.
+The head changes - 1 -> 2 becomes 2 -> 1 - so the function must return a
+different node than it was given, and every relink of the first pair needs a
+stable predecessor to write into. The dummy provides one, and `return
+dummy.next` yields the new head with no special case.
+This is the same rule as in Remove Linked List Elements: if the first node can
+move or vanish, allocate a dummy. Swapping VALUES instead of nodes would avoid
+all of this - and is usually explicitly forbidden, because the exercise is the
+pointer surgery.""",
+
+    """The loop condition, and both parities.
+`while prev.next and prev.next.next` requires a full PAIR to exist. An odd
+number of nodes leaves the last one alone: 1->2->3 becomes 2->1->3, with node 3
+untouched because prev.next.next is None.
+Test both 4 nodes (even, all swapped) and 3 nodes (odd, tail preserved) - each
+condition is exercised by only one of them, and a solution checking only
+`prev.next` dereferences None on the odd case.""",
+
+    """Complexity and the family.
+O(n) time - each node is touched a constant number of times - and O(1) space
+with the iterative version. The recursive version is elegant (swap the first
+pair, recurse on the rest) but costs O(n) stack.
+The family: Reverse Nodes in k-Group (this generalised to any k, and genuinely
+harder - you must check a full group exists before reversing it), Reverse
+Linked List, Rotate List, Odd Even Linked List, Reorder List.
+Swap Nodes in Pairs is the k=2 special case of Reverse Nodes in k-Group, which
+is worth knowing because the follow-up is almost always 'now do it for k'.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1R:
+        _e["examples"] = _EX_P1R[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
