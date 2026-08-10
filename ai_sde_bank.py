@@ -25501,51 +25501,379 @@ costs one pass.""",
 ]
 
 _EX_P0B["Lowest Common Ancestor of a Binary Tree"] = [
-    """The textbook case, traced.
-      3
-    5   1
-  6  2 0 8
-    7 4
-LCA(5, 1): at node 3, left search finds 5 (returns 5 immediately), right search
-finds 1. Both non-empty -> node 3 is the answer.""",
+    """1. THE GOAL, in plain English.
 
-    """The case where one node is an ancestor of the other.
-LCA(5, 4) in the same tree.
-At node 5, the function returns 5 immediately because the node IS one of the
-targets - it does NOT keep searching below for 4.
-That early return is deliberate: if one target is an ancestor of the other, the
-ancestor is the answer. Continuing the search would still work but the early
-return is what makes the code four lines.""",
+You are given a tree and two particular nodes in it, call them p and q. Find the
+node that is the LOWEST point in the tree from which you can still reach both of
+them going downwards.
 
-    """Both targets in the same subtree.
-LCA(6, 4): at node 3, the right search returns nothing, the left search returns
-node 5 (because within 5, one side found 6 and the other found 4, so 5 is the
-meeting point).
-Only one side is non-empty at the root, so the root passes 5 upward unchanged.
-Answer 5.""",
+Think of a family tree, or a company org chart. Two people work in the same
+company; who is the closest single manager that both of them report up to,
+directly or indirectly? Not the chief executive - everybody reports to the chief
+executive, so that answer is always true and always useless. You want the
+CLOSEST one, the one furthest down the chart.
 
-    """Why no parent pointers or path lists are needed.
-The obvious approach records the root-to-node path for each target and compares
-them - correct, and O(n) extra space.
-This version needs neither. Each call reports one of three things: nothing found
-below me, something found below me, or I am the meeting point. The first node to
-see results from BOTH sides is necessarily the lowest, because anything higher
-would also see both but is reached later on the way up.""",
+That node is called the LOWEST COMMON ANCESTOR, usually shortened to LCA.
 
-    """The BST version, which is much simpler.
-In a Binary Search Tree you can walk down from the root: if both targets are
-smaller go left, if both larger go right, otherwise you have found the split
-point.
-O(height) and O(1) space, no recursion. If the interviewer says BST and you give
-the general-tree solution, you have missed the point of the question - and the
-reverse mistake is worse.""",
+One thing that surprises people: a node counts as its own ancestor. If p happens
+to sit directly above q, then p itself is the answer. The problem statements
+almost always define it this way, so say it out loud when you start.""",
 
-    """The assumption to raise.
-The standard statement guarantees both nodes EXIST in the tree. If they might
-not, this solution can return a non-null answer when only one is present -
-it would return that one node.
-Handling absence properly requires either a pre-check or returning a count
-alongside the node. Naming that assumption unprompted is a good signal.""",
+    """2. THE INTUITION - the picture, and the words for what is in it.
+
+Here is the tree we will use throughout:
+
+              3
+            /   \\
+           5     1
+          / \\   / \\
+         6   2 0   8
+            / \\
+           7   4
+
+Vocabulary, defined as it appears:
+- Each item is a NODE. 3 is at the top; the top node is the ROOT.
+- The nodes hanging directly below a node are its CHILDREN. 5's children are 6
+  and 2.
+- A node with no children is a LEAF - 6, 7, 4, 0 and 8 are leaves here.
+- The SUBTREE at a node means that node plus everything hanging below it. The
+  subtree at 5 is {5, 6, 2, 7, 4}.
+- An ANCESTOR of a node is anything on the path from that node up to the root.
+  The ancestors of 7 are 2, 5 and 3.
+
+Now try the question by hand.
+
+p = 5 and q = 1. Walk up from 5: its ancestors are 3. Walk up from 1: its
+ancestors are 3. The only shared one is 3, so the answer is 3.
+
+p = 5 and q = 4. Walk up from 4: 2, 5, 3. Walk up from 5: 3. Now 5 appears in
+BOTH lists - because 5 is its own ancestor - and it is lower than 3. The answer
+is 5.
+
+Look at what separates those two cases. In the first, p and q live on OPPOSITE
+sides of node 3 - one down the left branch, one down the right. In the second,
+they are both inside the same subtree, the one rooted at 5.
+
+That observation is the whole solution: the lowest common ancestor is the node
+where p and q first go their separate ways.""",
+
+    """3. THE SIMPLE-BUT-SLOW VERSION FIRST, then the upgrade.
+
+THE SLOW VERSION, and it is worth knowing because it matches exactly how you did
+it by hand above. Walk the tree and record, for every node, who its parent is.
+Then start at p and walk upwards, writing down every ancestor into a set (a SET
+is a bag of items where you can ask "is this in here?" instantly). Then start at
+q and walk upwards, and the first ancestor you meet that is already in the set is
+the answer.
+
+That works, and it is easy to explain. It costs one pass to build the parent
+links, plus the two upward walks. The catch is the memory: you are storing a
+parent for every node and then a set of ancestors, which is O(n) extra space -
+and the problem does not give you parent links, so you have to build them
+yourself first.
+
+THE UPGRADE - one walk, no extra structures. Ask each node a single question and
+let the answers travel upward:
+
+  "Did you find p or q anywhere at or below you? If so, tell whoever asked."
+
+Now stand at any node and look at what its two children report back:
+
+- BOTH children report a find. Then one target is somewhere on the left and the
+  other is somewhere on the right, so this is the exact node where the two paths
+  separate. THIS node is the answer.
+- ONLY ONE child reports a find. Then both targets are down that one side (or
+  only one of them exists so far), so this node is not the split point - just
+  pass that child's report upward unchanged.
+- NEITHER reports a find. Report nothing upward.
+
+And the moment a node IS p or q, it reports itself and does not bother looking
+further down - it is its own ancestor, so anything below it cannot be lower.
+
+One walk, no parent map, no set. O(n) time and only the call stack for space.""",
+
+    """4. WHY "BOTH SIDES REPORTED" MEANS YOU HAVE FOUND IT.
+
+This is the step worth being sure about, because it looks like it might be too
+good to be true.
+
+Suppose you are at node 3 and both children report a find. The left report can
+only have come from somewhere in the subtree at 5, and the right report can only
+have come from somewhere in the subtree at 1. Those two subtrees share nothing -
+in a tree, two different branches never rejoin. So one target is inside one of
+them and the other target is inside the other.
+
+Therefore node 3 IS a common ancestor of both, because everything in both
+subtrees hangs below it.
+
+Is it the LOWEST one? Yes, and here is why. Any node lower than 3 sits inside
+one of those two subtrees, so it cannot possibly reach the target that lives in
+the other one. So no lower node is a common ancestor at all. 3 is the lowest.
+
+Now the second case, the one people find slippery. p = 5, q = 4. When the walk
+reaches node 5, node 5 is one of the targets, so it reports ITSELF immediately
+and stops - it never even looks down at 6 or 2, so it never discovers that 4 is
+below it. Node 3 then sees a report from the left (node 5) and nothing from the
+right, so it passes the left report upward. The final answer is 5.
+
+That is correct, and it works precisely BECAUSE 5 stopped early. Since a node is
+its own ancestor, once you have reached one of the targets there is nothing
+lower worth finding - the answer is at most this node, and if the other target
+is below it, the answer is exactly this node.""",
+
+    """5. DEFINING THE TERMS the code uses, and the two small inputs.
+
+RECURSION: a function that solves a big problem by calling itself on smaller
+pieces of the same problem. Here the question "where is the LCA in this tree?"
+is answered by asking the same question about the left subtree and the right
+subtree, which are smaller trees.
+
+BASE CASE: the situation the function answers immediately without calling itself
+again - it is what stops the recursion going forever. This solution has two of
+them rolled into one line: an empty spot (nothing here, report nothing), and
+landing exactly on p or q (report yourself).
+
+"is" versus "==" in Python: "is" asks whether two names refer to the SAME OBJECT
+in memory; "==" asks whether they merely look equal. This code uses "is" because
+the problem hands you the actual nodes p and q, and two different nodes could
+easily hold the same value. Comparing values would find the wrong node. This is
+a small detail that decides correctness.
+
+The small inputs:
+- Empty tree. The function is called with nothing and immediately returns
+  nothing. Fine.
+- p and q are the same node. The walk reaches it, sees it is a target, returns
+  it. The answer is that node, which is right - it is its own ancestor.
+- One of them is the root. The very first call lands on a target and returns the
+  root at once, without exploring anything.
+
+One assumption worth stating out loud: this code assumes p and q both really
+ARE in the tree. If one might be missing, it would still return the other one,
+which looks like a valid answer but is not. Handling that properly needs a
+second pass, or a version that also reports whether it actually found both.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: ask every node "did you find p or q at or below
+you?", and the answer is the lowest node that hears yes from BOTH of its sides.
+
+The mechanism, since this is recursion. When the function is called on node 3,
+it needs answers about node 5 and node 1 before it can decide anything. So it
+calls itself on node 5 - and node 3's call PAUSES right there, half-finished.
+Node 5's call runs, and it pauses too while asking about 6, and so on. These
+half-finished calls stack up, each waiting on the one below it; that pile is the
+CALL STACK. When a call finally returns something, the call above it wakes up
+exactly where it stopped, takes that value, and carries on. So the question
+travels DOWN and the reports travel back UP.
+
+What stops it: every path eventually runs out of tree - you reach a leaf and ask
+about its empty children - and an empty spot answers immediately without asking
+anything further. That is the base case, and it is what lets the whole pile
+unwind.
+
+The steps:
+
+  1. Write one function that takes a node and returns either a node or nothing.
+     Read its return value as: "the best answer found at or below here" - which
+     is either the LCA itself, or one of the targets, or nothing.
+
+  2. BASE CASE. If the node is empty, return nothing - there is nothing here to
+     find.
+
+  3. STILL THE BASE CASE. If this node IS p, or IS q, return this node
+     immediately. Do not look below it. Because a node is its own ancestor,
+     nothing below could be a lower answer.
+
+  4. Otherwise, ask the LEFT child the same question and keep what comes back.
+
+  5. Ask the RIGHT child the same question and keep what comes back.
+
+  6. If BOTH sides came back with something, the two targets are on opposite
+     sides, so this node is where they split. Return THIS node.
+
+  7. Otherwise return whichever side came back with something - and if neither
+     did, that means returning nothing. One line covers both.
+
+Now the part that feels like a trick but is not. Step 7 returns a value that
+means different things at different heights: deep in the tree it means "I found
+one of the targets down here", but once step 6 has fired somewhere below, the
+same value means "the answer is this node". The code does not distinguish them,
+and it does not need to - because once the true LCA has been returned by step 6,
+every node above it sees a report from exactly ONE side, so step 7 keeps passing
+it upward untouched all the way to the root. The answer, once found, cannot be
+overwritten.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the whole tree from the top, and every node it visits answers one
+question for its parent: "what is the best thing you found at or below you?"
+
+There are only three ways a node answers.
+
+If it is empty, it answers "nothing" - there is nothing there to find.
+
+If it is one of the two targets, it answers "me", straight away, without looking
+at anything below it. That early stop is not laziness; it is correct, because a
+node counts as its own ancestor and so nothing underneath it could be a lower
+answer.
+
+Otherwise it asks both of its children the same question and looks at the two
+replies. If BOTH children found something, then one target is down the left side
+and the other is down the right side, so this node is exactly where their paths
+separate - it answers "me", and that is the real answer. If only one child found
+something, it simply passes that child's reply upward unchanged. If neither
+found anything, it answers "nothing".
+
+The elegance is that once the true answer has been produced by a node whose two
+sides both reported, every node above it will only ever hear from one side - so
+they all just pass it along, and it arrives intact at the top.
+
+No parent pointers, no set of visited ancestors, no second pass. One walk down,
+one set of answers coming back up.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 2 beside you, with p = 5 and q = 1.
+
+    def lowest_common_ancestor(root, p, q):
+root is the node currently being asked; p and q are the two actual node objects
+we are hunting for. The same function is used for the whole tree and for every
+subtree, which is what makes the recursion work.
+
+    if root is None or root is p or root is q:
+        return root
+Both base cases in one line, and it is worth reading the three conditions
+separately.
+
+  "root is None" - there is nothing here. Returning root returns None, which is
+  exactly the "I found nothing" answer.
+
+  "root is p" or "root is q" - we have landed on a target. Returning root
+  returns the node itself: "I found one, and it is me." Nothing below is
+  explored, deliberately - see section 4.
+
+The single "return root" serves all three because in each case root already
+holds the correct answer. Note the use of "is" and not "==" - we are asking
+whether this is the SAME node, not merely a node with the same value.
+
+    left = lowest_common_ancestor(root.left, p, q)
+Ask the left child the same question. This call runs the entire left subtree to
+completion before coming back. For the root of our tree, this returns node 5.
+
+    right = lowest_common_ancestor(root.right, p, q)
+Ask the right child. For the root, this returns node 1.
+
+    if left and right:
+        return root
+The split test. In Python a node object counts as true and None counts as false,
+so this reads as "did both sides find something?". If they did, one target is on
+each side, so this node is the lowest node that can reach both - return it. For
+our root, left is 5 and right is 1, so it returns 3. Correct.
+
+    return left or right
+The one-line finish for every other case, and Python's "or" does exactly what is
+needed: it hands back the first value that is not None, or None if both are.
+
+  Only left found something -> return left.
+  Only right found something -> return right.
+  Neither -> return None.
+
+This is the line that carries the answer upward once it has been found: above
+the true LCA, only one side ever reports, so this line keeps passing it along
+unchanged until it reaches the very top.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Tree:            3
+               /   \\
+              5     1
+             / \\   / \\
+            6   2 0   8
+               / \\
+              7   4
+
+CASE A: p = 5, q = 1. Indentation shows the depth of the call stack.
+
+lca(3)
+  3 is not None, not p, not q -> carry on
+  left = lca(5)
+        5 IS p -> return 5 immediately. Nodes 6, 2, 7, 4 are never visited.
+  left = node 5
+  right = lca(1)
+        1 IS q -> return 1 immediately. Nodes 0 and 8 are never visited.
+  right = node 1
+  left and right are both set -> return 3
+Answer: 3.
+
+CASE B: p = 6, q = 4 - both on the left, splitting at 5.
+
+lca(3)
+  left = lca(5)
+        5 is not a target -> carry on
+        left = lca(6)
+              6 IS p -> return 6
+        left = node 6
+        right = lca(2)
+              2 is not a target -> carry on
+              left = lca(7)
+                    7 is not a target; both its children are empty
+                    left = None, right = None
+                    return None or None = None
+              left = None
+              right = lca(4)
+                    4 IS q -> return 4
+              right = node 4
+              left and right?  left is None -> no
+              return None or node 4 = node 4
+        right = node 4
+        left(6) and right(4) both set -> return 5      <- the answer is born here
+  left = node 5
+  right = lca(1)
+        1 is not a target
+        left = lca(0) -> not a target, both children empty -> None
+        right = lca(8) -> not a target, both children empty -> None
+        return None or None = None
+  right = None
+  left and right?  right is None -> no
+  return node 5 or None = node 5                        <- passed up untouched
+Answer: 5.
+
+Read the last two lines of Case B again. That is the answer, already decided at
+node 5, being carried up to the root without anything being able to change it -
+because above node 5 only one side ever reports.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. In the worst case every node is visited once
+and does a fixed amount of work - two comparisons and a couple of checks. It can
+be much faster in practice, because a node that IS a target stops without
+exploring its subtree at all, as we saw in Case A where five of the eight nodes
+were never touched.
+
+Big-O notation, in plain words: O(n) means "the work grows in step with the size
+of the input" - double the tree, roughly double the time. It deliberately
+ignores constant factors, because what matters is the shape of the growth, not
+whether each node costs two operations or five.
+
+SPACE: O(h), where h is the tree's HEIGHT - the number of levels. That is the
+call stack, holding one paused call per level as the recursion descends. For a
+bushy tree that is about log n (a million nodes is only about 20 levels), and
+for a long chain-like tree it is n. Python stops at roughly 1,000 nested calls,
+so a very deep tree would need an iterative version instead.
+
+THE #1 MISTAKE - comparing values instead of nodes. Writing "root.val == p.val"
+instead of "root is p" looks harmless and passes most test cases, but the moment
+two different nodes hold the same value, it matches the wrong one and returns a
+nonsense ancestor. Use identity.
+
+A close second: forgetting that a node is its own ancestor, and writing code
+that keeps searching below a target. That misses Case A entirely and returns 3
+where the answer should be 5.
+
+ONE-SENTENCE TAKEAWAY: ask every node whether it found p or q at or below
+itself; the answer is the lowest node that hears yes from both sides, and above
+that node only one side ever reports, so the answer rides straight up to the
+top.""",
 ]
 
 _EX_P0B["Merge Intervals"] = [
