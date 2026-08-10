@@ -22409,115 +22409,256 @@ matters.""",
 ]
 
 _EX_P0["Invert a Binary Tree"] = [
-    """The textbook case, traced.
-      4                4
-    2   7    ->     7    2
-   1 3 6 9         9 6  3 1
-At the root, swap children: left becomes 7's subtree, right becomes 2's.
-Recurse into 7: swap 6 and 9. Recurse into 2: swap 1 and 3.
-Every node is visited once and performs exactly one swap - O(n) time, O(h)
-stack.""",
+    """What 'invert' actually means - hold the picture up to a mirror.
 
-    """The empty and single-node cases.
-Empty tree -> return nothing; the base case fires immediately.
-Single node with no children -> swap two empty pointers, which is a no-op, and
-return the node unchanged.
-Both are handled by the same two lines with no special casing, which is a good
-sign the recursion is written correctly.""",
+Start with this tree. (A BINARY TREE is a diagram where each item, called a
+NODE, has at most two items hanging below it, called its CHILDREN. The node at
+the top is the ROOT.)
 
-    """The lopsided case, which catches a common bug.
-      1
-    2
-  3
-Only left children. After inverting: 1 -> right child 2 -> right child 3.
-If you wrote the swap as two separate statements - root.left = root.right then
-root.right = root.left - you would set both to the ORIGINAL right (empty here),
-destroying the tree entirely and returning a single node. Trace this shape after
-writing the swap; it fails loudly.""",
+         4
+       /   \\
+      2     7
+     / \\   / \\
+    1   3 6   9
 
-    """Why the traversal order does not matter.
-Swapping first then recursing (pre-order) and recursing first then swapping
-(post-order) both produce the same mirrored tree. The reason is that a swap at
-one node and a swap at its descendant are independent operations - neither
-affects which nodes the other touches.
-Contrast this with Flatten Binary Tree to Linked List, where the order is
-critical because each step consumes the structure the next step needs.""",
+Inverting it means producing its mirror image - as if you held it up to a
+mirror, so everything that was on the left is now on the right:
 
-    """The iterative version, for the deep-tree follow-up.
-Push the root onto a stack. While the stack is non-empty: pop a node, swap its
-children, and push both children if they exist.
-On a degenerate tree of 100,000 nodes in a single chain, the recursive version
-raises RecursionError in Python while this runs fine. A queue instead of a
-stack works equally well - the traversal order is irrelevant, as established
-above.""",
+         4
+       /   \\
+      7     2
+     / \\   / \\
+    9   6 3   1
 
-    """The story behind the question, worth knowing.
-This became famous when the author of Homebrew was rejected by Google after
-being unable to invert a binary tree on a whiteboard. It is now the archetype of
-"easy problem under pressure".
-The practical lesson: it is four lines, so what is actually being tested is
-whether you stay calm, ask whether they want it in place, and mention the
-iterative variant for deep trees. Getting the code right is assumed; the
-surrounding judgement is the signal.""",
+Read the bottom row of each: 1 3 6 9 became 9 6 3 1. Exactly reversed.""",
+
+    """How to do it: one swap, repeated everywhere.
+
+Look at what actually changed. At the root, the whole left branch and the whole
+right branch traded places. At node 7, its children 6 and 9 traded places. At
+node 2, its children 1 and 3 traded places.
+
+That is the entire algorithm: AT EVERY NODE, SWAP ITS TWO CHILDREN.
+
+So the function is:
+    1. If there is no node here, stop. (This is the BASE CASE - the simplest
+       situation, answered outright, which stops the function calling itself
+       forever.)
+    2. Swap this node's left and right children.
+    3. Do the same thing to the left child, and to the right child.
+
+Step 3 is the function calling itself on a smaller piece of the problem, which
+is called RECURSION. Each node does one tiny job and trusts the smaller calls
+to handle everything below.""",
+
+    """The bug that destroys the tree, and why.
+
+You must swap the two children in ONE step. In Python:
+
+    node.left, node.right = node.right, node.left        # correct
+
+Here is what happens if you write it as two separate lines instead:
+
+    node.left = node.right      # left now points at the right child
+    node.right = node.left      # ...but 'node.left' has ALREADY changed!
+
+The second line reads the value you just overwrote, so BOTH sides end up
+pointing at the original right child, and the original left branch is lost
+forever.
+
+Test it on this lopsided tree:
+
+    1
+   /
+  2
+ /
+3
+
+Node 1 has a left child (2) and no right child. The buggy version sets left to
+'nothing', then sets right to that same 'nothing' - and the entire tree below
+vanishes, leaving just the node 1. The correct version gives
+1 with 2 hanging on its RIGHT, and 3 hanging on 2's right.
+
+Whenever you swap two things in one statement, remember Python evaluates the
+whole right-hand side FIRST, using the old values. That is what makes the
+one-line version safe.""",
+
+    """Does the order matter? A pleasant surprise: no.
+
+You could swap the children first and then recurse into them, or recurse first
+and swap on the way back up. Both give exactly the same mirrored tree.
+
+Why? Because the swap at one node and the swap at a node below it are
+completely independent - neither one changes WHICH nodes the other touches. It
+just relabels which side they sit on.
+
+This is not always true. In some tree problems each step destroys the structure
+the next step needs, and then the order is critical. Being able to say WHY the
+order is safe here - rather than just observing that it works - is the kind of
+reasoning interviewers listen for.""",
+
+    """The version that survives a very deep tree.
+
+Every time the function calls itself, the unfinished call is held in memory.
+That pile of paused calls is the CALL STACK, and Python refuses to go deeper
+than about 1,000 of them.
+
+A neat bushy tree of 100,000 nodes is only ~17 levels deep, so recursion is
+fine. But a tree that is one long chain of 100,000 nodes is 100,000 levels
+deep, and the recursive version crashes with 'RecursionError'.
+
+The fix uses your own stack instead of Python's:
+    put the root on a stack
+    while the stack is not empty:
+        take a node off it
+        swap its two children
+        put its children (if any) on the stack
+Same swaps, same answer, no recursion limit. And because the order does not
+matter (previous point), you could use a queue instead of a stack and it would
+still be correct.""",
+
+    """Why this famously easy question is still asked.
+
+In 2015 the author of Homebrew - software on millions of Macs - was turned down
+by Google after being unable to invert a binary tree at the whiteboard. The
+story went everywhere, and the problem became the symbol of 'easy thing, hard
+moment'.
+
+Which tells you what is really being graded. The code is four lines; everyone
+knows the interviewer expects them. What is being watched is whether you stay
+calm, whether you ask a clarifying question ('should I modify the tree in place
+or return a new one?'), and whether you volunteer the deep-tree variant.
+
+Speed: each node is visited once and does one swap, so the time is proportional
+to the number of nodes - written O(n). Memory is proportional to the tree's
+depth, since that is how many paused calls stack up.""",
 ]
 
 _EX_P0["Maximum Depth of Binary Tree"] = [
-    """The textbook case, traced bottom-up.
-      3
-    9   20
-       15  7
-depth(9) = 1 + max(0,0) = 1
-depth(15) = 1, depth(7) = 1
-depth(20) = 1 + max(1,1) = 2
-depth(3) = 1 + max(1,2) = 3
-Answer 3. Notice the recursion resolves from the leaves upward even though the
-calls are made from the root downward - that inversion is the thing to get
-comfortable with.""",
+    """The question, on a picture.
 
-    """The empty tree and the single node.
-Empty -> 0. This is the base case that terminates everything, and it is what
-makes the plus-one arithmetic come out right.
-Single node -> 1 + max(0, 0) = 1.
-If your function returns 0 for a single node, you are counting EDGES rather
-than NODES - a real ambiguity. Ask which definition the problem wants; this
-question uses nodes.""",
+A BINARY TREE is a diagram where each item hangs below another, and each item
+can have at most two items below it. Here is ours:
 
-    """The degenerate case, which is also the worst case.
-A tree that is one long left chain of 5 nodes has depth 5. Its shape is a linked
-list, and this is where the O(h) stack cost bites: h equals n rather than
-log n.
-On 100,000 nodes the recursive version exceeds Python's recursion limit. The
-BFS alternative - count levels with a queue - is O(n) time and O(width) space
-and does not recurse, which is the answer to "what if the tree is very
-deep?".""",
+        3
+       / \\
+      9   20
+          / \\
+        15   7
 
-    """Why trusting the recursion beats tracing it.
-The instinct is to mentally simulate every call, which becomes impossible past
-three levels. The productive habit is: assume the two child calls return the
-correct depths, then ask what this node should do with them. The answer is
-obviously "one more than the deeper one".
-That leap - trusting the recursive contract rather than unrolling it - is the
-single most transferable thing in this problem, and it is why it is asked
-early.""",
+Words as they appear: each item is a NODE. The one at the top (3) is the ROOT.
+The items hanging directly below a node are its CHILDREN. A node with no
+children (9, 15, 7) is a LEAF - a dead end.
 
-    """The contrast with Minimum Depth, which is NOT symmetric.
-      1
-    2
-Maximum depth is 2. Minimum depth is also 2 - not 1.
-The naive mirror, 1 + min(left, right), returns 1 because the empty right child
-reports 0. But a node with one child is not a leaf, so no root-to-leaf path ends
-there.
-Minimum depth needs a special case for single-child nodes, or a BFS that stops
-at the first genuine leaf. Interviewers ask for minimum immediately after
-maximum precisely to see whether you notice the asymmetry.""",
+The question 'what is the maximum DEPTH?' means: counting the nodes, how many
+levels deep does the deepest path go? Trace down with your finger: 3 -> 20 -> 15
+is three nodes, so the answer is 3. The path 3 -> 9 is only two. We want the
+longest one.""",
 
-    """Where the pattern generalises.
-The same shape - solve both subtrees, combine, return - answers: count nodes
-(1 + left + right), sum values, find the maximum value, check balance (return
-height and use a sentinel for failure), and compute diameter (return depth
-while recording the best bend).
-Recognising that these are one template with a different combine step is worth
-more than memorising six functions.""",
+    """Working it out without tracing every call.
+
+The natural instinct is to simulate the code in your head. Do not - past three
+levels it becomes impossible. Use this instead:
+
+ASSUME the function already works correctly for the two children. Then ask:
+given those two answers, what should THIS node return?
+
+The answer is obvious once phrased that way: 'one more than the deeper of my
+two children'. My own level, plus however deep the better side goes.
+
+    depth(node) = 1 + the larger of depth(left) and depth(right)
+
+Now apply it to the picture, starting from the bottom:
+    depth(9)  = 1   (a leaf: nothing below, so 1 + 0)
+    depth(15) = 1
+    depth(7)  = 1
+    depth(20) = 1 + larger(1, 1) = 2
+    depth(3)  = 1 + larger(1, 2) = 3     <- the answer
+
+Notice something odd and important: the calls are made from the TOP downward,
+but the answers are worked out from the BOTTOM upward. Each node has to wait
+for its children before it can answer. Getting comfortable with that inversion
+is most of what learning recursion means.""",
+
+    """The two smallest cases, and a definition trap.
+
+EMPTY tree (no nodes at all): depth 0. This is the BASE CASE - the simplest
+situation, answered outright, which stops the function calling itself forever.
+Every recursive function needs one.
+
+SINGLE node: it has two empty sides, each depth 0, so 1 + larger(0, 0) = 1.
+
+The trap: if your function returns 0 for a single node, you are counting EDGES
+(the lines between nodes) rather than NODES (the circles). Both definitions of
+'depth' exist in textbooks and they differ by exactly one. This problem counts
+NODES, so a single node is depth 1. Worth confirming out loud before coding,
+because the whole answer shifts by one.""",
+
+    """What happens on a badly shaped tree.
+
+Trees do not have to be neat. This is a perfectly legal tree:
+
+    1
+     \\
+      2
+       \\
+        3
+         \\
+          4
+
+Every node has only a right child, so it is really a straight line. Its depth
+is 4.
+
+Why this matters: when the function calls itself, each unfinished call is held
+in memory (this stack of paused calls is called the CALL STACK). A neat, bushy
+tree of 10,000 nodes is only about 14 levels deep, so 14 paused calls. This
+straight-line tree of 10,000 nodes is 10,000 levels deep - and Python refuses
+to go past about 1,000 nested calls, so the program crashes with a
+'RecursionError'.
+
+The fix, and the standard follow-up answer: use BFS instead. BFS
+(Breadth-First Search) means processing the tree one whole LEVEL at a time
+using a queue, counting the levels as you go. No recursion, so no stack limit.""",
+
+    """The sibling question that looks identical and is not.
+
+Maximum depth has an easy mirror image: minimum depth, the SHORTEST path from
+the root down to a leaf. You would think you just swap 'larger' for 'smaller'.
+
+You would be wrong. Look at this tree:
+
+    1
+     \\
+      2
+
+Maximum depth is 2. Minimum depth is ALSO 2 - the only path is 1 -> 2.
+
+But `1 + smaller(left, right)` computes 1 + smaller(0, 1) = 1, because node 1's
+empty LEFT side reports depth 0 and 0 is the smaller number. That would claim
+a shortest path of length 1, ending at node 1 - but node 1 is not a leaf, it
+has a child. A path must end at a LEAF.
+
+So minimum depth needs an extra rule: if a node has only one child, you must go
+down that side and cannot count the empty one. Interviewers ask for minimum
+straight after maximum precisely to see whether you spot this.""",
+
+    """The template you have just learned, and where it is reused.
+
+The shape was: solve the left side, solve the right side, combine them, return.
+Change only the COMBINE step and the same three lines answer a whole family:
+
+    maximum depth   ->  1 + larger(left, right)
+    count the nodes ->  1 + left + right
+    sum the values  ->  node value + left + right
+    largest value   ->  largest of (node value, left, right)
+
+All four are the same function with one line different. That is why this
+problem is taught early - it is not really about depth, it is about learning to
+trust the recursive contract and vary the combine step.
+
+Speed: every node is visited exactly once, so the time is proportional to the
+number of nodes - written O(n). Memory is proportional to the tree's depth,
+because that is how many paused calls pile up.""",
 ]
 
 _EX_P0["Min Cost Climbing Stairs (DP)"] = [
