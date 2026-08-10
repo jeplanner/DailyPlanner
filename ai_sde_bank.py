@@ -32667,6 +32667,314 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1N[_e["title"]]
 
 
+_EX_P1O = {}
+
+_EX_P1O["01 Matrix (distance to nearest zero)"] = [
+    """Why MULTI-SOURCE BFS rather than one BFS per cell.
+The naive approach runs a BFS from every 1 to find its nearest 0 - O((rows*cols)^2)
+in the worst case. Instead, seed the queue with EVERY zero at distance 0 and
+expand outward once. The first time the wave reaches a cell, it has arrived by
+the shortest route from the nearest source, because BFS explores in order of
+distance.
+Think of it as every zero starting a flood at the same instant; the fronts meet
+along the midlines, and each cell is claimed by whichever flood got there
+first. One O(rows*cols) pass instead of thousands.""",
+
+    """A trace on a small matrix.
+mat = [[0,0,0],
+       [0,1,0],
+       [1,1,1]]
+Seed: all six zeros enter the queue with distance 0. dist for those is 0, the
+1s are -1 (unvisited).
+Wave 1: expanding from the zeros reaches (1,1) and (2,0) and (2,2) -> distance
+1. Wave 2: from those, (2,1) is reached -> distance 2. Queue empties.
+Result [[0,0,0],[0,1,0],[1,2,1]].
+Note (2,1) got 2 rather than 1 - its nearest zero is two steps away - and no
+comparison logic was needed; the wave order did the work.""",
+
+    """Why the dist array doubles as the visited set.
+Initialising to -1 and only writing a real distance when a cell is first
+reached means `dist[nr][nc] == -1` is exactly the 'not yet visited' test. No
+separate visited set is needed, which saves memory and removes a whole class of
+bug where the two structures disagree.
+The invariant to state: a cell is written EXACTLY ONCE, at the moment the first
+wave reaches it, and never revisited. That is what makes the whole thing linear
+rather than quadratic.""",
+
+    """The DP alternative, which is worth knowing.
+Two passes over the grid. Forward (top-left to bottom-right): dist[r][c] =
+min(dist[r][c], dist[r-1][c] + 1, dist[r][c-1] + 1). Backward (bottom-right to
+top-left): the same with the down and right neighbours.
+Two sweeps suffice because any shortest path in a 4-directional grid can be
+decomposed into an up-left portion and a down-right portion. O(rows*cols) time
+and O(1) extra space beyond the output - better than BFS's queue.
+Present BFS first (it is obviously correct) and offer the DP as the space
+optimisation; it is the standard follow-up.""",
+
+    """Edge cases.
+All zeros -> every distance is 0, and the queue seeds with everything.
+A single 1 among zeros -> distance 1.
+The problem GUARANTEES at least one zero exists. Without that guarantee the
+queue would start empty, the loop would not run, and every cell would remain
+-1 - so you would need to decide what 'distance to nothing' means. Worth asking
+about, because it is the one input that breaks the algorithm silently.
+A 1xN strip works fine; the neighbour bounds check handles the missing rows.""",
+
+    """Complexity and the family.
+O(rows*cols) time - each cell enters and leaves the queue once - and
+O(rows*cols) space for the queue in the worst case (an all-zeros grid seeds
+everything at once).
+The multi-source BFS family: Rotting Oranges (seed all rotten oranges, the
+answer is the last wave number), Walls and Gates (seed all gates), Shortest
+Bridge (BFS out from one island), Map of Highest Peak, and As Far from Land as
+Possible. The cue is 'nearest X for every cell' or 'time for something to
+spread' - whenever the answer is a distance from a SET of starting points,
+seed them all rather than looping.""",
+]
+
+_EX_P1O["Binary Search Lower Bound (bisect_left)"] = [
+    """What it returns, on all three kinds of input.
+a = [1,3,3,5,7].
+lower_bound(a, 3) -> 1: the FIRST index holding 3, not the last.
+lower_bound(a, 4) -> 3: where 4 would be inserted, between 3 and 5.
+lower_bound(a, 0) -> 0, and lower_bound(a, 9) -> 5, one past the end.
+The unifying description: the index of the first element NOT LESS THAN target.
+Every use of this primitive falls out of that one sentence.""",
+
+    """The half-open invariant, which is why the code looks like that.
+The search space is [lo, hi) - hi is EXCLUSIVE. The loop condition is
+`lo < hi`, and on the else branch `hi = mid` rather than `mid - 1`, because mid
+is still a candidate answer (a[mid] >= target).
+Contrast the exact-match template: `while lo <= hi` with `hi = mid - 1`, where
+mid has been ruled out. Mixing the two - `lo < hi` with `hi = mid - 1`, or
+`lo <= hi` with `hi = mid` - gives an infinite loop or an off-by-one. Pick one
+template and never blend them; that discipline is what makes binary search
+stop being error-prone.""",
+
+    """Why hi starts at len(a) and not len(a) - 1.
+The answer can legitimately be len(a), meaning 'insert past the end'. With
+hi = len(a) - 1 that outcome is unreachable and lower_bound(a, 9) above would
+return 4 instead of 5.
+This is the single most common bug in hand-written lower bounds, and it only
+shows on targets larger than every element - an input that a quick manual test
+often skips.""",
+
+    """What this primitive unlocks, which is the reason to learn it separately.
+COUNT of a value: bisect_right(a, x) - bisect_left(a, x). On [1,3,3,5,7] with
+x = 3 that is 3 - 1 = 2.
+FIRST and LAST position of an element: lower_bound gives the first;
+lower_bound(a, x+1) - 1 gives the last for integers.
+RANGE count, how many values in [lo, hi]: bisect_right(a, hi) -
+bisect_left(a, lo).
+Insertion into a sorted list, and the O(n log n) Longest Increasing Subsequence
+(patience sorting) which is lower_bound in a loop.
+None of these need new algorithms once you have this one.""",
+
+    """lower_bound versus upper_bound, and where the difference bites.
+lower_bound: first element >= target (`a[mid] < target` moves lo).
+upper_bound / bisect_right: first element > target (`a[mid] <= target` moves
+lo).
+On an array with no duplicates the two differ by at most one and it rarely
+matters. WITH duplicates they bracket the run - which is exactly what makes the
+counting trick above work. Whenever a problem involves duplicates and 'first'
+or 'last', the entire difficulty is choosing which of the two you want.""",
+
+    """Complexity, the overflow footnote, and the library.
+O(log n) time, O(1) space.
+`(lo + hi) // 2` overflows a 32-bit int in C++/Java when both are near the
+maximum - the famous JDK bug - so write `lo + (hi - lo) // 2` there. Python is
+immune.
+In practice use `bisect.bisect_left` / `bisect_right`, which are the C
+implementations of exactly this. Write it by hand in an interview because the
+bounds reasoning is what is being tested, then mention the library exists -
+that combination reads as someone who knows both the mechanism and the tool.""",
+]
+
+_EX_P1O["Car Pooling"] = [
+    """The sweep, traced.
+trips = [[2,1,5],[3,3,7]], capacity = 4.
+Trip 1: stops[1] += 2, stops[5] -= 2. Trip 2: stops[3] += 3, stops[7] -= 3.
+Walk locations: at 1 current = 2 (ok). At 3 current = 5 > 4 -> return False.
+With capacity 5 it would pass: at 5 the first trip drops off, current falls to
+3, then at 7 it falls to 0.
+The whole problem is 'what is the maximum concurrent occupancy', and the
+difference array answers it in one pass over the coordinate range.""",
+
+    """Why `stops[end] -= passengers` and NOT `end + 1` - the difference from the
+other difference-array problems. Passengers get OFF at the end location, so
+they are not in the car AT that point. The interval is half-open [start, end).
+Contrast Corporate Flight Bookings, where a booking covers the last flight
+inclusively and the decrement goes at `last + 1`; and Points That Intersect
+With Cars, where the endpoint is a covered point and it is also `end + 1`.
+Same technique, three problems, and the index differs because the SEMANTICS of
+the endpoint differ. Always ask: is the endpoint inside the interval or the
+moment it ends?""",
+
+    """Why the check must happen INSIDE the sweep.
+Capacity can be exceeded transiently and recover later - that is still a
+failure, because the car was overloaded at that moment. Testing only the
+maximum at the end, or only after processing all trips, misses nothing here
+(the running max is what you want) but testing per-TRIP rather than per-
+LOCATION does: two trips each of 3 passengers with capacity 4 are individually
+fine and jointly illegal between their overlapping stops.
+So the loop returns False the instant `current > capacity`, which is both
+correct and an early exit.""",
+
+    """The sorting alternative, for unbounded coordinates.
+The fixed 1001-slot array works because locations are bounded 0..1000. Without
+that bound you sort the EVENTS - (location, delta) pairs - and sweep them:
+O(n log n) time and O(n) space instead of O(n + range).
+The subtlety in the sorted version: at the same location, process DROP-OFFS
+before PICK-UPS, or a passenger getting off and another getting on at the same
+stop can spuriously exceed capacity. That ordering detail is the thing that
+breaks naive event-sweep implementations.""",
+
+    """Edge cases.
+Empty trips -> current never rises -> True.
+A single trip exceeding capacity on its own -> caught at its start location.
+Trips that merely touch, [[2,1,3],[2,3,5]] with capacity 2 -> at location 3 the
+first drops off (-2) and the second picks up (+2), net 0, so current stays 2 ->
+True. This is exactly the case the half-open convention gets right and an
+inclusive convention gets wrong.
+Zero-passenger trips are harmless. A trip with start == end contributes +p and
+-p at the same index, netting zero - correct, since nobody is ever aboard.""",
+
+    """Complexity and the family.
+O(n + range) time, O(range) space - and O(n log n) with the sorted-events
+version.
+The difference-array family: Corporate Flight Bookings (the canonical form),
+Points That Intersect With Cars, Range Addition, My Calendar I/II/III, Meeting
+Rooms II (where the running maximum IS the number of rooms needed), and
+Describe the Painting. The cue is always a BATCH of range updates followed by
+one query - two writes per range, then a single prefix sweep.""",
+]
+
+_EX_P1O["Cheapest Flights Within K Stops (Bellman-Ford)"] = [
+    """Why the SNAPSHOT is the entire problem.
+Plain Bellman-Ford relaxes edges in place, so within one round a distance
+updated early can be used again later in the same round - meaning a path can
+gain more than one edge per round. That is fine when you only want the shortest
+path, and fatal here, because the round count IS the hop budget.
+`new_dist = dist[:]` at the top of each round forces every relaxation to read
+LAST round's values. So after round i, dist holds the cheapest prices using at
+most i edges - exactly the invariant the k-stop limit needs.
+Remove that one line and the algorithm silently allows more stops than
+permitted, returning a cheaper-but-illegal price.""",
+
+    """The k+1, and why it is not k.
+'At most k STOPS' means at most k intermediate cities, which is k+1 FLIGHTS.
+src -> A -> dst is one stop and two edges. So the loop runs k+1 times.
+This off-by-one is the second most common failure here, and it always shows the
+same way: correct answers on k = 0 and wrong ones as k grows, or vice versa.
+Test k = 0 explicitly - it should permit only direct flights.""",
+
+    """A trace where the snapshot matters.
+n = 3, flights = [[0,1,100],[1,2,100],[0,2,500]], src 0, dst 2, k = 0.
+Round 1 (k+1 = 1 round): from the snapshot, dist[0] = 0, so 0->1 gives 100 and
+0->2 gives 500. Note 1->2 reads dist[1] from the SNAPSHOT, which is still
+infinity - so it does not fire.
+Result 500, the direct flight. Correct for k = 0.
+Without the snapshot, 0->1 would set 100 and then 1->2 would immediately use it
+for 200 - a two-flight route, which is one stop and therefore illegal.""",
+
+    """Why Dijkstra is awkward here, which is a good thing to say.
+Dijkstra finalises a node on first pop, but the CHEAPEST route to a city may
+use too many stops while a pricier route is legal - so 'best price' is no
+longer the right thing to finalise on. You can fix it by making the state
+(city, stops_used) rather than just city, which turns it into a Dijkstra over
+an expanded graph - valid, and more machinery.
+Bounded Bellman-Ford is the natural fit precisely because its rounds already
+count edges. Recognising which algorithm's structure matches the constraint is
+the insight.""",
+
+    """Edge cases.
+src == dst -> 0, though most versions guarantee they differ.
+No route within k stops -> dist[dst] stays infinity -> return -1.
+k >= n-1 -> the hop limit is not binding and this degenerates to ordinary
+Bellman-Ford.
+Multiple flights between the same pair -> the cheaper one wins naturally
+through the min.
+Note there are no negative prices in this problem, so negative-cycle detection
+is unnecessary - but the algorithm would still be correct if there were, which
+is worth knowing.""",
+
+    """Complexity and the family.
+O(k * E) time - k+1 rounds over every edge - and O(n) space for two distance
+arrays. Much better than the O(V*E) of unbounded Bellman-Ford when k is small.
+The family: Network Delay Time (plain Dijkstra, no hop limit), Bellman-Ford
+(the unbounded parent), Path with Maximum Probability (Dijkstra with
+multiplication and a max-heap), and Minimum Cost to Reach Destination in Time -
+which adds a second budget dimension and is solved by the same expanded-state
+idea. The general lesson: a constraint on PATH LENGTH usually means either
+bounded Bellman-Ford or a state expanded with the resource used so far.""",
+]
+
+_EX_P1O["Corporate Flight Bookings"] = [
+    """The canonical difference array, traced.
+bookings = [[1,2,10],[2,3,20],[2,5,25]], n = 5.
+Booking [1,2,10]: diff[0] += 10, diff[2] -= 10.
+Booking [2,3,20]: diff[1] += 20, diff[3] -= 20.
+Booking [2,5,25]: diff[1] += 25, diff[5] -= 25.
+diff = [10, 45, -10, -20, 0, -25].
+Prefix sweep: 10, 55, 45, 25, 25 -> answer [10,55,45,25,25].
+Three bookings, six writes, one sweep - regardless of how many flights each
+booking spans.""",
+
+    """The index arithmetic, which is where every bug lives.
+Flights are 1-INDEXED in the input and the array is 0-indexed, so a booking
+[first, last, seats] becomes `diff[first - 1] += seats` and
+`diff[last] -= seats`. That second index looks wrong until you see it: `last`
+in 0-indexed terms is the flight AFTER the last covered one, which is exactly
+where coverage should stop.
+So the general rule 'decrement at end + 1' is already baked in by the
+index shift. Writing `diff[last - 1] -= seats` ends the booking one flight
+early and undercounts every booking's final flight.""",
+
+    """Why the array needs n + 1 slots.
+`diff[last]` can be diff[n] when a booking runs to the final flight, so the
+array must have n + 1 entries even though only the first n are read back. Size
+it at n and the largest legal input throws an IndexError - and only that input,
+which is why it survives casual testing.
+The extra slot is never included in the output; it exists purely to absorb the
+decrement that falls off the end.""",
+
+    """Why this beats the naive loop, with numbers.
+The obvious solution adds `seats` to every flight in [first, last] - O(total
+span). With 20,000 bookings each covering 20,000 flights that is 400 million
+increments. The difference array does 40,000 writes plus a 20,000-element
+sweep.
+The saving comes from recording only where the total CHANGES and letting the
+prefix sum reconstruct everything between. That reframing - store the
+derivative, integrate at the end - is the whole technique, and it is worth
+saying in exactly those terms.""",
+
+    """Edge cases.
+A single-flight booking [3,3,5] -> diff[2] += 5, diff[3] -= 5 -> flight 3 gets
+5 and flight 4 gets none. The half-open handling works for a span of one.
+No bookings -> all zeros.
+A booking covering everything [1,n,x] -> diff[0] += x, diff[n] -= x -> every
+flight gets x.
+Overlapping bookings simply add, which is the point.
+Large seat counts can overflow a 32-bit accumulator in other languages once
+many bookings overlap; Python is immune.""",
+
+    """Complexity and the family.
+O(bookings + n) time, O(n) space. Both optimal - you must read every booking
+and produce every flight's total.
+The family: Range Addition (identical), Car Pooling (the same sweep with a
+capacity check, and note its decrement is at `end` not `end+1` because
+passengers leave AT the stop), Points That Intersect With Cars, Meeting Rooms
+II, and Describe the Painting.
+Two-dimensional version: the same trick with four corner updates per rectangle
+and a 2-D prefix sum - which is how Range Addition II and image-summing
+problems work.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1O:
+        _e["examples"] = _EX_P1O[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
