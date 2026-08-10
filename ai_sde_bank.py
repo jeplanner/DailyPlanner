@@ -30640,6 +30640,122 @@ That is the Design a First-Unique-Number problem, and it is a natural
 escalation an interviewer reaches for when this one goes quickly.""",
 ]
 
+_EX_P1J["Flipping an Image"] = [
+    """The two operations fused, with the algebra written out.
+Flip horizontally means new[i] = row[n-1-i]. Invert means every bit b becomes
+1-b. Doing both gives new[i] = 1 - row[n-1-i].
+So a single two-pointer pass from both ends does the whole job:
+    row[i], row[j] = 1 - row[j], 1 - row[i]
+row = [1,1,0]: i=0, j=2 -> row becomes [1-0, 1, 1-1] = [1,1,0]. i=1, j=1 - the
+middle element - the swap with itself still inverts it: 1-1 = 0 -> [1,0,0].
+Answer [1,0,0], which matches reversing to [0,1,1] and inverting to [1,0,0].""",
+
+    """Why the loop condition is `i <= j` and not `i < j`.
+On an ODD-length row the two pointers meet on the middle element, and that
+element still needs inverting even though it does not move. With `i < j` the
+loop exits before touching it, leaving one un-inverted bit in every odd row -
+a bug that shows up only on odd widths, which is exactly the input size people
+forget to test.
+When i == j the tuple assignment sets row[i] to 1 - row[i] twice, which is
+harmless: both sides compute the same value.""",
+
+    """Why the tuple assignment is safe here.
+`row[i], row[j] = 1 - row[j], 1 - row[i]` evaluates the whole right-hand side
+FIRST, using the original values, then assigns. Writing it as two statements -
+`row[i] = 1 - row[j]` then `row[j] = 1 - row[i]` - reads the already-overwritten
+row[i] and corrupts the second assignment.
+This is the same evaluation-order property that makes the Fibonacci-style
+rolling update work, and it is worth stating explicitly because the two-line
+version looks equivalent and is not.""",
+
+    """The naive version, and why fusing matters.
+`[[1 - b for b in reversed(row)] for row in image]` is correct, readable and
+allocates a new matrix - O(m*n) extra space. The two-pointer version mutates in
+place for O(1) extra space.
+Which to present depends on the prompt: if it says 'return the image' either is
+fine; if it says 'in place' or asks about space, the fused pass is required.
+Say the one-liner exists and then give the in-place version - showing you chose
+rather than only knowing one is the point.""",
+
+    """Edge cases.
+1x1 image [[0]] -> i == j == 0, inverted to [[1]].
+A single row [[1,0,1]] -> reverse gives [1,0,1], invert gives [0,1,0].
+Rows of length 2 [[1,1]] -> i=0, j=1, one swap -> [0,0].
+All zeros -> all ones. All ones -> all zeros.
+Rows are guaranteed equal length in a matrix, so len(row) is safe per row - but
+computing j from len(row) inside the loop rather than from a shared n is the
+habit that survives ragged input.""",
+
+    """Complexity and the transferable idea.
+O(m * n) time - each element is touched once - and O(1) extra space in place.
+The transferable idea is FUSING two passes into one by composing the index
+arithmetic. Rotate Image does the same thing (transpose then reverse each row,
+or compute the four-way cycle directly), and so does reversing words in a
+string (reverse the whole string, then each word). Whenever a problem is
+described as 'do A then B', check whether the composition has a closed form -
+it often halves the work and removes an intermediate allocation.""",
+]
+
+_EX_P1J["How Many Numbers Are Smaller Than the Current"] = [
+    """The counting-sort approach, traced.
+nums = [8,1,2,2,3]. Tally: count[1]=1, count[2]=2, count[3]=1, count[8]=1.
+Prefix: prefix[v] = how many elements are strictly less than v.
+prefix[1] = 0, prefix[2] = 1 (just the 1), prefix[3] = 3 (the 1 and both 2s),
+prefix[8] = 4.
+Map each element: 8 -> 4, 1 -> 0, 2 -> 1, 2 -> 1, 3 -> 3.
+Answer [4,0,1,1,3]. Note both 2s get the same answer, which is the point of
+'strictly smaller' - equal values do not count each other.""",
+
+    """Why prefix[i] uses count[i-1], which is the off-by-one that decides correctness.
+The loop is `prefix[i] = prefix[i-1] + count[i-1]` - it adds the count of the
+PREVIOUS value, so prefix[i] excludes value i itself. That is what makes the
+comparison STRICT.
+Write `prefix[i] = prefix[i-1] + count[i]` and each element counts its own
+duplicates, so the two 2s would report 3 instead of 1. If your answer is too
+high by exactly the number of duplicates, this line is why.""",
+
+    """Why this beats sorting, and when it does not.
+Sorting plus a map from value to first index is O(n log n). Counting sort is
+O(n + K) where K is the value range - and with the stated constraint that
+values are 0..100, K is a constant, making it effectively O(n).
+The trade to state: counting sort needs a bounded, small, integer value range.
+With arbitrary integers or floats, K explodes and sorting wins. So the correct
+answer is 'counting sort HERE, because the constraint says 0..100' rather than
+'counting sort is faster', which is not generally true.""",
+
+    """The sorting alternative, for when the range is not bounded.
+Sort a copy, then build a dict mapping each value to the index of its FIRST
+occurrence - that index is exactly how many elements are smaller. Iterate the
+sorted copy in reverse (or use setdefault) so the first occurrence wins for
+duplicates.
+    order = sorted(nums)
+    first = {}
+    for i, v in enumerate(order): first.setdefault(v, i)
+    return [first[v] for v in nums]
+Same answer, O(n log n), no assumption about the value range. Worth having
+ready as the follow-up to 'what if values can be anything?'.""",
+
+    """Edge cases.
+Single element [5] -> nothing is smaller -> [0].
+All identical [3,3,3] -> no element is strictly smaller than another -> [0,0,0].
+This is the case that catches a <= comparison.
+Already sorted [1,2,3] -> [0,1,2].
+Reverse sorted [3,2,1] -> [2,1,0] - the answers follow the VALUES, not the
+positions, which is worth checking since it is easy to accidentally return
+answers in sorted order rather than in the original order.
+Zero is a valid value, and prefix[0] is 0 by initialisation.""",
+
+    """Complexity and the family.
+O(n + K) time, O(K) space - constant by the constraint. Two passes over the
+value range plus two over the array.
+The family is bounded-value counting: Sort Colors (three-way partition rather
+than a full count), Height Checker (sort a copy and compare), Relative Sort
+Array, Maximum Gap (bucket sort), and Top K Frequent Elements (bucket by
+frequency). The cue is always an explicit small range in the constraints -
+whenever a prompt bothers to tell you values are 0..100, it is pointing at
+counting sort.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1J:
         _e["examples"] = _EX_P1J[_e["title"]]
