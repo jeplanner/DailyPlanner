@@ -32583,7 +32583,22 @@ _TITLE_DUPLICATES = {
         "How Many Numbers Are Smaller Than the Current",
     "Reverse proxy vs forward proxy":
         "Forward proxy vs reverse proxy",
+    # Found by a CODE-similarity scan rather than a title scan - these four
+    # pairs are the same LeetCode problem written twice under different names,
+    # which a normalised-title comparison misses entirely. In each case the
+    # richer entry (diagram, longer answer) survives.
+    "Min Stack (O(1) getMin)": "Design a Min Stack",
+    "Sqrt(x) via Binary Search": "Sqrt(x) — integer square root (binary search)",
+    "Excel Sheet Column Title": "Number to Excel Column Title",
+    "Count Negative Numbers in a Sorted Matrix": "Count Negatives in a Sorted Matrix",
 }
+# NOT folded, deliberately: the scan also flags the bank's PATTERN entries
+# against their exemplar problems - "Dynamic Programming - the 4-question
+# method" vs Coin Change, "Sliding Window - recognize & apply" vs Longest
+# Substring Without Repeating Characters, "Graphs - BFS, DFS" vs Number of
+# Islands, "Heap / Top-K" vs Kth Largest, "Binary Search Lower Bound" vs Search
+# Insert Position. Those share code ON PURPOSE: one teaches the pattern, the
+# other drills it. Folding them would delete the teaching layer.
 
 _LP_DUPLICATES = {
     "Tell me about a time you put the user first (LP: Customer Obsession)":
