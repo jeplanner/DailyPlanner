@@ -36414,62 +36414,382 @@ cannot debug.""",
 ]
 
 _EX_P0E["Word Ladder (shortest transformation, BFS)"] = [
-    """The textbook case, traced level by level.
-begin='hit', end='cog', words={hot,dot,dog,lot,log,cog}.
-Level 1: 'hit'. Its neighbours in the dictionary: change 'h'->? nothing; 'i'->o
-gives 'hot' (in the set) -> remove it, push (hot,2).
-Level 2: 'hot' -> 'dot' and 'lot'; push both with steps 3.
-Level 3: 'dot' -> 'dog'; 'lot' -> 'log'; steps 4.
-Level 4: 'dog' -> 'cog' (also 'log' already removed); push (cog,5).
-Pop 'cog' -> equals end -> return 5.
-The answer counts WORDS, not edits: hit,hot,dot,dog,cog is five words and four
-letter changes. Getting that off by one is the most common wrong answer.""",
+    """1. THE GOAL, in plain English.
 
-    """No path exists - and why the early check matters.
-begin='hit', end='cog', words={hot,dot,dog,lot,log} (no 'cog').
-The very first line `if end not in words: return 0` fires and we never traverse
-at all.
-Without that check the BFS would explore every reachable word, exhaust the
-queue, and fall through to `return 0` anyway - correct but wasteful. On a
-5000-word dictionary that is the difference between instant and a full sweep.""",
+You are given a starting word, an ending word, and a dictionary of allowed words.
+Change the start into the end one letter at a time, and every word along the way
+must be in the dictionary. What is the fewest number of words in such a chain?
 
-    """begin == end, and a one-step ladder.
-begin='hot', end='hot', words={hot}: the first pop matches, return 1. One word,
-zero changes.
-begin='hit', end='hot', words={hot}: level 1 generates 'hot', level 2 pops it,
-returns 2.
-These two pin down the counting convention. If your solution returns 0 or 1 for
-the second case, you are counting edges instead of nodes.""",
+Our example:
 
-    """Why removing the word at PUSH time is essential.
-Suppose 'hot' is reachable from two different level-2 words. If you only mark it
-visited when you POP it, both parents push it and it is expanded twice - and in
-a dense dictionary that duplication compounds level by level until the queue
-explodes.
-Removing it from `words` the moment you push it means each word enters the queue
-exactly once. That single line is what keeps the algorithm O(N x L x 26) rather
-than exponential.
-It also doubles as the visited set - no second data structure needed - at the
-cost of destroying the caller's word list, which is worth saying out loud.""",
+    begin = "hit",  end = "cog"
+    dictionary = ["hot", "dot", "dog", "lot", "log", "cog"]
 
-    """Cost, and the neighbour-generation choice.
-N words, each of length L. The code tries L positions x 26 letters per word:
-O(N x L x 26) string builds, each costing O(L) -> about O(N x L^2).
-The alternative is a precomputed bucket map: 'h*t' -> [hit, hot], built once in
-O(N x L). Then neighbours are a dict lookup instead of 26 tries.
-Which wins depends on the alphabet: for 26 lowercase letters the brute-force
-generation is usually fine and much shorter to write; for a large alphabet
-(Unicode, or long words) the bucket map is decisively better. Name both.""",
+Find a chain by hand. From "hit", change the i to an o: "hot", which is in the
+dictionary. From "hot", change the h to a d: "dot". From "dot", change the t to a
+g: "dog". From "dog", change the d to a c: "cog". Done.
 
-    """Bidirectional BFS - the follow-up worth knowing.
-Search from BOTH ends at once, always expanding the smaller frontier, and stop
-when the two sets touch.
-If the branching factor is b and the answer depth is d, one-directional BFS
-visits about b^d nodes; bidirectional visits 2 x b^(d/2). For b=10, d=6 that is
-1,000,000 versus 2,000 - a 500x cut.
-It is the standard optimisation for Word Ladder and for shortest-path queries in
-social graphs ('degrees of separation'). Mentioning it, even without coding it,
-is usually enough to clear the bar on this Hard problem.""",
+    hit -> hot -> dot -> dog -> cog
+
+Count the WORDS in the chain, including both ends: five. So the answer is 5.
+
+Note carefully what is counted. Not the number of changes (four), but the number
+of words (five). Problems differ on this, so check - and this one counts words,
+which is why the code starts its counter at 1 rather than 0.
+
+Two more rules. Every intermediate word must be in the dictionary - you may not
+pass through a non-word. And the starting word does not itself need to be in the
+dictionary, though the ending word must be, or no chain can exist.""",
+
+    """2. THE INTUITION - it is a graph, and the question is "fewest steps".
+
+The words do not look like a network, but they are one.
+
+A GRAPH is a set of things plus the connections between them. Each thing is a
+NODE; each connection is an EDGE. Here every dictionary word is a node, and two
+words are joined by an edge if they differ in exactly one letter.
+
+Draw part of ours:
+
+    hit --- hot --- dot --- dog --- cog
+                     |       |
+                    lot --- log
+
+Now the question "what is the shortest chain from hit to cog?" is exactly "what is
+the fewest edges from hit to cog?" - a shortest-path question on a graph where
+every edge costs the same.
+
+That is the signature of BREADTH-FIRST SEARCH (BFS). BFS explores in rings:
+everything one step away, then everything two steps away, and so on. Its guarantee
+is precisely what we need - THE FIRST TIME IT REACHES A WORD IS BY THE SHORTEST
+CHAIN. Nothing longer can arrive first, because everything shorter was tried
+first.
+
+DEPTH-FIRST SEARCH, which dives down one path before backing up, would also find
+chains - but the first one it finds could be enormously long, and you would have
+to explore every path to be sure you had the shortest. For "fewest steps" problems
+BFS is the right tool and DFS is the wrong one. That choice is the main thing this
+problem is testing.
+
+BFS uses a QUEUE - a waiting line where you join at the back and are served from
+the front. That first-in-first-out order is what makes the exploration happen in
+rings.""",
+
+    """3. THE TRICK - do not build the graph, generate neighbours on the fly.
+
+There is a decision here that decides whether the solution is fast or hopeless.
+
+THE OBVIOUS APPROACH: work out the graph first. Compare every pair of dictionary
+words, and if they differ in exactly one letter, record an edge. With N words each
+of length L, that is N x N comparisons costing L each - and for a dictionary of
+10,000 words that is 100 million comparisons before you even start searching.
+
+THE BETTER APPROACH: never build the graph. When standing on a word, GENERATE its
+neighbours directly. For each of the L positions, try replacing that letter with
+each of the 26 letters, and check whether the result is in the dictionary.
+
+That is 26 x L candidate words per step - for a 3-letter word, 78 lookups. Each
+lookup is instant if the dictionary is stored as a SET rather than a list.
+
+So the cost per word is 26 x L instead of N. When the dictionary is large - and it
+usually is - generating beats comparing by an enormous margin. When the words are
+very long and the dictionary tiny, the comparison approach could win, but that is
+rare.
+
+THE SECOND TRICK, and it is the neat one. How do we avoid visiting the same word
+twice? By REMOVING it from the dictionary the moment we queue it.
+
+That single move does two jobs. It marks the word visited, so nothing can queue it
+again. And because BFS reaches every word by its shortest chain the FIRST time, a
+second arrival could only ever be by a longer route - so deleting it loses nothing.
+
+Note the removal must happen when the word is ADDED to the queue, not when it is
+taken out. Otherwise the same word could be queued several times by different
+neighbours before any of them is processed, and the queue balloons.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the end word is not in the dictionary. Then no chain can exist, because
+every word in the chain must be a dictionary word. Check this first and return 0
+immediately - otherwise the search explores the entire dictionary and returns 0
+anyway, having wasted all that work.
+
+CASE 2 - counting changes instead of words. Our chain has four changes and five
+words, and this problem wants five. That is why the queue starts with a count of 1
+rather than 0. If a problem asks for the number of transformations, subtract one -
+but read the statement carefully.
+
+CASE 3 - no chain exists at all. If the search runs out of words to try without
+ever reaching the end, the queue empties and the loop finishes. Return 0. The
+empty queue IS the "impossible" signal; no separate check is needed.
+
+CASE 4 - the start word being in the dictionary or not. It does not matter. The
+start is put into the queue directly rather than being looked up, so either way
+works. Some versions remove it from the dictionary at the beginning to avoid
+revisiting it; here it is never re-added because reaching it again would require
+it to still be in the set, and if it was there it gets removed the first time a
+neighbour generates it.
+
+CASE 5 - checking for the end word only when generating neighbours. The code
+checks when a word is TAKEN OUT of the queue instead, which is simpler and
+equally correct - it just returns one round later than it strictly must. Checking
+at generation time is a small optimisation, not a correctness issue.
+
+CASE 6 - forgetting that the start word counts. Starting the counter at 0 gives 4
+for our example, which is the number of changes. One character in the initial
+tuple.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+GRAPH, NODE, EDGE: defined in section 2.
+
+BFS - BREADTH-FIRST SEARCH: explore in rings, nearest first. Its guarantee - first
+arrival is by the shortest route - is the whole reason it is used here.
+
+QUEUE: a waiting line, first in first out. deque (pronounced "deck") is Python's
+ready-made one; popleft() takes from the front and append() adds to the back. An
+ordinary list would work but removing from its front is slow, because every
+remaining item shuffles along.
+
+SET: a bag of items where "is this in here?" is answered instantly, no matter how
+many items it holds. The dictionary is turned into one so that checking a
+candidate word costs the same whether the dictionary has ten words or a million. On
+a list, each check would scan the whole thing.
+
+TUPLE (word, steps): the queue holds pairs, so each waiting word carries its own
+chain length with it. That is simpler than tracking depth separately, and it is
+why no level-counting logic is needed.
+
+word[:i] + ch + word[i+1:]: build a new word by replacing the letter at position i.
+The first slice is everything before i, then the new letter, then everything after
+i. Strings in Python cannot be changed in place, so a new one is built.
+
+O(N x L x 26): the cost, where N is the number of dictionary words and L the word
+length. In plain words: each word is processed once, and processing it means
+trying 26 letters at each of L positions.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: explore the words in rings outward from the start,
+generating each word's one-letter neighbours on the fly, and the first time you
+reach the end word you have the shortest chain.
+
+There is no recursion here - BFS is driven by a queue - so nothing piles up on the
+call stack. The loop ends when the queue empties, which happens once every
+reachable word has been processed.
+
+The steps:
+
+  1. Put the dictionary into a set, so that checking whether a candidate is a real
+     word is instant.
+
+  2. If the end word is not in that set, no chain can exist. Return 0 at once.
+
+  3. Make a queue holding one entry: the starting word paired with a count of 1.
+     One, not zero, because the starting word itself counts toward the chain
+     length.
+
+  4. While the queue is not empty:
+
+     a. Take the entry at the front - a word and its chain length.
+
+     b. If that word is the end word, return its chain length. Because BFS reaches
+        every word by its shortest route first, this is guaranteed to be the
+        shortest chain, not merely a chain.
+
+     c. Otherwise generate every one-letter variation: for each position in the
+        word, and for each of the 26 letters, build the word with that letter
+        substituted.
+
+     d. If the variation is in the set, it is a real word we have not visited.
+        Remove it from the set - which marks it visited - and add it to the back
+        of the queue with a chain length one greater.
+
+        Remove it as you ADD it, not when you take it out, or the same word can be
+        queued many times before it is processed.
+
+  5. If the queue empties without reaching the end word, no chain exists. Return
+     0.
+
+Step (b) is where the BFS guarantee is cashed in, and step (d) is where both the
+neighbour generation and the visited marking happen in one move.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code treats the words as places and the one-letter changes as roads between
+them, then walks outward from the starting word in rings - first every word one
+change away, then every word two changes away, and so on.
+
+Walking outward in rings is the whole point. It means that the very first time it
+arrives at the destination, it has arrived by the shortest possible route. There
+is no need to keep looking for something better, because everything shorter has
+already been tried.
+
+It never works out the whole network of roads in advance, which would mean
+comparing every pair of words in the dictionary. Instead, whenever it is standing
+on a word it manufactures that word's neighbours on the spot: for each position in
+the word it tries all twenty-six letters in turn, and asks whether the result
+happens to be a real word. Looking that up is instant, because the dictionary is
+held in a structure built for exactly that question.
+
+Each word carries its own chain length with it as it waits in line, so there is no
+separate counting to manage - when a word is added to the line, it is added with
+one more than the word it came from.
+
+The clever housekeeping is that a word is deleted from the dictionary the moment
+it joins the line. That marks it as visited, and it costs nothing, because any
+later route to that word would have to be longer than the one that got there
+first.
+
+If the line empties without ever reaching the destination, there is no chain at
+all.""",
+
+    """8. THE CODE, line by line.
+
+Keep begin = "hit", end = "cog", and the dictionary from section 1 beside you; the
+answer is 5.
+
+    words = set(word_list)
+Turn the dictionary into a set so membership checks are instant. This matters a
+great deal here: the inner loop performs 26 x L lookups per word, and on a list
+each one would scan the entire dictionary. One line, enormous difference.
+
+    if end not in words:
+        return 0
+The check from case 1 in section 4. If the destination is not a legal word, no
+chain can reach it. Checking now avoids exploring the whole dictionary to discover
+the same thing.
+
+    queue = deque([(begin, 1)])
+The waiting line, holding pairs of (word, chain length so far). It starts with the
+begin word at length 1 - ONE, because the problem counts words and the starting
+word is the first of them. Starting at 0 would answer the number of changes
+instead - see case 2.
+
+    while queue:
+Keep going while words are waiting. An empty queue means everything reachable has
+been explored.
+
+    word, steps = queue.popleft()
+Take from the FRONT. That first-in-first-out order is what makes this breadth-
+first: words queued earlier are nearer the start, so they are all processed before
+anything further away.
+
+    if word == end:
+        return steps
+The BFS guarantee cashed in. Because words are reached in order of distance, the
+first arrival at the end word is by the shortest chain - so this can return
+immediately rather than continuing to look for something better.
+
+    for i in range(len(word)):
+        for ch in "abcdefghijklmnopqrstuvwxyz":
+Generate every one-letter variation: each position, each letter. For a 3-letter
+word that is 78 candidates, most of which will not be real words.
+
+    nxt = word[:i] + ch + word[i+1:]
+Build the varied word: everything before position i, the new letter, everything
+after. Strings cannot be modified in place in Python, so a new one is built each
+time. Note this also produces the original word itself when ch happens to match -
+harmless, because that word has already been removed from the set.
+
+    if nxt in words:
+Is this a real, unvisited word? The set makes this instant. Note it does double
+duty: a word that has already been visited is no longer in the set, so this single
+check covers both "is it a word" and "have I been here".
+
+    words.remove(nxt)
+    queue.append((nxt, steps + 1))
+Mark it visited by deleting it, and queue it with a chain one longer.
+
+The removal happens HERE, at queueing time, not when the word is later taken out.
+Otherwise several neighbours could each queue the same word before any of them
+processes it, and the queue would fill with duplicates - see section 3.
+
+Deleting is safe because BFS reached this word by its shortest chain; any later
+route would be longer and is not worth keeping.
+
+    return 0
+The queue emptied without reaching the end. No chain exists.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+begin = "hit", end = "cog"
+words = {hot, dot, dog, lot, log, cog}
+queue = [("hit", 1)]
+
+ROUND 1.  pop ("hit", 1).  "hit" is not "cog".
+  Vary position 0: ait, bit, cit ... none are in the set.
+  Vary position 1: hat, hbt ... "hot" IS in the set.
+      remove "hot" -> words = {dot, dog, lot, log, cog}
+      queue = [("hot", 2)]
+  Vary position 2: hia, hib ... none in the set.
+
+ROUND 2.  pop ("hot", 2).  Not "cog".
+  Position 0 gives "dot" (in the set) and "lot" (in the set).
+      remove both -> words = {dog, log, cog}
+      queue = [("dot", 3), ("lot", 3)]
+  Positions 1 and 2 produce nothing new - "hit" is no longer in the set, so the
+  search cannot walk backwards.
+
+ROUND 3.  pop ("dot", 3).  Not "cog".
+  Position 2 gives "dog" (in the set).  remove it.
+      words = {log, cog}      queue = [("lot", 3), ("dog", 4)]
+  Position 1 would give "dot" itself and others - none in the set now.
+
+ROUND 4.  pop ("lot", 3).  Not "cog".
+  Position 2 gives "log" (in the set).  remove it.
+      words = {cog}           queue = [("dog", 4), ("log", 4)]
+  Note "dot" is already gone, so this branch does not re-queue it. That is the
+  removal-on-queueing doing its job.
+
+ROUND 5.  pop ("dog", 4).  Not "cog".
+  Position 0 gives "cog" (in the set).  remove it.
+      words = {}              queue = [("log", 4), ("cog", 5)]
+
+ROUND 6.  pop ("log", 4).  Not "cog".  Nothing left in the set, so nothing queued.
+
+ROUND 7.  pop ("cog", 5).  It IS the end word -> return 5.
+
+Answer 5, matching the chain hit -> hot -> dot -> dog -> cog counted by hand.
+
+Read the chain lengths as they came out: 1, 2, 3, 3, 4, 4, 5. They never
+decrease - that is BFS exploring in rings, and it is exactly why the first arrival
+at "cog" is guaranteed shortest.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(N x L x 26), where N is the number of dictionary words and L the word
+length. Each word is processed at most once - because it is removed from the set
+when queued - and processing it means building and checking 26 x L candidates.
+Building each candidate costs L as well, so a fuller statement is
+O(N x L x L x 26); with 26 a constant, people usually write O(N x L squared).
+
+Compare with pre-building the graph at O(N squared x L). For a dictionary of
+10,000 five-letter words, generation is around 6 million operations against 500
+million for comparison. That gap is the reason for the on-the-fly approach.
+
+SPACE: O(N) for the set and the queue.
+
+A REAL IMPROVEMENT worth knowing: BIDIRECTIONAL BFS. Search outward from BOTH ends
+at once, always expanding whichever frontier is smaller, and stop when they meet.
+Because the number of words at distance d grows roughly like b to the power d, two
+searches of depth d/2 explore far less than one of depth d - often the difference
+between seconds and minutes. Mentioning it shows you understand why BFS gets
+expensive rather than just how to write it.
+
+THE #1 MISTAKE - using DFS instead of BFS. It will find a chain, and the chain it
+finds first can be arbitrarily long; to get the shortest you would have to explore
+every path. The word "shortest" in a problem statement, on a graph where every
+step costs the same, is the signal for BFS. That recognition is what this problem
+is really testing.
+
+A close second: removing a word from the set when it is DEQUEUED rather than when
+it is queued. The same word then gets queued by several neighbours before any of
+them is processed, the queue fills with duplicates, and the work multiplies.
+
+ONE-SENTENCE TAKEAWAY: words differing by one letter form a graph, "shortest"
+means BFS, and you should generate each word's neighbours by trying 26 letters at
+every position rather than comparing every pair of words in the dictionary.""",
 ]
 
 _EX_P0E["Reverse Linked List"] = [
@@ -37362,64 +37682,389 @@ point: level membership is just depth, and DFS knows the depth too.""",
 ]
 
 _EX_P0E["Combination Sum (reusable candidates)"] = [
-    """The textbook case, traced.
-candidates = [2,3,6,7], target = 7.
-Start at i=0 with 2: remaining 5 -> take 2 again (i stays 0): remaining 3 -> take
-2 again: remaining 1 -> every candidate overshoots, prune. Back up, from
-remaining 3 take 3 (i=1): remaining 0 -> record [2,2,3].
-Back up to the top level, take 3 first: 3+3=6, remaining 1, prune; 3+6 and 3+7
-overshoot.
-Take 6: remaining 1, prune. Take 7: remaining 0 -> record [7].
-Answer [[2,2,3],[7]].""",
+    """1. THE GOAL, in plain English.
 
-    """The one-character difference from Combination Sum II.
-Here the recursive call is backtrack(i, ...) - SAME index - so a candidate can
-be reused: [2,2,3] is legal.
-Change it to backtrack(i+1, ...) and each candidate is used at most once, which
-is Combination Sum II (LeetCode 40), where the answer for the same input would
-be just [[7]] since 2 cannot repeat.
-That single character is the entire difference between two separate LeetCode
-problems. When you read the statement, find the sentence about reuse before you
-write a line.""",
+You are given a set of numbers and a target. Find every group of them that adds up
+to exactly the target. You may use the same number as many times as you like, and
+two groups count as the same if they contain the same numbers - order does not
+matter.
 
-    """Why `start` prevents duplicates but does not prevent reuse.
-Without `start` - looping from 0 every level - target 7 with [2,3] would produce
-[2,2,3], [2,3,2] and [3,2,2], three orderings of the same multiset.
-`start` forbids ever going BACKWARD in the candidate list, so every combination
-is generated in non-decreasing order exactly once. Reuse is still allowed
-because you may STAY at the same index.
-Forward-only = no duplicate combinations. Same-index-allowed = reuse. Two
-independent knobs on one loop.""",
+Our example: candidates = [2, 3, 6, 7], target = 7.
 
-    """Edge cases: target 0, and no solution.
-target = 0: the first call hits `remaining == 0` immediately and records the
-empty combination [[]]. Whether that is the desired answer depends on the
-problem statement - LeetCode's constraints say target >= 1, so ask.
-candidates = [4,5], target = 3: every branch overshoots on the first pick,
-remaining goes negative, prune. Answer [] - an empty list of combinations, not
-None, not [[]]. Returning the wrong empty shape is a classic silent failure.""",
+Work it out by hand:
 
-    """The pruning that makes it fast - sorting first.
-As written, a candidate that overshoots still costs a recursive call that
-immediately returns.
-Sort the candidates, then break out of the loop the moment
-candidates[i] > remaining:
+    2 + 2 + 3  =  7      uses the 2 twice - allowed
+    7          =  7      a single number is a perfectly good group
+
+Anything else? 2 + 2 + 2 is 6, too small; adding another 2 makes 8, too big.
+3 + 3 is 6, and 3 + 3 + 3 is 9. 6 alone is 6, and 6 + anything overshoots.
+
+So there are exactly two answers: [2,2,3] and [7].
+
+Two rules to be clear about, because they shape the whole solution.
+
+REUSE IS ALLOWED. That is what "reusable candidates" means in the title, and it is
+what separates this from the subsets problem where each item may be used once.
+
+ORDER DOES NOT MATTER. [2,2,3] and [3,2,2] and [2,3,2] are all the same group, so
+only one of them should appear in the answer. Section 3 is about the single line
+that enforces that.""",
+
+    """2. THE INTUITION - grow a group, and stop early when it cannot work.
+
+We cannot compute this with a formula. We have to try combinations - but we can be
+clever about which ones we bother to try.
+
+The method is BACKTRACKING: build a partial answer one piece at a time; at each
+step try every legal next piece; when you have explored everything that follows
+from a choice, UNDO it and try the next one. It is exploring a maze with chalk -
+walk down a corridor, and when you have seen where it leads, walk back and take
+another.
+
+Here the partial answer is a group of numbers, and the "pieces" are the
+candidates.
+
+At any moment we hold a partial group and know how much is still needed. Three
+things can be true:
+
+  The remaining amount is exactly ZERO. The group adds up to the target - record
+  it and stop going deeper.
+
+  The remaining amount is NEGATIVE. We have overshot. Nothing we add can bring it
+  back, because every candidate is positive. Abandon this route immediately.
+
+  Otherwise, still positive. Try adding each available candidate and carry on.
+
+That middle case is worth naming: it is PRUNING - cutting off a branch the moment
+it becomes hopeless, rather than exploring it and discovering the failure at the
+end. It is what keeps the search manageable.
+
+There is no simpler-but-slower version worth showing first. The honest alternative
+- generate every possible multiset of candidates up to some length and filter -
+is strictly worse, because it does not abandon a route the moment it overshoots.
+Checking legality as you build, rather than after, is the whole point.""",
+
+    """3. THE TRICK - one line stops [2,2,3] and [3,2,2] both appearing.
+
+Left to itself, the search would find the same group in every possible order. From
+the empty group it could take 2 then 2 then 3, or 3 then 2 then 2, or 2 then 3
+then 2 - three routes, one group, three copies in the answer.
+
+The fix is a rule about what each level is allowed to choose:
+
+    once you have moved past a candidate, you may never go back to it
+
+Concretely: each recursive call is told a starting POSITION, and it may only
+choose candidates from that position onwards. So after taking the 3 at position 1,
+the levels below may choose from position 1 onwards - the 3, the 6, the 7 - but
+never the 2 at position 0.
+
+The effect: every group is built in non-decreasing order of position. [2,2,3] is
+reachable, and [3,2,2] is not, because once you have taken the 3 the 2 is behind
+you. Each group therefore has exactly ONE route through the search, so it is found
+exactly once.
+
+NOW THE SECOND HALF, and it is one character. When we take the candidate at
+position i and recurse, what starting position do we pass down?
+
+    pass i      -> the same candidate may be chosen again. REUSE ALLOWED.
+    pass i + 1  -> we move past it. EACH CANDIDATE USED AT MOST ONCE.
+
+This problem allows reuse, so it passes i. The sibling problem, Combination Sum
+II, forbids reuse and passes i + 1 - and that is very nearly the only difference
+between them.
+
+So one line controls duplicate GROUPS (start from a position, never go back) and
+one character controls duplicate USES (i versus i + 1). Both are worth being able
+to point at.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - recording the list instead of a copy. The path list keeps changing after
+you record it, so storing the list itself stores a reference to something that
+will be dismantled on the way back up. You end up with the right NUMBER of answers,
+all of them empty or identical. The count being right is what makes this so hard
+to spot. Record a copy.
+
+CASE 2 - forgetting to undo. Without removing the number after exploring, the path
+only grows and almost every answer is missed.
+
+CASE 3 - passing i + 1 by mistake. Then each candidate is used at most once, and
+[2,2,3] never appears. You would get only [7] for our example. It is a one-
+character slip that silently answers a different question.
+
+CASE 4 - passing 0 instead of i. Then every level may choose anything, and you get
+every ORDERING of every group: [2,2,3], [2,3,2] and [3,2,2] all appear. The answer
+count balloons and the duplicates are real duplicates.
+
+CASE 5 - assuming the input is sorted. This code does not require it, and it works
+on unsorted input. But sorting first enables a real improvement: once a candidate
+is bigger than the remaining amount, every later candidate is too, so you can stop
+the loop entirely rather than trying them all and pruning each one. That turns
+several wasted branches into none.
+
+CASE 6 - negative or zero candidates. The whole method assumes every candidate is
+positive. A zero could be added forever without changing the remaining amount, so
+the search would never terminate. The problem statement normally promises positive
+values; if it does not, say so.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+COMBINATION: a selection where order does not matter. Contrast with a
+PERMUTATION, where it does. That distinction is exactly what section 3's rule
+enforces.
+
+BACKTRACKING: build, try, undo, try the next. Defined in section 2.
+
+PRUNING: abandoning a branch as soon as it cannot lead to an answer - here, the
+moment the remaining amount goes negative.
+
+RECURSION: a function that solves a problem by calling itself on a smaller piece.
+"Fill the remaining amount using candidates from position start onwards" is solved
+by taking one candidate and asking the same function to fill what is left.
+
+CALL STACK: when the function calls itself, the outer call PAUSES exactly where it
+is and the inner one runs. Those paused calls pile up, each waiting on the one
+below. That pile is the call stack, and it is what makes the undo happen at the
+right moment - the line after the recursive call runs precisely when that call
+returns.
+
+BASE CASE: the situation where the function stops instead of recursing. There are
+two here: remaining is zero (success - record it) and remaining is negative
+(failure - give up).
+
+path[:] - Python for "a copy of this list". The colon with nothing on either side
+means "from the start to the end".
+
+The complexity here is exponential and awkward to state exactly; section 10
+explains what actually governs the running time and why the usual bound is a
+pessimistic one.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: grow a group one number at a time, never looking
+back at candidates you have moved past, and stop a branch the moment it hits the
+target or overshoots it.
+
+The mechanism, since this is recursion. The function's job is "given the group so
+far and how much is still needed, find every way to finish using candidates from
+position start onwards". It picks a candidate, adds it to the group, and calls
+ITSELF with the smaller remaining amount. That inner call pauses the outer one.
+When the inner call has explored everything below that choice, it returns - and
+the outer call wakes on the very next line, which is the undo. So the removal
+happens at exactly the right moment with no bookkeeping.
+
+It stops because every candidate is positive, so the remaining amount strictly
+decreases at every level and must eventually reach zero or go below it.
+
+The steps:
+
+  1. Make an empty list for the results.
+
+  2. Write a function taking three things: the earliest position it may choose
+     from, how much is still needed, and the group built so far.
+
+  3. FIRST BASE CASE. If nothing is still needed - the remaining amount is exactly
+     zero - the group hits the target. Record a COPY of it and return.
+
+  4. SECOND BASE CASE. If the remaining amount has gone below zero, the group has
+     overshot. Since every candidate is positive, nothing can rescue it. Return.
+
+  5. Otherwise loop over the positions from start to the end. For each:
+
+     a. CHOOSE: add that candidate to the group.
+     b. EXPLORE: call the function again with the SAME position - so the candidate
+        may be chosen again - and the remaining amount reduced by it.
+     c. UN-CHOOSE: remove the last number from the group, restoring it exactly.
+
+  6. Start with position 0, the full target, and an empty group. Return the
+     results.
+
+Step 5b is where both rules live: passing the same position rather than the next
+is what allows reuse, and passing a position at all - rather than always starting
+from zero - is what stops the same group appearing in different orders.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code grows a group of numbers one at a time, keeping track of how much is
+still needed to reach the target.
+
+Every time it is about to add another number it checks two things first. If
+nothing is still needed - the amount left is exactly zero - then the group in its
+hand is an answer, so it writes down a copy and stops going deeper. If the amount
+left has gone below zero, the group has overshot; since every candidate is
+positive, nothing added later could bring it back, so it abandons that route
+immediately rather than exploring it further.
+
+Otherwise it tries each candidate it is still allowed to use. It adds the number,
+reduces the amount still needed, and carries on building. When it has explored
+everything that follows from that choice, it takes the number back off again -
+restoring the group exactly as it was - before trying the next candidate.
+
+Two restrictions shape which groups it finds. It may add the same number again,
+which is what lets [2,2,3] be found at all. But it may never go back to a
+candidate it has already moved past - so having taken the 3, it can no longer
+reach for the 2. That is what stops the same group being discovered several times
+in different orders, because every group can be assembled in exactly one way.
+
+When there is nothing left to try, the search unwinds back to wherever it still
+has options, and finishes when even the very first choice has been exhausted.""",
+
+    """8. THE CODE, line by line.
+
+Keep candidates = [2, 3, 6, 7] and target = 7 beside you; the answers are [2,2,3]
+and [7].
+
+    result = []
+Where finished groups are collected.
+
+    def backtrack(start, remaining, path):
+Three things carried down. start is the earliest position this call may choose
+from - the rule from section 3. remaining is how much is still needed. path is the
+group built so far.
+
+Note path is passed as an argument here rather than being a shared outer variable,
+but there is still only ONE list - it is the same object handed down each time,
+which is exactly why the undo below is necessary.
+
+    if remaining == 0:
+        result.append(path[:])
+        return
+FIRST BASE CASE. Nothing left to make, so the group hits the target exactly.
+Record a COPY - the [:] - because path is about to be dismantled on the way back
+up. Without it, result fills with references to one list that ends up empty - see
+case 1 in section 4.
+
+The return stops us going deeper. Adding anything now would overshoot, since every
+candidate is positive.
+
+    if remaining < 0:
+        return
+SECOND BASE CASE, and this is the PRUNING. We have overshot, and no positive
+number can bring the total back down, so this whole branch is dead. Abandoning it
+here rather than exploring further is what keeps the search from ballooning.
+
     for i in range(start, len(candidates)):
-        if candidates[i] > remaining: break
-        ...
-Because the list is sorted, every LATER candidate also overshoots, so `break`
-skips them all. On [2,3,6,7] with remaining 1 that turns four wasted calls into
-zero. On larger inputs it is the difference between passing and timing out.""",
+The choices available: every position from start onwards. Starting at start rather
+than 0 is what stops [3,2,2] appearing alongside [2,2,3] - once you have moved
+past a candidate you may not go back to it.
 
-    """Complexity, and where reuse-style combinations show up.
-Roughly O(n^(target/min_candidate)) states - exponential, which is expected for
-'enumerate all solutions': the OUTPUT itself can be exponential, so no algorithm
-can be polynomial.
-Real-world cousins: making change with unlimited coins of each denomination,
-choosing a set of resource sizes that exactly fill a quota, unbounded knapsack.
-Note the contrast: if the question asks HOW MANY combinations (not which ones),
-switch to DP - counting is polynomial even though listing is not. Recognising
-'count' versus 'enumerate' picks the algorithm for you.""",
+    path.append(candidates[i])
+CHOOSE. Add this candidate to the group.
+
+    backtrack(i, remaining - candidates[i], path)
+EXPLORE, and the single most important character in the function is that i.
+
+Passing i - the SAME position - means this candidate is still available to the
+levels below, which is how a number gets used more than once. Passing i + 1 would
+move past it and answer the each-candidate-once problem instead.
+
+The remaining amount drops by the candidate just taken, which is what guarantees
+the recursion terminates.
+
+    path.pop()
+UN-CHOOSE. Remove the number just added, restoring path exactly to what it was
+before. Its POSITION matters as much as its existence: sitting immediately after
+the recursive call means it runs at precisely the moment the subtree below has
+been fully explored.
+
+    backtrack(0, target, [])
+    return result
+Start with no restriction, the full target, and an empty group.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+candidates = [2, 3, 6, 7], target = 7. Indentation shows the call stack depth.
+I write the state as (start, remaining, path).
+
+backtrack(0, 7, [])
+  remaining 7: not 0, not negative -> loop i from 0
+  i=0, take 2 -> path=[2]
+    backtrack(0, 5, [2])          <- start stays 0, so 2 is reusable
+      i=0, take 2 -> path=[2,2]
+        backtrack(0, 3, [2,2])
+          i=0, take 2 -> path=[2,2,2]
+            backtrack(0, 1, [2,2,2])
+              i=0, take 2 -> backtrack(0, -1, ...) -> remaining < 0, RETURN
+              undo -> path=[2,2,2]
+              i=1, take 3 -> backtrack(1, -2, ...) -> negative, RETURN
+              undo. i=2 (6) and i=3 (7) also overshoot and return at once.
+              return
+            undo -> path=[2,2]
+          i=1, take 3 -> path=[2,2,3]
+            backtrack(1, 0, [2,2,3])
+              remaining == 0 -> RECORD a copy [2,2,3]
+              return
+            undo -> path=[2,2]
+          i=2, take 6 -> remaining 3-6 = -3 -> negative, return. undo.
+          i=3, take 7 -> negative, return. undo.
+          return
+        undo -> path=[2]
+      i=1, take 3 -> path=[2,3]
+        remaining was 5, minus 3 leaves 2
+        backtrack(1, 2, [2,3])
+          i=1, take 3 -> remaining -1, return. undo.
+          i=2 (6), i=3 (7) -> negative, return.
+          return
+        undo -> path=[2]
+      i=2, take 6 -> remaining 5-6 = -1, return. undo.
+      i=3, take 7 -> negative, return. undo.
+      return
+    undo -> path=[]
+  i=1, take 3 -> path=[3]
+    backtrack(1, 4, [3])          <- start is now 1: the 2 is OUT OF REACH
+      i=1, take 3 -> backtrack(1, 1, [3,3])
+        i=1 (3), i=2 (6), i=3 (7) all overshoot -> return
+        undo
+      i=2, take 6 -> negative. i=3, take 7 -> negative.
+      return
+    undo -> path=[]
+  i=2, take 6 -> backtrack(2, 1, [6]): 6 and 7 both overshoot -> return. undo.
+  i=3, take 7 -> backtrack(3, 0, [7]): remaining == 0 -> RECORD [7]. undo.
+  return
+
+result = [[2,2,3], [7]].  Correct.
+
+The line to look at is "backtrack(1, 4, [3])". Because start became 1, the 2 at
+position 0 was unreachable from there - which is exactly why [3,2,2] was never
+built. One group, one route, one appearance.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: exponential, and the honest way to state it is O(number of candidates raised
+to the power of (target divided by the smallest candidate)). The reason is that a
+group can be as long as target divided by the smallest candidate - with candidates
+[2,...] and target 7 that is three or four numbers - and at each position there are
+several choices.
+
+That bound is pessimistic in practice, because the overshoot check kills most
+branches within a step or two. In the trace above, most calls returned immediately
+on the "remaining < 0" line. What actually governs the running time is how quickly
+the pruning bites, and that depends on how large the candidates are relative to the
+target.
+
+SPACE: O(target divided by the smallest candidate) for the working group and the
+call stack - the depth of the search. The results themselves are extra, but those
+are the answer rather than working space.
+
+A REAL IMPROVEMENT worth mentioning: sort the candidates first. Then, inside the
+loop, the moment a candidate exceeds the remaining amount you can stop the loop
+entirely rather than trying every later one and pruning each in turn - because
+every later candidate is bigger still. It does not change the worst case but it
+cuts a lot of wasted branches, and noticing it is a good signal.
+
+THE #1 MISTAKE - passing i + 1 instead of i to the recursive call. It is one
+character and it silently answers a different question: each candidate used at
+most once, so [2,2,3] never appears and our example returns only [7]. Since the
+output is still well-formed and plausible, it is easy to miss. Say what the
+parameter means as you write it: "same position, so this number stays available".
+
+A close second: appending path instead of path[:]. The right number of answers,
+all empty.
+
+ONE-SENTENCE TAKEAWAY: grow the group while subtracting from the target, abandon a
+branch the moment it goes negative, and pass the SAME position down so numbers can
+repeat while groups cannot appear in two different orders.""",
 ]
 
 _EX_P0E["Course Schedule (topological sort)"] = [
