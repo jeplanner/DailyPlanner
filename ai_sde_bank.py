@@ -29892,7 +29892,18 @@ def _rank_score(entry):
     # Return on time: a 10-minute topic outranks a 60-minute one, all else
     # equal. Capped, or the 5-minute glossary terms would sweep the top of the
     # list purely for being short.
-    score += min(1.5, 25.0 / max(5, entry.get("prep_minutes", 15)))
+    #
+    # This uses the topic's INTRINSIC cost (category baseline x difficulty),
+    # NOT prep_minutes. prep_minutes grows with every example and diagram we
+    # write, so feeding it in here meant that documenting a topic more
+    # thoroughly LOWERED its study priority - the five LP entries enriched in
+    # one batch immediately fell out of P0 and five un-enriched ones replaced
+    # them, so the band could never converge. Same failure as the walkthrough
+    # and examples bonuses removed below: the rank must describe the interview,
+    # not our content.
+    _intrinsic = (_CAT_BASE_MIN.get(entry["cat"], 15)
+                  * _DIFF_MIN_MULT.get(entry.get("difficulty"), 1.0))
+    score += min(1.5, 25.0 / max(5, _intrinsic))
     # NOTE: this deliberately does NOT reward having a walkthrough or a full
     # worked-example set. Those measure how much of the CONTENT we have
     # written, not how important the topic is to study - and letting them
