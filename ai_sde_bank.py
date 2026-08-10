@@ -23701,229 +23701,747 @@ answers travel back up and the root's answer is the height of the whole tree."""
 ]
 
 _EX_P0["Min Cost Climbing Stairs (DP)"] = [
-    """A staircase where every stair charges you a toll.
+    """1. THE GOAL, in plain English.
 
-Same staircase as Climbing Stairs, with one change: standing on a stair costs
-money. You can still move 1 or 2 stairs at a time, and now you want to reach the
-top as CHEAPLY as possible, not in the most ways.
+A staircase where every stair charges you a toll to stand on it. You may climb
+one stair or two stairs at a time. You may start on either the first stair or the
+second stair, free of charge. Reach the top as cheaply as possible.
 
-Three important rules, and the third catches everyone:
-1. You may start on either the first stair OR the second - both starts are free
-   to choose, though you still pay whatever that stair costs.
-2. Stepping ONTO a stair means paying its toll.
-3. THE TOP IS NOT A STAIR. It is the floor above, and it costs nothing.
+The tolls are given as a list. Here is our example:
 
-Take cost = [10, 15, 20], meaning stair 0 costs 10, stair 1 costs 15, stair 2
-costs 20.
+    stair:   0    1    2
+    toll:    10   15   20
+                             and then the TOP, just past stair 2
 
-Try the routes by hand:
-    start on stair 0 (pay 10), step to stair 2 (pay 20), step to the top
-        -> 30
-    start on stair 1 (pay 15), step two to the top
-        -> 15     <- cheaper
-Answer: 15.""",
+Important: the top is NOT one of the stairs. It is the floor above, past the end
+of the list, and it costs nothing to arrive there.
 
-    """Building the rule, by asking the same question as before.
+Work it out by hand. Two sensible routes:
 
-To find the cheapest way to REACH a stair, ask: where did I come from? Only two
-possibilities - the stair just below, or the one two below. So:
+  Start on stair 0 (pay 10), climb two to stair 2 (pay 20), then one more to the
+  top. Total 30.
 
-    cheapest_to_reach(stair) = its own toll
-                             + the smaller of
-                                 cheapest_to_reach(one below)
-                                 cheapest_to_reach(two below)
+  Start on stair 1 (pay 15), climb two - which takes you straight past stair 2 to
+  the top. Total 15.
 
-The two starting stairs are free to arrive at (you begin there), so the
-cheapest way to reach stair 0 is just its own toll, and the same for stair 1.
+The second is cheaper, so the answer is 15.
 
-Now walk cost = [10, 15, 20] with two variables holding the last two answers.
-Both start at 0, meaning 'arriving here from outside costs nothing extra':
+Notice what makes this interesting: the expensive stair 20 was avoided entirely by
+jumping over it. You pay only for the stairs you actually STAND on, so the
+problem is about choosing which stairs to touch.""",
 
-    stair 0 (toll 10): 10 + smaller(0, 0)  = 10
-    stair 1 (toll 15): 15 + smaller(0, 10) = 15
-    stair 2 (toll 20): 20 + smaller(10,15) = 30
+    """2. THE INTUITION - ask how you ARRIVED, not where you are going.
 
-So reaching stair 1 costs 15 and reaching stair 2 costs 30.""",
+The unhelpful way to think about this is forwards: "from here, should I take one
+step or two?" That branches into two futures at every stair and gets complicated
+fast.
 
-    """The final line, which is where almost everyone loses this problem.
+The helpful question is backwards:
 
-You now know the cheapest cost to STAND ON each stair. But the goal is the TOP,
-which is not a stair and charges nothing.
+  To be standing on stair i, where did I come from?
 
-You can step onto the top from either of the last two stairs. So the answer is
-the cheaper of those two:
+There are only two possibilities, because those are the only two moves allowed:
 
-    answer = smaller(15, 30) = 15
+  You came from stair i-1, taking one step.
+  You came from stair i-2, taking two steps.
 
-If you instead return the last value (30), you have paid for the final stair
-when you never needed to stand on it. That single line - returning the minimum
-of the last TWO values rather than the last one - is the entire difficulty of
-this problem, and it is where nearly every wrong solution goes wrong.
+There is no third option. So the cheapest way to be standing on stair i is:
 
-Sanity check against the routes we listed by hand: 15 matches.""",
+    cost to reach stair i = toll(i) + the cheaper of
+                                        (cost to reach stair i-1)
+                                        (cost to reach stair i-2)
 
-    """Why you cannot just always take the cheaper next stair.
+You always pay this stair's toll - you are standing on it - and beyond that you
+take whichever arrival was cheaper.
 
-The tempting shortcut is: look at the next two stairs and step onto whichever
-is cheaper. That is called a GREEDY rule - decide using only what is right in
-front of you.
+Work up our example. Write reach(i) for "cheapest total to be standing on stair
+i":
 
-It fails, because a cheap stair now can force an expensive one later. Look at:
+    reach(0) = 10        you may start here free, so you pay only its toll
+    reach(1) = 15        you may start here free too
+    reach(2) = 20 + the cheaper of (reach(1)=15, reach(0)=10) = 20 + 10 = 30
 
-    cost = [1, 100, 1, 1, 1, 100, 1, 1, 100, 1]
+And the TOP is reached by one final step from either stair 1 or stair 2:
 
-The cheapest route pays only 6 in total, by landing on the stairs holding 1 and
-hopping over every 100 with two-steps. To do that you sometimes have to pass up
-an immediately-cheaper option so that you land well two moves later.
+    answer = the cheaper of (reach(1)=15, reach(2)=30) = 15
 
-The method above never gets tricked, because it computes the best cost of
-reaching EVERY stair and lets the later stairs choose. That is what dynamic
-programming buys you over a greedy rule - and knowing which problems need it is
-more valuable than the code.""",
+Which matches the hand-worked answer. That last line is the piece people forget -
+the top is not a stair, so it is not in the list, and it must be handled
+separately.""",
 
-    """The trap in the code itself: updating both variables at once.
+    """3. THE SIMPLE-BUT-SLOW VERSION FIRST, then the upgrade.
 
-We carry two numbers, prev and curr, and slide them forward. It MUST be one
-simultaneous update:
+THE SLOW VERSION. Turn the rule in section 2 straight into a function that calls
+itself: to find reach(i), work out reach(i-1) and reach(i-2), take the cheaper,
+and add this stair's toll.
 
-    prev, curr = curr, toll + min(prev, curr)          # correct
+That is correct and it reads exactly like the rule. It is also unusable, and the
+reason is worth seeing. Draw the calls for reach(5):
 
-Python works out the whole right-hand side first, using the OLD values, then
-assigns. Write it as two lines instead:
+                    reach(5)
+                   /        \\
+            reach(4)          reach(3)
+            /     \\           /      \\
+      reach(3) reach(2)  reach(2) reach(1)
+      /     \\
+ reach(2) reach(1)
 
-    prev = curr                       # prev is now the old curr
-    curr = toll + min(prev, curr)     # ...and this min sees the NEW prev!
+reach(3) is computed twice, in separate branches. reach(2) three times. Each of
+those recomputes everything beneath it from scratch, with no idea the identical
+work was just done elsewhere. The number of calls roughly DOUBLES per extra
+stair - written O(2^n) - so a staircase of 40 stairs takes over a billion calls
+and hangs.
 
-Both sides of the min are now the same number, so the formula quietly collapses
-and every answer comes out too high. Nothing crashes; the numbers are just
-wrong.
+THE UPGRADE - build upwards instead of downwards. Start from the two stairs you
+can reach for free and work up the staircase, computing each stair's cheapest
+arrival exactly once from the two you have just computed. Nothing is ever
+recomputed.
 
-Check with cost = [5, 3]: correct answer is 3 (start on stair 1, step straight
-to the top, ignoring stair 0 completely). If your code says 5 or 8, this is
-why.""",
+THEN the second upgrade. Filling in a whole list works, but look at what is ever
+READ: computing stair i needs only stairs i-1 and i-2. Nothing looks back three
+places. So the list is unnecessary - keep just two numbers and slide them forward
+as you climb.
 
-    """The contrast with Climbing Stairs, which shares the recurrence.
-Climbing Stairs COUNTS routes and sums the two predecessors. This MINIMISES cost
-and takes the smaller of the two predecessors, then adds a local price.
-Same window, same two variables, different combine operation. Once you see that
-a rolling-window DP is defined by (what the state means, how you combine the
-predecessors), both problems become one.""",
+Memory drops from proportional-to-n down to two variables, and the answers are
+identical. In an interview it is perfectly good to write the list version first
+and then say "and since each value only looks back two places, I can drop the
+list" - that shows the reasoning rather than a memorised trick.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - forgetting that the top is not a stair. The commonest wrong answer is to
+return the cost of reaching the LAST stair. On our example that is 30, not 15.
+The top is past the end of the list, so the answer is the cheaper of the last two
+stairs' arrival costs - because from either of them a single move reaches the top.
+
+CASE 2 - assuming you must start on stair 0. You may start on stair 0 or stair 1,
+whichever is better. On [10, 15, 20] starting on stair 1 is what makes 15
+possible. In the code this freedom is expressed by seeding both starting values to
+zero, which says "arriving at either of the first two stairs costs nothing beyond
+their own toll".
+
+CASE 3 - a staircase of exactly two stairs, [10, 15]. You start on one of them and
+step straight to the top, so the answer is the cheaper toll: 10. The code gets
+this without a special case - after both stairs are processed, the final
+comparison picks the smaller.
+
+CASE 4 - a staircase of one stair, [7]. You may start on stair 0 and step to the
+top, paying 7 - or, since you are allowed to start on "stair 1" which is already
+past the end, pay nothing. The conventional answer is 0. The code produces 0,
+because one of the two values it compares at the end never moved off its seed.
+This is the kind of case worth checking rather than assuming.
+
+CASE 5 - the greedy instinct. "Always step onto the cheaper of the next two
+stairs" is wrong for the same reason as in Coin Change: a cheap stair now can
+force you onto an expensive one later. Only trying every arrival at every stair
+avoids being misled.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+DYNAMIC PROGRAMMING (DP): solving a problem by first solving smaller versions of
+it, writing the answers down, and building the bigger answers from the ones
+already written. Here the "written down" answers shrink to just two variables.
+
+The two variables, and this is the part to hold onto:
+
+    curr = the cheapest total to be standing on the stair just processed
+    prev = the cheapest total to be standing on the stair before that
+
+They always describe two ADJACENT stairs, sliding up the staircase together.
+
+min(a, b): Python's "give me the smaller of these two".
+
+a, b = b, a + c - Python's simultaneous assignment. The whole right-hand side is
+worked out FIRST, using the old values of both variables, and only then are both
+assignments made. That is what lets the pair slide forward in one line with no
+temporary variable - and section 8 explains why splitting it into two ordinary
+lines breaks it.
+
+for c in cost - walks the VALUES of the list rather than their positions. The
+stair number never appears in the arithmetic; only the toll and the two carried
+numbers matter. That is why the loop needs no index at all.
+
+O(n) and O(1): the costs, where n is the number of stairs. O(n) means the work
+grows in step with the staircase - double the stairs, double the work. O(1) means
+the extra memory does not grow at all, because it is only ever two numbers.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: the cheapest way onto a stair is its own toll plus
+whichever of the two stairs below it was cheaper to reach, so climb once carrying
+just those two numbers.
+
+There is no recursion in the version we are writing - that was the slow one from
+section 3 - so nothing piles up on the call stack. What takes the place of a base
+case is the SEEDING of the two variables before the loop.
+
+The steps:
+
+  1. Set two variables to zero. Read them as "the cheapest cost to be standing on
+     the two stairs below where I am about to arrive". Zero is correct because
+     you may start on either of the first two stairs free of charge - there is
+     nothing to pay for arriving at them.
+
+  2. Walk through the tolls in order, one stair per turn of the loop.
+
+  3. On each turn, work out the cheapest cost to be standing on THIS stair: its
+     own toll, plus the smaller of the two carried numbers.
+
+  4. Slide the pair forward: the "one below" value becomes the "two below" value,
+     and the number just computed becomes the new "one below".
+
+     Do the slide using the OLD pair for both new values. Overwrite one first and
+     use it to compute the other, and you have used a new value where an old one
+     was needed - and every answer after that is wrong.
+
+  5. When the loop ends, the two variables hold the cheapest costs of standing on
+     the LAST stair and the second-to-last stair.
+
+  6. The top is one move past the end, reachable from either of those two, and
+     arriving there is free. So the answer is the smaller of the two. Return it.
+
+Step 6 is the one people leave out - see case 1 in section 4. It is not a
+tidying-up step; the top genuinely is not one of the stairs.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code climbs the staircase once, carrying just two numbers with it.
+
+Those two numbers are the cheapest possible total for standing on the stair
+immediately below where it is, and on the stair below that. Everything about the
+whole staircase beneath it is captured in those two values - how it got there does
+not matter, only what it cost.
+
+It starts both numbers at zero, and that is not an arbitrary choice: you are
+allowed to begin on either of the first two stairs without paying anything to
+arrive, so before any stair has been considered, arriving costs nothing.
+
+Then it climbs. At each stair it asks a single question: what is the cheapest way
+to be standing here? The answer is always this stair's own toll - you are standing
+on it, so you must pay it - plus whichever of the two stairs below was cheaper to
+have reached, because those are the only two places you could have stepped from.
+Having worked that out, it shuffles its two numbers along so they describe its new
+position, and climbs again.
+
+When it runs out of stairs, it does one last thing that is easy to overlook. The
+top is not a stair and costs nothing to reach, but you have to get there from
+somewhere - and that somewhere is either the last stair or the one before it. So
+it takes the cheaper of the two numbers it is carrying, and that is the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep cost = [10, 15, 20] beside you; the answer is 15.
+
+    prev, curr = 0, 0
+The two seeds. Read them as "cheapest cost to be standing on the two stairs below
+the one I am about to consider". Both zero, because you may start on either of the
+first two stairs free - there is nothing to pay for arriving at them, only for
+standing on them, and that toll gets added inside the loop.
+
+    for c in cost:
+Walk the tolls in order. c is the toll of the stair currently being considered.
+Note there is no index: the stair NUMBER never appears in the arithmetic, only its
+toll and the two carried numbers - which is exactly why two variables suffice.
+
+    prev, curr = curr, c + min(prev, curr)
+The entire algorithm in one line. Python builds the whole right-hand side FIRST,
+using the OLD values of both variables, and only then assigns. So:
+
+  the new prev gets the old curr - what was "one below" becomes "two below"
+  the new curr gets c + min(old prev, old curr) - this stair's toll plus the
+  cheaper of the two ways of arriving at it
+
+That simultaneous assignment is doing real work. Written as two ordinary lines in
+the obvious order:
+
+    prev = curr
+    curr = c + min(prev, curr)      <- prev has ALREADY been overwritten
+
+the second line compares curr against itself, so min(prev, curr) is just curr, and
+the code silently computes a running total of every toll instead of the cheapest
+path. If you prefer two lines, save the old value in a temporary first.
+
+    return min(prev, curr)
+The step section 6 warned about. After the loop, curr is the cheapest cost of
+standing on the LAST stair and prev is the cheapest cost of standing on the
+second-to-last. The top sits one move past the end and is free to arrive at, so it
+can be reached from either - take the cheaper.
+
+Returning curr alone would answer "what does it cost to stand on the last stair",
+which on our input is 30 rather than 15.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+cost = [10, 15, 20]. Expected answer 15.
+
+Seeds:  prev = 0, curr = 0
+
+TOLL c = 10  (stair 0)
+    right-hand side, using the OLD pair:
+        new prev = curr = 0
+        new curr = 10 + min(0, 0) = 10
+    assign:  prev = 0, curr = 10
+    meaning: cheapest way to stand on stair 0 is 10 - you start there and pay its
+             toll. The 0 in prev still means "the imaginary stair before the
+             start", which costs nothing.
+
+TOLL c = 15  (stair 1)
+    new prev = curr = 10
+    new curr = 15 + min(0, 10) = 15 + 0 = 15
+    assign:  prev = 10, curr = 15
+    meaning: cheapest way to stand on stair 1 is 15 - you START there, which is
+             free, and pay its toll. Note min picked the 0, not the 10: it is
+             cheaper to begin on stair 1 than to walk from stair 0.
+
+TOLL c = 20  (stair 2)
+    new prev = curr = 15
+    new curr = 20 + min(10, 15) = 20 + 10 = 30
+    assign:  prev = 15, curr = 30
+    meaning: cheapest way to stand on stair 2 is 30 - come from stair 0 (which
+             cost 10) and pay the 20 toll.
+
+Loop ends.  prev = 15 (stair 1), curr = 30 (stair 2).
+
+return min(15, 30) = 15.
+
+That is the route "start on stair 1, pay 15, jump two straight to the top" -
+exactly the answer we found by hand in section 1, and it never touched the
+expensive stair 2.
+
+A LONGER TRACE, cost = [1, 100, 1, 1, 1, 100, 1, 1, 100, 1] - expected 6:
+
+    c=1   -> prev=0,   curr=1
+    c=100 -> prev=1,   curr=100 + min(0,1)   = 100
+    c=1   -> prev=100, curr=1   + min(1,100) = 2
+    c=1   -> prev=2,   curr=1   + min(100,2) = 3
+    c=1   -> prev=3,   curr=1   + min(2,3)   = 3
+    c=100 -> prev=3,   curr=100 + min(3,3)   = 103
+    c=1   -> prev=103, curr=1   + min(3,103) = 4
+    c=1   -> prev=4,   curr=1   + min(103,4) = 5
+    c=100 -> prev=5,   curr=100 + min(4,5)   = 104
+    c=1   -> prev=104, curr=1   + min(5,104) = 6
+
+    return min(104, 6) = 6.
+
+Watch the two 100s: each time, curr jumps up to a large number, and the very next
+stair ignores it by taking min against the smaller prev. That is the algorithm
+stepping over an expensive stair.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). One pass over the tolls, with one addition and one comparison per
+stair. Double the staircase and you double the work. Compare with the naive
+recursion from section 3 at O(2^n): for 40 stairs that is 40 steps here versus
+over a billion there.
+
+SPACE: O(1) - constant. Two integers, no matter how tall the staircase. The
+list-based version would be O(n); collapsing it to two variables is free, because
+nothing ever looks back more than two places.
+
+THE #1 MISTAKE - returning the cost of the last stair instead of the smaller of
+the last two. The top is not a stair; it is the floor past the end, and it can be
+reached from either of the final two stairs. On [10, 15, 20] this error gives 30
+instead of 15. It is easy to make because the loop ends on the last stair and it
+feels like the journey is over.
+
+A close second: splitting the simultaneous assignment into two ordinary lines in
+the wrong order. The second line then compares curr against itself, min becomes a
+no-op, and the code quietly returns the sum of every toll. The code looks
+perfectly reasonable, which is what makes it nasty - always use the one-line
+tuple form, or save the old value in a temporary.
+
+ONE-SENTENCE TAKEAWAY: you arrived on this stair from one of the two below it, so
+its cheapest cost is its own toll plus the cheaper of those two - climb once
+carrying just those two numbers, and remember the top is one move past the last
+stair.""",
 ]
 
 _EX_P0["Path Sum (root-to-leaf boolean)"] = [
-    """The question, drawn out.
+    """1. THE GOAL, in plain English.
 
-Here is our tree. (The words, as they appear: each circle is a NODE. The one at
-the top is the ROOT. The ones hanging directly below a node are its CHILDREN. A
-node with nothing below it is a LEAF - a dead end.)
+You are given a tree of numbers and a target number. Is there a route from the
+top of the tree down to a dead end whose numbers add up to exactly the target?
+Answer yes or no.
+
+Here is the tree we will use, with target 22:
 
               5
             /   \\
            4     8
           /     / \\
         11    13   4
-       /  \\        \\
-      7    2        1
+       /  \\         \\
+      7    2         1
 
-The question: is there a path from the ROOT all the way down to a LEAF whose
-numbers add up to 22?
+Vocabulary, defined as it appears:
+- Each item is a NODE, holding a number. 5 sits at the very top; the top node is
+  the ROOT.
+- The nodes hanging directly below a node are its CHILDREN. 5's children are 4
+  and 8.
+- A node with no children at all is a dead end, called a LEAF. Here the leaves
+  are 7, 2, 13 and 1.
+- A ROOT-TO-LEAF PATH is a route starting at the root and ending at a leaf,
+  following the branches downwards.
 
-Two things to be careful about. The path must START at the top, and it must END
-at a leaf - you cannot stop halfway down and declare victory.
+Now list the root-to-leaf paths and add each one up:
 
-Try one by hand: 5 -> 4 -> 11 -> 2 gives 5 + 4 + 11 + 2 = 22. Yes. Answer:
-true.""",
+    5 -> 4 -> 11 -> 7   =  27
+    5 -> 4 -> 11 -> 2   =  22   <- this one
+    5 -> 8 -> 13        =  26
+    5 -> 8 -> 4  -> 1   =  18
 
-    """The neat trick: count DOWN instead of adding up.
+One of them hits 22, so the answer is TRUE.
 
-The obvious approach is to carry a running total as you walk down, and compare
-it to 22 when you reach a leaf. That works, but it means carrying two numbers
-around - the total so far AND the original target.
+Two things the question does NOT ask. It does not want the path, only yes or no.
+And the path must end at a LEAF - stopping partway down does not count, even if
+the running total happens to equal the target there.""",
 
-Instead, carry ONE number: how much is still left to find. Start with 22 and
-subtract each node's value as you pass through it.
+    """2. THE INTUITION - subtract as you go, instead of adding up.
 
-    at 5:   22 - 5  = 17 still needed
-    at 4:   17 - 4  = 13 still needed
-    at 11:  13 - 11 = 2  still needed
-    at leaf 7:  is 7 equal to 2?  No.
-    at leaf 2:  is 2 equal to 2?  YES -> found it
+The obvious approach is to walk down carrying a running total, adding each node's
+value, and check the total when you reach a leaf. That works perfectly well.
 
-That 'yes' then travels back up and the whole answer becomes true. One number
-carried instead of two, and the test at the leaf is a single comparison.""",
+There is a small reframing that makes the code shorter and, once you see it,
+clearer. Instead of adding up towards the target, SUBTRACT from the target as you
+descend, and check whether the last leaf's value finishes it off exactly.
 
-    """The mistake almost everyone makes: stopping too early.
+Walk our winning path both ways:
 
-Look at this tiny tree and target 1:
+    ADDING UP:      start 0
+                    at 5:  total 5
+                    at 4:  total 9
+                    at 11: total 20
+                    at 2:  total 22   -> equals target, yes
 
-    1
-     \\
-      2
+    COUNTING DOWN:  start 22
+                    at 5:  22 - 5 = 17 still needed below
+                    at 4:  17 - 4 = 13 still needed below
+                    at 11: 13 - 11 = 2 still needed below
+                    at 2:  the leaf holds exactly 2 -> yes
 
-Node 1 has a right child, so it is NOT a leaf. The correct answer is FALSE -
-the only complete root-to-leaf path is 1 -> 2, which sums to 3.
+The second reading is nicer because the question at every node becomes identical
+to the original question, just with a smaller target: "is there a path in MY
+subtree that adds to 17?" - which is the same shape of question that was asked
+about the whole tree.
 
-But watch what a careless check does. Arriving at node 1 and subtracting, the
-remaining amount becomes 0. If your code asks 'is the remaining amount 0?' at
-EVERY node, it says yes right there and returns true - which is wrong, because
-you have not reached the bottom.
+That is what makes recursion fit so neatly here. RECURSION means solving a big
+problem by asking the identical question about smaller pieces of it. The pieces
+here are subtrees, and the target shrinks as you descend.
 
-The test must be BOTH conditions at once: 'am I at a leaf?' AND 'is the
-remaining amount exactly my value?'. And 'am I at a leaf' means BOTH children
-are missing, not just one. That two-part check is the whole problem.""",
+So the rule at any node is:
 
-    """The empty tree, and why it is false.
+  If I am a leaf, the answer is simply "does my value equal what is still needed?"
+  Otherwise, the answer is yes if EITHER of my children can make up
+  (what is still needed, minus my own value).
 
-If there is no tree at all, the answer is false - even when the target is 0.
+There is no simpler-but-slower version worth showing first - you have to look at
+the paths, and this looks at each node once, which is already optimal.""",
 
-It feels like it should be true ('nothing adds up to nothing'), but re-read the
-question: it asks for a path ending at a LEAF, and an empty tree has no leaves.
-No leaf means no valid path means false.
+    """3. THE CASE THAT CATCHES EVERYONE - a node with one child is NOT a leaf.
 
-This is the BASE CASE - the simplest situation, answered outright, which also
-stops the function calling itself forever. If your code returns true here, the
-base case is written wrongly and several other answers will be wrong too.""",
+This is the mistake this problem exists to test, so it is worth setting up
+carefully.
 
-    """Why you cannot 'optimise' by giving up when the number goes negative.
+Look at the right side of our tree:
 
-A tempting speed-up: if the remaining amount drops below zero, stop exploring -
-we have overshot.
+           8
+          / \\
+        13   4
+              \\
+               1
 
-That is only safe if every node holds a POSITIVE number. Watch it fail:
+Node 4 has NO left child, but it does have a right child, 1. So node 4 is not a
+dead end - it is not a leaf. Any path passing through 4 must continue on to 1.
 
-        5
-       / \\
-     -3    8
-     /
-   10
+Now imagine testing target 17 and writing the leaf test carelessly as "if one of
+my children is missing, treat me as the end of the path". Coming down 5 -> 8 -> 4,
+the running total is 17, and that faulty test would look at node 4, see a missing
+left child, declare the path finished, and answer TRUE.
 
-with target 12. The path is 5 -> -3 -> 10 = 12. Going down: 12 - 5 = 7, then
-7 - (-3) = 10 - the remaining amount went UP, because subtracting a negative
-adds. A rule that abandons branches on the way down would have thrown away
-perfectly good paths.
+But 5 -> 8 -> 4 is not a root-to-leaf path. It stops in mid-air. The real path
+through there is 5 -> 8 -> 4 -> 1, which sums to 18.
 
-So before adding any shortcut like this, ask whether the values can be negative.
-This is a good habit generally: shortcuts usually rest on an assumption nobody
-stated.""",
+The correct test is that BOTH children must be missing:
 
-    """The three versions of this problem, and why the third is different.
+    if root.left is None and root.right is None:   -> this is a leaf
 
-PATH SUM (this one): does ANY root-to-leaf path hit the target? Answer
-true/false. You can stop at the first success.
+"and", not "or". That single word is the difference between right and wrong, and
+a tree with a one-child node is exactly the test case an interviewer will reach
+for.
 
-PATH SUM II: give me ALL such paths. Same walk, but you carry a list of the
-nodes visited, add on the way down and remove on the way back up, and save a
-COPY of the list each time you succeed. (Saving the list itself rather than a
-copy is a classic bug - the list keeps changing, so every saved answer ends up
-identical.)
+A related consequence: when you recurse into a missing child, that call must
+answer FALSE - not "yes, I found nothing to add". An empty spot is not a leaf and
+contains no path at all, so it can never satisfy the target.""",
 
-PATH SUM III: count paths that may start and end ANYWHERE, not just root to
-leaf. This one is not a small variation - the whole technique changes, to
-running totals stored in a lookup table. Knowing that the third is a different
-animal is more useful than memorising all three.
+    """4. THE OTHER CASES THAT CATCH PEOPLE.
 
-Speed for this problem: each node is visited at most once, so the time is
-proportional to the number of nodes - written O(n).""",
+CASE 1 - the empty tree. An empty tree contains no root-to-leaf paths at all, so
+the answer is FALSE for every target - including a target of 0. The code handles
+this with its first line, and it also depends on it: without it, the leaf test
+would try to read a missing node's children.
+
+CASE 2 - assuming a target of 0 is always satisfiable. It is tempting to think
+"take no nodes, that sums to zero". But the path must start at the root and end at
+a leaf, so the empty path is not allowed. On our tree, target 0 is FALSE.
+
+CASE 3 - negative numbers, and giving up too early. A natural-looking speed-up is
+"if the running total already exceeds the target, stop - it can only get bigger."
+That is only true when every value is positive. With negatives in the tree, a
+total that has overshot can come back down, so the shortcut wrongly rejects real
+paths. Do not add it unless the problem promises non-negative values, and say so
+if you do.
+
+CASE 4 - a single node. A tree of just the root, which is also a leaf. The answer
+is whether its value equals the target. The leaf test fires immediately and gets
+this right.
+
+CASE 5 - the "or" that stops early. The code checks the left subtree and then the
+right. Python stops evaluating an "or" the moment the first side is true, so if
+the left subtree contains a valid path, the right subtree is never searched at
+all. That is a real speed-up and it is correct, because the question is only
+whether ONE path exists.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+LEAF, ROOT, CHILDREN, ROOT-TO-LEAF PATH: defined in section 1.
+
+RECURSION: a function that solves a problem by calling itself on smaller pieces of
+the same problem. Here the piece is a subtree and the smaller problem is the same
+question with a reduced target.
+
+CALL STACK: when the function calls itself, the outer call PAUSES exactly where it
+is, half-finished, and the inner call runs. Those paused calls pile up, each
+waiting for the one below to hand back an answer. That pile is the call stack.
+When a call finally returns true or false, the call above wakes up exactly where
+it stopped and carries on.
+
+BASE CASE: the situation the function answers immediately without calling itself
+again - without one, recursion never ends. This solution has two: an empty spot
+answers false, and a leaf answers by comparing its value with what remains.
+
+"a or b" in Python: true if either side is true, and it evaluates left to right,
+stopping as soon as one side comes out true. That short-circuiting is what lets
+the search abandon the right subtree once the left has found a path.
+
+"is None": asks whether something is literally the None object - the correct way
+in Python to test for a missing node.
+
+O(n) and O(h): the costs, where n is the number of nodes and h the height of the
+tree. O(n) means the work grows in step with the number of nodes - in the worst
+case every node is visited once. O(h) describes the extra memory: the call stack
+holds one paused call per level of the tree.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: subtract each node's value from the target as you
+walk down, and ask whether some leaf holds exactly what is left.
+
+The mechanism, since this is recursion. When the function is called on node 5 with
+target 22, it cannot answer alone - it does not know what is below. So it works
+out what is still needed (22 minus 5, which is 17) and calls itself on its left
+child with that new target. At that moment node 5's call PAUSES, half-finished.
+The inner call runs, possibly pausing in turn, and eventually returns true or
+false. Node 5's call then wakes up exactly where it stopped: if the answer was
+true, it is done; if false, it tries the right child the same way.
+
+It stops because every route down eventually reaches either a leaf or an empty
+spot, and both of those answer immediately without asking anything further.
+
+The steps:
+
+  1. Write one function taking a node and a target, returning true or false.
+
+  2. FIRST BASE CASE. If the node is empty, return false. An empty spot holds no
+     path at all, so it can never satisfy any target.
+
+  3. SECOND BASE CASE. If the node is a leaf - meaning BOTH of its children are
+     missing, not just one - the path ends here. Return whether this node's value
+     equals the target exactly.
+
+     "Both", not "either". A node with one child is not a leaf, and treating it as
+     one is the classic wrong answer - see section 3.
+
+  4. Otherwise, work out what is still needed below: the current target minus this
+     node's value.
+
+  5. Ask the same question of the left child with that reduced target. If it says
+     yes, answer yes.
+
+  6. Otherwise ask the right child the same way, and return whatever it says.
+
+Steps 5 and 6 together are a single "either side will do" - and because the check
+stops as soon as one side succeeds, a path found on the left means the right
+subtree is never searched.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks down the tree from the top, and instead of keeping a running total
+it keeps a running SHORTFALL - how much is still needed to hit the target from
+here downwards.
+
+At every node it asks the same three-part question.
+
+First: is there anything here at all? If it has walked into an empty spot below a
+node that only had one child, there is no path here, so the answer is no.
+
+Second: is this a dead end - a node with nothing at all below it? If so, the path
+finishes here, and the answer is simply whether this node's number is exactly what
+was still needed. Note it has to be a genuine dead end, with both branches
+missing. A node with one child still has a path continuing through it, and
+stopping there would be answering a different question.
+
+Third, if neither of those: subtract this node's number from what is still needed,
+and ask the very same question of each child with the smaller shortfall. If either
+child says yes, the answer is yes. And because it checks the left side first and
+stops the moment it gets a yes, a path found early means the rest of the tree is
+never explored.
+
+That reframing - counting down instead of adding up - is what makes every node's
+question identical to the original one. The tree gets smaller and the target gets
+smaller, but the question never changes, which is exactly the shape recursion
+handles best.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you, with target 22.
+
+    def has_path_sum(root, target):
+root is the node currently being asked about - not necessarily the top of the
+whole tree. target is how much is still needed from here downwards. The same
+function serves the whole tree and every subtree inside it, which is what makes
+the recursion work.
+
+    if root is None:
+        return False
+The FIRST base case. An empty spot contains no root-to-leaf path, so it can never
+satisfy any target - not even a target of 0. This line also protects the next one:
+without it, the leaf test would try to read the children of something that is not
+there.
+
+    if root.left is None and root.right is None:
+        return root.val == target
+The SECOND base case, and the line the whole problem turns on. A node is a leaf
+only when BOTH children are missing - hence "and", not "or". A node with one
+child is not a dead end and the path must continue through it; treating it as a
+leaf is the classic wrong answer from section 3.
+
+Having reached a genuine leaf, the path ends here, so the question reduces to a
+single comparison: does this node's value finish off exactly what was still
+needed?
+
+    remaining = target - root.val
+Subtract this node's value, because the path is standing on it and therefore
+includes it. Whatever is left is what the subtree below must supply. This one line
+is the count-down reframing from section 2.
+
+    return has_path_sum(root.left, remaining) or has_path_sum(root.right, remaining)
+Ask both children the identical question with the smaller target, and answer yes
+if either says yes.
+
+Two things are worth noticing here. The recursive calls pass root.left and
+root.right directly, without checking whether they exist - the first base case
+handles a missing child by answering false, so no guard is needed.
+
+And Python's "or" stops as soon as the left side comes out true, so if a valid
+path is found in the left subtree, the right subtree is never searched at all.
+That is a genuine speed-up, and it is correct because the question is whether ONE
+path exists, not how many.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+              5
+            /   \\
+           4     8
+          /     / \\
+        11    13   4
+       /  \\         \\
+      7    2         1
+
+target = 22. Indentation shows the depth of the call stack.
+
+has_path_sum(5, 22)
+  5 is not None
+  Is 5 a leaf? Its left is 4 and its right is 8 - both present, so no.
+  remaining = 22 - 5 = 17
+  ask the LEFT first: has_path_sum(4, 17)
+        4 is not None
+        Is 4 a leaf? Its left is 11 - present - so no.
+        remaining = 17 - 4 = 13
+        has_path_sum(11, 13)
+              11 is not None
+              Is 11 a leaf? Its children are 7 and 2, so no.
+              remaining = 13 - 11 = 2
+              has_path_sum(7, 2)
+                    7 is not None
+                    Is 7 a leaf? Both children missing - YES.
+                    return 7 == 2 -> False
+              left said False, so try the right
+              has_path_sum(2, 2)
+                    Is 2 a leaf? Both children missing - YES.
+                    return 2 == 2 -> True
+              False or True -> return True
+        return True
+  the LEFT side returned True, so the "or" stops here - the right subtree
+  containing 8, 13, 4 and 1 is NEVER VISITED.
+  return True
+
+Answer: True, via the path 5 -> 4 -> 11 -> 2.
+
+Read the remaining column downwards: 22, 17, 13, 2 - counting down to exactly the
+value sitting in the final leaf. That is the reframing from section 2, visible.
+
+NOW THE ONE-CHILD TRAP, testing target 17 on the same tree:
+
+has_path_sum(5, 17)
+  remaining = 12
+  left: has_path_sum(4, 12) ... every leaf under 4 misses; returns False
+  right: has_path_sum(8, 12)
+        Is 8 a leaf? No.
+        remaining = 12 - 8 = 4
+        has_path_sum(13, 4): leaf, 13 == 4? False
+        has_path_sum(4, 4):
+              Is 4 a leaf?  Its LEFT is None - but its RIGHT is node 1.
+              Both missing?  NO.  So it is NOT a leaf.
+              remaining = 4 - 4 = 0
+              has_path_sum(None, 0) -> first base case -> False
+              has_path_sum(1, 0)    -> leaf, 1 == 0? False
+              return False
+        return False
+  return False
+
+Correct - 17 is not achievable. Note the two places the code refused to cheat: it
+declined to call node 4 a leaf, and when it walked into node 4's missing left
+child with a remaining of exactly 0, the empty-spot base case returned False
+rather than True. Written with "or" in the leaf test, this would have answered
+True at node 4 and been wrong.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) in the worst case, for a tree of n nodes - every node visited once,
+doing a fixed amount of work. In practice it is often much less, because the "or"
+abandons the rest of the search as soon as one path succeeds; in our first trace,
+four of the nine nodes were never touched.
+
+SPACE: O(h), where h is the HEIGHT of the tree - the call stack holds one paused
+call per level as the recursion descends. For a bushy, well-balanced tree that is
+about log n (a million nodes is only about 20 levels deep). For a long chain-like
+tree it is n, and Python's recursion limit of roughly 1,000 would stop it - the
+fix being an explicit stack holding (node, remaining) pairs instead of recursion.
+
+THE #1 MISTAKE - testing for a leaf with "or" instead of "and". Writing "if
+root.left is None or root.right is None" treats any node with a single child as
+the end of a path, which answers a question nobody asked and produces confident
+wrong answers. It passes on any tree where every node has zero or two children -
+which is most small hand-made test cases - and fails on the first realistic tree.
+Test it on a node with exactly one child.
+
+A close second: returning True for an empty spot when the remaining target happens
+to be 0. An empty spot is not a leaf; there is no path there at all. The second
+trace above shows exactly where that would go wrong.
+
+ONE-SENTENCE TAKEAWAY: count DOWN from the target as you walk, so every node asks
+the identical question with a smaller number - and only a node with BOTH children
+missing is allowed to answer it.""",
 ]
 
 _EX_P0["Balanced Binary Tree"] = [
