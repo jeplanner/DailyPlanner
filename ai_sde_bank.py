@@ -38236,61 +38236,396 @@ once.""",
 ]
 
 _EX_P0E["Binary Tree Level Order Traversal"] = [
-    """The textbook tree, traced.
-        3
-      /   \\
-     9     20
-          /  \\
-        15     7
-queue=[3]. Outer pass 1: len=1, pop 3 -> level [3], push 9, 20.
-Outer pass 2: len=2 (snapshot BEFORE pushing), pop 9 (no children), pop 20 (push
-15, 7) -> level [9,20].
-Outer pass 3: len=2, pop 15, pop 7 -> level [15,7].
-Result [[3],[9,20],[15,7]].""",
+    """1. THE GOAL, in plain English.
 
-    """Why `for _ in range(len(queue))` and not `while queue`.
-Take the snapshot away and you get a flat traversal - every node in one list -
-because children pushed during the pass would be consumed by the same pass.
-Freezing len(queue) at the top of each pass is what draws the line between
-levels. It works because BFS keeps the queue in strict level order: at that
-moment the queue contains EXACTLY the current level, nothing more.
-Alternative: push (node, depth) tuples and group by depth. Same result, more
-bookkeeping - but it is the version you want when levels interleave, as in a
-vertical-order traversal.""",
+You are given a tree and must list its values one horizontal row at a time, from
+the top down, with each row as its own list.
 
-    """A skewed tree - one node per level.
-1 -> 2 -> 3 (each has only a right child).
-Pass 1: [1]; pass 2: [2]; pass 3: [3]. Result [[1],[2],[3]].
-The queue never holds more than one node, so BFS costs O(1) space here - the
-opposite of the balanced case, where the last level alone holds n/2 nodes.
-Good example to have ready when asked 'what is the space complexity?': the
-honest answer is O(max width), which is O(n) worst case and O(1) best case.""",
+Here is the tree we will use:
 
-    """Empty tree, single node.
-root=None: the guard returns [] - not [[]], which is what you get if you forget
-the guard and the queue starts as [None].
-root=[1]: one pass, result [[1]].
-The None guard is doing real work here; without it `deque([None])` is truthy and
-you crash on node.val.""",
+            3
+           / \\
+          9   20
+              / \\
+            15   7
 
-    """The four variants built on this exact loop.
-- Zigzag / spiral order: append the level, then reverse it on odd levels.
-- Right side view: take level[-1] each pass.
-- Average of levels: sum(level)/len(level).
-- Maximum width / largest value per level: max(level).
-- Level order BOTTOM-up: build normally then reverse the result list.
-All five are the same fifteen lines with one line changed after `level` is
-built. Learn the skeleton, not five problems.""",
+Vocabulary, defined the moment it appears:
+- Each item is a NODE. There are five here.
+- 3 sits at the very top; the top node is the ROOT. (Trees in computing are drawn
+  upside down - root at the top, branches growing downwards.)
+- The nodes hanging directly below a node are its CHILDREN. 3's children are 9 and
+  20.
+- A node with no children is a dead end, called a LEAF - here 9, 15 and 7.
+- A LEVEL is one horizontal row.
 
-    """Cost, and the DFS alternative.
-O(n) time - each node is pushed once and popped once. O(width) space.
-You can also do it with DFS by passing a depth and appending into
-result[depth] (creating the sublist the first time you reach a new depth). That
-version is O(height) space and produces the same output, which surprises people
-who think 'levels' forces BFS.
-Use it when the tree is very wide but shallow - or when the interviewer asks
-'can you do it without a queue?' The answer is yes, and knowing why is the
-point: level membership is just depth, and DFS knows the depth too.""",
+Reading the rows off the picture:
+
+    level 0:  [3]
+    level 1:  [9, 20]
+    level 2:  [15, 7]
+
+So the answer is [[3], [9, 20], [15, 7]].
+
+Two things the answer format demands. The rows must be SEPARATE lists, not one
+flat list - so the grouping matters as much as the order. And within a row the
+values must run LEFT TO RIGHT.
+
+That is the whole problem, and the interesting part is a single line of code that
+keeps the rows from blurring into one another.""",
+
+    """2. THE INTUITION - a waiting line, served one row at a time.
+
+To visit a tree row by row you need a QUEUE - a waiting line where you join at the
+back and are served from the front, first in first out.
+
+The idea in one sentence: serve the nodes of the current row, and as you serve each
+one, push its children onto the back of the line. By the time the current row has
+been fully served, the line contains exactly the next row.
+
+Why does the order come out left to right? Because you serve the row left to right,
+and each node pushes its left child then its right child - so children enter the
+line in the same left-to-right order their parents had. Order in, order out. That
+is what a queue guarantees.
+
+This walk is called BREADTH-FIRST SEARCH, or BFS, because it explores in breadth -
+across a whole row - before going deeper. Its sibling, depth-first search, dives
+down one branch first and would give the values in a completely different order.
+
+Watch the line on our tree:
+
+    line = [3]           serve 3, push 9 and 20
+    line = [9, 20]       serve 9 (no children), serve 20, push 15 and 7
+    line = [15, 7]       serve both, neither has children
+    line = []            done
+
+There is no simpler-but-slower version worth showing first. The alternative -
+working out the tree's height, then walking the whole tree once per level
+collecting only the nodes at that depth - is genuinely worse: it revisits the upper
+levels over and over, costing roughly n times the height instead of n.""",
+
+    """3. THE ONE LINE THAT MAKES IT WORK - freeze the row's size first.
+
+Here is the difficulty, and it is the only real difficulty in the problem.
+
+You are taking nodes OUT of the line while simultaneously putting their children
+IN. So the line's length changes as you work. If you ask "how many are waiting?" in
+the middle of serving a row, the answer includes nodes from the NEXT row that have
+just been added - and the boundary between rows dissolves.
+
+The fix: BEFORE starting a row, write down how many nodes are waiting right now.
+That frozen number is exactly the size of the current row, because nothing from the
+next row has been added yet. Serve exactly that many, no more.
+
+Trace the freezing on our tree:
+
+    line = [3]        freeze 1  -> serve exactly 1.  After: line = [9, 20]
+    line = [9, 20]    freeze 2  -> serve exactly 2.  After: line = [15, 7]
+    line = [15, 7]    freeze 2  -> serve exactly 2.  After: line = []
+
+Now the wrong version. If the inner loop read the CURRENT length each time, then
+after serving node 3 the line would hold 2 nodes and it would keep going -
+swallowing 9 and 20 into the same row as 3, then their children too. The result is
+one flat list of all five values.
+
+And here is what makes that bug nasty: the ORDER is still correct. Every node comes
+out in proper level order; only the GROUPING is destroyed. So a test that checks
+the flattened sequence passes, and only a test that checks the rows catches it.
+
+This frozen-size line is the backbone of every level-by-level tree problem. Learn
+it once here and the right side view, zigzag order, level averages and minimum
+depth all become one-line variations - section 10 lists them.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the empty tree. The guard at the top returns an empty list. It is
+genuinely needed, not just tidy: without it you would put "nothing" into the line,
+and the first row would appear to contain one node.
+
+CASE 2 - a single node. The line starts with one node, the frozen size is 1, it is
+served, it has no children, and the line empties. The answer is [[3]] - a list
+containing one row containing one value. Note the double brackets; returning [3]
+would be the wrong shape.
+
+CASE 3 - a lopsided tree. Rows do not have to be full:
+
+        1
+       / \\
+      2   3
+     /
+    4
+
+Row 0 is [1], row 1 is [2, 3], row 2 is [4] - a row with a single node in it. The
+frozen size handles this without any special case, because it simply counts
+whatever happens to be waiting.
+
+CASE 4 - using an ordinary list as the queue and calling pop(0) to take from the
+front. It works, but each removal shuffles every remaining item along, turning an
+O(n) traversal into O(n squared) on a large tree. Use a deque, which removes from
+the front in one step.
+
+CASE 5 - pushing children without checking they exist. Appending node.left when it
+is missing puts "nothing" into the line, and the next row's count is wrong. The two
+"if" checks are what skip absent children.
+
+CASE 6 - assuming a queue is required for the values but not the grouping. If you
+only needed the flat sequence you could skip the inner loop entirely. The inner
+loop exists solely to draw the boundaries between rows.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+QUEUE: a waiting line - join at the back, leave from the front, first in first out.
+That ordering is what makes the traversal breadth-first.
+
+deque (pronounced "deck"): Python's ready-made double-ended queue. Used instead of
+an ordinary list because removing from the FRONT of a list is slow - it shuffles
+every remaining item along - whereas a deque does it in one step. popleft() takes
+from the front; append() adds to the back.
+
+BFS - BREADTH-FIRST SEARCH: exploring a whole row before going deeper. Defined in
+section 2.
+
+len(queue): how many nodes are waiting right now. Reading this ONCE per row, before
+serving any of it, is the frozen size from section 3.
+
+for _ in range(n): repeat exactly n times. The underscore means "I do not need the
+loop counter" - only the count matters here.
+
+node.left and node.right: the links to a node's two children, either of which may
+be missing.
+
+O(n) and O(w): the costs, where n is the number of nodes and w the width of the
+widest row. O(n) means the work grows in step with the number of nodes - each is
+added to the line once and taken out once. O(w) describes the memory: the line at
+its fullest holds one entire row, which in a wide bushy tree can be about half the
+nodes.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a waiting line of nodes, and before starting
+each row write down how many are waiting - that count IS the row.
+
+There is no recursion here; BFS is driven by a queue, so nothing piles up on the
+call stack. The loop ends when the line empties, which happens once every node has
+been served and none of them had children left to add.
+
+The steps:
+
+  1. If the tree is empty, return an empty list. Without this you would put
+     "nothing" into the line and the first row would look as though it had one
+     node.
+
+  2. Make an empty list for the finished rows.
+
+  3. Make a waiting line holding just the root. That is row 0.
+
+  4. While the line is not empty:
+
+     a. Start an empty list for THIS row's values.
+
+     b. Write down how many nodes are waiting right now. Do this BEFORE taking any
+        out - it is the size of the current row, and it is the line the whole thing
+        depends on.
+
+     c. Repeat exactly that many times: take the node at the FRONT of the line,
+        record its value in this row's list, and add its children to the BACK of
+        the line - left child first, then right, and only if they exist.
+
+     d. Add this row's list to the finished rows.
+
+  5. Return the finished rows.
+
+The reason step (c) preserves left-to-right order: you serve the row left to right,
+and each node adds its children in left-then-right order, so children enter the
+line in exactly the order their parents had.
+
+To turn this into a depth-first walk instead, you would swap the queue for a stack
+and take from the back - but then the values come out in a different order
+entirely, and the row grouping is lost.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the tree one horizontal row at a time, from the top down, and
+collects each row into its own list.
+
+It manages this with a waiting line. At the start the line holds just the top node,
+which is the first row all by itself. Then it repeats the same routine until the
+line is empty.
+
+Each round begins by counting how many nodes are currently waiting. That count is
+the size of the row about to be handled - and taking the count at that precise
+moment is what makes the whole thing work, because the moment it starts serving
+nodes it will also start adding their children to the back of the same line. Count
+first, and the boundary between one row and the next is exact. Count later, and the
+rows blur together.
+
+Having frozen the count, it serves exactly that many nodes from the front of the
+line. As each one is served, its value goes into the current row's list, and its
+children are added to the back - left child first, then right, which is what keeps
+the next row in left-to-right order. Missing children are skipped.
+
+By the time those nodes have been served, the line holds precisely the next row, in
+order, and the routine begins again one level lower.
+
+When the line finally empties, every node has been visited exactly once and the
+finished list holds the tree's values grouped by row.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you: 3 on top, 9 and 20 below, 15 and 7 below
+20. The answer is [[3], [9, 20], [15, 7]].
+
+    from collections import deque
+Python's ready-made waiting line. A deque removes from the front in one step,
+whereas an ordinary list shuffles every remaining item along - which would quietly
+turn an O(n) traversal into something far worse on a large tree.
+
+    if root is None:
+        return []
+The empty-tree guard. Genuinely needed: without it the next line would put None
+into the line, and the first row would appear to contain one node.
+
+    result = []
+The finished rows. Ours ends as [[3], [9, 20], [15, 7]].
+
+    queue = deque([root])
+The line starts holding just the root - which is row 0, and which is why the first
+frozen count comes out as 1.
+
+    while queue:
+Keep going while anyone is still waiting. The loop ends when the last row's nodes
+have all been served and none of them had children to add.
+
+    level = []
+The values for THIS row, started fresh each round.
+
+    for _ in range(len(queue)):
+THE critical line, and the one from section 3. len(queue) is read ONCE, here,
+before any node is taken out - so it is exactly the number of nodes on the current
+row. The loop then serves precisely that many.
+
+Written as "while queue" instead, the inner loop would keep eating into the next
+row as children are added, and you would get one flat list rather than rows. The
+values would still come out in the right ORDER, which is what makes that bug hard
+to spot.
+
+The underscore says we do not need the counter; only the count matters.
+
+    node = queue.popleft()
+Serve the node at the FRONT of the line. On row 1 this gives 9 first and then 20 -
+left to right, because that is the order their parent added them.
+
+    level.append(node.val)
+Record its value in the current row.
+
+    if node.left:
+        queue.append(node.left)
+    if node.right:
+        queue.append(node.right)
+Add this node's children to the BACK of the line, left first then right, so the
+next row keeps its left-to-right order. The "if" checks skip missing children -
+node 9 has none, so it adds nothing.
+
+Because children join behind everyone still in the current row, the frozen count
+above continues to describe the current row correctly even as the line grows.
+
+    result.append(level)
+This row is complete - add it to the answer.
+
+    return result
+The values grouped by row.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+            3
+           / \\
+          9   20
+              / \\
+            15   7
+
+Start:  queue = [3],  result = []
+
+ROUND 1
+  level = []
+  freeze len(queue) = 1  ->  serve exactly 1 node
+    popleft -> 3.  level = [3].
+      3.left is 9 -> append.  3.right is 20 -> append.
+      queue = [9, 20]
+  result = [[3]]
+
+  The queue now holds 2 nodes, but the frozen 1 stopped the inner loop after one.
+  That is the mechanism.
+
+ROUND 2
+  level = []
+  freeze len(queue) = 2  ->  serve exactly 2 nodes
+    popleft -> 9.  level = [9].
+      9 has no children -> nothing appended.  queue = [20]
+    popleft -> 20. level = [9, 20].
+      20.left is 15 -> append.  20.right is 7 -> append.
+      queue = [15, 7]
+  result = [[3], [9, 20]]
+
+ROUND 3
+  level = []
+  freeze len(queue) = 2  ->  serve exactly 2 nodes
+    popleft -> 15. level = [15].  no children.  queue = [7]
+    popleft -> 7.  level = [15, 7].  no children.  queue = []
+  result = [[3], [9, 20], [15, 7]]
+
+The queue is empty -> the outer loop ends.
+
+return [[3], [9, 20], [15, 7]].  Correct.
+
+NOW THE BUG, to see it clearly. With "while queue" as the inner loop instead of the
+frozen count:
+
+  Round 1 pops 3, appends 9 and 20, and then - since the queue is not empty -
+  keeps going: pops 9, pops 20, appends 15 and 7, pops 15, pops 7.
+  One round, one row, containing [3, 9, 20, 15, 7].
+
+Every node visited, in exactly the right order, with no row boundaries at all. That
+is the difference the one frozen line makes, and why a test on the flattened
+sequence would not catch it.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is added to the line once and taken
+out once, and each visit does a fixed amount of work. That is the best possible -
+you have to touch every node to report every node.
+
+SPACE: O(w), where w is the width of the WIDEST row - the most the line ever holds
+at once. In a wide bushy tree the bottom row can hold about half the nodes, so this
+is O(n) in the worst case. In a thin chain-like tree the line never holds more than
+a node or two.
+
+That is the mirror image of a depth-first walk, whose memory is O(h), the HEIGHT of
+the tree. So the two have opposite weaknesses: this struggles with very wide trees,
+recursion struggles with very deep ones. On a deep chain, recursion hits Python's
+limit of about 1,000 nested calls while this sails through on a two-item queue.
+
+THE #1 MISTAKE - reading the queue's length inside the inner loop instead of
+freezing it before. The traversal still visits every node in the right order, so it
+looks almost right - but every node lands in one enormous row and the grouping is
+destroyed. It is hard to spot precisely because the ORDER is correct; only a test
+that checks the rows will catch it.
+
+A close second: using an ordinary list and pop(0), which is correct but degrades
+the cost from O(n) to O(n squared) on a large tree.
+
+THE VARIATIONS, all the same walk with one line changed at the point where you
+decide what to record:
+  Right side view - keep only the LAST node of each row.
+  Left side view - keep only the first.
+  Average of each level - sum the row and divide by the frozen size, which you
+    already have.
+  Largest value per row - take the maximum as you serve.
+  Zigzag order - reverse every other row before adding it.
+  Minimum depth - stop the moment you serve a node with no children; the row number
+    you are on is the answer.
+
+ONE-SENTENCE TAKEAWAY: walk the tree with a waiting line, and freeze how many are
+waiting BEFORE you start each row - that frozen count is the row boundary, and
+without it the values come out in the right order with the grouping destroyed.""",
 ]
 
 _EX_P0E["Combination Sum (reusable candidates)"] = [
