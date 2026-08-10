@@ -26194,50 +26194,358 @@ does not.""",
 ]
 
 _EX_P0B["Number of Islands (DFS flood-fill)"] = [
-    """The textbook case, traced.
-grid = 11110 / 11010 / 11000 / 00000
-Scan row 0: (0,0) is '1' -> count=1, sink the whole connected mass. The DFS
-spreads through (0,0),(0,1),(0,2),(0,3),(1,0),(1,1),(1,3),(2,0),(2,1) - every
-land cell orthogonally connected.
-Continue scanning: everything is now '0'.
-Answer 1. All the land was one island despite the ragged shape.""",
+    """1. THE GOAL, in plain English.
 
-    """A grid with several islands.
-11000 / 11000 / 00100 / 00011
-(0,0) starts island 1 and sinks four cells.
-(2,2) is untouched land -> island 2, sinks one cell.
-(3,3) -> island 3, sinks two cells.
-Answer 3. Note (2,2) and (3,3) are diagonal neighbours and are NOT connected -
-only up/down/left/right count. Confirm that with the interviewer; some variants
-use 8-directional connectivity.""",
+You are given a map drawn on squared paper. Each square is either land or
+water. Count how many separate islands there are.
 
-    """All water, and all land.
-00000 -> 0 islands, the sink function is never called.
-11111 / 11111 -> exactly 1 island; the first cell's DFS sinks the entire grid,
-so the outer loop finds nothing more.
-These bracket the counter's behaviour.""",
+An ISLAND is a group of land squares that touch each other side by side - up,
+down, left or right. Diagonal touching does NOT count as connected, unless the
+problem says otherwise, so always check that assumption out loud.
 
-    """Why sinking replaces a visited set.
-Turning land into water makes the cell fail the '1' test forever, so a separate
-visited structure is unnecessary and you save O(mn) memory.
-If the interviewer says the grid must not be modified, switch to a visited set
-of coordinates - and say so proactively, because destroying the caller's input
-is a real design concern.""",
+Here is our map. '1' means land, '0' means water:
 
-    """The scale case that breaks the recursion.
-A 1000 x 1000 grid of all '1's. The DFS recursion depth reaches one million and
-Python raises RecursionError long before that.
-Fixes: an explicit stack, or BFS with a queue. Both are the same algorithm with
-your own container instead of the call stack. Mention this whenever the
-interviewer says "large grid".""",
+        col:  0  1  2  3
+    row 0:    1  1  0  0
+    row 1:    1  1  0  0
+    row 2:    0  0  1  0
+    row 3:    0  0  0  1
 
-    """The Union-Find alternative, and when it wins.
-Treat each land cell as a node, union it with its land neighbours, and count the
-distinct roots. Same answer, O(mn x alpha).
-DFS is simpler for a static grid. Union-Find wins when the grid CHANGES over
-time - "Number of Islands II", where land is added one cell at a time and you
-must report the count after each addition. Re-running DFS after every addition
-would be O(k x mn); Union-Find handles each addition in near-constant time.""",
+Count them by eye. The four 1s in the top-left corner all touch each other, so
+they are ONE island. The single 1 at row 2 column 2 touches nothing, so it is a
+second. The single 1 at row 3 column 3 is a third - note it sits diagonally
+from the previous one, and diagonal does not count, so they are separate.
+
+Answer: 3.""",
+
+    """2. THE INTUITION - the grid is secretly a graph.
+
+The map does not look like a network, but it is one in disguise, and seeing
+that is the whole insight.
+
+A GRAPH is just a set of things plus the connections between them. Each thing
+is a NODE; each connection is an EDGE. Here every square is a node, and two
+squares are joined by an edge if they sit directly side by side.
+
+Once you see it that way, "how many islands?" is the same question as "how many
+separate clumps are there in this network?" - and there is a standard way to
+answer that:
+
+  Look at every square in turn. If you find land you have not visited yet, it
+  must be the first square of an island you have never seen - so add one to the
+  count, then visit the whole island so you never count it again.
+
+Why must unvisited land start a NEW island? Because if that square belonged to
+an island already counted, the visiting sweep for that island would have
+reached it and marked it. It is unmarked, so nothing counted so far can reach
+it, so it is a new island. That single sentence is the entire correctness
+argument, and it is worth being able to say it.
+
+"Visit the whole island" is done by FLOOD FILL - the same thing as the paint
+bucket tool in a drawing program. Click one pixel and the colour spreads
+outwards through every touching pixel of the same colour, stopping at the edges
+of the region. Here we spread through touching land squares.""",
+
+    """3. THE TRICK - sink the island instead of remembering it.
+
+The usual way to record "I have visited this square" is a second grid of
+true/false the same size as the map. That works, and it costs an extra grid's
+worth of memory.
+
+This solution does something cheaper and rather elegant: it OVERWRITES the land
+with water. Every land square it visits is turned into a '0'.
+
+Why is that safe? Because of what '0' means to the rest of the program. Both
+the outer sweep and the flood fill only ever act on '1'. A square that has been
+turned into '0' is invisible to both of them from that moment on. So the map
+becomes its own record of what has been visited - no second grid needed at all.
+
+Two things fall out of that one change, and both matter:
+
+FIRST, the flood fill terminates. Without marking, the fill would step from
+square A to its neighbour B, and then from B straight back to A - because in a
+grid the connection works both ways - and bounce between them forever. Sinking
+A before moving on means B looks back at A, sees water, and stops.
+
+SECOND, the outer sweep cannot double-count. After the first island is sunk,
+the sweep continues across squares that used to be land and now read as water,
+so it walks straight past them.
+
+The price of the trick, and you must say it: it DESTROYS the caller's map.
+Everything ends up as water. If the caller needs the map afterwards, copy it
+first or use a separate visited grid. An interviewer who asks "does your
+solution modify the input?" is checking whether you noticed.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - reading off the edge of the grid. From row 0 the fill will try to step
+to row -1. In Python, grid[-1] does NOT fail - it quietly returns the LAST row.
+So a missing bounds check does not crash; it silently wraps around to the other
+side of the map and can join two islands that are nowhere near each other. This
+is why the bounds must be checked BEFORE the square is read, and why the order
+of the conditions in that one line is not cosmetic.
+
+CASE 2 - diagonal touching. In our map, the 1 at row 2 column 2 and the 1 at
+row 3 column 3 are diagonal neighbours. The answer is 3 because diagonals do
+not connect. If the problem said diagonals DO count, those two would merge and
+the answer would be 2 - and the only change needed would be four more
+neighbour calls. Ask which version is wanted.
+
+CASE 3 - the whole grid is land. A 100 x 100 grid of all 1s is a single island,
+and the flood fill will go 10,000 levels deep in recursion to cover it. Python
+gives up at around 1,000 nested calls, so this crashes with a RecursionError on
+a large grid. It is the reason to know the queue-based version in section 10.
+
+CASE 4 - the empty grid. No rows at all. The code checks for this first,
+because the next line reads grid[0] to count the columns.
+
+CASE 5 - a grid of all water. The sweep finds no '1' anywhere, so the fill is
+never called and the count stays 0. Correct with no special case.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+DFS - DEPTH-FIRST SEARCH. A way of exploring: go as far as you can in one
+direction before backing up and trying another. Like exploring a cave by always
+taking the first tunnel you see, and only retracing your steps at a dead end.
+The flood fill here is a DFS.
+
+RECURSION. A function that solves a problem by calling itself on a smaller
+piece of the same problem. Here "sink everything connected to this square" is
+done by sinking this square and then saying "sink everything connected to the
+square above / below / left / right". Same instruction, one step further out
+each time.
+
+CALL STACK. When the function calls itself, the outer call PAUSES exactly where
+it is and the inner one runs. Those paused calls pile up, each waiting for the
+one below it to finish; that pile is the call stack. It is what lets the fill
+"back up" when it reaches the edge of an island.
+
+BASE CASE. The situation where the function returns immediately instead of
+calling itself again - without one, recursion never ends. Here the base case is
+the single guard line at the top: off the grid, or not land. Every path
+eventually reaches water or an edge, because the grid is finite and each visit
+turns one more land square into water.
+
+O(R x C). The cost, where R is the number of rows and C the number of columns.
+In plain words: the work grows in step with the number of squares on the map.
+Double the squares and you roughly double the work. That is the best possible
+here, since you have to look at every square at least once to know what is on
+it.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: sweep every square, and each time you meet land
+you have not seen before, count one island and then flood it with water so you
+cannot possibly count it again.
+
+The mechanism, since this is recursion. When the fill is called on a square, it
+sinks that square and then calls itself on the square below. That call pauses
+the current one; the new call sinks its square and calls itself on the square
+below that; and so on. When a call finally hits water or an edge, it returns
+immediately, and the call that was waiting wakes up and tries its NEXT
+direction. So the fill snakes deep into the island first and unwinds back
+through every square trying the remaining directions. It finishes because each
+call turns one land square into water permanently, and the map has only
+finitely many land squares.
+
+The steps:
+
+  1. If the grid is empty, answer 0 and stop.
+
+  2. Note how many rows and columns there are - the fill needs them to know
+     where the edges are.
+
+  3. Write the fill. Given a row and a column, it does this:
+       a. If that position is off the grid - row below 0, column below 0, row
+          at or past the number of rows, column at or past the number of
+          columns - return immediately. Check this BEFORE reading the square,
+          because a negative index reads the wrong square rather than failing.
+       b. If the square is not land, return immediately. This covers water that
+          was always water AND land that this fill has already sunk.
+       c. Turn this square into water. Do this BEFORE the next step - it is
+          what stops the fill walking back the way it came.
+       d. Call the fill on the four neighbours: below, above, right, left. No
+          bounds checking here - step (a) handles anything off the edge.
+
+  4. Set the count to 0.
+
+  5. Walk every square of the grid, row by row, left to right.
+
+  6. If the square is land, add one to the count and run the fill on it. That
+     sinks the whole island, so the rest of the sweep walks past it.
+
+  7. When the sweep ends, the count is the answer.
+
+Steps 6 and 3 have separate jobs and neither works without the other: the sweep
+counts but never explores; the fill explores but never counts.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code reads the map square by square, left to right and top to bottom. Most
+squares are water and it walks straight past them.
+
+The interesting thing happens when it meets land. Because every island it has
+already counted was completely flooded at the time, any land still standing
+must belong to an island it has never seen. So it adds one to its running total
+and then sets off flooding.
+
+The flooding is a small instruction that a square carries out on itself and
+then passes to its four neighbours: "if I am off the map or I am not land, do
+nothing. Otherwise turn myself into water, then tell the squares above, below,
+left and right of me to do the same." Because each neighbour passes the same
+instruction on, the whole connected blob of land turns to water, spreading
+outward from wherever the flooding started, and stopping by itself wherever it
+meets water or the edge of the map.
+
+Turning land into water is doing two jobs at once. It is the record of what has
+been visited - which is why no separate grid of ticks is needed - and it is
+what stops the flooding bouncing back and forth between two neighbouring
+squares forever.
+
+When the sweep reaches the last square, the number of times it had to start
+flooding is exactly the number of islands.""",
+
+    """8. THE CODE, line by line.
+
+Keep the 4 x 4 map from section 1 beside you, answer 3.
+
+    if not grid:
+        return 0
+The empty-map guard. Needed because the very next line reads grid[0] to count
+the columns, which would fail on an empty list.
+
+    rows, cols = len(grid), len(grid[0])
+How many rows, and how many squares in a row. len(grid) counts the rows;
+len(grid[0]) counts the columns by measuring the first row. For our map both
+are 4.
+
+    def sink(r, c):
+The flood fill. It returns nothing - its only effect is to turn land into
+water. Defined inside so it can see grid, rows and cols directly.
+
+    if r < 0 or r >= rows or c < 0 or c >= cols or grid[r][c] != '1':
+        return
+The base case, doing three jobs in one line, and the ORDER is load-bearing.
+
+  The first four tests are the bounds check: above the top, below the bottom,
+  left of the left edge, right of the right edge. Python evaluates "or"
+  conditions left to right and stops at the first true one, so grid[r][c] is
+  only read once all four have passed. Put the square-read first and a row of
+  -1 would quietly read the LAST row instead of failing - see case 1 in
+  section 4.
+
+  The last test, "not equal to '1'", covers both water that was always water
+  and land this fill has already sunk. That second meaning is what stops the
+  fill running forever.
+
+    grid[r][c] = '0'
+Sink this square. This is the entire visited-marker, done in place with no
+extra memory - and it must happen BEFORE the calls below, or a neighbour would
+look back at this square, still see land, and call the fill on it again.
+
+    sink(r+1, c); sink(r-1, c); sink(r, c+1); sink(r, c-1)
+The four neighbours: below, above, right, left. There is no bounds checking
+here because the guard at the top of sink handles anything off the map, which
+is what lets these four calls be written so plainly. If diagonals counted as
+connected, you would add four more calls here - sink(r+1,c+1) and so on - and
+change nothing else.
+
+    count = 0
+Islands found so far.
+
+    for r in range(rows):
+        for c in range(cols):
+The sweep - every square, top to bottom, left to right.
+
+    if grid[r][c] == '1':
+        count += 1
+        sink(r, c)
+The counting, and the argument from section 2 in three lines. Land still
+standing cannot belong to a counted island, so it starts a new one: add one,
+then sink the whole thing so the rest of the sweep ignores it. On our map this
+fires exactly three times.
+
+    return count
+3 for our map.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    row 0:  1 1 0 0
+    row 1:  1 1 0 0
+    row 2:  0 0 1 0
+    row 3:  0 0 0 1
+
+count = 0. The sweep starts at row 0.
+
+(0,0) is '1' -> count = 1, then sink(0,0):
+    sink(0,0): on the grid, is '1' -> set to '0'.  grid row 0 is now 0 1 0 0
+      sink(1,0): is '1' -> set to '0'.  row 1 is now 0 1 0 0
+        sink(2,0): is '0' (water) -> return
+        sink(0,0): is now '0' -> return.   <- the fill trying to walk back the
+                                              way it came, stopped by the sink
+        sink(1,1): is '1' -> set to '0'.  row 1 is now 0 0 0 0
+          sink(2,1): water -> return
+          sink(0,1): is '1' -> set to '0'. row 0 is now 0 0 0 0
+            all four of ITS neighbours are now water or off-grid -> returns
+          sink(1,2): water -> return
+          sink(1,0): now '0' -> return
+        sink(1,-1): c is -1, below 0 -> return.  <- the bounds check earning
+                                                    its place; without it this
+                                                    would read column 3
+      sink(-1,0): r is -1 -> return
+      sink(0,1): now '0' -> return
+      sink(0,-1): c is -1 -> return
+    The top-left blob is gone. Four squares sunk.
+
+The sweep continues through row 0 and row 1: every square now reads '0', so
+nothing happens.
+
+(2,2) is '1' -> count = 2, then sink(2,2):
+    sets it to '0'; its four neighbours (3,2) (1,2) (2,3) (2,1) are all water
+    -> the fill stops immediately.
+
+(3,3) is '1' -> count = 3, then sink(3,3):
+    sets it to '0'; below and right are off the grid, above and left are water
+    -> stops immediately.
+
+The sweep finishes. return count = 3, matching the three islands we counted by
+eye. Note the grid is now entirely '0' - the input has been destroyed.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(R x C) - proportional to the number of squares. The sweep looks at each
+square once. The fill turns each land square to water exactly once, and each
+call does a fixed amount of work, so across the whole run no square is
+processed more than a constant number of times. On a 1000 x 1000 map that is a
+million steps - fast.
+
+SPACE: O(R x C) in the worst case, and this is the surprising part. The map
+itself needs no extra memory, because the visited marker is written into it.
+But the CALL STACK does: a map that is entirely land, snaking, forces the fill
+to go as deep as there are land squares before it can unwind. Python stops at
+about 1,000 nested calls, so a large all-land grid crashes.
+
+The cure is the same algorithm with a QUEUE instead of recursion: put the
+starting square in a queue and sink it, then repeatedly take a square off the
+front and, for each neighbour that is on the grid and is land, sink it and add
+it to the queue. Sink it AS YOU ADD IT, not when you take it out - otherwise
+the same square can be added several times by different neighbours before it is
+ever processed, and the queue balloons. Same O(R x C) time, but the memory is a
+queue rather than the call stack, so it survives any size of map.
+
+THE #1 MISTAKE - sinking the square AFTER recursing instead of before. The fill
+steps from A to B, and B immediately steps back to A, which is still land, so A
+steps to B again... it recurses until the stack dies. Mark first, then explore.
+It is the same rule as Clone Graph's "register before you descend".
+
+A close second: putting grid[r][c] before the bounds checks in that guard line.
+It does not crash - it silently reads the wrong edge of the map and can weld
+two distant islands into one.
+
+ONE-SENTENCE TAKEAWAY: every piece of land still standing when the sweep
+reaches it must be a new island, so count it and flood the whole thing with
+water - and the flooding must sink each square before it moves on, or it walks
+back the way it came forever.""",
 ]
 
 
@@ -27032,49 +27340,358 @@ board - a trade worth mentioning.""",
 ]
 
 _EX_P0C["Partition Equal Subset Sum"] = [
-    """The textbook case, traced.
-nums = [1,5,11,5]. total 22, even, target 11.
-dp = [T,F,F,...] over sums 0..11.
-  num=1:  dp[1]=T
-  num=5:  going down - dp[6]=dp[1]=T, dp[5]=dp[0]=T
-  num=11: dp[11]=dp[0]=T -> answer True
-Subset {11} against {1,5,5}, both summing to 11.""",
+    """1. THE GOAL, in plain English.
 
-    """The odd-total shortcut.
-nums = [1,2,5]. total 8... even. Try nums = [1,2,3,5]: total 11, odd -> return
-False immediately, because two equal integer halves cannot sum to an odd number.
-It is one line and it avoids building the table at all for half the inputs.""",
+You are given a list of positive whole numbers. Can you split them into TWO
+piles so that both piles add up to the same total? You must use every number,
+and each number goes into exactly one pile. Answer yes or no.
 
-    """A False case with an even total.
-nums = [1,2,5]. total 8, target 4.
-  num=1: dp[1]=T
-  num=2: dp[3]=dp[1]=T, dp[2]=dp[0]=T
-  num=5: 5 > 4, the inner loop range is empty - skipped entirely
-dp[4] is False. Answer False. Even totals do not guarantee a split.""",
+Two children are sharing a bag of sweets of different weights, and neither will
+accept a smaller share. Can it be done at all?
 
-    """Why the inner loop goes DOWNWARD - the bug made visible.
-nums = [3], target 6, going UPWARD:
-  s=3: dp[3] = dp[0] = True
-  s=6: dp[6] = dp[3] = True   <-- but dp[3] was just set THIS round
-You have used the single 3 twice and wrongly report that 6 is reachable.
-Going downward, s=6 reads dp[3] from BEFORE this number existed (False), and
-then s=3 is set. The direction is the entire difference between 0/1 knapsack and
-unbounded knapsack.""",
+Try it by hand. nums = [1, 5, 11, 5].
 
-    """Edge cases.
-Single element -> total is that element; if odd, False; if even, target is half
-and the single number cannot make it unless it is 0. [2] -> total 2, target 1,
-dp[1] never set -> False. Correct.
-Empty array -> total 0, target 0, dp[0] is True -> True (two empty subsets).
-Confirm what the problem wants for empty input.""",
+The total is 1 + 5 + 11 + 5 = 22. If a fair split exists, each pile must come
+to 11. Can we make 11 from some of these numbers? Yes: the 11 on its own. The
+other pile is then 1 + 5 + 5 = 11 too. So the answer is TRUE.
 
-    """The complexity, and why it is not really polynomial.
-O(n x target) time and O(target) space. With n=200 and values up to 100, target
-is at most 10,000 - trivial.
-But target is a VALUE, so it is pseudo-polynomial: the input length is n, and
-the runtime depends on the magnitude of the numbers. Subset-sum is NP-complete
-in general, and this DP is only fast because the constraints bound the sum.
-Saying that is what turns a coding answer into a complexity-theory one.""",
+Now nums = [1, 2, 3, 5]. The total is 11, which is an odd number. Half of 11 is
+5.5, and no pile of whole numbers can add up to a half. So the answer is FALSE
+before we even start looking - and that shortcut is worth keeping.
+
+Notice what the question quietly became. We never have to think about two piles
+at once. If we can find ONE group that adds up to half the total, the leftovers
+automatically add up to the other half. So the real question is:
+
+  Can I pick some of these numbers that add up to exactly half the total?""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Every number is either in the group or not in it. So try
+every possible combination: for four numbers there are 2 x 2 x 2 x 2 = 16
+combinations, and you check each one's total. In general that is 2 to the power
+n, written O(2^n).
+
+For 20 numbers that is a million combinations - fine. For 40 numbers it is a
+trillion - hopeless. And the growth is brutal: every extra number DOUBLES the
+work.
+
+Why is it so wasteful? Because it recomputes the same thing endlessly. Suppose
+the first two numbers are 3 and 4. Whether you take {3,4} or {7 on its own from
+somewhere else}, you are standing on "I have made 7 so far", and everything
+that happens next is identical. The slow version explores that identical future
+separately for every route that reaches 7.
+
+THE UPGRADE - stop tracking WHICH numbers you took, and track only WHICH TOTALS
+are reachable.
+
+Keep a row of boxes, one for every total from 0 up to the target, each holding
+just true or false: "can I make this total from the numbers I have looked at so
+far?"
+
+At the start only one box is true - the box for 0, because taking nothing makes
+0. Then feed in the numbers one at a time. When a new number num arrives, any
+total s becomes reachable if s was ALREADY reachable without num, or if
+(s - num) was reachable and you now add num to it.
+
+At the end, look at the box for the target. True means a fair split exists.
+
+The work is now the number of boxes times the number of numbers, instead of two
+to the power of the numbers. That is the whole upgrade, and section 3 explains
+the one line that makes it correct.""",
+
+    """3. THE TRICK - why the inner loop counts DOWNWARDS.
+
+This is the line people get wrong, and the reason is genuinely subtle.
+
+When the number num arrives, we want to update the boxes using the state of the
+row BEFORE num was available. Only one copy of the row exists, though, so as we
+write into it we are also reading from it - and the direction we walk decides
+whether we read the old values or the new ones.
+
+Take nums = [3] and a target of 6, with only box 0 true at the start.
+
+WALKING UPWARDS (the bug):
+  s = 3: box[3] = box[3] or box[0] = true.       (3 made from one 3 - correct)
+  s = 6: box[6] = box[6] or box[3] = true.       (but box[3] was set a moment
+                                                  ago in THIS pass, so this is
+                                                  3 + 3 - using the single 3
+                                                  twice!)
+  It reports that 6 is reachable. It is not - we only have one 3.
+
+WALKING DOWNWARDS (correct):
+  s = 6: box[6] = box[6] or box[3]. box[3] is still false, because we have not
+         reached it yet in this pass. So box[6] stays false. Correct.
+  s = 3: box[3] = box[3] or box[0] = true. Correct.
+
+Going downwards, every box we READ from (s - num) is a LOWER box, and lower
+boxes have not been touched yet in this pass - so they still hold the values
+from before num arrived. That guarantees each number is used at most once.
+
+Walking upwards is not merely a bug: it is a different, valid problem. It
+solves the version where you have UNLIMITED copies of each number - which is
+exactly Coin Change. Same table, same line, opposite direction, different
+question. Knowing that is worth a lot in an interview.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - an odd total. nums = [1, 2, 5]. Total 8... no, total is 8, which is
+even; use [1,2,3,5] with total 11. Half of an odd number is not a whole number,
+so no split can exist. Checking "is the total odd?" first is not just a speed
+-up, it also avoids computing a target of 5.5 and building a nonsense table.
+
+CASE 2 - forgetting that box 0 must start true. If every box starts false,
+nothing is ever reachable, because every update reads from a lower box and they
+are all false. The whole table stays false and the answer is always no. Box 0
+being true is the seed the entire table grows from - it says "taking no numbers
+at all makes a total of zero", which is obviously right and is the foundation
+of everything else.
+
+CASE 3 - a number bigger than the target. nums = [1, 1, 100], total 102, target
+51. When 100 arrives, no box from 51 downwards can use it, because s - 100
+would be negative. The loop's lower bound handles this: it stops at num, so if
+num is larger than the target the loop body never runs at all. No special case
+needed, and no negative index.
+
+CASE 4 - a single number. nums = [1]. Total 1, which is odd, so FALSE
+immediately. Correct: one sweet cannot be shared fairly.
+
+CASE 5 - all zeros, or an empty list. Total 0, which is even, target 0. Box 0
+is true, so the answer is TRUE. Debatable but defensible: two empty piles both
+add up to 0. Say what you assume.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBSET: some of the items from a list, in any combination, not necessarily
+next to each other. {1, 5, 5} is a subset of [1, 5, 11, 5]. This is different
+from a SUBARRAY, which must be an unbroken run - the distinction matters,
+because subsets are far more numerous and that is why the slow version is
+exponential.
+
+DYNAMIC PROGRAMMING (DP): solving a problem by first solving smaller versions
+of it and writing the answers down, then building the bigger answers out of the
+ones already written down. Our row of boxes is the writing-down.
+
+The row is called dp in the code, and dp[s] means "can I make the total s from
+the numbers I have processed so far?"
+
+BOOLEAN: a value that is only ever true or false. Every box holds one.
+
+"or" in this context: dp[s] or dp[s - num] is true if EITHER is true. It reads
+as "s was already reachable, OR s becomes reachable by adding num to something
+that was reachable".
+
+RANGE COUNTING DOWNWARDS: range(target, num - 1, -1) means "start at target,
+step down by 1, and stop just before num - 1" - so the last value visited is
+num itself. Stopping at num is what keeps s - num from going negative.
+
+O(n x target): the cost. In plain words, the work is the number of numbers
+multiplied by the size of the target. Note that is NOT the same as "the number
+of numbers" - it depends on how BIG the numbers are, not just how many there
+are. Section 10 explains why that distinction has a name and why it matters.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: instead of trying every combination, keep a row
+of true/false boxes recording which totals are reachable, and feed the numbers
+in one at a time - walking the boxes downwards so no number gets used twice.
+
+There is no recursion here, so nothing piles up on the call stack. What takes
+the place of a base case is the SEEDING of box 0, which is the one fact we know
+for free.
+
+The steps:
+
+  1. Add up all the numbers. If the total is odd, answer FALSE immediately -
+     half of an odd number is not a whole number, so no fair split can exist.
+
+  2. Otherwise the target is half the total. The question is now "can I pick
+     some numbers that add up to exactly the target?"
+
+  3. Make a row of true/false boxes, one for every total from 0 up to the
+     target inclusive. Set them all to false.
+
+  4. Set box 0 to true - taking no numbers at all makes a total of zero.
+
+  5. Take each number in turn. Call it num.
+
+  6. For this num, walk the boxes DOWNWARDS from the target to num. For each
+     total s: if box (s - num) is true, then s is now reachable too, so set box
+     s to true.
+
+     Downwards is not optional. Walking upwards would let a number be used
+     twice within the same pass - see section 3 for the worked example.
+
+     Stopping at num, rather than at 0, keeps s - num from going negative.
+
+  7. When every number has been fed in, the answer is whatever box[target]
+     holds.
+
+Worth noticing: boxes only ever turn from false to true, never back. Once a
+total is reachable it stays reachable, because adding more numbers to choose
+from can only ever open up more possibilities.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first checks whether the question is even askable: it adds everything
+up, and if the total is odd it answers no straight away, because you cannot
+halve an odd number into two whole-number piles.
+
+Otherwise it sets a target of exactly half the total, and then abandons the
+idea of two piles entirely. It only ever tries to build ONE pile that hits the
+target, because whatever is left over must automatically hit the target too.
+
+To do that it keeps a row of yes/no markers - one for every total from zero up
+to the target - each answering "can I make this exact total out of the numbers
+I have looked at so far?" At the start only the marker for zero says yes, since
+picking nothing makes zero.
+
+Then it takes the numbers one at a time. For each one it asks, for every total
+in the row: was this total already reachable, or does it become reachable now
+by adding this number to some smaller total that was already reachable? Any
+total that passes gets its marker turned to yes.
+
+The one subtlety is the direction it walks the row: from the target downwards.
+Because it is reading and writing the same row, walking downwards guarantees
+that the smaller total it reads from is still holding its value from before the
+current number arrived - which is what stops a single number being counted
+twice in one pass.
+
+When every number has been fed in, it simply reads the marker for the target.
+Yes means a fair split exists.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [1, 5, 11, 5] beside you, total 22, target 11, answer True.
+
+    total = sum(nums)
+Add everything up. For our input, 22.
+
+    if total % 2 != 0:
+        return False
+The odd-total shortcut. "%" is the remainder after dividing, so total % 2 is 0
+for even numbers and 1 for odd ones. An odd total cannot be halved into two
+whole-number piles, so we stop before building anything. This also guarantees
+the next line produces a whole number.
+
+    target = total // 2
+Half the total. "//" is whole-number division, which is safe here precisely
+because the line above proved the total is even. For us, 11.
+
+    dp = [False] * (target + 1)
+The row of boxes, one for every total from 0 to target INCLUSIVE - which is why
+it is target + 1 boxes, not target. All start false: nothing is known to be
+reachable yet.
+
+    dp[0] = True
+The seed. Taking no numbers at all makes a total of 0. Every true value in the
+finished table is ultimately built from this one - leave it out and the table
+stays entirely false. See case 2 in section 4.
+
+    for num in nums:
+Feed in the numbers one at a time. Each pass updates the whole row to account
+for one more available number.
+
+    for s in range(target, num - 1, -1):
+Walk the boxes DOWNWARDS, from the target to num. Two separate things are going
+on in this one line.
+
+  The -1 step makes it count down, which is the trick from section 3: every box
+  we read from is lower than the one we are writing to, and lower boxes have
+  not been touched yet in this pass, so they still hold their pre-num values.
+  That is what stops one number being used twice.
+
+  Stopping at num - written as "num - 1" because range excludes its endpoint -
+  keeps s - num from going negative on the next line. If num is bigger than the
+  target, this range is empty and the pass does nothing, which is exactly right
+  - see case 3.
+
+    dp[s] = dp[s] or dp[s - num]
+The heart of it. Total s is reachable if it already was (dp[s]), or if the
+smaller total s - num was reachable and we now add num to it (dp[s - num]).
+Because boxes only ever go from false to true, this line can never undo
+anything already discovered.
+
+    return dp[target]
+Can we make exactly half the total? For our input, True.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [1, 5, 11, 5].  total = 22, even.  target = 11.
+
+Start: dp = boxes 0 to 11, all False except dp[0] = True.
+Writing only the true ones for readability: {0}
+
+num = 1.  Walk s from 11 down to 1.
+  Every s except 1 finds dp[s-1] false. At s = 1: dp[0] is True -> dp[1] = True.
+  Reachable totals: {0, 1}
+
+num = 5.  Walk s from 11 down to 5.
+  s = 11: dp[6]? false.
+  s = 10: dp[5]? false.
+  s = 9, 8, 7: dp[4], dp[3], dp[2]? all false.
+  s = 6:  dp[1] is True -> dp[6] = True.
+  s = 5:  dp[0] is True -> dp[5] = True.
+  Reachable: {0, 1, 5, 6}
+  Sanity check by hand: from {1,5} you can make 0, 1, 5, and 1+5=6. Correct.
+
+num = 11.  Walk s from 11 down to 11 - a single step.
+  s = 11: dp[0] is True -> dp[11] = True.
+  Reachable: {0, 1, 5, 6, 11}
+  The answer is already settled here - 11 is made by the single number 11.
+
+num = 5 (the second one).  Walk s from 11 down to 5.
+  s = 11: dp[6] is True -> dp[11] = True (already was).
+          This is the OTHER solution appearing: 6 + 5, that is 1 + 5 + 5.
+  s = 10: dp[5] is True -> dp[10] = True.
+  s = 6:  dp[1] is True -> dp[6] = True (already was).
+  s = 5:  dp[0] is True -> dp[5] = True (already was).
+  Reachable: {0, 1, 5, 6, 10, 11}
+
+return dp[11] = True.
+
+Now watch the downward walk earn its place. On the last pass, at s = 10 we read
+dp[5], which was set during the num = 5 pass EARLIER - a different 5, so that is
+legitimate (5 + 5 = 10, and there are two 5s). But at s = 10 we did NOT read a
+dp[5] that had been set moments before in this same pass, because we started at
+11 and worked down and had not reached 5 yet. Had we walked upwards, dp[5] would
+have been set first and then reused at s = 10 within the same pass - using ONE
+five twice.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n x target), where n is how many numbers there are and target is half
+their total. Each of the n passes walks at most target boxes, doing one "or" per
+box. For 200 numbers summing to 20,000, that is 200 x 10,000 = two million
+steps - instant.
+
+SPACE: O(target) - one row of true/false boxes. Notice what is NOT stored:
+there is no record of which numbers were chosen. If the problem asked WHICH
+numbers form the pile, you would keep the full two-dimensional table (one row
+per number) and walk backwards through it to recover the choices.
+
+The catch worth naming: the cost depends on the SIZE of the numbers, not just
+how many there are. A list of ten numbers each around a billion has a target
+around five billion, so the table cannot be built at all - even though ten
+numbers is nothing. An algorithm whose cost scales with the numeric VALUE of
+the input rather than the length of the input is called PSEUDO-POLYNOMIAL. It
+looks efficient and stops being efficient once the numbers get large. Saying
+that word and being able to explain it is a strong signal - it is the same
+property Coin Change has.
+
+THE #1 MISTAKE - walking the inner loop upwards instead of downwards. It gives
+the right answer on plenty of inputs, which is what makes it dangerous, and the
+wrong answer whenever a number would need to be reused. Remember what upward
+actually computes: the unlimited-copies version of the problem. Direction is
+the difference between "each item once" and "items as often as you like".
+
+A close second: making the row target boxes long instead of target + 1, so
+dp[target] is off the end of the row.
+
+ONE-SENTENCE TAKEAWAY: a fair split exists exactly when some group of the
+numbers adds up to half the total, so keep a row of "is this total reachable?"
+markers, feed the numbers in one at a time, and walk the row downwards so no
+number is ever used twice.""",
 ]
 
 _EX_P0C["Permutations (backtracking)"] = [
