@@ -30884,60 +30884,350 @@ about the caller and not just the return value.""",
 ]
 
 _EX_P0D["Squares of a Sorted Array"] = [
-    """The textbook case, traced from the back.
-nums = [-4,-1,0,3,10]. left=0, right=4, result has 5 slots.
-i=4: |-4| vs |10| -> 10 wins, result[4]=100, right=3.
-i=3: |-4| vs |3| -> 4 wins, result[3]=16, left=1.
-i=2: |-1| vs |3| -> 3 wins, result[2]=9, right=2.
-i=1: |-1| vs |0| -> 1 wins, result[1]=1, left=2.
-i=0: left==right==2, |0| vs |0| -> else branch, result[0]=0.
-Answer [0,1,9,16,100]. Every step places exactly one value, so it is n steps
-total.""",
+    """1. THE GOAL, in plain English.
 
-    """All negatives - the output is the input reversed and squared.
-nums = [-5,-3,-1]. The largest square is always at the LEFT end here.
-i=2: |-5| > |-1| -> 25, left=1.
-i=1: |-3| > |-1| -> 9, left=2.
-i=0: left==right -> 1.
-Answer [1,9,25]. Useful mental check: sorted ascending negatives means their
-squares are sorted DESCENDING, so filling from the back gives ascending output
-for free.""",
+You are given a list of numbers that is already sorted from smallest to largest.
+Some of them may be negative. Square every number, and hand back the results
+sorted from smallest to largest.
 
-    """All non-negatives - the loop degenerates to a reverse copy.
-nums = [1,2,3]. The right pointer wins every comparison, so the result is filled
-3^2, 2^2, 1^2 from the back: [1,4,9].
-Combined with the previous example this is the proof sketch: the array is
-non-decreasing, so absolute values form a VALLEY - decreasing then increasing.
-The maximum of a valley is always at one of the two ends, which is exactly the
-invariant two pointers rely on.""",
+    input:   [-4, -1, 0, 3, 10]
+    squared: [16,  1, 0, 9, 100]     <- squaring in place ruins the order
+    answer:  [ 0,  1, 9, 16, 100]
 
-    """Edge cases: single element, and duplicates straddling zero.
-[-7] -> [49]; [0] -> [0]. The loop runs once with left==right and the else
-branch fires.
-[-2,-2,2,2]: i=3 -> |-2| vs |2| are equal, so the else branch takes the right
-one: 4, right=2. i=2 -> equal again, take right: 4, right=1. i=1 -> now
-left=0,right=1, both -2: take right, 4, right=0. i=0 -> 4.
-[4,4,4,4]. Ties are safe either way here because the values are equal; using
-`>` rather than `>=` just decides which pointer moves.""",
+The catch is right there in the middle line. The input was sorted, but squaring
+destroys that, because squaring a negative number makes it positive and large.
+-4 was the smallest input and 16 is one of the biggest outputs.
 
-    """The case that shows why sort() is the wrong answer.
-The one-liner `sorted(x*x for x in nums)` is correct and gets [0,1,9,16,100] too
-- but it is O(n log n). The entire point of this problem is that the input is
-ALREADY SORTED, and throwing that away is the mistake being tested.
-On n = 10^5 the difference is ~17x in comparisons. Say the one-liner exists,
-then say 'but the input is sorted, so we can do O(n) with two pointers' and
-write that. Skipping straight to the sort without naming the O(n) version is the
-answer that loses points.""",
+So the sortedness of the input is not simply inherited by the output - but it is
+not useless either, and section 2 is about what it actually gives us.
 
-    """Why fill from the BACK and not the front.
-Filling forward would need the SMALLEST square next, which lives somewhere in
-the middle of the array (nearest to zero) - and you cannot find the middle
-without searching. Filling backward needs the LARGEST square, which is always at
-one end, and comparing two ends is O(1).
-General principle: when a two-pointer merge produces values in descending order
-of certainty, write into the output from the end. Same reason 'Merge Sorted
-Array' (LeetCode 88) merges in place from the back - you overwrite only slots you
-have already consumed.""",
+The obvious question, which you should ask out loud: why not just square
+everything and sort? You can, and it is correct. The point of this problem is
+that you can do better, and that the reason you can do better comes from noticing
+the SHAPE of the squared values.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SIMPLE VERSION. Square every number, then sort the result.
+
+    [-4, -1, 0, 3, 10]  ->  [16, 1, 0, 9, 100]  ->  sort  ->  [0, 1, 9, 16, 100]
+
+That is two lines of code and it is correct. Its cost is the sort: O(n log n),
+meaning a bit more than proportional to the length of the list. Describe this
+first - it shows you can solve the problem before you optimise it.
+
+THE UPGRADE - look at where the BIG values are.
+
+Draw the squared values above the original list:
+
+    original:  -4   -1    0    3   10
+    squared:   16    1    0    9  100
+                \\    \\    /    /   /
+                 decreasing   increasing
+
+The squares fall as you move in from the left, reach their smallest somewhere in
+the middle (wherever the values cross zero), then rise as you continue right.
+That is a V shape - a valley.
+
+Now the useful consequence. The LARGEST square in the whole list must be at one
+END or the other. It cannot be in the middle, because the middle is the bottom of
+the valley. And that stays true no matter how much you chop off the ends: after
+removing an end value, the largest of what remains is again at one of the two new
+ends.
+
+So there is a method. Compare the two ends, take whichever has the bigger
+magnitude, square it, and place it at the BACK of the answer - because it is the
+largest remaining. Then step that end inwards and repeat, filling the answer from
+back to front.
+
+One pass, two fingers, no sorting: O(n).
+
+MAGNITUDE means "size ignoring the minus sign" - the magnitude of -4 is 4. We
+compare magnitudes rather than squares because it is the same comparison and
+cheaper, though squaring both and comparing would work identically.""",
+
+    """3. THE TRICK - why the answer is filled BACKWARDS.
+
+This is the part that feels upside down until you see the reason.
+
+Our method identifies the LARGEST remaining value at each step. The largest value
+belongs at the END of a sorted list. So the first value we produce is the last
+one we need - and the natural thing to do is write it into the last empty slot
+and work leftwards.
+
+Could we go the other way and find the smallest each time? In principle yes, but
+it is much harder. The smallest square sits at the bottom of the valley,
+somewhere in the middle, and you would have to find where the values cross zero
+first and then walk two fingers OUTWARDS from there. That is a real algorithm and
+people do write it, but it needs a search for the crossing point and careful
+handling when the list is entirely negative or entirely positive.
+
+Filling backwards avoids all of that. The two ends are trivially known - they are
+positions 0 and n-1 - and the comparison is a single "which of these two is
+bigger". No searching, no special cases for all-negative or all-positive lists,
+because in those cases one finger simply never moves.
+
+So the shape of the code is: an answer list of the right size created up front,
+an index starting at its last slot and walking down to 0, and two fingers on the
+input walking inwards toward each other. Each turn of the loop writes exactly one
+value, so the loop runs exactly n times and every slot gets filled.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - all negative. [-5, -3, -1]. The magnitudes are 5, 3, 1 - biggest at the
+LEFT end. So the left finger is chosen every single time and the right finger
+never moves. The answer is filled 25, 9, 1 from the back, giving [1, 9, 25].
+Correct, and no special case was needed - the comparison simply always picks the
+same side.
+
+CASE 2 - all positive. [1, 3, 5]. The mirror image: the right finger is chosen
+every time. Answer [1, 9, 25].
+
+CASE 3 - a tie in magnitude. [-3, 3]. Both ends have magnitude 3, so the
+comparison "is the left strictly bigger?" is false and the RIGHT one is taken.
+Then the fingers are on the same position, the left one is taken next. Both
+produce 9, so the answer is [9, 9] either way. Ties genuinely do not matter here,
+because equal magnitudes give equal squares - which is why "greater than" rather
+than "greater than or equal" is safe.
+
+CASE 4 - the fingers meeting. When left and right land on the same position, that
+one value still has to be written. The loop is driven by the ANSWER index rather
+than by the fingers, so it runs exactly n times and naturally writes that last
+value. Writing the loop as "while left <= right" also works, but then you must
+remember the <=; driving from the answer index removes that trap entirely.
+
+CASE 5 - a single element, or an empty list. [7] runs the loop once and writes
+49. An empty list creates an empty answer and the loop never runs. Both correct
+with no guard.
+
+CASE 6 - filling forwards by mistake. If you write into position 0 first, you are
+putting the LARGEST value at the front, and the answer comes out reversed. The
+direction of the answer index is not a detail - it follows from the fact that the
+method finds maxima, not minima.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+TWO POINTERS: two positions in the same list, moved under a rule. Here the rule
+is "start at both ends and move inwards", the same shape used in 3Sum. Other
+problems use "different speeds" (Middle of the Linked List) or "keep a fixed gap"
+(Remove Nth Node From End). Recognising which rule a problem wants is most of the
+skill.
+
+abs(x): Python's "ignore the minus sign" - abs(-4) is 4, abs(4) is 4. This is the
+MAGNITUDE from section 2.
+
+x ** 2: Python for "x squared". Note (-4) ** 2 is 16 - squaring always gives a
+non-negative result, which is exactly why the input's order is destroyed.
+
+range(n - 1, -1, -1): Python for "count down from n-1 to 0". The three parts are
+start, stop and step: start at n-1, step by -1 each time, and stop BEFORE -1 -
+which means the last value actually visited is 0. The stop value being one past
+where you want to end is the usual Python convention, and getting it wrong here
+means missing the first slot of the answer.
+
+result = [0] * n: create a list of n zeros up front, so every slot exists and can
+be written to in any order. You cannot write to position 4 of an empty list; the
+slot has to be there first.
+
+O(n) and O(n log n): the two costs. O(n) means the work grows in step with the
+length - double the list, double the work. O(n log n) is the cost of a good sort,
+a little more than proportional. The "log n" part is roughly how many times you
+can halve n before reaching 1 - about 20 for a million items.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: the biggest square is always at one end or the
+other, so compare the two ends, take the bigger, and fill the answer from the
+back forwards.
+
+No recursion here - a single loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Note the length of the input, and create an answer list of exactly that
+     many slots. It needs to exist at full size up front, because we are going to
+     fill it out of order, starting from the back.
+
+  2. Put one finger, left, on the first position and another, right, on the last.
+
+  3. Walk an index down the ANSWER, from its last slot to its first. Each turn of
+     this loop fills exactly one slot, so it runs exactly as many times as there
+     are numbers.
+
+  4. On each turn, compare the magnitude of the value under left with the
+     magnitude of the value under right - that is, their sizes ignoring any minus
+     signs.
+
+  5. If the left one is bigger, it is the largest remaining value: square it,
+     write it into the current answer slot, and move left one step to the right.
+
+  6. Otherwise the right one is at least as big: square it, write it into the
+     current answer slot, and move right one step to the left.
+
+  7. When the answer index reaches the front, every slot has been filled with the
+     values in decreasing order from the back - which is the same as increasing
+     order from the front. Hand it back.
+
+Two things worth noticing. The loop is driven by the answer index rather than by
+the fingers, which means you never have to reason about whether the fingers have
+met or crossed - the loop simply runs n times and the fingers move exactly n
+times between them. And a tie in step 4 can safely go either way, because equal
+magnitudes produce equal squares.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code takes advantage of one fact about the input: it was sorted before
+squaring, so the squared values form a valley - large at the left where the
+negatives are, dipping to their smallest somewhere in the middle near zero, and
+rising again to the right.
+
+Because of that shape, the biggest squared value can only ever be at one of the
+two ends of whatever part of the list is still under consideration. Never in the
+middle.
+
+So the code keeps a marker at each end of the input and an empty answer list of
+the right size. On every turn it looks at the two values under its markers,
+ignores their minus signs to see which is genuinely bigger, squares that one, and
+places it in the LAST unfilled slot of the answer. Then it steps that marker
+inwards, shrinking the part of the input still to be considered - and the same
+reasoning applies again to the smaller stretch.
+
+Filling from the back is what makes this work. The method finds the largest
+remaining value each time, and the largest value belongs at the end of a sorted
+list, so the answer is built right to left.
+
+After exactly as many turns as there are numbers, every slot of the answer has
+been filled and both markers have met in the middle. The answer comes out sorted
+without ever having been sorted.""",
+
+    """8. THE CODE, line by line.
+
+Keep [-4, -1, 0, 3, 10] beside you; the answer is [0, 1, 9, 16, 100].
+
+    n = len(nums)
+How many numbers there are. Used both to size the answer and to place the right
+finger.
+
+    result = [0] * n
+Create the answer at full size, filled with placeholder zeros. It must exist at
+full length before the loop, because the loop writes into position n-1 first and
+works backwards - you cannot write to slot 4 of an empty list.
+
+    left, right = 0, n - 1
+The two fingers, on the first and last positions of the input. For our list, left
+is on -4 and right is on 10.
+
+    for i in range(n - 1, -1, -1):
+Walk the ANSWER index from its last slot down to 0. The three parts are start
+(n-1), stop (-1) and step (-1) - and the stop being -1 rather than 0 is what
+makes 0 the last value actually visited, because Python stops BEFORE the stop
+value.
+
+Driving the loop from the answer index rather than from the fingers is a
+deliberate simplification: it runs exactly n times, so every slot is filled and
+you never have to reason about whether the fingers have met or crossed.
+
+    if abs(nums[left]) > abs(nums[right]):
+Compare the two ends by MAGNITUDE - size ignoring the minus sign. This is the
+whole decision. abs is used rather than squaring both because it is the same
+comparison and cheaper, though squaring would give an identical result.
+
+Note it is a strict ">". On a tie the else branch runs, which is safe because
+equal magnitudes square to equal values - see case 3 in section 4.
+
+    result[i] = nums[left] ** 2
+    left += 1
+The left end held the larger magnitude, so it is the biggest value remaining.
+Square it, put it in the current answer slot - which is the rearmost unfilled one
+- and step the left finger inwards, removing that value from consideration.
+
+    else:
+        result[i] = nums[right] ** 2
+        right -= 1
+Otherwise the right end is at least as big. Same three actions, mirrored: square,
+write, step inwards.
+
+Exactly one of the two branches runs per turn, so exactly one finger moves per
+turn - which is why n turns move the fingers n steps in total and they finish
+having met.
+
+    return result
+The filled answer, sorted ascending because it was filled with descending values
+from the back.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [-4, -1, 0, 3, 10],  n = 5
+result = [0, 0, 0, 0, 0],   left = 0 (on -4),  right = 4 (on 10)
+
+i = 4:  abs(-4) = 4, abs(10) = 10.  Is 4 > 10?  No -> take the RIGHT.
+        result[4] = 10 ** 2 = 100.  right = 3.
+        result = [0, 0, 0, 0, 100]      fingers now on -4 and 3
+
+i = 3:  abs(-4) = 4, abs(3) = 3.  Is 4 > 3?  Yes -> take the LEFT.
+        result[3] = (-4) ** 2 = 16.  left = 1.
+        result = [0, 0, 0, 16, 100]     fingers now on -1 and 3
+
+i = 2:  abs(-1) = 1, abs(3) = 3.  Is 1 > 3?  No -> take the RIGHT.
+        result[2] = 3 ** 2 = 9.  right = 2.
+        result = [0, 0, 9, 16, 100]     fingers now on -1 and 0
+
+i = 1:  abs(-1) = 1, abs(0) = 0.  Is 1 > 0?  Yes -> take the LEFT.
+        result[1] = (-1) ** 2 = 1.  left = 2.
+        result = [0, 1, 9, 16, 100]     both fingers now on 0
+
+i = 0:  abs(0) = 0, abs(0) = 0.  Is 0 > 0?  No -> take the RIGHT.
+        result[0] = 0 ** 2 = 0.  right = 1.
+        result = [0, 1, 9, 16, 100]
+
+Loop ends. return [0, 1, 9, 16, 100]. Correct.
+
+Two things to notice in that trace. The values were produced in the order
+100, 16, 9, 1, 0 - strictly decreasing, which is exactly why writing them
+backwards yields an ascending list. And on the last turn both fingers were on the
+same element; the loop still ran, because it is driven by the answer index, and
+that element was written exactly once.
+
+NOW THE ALL-NEGATIVE CASE, nums = [-5, -3, -1]:
+
+  i = 2: abs(-5)=5 > abs(-1)=1 -> LEFT.  result[2] = 25, left = 1
+  i = 1: abs(-3)=3 > abs(-1)=1 -> LEFT.  result[1] = 9,  left = 2
+  i = 0: abs(-1)=1 > abs(-1)=1?  No -> RIGHT. result[0] = 1, right = 1
+  return [1, 9, 25].
+
+The right finger never moved until the very last turn, and the code needed no
+special case to handle it.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). One pass, one comparison and one squaring per number. Compare with
+the simple version's O(n log n), which pays for a sort. On a million numbers that
+is roughly a million steps instead of twenty million - a real but not dramatic
+gain, and the honest way to describe it in an interview is "the same order of
+magnitude of work, but it removes the sort entirely and uses the structure the
+input already has".
+
+SPACE: O(n) for the answer list, which has to exist. Beyond that, only three
+integers - the two fingers and the loop index - so the extra working space is
+O(1). If the problem allowed modifying the input in place you could do better,
+but squares can be larger than the values they come from, so a separate output is
+the normal choice.
+
+THE #1 MISTAKE - filling the answer forwards instead of backwards. The method
+identifies the LARGEST remaining value on each turn, and the largest belongs at
+the end. Writing it to position 0 gives a perfectly reversed answer, which is
+maddening to debug because every individual step looks right. If you catch
+yourself writing result[i] with i counting up, stop and ask which end of the
+answer the value you just found belongs at.
+
+A close second: driving the loop with "while left < right" instead of "while
+left <= right", or instead of the answer index. That skips the final element -
+the one where the two fingers meet - and the first slot of the answer is left as
+a stray zero. Driving from the answer index sidesteps the whole question.
+
+ONE-SENTENCE TAKEAWAY: squaring a sorted list makes a valley, so the biggest
+square is always at one end or the other - compare the two ends, take the bigger,
+and fill the answer from the back forwards.""",
 ]
 
 _EX_P0D["Backtracking — subsets, permutations, combinations"] = [
@@ -31285,63 +31575,350 @@ is usually enough to clear the bar on this Hard problem.""",
 ]
 
 _EX_P0E["Reverse Linked List"] = [
-    """The textbook case, traced pointer by pointer.
-1->2->3, prev=None, curr=1.
-Iter 1: nxt=2; 1.next=None; prev=1; curr=2.   List so far: 1 (prev), 2->3.
-Iter 2: nxt=3; 2.next=1; prev=2; curr=3.      2->1, and 3 remains.
-Iter 3: nxt=None; 3.next=2; prev=3; curr=None. 3->2->1.
-Loop ends because curr is None. Return prev = 3.
-The invariant: prev always points at the head of the already-reversed prefix,
-curr at the head of the untouched suffix.""",
+    """1. THE GOAL, in plain English.
 
-    """Why `nxt` exists - the one-line version that loses the list.
-Write `curr.next = prev` FIRST without saving curr.next and you have just
-destroyed the only pointer to the rest of the list. On 1->2->3 you would flip
-1's pointer to None and then have no way to reach 2 or 3 - the nodes are
-garbage-collected and you return a one-element list.
-Python lets you avoid the temp with simultaneous assignment
-(`curr.next, prev, curr = prev, curr, curr.next`), because the right-hand side is
-evaluated fully before any assignment happens - but write the explicit
-three-pointer version in an interview; it is what you will be asked to trace.""",
+You are given a chain of items and must turn it around, so the last item becomes
+the first.
 
-    """Empty list and single node.
-head=None: curr=None, the loop never runs, return prev=None. An empty list
-reversed is an empty list.
-head=1: iter 1 sets 1.next=None (it already was), prev=1, curr=None. Return 1.
-Both fall out with no special-casing, which is the sign the three-pointer setup
-is right. Every linked-list answer should be checked against these two before
-you say 'done'.""",
+The chain is a LINKED LIST. Picture a train: each carriage holds some cargo and
+is coupled to exactly one carriage BEHIND it. To reach carriage 4 you must walk
+through 1, 2 and 3 - there is no way to jump straight there.
 
-    """The recursive version, and what it costs.
-    def reverse(head):
-        if not head or not head.next: return head
-        new_head = reverse(head.next)
-        head.next.next = head      # the node ahead now points BACK at me
-        head.next = None           # and I become the tail
-        return new_head
-Elegant, and the line `head.next.next = head` is worth staring at until it
-clicks: at 1->2, head.next is 2, so 2.next = 1.
-Cost: O(n) stack frames. On a 10^5-node list Python raises RecursionError. The
-iterative version is O(1) space and never fails - so lead with iterative, offer
-recursive as the variant.""",
+    before:   [1] -> [2] -> [3] -> None
 
-    """Reverse only part of the list - the real interview follow-up.
-'Reverse nodes from position m to n' (LeetCode 92) uses the identical three-
-pointer loop, but you first walk to position m-1 and keep that node as an
-anchor, run the loop exactly n-m+1 times, then reattach both ends.
-Same for 'Reverse Nodes in k-Group': run the loop k times per group.
-Practise attaching the reversed chunk back - the reversal itself is the easy
-part; the two reattachment pointers are where people lose the problem.""",
+    after:    [3] -> [2] -> [1] -> None
 
-    """Where reversal is the hidden subroutine.
-- Palindrome Linked List: reverse the second half, then compare.
-- Reorder List (1->n->2->n-1->...): split at the middle, reverse the tail,
-  interleave.
-- Add Two Numbers II (digits stored most-significant first): reverse both lists,
-  add with carry, reverse the result.
-- Swap Nodes in Pairs: a two-node reversal repeated.
-Whenever a linked-list problem needs to walk BACKWARDS and you are not allowed
-O(n) extra space, the answer is almost always 'reverse a portion in place'.""",
+Vocabulary as it appears:
+- Each carriage is a NODE. It holds a value and a link to the next node.
+- HEAD is the first node - the only one you are handed.
+- The last node's link points at NOTHING, written None. That is how you know the
+  chain has ended.
+
+Notice what "reversing" actually means here. We are NOT going to move the nodes
+around in memory, and we are not going to build a new chain. The nodes stay
+exactly where they are. All that changes is which node each one points at - every
+arrow gets turned around to face the other way.
+
+And there is one consequence that is easy to miss: the node that was FIRST must
+end up pointing at nothing, because it is now last. That detail decides how the
+code starts.""",
+
+    """2. THE INTUITION - the danger, and the three fingers that solve it.
+
+Try to reverse the chain naively and watch it break.
+
+    [1] -> [2] -> [3] -> None
+
+Start at node 1 and turn its arrow around. Node 1 should now point at nothing,
+since it is becoming the last node. So set 1's link to None:
+
+    [1] -> None        [2] -> [3] -> None
+                        ^
+                    ...and how do we get here?
+
+We have just destroyed the only thing that told us where node 2 was. The rest of
+the train has been uncoupled and there is no way to reach it. Nothing anywhere
+points at node 2 any more.
+
+That is the entire difficulty of this problem, and the fix is to look ahead
+before you cut.
+
+You need THREE fingers, not one:
+
+  CURR - the node whose arrow you are about to turn around.
+  PREV - the node curr should now point AT. This is the part already reversed,
+         sitting behind curr. It starts as "nothing", because the original first
+         node must end up pointing at nothing.
+  NXT  - a temporary hold on curr's next node, saved BEFORE the arrow is turned,
+         so you still know where to walk to afterwards.
+
+And each carriage is handled in four beats, in this exact order:
+
+  1. nxt = curr.next      save the rest of the train
+  2. curr.next = prev     turn this carriage around to face backwards
+  3. prev = curr          this carriage is now the front of the reversed part
+  4. curr = nxt           step forward onto the saved carriage
+
+Beat 1 must come before beat 2. Swap those two lines and the chain breaks
+exactly as it did above. That single ordering is what the question is really
+testing.
+
+There is no simpler-but-slower version worth showing here: building a new list
+would use memory proportional to the input, which the in-place requirement
+forbids, and it teaches nothing about pointers.""",
+
+    """3. THE TRICK - why prev starts as None, and what it becomes.
+
+Two small decisions carry the whole solution, and both are worth being sure
+about.
+
+WHY prev STARTS AS None. The first node we process is the original head, and in
+the reversed chain the original head is the LAST node. The last node of any chain
+points at nothing. So the very first thing beat 2 writes into curr.next must be
+None - which means prev has to be None before the loop starts.
+
+If you started prev at the head instead, the head would end up pointing at
+itself, and you would have made a one-node loop that never terminates when
+anything tries to walk it.
+
+WHY THE ANSWER IS prev, NOT curr. Follow the two fingers to the end. Each turn
+of the loop moves curr forward, so eventually curr steps onto None and the loop
+stops. At that moment:
+
+  curr is None - it walked off the end.
+  prev is the last node that was successfully turned around, which is the
+  ORIGINAL last node, which is the NEW first node.
+
+So prev is the answer. Returning curr returns None - an empty list - and the
+maddening thing is that this bug produces no error at all, just a silently empty
+result.
+
+A useful way to hold the whole thing in your head: at every moment, prev is the
+head of the reversed part and curr is the head of the not-yet-reversed part. The
+reversed part grows from the left while the remaining part shrinks from the left,
+and the two never overlap. When the remaining part is empty, the reversed part is
+the whole answer.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the wrong order inside the loop. Turning the arrow before saving the
+next node loses the rest of the chain, as shown in section 2. The symptom is a
+returned list of length 1. Save first, then flip - always.
+
+CASE 2 - returning curr instead of prev. Returns None, an empty list, with no
+error message. Covered in section 3.
+
+CASE 3 - the empty list. head is None, so curr is None and the loop never runs.
+prev is still None, and we return None. Correct - reversing nothing gives
+nothing. No special case needed.
+
+CASE 4 - a single node. [1]. One turn of the loop: nxt is None, 1's link is set
+to None (it already was), prev becomes node 1, curr becomes None, loop ends.
+Return node 1. Correct, again with no special case.
+
+CASE 5 - forgetting to advance one of the pointers. Leaving out "curr = nxt"
+means curr never moves and the loop runs forever. Leaving out "prev = curr" means
+every node gets pointed at the same thing, and the chain is mangled. All four
+beats are needed, every time.
+
+CASE 6 - the recursive version and the stack. There is an elegant three-line
+recursive solution to this problem, and it is worth knowing. But it uses one
+level of call stack per node, so on a list of a million nodes it exceeds Python's
+recursion limit (about 1,000) and crashes. The iterative version below has no
+such limit, which is why it is the one to write by default.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+LINKED LIST, NODE, HEAD, None: defined in section 1.
+
+node.next: the link a node holds - "the node after this one". Assigning to it,
+as in curr.next = prev, is what physically changes the chain. It is the only
+line in the whole algorithm that modifies anything.
+
+IN PLACE: changing the original structure rather than building a new one. The
+test is memory: an in-place algorithm uses a fixed amount of extra space no
+matter how big the input is - here, three variables.
+
+POINTER: a variable holding a reference to a node. Moving a pointer (prev = curr)
+does not change the chain at all; it only changes which node your finger is
+resting on. Confusing "moving a finger" with "changing an arrow" is the single
+biggest source of confusion in linked-list problems, so keep the distinction
+sharp: assignments to curr, prev and nxt move fingers; the assignment to
+curr.next changes the chain.
+
+O(n) and O(1): the costs, where n is the number of nodes. O(n) means the work
+grows in step with the length - double the list, double the work. O(1) means the
+extra memory does not grow at all, however long the list is, because it is only
+ever three variables.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: walk the chain turning each arrow to point
+backwards, always saving the next node BEFORE you turn the current one, and hand
+back the node you finished on.
+
+No recursion here - a single loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Set prev to nothing. This is the reversed part, which starts out empty - and
+     setting it to nothing is what makes the original first node correctly end up
+     pointing at nothing.
+
+  2. Set curr to the head. This is the node whose arrow you are about to turn.
+
+  3. Repeat while curr is pointing at an actual node:
+
+     a. Save curr's next node in a temporary variable. This must come first,
+        because the very next step overwrites the only link to it.
+
+     b. Turn curr's arrow around: point it at prev.
+
+     c. Move prev onto curr. The node just turned is now the front of the
+        reversed part.
+
+     d. Move curr onto the saved node. This is the only reason step (a) existed.
+
+  4. When curr walks off the end and becomes nothing, the loop stops. Return
+     prev - the last node successfully turned, which is the original last node
+     and therefore the new first node.
+
+Sanity-check the shape of it: only step (b) changes the chain. Steps (a), (c) and
+(d) just move fingers about. If you can keep that distinction clear in your head
+while reading the code, this problem stops being fiddly.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the chain from front to back, and as it passes each item it turns
+that item's arrow around so it points at the item behind instead of the item
+ahead.
+
+The whole difficulty is that an item's arrow is the only thing that tells you
+where the rest of the chain is. The moment you turn it around, everything after
+it becomes unreachable - the rest of the train is uncoupled and rolling away.
+
+So the code holds three fingers at once. One rests on the item currently being
+turned. One rests on the part already reversed, sitting behind - and that is what
+the current item's arrow gets pointed at. The third is a temporary hold on the
+item just ahead, taken a moment BEFORE the arrow is turned, so there is still a
+way to step forward afterwards.
+
+The "already reversed" finger starts pointing at nothing, and that is not an
+arbitrary choice: the item that was first has to end up last, and the last item
+in any chain points at nothing.
+
+Each round is four small moves in a fixed order - save what is ahead, turn the
+arrow backwards, move the reversed-part finger onto the item just turned, then
+step forward onto the saved item - repeated until it steps off the end.
+
+At that point the reversed-part finger is resting on what used to be the last
+item, which is now the first. That is what gets handed back.
+
+Nothing is copied and no new items are made. The same items are still sitting in
+the same places in memory; only the arrows between them changed.""",
+
+    """8. THE CODE, line by line.
+
+Keep [1] -> [2] -> [3] beside you.
+
+    prev = None
+The reversed part, starting out empty. Setting it to None rather than to head is
+what makes the ORIGINAL first node end up pointing at nothing - and a node
+pointing at nothing is exactly what "end of list" means. In round 1 this is the
+value that gets written into node 1's link. See section 3.
+
+    curr = head
+The node whose arrow we are about to turn. It starts at the front and walks to
+the end.
+
+    while curr:
+Keep going while curr is an actual node. When curr becomes None we have walked
+off the end and every arrow has been turned. On an empty list this is false
+immediately, which is why the empty case needs no special handling.
+
+    nxt = curr.next
+BEAT 1, and it must be first. Save where the rest of the list is, because the
+very next line overwrites curr.next and that link is the only way to reach it. In
+round 1 this saves node 2; without it, nodes 2 and 3 would be stranded with
+nothing pointing at them.
+
+    curr.next = prev
+BEAT 2 - the actual reversal, and the ONLY line in this function that changes the
+chain. This node now points BACKWARDS, at whatever has already been reversed.
+Round 1 writes None here; round 2 writes node 1; round 3 writes node 2.
+
+    prev = curr
+BEAT 3. The node just turned becomes the front of the reversed part, so it
+becomes the new prev for the next round. This moves a finger; it does not touch
+the chain.
+
+    curr = nxt
+BEAT 4. Step forward onto the node saved in beat 1. This is the only reason beat
+1 existed.
+
+    return prev
+Return PREV, not curr. By the time the loop exits, curr is None - it walked off
+the end. prev is the last node successfully turned, which is the old tail and
+therefore the new head. Returning curr here gives an empty list with no error at
+all - see case 2 in section 4.
+
+The four lines inside the loop, and their ORDER, are the entire problem. Write
+beat 2 before beat 1 and you get a list of length 1; return curr instead of prev
+and you get nothing. Both are worth checking on paper before you say you are
+done.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Starting list: [1] -> [2] -> [3] -> None
+Start:  prev = None,  curr = node 1
+
+ROUND 1.  curr is node 1.
+  nxt = node 2            saved - we are about to lose this link
+  1.next = None           flip: node 1 now points at prev, which is None.
+                          Node 1 has become the END of the list. Correct - it was
+                          the front, and the front becomes the back.
+  prev = node 1
+  curr = node 2
+  Picture:  reversed: [1] -> None       remaining: [2] -> [3] -> None
+
+ROUND 2.  curr is node 2.
+  nxt = node 3            saved
+  2.next = node 1         flip: node 2 now points back at node 1
+  prev = node 2
+  curr = node 3
+  Picture:  reversed: [2] -> [1] -> None      remaining: [3] -> None
+
+ROUND 3.  curr is node 3.
+  nxt = None              node 3 was last, so there is nothing after it
+  3.next = node 2         flip
+  prev = node 3
+  curr = None
+  Picture:  reversed: [3] -> [2] -> [1] -> None      remaining: empty
+
+Check the loop condition: curr is None, so stop.
+
+return prev = node 3.  The list reads [3, 2, 1]. Correct.
+
+Read the three pictures in order. The reversed part grows from the left while the
+remaining part shrinks from the left, and the two never overlap - which is the
+mental model from section 3, visible.
+
+SINGLE NODE, [1]:
+  Round 1: nxt = None; 1.next = None; prev = node 1; curr = None. Loop ends.
+  return node 1. Correct.
+
+EMPTY LIST:
+  curr is None immediately, the loop never runs, prev is still None.
+  return None. Correct.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) where n is the number of nodes. Each node is visited exactly once and
+handled with four assignments. You cannot do better - every arrow has to be
+turned, so every node must be touched.
+
+SPACE: O(1) - constant. Three variables, no matter how long the list is. Nothing
+is copied and no new nodes are made, which is what makes this a genuinely
+in-place algorithm.
+
+Contrast with the recursive version: it is shorter to write and uses O(n) space,
+because it stacks one paused call per node. On a list of a million nodes that
+exceeds Python's recursion limit and crashes. Knowing both, and knowing WHY you
+would choose the iterative one, is the answer an interviewer is listening for.
+
+THE #1 MISTAKE - turning the arrow before saving the next node. The rest of the
+chain becomes unreachable the instant curr.next is overwritten, and the function
+returns a list of length 1. It is the mistake this problem exists to test, so
+name the ordering out loud as you write it: "save, flip, advance, advance."
+
+A close second: returning curr instead of prev. curr is always None when the loop
+ends, so this returns an empty list - with no crash and no message, which makes
+it harder to spot than a real error would be.
+
+ONE-SENTENCE TAKEAWAY: keep three fingers - the node you are turning, the
+reversed part behind it, and a saved hold on the node ahead - and always save the
+next node BEFORE you turn the current one, because that arrow is the only route
+to the rest of the chain.""",
 ]
 
 _EX_P0E["Find First and Last Position (sorted array)"] = [
