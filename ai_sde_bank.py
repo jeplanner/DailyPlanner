@@ -44300,60 +44300,418 @@ oranges rotten as you queue them - and count the fresh ones so you can tell
 ]
 
 _EX_P0F["Search a 2D Matrix"] = [
-    """The textbook case, traced.
-matrix = [[1, 3, 5, 7],
-          [10,11,16,20],
-          [23,30,34,60]], target = 3. m=3, n=4, so indices run 0..11.
-lo=0, hi=11. mid=5 -> (5//4, 5%4) = (1,1) -> 11 > 3 -> hi=4.
-mid=2 -> (0,2) -> 5 > 3 -> hi=1.
-mid=0 -> (0,0) -> 1 < 3 -> lo=1.
-mid=1 -> (0,1) -> 3 == target -> True.
-Four probes for twelve cells: log2(12) is about 3.6.""",
+    """1. THE GOAL, in plain English.
 
-    """The index mapping, spelled out.
-Flatten the matrix row by row and cell k is at row k//n, column k%n.
-k=0 -> (0,0). k=3 -> (0,3), the end of row 0. k=4 -> (1,0), the start of row 1.
-k=11 -> (2,3).
-Note the divisor is n, the number of COLUMNS, not m. Using m works only on square
-matrices, so it passes the small examples and fails the hidden tests - a
-genuinely nasty bug because it looks symmetric.
-Sanity check on paper with a non-square matrix every time you write this.""",
+You are handed a grid of numbers - rows and columns, like a spreadsheet - and asked
+one question: is a particular number somewhere in this grid, yes or no?
 
-    """A target that is absent.
-Same matrix, target = 13. lo=0,hi=11.
-mid=5 -> 11 < 13 -> lo=6. mid=8 -> (2,0)=23 > 13 -> hi=7.
-mid=6 -> (1,2)=16 > 13 -> hi=5. Now lo=6 > hi=5, loop exits, return False.
-The exit condition `while lo <= hi` with hi = mid-1 / lo = mid+1 is the standard
-value-finding template - contrast with the boundary template used in Find
-Minimum in Rotated Sorted Array, which uses `lo < hi` and `hi = mid`.""",
+    matrix = [[ 1,  3,  5,  7],
+              [10, 11, 16, 20],
+              [23, 30, 34, 60]]
 
-    """Empty and degenerate shapes.
-matrix = [] -> the guard returns False before indexing matrix[0].
-matrix = [[]] -> `not matrix[0]` catches it. Without this second check, n = 0 and
-`mid // n` raises ZeroDivisionError.
-matrix = [[5]], target 5 -> lo=hi=0, one probe, True.
-A single row [[1,3,5]] behaves exactly like a plain sorted array, which is a
-useful mental model for the whole approach.""",
+    search for 16  ->  True
+    search for 13  ->  False
 
-    """The DIFFERENT problem: Search a 2D Matrix II.
-LeetCode 240 relaxes the guarantee: rows are sorted and columns are sorted, but
-a row's first element is NOT necessarily larger than the previous row's last. The
-flattened array is no longer sorted, so this binary search is simply wrong.
-The right tool there is the staircase walk: start at the TOP-RIGHT corner; if the
-value is too big move left, if too small move down. Each step eliminates a whole
-row or column, so it is O(m + n).
-Read the constraints carefully - these two problems look identical in the
-statement's first sentence and need completely different algorithms.""",
+You could of course look at all twelve cells. The point of the problem is to do it
+in about four looks instead, and the reason you can is a promise the problem makes
+about how the grid is arranged:
 
-    """Cost, and the two-binary-search alternative.
-This version: O(log(m x n)) = O(log m + log n).
-Alternative: binary-search the rows for the one whose range could contain the
-target, then binary-search inside it - also O(log m + log n), same cost, more
-code, but it generalises when rows have different lengths.
-The flattened version is the tidier answer and shows you can reason about index
-arithmetic, which is the actual skill being tested. State the mapping
-(k -> (k//n, k%n)) before you write the loop and the rest is a plain binary
-search.""",
+  - Every ROW is sorted left to right.        1 < 3 < 5 < 7
+  - Every row STARTS higher than the previous row ENDS.     7 < 10, and 20 < 23.
+
+That second promise is the whole problem. Read the grid row after row, left to
+right, and you get:
+
+    1, 3, 5, 7, 10, 11, 16, 20, 23, 30, 34, 60
+
+which is just... a sorted list. The grid is a sorted list that has been FOLDED into
+rows. So the real task is: binary-search a sorted list, while pretending the folds
+are not there.
+
+Note what is NOT promised: nothing here says the columns matter, and nothing says
+you must search row by row. A different, very similar-looking problem (section 4)
+drops the second promise, and then this method stops working.""",
+
+    """2. THE INTUITION - the grid is one long sorted line, folded.
+
+Picture the sorted list written on a long strip of paper:
+
+    1  3  5  7 | 10 11 16 20 | 23 30 34 60
+    0  1  2  3   4  5  6  7    8  9 10 11     <- position on the strip
+
+Now fold the strip at the two bars and stack the pieces:
+
+    row 0:   1   3   5   7
+    row 1:  10  11  16  20
+    row 2:  23  30  34  60
+
+Nothing about the ORDER changed. Position 6 on the strip holds 16; in the folded
+grid that same 16 sits at row 1, column 2. Folding moved the paper, not the numbers.
+
+So the plan is: search the strip, and every time you want to LOOK at a position,
+translate that position into a (row, column) pair and read the grid there.
+
+The translation is arithmetic you already know from telling time. If every row holds
+n = 4 cells, then strip position 6 is:
+
+    row    = 6 divided by 4, throwing away the remainder  = 1
+    column = the remainder of 6 divided by 4              = 2
+
+Exactly like 135 minutes being 2 hours (135 // 60) and 15 minutes (135 % 60). Rows
+are the "hours", cells within a row are the "minutes", and n is how many minutes are
+in an hour.
+
+With that translation in hand, ordinary binary search does the rest: look at the
+middle of the strip, and because the strip is sorted, one comparison throws away
+half of everything still in play.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+MATRIX / GRID. A list of lists. matrix[1] is the whole second row; matrix[1][2] is
+the third cell of the second row. Counting starts at 0, always.
+
+m AND n. m is how many rows there are (len(matrix)); n is how many cells are in one
+row (len(matrix[0])). The grid has m x n cells in total.
+
+SORTED. Arranged smallest to largest. It is what lets you rule out half the
+possibilities from a single comparison - if the middle value is too small, then
+everything to its LEFT is also too small, because everything to the left is even
+smaller.
+
+BINARY SEARCH. The halving method. Keep a window of positions that could still hold
+the answer. Look at its middle. Either you have found the target, or you learn which
+half to throw away. The window shrinks by half every step, so 12 cells take at most
+4 looks, 1,000 take 10, and 1,000,000 take 20.
+
+lo AND hi. The two ends of the window that is still in play - "the answer, if it
+exists, is somewhere between strip position lo and strip position hi, inclusive."
+They start at 0 and m*n - 1 (the last valid position: 12 cells means positions 0
+through 11) and squeeze toward each other.
+
+mid. The middle position of the current window, (lo + hi) // 2.
+
+// (FLOOR DIVISION). Divide and throw away the remainder. 7 // 4 = 1.
+
+% (MODULO / REMAINDER). What is left over after dividing. 7 % 4 = 3.
+
+O(log N) - "LOGARITHMIC TIME". A cost that grows by ONE step every time the input
+DOUBLES. 12 cells: 4 steps. 24 cells: 5 steps. A million: 20. This is the reason
+binary search is worth the trouble.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE - and the near-identical problem that is not
+this problem.
+
+TRAP 1: the empty grid. If matrix is [] then matrix[0] crashes - there is no row 0.
+Worse, matrix can be [[]]: one row that holds nothing. Then matrix[0] exists but
+len(matrix[0]) is 0, so n is 0, and mid % n divides by zero. That is why the guard
+in the code checks BOTH things:
+
+    if not matrix or not matrix[0]:
+
+The first half catches [], the second catches [[]]. Beginners nearly always write
+only the first.
+
+TRAP 2 - the big one: SEARCH A 2D MATRIX II is a different problem. It looks almost
+identical, and it keeps only the FIRST promise:
+
+    [[ 1,  4,  7],
+     [ 2,  5,  8],
+     [ 3,  6,  9]]
+
+Rows are sorted. Columns are sorted. But row 1 starts at 2, which is LESS than 7,
+the end of row 0. So flattening does NOT give a sorted list - the strip would read
+1,4,7,2,5,8,3,6,9. Binary search on that is meaningless, and the method on this page
+returns wrong answers.
+
+The way to tell them apart in an interview is one check: does the first value of
+each row exceed the last value of the row above? If yes, it is one folded sorted
+list, and you do what this page does. If not, it is Matrix II, and you use the
+staircase walk: start at the TOP-RIGHT corner; if that value is too big move LEFT
+(the whole column below is bigger), if too small move DOWN (the whole row left is
+smaller). That eliminates one row or one column per step, giving O(m + n).
+
+Say this distinction out loud in an interview. It is precisely what the interviewer
+is checking.
+
+TRAP 3: <= versus <. The loop is `while lo <= hi`, not `while lo < hi`. When the
+window narrows to a single cell, lo equals hi - and that one remaining cell has
+never been compared to the target yet. Using < skips it, and single-cell grids or
+targets sitting in the last surviving position come back False when they should be
+True.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADE.
+
+THE SLOW VERSION - look at everything.
+
+    for each row in the matrix:
+        for each value in that row:
+            if it equals the target, answer True
+    answer False
+
+Correct, easy to write, and worth saying out loud in an interview as your starting
+point. Cost: m x n looks. For a 1000 x 1000 grid that is a million comparisons.
+
+FIRST UPGRADE - two binary searches. Binary-search the FIRST COLUMN to find which
+row could contain the target (the last row whose first value is <= target), then
+binary-search inside that one row. Cost: O(log m + log n). This is completely valid
+and some people find it easier to reason about.
+
+THE UPGRADE THIS PAGE USES - one binary search over the folded strip. Instead of
+finding a row and then a cell, treat all m x n cells as one sorted list and binary
+search it directly.
+
+Cost: O(log(m x n)). And here is the pleasant surprise - that is the SAME number:
+
+    log(m x n) = log m + log n
+
+because multiplying inside a logarithm is adding outside it. The two upgrades cost
+identically. The folded-strip version just needs one loop instead of two, so there
+is less to get wrong.
+
+THE TRICK, EXPLAINED FROM SCRATCH: why mid // n and mid % n are safe.
+
+The claim is that strip position k always lands on row k // n, column k % n. Why can
+you trust that?
+
+Positions 0 through n-1 are row 0. Positions n through 2n-1 are row 1. In general,
+row r owns positions r*n through r*n + (n-1).
+
+Take k. Divide by n: k = r*n + c, where c is the remainder, so 0 <= c < n. That r is
+exactly k // n, and that c is exactly k % n. Since c is smaller than n, position k
+falls inside row r's block, at offset c from its start - which is column c.
+
+The remainder can never reach n (if it did, you could fit another whole row into it,
+and the division would have given a bigger quotient). So the column is always a
+legal column, and the row is always a legal row as long as k stays below m*n. Since
+lo and hi never leave the range 0..m*n-1, mid never does either. The mapping cannot
+go out of bounds.
+
+Check it on the example, where n = 4:
+
+    k=0  -> row 0, col 0  ->  1     (start of row 0)
+    k=3  -> row 0, col 3  ->  7     (end of row 0)
+    k=4  -> row 1, col 0  -> 10     (the fold - a new row begins)
+    k=6  -> row 1, col 2  -> 16
+    k=11 -> row 2, col 3  -> 60     (last cell)""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: PRETEND THE GRID IS ONE SORTED LIST OF
+LENGTH m*n, BINARY SEARCH THAT LIST, AND TRANSLATE EACH POSITION YOU WANT TO LOOK AT
+INTO A (ROW, COLUMN) PAIR WITH DIVIDE-AND-REMAINDER.
+
+There is NO RECURSION here. Nothing calls itself, nothing pauses waiting on a deeper
+call, and there is no call stack to reason about. The mechanism to understand
+instead is THE SHRINKING WINDOW, and it is simpler: two numbers, lo and hi, mark the
+part of the strip that could still contain the answer. Every pass through the loop
+moves one of them, so the window strictly shrinks. Two things follow:
+
+  - The loop must end. The gap between lo and hi shrinks every single pass, so it
+    cannot go on forever.
+  - When lo passes hi, the window is empty - there are no positions left that could
+    hold the target - and that is your proof the target is absent.
+
+The steps:
+
+  1. If the grid is empty, or its first row is empty, answer False right away. Do
+     this BEFORE touching any cell.
+
+  2. Note m, the number of rows, and n, the number of cells per row.
+
+  3. Set the window to the whole strip: lo = 0, hi = m*n - 1.
+
+  4. Repeat while the window is not empty, meaning while lo is still less than or
+     equal to hi:
+
+     a. Find the middle position of the window: mid = (lo + hi) // 2.
+
+     b. Translate mid into a cell: row is mid // n, column is mid % n. Read that
+        cell; call the value you read val.
+
+     c. If val equals the target, you are done - answer True.
+
+     d. If val is SMALLER than the target, then val and everything before it are too
+        small. Discard the left half by moving lo to mid + 1.
+
+     e. Otherwise val is BIGGER than the target, so val and everything after it are
+        too big. Discard the right half by moving hi to mid - 1.
+
+  5. If the loop finishes without ever matching, the window emptied out. The target
+     is not in the grid - answer False.
+
+Two details that beginners get wrong, worth fixing in your head now: in step 4d it
+is mid + 1 and not mid (mid was just checked and did not match, so re-including it
+would loop forever), and in step 4 the comparison is <= and not < (the last surviving
+single cell still needs to be checked).""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Imagine a library where the books are numbered 1 to 12 and shelved in strict order,
+four books to a shelf, three shelves. You want to know whether book 16 is there.
+
+You do not walk the shelves. You stand back and say: "the books I have not ruled out
+run from the 1st to the 12th." You ask for the middle one - the 6th - and someone
+works out that the 6th book is on shelf 2, second position, and hands it to you. It
+is book 11.
+
+Eleven is smaller than sixteen. Because the whole collection is in order, every book
+before the 6th is also smaller than sixteen. All six of them are gone in one move.
+
+Now the range is the 7th to the 12th. You ask for its middle, the 9th - shelf 3,
+first position - and get book 23. Too big. So the 9th and everything after it are
+out. Four more gone.
+
+The range is now the 7th to the 8th. Middle: the 7th - shelf 2, third position -
+book 16. Found.
+
+Three questions instead of twelve looks. And if the book had never existed, the
+range would have kept shrinking until its start passed its end - nothing left to
+ask about - and you would say "not here" with certainty, having never seen most of
+the library.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def search_matrix(matrix, target):
+
+matrix is the grid; target is the number you are hunting for. The function answers
+True or False - the problem asks only whether the value is present, not where.
+
+    if not matrix or not matrix[0]:
+        return False
+
+The guard from section 4. `not matrix` is true for the empty grid []. `not
+matrix[0]` is true for [[]] - a grid with one row that holds nothing. Both mean
+there is nothing to find, so leave immediately. Skipping this line is what makes the
+n = 0 division below crash.
+
+    m, n = len(matrix), len(matrix[0])
+
+m = number of rows, n = cells per row. In the story, m = 3 shelves and n = 4 books
+per shelf. n is the important one - it is the number you divide by to translate a
+strip position into a shelf.
+
+    lo, hi = 0, m * n - 1
+
+The window starts as the entire strip. m * n is 12 cells, so the last legal position
+is 11 - hence the minus one. Writing m * n here instead of 11 is what makes the code
+work for any size grid. This is "the books from the 1st to the 12th" in the story.
+
+    while lo <= hi:
+
+Keep going while the window still holds at least one position. When lo and hi are
+equal, exactly one cell remains and it has not been examined yet - which is why this
+is <= and not <. When lo finally exceeds hi, the window is empty and the search has
+failed.
+
+    mid = (lo + hi) // 2
+
+The middle position of the current window. // throws away the remainder, so with lo
+= 0 and hi = 11 you get 5, not 5.5. This is "ask for the middle book".
+
+    val = matrix[mid // n][mid % n]
+
+The translation, and the heart of the method. mid // n is the row - how many whole
+rows fit before position mid. mid % n is the column - how far into that row it sits.
+With n = 4 and mid = 5: 5 // 4 = 1 and 5 % 4 = 1, so matrix[1][1], which is 11. This
+is the librarian working out the shelf and handing you the book. val is the value
+just read.
+
+    if val == target:
+        return True
+
+Found it. The problem only asks yes-or-no, so there is nothing more to do. (If it
+had asked WHERE, you would return (mid // n, mid % n) here instead.)
+
+    if val < target:
+        lo = mid + 1
+
+val is too small. Everything from lo up to and including mid is therefore also too
+small - the strip is sorted - so the entire left half is discarded in one move. The
++ 1 matters: mid was just compared and did not match, so leaving it in the window
+would mean re-checking it forever, and the loop would never end.
+
+    else:
+        hi = mid - 1
+
+val is too big, so mid and everything after it are too big. Discard the right half.
+Same reasoning about the - 1.
+
+    return False
+
+The loop ended, which can only happen when lo passed hi and the window emptied.
+Every position was either checked or provably ruled out, so the target genuinely is
+not in the grid.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    matrix = [[1, 3,  5],
+              [7, 9, 11]]
+    target = 9
+
+Guard: matrix is not empty and matrix[0] is not empty, so continue.
+m = 2, n = 3. The strip is 1, 3, 5, 7, 9, 11 at positions 0..5.
+lo = 0, hi = m*n - 1 = 5.
+
+PASS 1.
+  lo = 0, hi = 5, and 0 <= 5, so enter.
+  mid = (0 + 5) // 2 = 2.
+  mid // n = 2 // 3 = 0.  mid % n = 2 % 3 = 2.  val = matrix[0][2] = 5.
+  val == target? 5 == 9, no.
+  val < target? 5 < 9, yes -> lo = mid + 1 = 3.
+  Window is now positions 3..5, holding 7, 9, 11.
+
+PASS 2.
+  lo = 3, hi = 5, and 3 <= 5, so enter.
+  mid = (3 + 5) // 2 = 4.
+  mid // n = 4 // 3 = 1.  mid % n = 4 % 3 = 1.  val = matrix[1][1] = 9.
+  val == target? 9 == 9, yes -> return True.
+
+Two comparisons for six cells.
+
+NOW THE SAME GRID WITH A TARGET THAT IS NOT THERE: target = 8.
+
+  lo = 0, hi = 5.
+  Pass 1: mid = 2, val = matrix[0][2] = 5. 5 < 8 -> lo = 3.
+  Pass 2: lo=3, hi=5, mid = 4, val = matrix[1][1] = 9. 9 > 8 -> hi = 3.
+  Pass 3: lo=3, hi=3, and 3 <= 3 so we still enter - this is the single-cell case
+          that `while lo < hi` would have skipped.
+          mid = (3+3)//2 = 3. 3 // 3 = 1, 3 % 3 = 0. val = matrix[1][0] = 7.
+          7 < 8 -> lo = 4.
+  Check: lo = 4, hi = 3. 4 <= 3 is false, so the loop ends.
+  return False.
+
+Follow the window shrinking: 6 positions, then 3, then 1, then 0. Every step at
+least halves it, and the empty window at the end is the proof that 8 is absent - not
+a guess.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(log(m x n)), which is the same thing as O(log m + log n).
+
+In plain words: every pass throws away half of whatever is left, so the number of
+passes is "how many times can you halve m x n before reaching 1". A 3 x 4 grid takes
+at most 4 passes. A 1000 x 1000 grid - a million cells - takes at most 20. Scanning
+every cell would take a million. That is the whole payoff.
+
+SPACE: O(1) - constant. Only lo, hi, mid, val, m and n are stored, and that stays six
+numbers whether the grid holds twelve cells or twelve million. No copy of the grid is
+made, and the grid is never modified - the caller's data comes back untouched.
+
+THE #1 BEGINNER MISTAKE: using this method on Search a 2D Matrix II. The two
+problems look the same on screen. This method needs the strong promise - each row
+starts above where the previous row ended - because that is what makes the flattened
+strip sorted. Matrix II only promises rows and columns are individually sorted, the
+strip is NOT sorted, and binary search over it silently returns wrong answers rather
+than crashing, which makes it hard to notice. Before writing a single line, check
+whether matrix[i][0] > matrix[i-1][n-1] for every row. If yes, fold and binary
+search. If no, walk the staircase from the top-right corner.
+
+Runner-up mistake: writing `while lo < hi` and losing the final single-cell check, or
+writing `lo = mid` instead of `lo = mid + 1` and hanging in an infinite loop.
+
+TAKEAWAY: when a grid is sorted row after row with no overlap between rows, it is not
+really a grid - it is one sorted list wearing a disguise, and divide-and-remainder is
+how you see through it.""",
 ]
 
 
@@ -45097,129 +45455,776 @@ the left edge never has to go back.""",
 ]
 
 _EX_P0G["Subsets (power set)"] = [
-    """The doubling, traced.
-nums = [1,2,3]. result = [[]].
-num=1: append 1 to every existing subset -> [[], [1]]. Count 2.
-num=2: -> [[], [1], [2], [1,2]]. Count 4.
-num=3: -> [[], [1], [2], [1,2], [3], [1,3], [2,3], [1,2,3]]. Count 8.
-Each number DOUBLES the answer because every existing subset gives rise to two:
-one without the new number and one with it. That is why the total is 2^n.""",
+    """1. THE GOAL, in plain English.
 
-    """The bit-mask view - the same answer, counted in binary.
-For n=3 the integers 0..7 in binary are 000,001,010,011,100,101,110,111. Read
-bit i as 'is nums[i] in this subset?':
-  000 -> []      001 -> [1]     010 -> [2]     011 -> [1,2]
-  100 -> [3]     101 -> [1,3]   110 -> [2,3]   111 -> [1,2,3]
-    for mask in range(1 << n):
-        result.append([nums[i] for i in range(n) if mask & (1 << i)])
-Identical output, no recursion, and it makes the 2^n immediately obvious. Worth
-knowing because the mask idea reappears in bitmask DP (travelling salesman,
-assignment problems).""",
+Given a handful of distinct items, list EVERY possible selection of them - including
+picking none, and including picking all.
 
-    """Edge cases: empty input, one element.
-[] -> result stays [[]]. The power set of the empty set contains exactly one
-member, the empty set itself - NOT zero members. Returning [] here is a genuine
-mistake, and interviewers ask about it.
-[1] -> [[], [1]], two subsets.
-n=20 -> 1,048,576 subsets. Say that out loud: the output is exponential, so this
-approach is only viable for n up to about 20.""",
+    nums = [1, 2, 3]
 
-    """The aliasing bug in the backtracking version.
-    def backtrack(start):
-        result.append(path)      # WRONG - appends a reference
-        ...
-Every entry ends up pointing at the same list, which the recursion empties, so
-you get eight copies of []. Writing path[:] (or list(path)) fixes it.
-The iterative version in the code above is immune, because
-`subset + [num]` builds a NEW list every time. That immunity is a real reason to
-prefer it when you are typing fast under pressure.""",
+    answer = [], [1], [2], [3], [1,2], [1,3], [2,3], [1,2,3]
 
-    """Duplicates - Subsets II, and the sort-then-skip rule.
-nums = [1,2,2] with the plain doubling gives [], [1], [2], [1,2], [2], [1,2],
-[2,2], [1,2,2] - [2] and [1,2] each appear twice.
-Fix: sort, then use backtracking with
-    if i > start and nums[i] == nums[i-1]: continue
-so a repeated value can only extend a subset that already ends in that value.
-Result: [], [1], [1,2], [1,2,2], [2], [2,2] - six distinct subsets.
-The iterative doubling can also be fixed (only double the subsets ADDED in the
-previous round when the value repeats), but the backtracking form is easier to
-justify.""",
+Eight of them. The order the eight come out in does not matter, and the order INSIDE
+each one does not matter either - [1,2] and [2,1] are the same selection.
 
-    """Complexity, and where power sets actually get used.
-O(n x 2^n): 2^n subsets, each costing O(n) to build and copy. Space is the same,
-since you keep them all.
-Real uses: enumerating feature-flag combinations for a test matrix, choosing
-which indexes to build in a query optimiser, bitmask DP over a small set of
-cities or tasks, generating all coalitions in a game-theory calculation, and
-brute-forcing small instances to validate a smarter algorithm.
-That last one is the practical one: writing a 2^n reference implementation and
-diffing it against your clever O(n log n) solution on random small inputs is the
-fastest way to find the bug.""",
+A everyday version: you have three toppings and you are deciding what goes on the
+pizza. Plain (no toppings) is a valid choice. All three is a valid choice. Every
+combination in between is a valid choice. List them all.
+
+The collection of all these selections has a name - the POWER SET - and it always
+has exactly 2^n members for n items. Three items gives 8. Ten items gives 1024.
+Twenty items gives over a million. That growth is not a flaw in your solution; it is
+the size of the answer you were asked to produce.
+
+The problem promises the items are DISTINCT, no repeats. Section 4 covers what
+changes when that promise is dropped.""",
+
+    """2. THE INTUITION - every new item DOUBLES the answer.
+
+Do not think about generating eight things. Think about one item arriving at a time.
+
+Start with no items at all. There is exactly one selection you can make: the empty
+one.
+
+    []
+
+Now item 1 walks in. Every selection you already had splits into two: the version
+WITHOUT 1 (unchanged) and the version WITH 1 added.
+
+    []                        []  and  [1]
+              --- 1 arrives -->
+    1 selection                    2 selections
+
+Now item 2 arrives. Same rule, applied to both:
+
+    []      ->  []      and  [2]
+    [1]     ->  [1]     and  [1,2]
+
+    4 selections
+
+Now item 3:
+
+    []      ->  []      and  [3]
+    [1]     ->  [1]     and  [1,3]
+    [2]     ->  [2]     and  [2,3]
+    [1,2]   ->  [1,2]   and  [1,2,3]
+
+    8 selections. Done.
+
+Drawn as the doubling:
+
+    1  ->  2  ->  4  ->  8
+       x2    x2     x2
+
+That is where 2^n comes from - you doubled n times starting from 1. And the method
+practically writes itself: keep a running pile of selections, and for each new item,
+add to the pile a copy of everything already in it with that item appended.
+
+No cleverness, no recursion required, no backtracking required. Just doubling.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+SUBSET. Any selection of items from a set, including the empty selection and the
+full one. [1,3] is a subset of [1,2,3]. So is []. So is [1,2,3] itself.
+
+POWER SET. The collection of ALL subsets. For [1,2,3] it is the eight lists above.
+Note the power set is a list OF lists.
+
+DISTINCT. No value appears twice in the input. [1,2,3] is distinct; [1,2,2] is not.
+
+2^n ("TWO TO THE n"). 2 multiplied by itself n times. 2^3 = 8, 2^10 = 1024. It is
+what you get from doubling n times.
+
+EXPONENTIAL. A cost that MULTIPLIES as the input grows by one, rather than adding.
+Going from 20 items to 21 does not add a bit of work - it doubles it. This is the
+most expensive shape of cost you routinely meet, and it is why subset problems cap
+out around n = 20 in practice.
+
+LIST COMPREHENSION. Python shorthand for building a list by looping. The expression
+[subset + [num] for subset in result] means "go through result, and for each item in
+it (called subset), produce subset + [num]; collect all those into a new list."
+
+subset + [num] - CONCATENATION. The + between two lists makes a THIRD, brand-new
+list holding the contents of both. [1,2] + [3] gives [1,2,3], and crucially the
+original [1,2] is unchanged. This is different from .append(), which modifies the
+list in place and returns nothing. That difference is the source of the classic bug
+in section 4.
+
+result += [ ... ] - EXTEND. Adds every element of the right-hand list onto the end of
+result. Not the same as append, which would add the whole list as a single nested
+element.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1: thinking the empty subset is a mistake. The answer for nums = [] is [[]] -
+a list containing ONE thing, the empty list. It is not [], which would mean "there
+are zero subsets". The power set of nothing has exactly one member. Getting this
+wrong shows up as an off-by-one on every test.
+
+TRAP 2 - the famous one: THE ALIASING BUG in the backtracking version. People write:
+
+    def backtrack(start, path):
+        result.append(path)          # WRONG
+        for i in range(start, len(nums)):
+            path.append(nums[i])
+            backtrack(i + 1, path)
+            path.pop()
+
+path is ONE list that gets mutated over and over. Appending path stores a REFERENCE
+to it - a pointer to that one list - not a snapshot. Every entry in result points at
+the same object, and when the recursion finishes and path has been popped back to
+empty, all of them read as empty. You get the right NUMBER of subsets, all of them
+[]. The fix is to store a copy: result.append(path[:]) or result.append(list(path)).
+
+The iterative version on this page is immune, because subset + [num] builds a fresh
+list every time instead of mutating a shared one.
+
+TRAP 3: mutating the list you are looping over. This is tempting:
+
+    for subset in result:
+        result.append(subset + [num])     # infinite loop
+
+You are adding to result while walking through it, so the loop keeps finding new
+items to process, forever. The code on this page avoids it in a way that is easy to
+miss - see section 8 - because Python builds the ENTIRE right-hand list before
+attaching any of it to result.
+
+TRAP 4: duplicates in the input - the "Subsets II" variant. With nums = [1,2,2], the
+plain doubling produces [], [1], [2], [1,2], [2], [1,2], [2,2], [1,2,2] - and [2]
+and [1,2] each appear twice, because the two 2s are treated as different items even
+though they are equal. The fix is to SORT the input first so equal values sit
+together, then use backtracking with the rule: at each level of choice, skip a value
+that is identical to the one you just tried at that same level. Sorting is what makes
+"identical to the previous one" a reliable test.
+
+Say the distinct-vs-duplicate distinction out loud in an interview. It is the usual
+follow-up question.""",
+
+    """5. THE SLOW-BUT-CLEAR VERSION FIRST, THEN THE UPGRADE.
+
+There is no genuinely slow version here - the answer has 2^n members, so nothing can
+beat 2^n. What there IS is a clearer-but-clunkier version worth understanding first,
+because interviewers often ask for it and because it explains why the compact version
+works.
+
+VERSION A - COUNT IN BINARY. There are 2^n subsets and there are 2^n numbers from 0
+to 2^n - 1. Pair them up. Write each number in binary and read bit i as "is nums[i]
+in this subset?"
+
+    n = 3, so count 0 through 7:
+
+      0 = 000  ->  []
+      1 = 001  ->  [1]
+      2 = 010  ->  [2]
+      3 = 011  ->  [1,2]
+      4 = 100  ->  [3]
+      5 = 101  ->  [1,3]
+      6 = 110  ->  [2,3]
+      7 = 111  ->  [1,2,3]
+
+Every subset appears exactly once, because every number has exactly one binary
+spelling. This is a genuinely useful mental model: A SUBSET IS A ROW OF YES/NO
+SWITCHES, and counting in binary flips through every switch setting in order.
+
+VERSION B - BACKTRACKING. Walk a decision tree: at each item, branch into "take it"
+and "skip it", and record the running selection at every node. Same 2^n leaves, and
+it is the version you extend when the problem adds constraints (Subsets II, or
+Combination Sum).
+
+THE UPGRADE THIS PAGE USES - ITERATIVE DOUBLING. Same answer, no recursion, no bit
+arithmetic, three lines. It just performs the doubling from section 2 directly.
+
+Which to say in an interview: mention all three, then write the doubling one, because
+it is the hardest to get wrong. If the follow-up adds constraints (no duplicates,
+target sums, pruning), switch to backtracking - constraints are easy to express as
+"stop going deeper" in a tree walk and awkward to express in the doubling loop.
+
+WHY THE DOUBLING IS SAFE - the invariant. Before item k arrives, result holds
+exactly the subsets of the first k-1 items, each exactly once. After item k is
+processed, result holds every one of those unchanged (the subsets that skip item k)
+plus every one of them with item k appended (the subsets that take item k). Those two
+groups cannot overlap - one group never contains item k, the other always does - so
+nothing is duplicated, and nothing is missed, because every subset either contains
+item k or does not. Start the invariant off correctly with result = [[]] and it holds
+all the way to the end.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: KEEP A RUNNING LIST OF SUBSETS THAT
+STARTS AS JUST THE EMPTY SUBSET, AND FOR EACH NUMBER IN THE INPUT, ADD TO THAT LIST A
+COPY OF EVERY SUBSET ALREADY IN IT WITH THE NUMBER APPENDED.
+
+THERE IS NO RECURSION IN THIS VERSION. Nothing calls itself, so there is no call
+stack to think about. That is a deliberate advantage: the alternative backtracking
+solution is recursive, and recursion is exactly where the aliasing bug from section 4
+lives. If you do write the backtracking version, here is what the recursion is
+actually doing:
+
+  - Calling a function PAUSES the current one. Python remembers where it stopped and
+    which values its variables held, on a stack of paused calls (the CALL STACK).
+  - The deeper call runs to completion, then the paused call resumes on the very next
+    line, with all its variables exactly as it left them.
+  - What STOPS it: each call moves the starting index one step further along nums.
+    When the index reaches the end of nums, there is nothing left to choose, so the
+    call records its selection and returns without calling deeper. That is the BASE
+    CASE - the floor the recursion cannot fall through.
+  - Because every branch of the tree eventually runs out of items, every branch stops.
+
+For the doubling version, the steps are:
+
+  1. Start the answer holding exactly one thing: the empty subset. Not an empty
+     answer - an answer containing the empty selection.
+
+  2. Go through the input numbers one at a time. Call the current one num.
+
+  3. For this num, build a whole batch of NEW subsets: take every subset currently in
+     the answer and make a fresh copy with num added to the end. Build the entire
+     batch first, before adding anything.
+
+  4. Attach that batch to the end of the answer. The answer has now exactly doubled.
+
+  5. When the numbers run out, the answer holds all 2^n subsets. Return it.
+
+The detail that makes or breaks step 3: build the batch COMPLETELY before attaching
+it. If you attach as you go, you will keep discovering the new subsets you just made
+and add items to them too, forever.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+Picture a noticeboard. Pinned to it is one blank card - that is the empty selection,
+"no toppings".
+
+Someone hands you a topping: mushroom. You go along the board, and for every card
+already pinned there, you write out a duplicate of it and add "mushroom" to the
+duplicate. You collect all those duplicates in your hand first - you do not pin them
+as you go, or you would start duplicating your own duplicates and never finish. Once
+you have been past every existing card, you pin the whole handful up at once.
+
+The board now shows: blank, and mushroom. Two cards.
+
+Next topping: olive. Same routine. Copy every card, add olive to each copy, pin them
+all at once.
+
+The board now shows: blank, mushroom, olive, mushroom+olive. Four cards.
+
+Next: pepper. Copy all four, add pepper, pin. Eight cards - and they are exactly the
+eight possible pizzas.
+
+Notice what makes this correct: at every stage, each card gets copied exactly once,
+and the copy differs from the original in exactly one way. So no two cards can ever
+end up identical, and no possible pizza can be missing - any pizza either has pepper
+on it (it came from the copies) or does not (it was already on the board).""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    def subsets(nums):
+
+nums is the input list of distinct numbers. The function returns a list of lists -
+every subset.
+
+    result = [[]]
+
+The starting board: ONE card, and that card is blank. Read the brackets carefully -
+the outer [ ] is the list of subsets, and the inner [] is the empty subset sitting
+inside it. Writing result = [] instead is the single most common way to get this
+function wrong: with an empty result there is nothing to copy, so the loop below has
+nothing to double, and the function returns [] no matter what the input is.
+
+    for num in nums:
+
+Take the numbers one at a time. num is the topping currently being handed to you.
+The order does not matter - any order produces all 2^n subsets, just listed in a
+different sequence.
+
+    result += [subset + [num] for subset in result]
+
+This is the entire algorithm, and it is worth reading in three separate pieces.
+
+  - subset + [num] takes one existing subset and produces a BRAND-NEW list holding
+    its contents plus num. The original subset is untouched. This is "duplicate the
+    card and write the topping on the duplicate". Because it makes a new list rather
+    than modifying an old one, the aliasing bug from section 4 cannot happen here.
+
+  - [ ... for subset in result] runs that over every subset currently in result and
+    collects the results into one new list - the handful of duplicates in your hand.
+    Critically, Python evaluates this WHOLE list first, finishing it completely,
+    before the += does anything.
+
+  - result += ... then attaches every item of that finished batch onto the end of
+    result. This is "pin the handful up at once".
+
+That evaluation order is what saves you from trap 3. The comprehension loops over the
+result that existed when the line started; the growth happens afterwards. Had you
+written `for subset in result: result.append(subset + [num])`, you would be adding to
+the very list you are walking through, and it would never stop.
+
+Note also that += on a list means extend, not append. Extend adds the batch's items
+individually; append would have added the whole batch as a single nested element,
+giving you a list of lists of lists.
+
+    return result
+
+After the last num, result holds all 2^n subsets. Return it as-is.
+
+One thing to state out loud in an interview: this function does NOT modify nums. It
+only reads it. The caller's list comes back exactly as it went in.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    nums = [1, 2]
+
+START.
+  result = [[]]                                  -> 1 subset
+
+ITERATION 1: num = 1.
+  The comprehension walks result, which right now is [[]].
+    subset = []      ->  [] + [1]   =  [1]
+  The finished batch is [[1]].
+  result += that batch.
+  result = [[], [1]]                             -> 2 subsets
+
+ITERATION 2: num = 2.
+  The comprehension walks result, which is now [[], [1]]. It walks this snapshot,
+  not the growing list.
+    subset = []      ->  [] + [2]   =  [2]
+    subset = [1]     ->  [1] + [2]  =  [1,2]
+  The finished batch is [[2], [1,2]].
+  result += that batch.
+  result = [[], [1], [2], [1,2]]                 -> 4 subsets
+
+nums is exhausted. return [[], [1], [2], [1,2]].
+
+Check: n = 2, so 2^2 = 4 subsets. Four came out. Each appears once.
+
+CARRY IT ONE MORE STEP - nums = [1,2,3], continuing from result = [[], [1], [2], [1,2]]:
+
+ITERATION 3: num = 3.
+  Batch: [] + [3] = [3]; [1] + [3] = [1,3]; [2] + [3] = [2,3]; [1,2] + [3] = [1,2,3].
+  result = [[], [1], [2], [1,2], [3], [1,3], [2,3], [1,2,3]]     -> 8 subsets
+
+Watch the count: 1, 2, 4, 8. One doubling per number, exactly as section 2 promised.
+And notice the shape of the output - the first half of the final list is precisely the
+answer for [1,2], and the second half is that same answer with 3 stapled onto each.
+That structure is the invariant from section 5, visible in the output.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n x 2^n).
+
+In plain words: there are 2^n subsets, and building each one costs about n steps
+because you copy a list of up to n items. Multiply them.
+
+AND HERE IS THE POINT TO SAY OUT LOUD: THIS IS OPTIMAL. The cost is dominated by the
+SIZE OF THE OUTPUT - you were asked to produce 2^n lists, so you must at minimum
+write down 2^n lists. No algorithm can be faster than the time it takes to print its
+own answer. When an interviewer asks "can you do better than exponential here?", the
+correct answer is no, and the reason is the output size, not a weakness in the
+method. (If they instead ask for the COUNT of subsets, that is 2^n and takes one
+line - the exponential cost was never in the thinking, only in the writing down.)
+
+SPACE: O(n x 2^n) as well, because you keep every subset. If the problem only needed
+to PROCESS each subset rather than store them all, the backtracking version can hand
+them out one at a time and use only O(n) space for the current path.
+
+Practical ceiling: n = 20 gives about a million subsets, which is fine. n = 30 gives
+a billion, which is not. If a problem has n = 40 and asks about subsets, it wants
+dynamic programming or meet-in-the-middle, not enumeration.
+
+THE #1 BEGINNER MISTAKE: starting with result = [] instead of result = [[]]. With no
+seed card on the board there is nothing to duplicate, the doubling never gets going,
+and the function returns an empty list for every input. Runner-up, in the
+backtracking version: appending path instead of path[:], so every stored subset is a
+reference to the same list and they all read as empty at the end.
+
+TAKEAWAY: a power set is n independent yes/no decisions, so build it by letting each
+new item double the answer - and remember the empty subset is a real subset, which is
+why you seed with [[]].""",
 ]
 
 _EX_P0G["Top K Frequent Elements"] = [
-    """The textbook case, traced.
-nums = [1,1,1,2,2,3], k = 2.
-Counter -> {1:3, 2:2, 3:1}.
-nlargest(2, keys, key=counts.get) compares 3, 2, 1 and keeps the two keys with
-the highest counts: [1, 2].
-Answer [1,2]. Order within the answer is not specified by the problem, which is
-worth confirming with the interviewer before you sort anything unnecessarily.""",
+    """1. THE GOAL, in plain English.
 
-    """A tie on frequency.
-nums = [1,1,2,2,3], k = 2 -> counts {1:2, 2:2, 3:1}. Both 1 and 2 have count 2,
-so [1,2] and [2,1] are both correct, and if k were 1 either single answer would
-be accepted only if the problem says ties are arbitrary - LeetCode guarantees
-the answer is unique, so this input would not appear there.
-In a real system you would break ties deterministically (by value, or by most
-recent occurrence) so the output is stable across runs. Say that; it is the
-difference between a LeetCode answer and a production answer.""",
+Given a list of values with repeats, report the k values that show up most often.
 
-    """Edge cases: k = 1, k = number of distinct values, all identical.
-[1,2,3], k=1 -> every count is 1; any single element is valid.
-[1,1,2], k=2 -> [1,2], the whole distinct set.
-[7,7,7], k=1 -> [7].
-[], k=0 -> []. Counter of an empty list is empty and nlargest returns [].
-Note k > number of distinct values is undefined by the problem; nlargest would
-simply return everything rather than raising, which may or may not be what the
-caller wants.""",
+    nums = [1, 1, 1, 2, 2, 3],  k = 2
+    answer = [1, 2]
 
-    """The bucket-sort solution - O(n), and the reason this problem is asked.
-A frequency can never exceed n, so make n+1 buckets and put each value into the
-bucket for its count:
-    buckets = [[] for _ in range(len(nums)+1)]
-    for val, c in counts.items(): buckets[c].append(val)
-    out = []
-    for c in range(len(buckets)-1, 0, -1):
-        for v in buckets[c]:
-            out.append(v)
-            if len(out) == k: return out
-On [1,1,1,2,2,3]: bucket[3]=[1], bucket[2]=[2], bucket[1]=[3]. Reading from the
-top gives [1,2].
-O(n) time and space, beating the heap's O(n log k). The follow-up on LeetCode
-347 explicitly asks for better than O(n log n), and this is the answer.""",
+because 1 appears three times, 2 appears twice, and 3 appears once - so the top two
+are 1 and 2.
 
-    """The heap version written out, and why nlargest is the same thing.
-    heap = []
-    for val, c in counts.items():
-        heapq.heappush(heap, (c, val))
-        if len(heap) > k: heapq.heappop(heap)
-    return [v for c, v in heap]
-A size-k MIN-heap on (count, value): the root is the weakest survivor, evicted
-in O(log k). heapq.nlargest does exactly this internally.
-Cost O(m log k) where m is the number of distinct values, plus O(n) to count.
-Prefer this when k is small relative to m and you want O(k) memory.""",
+Real versions of this question are everywhere: the ten most-searched terms this hour,
+the five most-visited pages today, the three error codes filling up the logs. It is
+one of the most-asked interview questions precisely because the naive answer works
+and the good answer is genuinely better.
 
-    """Where 'top K frequent' shows up at scale.
-- Trending searches / hashtags in the last hour.
-- Most-requested URLs for cache warming.
-- Heavy hitters in network traffic (DDoS detection).
-- Most frequent error signatures in a log pipeline.
-At real scale you cannot hold every count in memory, so the production answer is
-a SKETCH: Count-Min Sketch or the Space-Saving algorithm gives approximate
-top-K in fixed memory with bounded error. Naming that when the interviewer says
-'now do it for a billion events a day' is what separates the DSA answer from the
-system-design answer.""",
+Two things to notice about what is being asked:
+
+  - You return the VALUES, not their counts. The answer is [1, 2], not [(1,3),(2,2)].
+  - The ORDER of the k results usually does not matter, and ties may be broken any
+    way. If two values are tied on frequency and only one slot is left, either is
+    accepted. Confirm this with your interviewer - it is a legitimate question and
+    asking it looks good.
+
+The problem is really two problems stacked: first COUNT how often each value appears,
+then SELECT the k biggest counts. They are separate, and only the second one has any
+interesting choices in it.""",
+
+    """2. THE INTUITION - count first, then keep only a shortlist.
+
+Step one is not clever and does not need to be. Walk the list once with a tally:
+
+    nums:    1   1   1   2   2   3
+    tally:  {1:1}
+            {1:2}
+            {1:3}
+            {1:3, 2:1}
+            {1:3, 2:2}
+            {1:3, 2:2, 3:1}
+
+One pass, one entry per distinct value. Nothing faster exists - you have to look at
+every element at least once to know how often it appears.
+
+Step two is where the thinking is. You now have counts:
+
+    1 -> 3
+    2 -> 2
+    3 -> 1
+
+and you want the top 2. The obvious move is to sort all of them by count and take the
+front. That works. But sorting arranges ALL of them in order, and you only asked
+about the top 2 - you paid to rank 3rd against 4th, and 7th against 8th, and never
+looked at the result.
+
+The better move is a SHORTLIST OF SIZE k. Picture a leaderboard with exactly two
+slots that is always aware of which of its two entries is the weaker one:
+
+    consider 1 (count 3):  board has room  -> {1:3}
+    consider 2 (count 2):  board has room  -> {1:3, 2:2}
+    consider 3 (count 1):  board is full. Weakest on the board is 2 with count 2.
+                           Is 1 better than 2? No -> 3 is rejected immediately.
+
+Value 3 was dismissed with one comparison. It never got ranked against anything else,
+because nobody cares where it would have placed. That is the saving, and the data
+structure that maintains "always knows its weakest member" is called a HEAP.""",
+
+    """3. EVERY TERM, defined the first time you meet it.
+
+FREQUENCY. How many times a value appears. In [1,1,2] the frequency of 1 is 2.
+
+HASH MAP / DICTIONARY. A lookup table from keys to values. counts[5] tells you how
+often 5 appeared. The point of a hash map is that looking up or updating an entry
+takes the SAME tiny amount of time no matter how many entries it holds - it jumps
+straight to the slot instead of searching. Written in plain terms: instant lookup by
+name.
+
+Counter. Python's ready-made counting dictionary. Counter([1,1,2]) gives
+{1: 2, 2: 1} in one pass. It is a hash map that already knows how to tally.
+
+DISTINCT VALUES. The number of different values in the input, often written d. In
+[1,1,1,2,2,3] there are 6 elements but only 3 distinct values. d is never bigger than
+n and is often far smaller - a million log lines might contain only 500 distinct URLs.
+
+HEAP (specifically a MIN-HEAP). A container with one talent: it always knows its
+SMALLEST item and can hand it over immediately. Adding an item costs about log(size)
+steps, and so does removing the smallest. It is NOT sorted - ask a heap for its
+middle item and it has no idea. It only ever answers one question, which is why it is
+cheap. This is the "leaderboard that knows its weakest entry" from section 2.
+
+Why a MIN-heap when you want the LARGEST items? Because the only thing you ever need
+to do is kick out the weakest of your k survivors, and a min-heap makes exactly that
+one operation cheap. Keeping the biggest requires cheaply identifying the smallest of
+the shortlist.
+
+heapq. Python's heap module. heapq.nlargest(k, items, key=f) does the whole
+shortlist routine for you: it walks items once, maintaining a heap of the k best
+according to f, and returns them ordered largest first.
+
+key=counts.get. A rule for ranking. counts.get is the FUNCTION that looks up a value
+in counts - note there are NO parentheses after it, because you are handing over the
+function itself for nlargest to call, not calling it yourself. It means "rank each
+value by its count".
+
+O(n log k). Cost that grows with n, multiplied by the small factor log k. With k = 10,
+log k is about 3 - so this is roughly three passes' worth of work, not n-squared.""",
+
+    """4. THE CASE THAT CATCHES MOST PEOPLE.
+
+TRAP 1: sorting the ELEMENTS instead of the DISTINCT values. If you sort nums itself,
+you are sorting n things when only d of them are different. With a million log lines
+and 500 distinct URLs, that is a million-element sort to answer a question about 500
+things. Count first, then work with the counts.
+
+TRAP 2: ties. nums = [1,1,2,2,3] with k = 2 gives counts {1:2, 2:2, 3:1}. Both 1 and
+2 have count 2, so [1,2] and [2,1] are both correct. If k were 1, EITHER 1 or 2 is
+correct and the code may return whichever it likes. If your interviewer wants a
+specific tie-break (smallest value wins, say), you must add it explicitly - make the
+ranking key a pair, (count, -value), so that equal counts fall back to the value.
+
+TRAP 3: assuming k is small. If k equals d (the number of distinct values), the heap
+version degenerates to O(n log d), which is just sorting. The heap wins when k is much
+smaller than d, which is the usual case - top 10 out of 500,000.
+
+TRAP 4: returning counts instead of values. nlargest here is given counts.keys(), so
+it returns the values themselves. If you had passed counts.items(), you would get
+(value, count) pairs and would need to strip the counts off. Read what the problem
+asks for.
+
+TRAP 5: a MAX-heap of everything. It is tempting to push all d values into a heap and
+pop k times. That is O(d + k log d) with a proper heapify, which is fine and is
+sometimes the better choice when k is close to d - but people usually implement it as
+d pushes, giving O(d log d), which is no better than sorting. If you are going to
+carry a heap, carry one of size k, not size d.""",
+
+    """5. THE SLOW VERSION FIRST, THEN THE UPGRADES.
+
+THE SLOW VERSION - count, sort everything, take the front.
+
+    counts = tally of nums
+    ranked = sort the distinct values by count, biggest first
+    return the first k of ranked
+
+Cost: O(n) to count, O(d log d) to sort, where d is the number of distinct values.
+Absolutely correct, and worth saying out loud first in an interview - it shows you
+have a working answer before you optimise.
+
+Why it is wasteful: sorting puts ALL d values in complete order. You asked for the
+top k. Everything the sort did to arrange positions k+1 through d was thrown away.
+
+UPGRADE 1 - THE SIZE-k HEAP (what this page's code does).
+
+Keep a shortlist of exactly k, always aware of its weakest member. For each distinct
+value: if the shortlist has room, add it; otherwise compare against the weakest, and
+either replace the weakest or reject the newcomer outright.
+
+Cost: O(n) to count, plus O(d log k) to run the shortlist. Since k is usually tiny,
+log k is a small constant - with k = 10 it is about 3. Compare against log d, which
+for half a million distinct values is about 19. That is the win.
+
+Why it is safe to throw a value away the moment it loses to the weakest survivor:
+because the shortlist only ever improves. Its weakest member can go up over time but
+never down. So a value that cannot beat today's weakest can never beat tomorrow's
+weakest either, and there is no need to remember it.
+
+UPGRADE 2 - BUCKET SORT, O(n) total. The one that impresses.
+
+Here is the trick, from scratch. A frequency can never be larger than n - a value
+cannot appear more times than there are elements. So the possible frequencies are
+just the whole numbers 0 through n. That is a small, known, dense range - and
+whenever the possible keys form a small dense range of integers, you do not need to
+sort at all. You can use the key AS AN ADDRESS.
+
+Make n+1 empty buckets, numbered 0 to n. Put each distinct value into the bucket
+matching its count. Then walk the buckets from the highest number downwards, taking
+values until you have k.
+
+    nums = [1,1,1,2,2,3], n = 6, so buckets 0..6
+
+    bucket 3:  [1]
+    bucket 2:  [2]
+    bucket 1:  [3]
+    all others empty
+
+    walk down from 6: 6,5,4 empty. bucket 3 gives 1. bucket 2 gives 2. Have 2 -> stop.
+    answer [1,2]
+
+No comparisons between counts happen anywhere. Every step is a direct array index, so
+the whole thing is linear. The cost you pay is memory - n+1 buckets, most of them
+empty.
+
+WHICH TO WRITE IN AN INTERVIEW: say all three. Write the heap version, because it is
+short and hard to get wrong, then describe bucket sort as the O(n) alternative and
+explain the "frequency cannot exceed n" insight. That sentence is the thing being
+tested.""",
+
+    """6. HOW TO CODE IT - the steps, in plain English, no code yet.
+
+The one sentence that holds the whole idea: TALLY EVERY VALUE IN ONE PASS, THEN KEEP
+ONLY A RUNNING SHORTLIST OF THE k HIGHEST TALLIES, DISCARDING ANYTHING THAT CANNOT
+BEAT THE SHORTLIST'S WEAKEST MEMBER.
+
+THERE IS NO RECURSION HERE - nothing calls itself, so there is no call stack to
+follow. The mechanism to understand instead is THE SHORTLIST INVARIANT: at every
+moment, the heap holds the k best values SEEN SO FAR. That statement is true after
+the very first value is considered, and each step preserves it, so it is still true
+when the last value has been considered - at which point "the k best seen so far" is
+simply "the k best".
+
+The steps:
+
+  1. Make an empty tally table.
+
+  2. Walk the input once. For each value, add one to its entry in the tally,
+     creating the entry at zero if it is not there yet. After this pass you have every
+     distinct value and how often it occurred.
+
+  3. Make an empty shortlist that can hold at most k values and that always knows
+     which of its members has the LOWEST tally.
+
+  4. Go through the distinct values one at a time:
+
+     a. If the shortlist has fewer than k members, put this value in. Done.
+
+     b. Otherwise look at the shortlist's weakest member. If this value's tally is
+        higher, remove the weakest and put this value in its place. If it is not
+        higher, throw this value away and never think about it again.
+
+  5. When the distinct values run out, the shortlist holds the k most frequent.
+     Return the values themselves, not their tallies.
+
+In Python, steps 3 and 4 are one library call - heapq.nlargest does exactly that
+routine - and step 2 is one call to Counter. Knowing what those two calls are doing
+underneath is what the interviewer is checking, which is why the long form is spelled
+out here.""",
+
+    """7. WHAT THE CODE DOES, told as a story - no syntax at all.
+
+You are the judge of a talent show with hundreds of acts, and you must name the two
+best. You are not required to rank everyone - only to name two.
+
+First you watch every act once and write a score on a card for each. That is the
+unavoidable part; you cannot know who is good without watching.
+
+Now for the choosing. You do not lay out three hundred cards and sort them. You clear
+a small table with room for exactly two cards, and you make yourself one promise: at
+any moment, you can point instantly at whichever of the two cards on the table has
+the LOWER score.
+
+You go through the pile. The first card goes on the table. The second card goes on
+the table. The table is now full.
+
+Third card. You glance at the weaker of your two and compare. If the newcomer scores
+higher, the weaker card is swept off the table and the newcomer takes its place. If
+not, the newcomer goes in the bin. Either way it took one comparison, and you never
+have to think about that card again - because the table only ever gets stronger, so
+anything too weak for it now is too weak for it forever.
+
+You work through the whole pile this way. When you are done, the two cards on the
+table are the two best acts. You never learned who came 47th, and you never needed
+to.""",
+
+    """8. THE CODE, LINE BY LINE, in the real variable names.
+
+    from collections import Counter
+    import heapq
+
+Two standard-library imports. Counter does the tallying; heapq provides the
+shortlist.
+
+    def top_k_frequent(nums, k):
+
+nums is the input list, k is how many of the most frequent values to return. The
+function returns a list of k values.
+
+    counts = Counter(nums)                  # element -> frequency
+
+The one pass from step 2. counts is now a dictionary from each distinct value to how
+often it appeared: for [1,1,1,2,2,3] it holds {1: 3, 2: 2, 3: 1}. Doing this by hand
+is a for-loop with counts[x] = counts.get(x, 0) + 1 - the get with a default of 0 is
+what handles a value being seen for the first time. Counter just packages that. This
+is the judge watching every act and writing a score card.
+
+    return heapq.nlargest(k, counts.keys(), key=counts.get)
+
+The whole of steps 3, 4 and 5 in one line. Read it in three pieces.
+
+  - k is the size of the shortlist - the number of cards the table holds.
+
+  - counts.keys() is what gets considered: the DISTINCT values, not the original
+    nums. This matters. There are d of these and d can be far smaller than n. Passing
+    nums here instead would be trap 1 from section 4, considering the same value over
+    and over.
+
+  - key=counts.get is the ranking rule: judge each value by looking it up in counts.
+    Note there are NO parentheses after get. counts.get is the function itself, handed
+    over for nlargest to call on each value as it needs it. Writing counts.get() would
+    call it immediately with no argument and fail. This is one of the most common
+    Python slips in this problem.
+
+Underneath, nlargest walks counts.keys() maintaining a min-heap of size k - the
+table with two cards, always aware of the weaker one. Each value is either added
+(while there is room), or compared to the weakest and swapped in, or dropped. It
+returns them ordered highest first, though the problem does not require any
+particular order.
+
+The function returns the VALUES (1 and 2), not the counts and not pairs - because
+counts.keys() was what was passed in.
+
+Note that nothing here modifies nums. The input list comes back to the caller exactly
+as it went in; Counter only reads it.""",
+
+    """9. THE CODE TRACED, variable by variable.
+
+    nums = [1, 1, 1, 2, 2, 3]
+    k = 2
+
+STEP 1 - counts = Counter(nums). Walking nums once:
+
+    see 1  ->  counts = {1: 1}
+    see 1  ->  counts = {1: 2}
+    see 1  ->  counts = {1: 3}
+    see 2  ->  counts = {1: 3, 2: 1}
+    see 2  ->  counts = {1: 3, 2: 2}
+    see 3  ->  counts = {1: 3, 2: 2, 3: 1}
+
+Six elements read, three distinct values recorded. n = 6, d = 3.
+
+STEP 2 - heapq.nlargest(2, counts.keys(), key=counts.get). The values to consider are
+1, 2, 3. Their ranks come from counts.get: 3, 2 and 1 respectively. The shortlist
+(the min-heap) holds at most 2.
+
+  Consider value 1. Its rank is counts.get(1) = 3.
+    Shortlist has 0 of 2 members - room available. Add it.
+    shortlist = {1 (rank 3)}.  Weakest: 1, rank 3.
+
+  Consider value 2. Its rank is counts.get(2) = 2.
+    Shortlist has 1 of 2 members - room available. Add it.
+    shortlist = {1 (rank 3), 2 (rank 2)}.  Weakest: 2, rank 2.
+
+  Consider value 3. Its rank is counts.get(3) = 1.
+    Shortlist is full. Compare rank 1 against the weakest rank, 2.
+    1 is not greater than 2 -> reject value 3 outright. No swap, no further
+    comparisons. It is never reconsidered.
+    shortlist = {1 (rank 3), 2 (rank 2)}.
+
+Values exhausted. nlargest orders the survivors highest rank first and returns:
+
+    [1, 2]
+
+Check against the question: 1 appeared 3 times, 2 appeared 2 times, 3 appeared once.
+The top two are 1 and 2. Correct.
+
+Notice that value 3 cost exactly ONE comparison. A full sort would have positioned it
+against everything. With three distinct values that is no saving at all - but with
+500,000 distinct values and k = 10, the overwhelming majority are dismissed on a
+single comparison each, and that is where the time goes.""",
+
+    """10. COMPLEXITY IN PLAIN WORDS, THE #1 MISTAKE, AND THE TAKEAWAY.
+
+TIME: O(n) to count, plus O(d log k) to run the shortlist, where n is the number of
+elements, d is the number of DISTINCT values, and k is how many you want. Usually
+written O(n log k), since d is at most n.
+
+In plain words: you read the input once, which you cannot avoid. Then, for each
+distinct value, you do a handful of comparisons against a shortlist of size k -
+around log k of them, which with k = 10 is about 3. Compare to sorting everything,
+which is log d comparisons per value - about 19 when d is half a million.
+
+The bucket-sort alternative from section 5 is O(n) with no log factor at all, at the
+cost of n+1 buckets of memory.
+
+SPACE: O(d) for the counts plus O(k) for the shortlist. The counts dominate. You are
+holding one entry per distinct value, not one per element.
+
+THE #1 BEGINNER MISTAKE: sorting nums itself, or running the heap over nums, instead
+of over the DISTINCT values in counts. It gives the right answer and quietly does n
+work where d work would do - and in the real systems this question is modelled on
+(trending searches, hot URLs, heavy hitters in network traffic) n is millions while d
+is thousands. Runner-up: writing key=counts.get() with parentheses, which calls the
+lookup instead of handing it over.
+
+TAKEAWAY: when you need the top k out of many, do not rank everything - carry a
+shortlist of exactly k that always knows its weakest member, and discard anything
+that cannot beat it, because the shortlist only ever gets stronger.""",
 ]
 
 _EX_P0G["Two Pointers — recognize & apply"] = [
