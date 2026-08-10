@@ -36379,6 +36379,342 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1AA[_e["title"]]
 
 
+_EX_P1AB = {}
+
+_EX_P1AB["Design a Min Stack"] = [
+    """The auxiliary-stack trick, traced.
+push(5): stack [5], mins [5]. push(2): 2 < 5 so mins gets 2 -> mins [5,2].
+push(7): 7 > 2 so mins REPEATS the current minimum -> mins [5,2,2].
+get_min() -> 2. pop() removes 7 from both -> mins [5,2], min still 2.
+pop() removes 2 -> mins [5], min back to 5. Correct.
+The key is that mins[i] holds the minimum of stack[0..i], so popping both in
+lockstep automatically restores the previous minimum with no recomputation.""",
+
+    """Why you cannot just track a single minimum variable.
+A single `self.min` works for push but breaks on pop: if you pop the current
+minimum, you have no idea what the previous one was, and finding it means
+scanning the whole stack - O(n), which defeats the requirement.
+The auxiliary stack IS that history. That is the insight the problem is
+testing: when an O(1) query must survive removals, you usually need to store
+the answer for every prefix rather than just the current one.""",
+
+    """The two variants, and their trade.
+REPEAT the minimum on every push (as above): mins is always the same length as
+stack, so pop is a blind pop from both. Simple, O(n) extra space always.
+PUSH ONLY when the new value is <= the current minimum, and pop from mins only
+when the popped value equals mins[-1]. Saves space when few new minima appear,
+but the `<=` is critical - with `<`, duplicate minima break it: push(2),
+push(2), pop() would remove 2 from mins and report the wrong minimum while a 2
+is still on the stack. That off-by-one on the comparison is the classic bug.""",
+
+    """The O(1)-space variant, for the follow-up.
+Store `2*x - min` when a new minimum arrives, keeping a single min variable.
+On pop, if the stored value is less than the current min, the real popped value
+was the min and the previous min is recoverable as `2*min - stored`.
+It is clever, it needs care with overflow, and it is genuinely harder to read -
+so present it as the answer to 'can you do it without the second stack?' rather
+than as your first solution. Interviewers usually want the clean version
+first.""",
+
+    """Edge cases.
+get_min or pop on an empty stack -> decide the contract: raise, or return None.
+The problem usually guarantees calls are valid, but saying which you chose is
+worth a sentence.
+Duplicate minima [2,2] -> handled correctly by the repeat variant, and by the
+optimised variant only with `<=`.
+All equal values -> mins mirrors stack.
+Negative numbers and a single element both work unchanged.""",
+
+    """Complexity and the family.
+push, pop, top and get_min all O(1). Space O(n) for the auxiliary stack.
+The family is 'augment a structure so an aggregate query stays O(1)': Max
+Stack, Min Queue (harder - needs two stacks or a monotonic deque), Sliding
+Window Maximum (monotonic deque), and LRU Cache (hash map plus doubly linked
+list).
+The unifying idea: if a query must be O(1) under mutation, precompute and store
+it alongside the data rather than deriving it on demand.""",
+]
+
+_EX_P1AB["Evaluate Reverse Polish Notation"] = [
+    """Why postfix needs no parentheses or precedence.
+In '3 4 + 2 *', the order of operations is fully determined by position - no
+brackets, no precedence rules. That is the whole point of RPN and why it was
+used in calculators and stack machines.
+Trace: push 3, push 4. '+' pops 4 and 3 -> push 7. Push 2. '*' pops 2 and 7 ->
+push 14. Answer 14, which is (3+4)*2.
+The infix equivalent needs parentheses to express the same thing, which is
+exactly the complexity RPN removes.""",
+
+    """The pop ORDER, which is the bug in this problem.
+The stack pops the RIGHT operand first, then the left: `b = pop(); a = pop()`
+and compute `a op b`.
+For commutative operators (+, *) the order does not matter and the bug hides.
+For '-' and '/' it does: '5 1 -' should be 5 - 1 = 4, but popping in the wrong
+order gives 1 - 5 = -4. Always test with a subtraction; addition alone will not
+reveal it.""",
+
+    """Integer division truncation, the other classic trap.
+Most versions of this problem require truncation TOWARD ZERO: -7 / 2 = -3, not
+-4.
+Python's `//` floors, so -7 // 2 = -4 - wrong. Use `int(a / b)` for
+float-then-truncate, or `int(operator.truediv(a, b))`.
+This is a genuine difference between Python and C/Java semantics, and the test
+suite will contain a negative division specifically to catch it. Mentioning it
+unprompted signals care.""",
+
+    """Edge cases.
+A single number ['3'] -> nothing to do, the stack holds 3 -> 3.
+Negative numbers as tokens ('-4') must parse as operands, not as the '-'
+operator - so the check should be `tok in ops` (exact match) rather than
+`tok in '+-*/'` (substring), which would misclassify '-4'.
+Division by zero -> the problem usually guarantees it does not occur; say what
+you would do otherwise.
+The input is guaranteed well-formed, so the stack always has two operands when
+an operator arrives - worth stating as an assumption rather than validating.""",
+
+    """Why a stack is the natural structure.
+An operator always applies to the two most RECENT unresolved values - last in,
+first out. As with Valid Parentheses, the data structure is not a choice, it is
+the shape of the problem.
+That also explains the connection to actual machines: the JVM and CPython
+bytecode are both stack-based, so `3 4 +` is very close to what the interpreter
+literally executes. Mentioning that connection makes the problem feel less
+arbitrary.""",
+
+    """Complexity and the family.
+O(n) time, O(n) space (the stack can hold up to n/2 operands).
+The family: Basic Calculator I/II/III (infix, which is harder - you need
+precedence via a second stack or the shunting-yard algorithm), Valid
+Parentheses, Decode String, Asteroid Collision, and Design a Min Stack.
+The natural follow-up is 'now evaluate INFIX', where the answer is either
+shunting-yard to convert to RPN then this, or a two-stack approach handling
+precedence directly.""",
+]
+
+_EX_P1AB["Group Anagrams"] = [
+    """The canonical-key idea.
+Two words are anagrams exactly when their sorted letters match, so the sorted
+string is a fingerprint every anagram of a word shares. Use it as a dict key
+and the grouping falls out in one pass.
+['eat','tea','tan','ate','nat','bat'] -> keys 'aet' (eat, tea, ate), 'ant'
+(tan, nat), 'abt' (bat) -> three groups.
+The general pattern: to group by an equivalence relation, find a CANONICAL FORM
+that every member of a class maps to, then bucket by it.""",
+
+    """The O(k) key, which is the follow-up.
+Sorting each word costs O(k log k). Instead build a 26-length count tuple -
+tuple(counts of each letter) - which is O(k) to construct and hashable.
+Total drops from O(N k log k) to O(N k). For long words this matters; for the
+typical short words in test cases it usually does not, and the sorted key is
+more readable.
+The tuple must be a TUPLE, not a list - lists are unhashable and cannot be dict
+keys, which is exactly the kind of Python detail that trips people mid-
+interview.""",
+
+    """Why defaultdict rather than a plain dict.
+`groups[key].append(w)` on a plain dict raises KeyError the first time a key
+appears; you would need `groups.setdefault(key, []).append(w)` instead.
+defaultdict(list) creates the empty list on first access. Small thing, but it
+is the idiomatic form and it keeps the loop to two lines.""",
+
+    """Edge cases.
+Empty input -> [].
+Empty strings [''] -> key is '' and they group together, which is correct: all
+empty strings are anagrams of each other.
+No anagrams at all ['a','b','c'] -> three groups of one.
+Single word -> one group.
+Case sensitivity: 'Eat' and 'eat' produce different keys. If the prompt means
+case-insensitive, lowercase before keying - and ask, because it changes the
+answer on a two-word input.
+Unicode: sorting works, but combining characters mean two visually identical
+strings can differ; normalise first if that is in scope.""",
+
+    """Complexity and the space caveat.
+Time O(N k log k) with sorted keys, O(N k) with count tuples. Space O(N k) for
+the output - which is unavoidable, since every input word appears in it.
+Worth stating precisely: the algorithm's EXTRA space is the keys, O(N k) in the
+worst case, and the output is O(N k) by necessity. Conflating the two is a
+common imprecision.""",
+
+    """The family: canonical-form grouping.
+Group Shifted Strings (key on the sequence of gaps between letters, so 'abc'
+and 'bcd' share a key), Find and Replace Pattern (key on the first-occurrence
+index pattern), Valid Anagram (the two-word case - equality rather than
+grouping), Isomorphic Strings, and Group People by Group Size.
+Every one asks the same question: what fingerprint do members of a class share?
+Once you name the fingerprint, the code is four lines.""",
+]
+
+_EX_P1AB["Koko Eating Bananas (binary search on the answer)"] = [
+    """Binary search on the ANSWER, traced.
+piles = [3,6,7,11], h = 8. The array is not sorted and does not need to be -
+what is monotonic is FEASIBILITY: a faster speed never needs more hours.
+lo = 1, hi = 11 (no point eating faster than the largest pile).
+speed 6 -> hours = 1+1+2+2 = 6 <= 8 -> feasible, hi = 6.
+speed 3 -> 1+2+3+4 = 10 > 8 -> infeasible, lo = 4.
+speed 5 -> 1+2+2+3 = 8 <= 8 -> feasible, hi = 5.
+speed 4 -> 1+2+2+3 = 8 <= 8 -> feasible, hi = 4.
+lo == hi == 4. Answer 4.""",
+
+    """Why hours per pile is a CEILING, and what that rule means.
+Koko eats from ONE pile per hour and does not carry leftovers to another pile.
+So a pile of 7 at speed 3 takes ceil(7/3) = 3 hours - two full hours and one
+hour eating just 1 banana.
+Using integer division instead of ceiling silently underestimates the hours,
+making infeasible speeds look feasible and returning an answer that is too
+small. `-(-p // speed)` is the integer-only ceiling if you want to avoid
+floats.""",
+
+    """The bounds, and why hi = max(piles).
+LOWER: speed 1 is the slowest meaningful rate.
+UPPER: at max(piles) every pile takes exactly one hour, so the total is
+len(piles) hours - the fastest useful speed. Going higher cannot reduce the
+time further, because you can never finish a pile in less than an hour.
+Setting hi to sum(piles) also works and just wastes iterations; setting it to
+something smaller than max(piles) can exclude the answer entirely.""",
+
+    """The template detail: hi = speed, not speed - 1.
+This is the lower-bound shape - `while lo < hi`, feasible -> `hi = mid` because
+mid might BE the answer, infeasible -> `lo = mid + 1`. Return lo.
+Writing `hi = mid - 1` discards a feasible candidate and can return one too
+large. Mixing the half-open loop with the closed-interval update is the usual
+source of infinite loops here. Same template as Search Insert Position and
+Capacity to Ship Packages - pick it once and reuse it.""",
+
+    """Edge cases.
+h == len(piles) -> she has exactly one hour per pile, so the answer is
+max(piles).
+One pile [1000] with h = 1 -> 1000. With h = 2 -> 500.
+h much larger than the number of piles -> the answer approaches 1.
+The problem guarantees h >= len(piles); otherwise no speed suffices and you
+would return -1 or raise, which is worth noting as an assumption.
+Large piles: sum(ceil(...)) can be big but stays well within range.""",
+
+    """Complexity and the family.
+O(n log(max pile)) - a log-many binary search steps, each doing an O(n)
+feasibility check. Space O(1).
+The family: Capacity to Ship Packages Within D Days (identical structure),
+Split Array Largest Sum (the same problem again), Minimum Number of Days to
+Make m Bouquets, Minimise Maximum of Array, Arranging Coins, and Sqrt(x).
+Cue: 'minimise the maximum' / 'maximise the minimum' / 'smallest X such that Y
+is achievable', plus a cheap way to TEST a candidate. When you can test but not
+directly compute, binary-search the answer.""",
+]
+
+_EX_P1AB["Longest Consecutive Sequence"] = [
+    """The one line that makes it O(n): only start counting at a run's BEGINNING.
+`if n - 1 not in num_set` means you only expand upward from numbers that have
+no predecessor - i.e. the first element of each run. Every other number is
+skipped instantly.
+Without that guard, [1,2,3,4] would count from 1 (length 4), then from 2
+(length 3), then 3, then 2 - O(n^2) on a long run. With it, only 1 starts a
+walk and the rest are O(1) rejections.""",
+
+    """Why the total work is linear, which is the argument to make.
+The inner while loop looks nested, but across the WHOLE run it advances at most
+once per element in the array - each number is visited by exactly one run's
+expansion, the one that starts at its own run's beginning.
+So the outer loop is O(n) rejections plus O(n) total inner steps = O(n). That
+'each element is touched by exactly one expansion' invariant is the same shape
+as the amortised argument for monotonic stacks, and it is what an interviewer
+wants to hear rather than 'it's roughly linear'.""",
+
+    """A trace on the messy example.
+nums = [100,4,200,1,3,2]. Set: {100,4,200,1,3,2}.
+100: is 99 present? No -> start. 101 not present -> length 1.
+4: is 3 present? YES -> skip, 4 is mid-run.
+200: 199 absent -> start, 201 absent -> length 1.
+1: 0 absent -> start. 2, 3, 4 all present -> length 4. Best 4.
+3 and 2: both have predecessors -> skipped.
+Answer 4, and note only two numbers ever triggered a walk.""",
+
+    """Why not just sort.
+Sorting then scanning for runs is O(n log n) and perfectly correct - and it is
+the right FIRST answer to state. The set version is O(n), which is the point of
+the problem, and the explicit constraint in the prompt is what rules sorting
+out.
+The trade: the set costs O(n) space, while an in-place sort costs O(1) extra.
+If memory were the binding constraint, sorting would win - so the choice is not
+absolute, and saying that reads better than presenting the set as strictly
+superior.""",
+
+    """Edge cases.
+Empty array -> best stays 0.
+All duplicates [1,1,1] -> the set collapses to {1}, one run of length 1.
+Iterating the SET rather than the list matters here: with a million copies of
+1, iterating the list does a million redundant lookups while the set does one.
+Negative numbers and mixed signs work unchanged; [-1,0,1] is a run of 3.
+A single element -> 1.""",
+
+    """Complexity and the family.
+O(n) time, O(n) space.
+The family: Longest Consecutive Sequence in a binary tree (different technique -
+DFS carrying the run length), Summary Ranges (the same run-detection on a
+SORTED array, where neighbours suffice), Missing Ranges, Degree of an Array,
+and Binary Subarrays With Sum.
+The transferable idea is the anchor test: when counting runs or groups, find a
+cheap way to identify the START of each one so you process each group exactly
+once.""",
+]
+
+_EX_P1AB["Next Greater Element (monotonic stack)"] = [
+    """The mechanic, traced.
+nums = [2,1,2,4,3]. Stack holds indices still waiting for a greater value.
+i=0 (2): push 0. i=1 (1): 1 < 2, push 1. Stack [0,1].
+i=2 (2): 2 > nums[1]=1 -> pop 1, res[1] = 2. 2 is not > nums[0]=2 (strict) ->
+stop, push 2. Stack [0,2].
+i=3 (4): pops 2 (res[2]=4) and 0 (res[0]=4). Push 3.
+i=4 (3): 3 < 4, push 4.
+Leftover [3,4] keep their -1.
+Answer [4,2,4,-1,-1].""",
+
+    """Why the stack is DECREASING, and what it buys.
+Everything on the stack is waiting, in decreasing value order - any element
+larger than the one below would have popped it on arrival.
+So a new value resolves a CONTIGUOUS RUN from the top and can stop the instant
+it meets something larger, because everything deeper is larger still. That
+early stop is the whole reason this is O(n) rather than O(n^2).""",
+
+    """Why each element is pushed once and popped at most once.
+That is the amortised argument: the inner while may be long on one iteration
+and empty on the next, but across the entire run it executes at most n times
+total. So the complexity is O(n), not O(n^2), despite the nested loop shape.
+Being able to state 'pushed once, popped once' is the correct answer to 'are
+you sure that's linear?'.""",
+
+    """The circular variant, which is the standard follow-up.
+Next Greater Element II wraps around: the answer for the last element may come
+from the front. The trick is to iterate 2n times using `i % n`, pushing only
+during the first pass and only resolving during both.
+That simulates a second lap without copying the array. It is a small change and
+it is the first thing an interviewer reaches for after this problem, so it is
+worth having ready.""",
+
+    """Edge cases.
+Strictly increasing [1,2,3] -> each resolves immediately -> [2,3,-1].
+Strictly decreasing [3,2,1] -> nothing ever pops -> [-1,-1,-1] and the stack
+ends full.
+All equal [5,5,5] -> the comparison is STRICT so nothing resolves -> [-1,-1,-1].
+If the prompt wanted 'greater or equal', flipping to `<=` changes every answer.
+Single element -> [-1]. Empty -> [].
+The leftover stack needs no cleanup because the result was initialised to -1.""",
+
+    """Complexity and the family.
+O(n) time, O(n) space.
+The monotonic stack family: Daily Temperatures (the same algorithm returning a
+DISTANCE instead of a value), Next Greater Element I (map values to answers via
+this, then look up), II (circular), Largest Rectangle in Histogram (an
+INCREASING stack), Trapping Rain Water, Sum of Subarray Minimums, Remove K
+Digits, and Online Stock Span.
+Rule of thumb: DECREASING stack for next-greater, INCREASING for next-smaller,
+and whatever is left on the stack at the end takes the default answer.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AB:
+        _e["examples"] = _EX_P1AB[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
