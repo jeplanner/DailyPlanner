@@ -23671,6 +23671,37 @@ In plain words, the takeaway: sort the list so it tells you which way to move,
 walk two fingers inward, and skip over any value equal to the one you just used.
 Time O(n^2) after an O(n log n) sort; extra space O(1) beyond the output.""",
 
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code does three things, in this order.
+
+FIRST it sorts the list. That one step buys two separate things: the numbers now
+run from smallest to largest, so "my total is too small" tells you which
+direction to move; and equal numbers are now sitting next to each other, so
+spotting a repeat is just a glance at the neighbour.
+
+SECOND it walks through the list picking one number at a time to be the FIXED
+first member of the trio. For each fixed number, it puts one finger just to the
+right of it and another finger at the far right end of the list, and slides the
+two fingers toward each other. If the three numbers add up to less than zero, it
+slides the left finger right to pick up something bigger. If they add up to more
+than zero, it slides the right finger left to pick up something smaller. If they
+add up to exactly zero, it writes the trio down and moves both fingers inward.
+The fingers only ever move toward each other and never back, so each fixed
+number costs one sweep of the list and no more.
+
+THIRD, in two places, it refuses to use a number that is the same as the one it
+just used - once for the fixed number, once for the left finger after a hit.
+That is the only thing standing between you and the same trio being reported
+several times.
+
+Nothing is stored except the answers themselves. There is no hash map, no set,
+no second copy of the list - just two positions being nudged along.
+
+In one sentence: sort the list so it tells you which way to walk, then for each
+starting number squeeze two fingers together from both ends until they meet,
+skipping any number identical to the one you just used.""",
+
     """Now the code, line by line, against the trace we just did by hand.
 
 Keep the traced list beside you: sorted [-4, -1, -1, 0, 1, 2].
@@ -23903,6 +23934,36 @@ row". Walk the tree row by row with a queue, freeze the row's size before you
 start serving it, and keep the last node you serve. Time O(n), space O(width of
 the widest row).""",
 
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code walks the tree one horizontal ROW at a time, from the top down, and
+keeps the last node of each row.
+
+It manages the rows using a waiting line. At the start, the line contains just
+the top node - that is row 0. Then it repeats this until the line is empty:
+
+  Count how many nodes are waiting RIGHT NOW. That count is exactly the size of
+  the current row, because nothing from the next row has joined yet.
+
+  Serve exactly that many nodes, taking them from the front of the line. As each
+  one is served, put its children on the BACK of the line - left child first,
+  then right - so they queue up in order for the next row.
+
+  The very last node served in that count is the rightmost one in its row, so
+  write its value down.
+
+By the time those nodes have been served, the line holds exactly the next row,
+in left-to-right order, and the whole thing repeats one level lower.
+
+The single line that everything depends on is the one that counts the waiting
+nodes BEFORE serving any of them. The line keeps growing while you work, because
+you are adding children to it at the same time as you are taking parents off it.
+Freeze the count first and the boundary between one row and the next is exact.
+Ask for the length again in the middle and the two rows blur into one.
+
+In one sentence: walk the tree row by row using a waiting line, freeze how many
+are waiting before you start on a row, and keep the last one you serve.""",
+
     """Now the code, line by line, against the trace we just did by hand.
 
 Keep the traced tree beside you: 1 on top, 2 and 3 below it, then 5 and 4.
@@ -24134,6 +24195,38 @@ you have already copied, and that memory must be written BEFORE you follow any
 edge - otherwise the loop sends you back to a node you are still in the middle
 of copying, and you copy it again forever.""",
 
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code keeps a notebook - the map - with one line per node, saying "this
+original node has this copy". Then it walks the graph, and at every node it
+arrives at, it does the same four things:
+
+  1. Look the node up in the notebook. If it is already written down, hand back
+     the copy that is recorded there and go no further. This is the step that
+     stops the walk going round a loop forever.
+  2. Otherwise, make a brand-new node holding the same value. Its list of
+     neighbours is deliberately left EMPTY for the moment.
+  3. Write that pairing into the notebook immediately - before going anywhere
+     else at all.
+  4. Now go through the original node's neighbours one by one, ask for each
+     one's copy (which means starting this same procedure at that neighbour),
+     and attach whatever comes back to the new node's neighbour list.
+
+Step 3 is the entire solution, and its POSITION is what makes it work. The walk
+will come back round the loop to a node it is still in the middle of copying. If
+that node was written in the notebook first, the walk finds it, hands back the
+half-finished copy, and stops - and that half-finished copy will be completed by
+the call still working on it further up. If it was not written down yet, the
+walk starts copying it a second time, and a third, and never stops.
+
+The notebook is doing two jobs at once with one line of storage: it is the
+"already been here" marker, and it is the lookup table that tells every edge
+which copy to point at. That is why there is no separate visited set anywhere.
+
+In one sentence: copy each node, write it in the notebook BEFORE following any
+of its edges, and whenever you arrive somewhere already in the notebook, hand
+back what is written there instead of copying it again.""",
+
     """Now the code, line by line, against the trace we just did by hand.
 
 Keep the square beside you: 1-2, 2-3, 3-4, 4-1.
@@ -24350,6 +24443,41 @@ In plain words, the takeaway: do not guess with the biggest coin. Ask "what was
 the last coin?", try every possibility, and reuse the answers you already
 computed for smaller amounts. Time O(amount x coins), space O(amount).""",
 
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code fills in a table of answers, one row per amount, working upward from
+zero.
+
+Think of it as a price list you are writing by hand. The first line is free:
+making 0 costs 0 coins. Then you work out the cost of making 1, then 2, then 3,
+and so on, all the way up to the amount you actually care about - and crucially,
+by the time you reach any amount, every smaller amount is already written down
+in front of you.
+
+To fill in the line for some amount, ask one question: WHAT WAS THE LAST COIN I
+HANDED OVER? It has to have been one of your coins. So try each coin in turn: if
+the last coin was a 5, then before handing it over you must have made
+(this amount minus 5), and the cheapest way to do that is already sitting on the
+list - so that route costs "what is written for amount minus 5" plus one more
+coin. Do that for every coin that is not too big, and keep the smallest total.
+
+That is the whole method. No cleverness, no guessing - it simply tries every
+possible last coin at every amount and keeps the best.
+
+Two details make it tidy. Every amount starts out marked "infinity", meaning "no
+way to make this has been found yet"; because adding one to infinity is still
+infinity, and the smallest of a real number and infinity is always the real
+number, unreachable amounts stay unreachable with no extra checks. And the very
+first line, zero costs zero, is the floor that every other line is ultimately
+built on - get it wrong and every answer in the table is wrong with it.
+
+At the end you read off the line for your amount. If it still says infinity, the
+amount could not be made at all, so you report -1.
+
+In one sentence: work out the cheapest way to make every amount from 0 upward,
+and get each one by asking "what was the last coin?" and reusing the answer you
+already wrote down for the leftover.""",
+
     """Now the code, line by line, against the table we just filled in by hand.
 
 Keep the trace beside you: coins [1, 2, 5], amount 11, answer 3.
@@ -24399,95 +24527,525 @@ line that turns the [2]-coins-amount-3 case into -1.""",
 ]
 
 _EX_P0B["Decode Ways (DP)"] = [
-    """The textbook case, traced.
-s = "226". prev=1, curr=1.
-  i=1 ('2'): single '2' valid -> cur += curr = 1. two-digit "22" is 22, in
-             10..26 -> cur += prev = 1. cur=2. Slide: prev=1, curr=2.
-  i=2 ('6'): single '6' valid -> cur += 2. two-digit "26" = 26, valid ->
-             cur += 1. cur=3.
-Answer 3: "2 2 6" (BBF), "22 6" (VF), "2 26" (BZ).""",
+    """The question, as a secret code your friend sent you.
 
-    """The leading-zero rejection.
-s = "06". The very first character is '0', which cannot decode - there is no
-letter 0 - so return 0 immediately before the loop.
-Contrast "10", which is valid as a single pair -> 1 way. The zero is only legal
-when it is the second digit of 10 or 20.""",
+You and a friend agreed on a simple code: A = 1, B = 2, C = 3, all the way to
+Z = 26. To send a message you write the numbers with no spaces between them.
 
-    """The zero that kills a branch mid-string.
-s = "230".
-  i=1 ('3'): single valid (+1), "23" valid (+1) -> curr=2.
-  i=2 ('0'): single '0' is NOT valid, so no addition from curr. Two-digit "30"
-             is 30, outside 10..26, so no addition from prev. cur = 0.
-Answer 0 - the string cannot be decoded at all. A zero that is neither preceded
-by 1 nor 2 makes the whole decoding impossible.""",
+Your friend sends you: 226
 
-    """The classic bug: allowing "06" as a pair.
-s = "106".
-  i=1 ('0'): single invalid; "10" = 10, valid -> curr = prev = 1.
-  i=2 ('6'): single '6' valid -> +1 (from curr=1); two-digit "06" = 6, which is
-             NOT in 10..26 -> no addition.
-Answer 1 ("10 6" = JF). If you only checked "is the pair <= 26" and forgot the
-lower bound of 10, you would count "06" and return 2. Checking both bounds is
-the fix.""",
+The trouble is that the spaces are gone, so YOU have to decide where one letter
+ends and the next begins. Try it by hand - read the digits left to right and at
+each point choose to take one digit or two:
 
-    """A longer string to see the Fibonacci-like growth.
-s = "11111" -> 8 ways. s = "111111" -> 13.
-When every adjacent pair is a valid letter, the recurrence is exactly
-f(n) = f(n-1) + f(n-2) - the Fibonacci numbers. Zeros and out-of-range pairs are
-what break that pattern and collapse the count.
-Recognising the Fibonacci skeleton makes the two-variable structure obvious.""",
+  2 | 2 | 6   ->  B, B, F     ->  "BBF"
+  22 | 6      ->  V, F        ->  "VF"
+  2 | 26      ->  B, Z        ->  "BZ"
 
-    """Why two variables suffice, and the follow-up.
-Each position looks back at most two characters, so a rolling window of two
-counts is enough - O(1) space instead of an O(n) table.
-The follow-up is usually Decode Ways II, which introduces '*' as a wildcard for
-1-9. The structure survives, but each branch becomes a count of possibilities
-(a '*' alone is 9 ways; "1*" is 9; "2*" is 6), and the arithmetic gets fiddly.
-Same recurrence, richer transitions.""",
+Is there a fourth? "226" as one chunk would be letter number 226, and there is
+no such letter. So there are exactly THREE ways.
+
+The question does not ask you to list them - only to COUNT them. And that
+difference is what makes a fast solution possible: counting lets you add numbers
+together instead of building every message.""",
+
+    """Spotting the shape: at every step there are only two moves.
+
+Stand at some position in the digit string and ask: how did I ARRIVE here?
+
+There are only two possibilities. Either the previous letter used ONE digit, so
+I arrived from one position back. Or it used TWO digits, so I arrived from two
+positions back. Nothing else - no letter is three digits long, because 26 is the
+largest and it has two digits.
+
+So, writing ways(i) for "the number of ways to decode the first i digits":
+
+    ways(i) = ways(i-1)   [if the single digit at position i is decodable]
+            + ways(i-2)   [if the two digits ending at position i form 10..26]
+
+If that shape looks familiar, it should - it is exactly Climbing Stairs, where
+you may take one step or two. The only difference is that here each move has a
+CONDITION attached: a move is allowed only if the digits it swallows form a real
+letter.
+
+Which means we never have to build the messages at all. We just carry two
+running counts up the string, adding as we go. And since ways(i) only ever looks
+back two places, we do not even need a whole table - two variables are enough.
+That is why the code has just prev and curr rather than a list.
+
+Seeds: ways(0) = 1 ("there is exactly one way to decode nothing - do nothing"),
+and ways(1) = 1 for a valid first digit. The empty-string 1 feels odd, but it is
+what makes the two-digit move come out right at the very start.""",
+
+    """The trace on "226", with the reason attached to every line.
+
+    s  =  2   2   6
+    i  =  0   1   2
+
+Start: prev = 1 (ways to decode nothing), curr = 1 (ways to decode just "2").
+
+i = 1, the digit is '2':
+  Single-digit move: is '2' on its own decodable? Yes - it is not '0', and every
+    digit 1-9 is a letter. So add curr (= 1) to this position's count. cur = 1.
+    In words: every way of decoding "2" can be extended by the letter B.
+  Two-digit move: the pair ending here is "22". Is 22 between 10 and 26? Yes.
+    So add prev (= 1). cur = 2.
+    In words: every way of decoding nothing can be extended by the letter V.
+  Slide the window: prev = 1 (the old curr), curr = 2.
+  Meaning: there are 2 ways to decode "22" - "BB" and "V". Check by hand: yes.
+
+i = 2, the digit is '6':
+  Single-digit move: '6' is fine on its own, so add curr (= 2). cur = 2.
+    Those are "BB" + F and "V" + F.
+  Two-digit move: the pair is "26". Between 10 and 26? Yes, just barely.
+    So add prev (= 1). cur = 3.
+    That is "B" + Z.
+  Slide: prev = 2, curr = 3.
+
+The loop ends. curr = 3.
+
+Answer 3 - and the three messages are exactly BBF, VF and BZ, the ones we listed
+by hand at the start. Notice we never built a single string; we only ever added
+two numbers together.""",
+
+    """Zero is the villain of this problem. Four cases worth knowing.
+
+There is no letter number 0, so a '0' can never stand alone. It is only ever
+legal as the second half of 10 or 20. Every wrong answer to this problem comes
+from mishandling a zero.
+
+s = "06". The very first character is '0'. There is nothing before it to pair
+it with, so it can never decode. Answer 0, and the code returns it immediately,
+before the loop even starts.
+
+s = "10". At i = 1 the digit is '0': the single-digit move is BLOCKED (add
+nothing). The two-digit move sees "10", which is in 10..26, so it adds prev = 1.
+Total 1 way - the single letter J. Correct.
+
+s = "100". At i = 1 we get 1 way ("10" = J), so prev = 1, curr = 1. At i = 2 the
+digit is '0': single-digit move blocked. Two-digit move sees "00", which is not
+in 10..26, so blocked too. cur = 0. Answer 0 - and rightly, because that last
+'0' can never be attached to anything.
+
+s = "30". At i = 1 the digit is '0': single blocked. Two-digit move sees "30",
+above 26, blocked. cur = 0. Answer 0. A '0' after a 3 or higher is always fatal.
+
+The pattern to remember: a zero kills the single-digit move outright, and
+survives only if the digit in front of it is a 1 or a 2. Once a position reaches
+a count of 0, everything after it is 0 too - the zero propagates, which is
+exactly what should happen.""",
+
+    """Why the two-digit test is 10 to 26, and not 1 to 26.
+
+The upper limit is easy: 26 is Z, the last letter.
+
+The lower limit is the interesting one. Why start at 10 and not at 1? Because
+the two-digit move looks at a pair of characters, and a pair whose first
+character is '0' - like "06" - is NOT the number 6. Writing a letter as "06"
+was never part of the code; B is written "2", never "02". Testing
+1 <= two <= 26 would accept "06" as the letter F and count messages that cannot
+exist.
+
+Requiring the pair to be at least 10 says exactly one thing: "the first of these
+two characters is not a zero". It is a compact way of writing a leading-zero
+check, and that is all it is doing.
+
+One more subtlety worth naming: the two moves are added, not chosen between.
+This trips people up. At i = 2 of "226" we did NOT pick the better of the two
+moves - we added both counts, because the single-digit route and the two-digit
+route lead to DIFFERENT messages and the question asks for the total number of
+messages. Whenever a problem asks "how many ways", you add; when it asks
+"what is the best", you take a min or a max. Reading the question for that one
+word tells you which operator belongs in your recurrence.""",
+
+    """The cost, and the variants.
+
+Time: one pass over the string, doing a fixed amount of work at each character -
+O(n) for a string of length n. Space: two integers, so O(1). You never store a
+table at all, which is why this is the cleanest example of "a DP that has been
+squeezed down to rolling variables".
+
+If you did write the full table first - dp[0..n] - and then noticed that dp[i]
+only ever reads dp[i-1] and dp[i-2], collapsing it to two variables is a
+mechanical final step. In an interview it is perfectly good to write the table
+version first and then say "and since each cell only looks back two places, I
+can drop the array". That shows the reasoning rather than a memorised trick.
+
+The variants:
+- Decode Ways II adds a wildcard '*' that can stand for any digit 1-9. The shape
+  is identical, but each move's count is multiplied by how many digits the
+  wildcard could be: a lone '*' contributes 9 ways, "1*" contributes 9 (11..19),
+  "2*" contributes 6 (21..26), and so on. The answers get big, so they are taken
+  modulo 10^9 + 7.
+- If you were asked to LIST the messages rather than count them, this approach
+  would not do - you would switch to backtracking, and the answer count can be
+  exponential, which is exactly why the counting version is the one asked.
+
+In plain words, the takeaway: at each digit you either took one digit or two, so
+the count at each position is the sum of the counts one and two positions back -
+each added only if the digits it swallows form a real letter. Zeros are the only
+thing that can break a move. Time O(n), space O(1).""",
+
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code reads the digits from left to right, carrying just two running counts
+with it, and never builds a single message.
+
+Picture yourself standing on one digit. Two questions, and only two:
+
+  "Can this digit be a letter on its own?" It can, unless it is a '0'. If it
+  can, then every message that decoded everything up to the digit BEFORE this
+  one can be extended by one more letter - so all of those messages carry
+  forward.
+
+  "Can this digit team up with the one in front of it to make a letter?" It can,
+  if the pair reads as a number between 10 and 26. If it can, then every message
+  that decoded everything up to TWO digits back can be extended by that
+  two-digit letter - so all of those carry forward too.
+
+Add the two counts together and that is the number of messages up to and
+including where you are standing. Then take one step right and do it again.
+
+Notice both counts are ADDED, not chosen between. The one-digit route and the
+two-digit route produce genuinely different messages, and the question asks how
+many messages there are in total. That is the difference between a "how many
+ways" problem, which adds, and a "what is the best" problem, which takes a
+minimum or maximum.
+
+Because you only ever look back one digit and two digits, you never need to keep
+the whole table - two variables are enough, and they get shuffled along at the
+end of each step. Zeros are the only thing that can shut a route down, and once
+a position's count reaches zero everything after it is zero too, which is
+exactly right: an undecodable digit poisons the whole message.
+
+In one sentence: at each digit, add up the count from one step back (if the
+digit alone is a letter) and the count from two steps back (if the pair is a
+letter), and carry those two counts along to the end.""",
+
+    """Now the code, line by line, against the trace we just did by hand.
+
+Keep "226" beside you, and the counts we produced: 1, 2, 3.
+
+    if not s or s[0] == '0':
+        return 0
+Two impossible inputs handled up front: an empty string, and a string starting
+with '0' (our "06" case). It has to be checked here rather than in the loop
+because the loop starts at i = 1 and never examines the first character on its
+own.
+
+    prev, curr = 1, 1
+The two seeds. curr is "ways to decode the first digit", which is 1 because we
+just proved the first digit is not '0'. prev is "ways to decode nothing", which
+is 1 by the convention explained earlier - it exists so that the very first
+two-digit move has something correct to add.
+
+    for i in range(1, len(s)):
+Start at the SECOND character. The first one is already accounted for by the
+seeds, so there is nothing for the loop to do at i = 0.
+
+    cur = 0
+The count being built for THIS position. It starts at zero and the two moves
+below add into it. If neither move is legal it stays 0 - which is precisely the
+"100" case, where the answer collapses to zero and stays there.
+
+    if s[i] != '0':
+        cur += curr
+The SINGLE-digit move. Any digit except '0' is a letter on its own, so every way
+of decoding up to the previous character extends by one more letter - hence we
+add curr, the count at the previous position. At i = 2 of "226" this added 2.
+
+    two = int(s[i-1:i+1])
+Slice out the two characters ending at position i and read them as a number.
+At i = 2 of "226" the slice s[1:3] is "26", so two = 26.
+
+    if 10 <= two <= 26:
+        cur += prev
+The TWO-digit move, with the range test explained in the previous example: at
+least 10 means "no leading zero", at most 26 means "a real letter". Because this
+move swallows two characters, it extends the count from TWO positions back -
+hence prev, not curr. At i = 2 this added prev = 1, giving 3.
+
+Note the += on both moves rather than an if/else: both routes can be legal at
+once, and their messages are different, so both counts belong in the total.
+
+    prev, curr = curr, cur
+Slide the two-character window one step right. What was "the previous position"
+becomes "two back", and the position we just finished becomes "the previous
+one". Python assigns the whole right side first, so this swap needs no temporary
+variable - written as two separate statements it would be a classic bug.
+
+    return curr
+After the last character, curr holds the count for the whole string - 3 for our
+input.""",
 ]
 
 _EX_P0B["Generate Parentheses (backtracking)"] = [
-    """The textbook case, traced.
-n = 2. Start "" (0 open, 0 close).
-  "(" (1,0)
-    "((" (2,0) -> can only close: "(()" then "(())" - length 4, record.
-    "()" (1,1) -> open<2 so "()(", then "()()" - record.
-Answer ["(())", "()()"]. The tree of choices has exactly two leaves.""",
+    """What "well-formed" means, before any code.
 
-    """n = 1 and n = 0.
-n = 1 -> ["()"] - the only well-formed string.
-n = 0 -> [""] by convention, since the empty string is vacuously balanced. Worth
-confirming which the problem wants; some expect an empty list.""",
+You are given a number n and asked for every arrangement of n opening brackets
+and n closing brackets that is WELL-FORMED - meaning every "(" has a matching
+")" after it, and you never close a bracket you have not opened.
 
-    """The invalid string the second condition prevents.
-Suppose you compared close against n instead of against open. Starting from "",
-you could add ")" first, producing ")(" - correct length, completely invalid.
-The rule "you can only close what you have already opened" is enforced by
-close < open. Read it out loud when you write it; it is the invariant.""",
+Take n = 2, so two "(" and two ")". Write out every arrangement you can think of
+and check each one by hand, reading left to right and keeping a running count of
+how many brackets are currently open:
 
-    """Why pruning beats generate-and-filter.
-Brute force: generate all 2^(2n) strings of brackets and keep the valid ones.
-For n=5 that is 1,024 strings of which only 42 are valid - 96% wasted.
-For n=10, 1,048,576 strings for 16,796 valid ones.
-Backtracking never constructs an invalid prefix at all, so the work is
-proportional to the OUTPUT size, not the search space. That is the defining idea
-of backtracking.""",
+  "(())"  ->  open 1, open 2, close 1, close 0.  Never negative, ends at 0. GOOD
+  "()()"  ->  open 1, close 0, open 1, close 0.  GOOD
+  "())("  ->  open 1, close 0, close -1 ... you just closed a bracket that was
+              never opened. BAD
+  ")(()"  ->  starts by closing nothing at all. BAD
+  "(()("  ->  ends with a bracket still open. BAD
 
-    """The count, and what it tells you about complexity.
-The number of results is the nth Catalan number: 1, 2, 5, 14, 42, 132 for
-n = 1..6.
-Since the output itself grows exponentially, no algorithm can be polynomial -
-you must produce every string. So O(4^n / sqrt(n)) is the honest complexity, and
-saying "the output is exponential, so that is the floor" is the right way to
-answer the complexity question.""",
+So for n = 2 the answer is exactly two strings: "(())" and "()()".
 
-    """The string-building detail that matters at scale.
-Passing current + "(" creates a new string at every call - O(n) per node.
-Using a list you append to and pop from makes each step O(1), joining once at a
-leaf.
-For n=10 with 16,796 results the difference is measurable. It is also the same
-choose/explore/un-choose discipline as every other backtracking problem, so it
-is worth writing that way by default.""",
+That hand-check gives us the two rules that the whole solution rests on:
+
+  RULE 1: the running count of open brackets must never go below zero.
+  RULE 2: it must be exactly zero at the end.
+
+Now here is the idea that makes this efficient. Instead of generating every
+arrangement and then testing it, we will only ever ADD a bracket when doing so
+keeps the rules true. Bad strings are then never built in the first place.""",
+
+    """What BACKTRACKING is, in plain words.
+
+BACKTRACKING means: build the answer one piece at a time; at each step try every
+legal next piece; when a piece leads nowhere useful, undo it and try the next
+one. It is how you solve a maze with a piece of chalk - walk down a corridor,
+and if it dead-ends, walk back and take a different one.
+
+Here the "pieces" are single characters, and there are only two of them to try
+at each step: "(" or ")".
+
+We carry three things as we build:
+- current: the string built so far, e.g. "((".
+- open_count: how many "(" we have placed.
+- close_count: how many ")" we have placed.
+
+Now translate the two rules from the last example into conditions on those
+counts:
+
+  We may add "("   if open_count < n.
+      In words: we have not used up our supply of opening brackets yet. Adding
+      one can never break anything - an open bracket can always be closed later.
+
+  We may add ")"   if close_count < open_count.
+      In words: there is at least one bracket currently open and waiting to be
+      closed. This single condition IS Rule 1 - it makes it impossible for the
+      running count to ever go negative, because we refuse to close more than we
+      have opened.
+
+And we are FINISHED when the string has reached length 2n. At that point
+open_count must be n (we could never exceed it) and close_count must be n too
+(the string is 2n long), so the string is automatically well-formed - Rule 2
+comes for free. There is no validity check anywhere in the code, because
+invalidity was never allowed to happen.
+
+By the way: this is a recursive walk, and each nested call sits on the CALL
+STACK - the pile of paused calls waiting for the one above to finish. When a
+call finishes and returns, we are back in its caller with the shorter string,
+which is what "undoing a choice" looks like in practice.""",
+
+    """The whole search drawn out for n = 2, with the reason at every branch.
+
+Start with current = "", open = 0, close = 0. At each node the two questions
+are: may I add "(" (is open < 2)? may I add ")" (is close < open)?
+
+    ""            open=0 close=0
+      "(" allowed (0 < 2).  ")" NOT allowed (close 0 is not < open 0) -
+                            correctly refusing to start with a closing bracket.
+    "("           open=1 close=0
+      "(" allowed (1 < 2).  ")" allowed (0 < 1).  Two branches - this is where
+                            "(())" and "()()" part company.
+      |
+      +-- "(("    open=2 close=0
+      |     "(" NOT allowed (2 is not < 2) - out of opening brackets.
+      |     ")" allowed (0 < 2).
+      |   "(()"   open=2 close=1
+      |     "(" still not allowed.  ")" allowed (1 < 2).
+      |   "(())"  length 4 = 2n -> RECORD IT, and return.
+      |
+      +-- "()"    open=1 close=1
+            "(" allowed (1 < 2).  ")" NOT allowed (1 is not < 1) - nothing is
+                                  currently open, so we cannot close.
+          "()("   open=2 close=1
+            "(" not allowed.  ")" allowed.
+          "()()"  length 4 -> RECORD IT, and return.
+
+Result: ["(())", "()()"] - exactly the two we found by hand, and in that order.
+
+Look at what did NOT happen. We never built "())(", never built ")(()", never
+built anything invalid at all. Every branch we refused to take was refused by
+one of the two conditions, at the earliest possible moment. That is the payoff
+of checking legality BEFORE placing a character rather than after.""",
+
+    """Why not just generate everything and filter? The numbers say no.
+
+The lazy approach: produce every possible string of length 2n made of "(" and
+")", then keep the well-formed ones. Each of the 2n positions has 2 choices, so
+that is 2^(2n) strings, which is 4^n.
+
+For n = 10 that is 4^10 = about 1.05 MILLION strings to build and test. How many
+survive? 16,796.
+
+So over 98% of the work is spent building strings that are immediately thrown
+away. And it gets worse fast: at n = 15, you would build about a billion strings
+to keep 9.7 million.
+
+That surviving count has a name - the CATALAN NUMBERS: 1, 1, 2, 5, 14, 42, 132,
+429, ... for n = 0, 1, 2, 3, ... You do not need to memorise the formula, but it
+is worth knowing the sequence exists and that it grows roughly like 4^n divided
+by n^1.5 - much smaller than 4^n, but still exponential.
+
+The backtracking version builds ONLY the survivors. It never wastes a step on a
+string that cannot be completed. This idea - refusing a choice at the moment it
+becomes illegal, rather than discovering the problem at the end - is called
+PRUNING, and it is the single most valuable habit in backtracking problems.""",
+
+    """The tiny inputs, and the one real trap in the code.
+
+n = 1. The only string is "()". Trace it: from "" we may only add "(" (close is
+not less than open). From "(" both are legal, but adding "(" again is blocked
+because open would exceed n... actually at n = 1, open is already 1, so
+open < n is false and only ")" is available. We reach "()", length 2 = 2n,
+record it. One answer. Correct.
+
+n = 0. The length target is 0, so the very first call finds len(current) == 0 ==
+2n and immediately records the empty string. The answer is [""], a list holding
+one empty string - not an empty list. That is the mathematically right answer
+(there is exactly one way to arrange no brackets), and it matches the Catalan
+sequence starting 1, 1, 2, 5.
+
+Now the trap. In many languages you would build the string by APPENDING to a
+shared buffer, and then you must REMOVE the character again after the recursive
+call returns - the literal "backtrack" step:
+
+    current.append('(')
+    backtrack(...)
+    current.pop()        <- forget this line and every branch is polluted by
+                            the choices of the branch before it
+
+The Python code below sidesteps this entirely by passing current + "(" as a NEW
+string. Strings in Python are immutable, so the caller's own string is untouched
+and there is nothing to undo - the undo happens automatically when the call
+returns and we are back with the caller's shorter string. It costs a little
+copying, but it removes the most common source of bugs in backtracking code.
+Worth saying out loud in an interview, because the interviewer is watching for
+whether you know the undo step exists at all.""",
+
+    """The cost, and the family of problems this shape covers.
+
+Time and space: the answer itself contains a Catalan number of strings, each 2n
+characters long, so simply WRITING the output costs about 4^n / n^1.5 x n steps.
+No algorithm can beat that, because it has to produce all of them. The usual way
+to state it is O(4^n / sqrt(n)), and the important part of the sentence is "and
+that is optimal, because the output is that large". The recursion depth is 2n,
+so the call stack is O(n) on top of the output.
+
+The same build-one-piece-at-a-time-with-a-legality-rule shape solves:
+- Permutations: at each step place any number you have not used yet.
+- Subsets: at each step choose to include or exclude the next item.
+- Combination Sum: at each step add any coin, stopping when you overshoot the
+  target - the overshoot check is the pruning rule.
+- N-Queens: at each step place a queen in a column, refusing any square attacked
+  by a queen already placed.
+- Word Search: at each step step to a neighbouring letter, refusing squares
+  already used in this path.
+
+Every one of them is: a partial answer, a set of candidate next moves, a rule
+that says which moves are legal, and a base case that says when the partial
+answer is finished. Learn the skeleton here, where the rules are only two lines
+long, and the harder ones become a matter of writing the right condition.
+
+In plain words, the takeaway: never build a bad string. Add "(" while you still
+have some left, add ")" only while something is open, and stop at length 2n -
+then everything you produce is valid by construction and no checking is needed.""",
+
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code grows a string one character at a time, and it is only ever allowed to
+add a character that keeps the string legal. Because of that, every string it
+finishes is automatically well-formed - there is no checking step anywhere.
+
+It carries three things as it grows: the string so far, how many "(" it has
+placed, and how many ")" it has placed. At each step it asks two questions, and
+it may answer yes to both:
+
+  "May I add an opening bracket?" Yes, as long as it has not already used all n
+  of them. Adding an opening bracket can never break anything - whatever you
+  open, you can close later.
+
+  "May I add a closing bracket?" Yes, but only if it has placed more opening
+  brackets than closing ones - that is, only if something is actually open and
+  waiting to be closed. This single condition is what makes it impossible to
+  ever write a stray ")".
+
+When both answers are yes, it takes BOTH routes, one after the other. It follows
+the first choice all the way down to a finished string, then comes back to where
+it was and follows the second. That is why the answer contains more than one
+string: the search branches wherever a genuine choice existed.
+
+It knows it is finished when the string has reached 2n characters. At that point
+there is nothing left to check - n opening and n closing brackets, every one of
+them placed legally - so it simply writes the string down and stops.
+
+The important thing this AVOIDS is worth naming. The lazy approach builds every
+possible arrangement of brackets and then throws away the bad ones, which at
+n = 10 means building about a million strings to keep sixteen thousand. This
+code never builds a single bad string, because a bad string is refused at the
+exact character that would have made it bad.
+
+In one sentence: add an opening bracket while you still have some left, add a
+closing bracket only while something is open, stop at 2n characters - and
+everything you produce is valid because nothing invalid was ever allowed.""",
+
+    """Now the code, line by line, against the search tree we just drew.
+
+Keep n = 2 and that tree beside you.
+
+    result = []
+Where finished strings land. Ours ended as ["(())", "()()"], in exactly the
+order the tree visits them - the "((" branch is explored fully before the "()"
+branch, because the "(" line comes first in the code.
+
+    def backtrack(current, open_count, close_count):
+The three things we carry, exactly as described earlier: the string so far, and
+how many of each bracket it contains. Defining it INSIDE generate_parenthesis
+lets it see result and n without passing them down through every call.
+
+    if len(current) == 2 * n:
+        result.append(current)
+        return
+The BASE CASE - the condition that stops the recursion. A string of length 2n
+must contain n of each bracket, and every character was placed legally, so it
+needs no validity check: record it and stop. The return is what makes us climb
+back UP the tree and try the branch we have not taken yet.
+
+    if open_count < n:
+        backtrack(current + "(", open_count + 1, close_count)
+The first choice: add an opening bracket, allowed while we still have some in
+our supply. In the tree this is the line that took us from "" to "(" to "((".
+Notice current + "(" builds a NEW string - the caller's own current is
+untouched, which is why no undo step is needed.
+
+    if close_count < open_count:
+        backtrack(current + ")", open_count, close_count + 1)
+The second choice: add a closing bracket, allowed only while something is open.
+This is the guard that refused to start the string with ")" (at "", close 0 is
+not less than open 0) and refused ")" at "()" (1 is not less than 1). One
+condition, and every invalid string in the language is unreachable.
+
+These two ifs are deliberately NOT if/else. At "(" in the tree both were true,
+and we took both - first the "(" branch all the way down to "(())", then, when
+that returned, the ")" branch down to "()()". That is what makes it a search
+over a tree rather than a single path.
+
+    backtrack("", 0, 0)
+Start at the root of the tree: nothing built, nothing used.
+
+    return result
+The finished list, ["(())", "()()"] for n = 2.""",
 ]
 
 _EX_P0B["Longest Substring Without Repeating Characters"] = [
@@ -24692,47 +25250,297 @@ for _e in ENTRIES:
 _EX_P0C = {}
 
 _EX_P0C["Linked Lists — reversal & fast/slow pointers"] = [
-    """Reversal traced pointer by pointer.
-list 1->2->3. prev=None, curr=1.
-  save nxt=2; 1.next=None; prev=1; curr=2      state: 1 | 2->3
-  save nxt=3; 2.next=1;    prev=2; curr=3      state: 2->1 | 3
-  save nxt=None; 3.next=2; prev=3; curr=None   state: 3->2->1
-Return prev = 3. Draw these three boxes on paper once and the problem is
-permanently solved.""",
+    """What a LINKED LIST is, drawn as a train.
 
-    """Empty list and single node.
-head = None: the loop never runs, prev stays None, return None. Correct.
-head = 1: save None, 1.next = None (already), prev=1, curr=None. Return 1.
-Both fall out with no special casing - a sign the loop invariant is right.""",
+Think of a train. Each carriage holds some cargo, and it is coupled to exactly
+one carriage behind it. To get to carriage 4 you must walk through 1, 2 and 3 -
+there is no way to jump straight there.
 
-    """Fast/slow finding the middle - even and odd lengths differ.
-1->2->3->4->5 (odd): slow ends on 3, the true middle.
-1->2->3->4 (even): fast starts at 1, moves to 3, then fast.next is None so the
-loop stops with slow on 3 - the SECOND of the two middles.
-If you want the first middle instead, change the condition to
-`while fast.next and fast.next.next`. Which one you land on is decided entirely
-by that line, so know which the problem wants.""",
+That is a LINKED LIST. Each item is a NODE, and each node holds two things: a
+value, and a link to the next node. The last node's link points at NOTHING,
+written as None in Python, which is how you know the list has ended.
 
-    """Cycle detection, and why the step sizes are 1 and 2.
-1->2->3->4->2 (4 points back to 2). slow: 1,2,3,4,2... fast: 1,3,2,4,3...
-Once both are inside the loop, fast closes the gap by exactly ONE node per
-iteration, so the gap must reach zero - it can never jump over.
-With steps of 1 and 3 the gap shrinks by 2 each time and can skip past zero on
-an odd-length cycle. That is why the classic algorithm uses 1 and 2.""",
+    head
+     |
+     v
+    [1] -> [2] -> [3] -> [4] -> None
 
-    """The bug that destroys the list.
-Writing `curr.next = prev` BEFORE saving `curr.next` loses the entire remainder
-in one statement - you now have a two-node list and no way back.
-The order is: save, flip, advance prev, advance curr. Four lines, and the first
-one is the one people drop under pressure.""",
+The vocabulary as it appears:
+- HEAD is the first node. It is the only node you are given; everything else is
+  reached by following links.
+- .next is the link a node holds. node.next is "the node after this one".
+- None at the end is the TAIL marker - "nothing follows".
 
-    """What this pattern unlocks.
-Reverse Linked List II (reverse a sublist), Palindrome Linked List (find the
-middle, reverse the second half, compare), Reorder List (middle + reverse +
-interleave), Remove Nth From End (gap of n between two pointers), Linked List
-Cycle II (find the cycle entrance).
-Every one is a combination of "reverse in place" and "two pointers at different
-speeds". Own those two primitives and the whole category collapses.""",
+Compare with an ordinary array [1,2,3,4]. An array is a row of boxes side by
+side, so you can jump straight to box 3. A linked list cannot do that - reaching
+the k-th node always costs k steps. What the linked list gives you in exchange
+is cheap INSERTION and DELETION in the middle: to remove a carriage you just
+re-couple its neighbours, whereas in an array you must shuffle everything after
+it along.
+
+Two techniques cover most linked-list interview questions, and they are the two
+in this entry: REVERSAL, and the FAST/SLOW pointer pair.""",
+
+    """Reversing the list by hand, before any code.
+
+We want to turn this:
+
+    [1] -> [2] -> [3] -> None
+
+into this:
+
+    [3] -> [2] -> [1] -> None
+
+The list is not a row of boxes we can shuffle - all we can do is change which
+node each link points at. So reversing means: walk along, and flip each node's
+arrow to point BACKWARDS instead of forwards.
+
+Now the danger, and it is the whole reason this problem is asked. The moment you
+flip node 1's arrow to point backwards, you have DESTROYED the only thing that
+told you where node 2 was. The rest of the train is gone - uncoupled, with no
+way to reach it.
+
+So you need three fingers, not one:
+
+- CURR: the node whose arrow you are about to flip.
+- PREV: the node that curr should now point at - the part already reversed,
+  sitting behind curr. It starts as None, because the original first node must
+  end up pointing at nothing.
+- NXT: a temporary hold of curr.next, saved BEFORE the flip, so you still know
+  where to go next.
+
+The four steps, in this exact order, repeated until curr falls off the end:
+
+  1. nxt = curr.next      save the rest of the train
+  2. curr.next = prev     flip this carriage to face backwards
+  3. prev = curr          this carriage is now the front of the reversed part
+  4. curr = nxt           step forward onto the saved carriage
+
+Step 1 must come before step 2. Swap those two and the list breaks - that single
+ordering is what the question is really testing.""",
+
+    """The reversal trace, with the reason on every line.
+
+Starting list: [1] -> [2] -> [3] -> None.  prev = None, curr = [1].
+
+ROUND 1.  curr is [1].
+  nxt = [2]           save it - we are about to lose the link to it
+  1.next = None       flip: 1 now points at prev, which is None. So 1 has become
+                      the END of the list. Correct - it was the front, and the
+                      front becomes the back.
+  prev = [1]          the reversed part is now just [1] -> None
+  curr = [2]          step forward
+  Picture now:  reversed: [1] -> None      remaining: [2] -> [3] -> None
+
+ROUND 2.  curr is [2].
+  nxt = [3]           save
+  2.next = [1]        flip: 2 now points back at 1
+  prev = [2]          reversed part is [2] -> [1] -> None
+  curr = [3]
+  Picture now:  reversed: [2] -> [1] -> None    remaining: [3] -> None
+
+ROUND 3.  curr is [3].
+  nxt = None          3 was the last node, so there is nothing after it
+  3.next = [2]        flip
+  prev = [3]          reversed part is [3] -> [2] -> [1] -> None
+  curr = None
+  The loop condition "while curr" is now false, so we stop.
+
+Return prev, which is [3] - the new head. Note we return PREV, not curr: curr
+has walked off the end and is None. prev is always the last node we successfully
+flipped, which after the final round is the new front of the list.
+
+Read the three pictures again in order. The reversed part grows from the left
+while the remaining part shrinks from the left, and the two never overlap.""",
+
+    """The FAST/SLOW pointer pair - finding the middle in one pass.
+
+Second technique. You want the middle node of a list, but you do not know how
+long the list is, and walking it twice (once to count, once to reach the middle)
+feels wasteful.
+
+The trick: send two fingers along at DIFFERENT SPEEDS. SLOW moves one node per
+step; FAST moves two. When fast reaches the end, slow is at the middle - because
+in the same amount of time, slow covered exactly half the ground fast did.
+
+Trace on [1] -> [2] -> [3] -> [4] -> [5]:
+
+  Start:   slow = 1, fast = 1
+  Step 1:  slow = 2, fast = 3
+  Step 2:  slow = 3, fast = 5
+  Step 3:  fast.next is None, so fast cannot take two more steps - stop.
+  slow = 3. That is the middle of five nodes. Correct.
+
+On an EVEN-length list [1,2,3,4] there are two middles, so you must decide which
+one you want, and the loop condition is what decides it:
+
+  while fast and fast.next:      -> slow lands on the SECOND middle (node 3)
+  while fast.next and fast.next.next: -> slow lands on the FIRST middle (node 2)
+
+Neither is more correct; the problem tells you which. Say which one your
+condition gives, because "off by one middle" is the most common bug here.
+
+The two guards in "while fast and fast.next" both matter. fast might already be
+None (odd-length list, fast ran exactly off the end), and fast.next might be
+None (even-length list). Reading fast.next.next without both checks crashes.""",
+
+    """The same two fingers detect a LOOP - and here is why they must meet.
+
+Now suppose the train's last carriage is coupled back to an earlier one, so it
+runs in a circle:
+
+    [1] -> [2] -> [3] -> [4]
+                   ^      |
+                   |______|
+
+Walking this list never ends. How do you detect that without remembering every
+node you have seen?
+
+Send the same two fingers. Slow moves one step, fast moves two. If the list ends
+normally, fast falls off the end and you are done - no loop. But if there IS a
+loop, both fingers eventually enter it and can never leave.
+
+Once both are inside the loop, think about the GAP between them, measured
+forwards around the circle. Each step, fast gains exactly one node on slow -
+because fast moves two and slow moves one. So the gap shrinks by one every
+single step: 5, 4, 3, 2, 1, 0. It cannot jump over zero, because it only ever
+changes by one. So the gap MUST hit exactly zero, which means the two fingers
+land on the same node. They meet.
+
+That is the proof, and it is worth being able to say in two sentences: they are
+trapped in a circle, the gap between them closes by exactly one each step, and a
+quantity that decreases by one at a time cannot skip zero.
+
+This is called FLOYD'S CYCLE DETECTION, or the tortoise and hare. It uses O(1)
+extra memory - just two variables - where the obvious alternative (a set of
+every node seen) uses O(n).
+
+Handy extra: to find WHERE the loop starts, once the fingers meet, move one of
+them back to the head and then advance BOTH one step at a time. They meet again
+exactly at the loop's entry point.""",
+
+    """The tiny inputs, the DUMMY HEAD trick, and the cost.
+
+Empty list. head is None, so in the reversal the while loop never runs and we
+return prev, which is still None. Correct - reversing nothing gives nothing. No
+special case needed.
+
+Single node [1]. Round 1: nxt = None, 1.next = None (it already was), prev = 1,
+curr = None, loop ends, return 1. Correct, and again no special case.
+
+Now the trick that removes most of the remaining edge cases in linked-list
+problems: the DUMMY HEAD. Create one throwaway node that sits in front of the
+real head:
+
+    [dummy] -> [1] -> [2] -> [3] -> None
+
+Why bother? Because "delete the first node" and "insert before the first node"
+are normally special cases - there is no node in front of the head to re-couple.
+With a dummy there, the real head has a predecessor like every other node, so
+one piece of code handles every position. At the end you return dummy.next
+rather than dummy. Merging two sorted lists, removing the n-th node from the
+end, and removing duplicates all get noticeably shorter this way.
+
+Cost of everything in this entry: reversal touches each node once, so O(n) time
+and O(1) extra memory - the three pointers, no matter how long the list is. The
+fast/slow techniques are the same: one pass, two variables.
+
+Beware the recursive reversal. It is elegant in three lines but uses O(n) call
+stack, so on a list of a million nodes Python's recursion limit stops it. The
+iterative version below has no such problem, which is why it is the one to
+write.
+
+In plain words, the takeaway: to reverse, keep three fingers and always save the
+next node BEFORE you flip the current one. To find a middle or a loop with no
+extra memory, send one finger at twice the speed of the other. Both are O(n)
+time and O(1) space.""",
+
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code below reverses the list. It walks from the front to the back, and as it
+passes each node it turns that node's arrow around to point at the node behind
+it instead of the node in front.
+
+The whole difficulty is that a node's arrow is the ONLY thing that tells you
+where the rest of the list is. The moment you turn it around, everything after
+it becomes unreachable - the rest of the train is uncoupled and rolling away.
+
+So the code holds three fingers at once:
+
+  One on the node it is currently flipping.
+  One on the part it has already reversed, which sits behind - this is what the
+    current node's arrow gets pointed at. It starts as "nothing", which is
+    exactly right, because the original first node has to end up as the new last
+    node, pointing at nothing.
+  One temporary finger holding the node in front, saved a moment BEFORE the flip
+    so there is still a way to step forward afterwards.
+
+Each round is four small moves in a fixed order: save what is in front, flip the
+arrow backwards, move the "already reversed" finger onto the node just flipped,
+and step forward onto the saved node. Repeat until you step off the end.
+
+At that point the "already reversed" finger is sitting on what used to be the
+last node, which is now the first - so that is what gets handed back.
+
+Nothing is copied and no new nodes are made. The same nodes are still there in
+the same places in memory; only the arrows between them changed. That is why it
+needs no extra memory beyond the three fingers, however long the list is.
+
+In one sentence: walk the list turning each arrow backwards, always saving the
+next node before you flip the current one, and hand back the node you finished
+on.""",
+
+    """Now the code, line by line, against the trace we just did by hand.
+
+Keep [1] -> [2] -> [3] beside you, and the three pictures from the trace.
+
+    def reverse(head):
+head is the only thing we are given - the first node. Everything else is reached
+by following .next links.
+
+    prev = None
+The reversed part, which starts out empty. Setting it to None rather than to
+head is what makes the ORIGINAL first node end up pointing at nothing - and a
+node pointing at nothing is exactly what "end of list" means. In round 1 of the
+trace this is the value that got written into 1.next.
+
+    curr = head
+The node whose arrow we are about to flip. It starts at the front and walks to
+the end.
+
+    while curr:
+Keep going while curr is an actual node. When curr becomes None we have walked
+off the end and every arrow has been flipped. In the trace this became false
+after round 3.
+
+    nxt = curr.next
+STEP 1, and it must be first. Save where the rest of the list is, because the
+very next line overwrites curr.next and that link is the only way to reach it.
+In round 1 this saved [2]; had we skipped it, nodes 2 and 3 would have been
+stranded with nothing pointing at them.
+
+    curr.next = prev
+STEP 2, the actual reversal, and the only line that changes the list. This node
+now points BACKWARDS, at whatever we have already reversed. Round 1 wrote None
+here; round 2 wrote [1]; round 3 wrote [2].
+
+    prev = curr
+STEP 3. The node we just flipped is now the front of the reversed part, so it
+becomes the new prev for the next round. After round 2 this was [2], and indeed
+the reversed part was [2] -> [1] -> None.
+
+    curr = nxt
+STEP 4. Step forward onto the node we saved in step 1. This is the only reason
+step 1 existed.
+
+    return prev
+Return PREV, not curr. By the time the loop exits, curr is None - it walked off
+the end. prev is the last node we successfully flipped, which is the old tail
+and therefore the new head. In the trace that was [3].
+
+Four lines in the loop body, and their ORDER is the entire problem. Write step 2
+before step 1 and you get a list of length 1; return curr instead of prev and
+you get None. Both are worth checking on paper before you say you are done.""",
 ]
 
 _EX_P0C["Longest Increasing Subsequence (patience + binary search)"] = [
@@ -25251,67 +26059,275 @@ traversal with the whole set and let one sweep answer for everybody.""",
 ]
 
 _EX_P0D["Graphs — BFS, DFS, and when to use each"] = [
-    """Counting islands with DFS, traced.
-grid = [['1','1','0'],
-        ['0','1','0'],
-        ['0','0','1']]
-Scan row by row. (0,0) is land -> count=1, sink() floods (0,0), (0,1), (1,1) and
-turns them into '0'. The remaining scan finds those cells already water, so it
-does not recount them.
-(2,2) is land -> count=2, sink() floods just that one cell.
-Answer 2. Note what marking visited does here: it is not a separate set, it is
-an in-place mutation of the grid, which is O(1) extra space but destroys the
-input - say so in an interview and offer a `seen` set if the caller needs the
-grid intact.""",
+    """What a GRAPH is, and why a grid is secretly one.
 
-    """The same grid with BFS, and why the answer is identical.
-Replace the recursion with a queue: push (0,0), mark it water, then repeatedly
-pop a cell and push its unvisited land neighbours.
-Queue evolution: [(0,0)] -> pop (0,0), push (0,1),(1,0)? (1,0) is water, so just
-(0,1) -> pop (0,1), push (1,1) -> pop (1,1), no land neighbours -> empty.
-Same three cells, same island count. For CONNECTIVITY questions the two are
-interchangeable; only when the question is about DISTANCE does it matter.""",
+A GRAPH is just a set of things plus the connections between them. Each thing is
+a NODE (sometimes called a vertex); each connection is an EDGE. Friends and
+friendships, cities and roads, web pages and links - all graphs.
 
-    """The case that forces BFS - shortest path in a maze.
-grid where '.' is open and '#' is wall:
-    S . . #
-    # # . .
-    . . . E
-DFS from S might wander down the long left-hand corridor and reach E after 7
-steps, then report 7. It found A path, not the shortest.
-BFS expands in rings: everything 1 step away, then 2, then 3. The first time it
-touches E, the ring number IS the shortest distance (5 here). That guarantee
-only holds when every edge costs the same; add weights and you need Dijkstra.""",
+Now look at a grid of squares:
 
-    """The infinite-loop bug - forgetting to mark visited.
-Graph 1 - 2, undirected. DFS(1) visits 2; 2's neighbours include 1; without a
-visited set DFS(2) calls DFS(1), which calls DFS(2)... RecursionError.
-On a grid it is subtler: your `sink` marks cells as it goes, so it terminates.
-But if you write `if grid[r][c]=='1': queue.append(...)` in a BFS and only mark
-the cell when you POP it, the same cell gets pushed by several neighbours before
-it is ever popped. It still terminates, but the queue blows up and you may count
-a cell twice. Rule: mark visited at PUSH time, not at pop time.""",
+    1 1 0 0
+    1 1 0 0
+    0 0 1 0
+    0 0 0 1
 
-    """Choosing between them by what the question asks.
-'How many groups / components?' -> either; DFS recursion is shortest to write.
-'Shortest number of moves / minimum steps' -> BFS, always.
-'Does a path exist?' -> either; DFS often exits earlier in practice.
-'All paths / all combinations' -> DFS with backtracking (BFS would hold every
-partial path in memory at once).
-'Detect a cycle in a directed graph' -> DFS with three colours (white/grey/black)
-or Kahn's BFS topological sort.
-'Level-by-level output' -> BFS with the len(queue) trick.""",
+Here '1' means land and '0' means water. This does not look like a graph, but it
+is one in disguise: every square is a NODE, and two squares are joined by an
+EDGE if they sit directly side by side (up, down, left or right - not diagonally,
+unless the problem says so).
 
-    """Cost, and the recursion-depth trap.
-Both are O(V + E): every node enters once, every edge is examined once (twice
-for undirected, once from each side). On an R x C grid V = R x C and E is about
-4V, so O(R x C).
-Space: BFS holds a frontier, which for a grid can be O(min(R,C)) but worst case
-O(R x C); DFS holds a call stack as deep as the longest path.
-That last point bites in Python: a 1000x1000 grid of all land gives a DFS depth
-of a million and the default recursion limit is 1000. Either convert to an
-explicit stack or say out loud that you would - interviewers at Amazon and Google
-notice.""",
+Once you see the grid that way, a question like "how many separate islands are
+there?" becomes a graph question: how many separate GROUPS of connected land
+squares are there? Count them by eye above - the four 1s in the top-left corner
+touch each other, so they are one island; the single 1 in the third row is
+another; the single 1 in the fourth row is a third. Three islands.
+
+The two ways to explore a graph are DFS and BFS, and the rest of this entry is
+about what each one does, when to reach for which, and how the islands code
+below implements one of them.""",
+
+    """DFS and BFS in plain words, with the pictures they make.
+
+DEPTH-FIRST SEARCH (DFS): go as far as you can down one path before backing up.
+Like exploring a cave by always taking the first tunnel you see, and only
+retracing your steps when you hit a dead end. It uses a STACK - a pile where you
+put things on top and take them off the top, last in first out. Usually you do
+not build the stack yourself; you use recursion, and the CALL STACK (the pile of
+paused function calls) is the stack.
+
+BREADTH-FIRST SEARCH (BFS): explore in rings, everything one step away first,
+then everything two steps away, and so on. Like a drop of ink spreading in
+water. It uses a QUEUE - a waiting line where you join the back and are served
+from the front, first in first out.
+
+Starting from the top-left square of our grid, DFS might visit the four land
+squares in the order (0,0), (1,0), (1,1), (0,1) - plunging downwards first. BFS
+would visit (0,0), then both of its neighbours (0,1) and (1,0), then (1,1).
+Different order, same four squares.
+
+The single rule they share, and the one that matters most: MARK A NODE AS
+VISITED THE FIRST TIME YOU REACH IT, and never process it again. Graphs contain
+loops - in a grid, square A's neighbour is B and B's neighbour is A - so without
+that mark you walk back and forth between two squares forever until the program
+runs out of memory. The visited mark is not an optimisation. It is what makes
+the walk terminate at all.""",
+
+    """When to reach for which - the decision, in one page.
+
+Use BFS when the question involves SHORTEST or FEWEST or MINIMUM NUMBER OF STEPS
+in a graph where every edge costs the same. Because BFS finishes everything one
+step away before it looks at anything two steps away, the FIRST time it reaches
+a node is guaranteed to be by a shortest route. Examples: fewest moves for a
+knight, shortest word ladder, minutes for rot to spread through a crate of
+oranges, minimum depth of a tree.
+
+Use DFS when the question is about EXISTENCE, CONNECTIVITY, or ALL POSSIBLE
+PATHS - anything where you do not care how long the route was. Examples: how
+many islands (this entry), does a path exist between two nodes, does the graph
+contain a cycle, topological ordering, generating every path from A to B.
+
+Three more practical notes:
+
+- DFS is shorter to write, because recursion gives you the stack for free. That
+  is why the islands code below is DFS - the problem does not care about
+  distances, so there is no reason to pay for a queue.
+- DFS recursion depth equals the length of the longest path. On a 1000 x 1000
+  grid that is a million nested calls, and Python gives up at about a thousand.
+  When the input can be large, rewrite DFS with your own explicit stack, or use
+  BFS - neither touches the call stack.
+- If edges have DIFFERENT costs, plain BFS no longer finds the cheapest route.
+  You need Dijkstra's algorithm, which is BFS with a priority queue instead of a
+  plain queue - it serves the cheapest-so-far node next rather than the oldest.""",
+
+    """The islands trace, with the reason on every line.
+
+    grid:      col 0 1 2 3
+        row 0      1 1 0 0
+        row 1      1 1 0 0
+        row 2      0 0 1 0
+        row 3      0 0 0 1
+
+The outer scan reads every square left to right, top to bottom. count = 0.
+
+(0,0) is '1'. This is land we have not seen before, so it must belong to a NEW
+      island - nothing visited so far could have reached it. count = 1.
+      Now sink the whole island so we never count it again:
+      sink(0,0): it is land -> set it to '0', then call sink on its four
+        neighbours: below (1,0), above (-1,0), right (0,1), left (0,-1).
+        sink(1,0): land -> set to '0', recurse on its neighbours...
+          sink(2,0): it is '0' (water) -> return immediately.
+          sink(0,0): it is now '0', because we just changed it -> return. THIS
+            is the visited check doing its job; without it we would bounce
+            between (0,0) and (1,0) forever.
+          sink(1,1): land -> set to '0', recurse...
+            sink(0,1): land -> set to '0', recurse; all its neighbours are now
+              water or off the grid, so it returns.
+            everything else around (1,1) is water or already sunk.
+        sink(-1,0): row -1 is off the top of the grid -> return.
+        sink(0,-1): column -1 is off the left edge -> return.
+      The whole top-left blob is now '0'. Four squares turned to water.
+
+(0,1), (0,2), (0,3), (1,0), (1,1) ... all read '0' now - either they were water
+      to begin with, or we sank them. The scan walks past them.
+
+(2,2) is '1'. New island -> count = 2. sink turns it to '0'; all four of its
+      neighbours are water, so the recursion stops at once.
+
+(3,3) is '1'. New island -> count = 3. Same - it is alone.
+
+Scan finishes. Answer 3, matching the three islands we counted by eye.""",
+
+    """Why "sink the island" is the neat trick here.
+
+The normal way to remember which squares you have visited is a second grid of
+true/false the same size as the input. That works and costs O(rows x cols) extra
+memory.
+
+This solution does something cheaper: it OVERWRITES the land with water. Once a
+square has been counted as part of an island, turning its '1' into a '0' means
+every later check - both the outer scan and any recursive call - sees water and
+walks away. The grid becomes its own visited-marker, so no extra memory is
+needed at all.
+
+Read the guard line with that in mind:
+
+    if r < 0 or c < 0 or r >= R or c >= C or grid[r][c] != '1': return
+
+It is doing two completely different jobs in one line. The first four tests are
+BOUNDS CHECKS - "have I walked off the edge of the grid?" - and they must come
+first, because reading grid[r][c] with r = -1 would silently read the last row
+in Python instead of failing. The last test is the visited check, and it also
+covers water that was never land. Three situations, one early return.
+
+The cost of the trick: it DESTROYS the caller's grid. Everything ends up as
+water. If the caller needs the grid afterwards, either copy it first or use a
+separate visited set. Always say this out loud - an interviewer who cares about
+the input being mutated is testing whether you noticed.""",
+
+    """The cost, and the BFS rewrite of the same problem.
+
+Cost: the outer loops look at every square once, and sink turns each land square
+to water exactly once, so no square is processed more than a constant number of
+times. Time O(R x C). Extra memory is the recursion stack, which in the worst
+case - a grid that is entirely land, snaking - is O(R x C) deep.
+
+That worst case is the reason to know the BFS version. Replace sink with:
+
+  Put the starting square in a queue and immediately mark it water.
+  While the queue is not empty:
+    Take a square off the front.
+    For each of its four neighbours: if it is on the grid and is land, mark it
+      water and add it to the queue.
+
+Mark it water AS YOU ENQUEUE, not when you dequeue. If you wait, the same square
+can be added to the queue several times by different neighbours before it is
+ever served, and the queue balloons. This is the same "register before you
+explore" rule that Clone Graph turns on.
+
+Same O(R x C) time, same answer, but the memory is a queue rather than the call
+stack - so it survives a grid far larger than Python's recursion limit.
+
+In plain words, the takeaway: a graph is things plus connections, and a grid is
+one in disguise. DFS dives deep with a stack and answers "is it connected / does
+a path exist"; BFS spreads in rings with a queue and answers "what is the fewest
+steps". Whichever you use, mark a node the moment you first reach it - that mark
+is what stops the loops from running forever.""",
+
+    """What the code does, in plain language - read this before the line-by-line.
+
+The code counts islands by scanning the grid square by square and, every time it
+bumps into a piece of land it has not seen before, sinking the entire island
+that square belongs to.
+
+The scan itself is the boring part: read every square, left to right, top to
+bottom. Almost all of them are water, and it walks straight past those.
+
+The interesting part is what happens when it finds land. Reaching an unvisited
+land square during the scan means that square cannot belong to any island
+already counted - if it did, the earlier sinking would have swallowed it. So it
+must be the first square of a NEW island. Add one to the count, and then send
+out the flood-fill.
+
+The flood-fill is a small procedure that says: "if I am off the edge of the grid,
+or I am not standing on land, do nothing and go back. Otherwise, turn this
+square into water, then run this same procedure on the square above me, below
+me, to my left and to my right." Because each of those neighbours does the same
+thing, the whole connected blob of land turns to water, spreading outward from
+where it started, and it stops naturally wherever it meets water or the edge.
+
+Turning the land into water is doing double duty and this is the neat bit. It is
+not just tidying up - it IS the record of what has been visited. There is no
+separate grid of true/false anywhere, because a square that has been counted has
+literally been changed into a square the code ignores. That stops the flood-fill
+walking back and forth between two neighbouring squares forever, and it stops
+the outer scan counting the same island a second time.
+
+The price is that the grid is destroyed - everything ends up as water. If the
+caller still needs it, copy it first.
+
+In one sentence: walk every square; each time you meet land you have not seen,
+that is a new island, so count it and then flood the whole thing with water so
+you cannot possibly count it again.""",
+
+    """Now the code, line by line, against the trace we just did by hand.
+
+Keep the 4 x 4 grid beside you, and the answer 3.
+
+    if not grid:
+        return 0
+An empty grid has no islands. Needed because the very next line reads
+grid[0] to find the number of columns, which would fail on an empty list.
+
+    R, C = len(grid), len(grid[0])
+Rows and columns. len(grid) is how many rows there are; len(grid[0]) is how many
+squares are in the first row. For our grid, R = 4 and C = 4.
+
+    count = 0
+Islands found so far. It ended at 3.
+
+    def sink(r, c):
+The flood-fill: given one land square, turn it and every land square connected
+to it into water. Defined inside so it can see grid, R and C directly.
+
+    if r < 0 or c < 0 or r >= R or c >= C or grid[r][c] != '1':
+        return
+The three-jobs-in-one-line guard from the previous example: off the top, off the
+left, off the bottom, off the right, or not land. In the trace this is the line
+that returned instantly for sink(-1,0), for sink(2,0) which was water, and -
+most importantly - for sink(0,0) called back from (1,0), which had just been
+turned to '0'. That last one is the cycle-breaker.
+
+Order matters here. Python evaluates or-conditions left to right and stops at
+the first true one, so grid[r][c] is only read once all four bounds tests have
+passed. Put the grid read first and a negative index would quietly read the
+wrong square.
+
+    grid[r][c] = '0'
+Mark this square visited by turning land into water. This is the whole
+visited-set, done in place with no extra memory.
+
+    sink(r+1, c); sink(r-1, c); sink(r, c+1); sink(r, c-1)
+The four neighbours: down, up, right, left. No bounds checking here - the guard
+at the top of sink handles anything off the grid, which is why the four calls
+can be written so plainly. If the problem counted diagonals as connected, you
+would add four more calls here and change nothing else.
+
+    for r in range(R):
+        for c in range(C):
+Scan every square, top to bottom, left to right - the outer walk from the trace.
+
+    if grid[r][c] == '1':
+        count += 1
+        sink(r, c)
+The heart of the counting. Reaching an unvisited land square during the scan
+means it cannot belong to any island already found - if it did, sink would have
+reached it and turned it to water. So it must start a NEW island: add one to the
+count, then sink the entire island so the rest of the scan walks straight past
+it. In the trace this fired exactly three times: at (0,0), (2,2) and (3,3).
+
+    return count
+3 for our grid.""",
 ]
 
 _EX_P0D["Trees — BFS vs DFS"] = [
