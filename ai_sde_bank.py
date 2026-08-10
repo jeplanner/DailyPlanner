@@ -8764,61 +8764,373 @@ level - so one sweep settles every pair worth considering.""",
 ]
 
 _EXAMPLES["Find the Duplicate Number (Floyd's cycle)"] = [
-    """The textbook case, with the linked list drawn out.
-nums = [1,3,4,2,2]  ->  answer 2
-Follow index -> value as a pointer starting at index 0:
-  0 -> 1 -> 3 -> 2 -> 4 -> 2 -> 4 -> 2 -> ...
-So the tail is 0 -> 1 -> 3 and the loop is 2 -> 4 -> 2. The entrance is 2.
-Why 2 is the entrance: two different slots hold the value 2 (index 3 and
-index 4), so node 2 has two arrows pointing into it - which is exactly what
-being a duplicate means.
-Phase 1: slow and fast meet somewhere inside the loop. Phase 2: reset one
-pointer to index 0, step both one at a time, and they meet at 2.""",
+    """1. THE GOAL, in plain English.
 
-    """A second case where the tail is shorter.
-nums = [3,1,3,4,2]  ->  answer 3
-  0 -> 3 -> 4 -> 2 -> 3 -> 4 -> 2 -> ...
-Tail is just 0 -> 3, loop is 3 -> 4 -> 2 -> 3, entrance is 3. And indeed the
-value 3 sits at both index 0 and index 2.
-Notice the loop does not have to be short and the tail does not have to be
-long - the algorithm never needs to know either length.""",
+You are given a list of n + 1 numbers, and every number is somewhere between 1 and
+n. So there are more numbers than there are distinct values available - which means
+at least one value must appear more than once. Find that repeated value.
 
-    """The smallest possible input.
-nums = [1,1]  ->  answer 1
-n = 1, so there are 2 slots holding values in the range 1..1.
-  0 -> 1 -> 1 -> 1 -> ...
-The tail is 0 -> 1 and the loop is the self-referencing node 1. Entrance is 1.
-This also shows why starting at index 0 is safe: every value is at least 1, so
-nothing ever points AT index 0, which guarantees index 0 sits on the tail and
-never inside the loop.""",
+Two restrictions make this interesting, and they are the whole reason for the
+strange solution below:
 
-    """The duplicate repeated many times.
-nums = [2,2,2,2,2]  ->  answer 2
-  0 -> 2 -> 2 -> 2 -> ...
-The tail is 0 -> 2 and node 2 loops to itself. The answer is 2 even though it
-appears five times rather than twice. The problem only promises AT LEAST one
-repeat; the algorithm does not care how many copies there are and it will not
-tell you the count, only the value.""",
+  You may NOT modify the list.
+  You may use only a fixed amount of extra memory - no set, no counting array, no
+  sorted copy.
 
-    """A longer, messier case.
-nums = [2,5,9,6,9,3,8,9,7,1]  ->  answer 9
-The walk: 0 -> 2 -> 9 -> 1 -> 5 -> 3 -> 6 -> 8 -> 7 -> 9 -> 1 -> 5 -> ...
-The tail is 0 -> 2, and the loop is 9 -> 1 -> 5 -> 3 -> 6 -> 8 -> 7 -> 9.
-The entrance is 9, and sure enough the value 9 appears at indices 2, 4 and 7.
-This is the case to trace when the short ones feel like coincidence - the
-structure is genuinely a rho shape and the entrance is genuinely the answer.""",
+Our example:
 
-    """The alternative solution worth mentioning in an interview.
-Binary search on the ANSWER rather than the array - same constraints, much
-easier to derive under pressure.
-On nums = [1,3,4,2,2], search the value range 1..4:
-  mid = 2: count how many values are <= 2. That is 1, 2, 2 -> three of them.
-  Three values are <= 2 but only two values (1 and 2) exist in that range, so
-  the duplicate must be at 2 or below.
-  mid = 1: count of values <= 1 is just 1. Not more than 1, so the low half is
-  clean; move up. Answer 2.
-O(n log n) time, O(1) space, and it never modifies the array. Slower than
-Floyd's O(n) but far easier to explain and get right.""",
+    nums = [1, 3, 4, 2, 2]
+    pos    0  1  2  3  4
+
+There are 5 numbers, each between 1 and 4. The value 2 appears twice, so the answer
+is 2.
+
+Why must a repeat exist at all? This is the PIGEONHOLE PRINCIPLE: if you have more
+items than containers, some container holds at least two. Here there are n + 1
+numbers and only n possible values, so some value is used twice. That guarantee is
+worth stating because it means the answer always exists - there is no "not found"
+case to handle.
+
+Without the two restrictions this is trivial: put the numbers in a set and report
+the first repeat, or sort and look for neighbours. Both are correct. The
+restrictions rule them out, and what remains is genuinely surprising.""",
+
+    """2. THE INTUITION - the list is secretly a linked list with a loop.
+
+Here is the leap, and it is the whole problem.
+
+Read the list as a set of ARROWS. From position i, follow an arrow to position
+nums[i].
+
+Our list [1, 3, 4, 2, 2] gives:
+
+    position 0 -> 1        (nums[0] is 1)
+    position 1 -> 3        (nums[1] is 3)
+    position 3 -> 2        (nums[3] is 2)
+    position 2 -> 4        (nums[2] is 4)
+    position 4 -> 2        (nums[4] is 2)
+
+Draw it:
+
+    0 --> 1 --> 3 --> 2 --> 4
+                      ^     |
+                      |_____|
+
+Start at position 0 and follow arrows: 0, 1, 3, 2, 4, 2, 4, 2, 4... and you are
+going round a loop forever.
+
+Now the crucial observation. Why is there a loop at all? Because TWO different
+positions point at the SAME place. Positions 3 and 4 both hold the value 2, so both
+arrows land on position 2. That is exactly what makes the path bend back on itself.
+
+And the position where the loop closes - position 2 - is the value that appears
+twice.
+
+So "find the duplicate value" has become "find where the loop begins".
+
+Two details make the arrows well-behaved. Every value is between 1 and n, so every
+arrow lands on a valid position - none points off the end. And no arrow ever leads
+to position 0, since 0 is not a possible value, which means position 0 is outside
+the loop and is a safe place to start.
+
+Finding where a loop begins in a chain of arrows is a solved problem: FLOYD'S CYCLE
+DETECTION, the tortoise and hare.""",
+
+    """3. PHASE ONE - why two runners at different speeds must meet.
+
+Send two markers along the arrows from position 0. The SLOW one advances one arrow
+per step; the FAST one advances two.
+
+Both eventually enter the loop, because the path from the start leads into it and
+there is no way out. Once both are inside, think about the GAP between them,
+measured forwards around the loop.
+
+Each step, fast moves two and slow moves one, so fast gains exactly ONE on slow
+every step. The gap therefore shrinks by one each time: 5, 4, 3, 2, 1, 0. It
+changes by exactly one per step, so it cannot jump over zero - it must land on it.
+
+Gap zero means they are on the same position. They meet.
+
+That is the whole argument for phase one, and it is short enough to say aloud: they
+are trapped in a loop, the gap closes by exactly one each step, and a quantity that
+decreases by one at a time cannot skip zero.
+
+What phase one does NOT give you is the loop's entrance. The meeting point is
+somewhere inside the loop, and where exactly depends on how long the tail is. On
+our example they meet at position 4, not at position 2.
+
+So we know a loop exists and we have a point inside it. Phase two turns that into
+the entrance, and it needs a second idea.""",
+
+    """4. PHASE TWO - why restarting one marker finds the entrance.
+
+Here is the surprising part. After they meet, move ONE marker back to the start and
+then advance BOTH one step at a time. They meet again exactly at the loop's
+entrance.
+
+The reason is a small piece of arithmetic. Write:
+
+    T = the number of steps from the start to the loop's entrance (the tail)
+    L = the length of the loop
+    m = the number of steps from the entrance to the meeting point
+
+When they met, slow had taken T + m steps. Fast had taken twice that, 2(T + m), and
+fast's extra distance must be a whole number of laps around the loop:
+
+    2(T + m) - (T + m) = T + m,   and that must be a multiple of L
+    so  T + m = qL  for some whole number q
+    rearranged:  T = qL - m
+
+Now read that last line as an instruction. Starting from the meeting point and
+walking T steps takes you qL - m steps forward - which is q complete laps MINUS m,
+and since you are m steps past the entrance, going back by m lands you exactly ON
+the entrance.
+
+Meanwhile a marker starting at the beginning and walking T steps also arrives
+exactly at the entrance, by the definition of T.
+
+So both markers, moving one step at a time, arrive at the entrance together. That
+is why they meet there.
+
+You do not need to reproduce the algebra under pressure. What you should be able to
+say is: "the distance from the start to the entrance equals the distance from the
+meeting point to the entrance, modulo whole laps - so walking both at the same
+speed brings them together at the entrance."
+
+And the entrance is the position that two different arrows point at - which is the
+duplicated value.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+PIGEONHOLE PRINCIPLE: more items than containers means some container holds two.
+It guarantees the duplicate exists - defined in section 1.
+
+Reading the list as ARROWS: from position i, go to position nums[i]. This
+reinterpretation is the entire trick and is worth saying explicitly, because
+nothing in the code announces it.
+
+nums[slow]: follow one arrow from the position slow is on.
+
+nums[nums[fast]]: follow TWO arrows. The inner lookup gives the next position; the
+outer follows a second arrow from there. Reading it inside-out is the way to make
+sense of it.
+
+CYCLE / LOOP: a path that returns to a position it has already visited.
+
+FLOYD'S CYCLE DETECTION, or tortoise and hare: the two-runner technique from
+sections 3 and 4. The same method detects a loop in a real linked list.
+
+while True: a loop with no condition at the top, which runs until something inside
+it breaks out. Used here because the first check must happen AFTER the markers have
+moved - both start at the same position, so testing before moving would stop
+immediately with a false meeting.
+
+O(n) and O(1): the costs. O(n) means the work grows in step with the list's length -
+each phase walks a bounded number of times around. O(1) means the extra memory does
+not grow at all: two integers, whatever the input size. That O(1) is the entire
+reason for this solution's existence, since a set would be O(n).""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: read the list as arrows from position to position,
+which must contain a loop because two arrows share a target - then find where the
+loop begins, because that position is the duplicated value.
+
+There is no recursion here - two loops - so nothing piles up on the call stack.
+
+PHASE ONE - find a meeting point inside the loop:
+
+  1. Put both markers on the value at position 0.
+
+  2. Repeat forever:
+     a. Move the slow marker one arrow forward.
+     b. Move the fast marker two arrows forward.
+     c. If they are now on the same position, stop - they have met inside the loop.
+
+     The moving must happen BEFORE the comparison. Both markers start together, so
+     checking first would report an immediate false meeting.
+
+PHASE TWO - turn the meeting point into the entrance:
+
+  3. Move the slow marker back to the value at position 0. Leave the fast marker
+     where it met.
+
+  4. While the two markers are on different positions, move BOTH forward by exactly
+     one arrow.
+
+  5. When they land on the same position, that position is the loop's entrance - and
+     the entrance is the duplicated value. Return it.
+
+Note phase two moves both markers at the SAME speed, unlike phase one. That change
+of speed is deliberate and is what makes the arithmetic in section 4 work out.
+
+Also note what the code never does: it never modifies the list, never allocates a
+set, and never counts anything. Two integers, start to finish.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code reinterprets the list as a set of signposts. Standing at any position, the
+number written there tells you which position to go to next. Following those
+signposts from the start traces out a path.
+
+That path must eventually loop back on itself, and the reason is precisely the
+duplicate: two different positions hold the same number, so two different signposts
+point at the same destination. The place where the path rejoins itself is that
+shared destination - and its position number IS the repeated value. So finding the
+duplicate becomes finding where the loop begins.
+
+To do that, the code sends two walkers along the path. One moves a single step at a
+time; the other moves two. Because the path loops, neither can escape, and the
+faster one gains exactly one step on the slower one each round - so the gap between
+them shrinks by one every time and must eventually reach exactly zero. They land on
+the same spot.
+
+That meeting spot is somewhere inside the loop, but not necessarily where the loop
+begins. So the code does one more thing that looks like sleight of hand: it sends
+one walker back to the very start, and then advances both at the same single-step
+pace. The distances work out so that they arrive at the loop's opening at the same
+moment, and where they meet the second time is the answer.
+
+Throughout, the list itself is never touched and nothing is stored beyond the two
+walkers' positions.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [1, 3, 4, 2, 2] and the arrow diagram from section 2 beside you; the
+answer is 2.
+
+    slow = fast = nums[0]
+Both markers start at the same place. Note they start at nums[0] - the VALUE at
+position 0 - rather than at 0 itself. That is equivalent to starting at position 0
+and immediately taking one step, and it works because no arrow ever points back to
+position 0, so position 0 is outside the loop and safe to leave behind.
+
+    while True:
+A loop with no condition at the top, because the check has to come after the
+markers move. Both start together, so testing before moving would report a false
+meeting on the very first look.
+
+    slow = nums[slow]
+Follow ONE arrow. The marker is standing on a position; the number there is the
+next position.
+
+    fast = nums[nums[fast]]
+Follow TWO arrows, read inside-out: nums[fast] is the next position, and nums of
+that is the one after. This is safe because every value lies between 1 and n, so
+every lookup lands on a real position - there is no way to run off the end.
+
+    if slow == fast:
+        break
+They have met, somewhere inside the loop. Phase one is done. Note this tells us a
+loop exists and gives a point inside it - but NOT the entrance.
+
+    slow = nums[0]
+PHASE TWO begins. Send one marker back to the starting point, and leave fast where
+it met. This is the move that looks like sleight of hand until you have read the
+arithmetic in section 4.
+
+    while slow != fast:
+        slow = nums[slow]
+        fast = nums[fast]
+Advance BOTH by exactly one arrow. Note fast now moves at the SAME speed as slow -
+the speed difference existed only to force a meeting, and phase two needs equal
+speeds for the distances to line up.
+
+By the arithmetic in section 4, the number of steps from the start to the entrance
+equals the number of steps from the meeting point to the entrance, once whole laps
+are discounted. So both arrive at the entrance together.
+
+    return slow
+The position where they met the second time is the loop's entrance - the position
+that two different arrows point at - which is the duplicated value.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    nums = [1, 3, 4, 2, 2]
+    pos     0  1  2  3  4
+
+    arrows: 0 -> 1,  1 -> 3,  3 -> 2,  2 -> 4,  4 -> 2
+
+    0 --> 1 --> 3 --> 2 --> 4
+                      ^     |
+                      |_____|
+
+    The loop is 2 -> 4 -> 2, and it begins at position 2.
+
+PHASE ONE.  slow = fast = nums[0] = 1.  Both start on position 1.
+
+    ROUND 1: slow = nums[1] = 3
+             fast = nums[nums[1]] = nums[3] = 2
+             3 != 2, carry on.
+    ROUND 2: slow = nums[3] = 2
+             fast = nums[nums[2]] = nums[4] = 2
+             2 == 2 -> MEET at position 2, and break.
+
+    (The meeting happens to be at the entrance here because the loop is short;
+    in general it need not be, which is why phase two exists.)
+
+PHASE TWO.  slow = nums[0] = 1.  fast stays at 2.
+
+    Is 1 != 2?  Yes -> advance both by one.
+        slow = nums[1] = 3
+        fast = nums[2] = 4
+    Is 3 != 4?  Yes -> advance both.
+        slow = nums[3] = 2
+        fast = nums[4] = 2
+    Is 2 != 2?  No -> the loop ends.
+
+return slow = 2.  Correct - the value 2 appears twice, at positions 3 and 4.
+
+A SECOND EXAMPLE with a longer tail, nums = [3, 1, 3, 4, 2]:
+
+    arrows: 0 -> 3,  3 -> 4,  4 -> 2,  2 -> 3,  1 -> 1
+
+    Starting from position 0: 0 -> 3 -> 4 -> 2 -> 3 -> 4 -> 2 ...
+    The loop is 3 -> 4 -> 2 -> 3, entered at position 3.
+
+PHASE ONE.  slow = fast = nums[0] = 3.
+    ROUND 1: slow = nums[3] = 4;  fast = nums[nums[3]] = nums[4] = 2.  4 != 2.
+    ROUND 2: slow = nums[4] = 2;  fast = nums[nums[2]] = nums[3] = 4.  2 != 4.
+    ROUND 3: slow = nums[2] = 3;  fast = nums[nums[4]] = nums[2] = 3.  MEET at 3.
+
+PHASE TWO.  slow = nums[0] = 3.  fast = 3.
+    Is 3 != 3?  No - the loop never runs.
+    return 3.
+
+And indeed 3 appears twice, at positions 0 and 2.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). Phase one walks at most a bounded number of times around the tail and
+loop before the markers meet; phase two walks the tail length. Both are
+proportional to the list's size.
+
+SPACE: O(1) - constant. Two integers, whatever the length of the list. That is the
+entire reason for this solution's existence.
+
+WHEN NOT TO USE IT. If you are allowed extra memory, a set is three lines, obviously
+correct, and just as fast: walk the list, and the first value already in the set is
+the answer. If you are allowed to modify the list, sorting it and looking at
+neighbours also works. Reach for Floyd's method only when BOTH restrictions apply -
+and say so, because choosing an intricate solution when a simple one is permitted is
+its own kind of mistake.
+
+THE #1 MISTAKE - comparing the two markers before moving them. They start on the
+same position, so a check at the top of the loop reports an immediate meeting and
+the function returns the starting value. That is why the code uses "while True" with
+the comparison at the bottom rather than a condition at the top.
+
+A close second: treating the phase-one meeting point as the answer. It is a point
+inside the loop, not the loop's entrance. On the first example the two happen to
+coincide because the loop is only two positions long, which makes this bug easy to
+miss on small tests - the second example in section 9 is the kind that exposes it.
+
+A third: forgetting that phase two moves BOTH markers at the same speed. Keeping
+fast at double pace makes the arithmetic wrong and the meeting point meaningless.
+
+ONE-SENTENCE TAKEAWAY: read the list as arrows from position to position - two
+positions holding the same value point at the same place, which creates a loop, and
+the loop's entrance is the duplicated value.""",
 ]
 
 _EXAMPLES["First Missing Positive"] = [
@@ -40099,66 +40411,339 @@ needed.""",
 ]
 
 _EX_P0F["Heap / Top-K — when 'K largest/most frequent' appears"] = [
-    """The textbook case, traced heap state by heap state.
-nums = [3,1,5,2,4], k = 2. h is a MIN-heap capped at size 2.
-push 3 -> [3]. push 1 -> [1,3]. size 2, fine.
-push 5 -> [1,3,5], size 3 > 2 -> pop the smallest, 1. h = [3,5].
-push 2 -> size 3 -> pop 2 (it is now the smallest). h = [3,5].
-push 4 -> [3,4,5] -> pop 3. h = [4,5].
-Return sorted descending: [5,4].
-Read the invariant off the trace: the heap always holds the best k seen so far,
-and its ROOT is the weakest survivor - the one to evict.""",
+    """1. THE GOAL, in plain English.
 
-    """Why a MIN-heap for the k LARGEST (the part everyone gets backwards).
-You want cheap access to the element most likely to be kicked out - and that is
-the SMALLEST of your current top k. A min-heap puts exactly that on top, so the
-evict-if-worse test is `if x > h[0]` in O(1) and the eviction is O(log k).
-Use a max-heap instead and the root is your BEST element, which you never want
-to remove - finding the worst would cost O(k).
-Mirror it for the k smallest: keep a MAX-heap (in Python, push -x), root = the
-largest survivor.
-Card version: keep the heap whose root is the item you are ready to throw
-away.""",
+Whenever a problem says "the K largest", "the K smallest", "the K most frequent" or
+"the K closest", there is one tool that fits: a HEAP. This entry teaches the tool
+using "return the K largest numbers" as the worked example.
 
-    """Edge cases: k >= n, k = 0, and duplicates.
-k = 5 on a 3-element list: the heap never exceeds k, so nothing is evicted and
-you get all three back - correct, though you should confirm the caller expects
-fewer than k results.
-k = 0: every push is immediately followed by a pop, and you return []. Correct
-but wasteful; guard it if k comes from user input.
-Duplicates [5,5,5], k=2 -> [5,5]. The k largest is a multiset, not a set - do
-not dedupe unless the problem says 'distinct'.""",
+Our example: nums = [3, 1, 5, 12, 2, 11], k = 3.
 
-    """The streaming case - the one sorting cannot do.
-Server logs arrive at 50k events/second and you must always be able to answer
-'what are the 10 slowest requests in the last minute?'
-Sorting requires holding every event; the size-k heap holds ten. Memory is O(k)
-regardless of how long the stream runs, and each event costs at most one O(log
-10) push.
-This is why the pattern shows up in system-design rounds too: per-shard size-k
-heaps, then merge the shard heaps at the coordinator. Say 'heap' when the
-interviewer says 'top 10 trending' and you are already on the right track.""",
+Sort them mentally: 1, 2, 3, 5, 11, 12. The three largest are 12, 11 and 5. So the
+answer is [12, 11, 5].
 
-    """Top K Frequent Elements - the two-stage version.
-nums = [1,1,1,2,2,3], k = 2.
-Stage 1: count with a dict -> {1:3, 2:2, 3:1}.
-Stage 2: run the size-k heap over the (count, value) pairs -> keeps (2,2) and
-(3,1) -> answer [1,2].
-Cost O(n + m log k) where m is the number of distinct values.
-There is a linear alternative worth naming: BUCKET SORT by frequency. Make
-buckets[0..n], put each value in the bucket for its count, then read buckets
-from the top until you have k. O(n) total, because a count can never exceed n.
-That is the optimal answer for this specific problem.""",
+Notice what the question does NOT ask for. It does not want the whole list sorted.
+It wants three numbers out of six - and out of a million, it would still want
+three. That gap between "K" and "n" is the whole reason a special tool exists.
 
-    """Costs, and the three ways to do Top-K.
-n items, k wanted:
-- Sort everything: O(n log n), simplest, fine when k is close to n or n is small.
-- Size-k heap: O(n log k) time, O(k) space, works on a stream.
-- Quickselect: O(n) average, O(n^2) worst case, O(1) extra, needs the whole array
-  in memory and reorders it.
-- Bucket/counting sort by frequency (only when the key range is bounded): O(n).
-Say the constraints back to the interviewer before choosing: 'n is 10^6, k is
-10, and it is a stream, so the size-k heap' is a complete answer.""",
+The obvious approach is to sort everything and take the last K. That is correct,
+and for six numbers it is perfectly sensible. But sorting a million numbers to
+report three is an enormous amount of wasted work: you carefully order 999,997
+numbers you are about to throw away.
+
+The heap approach never sorts the losers. It keeps only K numbers at any moment,
+and each new number is compared against just one of them. Section 3 explains why
+one comparison is enough.""",
+
+    """2. WHAT A HEAP IS - the picture, before any code.
+
+A HEAP is a container with exactly one promise: THE SMALLEST ITEM IS ALWAYS
+INSTANTLY AVAILABLE.
+
+That is the whole contract. It does NOT keep everything sorted - if you look
+inside, the items are in no particular order beyond that one guarantee. It simply
+knows which one is smallest, at all times, cheaply.
+
+Picture it as a tournament bracket turned upside down, with the smallest at the
+top:
+
+              1
+             / \\
+            2   5
+           / \\
+          3  12
+
+Every item is smaller than the items below it. So the top is the smallest overall.
+When you add or remove something, the tree quietly rearranges itself along one path
+from top to bottom - about log n swaps, roughly 20 for a million items.
+
+Three operations, all cheap:
+
+    push(x)   add an item                              O(log n)
+    pop()     remove and return the SMALLEST           O(log n)
+    peek      look at the smallest without removing    O(1) - just read the top
+
+That kind of heap is a MIN-HEAP, because the minimum is on top. Python's heapq
+module provides one, and it is the only kind Python provides - which matters,
+because we want the K LARGEST. Section 3 is about why a min-heap is exactly right
+for that, counter-intuitive as it sounds.
+
+The tree above is usually stored as a plain list with a bit of index arithmetic
+rather than as real nodes, but you never need to think about that to use it.""",
+
+    """3. THE TRICK - use a MIN-heap to find the MAXIMUM K.
+
+This is the step that feels backwards and is the heart of the technique.
+
+We want the K largest. So keep a heap holding the K best numbers seen so far - and
+make it a MIN-heap, so the smallest of those K sits on top.
+
+Why is that the useful arrangement? Because the smallest of your current K is
+exactly the number ON THE BOUNDARY - the weakest survivor, the one that will be
+kicked out first. And the boundary is the only thing you ever need to compare
+against.
+
+When a new number arrives, there are only two possibilities:
+
+  It is SMALLER than or equal to the weakest survivor. Then it is smaller than all
+  K of them, so it cannot possibly belong in the top K. Discard it, with a single
+  comparison.
+
+  It is BIGGER than the weakest survivor. Then it deserves a place, so the weakest
+  survivor is evicted and the newcomer takes its spot.
+
+That is why one comparison suffices: the top of a min-heap IS the weakest member of
+the current top K, so beating it is precisely the entry requirement.
+
+A max-heap would be exactly wrong here. It would put the LARGEST of your survivors
+on top - the one that is safest, the one you never need to think about - and
+finding the weakest would mean searching the whole thing.
+
+THE RULE WORTH MEMORISING, because it is the bit people get backwards:
+
+    K LARGEST  -> keep a MIN-heap of size K, evict the smallest
+    K SMALLEST -> keep a MAX-heap of size K, evict the largest
+
+You always keep the OPPOSITE kind of heap, because you want instant access to the
+member most at risk of being replaced.
+
+Python only gives you a min-heap. For the K smallest you simulate a max-heap by
+pushing negated values - push -x, and the "smallest" negative is the largest
+original. Ugly but standard.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - keeping a heap of everything instead of just K. Pushing all n numbers and
+then popping K times works, but the heap holds n items, so the memory is O(n) and
+each operation costs log n instead of log k. The entire point is that the heap
+never grows past K. On a stream of a billion numbers with k = 10, the difference is
+between ten slots and a billion.
+
+CASE 2 - reaching for a max-heap. Covered in section 3, and it is the single most
+common confusion. Say the sentence out loud: "I want the K largest, so I keep a
+MIN-heap and throw away the smallest."
+
+CASE 3 - k larger than the list. With nums of length 6 and k = 10, the heap never
+exceeds 6 items and the answer is the whole list. Harmless here, but if a problem
+promises k is at most n, do not silently rely on it.
+
+CASE 4 - k equal to zero. The heap is emptied on every push, and the answer is
+empty. Correct, and worth a moment's thought rather than an assumption.
+
+CASE 5 - expecting the heap's contents to be sorted. They are not. The only
+guarantee is that the smallest is on top; the rest are in no useful order. That is
+why the code sorts at the very end - but note it sorts only K items, not n.
+
+CASE 6 - duplicates. [5, 5, 5] with k = 2 gives [5, 5]. Heaps handle repeated
+values without any special care; nothing here assumes the numbers are distinct.
+
+CASE 7 - forgetting that the comparison must be strict about ties. Pushing then
+popping when the size exceeds K handles ties automatically: an equal newcomer may
+displace an equal survivor, which changes nothing about the answer's values.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+HEAP: a container that always knows its smallest item. Defined in section 2.
+
+MIN-HEAP / MAX-HEAP: smallest on top, or largest on top. Python's heapq is a
+min-heap only.
+
+heapq.heappush(h, x): add x, keeping the heap's promise intact. O(log n).
+
+heapq.heappop(h): remove and return the SMALLEST item. O(log n).
+
+h[0]: the smallest item, read without removing it. Because the heap is stored as a
+plain list with the smallest at position 0, peeking is just an ordinary list index -
+O(1), no method call needed. That is worth knowing: h[0] is not a hack, it is the
+documented way to peek.
+
+O(1), O(log n), O(n log k): costs. O(1) means constant - the same tiny amount of
+work regardless of size. O(log n) means it grows like the number of times you can
+halve n - about 20 for a million. O(n log k) means n items each costing about
+log k, which for a million items and k = 10 is roughly 3.3 million steps rather
+than the 20 million a full sort would need.
+
+STREAM: data arriving one item at a time, too large to hold all at once. The heap
+approach works on a stream because it only ever holds K items - which is the real
+reason it beats sorting, and section 10 returns to it.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a min-heap holding only the K best numbers so
+far, and for each new number, add it and then drop the smallest if you now hold
+more than K.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+
+The steps:
+
+  1. Start with an empty heap. It will never hold more than K items.
+
+  2. Take each number in turn.
+
+  3. Push it onto the heap. The heap rearranges itself so the smallest is on top.
+
+  4. If the heap now holds MORE than K items, pop the smallest and throw it away.
+     Because the heap always holds the K best seen so far plus this newcomer, the
+     smallest of those K + 1 cannot belong in the final top K.
+
+  5. When every number has been processed, the heap holds exactly the K largest.
+
+  6. Sort those K items in descending order and return them - the heap's internal
+     arrangement is not sorted, and the question asks for an ordered answer.
+
+WHY PUSH-THEN-POP RATHER THAN COMPARE-THEN-PUSH? Both work. Pushing first and
+trimming afterwards is simpler to get right, because it needs no special case for
+the first K numbers - while the heap is still filling up, the size never exceeds K
+so nothing is dropped. The alternative - "if the heap is full and the newcomer
+beats the top, replace it" - is slightly faster because it avoids a push for
+numbers that will lose, but it needs an extra branch for the filling-up phase.
+
+Section 8 walks the simpler version; section 10 notes the faster variant.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code keeps a small holding pen containing the best numbers it has seen so far -
+never more than K of them.
+
+The pen has one useful property: it always knows which of its occupants is the
+weakest. Not a sorted list, not an ordered queue - just instant knowledge of the
+current worst.
+
+As each new number arrives, the code puts it into the pen. If that pushes the
+population above K, it immediately evicts whoever is weakest. And that eviction is
+always safe, because at that moment the pen holds the K best numbers seen so far
+plus one newcomer, so whoever is weakest among those cannot possibly be one of the
+K best overall.
+
+Notice what never happens: the losers are never ordered relative to one another.
+A number that arrives, fails to make the cut, and is evicted has cost a single
+comparison and a little rearranging. It is never carefully sorted into place among
+the other rejects, which is precisely the work that sorting the whole list would
+have done for nothing.
+
+When the last number has been handled, the pen contains exactly the K largest. The
+code then sorts those K into descending order and returns them - a tiny sort of K
+items rather than a large sort of everything.
+
+And because the pen never grows past K, the code could run on a stream far larger
+than memory: it only ever holds K numbers at once.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [3, 1, 5, 12, 2, 11] and k = 3 beside you; the answer is [12, 11, 5].
+
+    import heapq
+Python's heap module. It works on an ordinary list, treating it as a MIN-heap -
+smallest item always at position 0.
+
+    h = []
+The holding pen, starting empty. The key discipline of this whole technique is that
+h never grows beyond k items - see case 1 in section 4.
+
+    for x in nums:
+Take each number in turn. Note nothing about the list needs to be known in advance,
+which is what lets this work on a stream.
+
+    heapq.heappush(h, x)
+Add the newcomer. The heap rearranges itself along one path so its smallest item is
+back on top - about log k swaps.
+
+    if len(h) > k:
+        heapq.heappop(h)
+Trim back to k. heappop removes the SMALLEST, which is exactly the right one to
+lose: at this moment the heap holds the k best seen so far plus one newcomer, so
+the weakest of those k + 1 cannot be among the k best overall.
+
+Pushing first and trimming afterwards is what removes the need for a special case
+while the heap is still filling up - for the first k numbers the size never exceeds
+k, so nothing is dropped.
+
+This is also where the min-heap earns its place. Removing the smallest is the cheap
+operation on a min-heap; on a max-heap it would mean searching the whole thing -
+see section 3.
+
+    return sorted(h, reverse=True)
+The heap's internal order is NOT sorted - the only promise is that the smallest is
+on top. So the survivors are sorted here, descending, to answer the question.
+
+That sort costs k log k, which for k = 3 is nothing. The important thing is that it
+sorts K items, not n - which is the entire saving over sorting the whole list.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [3, 1, 5, 12, 2, 11], k = 3. I write the heap as a set of values with the
+smallest marked, since the internal arrangement does not matter.
+
+    h = []
+
+x = 3    push -> h = {3}.  size 1, not > 3, so nothing dropped.
+                 smallest = 3
+x = 1    push -> h = {1, 3}.  size 2, not > 3.
+                 smallest = 1
+x = 5    push -> h = {1, 3, 5}.  size 3, not > 3.
+                 smallest = 1
+                 The pen is now full, and from here every push triggers a drop.
+x = 12   push -> h = {1, 3, 5, 12}.  size 4 > 3 -> pop the smallest, which is 1.
+                 h = {3, 5, 12}.  smallest = 3
+                 The 1 is gone forever, and rightly - three numbers already beat it.
+x = 2    push -> h = {2, 3, 5, 12}.  size 4 > 3 -> pop the smallest, which is 2.
+                 h = {3, 5, 12}.  smallest = 3
+                 The newcomer was itself the weakest, so it was evicted immediately.
+                 Total cost for this loser: one push and one pop.
+x = 11   push -> h = {3, 5, 11, 12}.  size 4 > 3 -> pop the smallest, which is 3.
+                 h = {5, 11, 12}.  smallest = 5
+
+Loop ends.  h holds {5, 11, 12}.
+
+return sorted(h, reverse=True) = [12, 11, 5].  Correct.
+
+Two things to read off that trace. The heap never held more than four items even
+momentarily, and never more than three between iterations - so the memory was fixed
+regardless of the input's length. And the numbers 1 and 2 were discarded without
+ever being compared against each other; a full sort would have carefully placed
+them relative to one another for no reason at all.
+
+WHAT IF k WERE 1? Then every push is followed by a pop, the heap always holds one
+item, and that item ends up being the maximum. Correct, though for k = 1 you would
+just track the largest in a variable.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log k). Each of the n numbers costs a push and possibly a pop, and each
+of those is about log k because the heap never holds more than k items. Then a
+final sort of k items, which is negligible.
+
+Compare with sorting everything: O(n log n). For n = 1,000,000 and k = 10, that is
+roughly n x 3.3 versus n x 20 - about six times less work. The gain grows as k
+shrinks relative to n, and vanishes when k approaches n, at which point you should
+simply sort.
+
+SPACE: O(k). The heap holds at most k items, whatever the size of the input. This
+is the more important advantage: it means the algorithm works on a STREAM of data
+too large to hold in memory at all, where sorting is not merely slower but
+impossible. If an interviewer says "the numbers arrive one at a time and there are
+billions of them", they are asking for a heap.
+
+THE #1 MISTAKE - using a max-heap for the K largest. It is the natural instinct
+and it is exactly backwards. You keep a MIN-heap, because the thing you need
+instant access to is the WEAKEST of your current survivors - the one on the
+boundary, the one a newcomer must beat. A max-heap puts the safest item on top and
+makes finding the weakest expensive.
+
+A close second: letting the heap grow to hold all n items and popping k times at
+the end. It gives the right answer, but the memory becomes O(n) and the streaming
+advantage - the real reason to use a heap - is thrown away.
+
+A FASTER VARIANT worth mentioning: instead of always pushing, first compare the
+newcomer against the top. If it does not beat the top, skip it entirely with no
+heap operation at all; if it does, use heapreplace to pop and push in one step.
+That avoids touching the heap for numbers that will lose, which on data with few
+winners is a real saving.
+
+ONE-SENTENCE TAKEAWAY: for the K largest, keep a MIN-heap of size K so the weakest
+survivor is always on top - every newcomer needs only to beat that one number, and
+the losers are never sorted against each other at all.""",
 ]
 
 _EX_P0F["Intervals — merge, insert, overlap"] = [
