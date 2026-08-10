@@ -22891,56 +22891,119 @@ five seconds and occasionally changes the answer.""",
 ]
 
 _EX_P0["Diameter of a Binary Tree"] = [
-    """The textbook case, traced.
-      1
-    2   3
-  4  5
-depth(4)=1, depth(5)=1.
-At node 2: bend = 1 + 1 = 2, best becomes 2; returns 1 + max(1,1) = 2.
-At node 3: bend = 0, returns 1.
-At node 1: bend = depth(2) + depth(3) = 2 + 1 = 3, best becomes 3.
-Answer 3 - the path 4 -> 2 -> 1 -> 3, measured in edges.""",
+    """What 'diameter' means here - it is not what the word suggests.
 
-    """The case where the diameter does NOT pass through the root.
+Forget circles. In a tree, the DIAMETER is simply the LONGEST PATH between any
+two nodes - and that path does not have to pass through the top of the tree.
+
+Here is our tree. (Reminder of the words: each item is a NODE, the top one is
+the ROOT, the ones hanging below a node are its CHILDREN, and a node with no
+children is a LEAF.)
+
         1
-      2
-    3   4
-  5      6
-The root has only a left subtree. The longest path is 5 -> 3 -> 2 -> 4 -> 6,
-which has length 4 and never touches node 1.
-Any solution that computes depth(left) + depth(right) only at the root returns
-3. This example is the entire reason the bend is recorded at every node.""",
+       / \\
+      2   3
+     / \\
+    4   5
 
-    """The single node and the empty tree.
-Empty -> best stays 0.
-Single node -> depth returns 1, bend = 0 + 0 = 0, so the diameter is 0.
-That is correct under the edge-counting definition: one node has no edges. If
-the problem counted NODES the answer would be 1 - another definition worth
-confirming, since both appear in the wild.""",
+Walk the longest journey you can find between any two nodes. Try
+4 -> 2 -> 1 -> 3. How long is it? We measure in EDGES - the lines between
+nodes, not the nodes themselves. That journey crosses 3 lines, so its length is
+3. Nothing longer exists here, so the diameter is 3.""",
 
-    """The degenerate chain.
-1 -> 2 -> 3 -> 4 (all left children).
-At each node the bend is depth(left) + 0, so the best rises 1, 2, 3 as you come
-back up. Answer 3.
-This is also the worst case for stack depth, which is the usual follow-up for
-very large trees.""",
+    """The shape of the answer: every path has one highest point.
 
-    """The distinction that is the whole problem.
-The helper RETURNS a depth and RECORDS a diameter, and they are different
-numbers.
-Return 1 + max(left, right), because a parent can only continue through ONE
-side - a path cannot fork.
-Record left + right, because the answer itself may bend here and use both.
-Returning the bend instead would let a parent build an impossible forked path,
-which produces silently inflated answers.""",
+Here is the observation the whole solution rests on. Take any path in a tree
+and follow it with your finger. It goes UP for a while, reaches a highest
+point, then goes DOWN. It can never go up twice, because there is only one way
+up from any node.
 
-    """The family this belongs to.
-Binary Tree Tilt: return the subtree SUM, record the absolute difference.
-Binary Tree Maximum Path Sum: return value + max(left, right) clamped at zero,
-record value + left + right.
-Diameter: return depth, record the sum.
-Three problems, one template - "return the straight-line contribution, record
-the bent one". Spotting that saves you deriving each from scratch.""",
+So every possible path 'bends' at exactly one node - its highest point. In our
+example, the path 4 -> 2 -> 1 -> 3 bends at node 1.
+
+That means: if we visit every node and ask 'what is the longest path that bends
+HERE?', then take the best answer across all nodes, we have the diameter. And
+the longest path bending at a node is easy - it is
+    (how far down the left side goes) + (how far down the right side goes).""",
+
+    """Doing it on the picture.
+
+First we need DEPTH: how many nodes deep the tree goes below and including a
+given node. A leaf has depth 1 (just itself).
+
+    depth(4) = 1, depth(5) = 1, depth(3) = 1     (all leaves)
+    depth(2) = 1 + the deeper of its children = 1 + 1 = 2
+    depth(1) = 1 + the deeper of 2 and 3 = 1 + 2 = 3
+
+Now the bend at each node - left depth plus right depth:
+    at node 4: 0 + 0 = 0     (no children)
+    at node 5: 0 + 0 = 0
+    at node 3: 0 + 0 = 0
+    at node 2: depth(4) + depth(5) = 1 + 1 = 2
+    at node 1: depth(2) + depth(3) = 2 + 1 = 3    <- the biggest
+
+Answer 3, matching the path we traced by hand. Notice we did not search for
+paths at all; we just asked one small question at every node.""",
+
+    """The example that proves you cannot only check the root.
+
+It is tempting to compute left depth + right depth at the ROOT and stop. Here
+is a tree where that gives the wrong answer:
+
+          1
+         /
+        2
+       / \\
+      3   4
+     /     \\
+    5       6
+
+The root (1) has nothing on its right, so at the root the sum is 2 + 0. But the
+genuine longest path is 5 -> 3 -> 2 -> 4 -> 6, which is 4 edges long and never
+touches node 1 at all.
+
+The best path bends at node 2, not at the root. This is exactly why the bend
+must be measured at EVERY node and the best kept - and it is the single most
+common way this problem is got wrong.""",
+
+    """The part that confuses everyone: two different numbers.
+
+The helper function does two jobs at once, and they return DIFFERENT numbers.
+Keeping them straight is the whole problem.
+
+It RETURNS the depth: 1 + the deeper of the two sides.
+It RECORDS (into a running best) the bend: left depth + right depth.
+
+Why not return the bend? Because of what a parent can do with it. A parent can
+only continue a path through ONE of its children - a path is a line, it cannot
+fork into both directions and still be a path. So the parent needs to know 'how
+far can I go if I come through you', which is the one-sided depth.
+
+The bend, meanwhile, is a finished candidate answer - it uses both sides, so
+nobody above can extend it. Hence: return one, record the other. If you return
+the bend by mistake, a parent will happily build a forked, impossible path and
+your answers come out too large.""",
+
+    """Small cases, speed, and the family.
+
+EMPTY tree: no nodes, no edges, diameter 0.
+SINGLE node: it has no edges at all, so 0. (If the problem had asked for the
+number of NODES on the longest path the answer would be 1 - both definitions
+exist, so confirm which is meant. This one counts edges.)
+A straight chain 1 -> 2 -> 3 -> 4: the best bend rises 1, 2, 3 as you come back
+up; the diameter is 3.
+
+Speed: every node is visited once and does a fixed amount of work, so the time
+is proportional to the number of nodes - written O(n).
+
+The family, all built from the same trick of returning one thing and recording
+another:
+    Diameter                     -> return depth,      record left + right
+    Binary Tree Tilt             -> return subtree sum, record |left - right|
+    Binary Tree Maximum Path Sum -> return value + best one side,
+                                    record value + both sides
+Three problems, one template. Once you see 'return the straight-line
+contribution, record the bent one', all three stop being separate.""",
 ]
 
 _EX_P0["Merge Two Sorted Lists"] = [
