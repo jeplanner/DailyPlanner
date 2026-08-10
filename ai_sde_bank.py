@@ -37455,68 +37455,365 @@ to the rest of the chain.""",
 ]
 
 _EX_P0E["Find First and Last Position (sorted array)"] = [
-    """The textbook case, traced.
-nums = [5,7,7,8,8,10], target = 8.
-bisect_left finds the first index where 8 could be inserted keeping the array
-sorted, WITHOUT going past an existing 8 -> index 3.
-nums[3] == 8, so the target is present.
-bisect_right finds the insertion point AFTER all the 8s -> index 5. Minus one
-gives 4, the last 8.
-Answer [3,4]. Two binary searches, O(log n) total.""",
+    """1. THE GOAL, in plain English.
 
-    """Target absent - and why the guard is two conditions.
-nums = [5,7,7,8,8,10], target = 6.
-bisect_left returns 1 (6 belongs between 5 and 7), but nums[1] is 7, not 6 ->
-return [-1,-1].
-Now target = 11: bisect_left returns 6, which is len(nums) - indexing nums[6]
-would raise IndexError. That is why the check reads
-`if left == len(nums) or nums[left] != target`, in that order: Python
-short-circuits, so the bounds test runs before the value test.
-Swap the two and the empty/too-large case crashes.""",
+You are given a sorted list that may contain the same number several times. Find
+where a target number STARTS and where it ENDS. If it is not there at all, report
+[-1, -1].
 
-    """Every element is the target.
-nums = [8,8,8,8], target = 8. bisect_left -> 0, bisect_right -> 4, minus one is
-3. Answer [0,3], the full array.
-Contrast with the single occurrence [8], which gives left=0, right=1-1=0 ->
-[0,0]. First and last are the same index, which is correct and needs no special
-case.""",
+Because the list is sorted, every copy of a number sits in one unbroken block, so
+"where it starts and where it ends" is a sensible question with a single answer.
 
-    """The empty array, and a single non-matching element.
-nums = [], target = 1: bisect_left returns 0, which equals len(nums)=0, so the
-first half of the guard fires -> [-1,-1]. No crash.
-nums = [2], target = 1: left=0, nums[0]=2 != 1 -> [-1,-1].
-nums = [2], target = 3: left=1 == len -> [-1,-1].
-Three one-element shapes, all handled by the same two-condition guard - worth
-naming them in an interview because they are exactly what a hidden test suite
-checks.""",
+Our example:
 
-    """The naive approach and why it fails the constraint.
-Finding the target with one binary search and then walking left and right to the
-boundaries is correct - but on [8,8,8,...,8] with 10^5 elements that walk is
-O(n), and the problem explicitly asks for O(log n).
-This is the point of the exercise: the array has DUPLICATES, so 'find the
-target' is not enough - you must find a BOUNDARY. Boundary-finding is what
-bisect_left/bisect_right do, and writing them by hand is the real skill:
-    # bisect_left by hand
-    lo, hi = 0, len(nums)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if nums[mid] < target: lo = mid + 1
-        else:                  hi = mid
-    return lo
-Note `hi = len(nums)` (not len-1), `while lo < hi` (not <=), and `hi = mid` (not
-mid-1). All three differ from plain binary search.""",
+    nums =  [5, 7, 7, 8, 8, 8, 10]
+    pos      0  1  2  3  4  5   6
 
-    """Where boundary binary search shows up again.
-- Search Insert Position: bisect_left is literally the answer.
-- Count occurrences of x: bisect_right(x) - bisect_left(x), in O(log n).
-- First bad version / first true in a monotone predicate: same template with
-  `is_bad(mid)` in place of the comparison.
-- Longest Increasing Subsequence (patience method): bisect_left into the tails
-  array.
-- 'Search on the answer' problems: binary-search the smallest feasible value.
-Once you see it as 'find the boundary of a monotone true/false array' rather
-than 'find a value', all of these become one template.""",
+Looking for 8. The 8s occupy positions 3, 4 and 5. So the answer is [3, 5].
+
+Looking for 6. There is no 6 anywhere - it would sit between the 5 and the first 7,
+but it is simply absent. So the answer is [-1, -1].
+
+Two things to notice.
+
+The block is UNBROKEN. That is guaranteed by the list being sorted: if positions 3
+and 5 both hold 8, then position 4 must hold something between 8 and 8, which can
+only be 8.
+
+And the answer's two numbers are POSITIONS, not values. Beginners sometimes return
+the count of 8s (three) or the values themselves. The problem wants the index where
+the block begins and the index where it ends.
+
+The obvious approach - scan from the left until you find the first 8, then keep
+going until they stop - is correct and takes n steps. The point of the problem is
+to do it in about log n by halving.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Walk the list from the front. Remember the position of the first
+8 you see, then keep walking and remember the position of the last one. Report
+both, or [-1, -1] if you never saw one.
+
+That is completely correct and it is O(n) - proportional to the length of the list.
+For a sorted list it is also a waste, because sortedness lets you jump.
+
+THE UPGRADE - two binary searches, one for each end.
+
+Ordinary binary search finds SOME position holding the target, but on a list with
+duplicates you have no idea which one it landed on - it could be the middle 8. So
+"find the target then walk outwards to the edges" does not help: on a list that is
+a million 8s, walking outwards is a million steps again.
+
+Instead, ask two slightly different questions, each answerable by halving:
+
+    Where would the target be INSERTED to keep the list sorted, placing it BEFORE
+    any equal values?    -> that position is the first 8.
+
+    Where would it be inserted placing it AFTER any equal values?
+                         -> one before that position is the last 8.
+
+Both are boundary searches rather than value searches, and both take about log n
+steps. Two searches, so about 2 log n - still trivial next to n.
+
+Watch it on our list with target 8:
+
+    insert-before-equals  ->  position 3   (just before the first 8)
+    insert-after-equals   ->  position 6   (just after the last 8)
+    so the block runs from 3 to 6 - 1 = 5.
+
+Answer [3, 5].
+
+The reframing is the whole idea: stop looking for the VALUE and start looking for
+the BOUNDARY.""",
+
+    """3. bisect_left AND bisect_right - what they actually return.
+
+Python provides both boundary searches ready-made in the bisect module, and getting
+them straight is the whole problem.
+
+    bisect_left(nums, x)   the leftmost position where x could be inserted while
+                           keeping the list sorted - so BEFORE any existing copies
+                           of x.
+
+    bisect_right(nums, x)  the rightmost such position - AFTER any existing copies.
+
+On our list [5, 7, 7, 8, 8, 8, 10] with x = 8:
+
+    bisect_left  -> 3      the first 8 is at position 3
+    bisect_right -> 6      one past the last 8, which is at position 5
+
+So bisect_left lands ON the first copy, and bisect_right lands ONE PAST the last
+copy - which is why the code subtracts one from it.
+
+That "one past the end" convention is the same one Python uses everywhere: a slice
+nums[3:6] gives exactly the three 8s. So bisect_left and bisect_right together
+hand you a ready-made slice range, and the last position is simply the right end
+minus one.
+
+WHEN THE TARGET IS ABSENT, both return the SAME position - the place where it would
+go. For x = 6 on our list, both return 1, sitting between the 5 and the first 7. So
+if the two searches agree, the target is not present.
+
+The code does not compare them, though. It uses a simpler and equally reliable
+test, which section 4 explains - and which also avoids a second search when the
+target is missing.
+
+A useful way to remember which is which: LEFT gives you the first occurrence,
+RIGHT gives you one past the last. If you can only remember one thing, remember
+that bisect_left is the one that lands on a real copy.""",
+
+    """4. THE CHECK FOR ABSENCE - two conditions, both needed.
+
+Suppose the target is not in the list. bisect_left still returns a position - the
+place where it WOULD go. So we must check whether a real copy actually lives there.
+
+The code asks two questions:
+
+    if left == len(nums) or nums[left] != target:  ->  not present
+
+FIRST: is the position past the END of the list? That happens when the target is
+larger than everything. Searching for 99 in our list returns position 7, which is
+one past the last valid position 6. Reading nums[7] would fail, so this check must
+come FIRST - and because Python stops evaluating an "or" at the first true
+condition, putting it first is what makes the second half safe.
+
+SECOND: does the value at that position actually equal the target? For target 6,
+bisect_left returns 1, and nums[1] is 7, not 6. So the target is absent.
+
+If both checks pass, we know a real copy sits at that position - and since
+bisect_left lands on the FIRST copy, that position is the answer's left end.
+
+WHY THIS TEST RATHER THAN COMPARING THE TWO SEARCHES? Because it lets us skip the
+second search entirely when the target is missing. Comparing bisect_left against
+bisect_right would work, but it costs a second binary search to discover something
+we already know from one lookup.
+
+Two more small things worth knowing.
+
+The check must use bisect_left's result, not bisect_right's. bisect_right lands one
+PAST the block, so nums at that position is a different number even when the target
+IS present.
+
+And the list must actually be sorted. Neither search can detect an unsorted list;
+they will return a confident, meaningless position.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SORTED: arranged from smallest to largest. Everything here depends on it, and
+nothing checks it.
+
+BINARY SEARCH: finding a position in a sorted collection by repeatedly halving the
+range - about 20 steps for a million items, written O(log n).
+
+bisect: Python's module of ready-made binary searches. Using it rather than
+hand-writing the halving loop is the right choice in real code; hand-written binary
+searches are notoriously easy to get subtly wrong at the boundaries.
+
+bisect_left / bisect_right: the two boundary searches, defined in section 3. Left
+lands on the first copy; right lands one past the last.
+
+INDEX: a position in the list, counting from 0. The answer is a pair of indices.
+
+len(nums): how many items the list holds. The last valid position is len(nums) - 1,
+which is why "left == len(nums)" means "past the end".
+
+"or" in Python: true if either side is true, evaluated left to right and stopping
+at the first true one. That short-circuiting is what makes the bounds check safe
+before the value check.
+
+O(log n) and O(1): the costs. O(log n) means the work grows like the number of
+times you can halve n - about 20 for a million items, so two searches is about 40
+steps. O(1) means the extra memory does not grow at all: two positions, whatever
+the input size.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: run two boundary searches - one that lands before
+any equal values and one that lands after them - and the block runs from the first
+to one before the second.
+
+There is no recursion here and no loop of our own; both searches are single calls.
+
+The steps:
+
+  1. Run the boundary search that lands BEFORE any equal values. Call the result
+     left. If the target is present, this is the position of its first copy.
+
+  2. Check whether a real copy is actually there, because the search returns a
+     position whether or not the target exists:
+
+     a. If left is past the end of the list, the target is bigger than everything.
+        Not present.
+     b. Otherwise, if the value at that position is not the target, the target is
+        absent and left is merely where it would have gone.
+
+     Check (a) before (b), or you will read past the end of the list.
+
+     If either is true, report [-1, -1] and stop - and note this skips the second
+     search entirely, which is the reason for testing this way rather than by
+     comparing the two searches.
+
+  3. Otherwise the target really is present. Run the boundary search that lands
+     AFTER any equal values, and subtract one. That gives the position of the last
+     copy, because the search lands one PAST the block.
+
+  4. Report the two positions.
+
+The only thing to keep hold of while reading it: one search lands ON the first
+copy and the other lands ONE PAST the last. The asymmetry is not sloppiness - it
+is the standard "start inclusive, end exclusive" convention Python uses for slices,
+and it is why exactly one of the two results needs adjusting.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+Because the list is sorted, every copy of the target sits in one unbroken block. So
+the task is really to find where that block begins and where it ends - and each of
+those is a boundary, which is something binary search can find by halving.
+
+The code asks two closely related questions. The first is: if I were to slot this
+number into the list without disturbing the ordering, and I wanted to place it
+before any copies that are already there, where would it go? When copies do exist,
+the answer is precisely the position of the first one.
+
+Before doing anything else it checks whether a copy really is there, because that
+first question returns an answer whether the number exists or not - it simply
+points at the gap where it would belong. Two things could go wrong: the position
+might be past the end of the list, which happens when the target is larger than
+everything; or the value sitting there might be some other number entirely. Either
+way the target is absent and the code reports the not-found pair straight away,
+without bothering with the second search.
+
+If a copy really is there, it asks the mirror question: where would the number go
+if I wanted to place it after any existing copies? That lands one step past the end
+of the block, so stepping back by one gives the last copy.
+
+Both questions are answered by halving the search range, so each takes about twenty
+steps on a list of a million items rather than a million.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [5, 7, 7, 8, 8, 8, 10] and target = 8 beside you; the answer is [3, 5].
+
+    import bisect
+Python's ready-made binary searches. Worth using rather than hand-writing the
+halving loop - the boundary conditions are exactly where hand-written binary
+searches go wrong.
+
+    left = bisect.bisect_left(nums, target)
+The first boundary: the leftmost position where the target could be inserted while
+keeping the list sorted, which places it BEFORE any existing copies. When copies
+exist, that IS the position of the first one. For our input this returns 3.
+
+Note this returns a position even when the target is absent - it simply points at
+the gap where it would belong, which is why the next line exists.
+
+    if left == len(nums) or nums[left] != target:
+        return [-1, -1]
+The absence check from section 4, and the ORDER of the two halves matters.
+
+  "left == len(nums)" catches a target larger than everything, where the search
+  returns one past the last valid position. Reading nums at that position would
+  fail, so this must be tested first - and Python stops evaluating an "or" at the
+  first true condition, which is what makes the second half safe.
+
+  "nums[left] != target" catches a target that would slot into a gap. For target 6
+  the search returns 1, and nums[1] is 7.
+
+Returning here skips the second search entirely, which is the reason for testing
+this way rather than comparing the two searches against each other.
+
+    right = bisect.bisect_right(nums, target) - 1
+The second boundary: the rightmost insertion position, which places the target
+AFTER any existing copies - so it lands ONE PAST the block. For our input
+bisect_right returns 6, and 6 - 1 = 5 is the position of the last 8.
+
+That "- 1" is the whole difference between the two searches. bisect_left lands ON
+the first copy; bisect_right lands one past the last. Forgetting the subtraction
+reports the position just after the block, which is a different number entirely -
+or off the end of the list when the block runs to the very end.
+
+    return [left, right]
+The first and last positions - [3, 5] for our input.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    nums = [5, 7, 7, 8, 8, 8, 10]
+    pos     0  1  2  3  4  5   6
+
+TARGET 8 - present, three copies.
+
+    left = bisect_left(nums, 8)
+        Where does 8 go, placed before any existing 8s? Positions 0, 1 and 2 hold
+        5, 7, 7 - all smaller. Position 3 holds the first 8.
+        left = 3
+
+    Check: is 3 == len(nums) = 7?  No.
+           is nums[3] != 8?  nums[3] is 8, so no.
+           Both checks pass, so a real 8 sits at position 3.
+
+    right = bisect_right(nums, 8) - 1
+        Where does 8 go, placed after any existing 8s? Just past position 5, which
+        is position 6.
+        bisect_right = 6, so right = 6 - 1 = 5.
+
+    return [3, 5].  Correct - the 8s occupy positions 3, 4 and 5.
+
+TARGET 6 - absent, would slot between the 5 and the first 7.
+
+    left = bisect_left(nums, 6) = 1
+    Check: is 1 == 7? No.
+           is nums[1] != 6?  nums[1] is 7, which is not 6 -> TRUE.
+    return [-1, -1].  Correct, and the second search was never run.
+
+TARGET 99 - absent, larger than everything.
+
+    left = bisect_left(nums, 99) = 7
+    Check: is 7 == len(nums) = 7?  YES -> return [-1, -1] immediately.
+    Note the second half of the condition was never evaluated. Had the two halves
+    been written the other way round, nums[7] would have been read and the program
+    would have failed.
+
+TARGET 5 - present once, at the very start.
+
+    left = bisect_left(nums, 5) = 0
+    Check: 0 is not 7, and nums[0] is 5 -> both pass.
+    right = bisect_right(nums, 5) - 1 = 1 - 1 = 0
+    return [0, 0].  Correct - a single copy has the same first and last position.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(log n). Two binary searches, each halving the range, so about 20 steps each
+on a million items - roughly 40 in total against a million for a plain scan. Note
+the two searches are independent; neither depends on the other's result except for
+the early exit, so nothing is repeated.
+
+SPACE: O(1) - constant. Two positions, whatever the size of the list.
+
+THE #1 MISTAKE - finding the target with an ordinary binary search and then walking
+outwards to the edges of the block. It looks reasonable and it is O(log n) only in
+the best case. On a list that is a million copies of the target, the ordinary
+search lands somewhere in the middle and the outward walk takes half a million
+steps in each direction - so the whole thing degrades to O(n) and you have gained
+nothing. The two-boundary-search approach stays O(log n) no matter how large the
+block is.
+
+A close second: forgetting the "- 1" after bisect_right, which reports the position
+just past the block. On our input that gives [3, 6], and position 6 holds 10 - a
+completely different number.
+
+A third: checking nums[left] before checking whether left is past the end. Python
+evaluates "or" left to right and stops at the first true condition, so the bounds
+check must come first, or a target larger than everything crashes.
+
+IF YOU HAD TO WRITE IT BY HAND, the leftmost variant is an ordinary binary search
+that does NOT return on a match - instead it records the position and continues
+searching the LEFT half, to see whether an earlier copy exists. The rightmost
+variant records and continues RIGHT. That is worth knowing for an interview that
+forbids the library.
+
+ONE-SENTENCE TAKEAWAY: do not search for the value, search for the two BOUNDARIES -
+one insertion point before any equal values and one after them - and remember the
+second lands one past the block, so subtract one.""",
 ]
 
 _EX_P0E["K Closest Points to Origin (heap)"] = [
@@ -39118,62 +39415,352 @@ for _e in ENTRIES:
 _EX_P0F = {}
 
 _EX_P0F["Find Peak Element (binary search)"] = [
-    """The textbook case, traced.
-nums = [1,2,3,1]. lo=0, hi=3.
-mid=1: nums[1]=2 < nums[2]=3 -> we are climbing, so a peak must lie to the
-right: lo=2.
-mid=2: nums[2]=3 > nums[3]=1 -> descending, so a peak is at mid or left: hi=2.
-lo==hi==2, return 2. nums[2]=3 is greater than both neighbours. Correct.""",
+    """1. THE GOAL, in plain English.
 
-    """A strictly increasing array - the peak is the last element.
-nums = [1,2,3,4,5]. Every comparison nums[mid] < nums[mid+1] is true, so lo
-marches right: lo=3, then 4. Return 4.
-This is where 'treat out of bounds as -infinity' earns its keep: nums[5] does
-not exist, but conceptually it is -inf, so nums[4]=5 IS a peak. The code never
-touches index 5 because the loop stops when lo==hi.
-Strictly decreasing [5,4,3,2,1] is the mirror image: hi collapses to 0 and index
-0 is the peak.""",
+You are given a list of numbers. Find the position of any PEAK - a number that is
+bigger than both of its neighbours.
 
-    """Why ANY peak is enough, and how that makes log-time possible.
-nums = [1,5,1,5,1] has peaks at index 1 and index 3; returning either is
-accepted.
-That is the crucial relaxation. Finding the GLOBAL maximum requires looking at
-every element - O(n), no way around it, since the maximum could hide anywhere.
-Finding SOME local peak does not, because the slope tells you a direction: if
-you are climbing, there must be a peak somewhere ahead (the array either keeps
-climbing to the end, which makes the end a peak, or turns over somewhere).
-That existence argument is the correctness proof, and it is what an interviewer
-is really asking for.""",
+If there are several peaks, returning ANY of them is acceptable. That permission is
+unusual and it is the reason a fast solution exists at all.
 
-    """Edge cases: one and two elements.
-[1]: lo==hi==0, the loop never runs, return 0. A single element is a peak by
-definition (both neighbours are -inf).
-[1,2]: mid=0, 1 < 2 -> lo=1, return 1.
-[2,1]: mid=0, 2 > 1 -> hi=0, return 0.
-Note nums[mid+1] is only ever read when lo < hi, which guarantees mid+1 <= hi is
-in bounds - the loop condition is what keeps the index safe, so do not 'fix' it
-to lo <= hi.""",
+Our example:
 
-    """The plateau caveat.
-The problem guarantees nums[i] != nums[i+1] - no two adjacent elements are equal
-- and this algorithm needs that guarantee.
-On [1,2,2,2,1] the comparison nums[mid] < nums[mid+1] is false in the middle of
-the plateau, so you would move hi left and could miss the real structure; with
-equal neighbours there is no slope to follow and no better strategy than a
-linear scan.
-Ask about duplicates. If they are allowed, say the guarantee is gone and the
-worst case becomes O(n) - the same reasoning as duplicates in a rotated sorted
-array.""",
+    nums = [1, 2, 1, 3, 5, 6, 4]
+    pos    0  1  2  3  4  5  6
 
-    """The same slope trick in two dimensions.
-'Find a Peak Element II' (LeetCode 1901): binary-search the COLUMNS. For the
-middle column, find its row-wise maximum in O(m); compare it with its left and
-right neighbours and move toward the larger side.
-O(m log n) instead of O(m x n).
-Generalise the pattern: whenever a local property (rather than a global one) is
-asked for AND you can derive a direction from a comparison, binary search
-applies - even without a sorted array. That is the deeper lesson of this
-problem, and it is why interviewers still ask it.""",
+Drawn roughly:
+
+    6 |                    #
+    5 |                 #  #
+    4 |                 #  #  #
+    3 |              #  #  #  #
+    2 |     #        #  #  #  #
+    1 |  #  #  #     #  #  #  #
+      +---------------------------
+       0  1  2  3  4  5  6
+
+Position 1 holds 2, with 1 on either side - a peak. Position 5 holds 6, with 5 and
+4 on either side - also a peak. Either answer is correct.
+
+Two rules make the edges work. The problem treats the positions just outside the
+list as holding NEGATIVE INFINITY - imagine the ground falling away at both ends.
+So the first element only needs to beat its right neighbour, and the last only
+needs to beat its left. On [1, 2, 3, 4] the answer is position 3, because 4 has
+nothing to its right that could beat it.
+
+And the problem promises no two ADJACENT elements are equal. Without that promise a
+flat plateau makes "which way is up?" unanswerable, and the method below breaks.""",
+
+    """2. THE INTUITION - a peak must exist, and you can always walk uphill to one.
+
+The surprising claim is that binary search works here at all. Binary search
+normally needs a sorted list, and this list is in no order whatsoever.
+
+What binary search actually needs is weaker: a rule that lets you throw away half
+the range with confidence. Sortedness is one way to get that. Here is another.
+
+FIRST, WHY A PEAK ALWAYS EXISTS. Start anywhere and keep stepping toward the higher
+neighbour. The value strictly increases with every step, so you can never revisit a
+position - you would have to come back down. The list is finite, so you must
+eventually stop, and the only place you can stop is somewhere with no higher
+neighbour. That is a peak. So one always exists, and the answer is never "none".
+
+SECOND, THE HALVING RULE. Look at the middle position and compare it with its RIGHT
+neighbour.
+
+  If the middle is SMALLER than its right neighbour, the ground is rising as you
+  move right. Follow it: keep stepping to higher neighbours and you must reach a
+  peak somewhere to the right - by the argument above, and because the far right
+  end falls away to negative infinity, so the rise cannot continue forever. A peak
+  exists in the right half, so the left half and the middle can be discarded.
+
+  If the middle is BIGGER than its right neighbour, the ground is falling to the
+  right. By the mirror argument, walking left from the middle - or standing still,
+  if the middle is itself a peak - must reach a peak. So a peak exists at the middle
+  or to its left, and the right half can be discarded.
+
+Either way half the range goes, and the remaining half is guaranteed to still
+contain a peak. That guarantee is what licenses the halving, and it is why an
+unsorted list can still be searched in about log n steps.""",
+
+    """3. WHY THE DISCARDED HALF IS SAFE TO THROW AWAY.
+
+This deserves its own moment, because "there might be a peak over there too" is the
+natural objection.
+
+There might well be. The problem does not ask for ALL peaks, or the highest peak,
+or the leftmost peak - it asks for ANY peak. So discarding a half that also
+contains a peak costs nothing, provided the half we KEEP definitely contains one
+too.
+
+And it does. Take the case where the middle is smaller than its right neighbour.
+The kept half starts at the middle's right neighbour and runs to the end of the
+list. Inside that stretch:
+
+  The left edge of the stretch is higher than the position immediately before it -
+  that is exactly what the comparison told us.
+  The right edge of the stretch falls away to negative infinity, either because it
+  is the end of the list or because of how the range was narrowed earlier.
+
+A stretch that rises on entry and falls off at the far end must contain a high
+point somewhere inside it. That high point is a peak.
+
+The same argument mirrored covers the other branch.
+
+So the loop maintains a promise at all times: THE CURRENT RANGE CONTAINS A PEAK.
+Since it starts as the whole list, which certainly contains one, and every step
+preserves it, whatever single position the range shrinks to must be a peak.
+
+That is why the code needs no final check. It does not verify that the answer is a
+peak - it never had to, because the promise was never broken. Being able to state
+that promise is the difference between understanding this solution and having
+memorised its four lines.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - "while lo < hi", NOT "lo <= hi". Like Find Minimum in Rotated Sorted
+Array, the range always contains the answer, so when the two markers meet the
+search is over. Writing "<=" runs an extra round where mid equals both markers, and
+"mid + 1" would then push lo past hi or the other branch would leave the range
+unchanged and hang.
+
+CASE 2 - "hi = mid", NOT "hi = mid - 1". When the middle is bigger than its right
+neighbour, the middle might itself BE the peak, so it must stay in the range.
+Excluding it can discard the only peak in that half. Meanwhile the other branch
+does use "mid + 1", because when the middle is smaller than its right neighbour the
+middle is definitely not a peak. The asymmetry is deliberate.
+
+CASE 3 - reading nums[mid + 1] off the end. It cannot happen, and it is worth
+seeing why. The loop only runs while lo is strictly less than hi, so the range has
+at least two positions, and (lo + hi) // 2 rounds DOWN - which means mid is always
+strictly less than hi. So mid + 1 is at most hi, a valid position. The downward
+rounding is doing real safety work here.
+
+CASE 4 - a single element. lo and hi are both 0, the loop never runs, and position
+0 is returned. Correct: with the ground falling away on both sides, a lone element
+is a peak.
+
+CASE 5 - a strictly increasing list, [1, 2, 3, 4]. Every comparison finds the
+middle smaller than its right neighbour, so the range keeps moving right and lands
+on the last position. Correct - the last element is a peak because nothing is to
+its right.
+
+CASE 6 - equal adjacent values. The problem forbids them, and the method needs
+that promise: with nums[mid] equal to nums[mid + 1], neither "rising" nor "falling"
+is true, and the argument in section 3 collapses. If a variant allows plateaus,
+binary search no longer applies and you are back to scanning.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+PEAK: a position whose value is greater than both neighbours, with the positions
+just outside the list treated as negative infinity. Defined in section 1.
+
+BINARY SEARCH: halving the range each round. Normally associated with sorted data,
+but as section 2 shows, what it really needs is a rule that safely discards half -
+sortedness is only one way to get one.
+
+lo and hi: the ends of the stretch still under consideration. Unlike an ordinary
+binary search for a value, this range is guaranteed to CONTAIN a peak at all times -
+which is why the loop stops when they meet rather than when they cross, and why no
+final verification is needed.
+
+(lo + hi) // 2: the middle. The double slash is whole-number division, throwing
+away any fraction, so it rounds DOWN. Two things depend on that: mid is always
+strictly less than hi, which makes nums[mid + 1] safe to read, and the "hi = mid"
+branch always shrinks the range rather than leaving it unchanged.
+
+INVARIANT: a statement that is true before and after every round of a loop. Here it
+is "the current range contains a peak". Naming the invariant is usually the
+clearest way to explain why a loop is correct.
+
+O(log n) and O(1): the costs, where n is the length of the list. O(log n) means the
+work grows like the number of times you can halve n - about 20 for a million items.
+O(1) means the extra memory does not grow at all: three variables.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: compare the middle with its right neighbour and
+walk uphill - keep the half the ground is rising toward, because a stretch that
+rises on entry and falls away at the far end must contain a peak.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+The loop ends when the two markers meet, and because the range always contains a
+peak, wherever they meet IS one.
+
+The steps:
+
+  1. Put one marker at the first position and one at the last. The whole list
+     certainly contains a peak, so the promise holds at the start.
+
+  2. Repeat while the two markers have not MET. Not crossed - met. When they are
+     equal there is one position left, and by the promise it is a peak, so there is
+     nothing more to decide.
+
+  3. Work out the middle position by adding the markers and halving, rounding down.
+     The rounding guarantees the middle is never the right-hand marker, so looking
+     one position to its right is always safe.
+
+  4. Compare the middle with the position immediately to its RIGHT.
+
+  5. If the middle is SMALLER, the ground rises to the right. A peak lies somewhere
+     in that direction, so move the left marker to just past the middle - the
+     middle itself is not a peak, since its right neighbour is higher.
+
+  6. Otherwise the ground falls to the right. A peak lies at the middle or to its
+     left, so move the right marker TO the middle - not past it, because the middle
+     might be the peak.
+
+  7. When the markers meet, return that position.
+
+Steps 5 and 6 are deliberately not mirror images: one excludes the middle, the
+other keeps it. That asymmetry is exactly what keeps the promise from being broken.
+
+And note what the code never does: it never checks that the answer is actually a
+peak. It does not need to - the promise guarantees it.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The list is not sorted, so the usual reason for halving a search does not apply
+here. What applies instead is a promise the code keeps from beginning to end: the
+stretch it is currently considering definitely contains a peak somewhere inside it.
+
+That promise is true at the start, because the whole list contains a peak - you can
+always start anywhere and keep stepping to the higher neighbour, the values rise
+every step so you never go in circles, and since the list is finite you must
+eventually arrive somewhere with nothing higher beside it.
+
+Each round the code looks at the middle of its stretch and compares it with the
+position just to the right. If the ground is rising in that direction, it keeps the
+right-hand portion and throws away everything from the middle leftwards - because
+a stretch that rises as you enter it, and falls away at the far end, has to have a
+high point somewhere in the middle. If the ground is falling to the right, it keeps
+the left-hand portion, and this time it keeps the middle too, because the middle
+itself might be that high point.
+
+Each round halves the stretch while the promise stays true, so from a million
+positions it takes about twenty rounds to narrow to one.
+
+And when the stretch has shrunk to a single position, no checking is needed. The
+promise said the stretch contains a peak, and there is only one position left in
+it, so that position is the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [1, 2, 1, 3, 5, 6, 4] beside you; position 5 is one valid answer.
+
+    lo, hi = 0, len(nums) - 1
+The ends of the stretch under consideration. The promise from section 3 starts out
+true here: the whole list certainly contains a peak.
+
+    while lo < hi:
+Strictly less than, NOT "or equal". The stretch always contains a peak, so the
+moment the markers meet the search is over - that position is the answer. Writing
+"<=" runs an extra round that can fail to shrink the range and hang.
+
+    mid = (lo + hi) // 2
+The middle, rounding DOWN because of whole-number division. That rounding does two
+jobs. It guarantees mid is strictly less than hi, so reading nums[mid + 1] on the
+next line is always a valid position - see case 3 in section 4. And it guarantees
+the "hi = mid" branch below actually shrinks the range.
+
+    if nums[mid] < nums[mid + 1]:
+        lo = mid + 1
+The ground rises to the right, so a peak lies somewhere in that direction. Move the
+left marker past the middle - and past it is right, because the middle is
+definitely NOT a peak: its right neighbour is higher.
+
+    else:
+        hi = mid
+The ground falls to the right, so a peak is at the middle or to its left. Note this
+is "hi = mid", NOT "mid - 1" - the middle itself might be the peak, and excluding
+it could throw away the only one in this half. The asymmetry with the branch above
+is deliberate and is what keeps the promise intact.
+
+    return lo
+The markers have met. The promise says the stretch contains a peak and there is one
+position left in it, so this is a peak.
+
+Notice what is missing: there is no check that nums[lo] is actually greater than
+its neighbours. None is needed. The correctness comes from the invariant, not from
+verifying the answer - which is exactly why being able to state the invariant
+matters more than remembering the four lines.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    nums = [1, 2, 1, 3, 5, 6, 4]
+    pos     0  1  2  3  4  5  6
+
+Start: lo = 0, hi = 6
+
+ROUND 1.  Is 0 < 6? Yes.
+    mid = (0 + 6) // 2 = 3.  nums[3] = 3, nums[4] = 5.
+    Is 3 < 5?  YES -> the ground rises to the right.
+    lo = mid + 1 = 4.        stretch is now positions 4..6
+
+ROUND 2.  Is 4 < 6? Yes.
+    mid = (4 + 6) // 2 = 5.  nums[5] = 6, nums[6] = 4.
+    Is 6 < 4?  No -> the ground falls to the right.
+    hi = mid = 5.            stretch is now positions 4..5
+    Note hi became 5, not 4 - position 5 is kept, because it might be the peak.
+    It is.
+
+ROUND 3.  Is 4 < 5? Yes.
+    mid = (4 + 5) // 2 = 4.  nums[4] = 5, nums[5] = 6.
+    Is 5 < 6?  YES -> rises to the right.
+    lo = mid + 1 = 5.        stretch is now position 5 only
+
+CHECK: is 5 < 5? No -> the loop ends.
+
+return 5.  And nums[5] = 6, with 5 to its left and 4 to its right - a genuine peak.
+
+Notice the search walked right past position 1, which is also a peak. That is
+allowed: the problem asks for any peak, and the halving rule only promises to keep
+A peak in range, not every peak.
+
+THE STRICTLY INCREASING CASE, nums = [1, 2, 3, 4]:
+
+  lo = 0, hi = 3.  mid = 1.  nums[1] = 2 < nums[2] = 3 -> lo = 2.
+  lo = 2, hi = 3.  mid = 2.  nums[2] = 3 < nums[3] = 4 -> lo = 3.
+  lo = 3, hi = 3 -> loop ends.  return 3.
+
+Correct - position 3 holds 4, and there is nothing to its right, so the ground
+falls away to negative infinity. Every comparison sent the search right, which is
+what a continuously rising list should do.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(log n). Each round halves the stretch, so about 20 rounds for a million
+items. A plain scan comparing every element with its neighbours would be O(n) -
+also perfectly correct, and the answer you should mention first before improving on
+it.
+
+SPACE: O(1) - constant. Three variables, whatever the length of the list.
+
+WHAT THIS PROBLEM IS REALLY TEACHING: that binary search does not require sorted
+data. It requires a rule that lets you discard half the range while keeping a
+guarantee. Sortedness is the most familiar source of such a rule, but "the ground
+rises this way, so a peak lies over there" works just as well. Recognising that is
+what lets you spot binary search in problems that look nothing like a lookup - the
+same insight behind "search on the answer".
+
+THE #1 MISTAKE - writing "hi = mid - 1" to match the shape of an ordinary binary
+search. There, you have examined the middle and ruled it out, so excluding it is
+correct. Here you have NOT ruled it out - when the ground falls to the right, the
+middle may be the peak. Excluding it can discard the only peak in that half and
+return a position that is not a peak at all.
+
+A close second: using "while lo <= hi". The range always contains the answer, so
+the search is finished the moment the markers meet; the extra round can leave the
+range unchanged and hang.
+
+A third, more conceptual: adding a final check that the returned position really is
+a peak. It is harmless but it signals that you do not trust the invariant - and if
+you do not trust it, you have not understood why the halving was allowed.
+
+ONE-SENTENCE TAKEAWAY: keep the half the ground rises toward, because a stretch
+that rises on entry and falls away at the end must contain a peak - so the range
+always holds one, and wherever the markers meet is the answer with no checking
+needed.""",
 ]
 
 _EX_P0F["Heap / Top-K — when 'K largest/most frequent' appears"] = [
