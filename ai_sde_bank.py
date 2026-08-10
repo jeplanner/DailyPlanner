@@ -32533,6 +32533,135 @@ Cities With Minimum Cost, Min Cost to Connect All Points, and Optimize Water
 Distribution - all of which are MST problems wearing product language.""",
 ]
 
+_EX_P1N["Temperature, top-k and top-p (controlling LLM output)"] = [
+    """What temperature actually does to the numbers.
+The model produces logits; softmax turns them into probabilities. Temperature
+DIVIDES the logits before that softmax, so it stretches or flattens the
+distribution.
+Logits [3.0, 2.0, 1.0]. At T = 1.0 the probabilities are roughly
+[0.67, 0.24, 0.09]. At T = 0.5 (divide by 0.5, i.e. double them) they sharpen
+to about [0.87, 0.12, 0.02]. At T = 2.0 they flatten toward
+[0.51, 0.31, 0.19].
+So low temperature concentrates mass on the top token and high temperature
+shares it out. T = 0 is the degenerate case: always take the argmax, which is
+greedy decoding.""",
+
+    """Top-k and top-p, and why top-p usually wins.
+TOP-K keeps only the k highest-probability tokens and renormalises. The flaw is
+that k is fixed regardless of how confident the model is: when one token
+deserves 99% of the mass, k = 40 still admits 39 poor alternatives; when the
+distribution is genuinely flat, k = 40 may cut off good options.
+TOP-P (nucleus) keeps the smallest set of tokens whose probabilities SUM to p.
+That adapts automatically - a confident step keeps one or two tokens, an
+uncertain step keeps many. This is why top-p around 0.9-0.95 is the modern
+default and top-k is largely legacy.
+They compose: filter by top-k, then top-p, then sample with temperature.""",
+
+    """Settings by task, which is the practically useful part.
+Extraction, classification, SQL generation, tool arguments, anything parsed by
+code: temperature 0 (or very near). You want determinism and the single most
+likely token; creativity here is a bug.
+Summarisation, general Q&A, RAG answers: 0.2-0.5. Slight variation, still
+grounded.
+Brainstorming, story writing, generating diverse test data: 0.8-1.2 with
+top-p 0.95.
+The mistake to avoid is leaving a default of 0.7 on an extraction endpoint and
+then debugging 'why does my JSON parser fail one time in twenty'.""",
+
+    """Temperature 0 is NOT fully deterministic in production, and knowing why
+matters. Even at T = 0 the same prompt can give different outputs across calls,
+because floating-point reductions on GPUs are not associative and batching
+changes the summation order, mixture-of-experts routing can vary with batch
+composition, and providers update model versions silently.
+So T = 0 means 'as deterministic as we can offer', not 'reproducible'. If you
+need reproducibility for tests, pin the model version, set a seed where the API
+supports one, and still assert on SEMANTICS rather than exact strings.""",
+
+    """The failure modes at each extreme.
+Too HIGH: incoherence, invented facts, and drifting off the instruction -
+because a token with 2% probability is now getting picked regularly.
+Too LOW (or T = 0): repetition loops, where the model gets stuck emitting the
+same phrase because the greedy choice at each step leads back into the same
+state. This is why frequency and presence PENALTIES exist - they subtract from
+the logits of tokens already used, breaking the loop without adding randomness.
+Recognising a repetition loop as a decoding problem rather than a model
+weakness is the useful diagnosis.""",
+
+    """How this interacts with RAG and structured output, which is where you will
+meet it. In a RAG system the retrieved context should be doing the work, so
+temperature stays low - high temperature makes the model paraphrase away from
+its sources and undermines the grounding you paid for.
+For structured output, prefer the API's JSON mode or schema-constrained
+decoding over merely lowering the temperature: constrained decoding masks
+invalid tokens at each step and cannot produce malformed JSON, whereas T = 0
+just makes malformed JSON rarer. 'Constrain, do not persuade' is the rule.""",
+]
+
+_EX_P1N["What is the context window, and why does it matter?"] = [
+    """What is actually inside the window - the accounting people get wrong.
+The window holds EVERYTHING for a single call: the system prompt, the entire
+conversation history you resend, any retrieved documents, tool schemas, tool
+results, and the model's own output. It is not 'how much the user typed'.
+A 128k window with a 2k system prompt, 40k of chat history, 20k of retrieved
+chunks and 4k of tool definitions leaves about 62k for everything else -
+including the answer, since output tokens come out of the same budget on most
+APIs.
+Running out mid-generation truncates the answer, which is why long agent traces
+fail in the middle rather than at the start.""",
+
+    """Why the model has no memory between calls, and what that implies.
+The model is stateless. A chat 'remembering' turn 1 at turn 20 only happens
+because your client RESENDS the whole transcript every time. So cost and
+latency grow with conversation length, and once the transcript exceeds the
+window something must be dropped.
+The three standard strategies: sliding window (keep the last N turns - simple,
+loses early context), summarisation (compress old turns into a running summary -
+keeps the gist, loses detail and can compound errors), and retrieval over the
+history (embed past turns and pull back only the relevant ones - best for long
+sessions, more machinery).""",
+
+    """'Lost in the middle', which is the fact that surprises people.
+Filling a large window does not mean the model attends to all of it evenly.
+Measured across models, recall is strongest for material at the START and END
+of the context and measurably weaker in the MIDDLE. So burying the key document
+at position 40 of 80 retrieved chunks is worse than returning 5 well-ranked
+ones.
+The practical consequences: rerank so the best evidence sits first, put
+critical instructions at the beginning AND restate them at the end, and treat
+'just stuff more context in' as a strategy with diminishing and sometimes
+negative returns.""",
+
+    """Why a bigger window does not make RAG obsolete - the comparison to have ready.
+Cost: attention work grows quadratically with sequence length, so a 100k-token
+prompt is dramatically more expensive per call than a 5k one carrying the same
+5 relevant chunks. Latency follows. Quality: lost-in-the-middle means precision
+often DROPS as you add marginal context. And you still cannot cite sources or
+enforce per-user access control by stuffing everything in.
+So the honest position is that large windows raise the ceiling on how much RAG
+can pass through, rather than replacing retrieval.""",
+
+    """The numbers worth carrying.
+Roughly 0.75 words per token in English, so ~750 words per 1,000 tokens and
+about 500 tokens per page of prose. A 128k window is therefore something like
+250 pages - large, but a single codebase or a year of chat history exceeds it
+easily.
+Non-Latin scripts consume two to five times more tokens for the same content,
+so a multilingual product's effective window is smaller for some users - a real
+architecture consideration, not trivia.
+Code tokenizes densely because of indentation and punctuation, so a file is
+usually more tokens than its character count suggests.""",
+
+    """How the limit is engineered around, named so the follow-up is easy.
+RAG (retrieve only what is relevant), chunking with overlap, reranking to put
+the best material first, conversation summarisation, prompt caching (providers
+cache a long stable prefix so resending it is cheaper), and streaming so the
+user sees output before the full budget is consumed.
+On the model side: sparse and sliding-window attention, and positional schemes
+like RoPE with interpolation that let a model trained at one length generalise
+to longer ones. Knowing that the window is an architectural CHOICE with a
+quadratic cost - not a hard law - is what the question is really probing.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1N:
         _e["examples"] = _EX_P1N[_e["title"]]
