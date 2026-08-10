@@ -35131,6 +35131,308 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1V[_e["title"]]
 
 
+_EX_P1W = {}
+
+_EX_P1W["Hashing — the 'have I seen this?' pattern"] = [
+    """The three questions that should trigger a hash map.
+'Have I seen X before?' -> a SET. 'How many times have I seen X?' -> a COUNTER.
+'Does the value that completes X exist?' -> a MAP from value to index.
+Each turns an O(n) inner scan into an O(1) average lookup, which is what drops
+a nested loop from O(n^2) to O(n). If you catch yourself writing an inner loop
+whose only job is to search, that inner loop is a hash map.""",
+
+    """Two Sum, traced - the canonical case.
+nums = [2,7,11,15], target = 9.
+i=0, x=2: is 7 in seen? No. Record seen[2] = 0.
+i=1, x=7: is 2 in seen? YES at index 0 -> return [0,1].
+The subtle detail: check the complement BEFORE recording the current value.
+Reversed, a target of 4 with a single 2 in the array would match the 2 against
+itself and return [0,0]. That check-then-record ordering appears in every
+variant of this pattern.""",
+
+    """What the hash map costs, stated honestly.
+Lookups are O(1) AVERAGE, not worst case - with adversarial keys that all
+collide, a hash table degrades to O(n) per operation and the whole algorithm to
+O(n^2). Python randomises string hashing per process specifically to make that
+attack impractical.
+Space is O(n), which is the trade: you are buying time with memory. If the
+input is sorted, two pointers give the same result in O(1) space, and if it is
+not sorted but you may sort it, O(n log n) time with O(1) space is sometimes
+the better deal. Say which trade you are making.""",
+
+    """The variants worth recognising instantly.
+COMPLEMENT lookup: Two Sum, Pairs With Absolute Difference K, Pairs Divisible
+by 60.
+GROUPING by a canonical key: Group Anagrams (sort each word to make the key),
+Group Shifted Strings.
+PREFIX-SUM plus map: Subarray Sum Equals K, Continuous Subarray Sum, Path Sum
+III - store how many prefixes had each value.
+SET for membership: Longest Consecutive Sequence (only start counting a run at
+a number whose predecessor is absent - that check is what makes it O(n) rather
+than O(n^2)), Contains Duplicate.
+Four shapes cover most of the family.""",
+
+    """Choosing the KEY is the actual skill.
+The algorithm is trivial; the insight is what to key on. Group Anagrams keys on
+the sorted string ('eat' -> 'aet') or on a 26-length count tuple. Subarray Sum
+Equals K keys on the running prefix sum. Continuous Subarray Sum keys on the
+prefix sum MODULO k. Isomorphic Strings keys on the first-occurrence pattern.
+When a hash-map solution is not obvious, the question to ask is not 'should I
+use a map' but 'what quantity, if two items shared it, would answer the
+question?'.""",
+
+    """Edge cases and the language footnote.
+Empty input -> the loop never runs; return the empty result rather than
+crashing.
+Duplicates in the input are usually the interesting case - decide whether the
+map stores the FIRST or LAST index (assignment overwrites, so it stores the
+last unless you guard with setdefault).
+Unhashable keys: lists cannot be dict keys in Python, so a list must become a
+tuple first - which is exactly what Group Anagrams needs. And keys must be
+immutable, or mutating one after insertion makes it unfindable, which is a
+genuinely confusing bug.""",
+]
+
+_EX_P1W["Linked List Cycle"] = [
+    """Why the two pointers must meet, which is the proof to have ready.
+Slow moves 1 step per iteration, fast moves 2. Once both are inside the cycle,
+fast gains exactly ONE step on slow per iteration - so the gap between them
+shrinks by 1 each time and cannot jump over 0. It therefore hits 0 exactly, and
+they meet.
+If fast moved 3 steps, the gap would shrink by 2 and could skip past a gap of
+1 in an odd-length cycle - which is why the classic uses 1 and 2. That is the
+answer to 'why not faster?'.""",
+
+    """The trace.
+1 -> 2 -> 3 -> 4 -> 5 -> back to 3.
+slow 1, fast 1. Step: slow 2, fast 3. Step: slow 3, fast 5. Step: slow 4,
+fast 4 -> MET, return True.
+No cycle, 1 -> 2 -> 3: slow 2, fast 3; then fast.next is None -> exit -> False.
+Note the loop condition checks both `fast` and `fast.next`, because fast takes
+two steps and either could fall off the end - checking only one dereferences
+None on a list of even length.""",
+
+    """The hash-set alternative, and why the pointers win.
+Storing every visited node in a set and checking membership is correct, easier
+to explain, and O(n) SPACE. Floyd's is O(1) space, which is the entire point of
+the problem - the constraint in the prompt is what forces the two-pointer
+answer.
+Worth presenting both: the set version first as the obvious solution, then the
+pointers as the constant-space improvement. That ordering shows you can produce
+a working answer and then optimise, which is what interviewers want to see.""",
+
+    """Finding the cycle's START - the follow-up that always comes.
+After the meeting point, reset one pointer to the head and advance BOTH one
+step at a time; they meet at the cycle entrance.
+The proof in one line: if the tail before the cycle has length a and the meeting
+point is b steps into a cycle of length c, then the maths works out so that a
+and (c - b) are congruent - so a pointer from the head and one from the meeting
+point converge exactly at the entrance.
+You do not have to derive it live, but you should be able to state the
+procedure and that it is a known result.""",
+
+    """Edge cases.
+Empty list -> the loop condition fails immediately -> False.
+Single node with no cycle -> fast.next is None -> False.
+Single node pointing at ITSELF -> slow and fast both move to the same node and
+meet -> True. This is the smallest possible cycle and a good test.
+Two nodes in a cycle -> meet on the second iteration.
+The whole list being one big cycle -> detected normally; there is no special
+case for a cycle that includes the head.""",
+
+    """Complexity and the family.
+O(n) time - slow travels at most n steps before fast laps it - and O(1) space.
+The family: Linked List Cycle II (find the entrance, above), Find the Duplicate
+Number (the same tortoise-and-hare applied to an ARRAY treated as a linked list
+via index -> value, which is a genuinely clever reuse), Happy Number (cycle
+detection on a number sequence), Middle of the Linked List (fast/slow with fast
+at 2x, so slow lands in the middle), and Palindrome Linked List (find the
+middle, reverse the second half, compare).
+Fast/slow pointers are one primitive with many disguises.""",
+]
+
+_EX_P1W["Missing Number"] = [
+    """Three correct solutions, ranked - which is what this problem is for.
+SORT and scan for the gap: O(n log n), trivial.
+HASH SET of the array, then check 0..n: O(n) time, O(n) space.
+SUM formula: expected n(n+1)/2 minus the actual sum: O(n) time, O(1) space.
+XOR: XOR 0..n and every element together; pairs cancel and the missing number
+survives: O(n) time, O(1) space AND no overflow risk.
+Producing all four and explaining the trade is a much better answer than
+producing only the clever one - it shows you can reason about the constraints
+rather than having memorised a trick.""",
+
+    """The sum trick, traced.
+nums = [3,0,1], n = 3. Expected sum of 0..3 is 3*4/2 = 6. Actual sum is 4.
+6 - 4 = 2 -> the missing number is 2. Correct.
+The whole idea: you know exactly what the total SHOULD be, so the shortfall is
+precisely the absent value. It works because the numbers are DISTINCT and the
+range is known - remove either guarantee and the arithmetic means nothing.""",
+
+    """The overflow argument for preferring XOR.
+For n around 100,000 the expected sum is about 5 billion, which exceeds a
+signed 32-bit integer. In Java or C++ the formula silently overflows and
+returns nonsense; Python's arbitrary-precision integers hide it entirely.
+XOR has no such problem - it never produces a value larger than the largest
+input. So in a language with fixed-width integers, XOR is the better answer,
+and saying so unprompted signals you are thinking past your interpreter.
+The safer variant of the sum approach is to subtract as you go
+(`result += i - nums[i]`), keeping the running value small.""",
+
+    """The XOR version, traced.
+nums = [3,0,1]. XOR of indices 0,1,2 and the sentinel n=3 gives 0^1^2^3 = 0.
+XOR of the values 3^0^1 = 2.
+Combined: 0 ^ 2 = 2. Correct.
+In one loop: `result = n; for i, x in enumerate(nums): result ^= i ^ x`.
+Why it works: every number that IS present appears once as an index (or as n)
+and once as a value, so it cancels itself to 0; the missing number appears only
+on the index side and survives.""",
+
+    """Edge cases.
+n = 1 with nums = [0] -> expected 1, actual 0 -> missing 1. The missing number
+can be n itself, at the END of the range - which a scan-for-a-gap solution can
+miss if it only checks between elements.
+nums = [1] -> missing 0, at the START. Those two inputs bracket the range and
+are the ones to test.
+Empty array -> missing 0.
+The problem guarantees exactly one missing and no duplicates; without those the
+sum tells you only the NET difference, and both tricks break.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space with either the sum or XOR approach.
+The family is 'exploit a stated constraint instead of searching': Single Number
+(XOR, because everything else appears exactly twice), Find All Numbers
+Disappeared in an Array (mark indices negative in place - a different trick for
+MULTIPLE missing values, where sum and XOR both fail), Find the Duplicate
+Number (Floyd's cycle detection on the value range), First Missing Positive
+(index-as-hash placement), and Missing Number in an arithmetic progression.
+When a prompt volunteers an unusual guarantee - distinct, a known range,
+exactly one - that guarantee is almost always the intended route.""",
+]
+
+_EX_P1W["Number of 1 Bits (popcount)"] = [
+    """Why `n &= n - 1` clears the lowest set bit.
+Subtracting 1 flips the lowest set bit to 0 and turns every zero below it into
+1. ANDing with the original therefore keeps everything above the lowest set bit
+and zeroes that bit and everything below.
+n = 12 (1100). n-1 = 11 (1011). 1100 & 1011 = 1000 -> the lowest set bit (the
+4) is gone.
+Next: 1000 & 0111 = 0000. Two iterations, two set bits. The loop runs exactly
+as many times as there are 1s - not 32 times.""",
+
+    """The naive version, and when the difference matters.
+Checking each bit with `n & 1` then `n >>= 1` runs 32 times regardless, so it
+is O(number of BITS). The Brian Kernighan trick above is O(number of SET bits).
+For a sparse value like 2^31 (one set bit) that is 1 iteration versus 32 - a
+32x difference on the hot path of something like a bitmap index or a chess
+engine's board evaluation, where popcount is called billions of times.
+For a single call neither matters, and being clear about WHEN the optimisation
+is worth it is part of the answer.""",
+
+    """The production answer, which you should give last.
+Every real language exposes a hardware popcount: Python's `bin(n).count('1')`
+or `int.bit_count()` in 3.10+, Java's Integer.bitCount, C++'s
+__builtin_popcount, and the x86 POPCNT instruction that does it in ONE cycle.
+So the honest ordering in an interview: implement it by hand because that is
+what is being asked, then note the built-in exists and compiles to a single
+instruction. Reaching for the built-in first skips the exercise; not knowing it
+exists looks naive.""",
+
+    """Edge cases.
+n = 0 -> the loop never runs -> 0.
+n = 1 -> one iteration -> 1.
+All ones, n = 0xFFFFFFFF -> 32 iterations -> 32.
+NEGATIVE numbers are the real trap: in Python, integers are arbitrary
+precision and two's-complement negatives conceptually have infinitely many
+leading 1s, so `while n` never terminates for n < 0. Mask first with
+`n & 0xFFFFFFFF` if the input can be negative.
+In Java the same problem appears as an infinite loop with `>>` (arithmetic
+shift preserves the sign bit) which is why you use `>>>` there.""",
+
+    """The bit tricks worth knowing alongside it.
+n & (n-1) -> clears the lowest set bit (this problem), and `n & (n-1) == 0`
+tests for a POWER OF TWO.
+n & -n -> ISOLATES the lowest set bit, which is what Fenwick trees use to walk
+their index structure.
+n | (n+1) -> sets the lowest zero bit.
+n ^ (n >> 1) -> converts to Gray code.
+These four cover most bit-manipulation questions, and each is one line - worth
+memorising as a set rather than deriving under pressure.""",
+
+    """Complexity and the family.
+O(k) time where k is the number of set bits (at most 32 or 64), O(1) space.
+The family: Counting Bits (compute popcount for 0..n using dp[i] = dp[i >> 1] +
+(i & 1), which is DP over bits and a lovely little problem), Power of Two,
+Reverse Bits, Single Number, Hamming Distance (popcount of a XOR b), Subsets
+(iterate 0..2^n and read each integer as a membership mask), and Bitmask DP for
+travelling-salesman style problems.""",
+]
+
+_EX_P1W["Single Number (XOR)"] = [
+    """The three XOR properties that make it work.
+x ^ x = 0 (a value cancels itself), x ^ 0 = x (zero is the identity), and XOR is
+COMMUTATIVE and ASSOCIATIVE (order does not matter).
+So XOR-ing the whole array pairs up every duplicate regardless of where the
+copies sit, and everything cancels except the lone value.
+nums = [4,1,2,1,2]: 4^1^2^1^2 = 4 ^ (1^1) ^ (2^2) = 4 ^ 0 ^ 0 = 4. The
+rearrangement in the middle is licensed by commutativity, and it is the whole
+proof.""",
+
+    """Why the alternatives are worse HERE.
+A hash set of seen values is O(n) space. Sorting and scanning pairs is
+O(n log n). Summing 2*sum(set(nums)) - sum(nums) is clever but risks overflow
+and allocates a set.
+XOR is O(n) time, O(1) space, no overflow, one line. The prompt's explicit
+'O(1) extra space' constraint is what rules out the others - which is worth
+noticing, because it tells you a bit trick is intended before you have thought
+of one.""",
+
+    """The constraint that XOR depends on, and what breaks it.
+It requires every other element to appear EXACTLY TWICE. Change that and it
+fails: with elements appearing three times, XOR does not cancel (x^x^x = x).
+Single Number II (all others appear THRICE) needs a different technique -
+either count bits at each of the 32 positions and take each count mod 3, or the
+two-variable ones/twos state machine.
+Single Number III (TWO unique values) XORs everything to get a^b, isolates any
+set bit of that with `d & -d`, and partitions the array by that bit so each
+group contains one unique value.
+Knowing that the three problems need three different ideas is the point of
+studying them together.""",
+
+    """A worked variant, since the follow-up is common.
+Single Number III on [1,2,1,3,2,5]: XOR everything -> 3^5 = 6 (binary 110).
+Isolate the lowest set bit: 6 & -6 = 2 (binary 010). Partition by whether the
+element has that bit: group A = {2,3,2} -> XOR = 3; group B = {1,1,5} -> XOR =
+5. Answer [3,5].
+The insight is that a^b must have at least one set bit (since a != b), and that
+bit differs between a and b - so it cleanly separates them while keeping each
+duplicate pair together.""",
+
+    """Edge cases.
+Single element [7] -> 7 ^ nothing = 7.
+The unique element first or last -> position is irrelevant by commutativity.
+Zero as the unique value, [0,1,1] -> 0^1^1 = 0. Correct, and it is the case
+that breaks any solution using 0 as a sentinel for 'not found'.
+Negative numbers work: XOR operates on the two's-complement bit patterns and
+the cancellation is unaffected.
+The problem guarantees exactly one unique value; with none or two, the result is
+meaningless rather than an error - which is worth stating.""",
+
+    """Complexity and where XOR shows up beyond puzzles.
+O(n) time, O(1) space, one pass.
+Real uses: RAID parity (the parity disk is the XOR of the others, so any one
+lost disk is reconstructible by XOR-ing the rest - exactly this problem),
+checksums, simple stream ciphers, and hashing.
+The family: Missing Number (XOR indices with values), Single Number II and III,
+Find the Duplicate Number, and Maximum XOR of Two Numbers in an Array (which
+uses a bitwise trie).""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1W:
+        _e["examples"] = _EX_P1W[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
