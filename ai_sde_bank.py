@@ -31347,6 +31347,245 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1K[_e["title"]]
 
 
+_EX_P1L = {}
+
+_EX_P1L["Minimum Recolors to Get K Consecutive Black Blocks"] = [
+    """The reframing that solves it in one line of thought.
+Recolouring only ever turns W into B, so the cost of making a window all black
+is exactly the NUMBER OF W's in that window. The question 'fewest recolors' is
+therefore 'the window of size k containing the fewest W's' - a fixed-size
+sliding window minimum, with no optimisation reasoning needed at all.
+blocks = 'WBBWWBBWBW', k = 7: the first window 'WBBWWBB' has 3 W's. Slide and
+the counts go 3, 3, 3 -> answer 3.
+Turning a recolour-cost question into a character-count question is the whole
+insight; everything after is mechanical.""",
+
+    """The slide, and the arithmetic trick in it.
+`whites += (blocks[i] == 'W') - (blocks[i-k] == 'W')` adds 1 if the entering
+character is W and subtracts 1 if the leaving one was - booleans arithmetic in
+Python, which reads compactly and avoids two if-statements.
+The two indices are the pair to get right: `i` is entering, `i - k` is leaving.
+Off by one there and the window drifts to size k+1 or k-1, which still returns
+a plausible number. Check on a tiny input where the answer is obvious.""",
+
+    """Why the window is FIXED size, not variable.
+Most sliding-window problems grow and shrink to satisfy a condition (longest
+substring without repeats, minimum window substring). Here k is given, so the
+window never changes size - it just translates one step at a time.
+That makes this the SIMPLEST class of window problem: initialise over the first
+k, then a single loop from k to n-1. Recognising which of the two kinds you
+have determines the loop shape, and this fixed-size kind needs no inner while
+loop at all.""",
+
+    """Why recomputing per window is the thing to avoid.
+`min(blocks[i:i+k].count('W') for i in range(len(blocks)-k+1))` is correct and
+one line - and it is O(n*k), because each slice is counted from scratch. At
+n = 100 that is fine; the sliding update makes it O(n) by reusing the previous
+window's answer and touching only the two characters that changed.
+The general principle: when consecutive subproblems overlap heavily, update the
+answer incrementally instead of recomputing. That is the same idea behind
+prefix sums and behind Kadane.""",
+
+    """Edge cases.
+k equals the length -> the initial count IS the answer; the loop never runs.
+k = 1 -> the answer is 0 if any B exists, else 1.
+All black 'BBBB' with k = 2 -> 0 recolors.
+All white 'WWWW' with k = 3 -> 3.
+k = 0 is excluded by the constraints; if allowed it would be 0 trivially.
+Note `blocks[:k]` is safe even when k equals the length, and the loop
+`range(k, len(blocks))` is empty in that case - so no guards are needed.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space - one integer for the running count.
+The fixed-window family: Maximum Average Subarray I, Maximum Number of Vowels
+in a Substring of Given Length, Find All Anagrams in a String (fixed window
+plus a frequency comparison), Sliding Window Maximum (fixed window plus a
+monotonic deque, the hard one). All share the initialise-then-slide skeleton;
+only what you maintain inside the window changes - a count, a sum, a frequency
+map, or a deque.""",
+]
+
+_EX_P1L["Points That Intersect With Cars"] = [
+    """The difference-array idea, traced.
+nums = [[3,6],[1,5],[4,7]]. Instead of marking every covered point, record only
+the CHANGES: +1 where coverage starts, -1 just after it ends.
+diff[3] += 1, diff[7] -= 1; diff[1] += 1, diff[6] -= 1; diff[4] += 1,
+diff[8] -= 1.
+Prefix-sum across coordinates: at 1 running becomes 1 (covered), 2 -> 1, 3 -> 2,
+4 -> 3, 5 -> 3, 6 -> 2, 7 -> 1, 8 -> 0.
+Points with running > 0 are 1..7 -> answer 7.
+Three intervals, six updates, one sweep - regardless of how long the intervals
+are.""",
+
+    """Why `end + 1` and not `end`.
+The interval [3,6] covers the integer point 6, so coverage must persist THROUGH
+6 and stop at 7. Decrementing at `end` would end coverage one point early and
+undercount every interval by its last point.
+This is the single most common difference-array bug, and it always presents the
+same way: the answer is short by roughly the number of intervals. Test on one
+interval [1,1], which must yield 1 - with the wrong index it yields 0.""",
+
+    """Why a difference array beats marking every point.
+Marking is O(total length): an interval [1, 1000000] costs a million writes.
+The difference array costs TWO writes per interval no matter how long it is,
+plus one sweep of the coordinate range. So the cost moves from 'sum of interval
+lengths' to 'number of intervals plus range'.
+That distinction matters the moment intervals are long or numerous, and it is
+the reason this technique exists. Say it as 'I only record where the coverage
+CHANGES' - the sweep reconstructs everything in between.""",
+
+    """The sizing of the array, and where the +1 comes from.
+Coordinates run 1..100 by the constraint, and you write to `end + 1`, which can
+be 101 - so the array needs 102 slots to avoid an index error. Getting that
+headroom wrong throws on the largest legal input only, which is exactly the
+input a test suite includes and a hand-run does not.
+For unbounded coordinates you would use a dict of changes plus a sort of the
+keys, which is the same algorithm at O(n log n) - the standard escalation when
+the range is large or sparse.""",
+
+    """Edge cases.
+Fully overlapping intervals [[1,5],[1,5]] -> running reaches 2 but each point
+counts ONCE, since the test is `running > 0` rather than a sum. Counting
+coverage rather than counting cars is the point of the > 0 test.
+Adjacent but disjoint [[1,3],[4,6]] -> all of 1..6 covered -> 6.
+A gap [[1,2],[5,6]] -> 4 points, not 6.
+A single point [[4,4]] -> diff[4] += 1, diff[5] -= 1 -> exactly one covered
+point.
+Nested [[1,10],[3,4]] -> still 10 points.""",
+
+    """Complexity and the family.
+O(n + range) time, O(range) space. Sorting-and-merging the intervals is the
+alternative at O(n log n) time and O(1) extra space - better when the
+coordinate range is huge relative to the number of intervals.
+The family: Corporate Flight Bookings (the canonical difference array), Car
+Pooling (capacity check via the same sweep), Meeting Rooms II (the max of the
+running count IS the number of rooms), Range Addition, and My Calendar
+problems. The cue is any batch of range updates followed by one query - which
+is exactly what the difference array is built for.""",
+]
+
+_EX_P1L["Ransom Note"] = [
+    """The direction of the containment, which is the thing to get right.
+The note must be buildable FROM the magazine, so every letter of the note must
+be available in at least that quantity. It is a one-way check: the magazine may
+contain plenty of letters the note never uses.
+note = 'aa', magazine = 'aab' -> a appears twice in the magazine, note needs
+two -> True. note = 'aab', magazine = 'aa' -> needs a b, none available ->
+False.
+Reversing the direction - counting the note and checking the magazine fits
+inside it - is a real and easy mistake, and it passes on symmetric inputs.""",
+
+    """Why counts, not sets.
+A set-based check ('every letter of the note appears somewhere in the
+magazine') gets 'aa' from 'ab' wrong, reporting True when there is only one a.
+Multiplicity is the entire problem - each magazine letter is usable ONCE - so
+the structure must be a multiset.
+This is the same trap as Find Words That Can Be Formed by Characters, and the
+same fix: compare frequencies, not membership.""",
+
+    """The early exit, and why decrementing beats pre-counting both sides.
+Decrementing as you walk the note lets you return False the moment a letter
+runs out, without counting the whole note first. On a long note with an early
+failure that is a real saving.
+The alternative `Counter(ransom_note) <= Counter(magazine)` (Python 3.10+) is
+one line and reads beautifully, but it counts both strings fully before
+comparing. Both are O(n + m); mention the one-liner and then give the explicit
+loop, since the loop is what you would write in an interview where the
+interviewer may not accept a library subset comparison.""",
+
+    """Edge cases.
+Empty note -> True vacuously; anything can build nothing. The loop never runs.
+Empty magazine with a non-empty note -> the first letter fails -> False.
+Note longer than magazine -> must fail on some letter, and the count check
+catches it without a separate length guard (though adding
+`if len(note) > len(magazine): return False` is a legitimate cheap early exit).
+Identical strings -> True, with every count landing at exactly 0.
+Repeated letters are the case that matters: 'aa' from 'a' -> False.""",
+
+    """Complexity.
+O(n + m) time, O(k) space for k distinct characters - O(1) under the
+lowercase-letters constraint.
+The array version replaces Counter with a 26-integer list indexed by
+ord(ch) - ord('a'): no hashing, better constants, and it is what you would
+write in C++ or Java. Worth a sentence, since 'O(1) hash lookup' still costs
+more than an array index and the alphabet here is small and dense.""",
+
+    """The family: multiset containment and equality.
+Ransom Note (containment, one direction), Valid Anagram (equality both ways),
+Find Words That Can Be Formed by Characters (containment, repeated per word),
+Find All Anagrams in a String (sliding-window equality), Permutation in String,
+and Minimum Window Substring - the hard end, where you slide until containment
+holds and then shrink to minimise.
+Every one is a frequency comparison; the only questions are which direction and
+whether a window is involved. Recognising that makes the easy ones instant and
+gives you the vocabulary for the hard one.""",
+]
+
+_EX_P1L["Remove Duplicates from Sorted List"] = [
+    """The walk, traced.
+list 1 -> 1 -> 2 -> 3 -> 3.
+current at the first 1: next is 1, equal -> relink current.next to the second
+node's next, giving 1 -> 2 -> 3 -> 3. Do NOT advance - there could be a third
+1.
+current still at 1: next is 2, different -> advance to 2.
+At 2: next is 3, different -> advance.
+At the first 3: next is 3, equal -> relink -> 1 -> 2 -> 3. Next is None -> loop
+ends.
+Result 1 -> 2 -> 3.""",
+
+    """Why you must NOT advance after removing.
+`current.next = current.next.next` followed by `current = current.next` would
+skip past the newly-linked node without comparing it. On 1 -> 1 -> 1 that
+leaves a duplicate behind: you remove the second 1, jump to the third, and
+never compare it against the first.
+The if/else structure is doing exactly this - advance only in the else branch.
+Any run of three or more equal values is the test that exposes the bug, and a
+two-element test will not.""",
+
+    """Why sortedness is load-bearing.
+Duplicates are adjacent only because the list is sorted, which is what lets a
+single pointer with no memory do the job. On an UNSORTED list you would need a
+set of seen values and a previous pointer - O(n) space - or an O(n^2)
+double walk.
+State that dependency out loud: 'this is O(1) space because sorted means equal
+values are neighbours'. It is also the natural bridge to the follow-up below.""",
+
+    """Why no dummy head is needed here - and when it would be.
+The head node is never deleted: this problem keeps ONE node per value, so the
+first node always survives. That is why the function can return `head`
+unchanged and needs no sentinel.
+Contrast Remove Duplicates from Sorted List II, which deletes ALL nodes of any
+duplicated value - there the head itself may vanish, so you need a dummy node
+in front and a `prev` pointer. Knowing which variant needs the dummy is the
+distinction worth carrying: the dummy exists to give you a stable handle when
+the head can be removed.""",
+
+    """Edge cases.
+Empty list (head is None) -> the while condition fails immediately -> return
+None.
+Single node -> current.next is None -> loop does not run -> unchanged.
+All duplicates 1 -> 1 -> 1 -> collapses to a single 1.
+No duplicates -> the pointer simply walks to the end, touching nothing.
+Two nodes equal -> one relink, then next is None -> done.
+Note the condition `current and current.next` guards both the empty list and
+the final node in one expression.""",
+
+    """Complexity and the family.
+O(n) time - each node is examined once - and O(1) space, since only pointers
+are rearranged and no nodes are allocated.
+The family: Remove Duplicates from Sorted List II (delete every copy, needs a
+dummy), Remove Duplicates from Sorted Array (the array twin, using a slow/fast
+index pair instead of relinking), Remove Nth Node From End (dummy plus two
+pointers), and Merge Two Sorted Lists. The shared skill is pointer surgery on a
+singly linked list - and the recurring question is always whether the head can
+disappear, because that is what decides the dummy.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1L:
+        _e["examples"] = _EX_P1L[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
