@@ -22229,131 +22229,338 @@ for _e in ENTRIES:
 _EX_P0 = {}
 
 _EX_P0["Climbing Stairs"] = [
-    """Let us actually count them by hand first, with no code and no theory.
+    """1. THE GOAL, in plain English.
 
-There is a staircase. You can take either ONE step or TWO steps at a time. The
-question is: how many different ways can you get to the top?
+There is a staircase with n steps. You climb it by taking either ONE step or TWO
+steps at a time, in any mix you like. How many different ways are there to get
+from the ground to the top?
 
-A staircase with 1 stair. Only one way: take one step. -> 1 way
-A staircase with 2 stairs. Either two small steps (1 then 1), or one big step
-(2). -> 2 ways
-A staircase with 3 stairs. Write them all out:
-    1+1+1
-    1+2
-    2+1
--> 3 ways
-A staircase with 4 stairs:
-    1+1+1+1,  1+1+2,  1+2+1,  2+1+1,  2+2
--> 5 ways
+Two ways count as different if the sequence of moves differs. So 1-then-2 is a
+different way from 2-then-1, even though both cover three steps.
 
-So far the counts are 1, 2, 3, 5. Look at those four numbers for a moment
-before reading on - is there a pattern?""",
+Let us count small staircases by hand, carefully.
 
-    """The pattern, and WHY it is true (this is the important bit).
+n = 1:   just  1                          -> 1 way
+n = 2:   1+1,  or  2                      -> 2 ways
+n = 3:   1+1+1,  1+2,  2+1                -> 3 ways
+n = 4:   1+1+1+1,  1+1+2,  1+2+1,  2+1+1,  2+2   -> 5 ways
+n = 5:   count them and you get 8.
 
-1, 2, 3, 5 - each number is the two before it added together. 1+2 = 3, and
-2+3 = 5. If that is real, the next one should be 3+5 = 8.
+Write the answers in a row: 1, 2, 3, 5, 8.
 
-Here is why it must be true. Think about the very LAST move you made to arrive
-at stair number 4. There are only two possibilities:
-  - Your last move was a 1-step. Then just before it you were standing on
-    stair 3.
-  - Your last move was a 2-step. Then just before it you were standing on
-    stair 2.
-There is no third option, because you can only step 1 or 2.
+Stare at that for a second. Each number is the sum of the two before it.
+1 + 2 = 3.  2 + 3 = 5.  3 + 5 = 8. That is not a coincidence, and section 2
+explains exactly why it must happen.""",
 
-So every route to stair 4 is either "some route to stair 3, then a small step"
-or "some route to stair 2, then a big step". Nothing is counted twice (the two
-groups end differently) and nothing is missed. Therefore:
+    """2. THE INTUITION - look at the LAST move, not the first.
 
-    ways(4) = ways(3) + ways(2) = 3 + 2 = 5.
+Here is the question that unlocks the whole problem:
 
-That reasoning works for any stair, which gives the general rule:
+  You are standing on the top step, step n. What was your LAST move?
+
+There are only two possibilities, because those are the only two moves allowed:
+
+  Your last move was a single step. Then just before it, you were on step n-1.
+  Your last move was a double step. Then just before it, you were on step n-2.
+
+There is no third option. And - this is the important part - those two groups
+share nothing. A way that ends with a single step can never be the same as a way
+that ends with a double step, because their final moves differ.
+
+So every way of reaching step n falls into exactly one of the two groups, and:
+
     ways(n) = ways(n-1) + ways(n-2)
 
-A rule that defines an answer using SMALLER versions of the same answer is
-called a RECURRENCE. That is all the word means.""",
+Read that in words: "the number of ways to reach the top is the number of ways
+to reach the step just below it, plus the number of ways to reach the step two
+below it." Every route to step n-1 becomes a route to step n by adding one final
+small step; every route to step n-2 becomes one by adding a final big step.
 
-    """Turning the rule into code, one line at a time.
+Check it against the hand-counted numbers. ways(4) should be ways(3) + ways(2) =
+3 + 2 = 5. And we counted 5 by hand. It holds.
 
-To work out ways(5) we need ways(4) and ways(3). To get those we need ways(3)
-and ways(2), and so on. Rather than jumping around, we build UPWARDS from the
-small cases we already counted by hand.
+By the way, 1, 2, 3, 5, 8, 13, ... is the FIBONACCI sequence, shifted along by
+one place. That is a nice sanity check when you are testing your code - if your
+output is not Fibonacci-shaped, something is wrong.""",
 
-We only ever need the two most recent answers, so we keep two variables:
-    prev = 1     <- ways to reach stair 1
-    curr = 2     <- ways to reach stair 2
+    """3. THE SEEDS - the two facts the whole thing is built on.
 
-Now walk up the staircase, one stair at a time. At each new stair, the answer
-is prev + curr; then both variables shift forward one place:
+The rule ways(n) = ways(n-1) + ways(n-2) is a recipe for building a number out
+of two smaller ones. But a recipe has to bottom out somewhere, or it just keeps
+asking for smaller numbers forever.
 
-    stair 3:  new = 1 + 2 = 3     now prev = 2, curr = 3
-    stair 4:  new = 2 + 3 = 5     now prev = 3, curr = 5
-    stair 5:  new = 3 + 5 = 8     now prev = 5, curr = 8
+The two starting facts, which we counted by hand and do not need to derive:
 
-Answer for 5 stairs: 8.
+    ways(1) = 1     one step: the only way is a single step
+    ways(2) = 2     two steps: 1+1, or 2
 
-And we can check it by hand, because 8 is small enough to list:
-    11111, 1112, 1121, 1211, 2111, 122, 212, 221
-Eight routes. The code agrees with the counting.""",
+From those two, everything else follows. ways(3) needs ways(2) and ways(1) -
+both known. Then ways(4) needs ways(3) and ways(2) - both now known. And so on
+up the staircase.
 
-    """The starting values, which are the easiest thing to get wrong.
+A starting fact like this, which stops a self-referential rule from going on
+forever, is called a BASE CASE. Getting the base cases wrong is the commonest
+way to get a right-looking method to produce wrong numbers, because the error
+does not announce itself - it just shifts every later answer.
 
-The loop above never computes ways(1) or ways(2) - it ASSUMES them. Those two
-starting values are called the BASE CASES: the smallest answers you know
-outright and build everything else from.
+Some versions of this problem define ways(0) = 1, meaning "there is exactly one
+way to climb no steps: do nothing". That is a perfectly good convention and it
+makes the formula work from n = 2 upwards without special-casing. The code below
+takes the simpler route of handling n = 1 and n = 2 directly, which avoids
+having to justify the slightly odd-sounding ways(0) = 1.""",
 
-ways(1) = 1 and ways(2) = 2, exactly as we counted at the start.
+    """4. THE CASE THAT CATCHES PEOPLE - the naive recursion is unusably slow.
 
-If you set them wrongly - say prev = 1 and curr = 1 - then stair 3 comes out as
-1 + 1 = 2 instead of 3, and every single answer after it is wrong too, because
-each one is built from the last. Nothing crashes; the numbers are simply
-quietly incorrect.
+The rule in section 2 practically writes itself as a function that calls itself:
+to get ways(n), work out ways(n-1) and ways(n-2) and add them.
 
-So after any change, test n = 3 by hand. It must give 3. That one check catches
-almost every mistake in this problem.""",
+That is correct. It is also catastrophically slow, and it is worth seeing WHY,
+because the reason is the whole justification for the code below.
 
-    """Why not just write it the obvious recursive way?
+Draw what happens for ways(5):
 
-The rule ways(n) = ways(n-1) + ways(n-2) can be written as a function that
-calls itself:
+                    ways(5)
+                   /       \\
+             ways(4)        ways(3)
+             /     \\        /     \\
+       ways(3)  ways(2) ways(2) ways(1)
+       /     \\
+   ways(2)  ways(1)
 
-    def climb(n):
-        if n <= 2: return n
-        return climb(n-1) + climb(n-2)
+Count the ways(3) calls: there are two, in completely separate branches. Count
+ways(2): three times. Each of those recomputes everything below it from scratch,
+having no idea the same work was just done elsewhere.
 
-This is CORRECT, and it is unusably slow for large n. Here is why. To work out
-climb(5) it computes climb(4) and climb(3). But climb(4) itself computes
-climb(3) and climb(2) - so climb(3) is calculated TWICE. Further down, climb(2)
-gets recalculated five times.
+The number of calls roughly DOUBLES for every extra step, which is written
+O(2^n). For n = 40 that is over a billion calls, and your program hangs.
 
-The waste doubles with every extra stair. At n = 40 it makes over a billion
-calls and takes minutes; at n = 50 you would wait about an hour.
+The fix is embarrassingly simple once you see the tree: work UPWARDS instead of
+downwards. Start from the known values ways(1) and ways(2), and build 3, then 4,
+then 5, each from the two you have just computed. Each number is worked out
+exactly once, and nothing is ever recomputed.
 
-Two ways to fix it. MEMOISATION means keeping a note of each answer the first
-time you compute it and reusing the note afterwards ("memo" as in memorandum).
-Or - what we did above - build upwards with two variables, which never
-recomputes anything because it only ever moves forward. Same answers, and it
-finishes instantly even for n = 1,000,000.""",
+That change - from "break the problem down and recompute" to "build up and
+reuse" - is the essence of DYNAMIC PROGRAMMING, and this problem is the smallest
+clean example of it.""",
 
-    """One extra thing worth knowing, and where else this shows up.
+    """5. THE UPGRADE - and why two variables are enough.
 
-If the rules changed so you could climb 1, 2 OR 3 stairs at a time, nothing
-about the method changes - only the number of possibilities for your last move.
-Now the last step could have come from stair n-1, n-2 or n-3, so:
-    ways(n) = ways(n-1) + ways(n-2) + ways(n-3)
-and you carry three variables instead of two. Interviewers ask this immediately
-after the basic version, so it is worth having seen it once.
+Building upwards, the obvious approach is a list: make room for n+1 numbers, put
+the seeds in, and fill the rest left to right.
 
-Two more notes:
-- The sequence 1, 2, 3, 5, 8, 13 is the FIBONACCI sequence (each number is the
-  sum of the two before it), just started one place along. If your code
-  produces Fibonacci numbers that are shifted, your base cases are off by one.
-- The same "count the routes into this position" idea appears in: how many ways
-  a robot can cross a grid, how many ways to make change from a set of coins,
-  and how many binary strings of a given length contain no two 1s in a row.
-  Once you recognise "the answer here is the sum of a few earlier answers", you
-  are looking at this exact pattern.""",
+    dp[1] = 1
+    dp[2] = 2
+    dp[3] = dp[2] + dp[1] = 3
+    dp[4] = dp[3] + dp[2] = 5
+    dp[5] = dp[4] + dp[3] = 8
+
+That works and costs memory proportional to n.
+
+Now look at which cells are ever READ. To compute dp[5] we needed dp[4] and
+dp[3]. To compute dp[6] we would need dp[5] and dp[4]. At no point does anything
+look further back than two places.
+
+So the whole list is unnecessary. Keep just two numbers - "the answer for the
+step below me" and "the answer for the step two below me" - and slide them
+forward as you climb.
+
+    prev = ways for two steps back
+    curr = ways for one step back
+    new  = prev + curr
+    then: prev becomes curr, curr becomes new, and climb one more step
+
+Memory drops from proportional-to-n down to a fixed two variables, and the
+answers are identical.
+
+This is worth saying out loud in an interview: write the list version first if
+it helps you think, then say "and since each value only looks back two places, I
+can drop the list and keep two variables." Showing the reasoning is better than
+producing the two-variable version as if by magic.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: the number of ways to reach a step is the sum of
+the ways to reach the two steps below it, so start from the two known answers and
+add your way up.
+
+There is no recursion in the version we are writing - that was the slow one from
+section 4 - so nothing piles up on the call stack. What takes the place of base
+cases is the SEEDING of the two starting values before the loop.
+
+The steps:
+
+  1. Handle the two smallest staircases directly. If n is 1 or 2, the answer is
+     n itself - one way for one step, two ways for two steps. Return it and stop.
+     This is not just a shortcut; it also guarantees the loop below always has
+     valid seeds.
+
+  2. Set up two variables holding the two answers you already know: one for a
+     staircase of 1 step (which is 1), and one for a staircase of 2 steps (which
+     is 2).
+
+  3. Now climb from step 3 up to step n, one step per turn of the loop.
+
+  4. On each turn, the answer for the current step is the sum of the two
+     variables. Then slide the pair forward: the "one below" value becomes the
+     "two below" value, and the newly computed answer becomes the "one below"
+     value.
+
+     Do the slide in a way that uses the OLD pair for both new values. If you
+     overwrite one of them first and then use it to compute the other, you have
+     used a new value where an old one was needed, and every answer from there
+     on is wrong.
+
+  5. When the loop finishes, the "one below" variable holds the answer for step
+     n. Return it.
+
+Worth noticing why the loop runs from 3 to n inclusive: steps 1 and 2 are
+already accounted for by the seeds, so there are exactly n - 2 steps left to
+compute.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code climbs the staircase from the bottom, carrying just two numbers with it.
+
+Those two numbers are the answers for the step immediately below where it is
+standing, and the step two below that. Everything it needs to know about the
+entire staircase beneath it is captured in those two values - nothing else about
+how it got there matters.
+
+It begins by dealing with the two tiniest staircases outright, because those are
+the facts everything else is built from and there is nothing below them to add
+up: one step has one way, two steps have two ways.
+
+Then it climbs. At each step it adds its two carried numbers together, and that
+sum is the number of ways to reach the step it has just arrived at - because
+every route here either came from one step below with a small stride, or from
+two steps below with a big one, and there is no third possibility. Having worked
+that out, it shuffles its two numbers along so they describe the new position,
+and climbs again.
+
+When it reaches the top, the more recent of its two carried numbers is the
+answer.
+
+The reason this is fast is that no answer is ever computed twice. The naive
+approach of breaking the problem down repeatedly re-derives the same small
+staircases in different branches; building upwards computes each one once and
+then reuses it.""",
+
+    """8. THE CODE, line by line.
+
+Keep the sequence 1, 2, 3, 5, 8 beside you, and take n = 5.
+
+    if n <= 2:
+        return n
+The two base cases in one line, using a small piece of luck: for n = 1 the answer
+is 1, and for n = 2 the answer is 2, so in both cases the answer happens to equal
+n itself. Returning n covers both.
+
+This also protects the loop below. Without it, a call with n = 1 would seed curr
+to 2 and return 2 - the wrong answer for a one-step staircase.
+
+    prev, curr = 1, 2
+The two seeds from section 3. Read them as: prev is "the number of ways to reach
+the step two below where I am about to stand", and curr is "the number of ways to
+reach the step one below". Standing at the bottom of step 3, that is ways(1) = 1
+and ways(2) = 2.
+
+    for _ in range(3, n + 1):
+Climb from step 3 up to step n. The underscore is Python's way of saying "I do
+not care about the loop counter, I just want to repeat this the right number of
+times" - and indeed the step number never appears in the calculation, only the
+two carried values.
+
+The "n + 1" is because range stops BEFORE its second value, so this really does
+include step n. For n = 5, the loop body runs for steps 3, 4 and 5 - three times.
+
+    prev, curr = curr, prev + curr
+The whole algorithm, in one line. Python builds the entire right-hand side FIRST,
+using the old values of both variables, and only then assigns. So:
+
+  the new prev gets the old curr - what was "one below" is now "two below"
+  the new curr gets old prev + old curr - the answer for the step just reached
+
+That simultaneous assignment is doing real work here. Written as two separate
+lines in the obvious order:
+
+    prev = curr
+    curr = prev + curr        <- prev has ALREADY been overwritten
+
+the second line would use the new prev, effectively computing curr + curr, and
+the answers would be powers of two instead of Fibonacci numbers. If you prefer
+two lines, you must save the old value in a temporary variable first.
+
+    return curr
+After the last turn of the loop, curr holds the answer for step n - 8 for our
+input. Note it is curr and not prev: prev is always one step behind, so returning
+it would give the answer for n - 1.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+n = 5. Expected answer 8.
+
+    n <= 2?  No, 5 is bigger. Carry on.
+    Seeds:   prev = 1  (ways to reach step 1)
+             curr = 2  (ways to reach step 2)
+
+The loop runs for steps 3, 4 and 5.
+
+STEP 3:
+    right-hand side computed with the OLD values: (curr, prev + curr) = (2, 1+2)
+                                                                     = (2, 3)
+    assign:  prev = 2, curr = 3
+    meaning: ways(2) = 2 and ways(3) = 3.  Matches our hand count of 3.
+
+STEP 4:
+    right-hand side: (curr, prev + curr) = (3, 2 + 3) = (3, 5)
+    assign:  prev = 3, curr = 5
+    meaning: ways(3) = 3 and ways(4) = 5.  Matches our hand count of 5.
+
+STEP 5:
+    right-hand side: (curr, prev + curr) = (5, 3 + 5) = (5, 8)
+    assign:  prev = 5, curr = 8
+    meaning: ways(4) = 5 and ways(5) = 8.
+
+Loop ends. return curr = 8.
+
+Read the curr column down the trace: 2, 3, 5, 8 - the Fibonacci shape promised in
+section 2. And read the pair at any moment: it is always (the answer two steps
+back, the answer one step back) for wherever the climb has reached.
+
+NOW THE SMALL CASES:
+
+  n = 1:  the guard fires, return 1. The loop never runs.
+  n = 2:  the guard fires, return 2.
+  n = 3:  seeds 1 and 2; the loop runs once for step 3, giving prev = 2,
+          curr = 3; return 3. Matches the hand count.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). The loop runs about n times and does one addition per turn. Double
+the staircase and you double the work. Compare with the naive recursion from
+section 4 at O(2^n): for n = 40 that is roughly 40 steps here versus over a
+billion there. This is the single most dramatic speed-up in any beginner DSA
+problem, and it comes purely from computing upwards instead of downwards.
+
+SPACE: O(1) - constant. Two integers, no matter how tall the staircase. The list
+version from section 5 would be O(n); collapsing it to two variables is free,
+because nothing ever looks back more than two places.
+
+THE #1 MISTAKE - splitting the simultaneous assignment into two ordinary lines in
+the wrong order. Writing "prev = curr" and then "curr = prev + curr" uses the
+already-overwritten prev, so you compute curr + curr and get 2, 4, 8, 16 instead
+of 2, 3, 5, 8. The code looks perfectly sensible, which is what makes it nasty.
+Either use the one-line tuple assignment, or save the old value in a temporary
+first.
+
+A close second: getting the base cases wrong - returning 1 for n = 2, or seeding
+prev and curr as 1 and 1 instead of 1 and 2. Every answer then comes out shifted
+one place along the sequence, which passes a surprising number of casual checks
+because the output is still Fibonacci-shaped. Test n = 2 and n = 3 explicitly.
+
+ONE-SENTENCE TAKEAWAY: your last move was either one step or two, so the ways to
+reach a step are the ways to reach the two steps below it added together - build
+upward from the two known answers and you only ever need to remember two numbers.""",
 ]
 
 _EX_P0["Flood Fill"] = [
@@ -22598,10 +22805,11 @@ depth, since that is how many paused calls stack up.""",
 ]
 
 _EX_P0["Maximum Depth of Binary Tree"] = [
-    """The question, on a picture.
+    """1. THE GOAL, in plain English.
 
-A BINARY TREE is a diagram where each item hangs below another, and each item
-can have at most two items below it. Here is ours:
+You are given a tree and must say how many levels tall it is.
+
+Here is the tree we will use throughout:
 
         3
        / \\
@@ -22609,119 +22817,369 @@ can have at most two items below it. Here is ours:
           / \\
         15   7
 
-Words as they appear: each item is a NODE. The one at the top (3) is the ROOT.
-The items hanging directly below a node are its CHILDREN. A node with no
-children (9, 15, 7) is a LEAF - a dead end.
+Vocabulary, defined the moment it appears:
+- Each item is a NODE. There are five here: 3, 9, 20, 15 and 7.
+- 3 sits at the very top. The top node is the ROOT. (Trees in computing are
+  drawn upside down - the root is at the top and the branches grow downwards.
+  Everyone finds this odd at first.)
+- The nodes hanging directly below a node are its CHILDREN. 3's children are 9
+  and 20.
+- A node with no children is a dead end, called a LEAF. Here 9, 15 and 7 are
+  leaves.
+- BINARY means each node has at most two children.
 
-The question 'what is the maximum DEPTH?' means: counting the nodes, how many
-levels deep does the deepest path go? Trace down with your finger: 3 -> 20 -> 15
-is three nodes, so the answer is 3. The path 3 -> 9 is only two. We want the
-longest one.""",
+Now count the levels. Level one is just {3}. Level two is {9, 20}. Level three
+is {15, 7}. Three levels, so the answer is 3.
 
-    """Working it out without tracing every call.
+Another way to say the same thing: find the LONGEST path from the root down to a
+leaf, and count the nodes on it. Root 3 to leaf 9 is two nodes. Root 3 to leaf 15
+is three nodes: 3, 20, 15. The longest is three.
 
-The natural instinct is to simulate the code in your head. Do not - past three
-levels it becomes impossible. Use this instead:
+That second phrasing - the longest route down - is the one that leads straight to
+the solution.
 
-ASSUME the function already works correctly for the two children. Then ask:
-given those two answers, what should THIS node return?
+One convention to settle before you start: an empty tree has depth 0, and a tree
+with a single node has depth 1. Say which you are using, because some textbooks
+count EDGES (the lines between nodes) rather than nodes, which gives answers one
+smaller. This entry counts nodes.""",
 
-The answer is obvious once phrased that way: 'one more than the deeper of my
-two children'. My own level, plus however deep the better side goes.
+    """2. THE INTUITION - ask the children, not the whole tree.
 
-    depth(node) = 1 + the larger of depth(left) and depth(right)
+Trying to measure a big tree in one go is awkward. Instead, stand on a node and
+ask a much smaller question.
 
-Now apply it to the picture, starting from the bottom:
-    depth(9)  = 1   (a leaf: nothing below, so 1 + 0)
-    depth(15) = 1
-    depth(7)  = 1
-    depth(20) = 1 + larger(1, 1) = 2
-    depth(3)  = 1 + larger(1, 2) = 3     <- the answer
+Stand on node 20. How tall is the tree starting from here? Well, 20 has two
+things below it: the tree starting at 15, and the tree starting at 7. If you knew
+how tall each of those was, you would know how tall 20's tree is - it is one more
+than the taller of the two.
 
-Notice something odd and important: the calls are made from the TOP downward,
-but the answers are worked out from the BOTTOM upward. Each node has to wait
-for its children before it can answer. Getting comfortable with that inversion
-is most of what learning recursion means.""",
+    depth(20) = 1 + the taller of depth(15) and depth(7)
 
-    """The two smallest cases, and a definition trap.
+And 15 is a leaf, so the tree starting at 15 is just one level: depth(15) = 1.
+Same for 7. So depth(20) = 1 + 1 = 2.
 
-EMPTY tree (no nodes at all): depth 0. This is the BASE CASE - the simplest
-situation, answered outright, which stops the function calling itself forever.
-Every recursive function needs one.
+Now do the same at the root:
 
-SINGLE node: it has two empty sides, each depth 0, so 1 + larger(0, 0) = 1.
+    depth(3) = 1 + the taller of depth(9) and depth(20)
+             = 1 + the taller of 1 and 2
+             = 1 + 2
+             = 3
 
-The trap: if your function returns 0 for a single node, you are counting EDGES
-(the lines between nodes) rather than NODES (the circles). Both definitions of
-'depth' exist in textbooks and they differ by exactly one. This problem counts
-NODES, so a single node is depth 1. Worth confirming out loud before coding,
-because the whole answer shifts by one.""",
+Which is the answer we counted by hand.
 
-    """What happens on a badly shaped tree.
+Notice what happened. Every node answered the SAME question - "how tall is the
+tree starting here?" - by asking its children that same question and adding one
+for itself. The question never changed; only the tree it was asked about got
+smaller.
 
-Trees do not have to be neat. This is a perfectly legal tree:
+That is RECURSION: solving a big problem by asking the identical question about
+smaller pieces. The pieces here are subtrees - a SUBTREE being a node plus
+everything hanging below it.
 
-    1
-     \\
+There is no simpler-but-slower version worth writing first. The alternative -
+walking level by level with a queue - is a genuinely different technique of the
+same speed, and it is described in section 10 as the version to use when the tree
+is very deep.""",
+
+    """3. THE BASE CASE - where the asking stops.
+
+A rule like "ask your children and add one" cannot go on forever. Something has
+to answer without asking anyone.
+
+That something is the empty spot. When a node has no left child, "the tree
+starting at my left child" is a tree with nothing in it - and a tree with nothing
+in it is zero levels tall.
+
+    depth(nothing) = 0
+
+That single fact is the BASE CASE - the situation the rule answers immediately
+instead of recursing. Without one, the function would keep calling itself past
+the bottom of the tree and never stop.
+
+Now watch how it makes leaves work out correctly without any special handling. A
+leaf has no children at all, so both of its children are empty spots:
+
+    depth(9) = 1 + the taller of depth(nothing) and depth(nothing)
+             = 1 + the taller of 0 and 0
+             = 1 + 0
+             = 1
+
+A leaf is one level tall. We never had to write a rule saying so - it falls out
+of the base case. That is worth pausing on, because beginners often add an extra
+"if this node is a leaf, return 1" check, which is redundant and clutters the
+code.
+
+Why 0 and not 1 for the empty spot? Because we are counting NODES on the path,
+and an empty spot has no node. Choosing 1 there would make every leaf come out as
+2 and the whole answer would be one too big.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - a completely lopsided tree. Depth is about the LONGEST path, not the
+average or the shortest:
+
+        1
+       /
       2
-       \\
-        3
-         \\
-          4
+     /
+    3
 
-Every node has only a right child, so it is really a straight line. Its depth
-is 4.
+Only three nodes, and it is three levels tall. The answer is 3, the same as our
+bushy five-node tree. A common wrong instinct is that "more nodes means deeper" -
+it does not.
 
-Why this matters: when the function calls itself, each unfinished call is held
-in memory (this stack of paused calls is called the CALL STACK). A neat, bushy
-tree of 10,000 nodes is only about 14 levels deep, so 14 paused calls. This
-straight-line tree of 10,000 nodes is 10,000 levels deep - and Python refuses
-to go past about 1,000 nested calls, so the program crashes with a
-'RecursionError'.
+CASE 2 - taking the smaller side instead of the larger. Using min instead of max
+answers a different question entirely: the MINIMUM depth, the shortest route to a
+leaf. On the tree in section 1 that would give 2 (root to leaf 9) instead of 3.
+Both are real problems and both get asked; make sure you are answering the one in
+front of you.
 
-The fix, and the standard follow-up answer: use BFS instead. BFS
-(Breadth-First Search) means processing the tree one whole LEVEL at a time
-using a queue, counting the levels as you go. No recursion, so no stack limit.""",
+CASE 3 - a single node. depth = 1 + max(0, 0) = 1. Correct with no special case.
 
-    """The sibling question that looks identical and is not.
+CASE 4 - the empty tree. The very first call hits the base case and returns 0.
+Correct, and it means the function needs no guard before it is called.
 
-Maximum depth has an easy mirror image: minimum depth, the SHORTEST path from
-the root down to a leaf. You would think you just swap 'larger' for 'smaller'.
+CASE 5 - counting edges instead of nodes. If a problem says "the depth of a
+single-node tree is 0", it is counting the LINES between nodes rather than the
+nodes themselves, and every answer is one smaller. The fix is a single change to
+the base case, but you have to notice which convention is being asked for.
 
-You would be wrong. Look at this tree:
+CASE 6 - a very deep tree. A chain of 10,000 nodes makes this function call
+itself 10,000 times before any call returns. Python gives up at around 1,000
+nested calls and raises a RecursionError. The tree in the question is almost
+never that deep, but knowing the limit exists - and knowing the queue-based fix in
+section 10 - is what separates a memorised answer from an understood one.""",
 
-    1
-     \\
-      2
+    """5. DEFINING THE TERMS the code uses.
 
-Maximum depth is 2. Minimum depth is ALSO 2 - the only path is 1 -> 2.
+RECURSION: a function that solves a problem by calling itself on smaller pieces
+of the same problem. Defined in section 2.
 
-But `1 + smaller(left, right)` computes 1 + smaller(0, 1) = 1, because node 1's
-empty LEFT side reports depth 0 and 0 is the smaller number. That would claim
-a shortest path of length 1, ending at node 1 - but node 1 is not a leaf, it
-has a child. A path must end at a LEAF.
+CALL STACK: when a function calls itself, the outer call PAUSES exactly where it
+is, half-finished, and the inner call starts running. Those paused calls pile up,
+each waiting for the one below it to hand back an answer. That pile is the call
+stack. When a call finally returns a number, the call above it wakes up exactly
+where it paused, takes that number, and carries on. So the questions travel DOWN
+the tree and the answers travel back UP.
 
-So minimum depth needs an extra rule: if a node has only one child, you must go
-down that side and cannot count the empty one. Interviewers ask for minimum
-straight after maximum precisely to see whether you spot this.""",
+BASE CASE: the situation the function answers immediately without calling itself
+again. Defined in section 3, and it is what lets the pile unwind.
 
-    """The template you have just learned, and where it is reused.
+SUBTREE: a node plus everything hanging below it. The subtree at 20 is
+{20, 15, 7}.
 
-The shape was: solve the left side, solve the right side, combine them, return.
-Change only the COMBINE step and the same three lines answer a whole family:
+max(a, b): Python's "give me the larger of these two".
 
-    maximum depth   ->  1 + larger(left, right)
-    count the nodes ->  1 + left + right
-    sum the values  ->  node value + left + right
-    largest value   ->  largest of (node value, left, right)
+None: Python's word for "nothing here". A missing child is None, and testing
+"root is None" is how the code recognises an empty spot.
 
-All four are the same function with one line different. That is why this
-problem is taught early - it is not really about depth, it is about learning to
-trust the recursive contract and vary the combine step.
+O(n) and O(h): the two costs, where n is the number of nodes and h is the height
+of the tree. O(n) means the work grows in step with the number of nodes - double
+the tree, double the work. O(h) describes the extra memory: it grows with how
+DEEP the tree is, not how wide, because that is how many paused calls can be
+stacked up at once.""",
 
-Speed: every node is visited exactly once, so the time is proportional to the
-number of nodes - written O(n). Memory is proportional to the tree's depth,
-because that is how many paused calls pile up.""",
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: every node's depth is one more than the taller of
+its two children's depths, and an empty spot has depth zero.
+
+The mechanism, since this is recursion. When the function is called on node 3, it
+cannot answer without first knowing about node 9 and node 20. So it calls itself
+on node 9 - and node 3's call pauses right there, half-finished, with nothing
+computed yet. Node 9's call runs; it in turn calls itself on node 9's two empty
+children, which answer 0 immediately. Node 9's call then finishes and hands back
+1, at which point node 3's call wakes up exactly where it stopped, holding the
+number 1, and goes on to ask about node 20 the same way. Only when both children
+have reported does node 3 do its own small piece of arithmetic.
+
+What makes it stop: every path down the tree eventually runs out of nodes, and an
+empty spot answers without asking anything further. That is the base case, and it
+is what lets the whole pile of paused calls unwind.
+
+The steps:
+
+  1. Write one function that takes a node and returns a number - the depth of the
+     tree starting at that node.
+
+  2. BASE CASE first. If the node is empty, return 0. Nothing there means zero
+     levels.
+
+  3. Otherwise, ask the same function for the depth of the left child.
+
+  4. Ask the same function for the depth of the right child.
+
+  5. Take the LARGER of those two numbers - the depth of a tree is set by its
+     longest branch, not its shortest.
+
+  6. Add 1 for the node you are standing on, and return that.
+
+That is the entire function: three lines of substance. Notice there is no special
+case for leaves - step 2 handles them automatically, because a leaf's two
+children are both empty and both answer 0.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code measures the tree by asking every node the same small question and
+letting the answers travel back up.
+
+Imagine standing on a node and being asked "how many levels tall is the tree
+starting from you?" You cannot answer alone - you do not know what is below you.
+So you turn to your left child and ask exactly that question, then to your right
+child and ask it again. Once both have replied with numbers, you take the bigger
+of the two, add one for yourself, and hand that back to whoever asked you.
+
+Every node does precisely that, so the question ripples all the way down the tree
+until it reaches the empty spots below the leaves. An empty spot answers
+immediately: nothing here, zero levels. That is what stops the questioning going
+on forever.
+
+Then the numbers travel back up. Each leaf, having heard zero from both of its
+empty children, reports one. Their parents take the larger of their children's
+numbers and report one more. And so on, level by level, until the root reports
+the height of the whole tree.
+
+The reason you take the LARGER of the two children rather than the smaller, or
+the sum, is that the depth of a tree is set by its longest branch - the deepest
+place you could get to going downwards. A short branch on one side does not make
+the tree any shorter overall.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you: 3 on top, 9 and 20 below it, 15 and 7
+below 20.
+
+    def max_depth(root):
+root is the node currently being asked about - not necessarily the root of the
+whole tree. The same function is used for the whole tree and for every subtree
+inside it, which is exactly what makes the recursion work. Read the parameter as
+"the top of whatever piece I am being asked about".
+
+    if root is None:
+        return 0
+The BASE CASE - the point where the recursion stops instead of going deeper. An
+empty spot is zero levels tall. This one line does two jobs: it ends the descent,
+and it makes leaves come out as 1 without any special code, because a leaf's two
+children are both None and both return 0. See section 3.
+
+Note "is None" rather than "== None": "is" asks whether this is literally the
+None object, which is the correct and conventional test in Python.
+
+    return 1 + max(max_depth(root.left), max_depth(root.right))
+The entire algorithm in one line. Read it from the inside out.
+
+  max_depth(root.left) - ask the left child the same question. For the root of
+  our tree this goes down to node 9, which asks its two empty children, gets 0
+  and 0, and returns 1.
+
+  max_depth(root.right) - ask the right child. For the root this goes down to
+  node 20, which asks 15 and 7, gets 1 and 1, and returns 1 + 1 = 2.
+
+  max(..., ...) - take the taller side. Here max(1, 2) = 2. This is the line that
+  makes it the MAXIMUM depth; swapping in min would answer the minimum-depth
+  question instead, which is a different problem - see case 2 in section 4.
+
+  1 + ... - add the node you are standing on. Without this the count would be of
+  the levels BELOW you rather than including you, and every answer would be one
+  too small.
+
+For the root: 1 + max(1, 2) = 3, matching the hand count.
+
+Both recursive calls happen before the addition, because Python must evaluate the
+arguments before it can call max. So the whole left subtree is measured, then the
+whole right subtree, and only then does this node do its own arithmetic.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Tree:       3
+           / \\
+          9   20
+              / \\
+            15   7
+
+Calls travel downwards; answers travel back up. Indentation shows how deep the
+call stack is at that moment.
+
+max_depth(3)
+  needs the left first: max_depth(9)
+        max_depth(9): 9 is not None, so:
+          max_depth(None) -> base case, return 0        (9's left child)
+          max_depth(None) -> base case, return 0        (9's right child)
+          max(0, 0) = 0
+          return 1 + 0 = 1
+  left side = 1
+  now the right: max_depth(20)
+        max_depth(20): not None, so:
+          max_depth(15)
+                max_depth(15): both children None -> 0 and 0
+                               return 1 + max(0,0) = 1
+          left of 20 = 1
+          max_depth(7)
+                max_depth(7): both children None -> 0 and 0
+                              return 1 + max(0,0) = 1
+          right of 20 = 1
+          max(1, 1) = 1
+          return 1 + 1 = 2
+  right side = 2
+  max(1, 2) = 2
+  return 1 + 2 = 3
+
+Answer: 3. Matches the three levels we counted by eye.
+
+Two things to notice in that trace. At the deepest point - inside max_depth(15) -
+there are four paused calls stacked up (3, 20, 15, and the None call), which is
+one per level plus one. That is the O(h) memory from section 10, visible. And the
+number 0 appears only at the very bottom, from the empty spots; every other value
+was built by adding 1 to something below it.
+
+THE LOPSIDED TREE from case 1:
+
+    max_depth(1)
+      left: max_depth(2)
+              left: max_depth(3)
+                      left: max_depth(None) -> 0
+                      right: max_depth(None) -> 0
+                      return 1
+              right: max_depth(None) -> 0
+              return 1 + max(1, 0) = 2
+      right: max_depth(None) -> 0
+      return 1 + max(2, 0) = 3
+
+Answer 3, from only three nodes - because max keeps choosing the one branch that
+actually goes anywhere.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is visited exactly once and does a
+fixed amount of work there - one comparison and one addition. You cannot do
+better, because you have to look at every node to be sure you have found the
+deepest one.
+
+SPACE: O(h), where h is the HEIGHT of the tree. That is the call stack, holding
+one paused call per level as the recursion descends - you saw four stacked up in
+the trace. For a bushy, well-balanced tree the height is about log n (a tree of a
+million nodes is only about 20 levels deep), so the memory is tiny. For a long
+chain-like tree the height is n, and on a chain of 10,000 nodes Python's
+recursion limit of roughly 1,000 stops the program with a RecursionError.
+
+The cure for that is the level-by-level version: put the root in a queue (a
+waiting line), then repeatedly take a whole level out of the queue, push all
+their children in, and add one to a counter. It visits the same nodes in a
+different order, costs the same O(n) time, and uses a queue instead of the call
+stack - so it survives any depth. Same answer, no recursion limit.
+
+THE #1 MISTAKE - using min instead of max, or forgetting the "1 +". The first
+silently answers the minimum-depth question; the second gives an answer exactly
+one too small on every input, which is easy to miss if you only test one tree.
+Test a lopsided tree and a single node, and both errors show up immediately.
+
+A close second: adding a redundant "if this node is a leaf, return 1" check. It
+is not wrong, but it shows you have not noticed that the base case already
+handles leaves - and it is extra code that can go out of step with the rest.
+
+ONE-SENTENCE TAKEAWAY: ask every node how tall the tree below it is, answer zero
+for an empty spot, and let each node report one more than its taller child - the
+answers travel back up and the root's answer is the height of the whole tree.""",
 ]
 
 _EX_P0["Min Cost Climbing Stairs (DP)"] = [
