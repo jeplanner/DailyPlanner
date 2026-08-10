@@ -35689,6 +35689,262 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1X[_e["title"]]
 
 
+_EX_P1Y = {}
+
+_EX_P1Y["How do you evaluate an LLM / GenAI system?"] = [
+    """Evaluate the STAGES separately - the single most valuable habit.
+For a RAG system, measure RETRIEVAL and GENERATION apart. Build 50-100 real
+questions with the correct source chunk labelled, and compute recall@k: if
+recall@5 is 0.6, then four questions in ten are unanswerable no matter how good
+the model is, and every hour spent on prompt wording is wasted.
+Teams routinely tune prompts for a month when retrieval was the bottleneck.
+Separating the stages is what prevents that, and saying it first is the answer
+to this question.""",
+
+    """The four axes for generation, with what each catches.
+FAITHFULNESS / groundedness: is every claim supported by the retrieved context?
+Catches hallucination. Measurable by an LLM judge citing evidence per claim, or
+by checking quoted spans appear in the chunks.
+ANSWER RELEVANCE: does it address the question actually asked?
+COMPLETENESS: does it cover what the sources support, or stop early?
+SAFETY / format: refusals where required, valid JSON where required.
+A system can score well on relevance and badly on faithfulness - fluent,
+on-topic and invented - which is precisely why they are separate axes.""",
+
+    """Why BLEU and ROUGE are mostly the wrong tool here.
+They measure n-gram OVERLAP with a reference answer. For summarisation with a
+gold summary that is defensible; for open-ended Q&A it is not, because a
+correct answer phrased differently scores near zero while a wrong answer that
+reuses the question's words scores well.
+Use them where a reference genuinely exists and paraphrase is not expected
+(translation, some summarisation). Otherwise prefer an LLM judge with a rubric,
+plus human review on a sample. Naming why they fail is better than not
+mentioning them.""",
+
+    """LLM-as-judge, and the guards it needs.
+Cheap, fast, and correlates reasonably with human judgement IF you constrain
+it: give a rubric with explicit criteria, force it to CITE evidence before
+scoring (which measurably reduces drift), use a small discrete scale rather
+than 1-10, and randomise the order when comparing two outputs.
+Its known biases: position bias (favours the first option), length bias
+(favours longer answers), and self-preference (favours text from the same model
+family). Calibrate against a few hundred human labels before trusting it, and
+re-check when you change judge models.""",
+
+    """The offline/online split, and what only production tells you.
+OFFLINE: a fixed eval set, run on every change, gating deploys. Fast, cheap,
+reproducible - and it cannot tell you whether users are helped.
+ONLINE: thumbs up/down, whether the user rephrased the question (a strong
+implicit failure signal), escalation to a human agent, task completion, and
+latency and cost per query. Plus an A/B test on the business metric for
+anything significant.
+The pairing to state: offline evals catch regressions, online metrics decide
+whether it is worth shipping.""",
+
+    """Building the eval set, which is the actual work.
+Start with 50-100 real questions from logs or from the people who will use it -
+not invented ones, which cluster around what you already handle. Include a
+deliberate mix: easy lookups, multi-hop questions, questions the corpus CANNOT
+answer (to test the refusal path), and adversarial or ambiguous phrasings.
+Label the expected source and a reference answer. Freeze it, version it, and
+add every production failure to it - that growing regression set is worth more
+than any published benchmark, because it is your distribution rather than
+someone else's.""",
+]
+
+_EX_P1Y["RAG chunking strategies (how to split documents)"] = [
+    """The two failure modes, each with a concrete cost.
+TOO LARGE (2,000 tokens): retrieval returns a wall of text where the relevant
+sentence is one line. Attention is diluted, the prompt cost triples, and
+precision drops because one chunk now matches many unrelated queries.
+TOO SMALL (100 tokens, no overlap): "Paternity leave is 2 weeks." lands in one
+chunk while "...for employees based in Ireland" lands in the next. Retrieved
+alone, the first chunk answers the question WRONGLY for every other country.
+That second example is the one to have ready - it shows chunking as a
+correctness problem, not a tuning knob.""",
+
+    """The working default, and why each part of it.
+300-800 tokens with 10-15% overlap, split on STRUCTURAL boundaries (headings,
+paragraphs, list items) rather than a fixed character count, and prepend the
+document title and section heading to every chunk so it is self-describing.
+The overlap stops a sentence that straddles a boundary from being lost by both
+chunks. The structural split keeps semantically related text together. The
+prepended heading is the cheapest single improvement most RAG systems can make -
+it gives the embedding context the chunk's body assumes.""",
+
+    """The strategies, ordered by how much they cost to build.
+FIXED-SIZE with overlap: trivial, works surprisingly well, the right starting
+point.
+RECURSIVE character splitting: try paragraph breaks, then sentences, then
+words - respects structure without needing a parser. This is what most
+frameworks default to.
+DOCUMENT-AWARE: use the real structure - markdown headings, HTML sections, code
+functions, PDF layout. Better, needs a parser per format.
+SEMANTIC: embed sentences and cut where consecutive similarity drops. Elegant,
+noticeably more expensive to build, and the gain over document-aware splitting
+is often small.
+Start simple and escalate only when the eval set says retrieval is the
+bottleneck.""",
+
+    """Chunk size is not one decision - it is two.
+The chunk you EMBED and the chunk you PASS TO THE MODEL need not be the same.
+Small-to-big (parent document) retrieval embeds small precise chunks for
+matching, then hands the model the surrounding PARENT section for context.
+You get the precision of small chunks and the completeness of large ones.
+The variant worth naming alongside it: index a generated SUMMARY or
+hypothetical questions for each chunk and retrieve on those, while returning
+the original text. Both decouple 'what matches well' from 'what reads well'.""",
+
+    """What breaks regardless of strategy, and the fix.
+TABLES split across chunks become meaningless; extract them separately and
+store them whole, or serialise each row with its headers.
+CODE split mid-function loses the signature; split on function boundaries.
+Long documents lose their global context - which is what prepending the title
+and heading recovers.
+Cross-references ('as described in section 3') are unresolvable in isolation;
+either inline the reference during ingestion or accept the limit and let
+retrieval fetch both.""",
+
+    """How to actually choose, since guessing is the usual approach.
+Build the retrieval eval set first (questions with the correct source chunk
+labelled), then sweep chunk size and overlap and measure recall@k. That is a
+one-afternoon experiment and it replaces months of opinion.
+Also measure what it costs: smaller chunks mean more vectors, so a 200-token
+chunking of a corpus produces roughly four times the index of an 800-token one -
+more memory, slower search, higher embedding cost. Chunking is a
+quality-versus-cost trade with a measurable answer, which is the point to
+close on.""",
+]
+
+_EX_P1Y["Decision Trees & Random Forests"] = [
+    """How a single tree splits, in one worked node.
+At each node the tree tries every feature and every threshold and keeps the
+split whose CHILDREN are purest. A node with 6 negatives and 4 positives has
+Gini 1 - (0.6^2 + 0.4^2) = 0.48. A split producing two pure children has
+weighted child impurity 0, so the gain is 0.48 - the maximum possible. A split
+producing two 50/50 children has gain 0 - it learned nothing.
+Greedy: it takes the locally best split and never reconsiders, so it does not
+find the globally optimal tree (that is NP-hard).""",
+
+    """Why a single tree overfits, and what actually stops it.
+Left unconstrained, a tree splits until every leaf is pure - 100% training
+accuracy, poor test accuracy, because the deepest splits are fitting noise in
+single samples.
+The constraints, in order of usefulness: min_samples_leaf (a leaf built from 2
+samples is a rumour), max_depth (blunt but effective), min_impurity_decrease,
+and post-pruning by cost complexity. But the real answer is not to tune one
+tree at all - it is to average many, which is what a forest does.""",
+
+    """Why a random forest works - TWO sources of randomness, not one.
+BAGGING: each tree trains on a bootstrap sample (sample n rows WITH
+replacement, so about 63% of unique rows appear and the rest are out-of-bag).
+FEATURE SUBSAMPLING: at each split, consider only a random subset of features -
+sqrt(p) for classification, p/3 for regression.
+The second is what makes it a random FOREST rather than just bagged trees.
+Without it, if one feature is dominant every tree splits on it first and the
+trees are highly correlated - and averaging correlated models cancels little
+variance. Forcing them to sometimes ignore the best feature DECORRELATES them,
+which is where most of the gain comes from.""",
+
+    """Read through the bias-variance lens, which explains the design choices.
+Averaging reduces VARIANCE and leaves bias roughly unchanged. So the ideal base
+learner is LOW-BIAS and HIGH-VARIANCE - which is exactly a deep, unpruned tree.
+That is why forests do not prune their trees: you WANT each one to overfit,
+because the averaging cleans it up.
+Contrast boosting, which fits each new model to the residual errors and
+therefore reduces BIAS - so its base learner is a shallow stump, and it
+overfits readily and needs early stopping. Same ensemble idea, opposite
+targets.""",
+
+    """Out-of-bag error, the free validation set.
+Each tree omits about 37% of rows from its bootstrap sample. Predict each row
+using only the trees that did NOT see it, and you get an unbiased error
+estimate with no separate validation split and no cross-validation.
+That is genuinely useful on small datasets where holding out 20% hurts, and it
+is a distinctive feature of bagging worth naming - most models have no
+equivalent.""",
+
+    """Feature importance, and the caveat that matters.
+Default (Gini/impurity) importance is BIASED toward high-cardinality features -
+a continuous feature or an id column offers more possible split points and
+accumulates importance for that reason alone, not because it is predictive.
+It also splits credit arbitrarily between correlated features, so two nearly
+identical columns each look half as important as either really is.
+Prefer PERMUTATION importance (shuffle a column, measure the score drop) or
+SHAP values. And never present tree importance as causal - it measures
+predictive association within this model, nothing more.""",
+]
+
+_EX_P1Y["Feature engineering, scaling & encoding"] = [
+    """Scaling: who needs it and who does not.
+NEEDS it - anything using distances or gradients: logistic and linear
+regression, SVM, KNN, k-means, PCA, neural networks. Income (0-200,000) and age
+(0-100) in a KNN means distance is essentially |income difference| and age is
+invisible.
+DOES NOT need it - tree-based models: decision trees, random forests, gradient
+boosting. A tree only cares about the ORDER of values, so income in euros or
+log-euros gives an identical tree. That distinction is a common interview
+question and the answer is one sentence: trees split on thresholds, so
+monotone rescaling changes nothing.""",
+
+    """Standardisation versus normalisation, and when each.
+STANDARDISE (z-score: subtract the mean, divide by the standard deviation) when
+the feature is roughly normal or when the algorithm assumes zero-centred data -
+PCA, linear models, neural nets. It is unbounded and handles outliers better
+than min-max.
+NORMALISE (min-max to [0,1]) when you need a bounded range - image pixels,
+some neural network inputs - and when the distribution is not normal. Its
+weakness: one extreme outlier compresses every other value into a tiny band.
+For heavy outliers, RobustScaler (median and interquartile range) beats both.""",
+
+    """Categorical encoding, by cardinality.
+LOW cardinality (under ~15): one-hot. Simple, no ordering implied, works
+everywhere.
+HIGH cardinality (thousands of user or product ids): one-hot explodes the
+feature space. Use target encoding (replace each category with the mean target
+for that category - computed WITHIN cross-validation folds, or it leaks),
+frequency encoding, or learned EMBEDDINGS in a neural net.
+ORDINAL data (small/medium/large): map to 0/1/2 so the order is preserved.
+The trap: label-encoding a nominal feature (red=0, green=1, blue=2) tells a
+linear model that blue is twice green, which is meaningless - though a TREE
+handles it fine, which is another place the model type changes the answer.""",
+
+    """Target encoding leaks unless you are careful - the failure worth knowing.
+Replacing a category with its target mean uses the LABEL, so computing it on
+the full dataset lets information about a row's own target into its features.
+The model looks brilliant in validation and collapses in production.
+The fix: compute the encoding inside each cross-validation fold using only that
+fold's training rows, add smoothing toward the global mean for rare categories,
+and treat unseen categories at inference explicitly. CatBoost's ordered target
+statistics exist precisely to solve this.""",
+
+    """Missing values, where the pattern is often the signal.
+Simple: impute numeric with the MEDIAN (robust to outliers) and categorical
+with the mode or an explicit 'Missing' category.
+Better: add a BINARY INDICATOR column marking that the value was missing -
+because missingness is frequently informative. 'Income not provided' on a loan
+application is a real signal, and imputing it away destroys that.
+Note that some models handle missing natively: LightGBM and XGBoost learn a
+default branch direction per split, which is usually better than imputing.
+And never impute using statistics computed on the full dataset before
+splitting - that is leakage.""",
+
+    """The features that actually move the needle, and the leakage question.
+DOMAIN features beat clever transformations: from a timestamp derive hour of
+day, day of week, is-weekend, days-since-signup, time-since-last-event. From
+transactions derive counts and means over 7/30/90-day windows. Ratios often
+beat raw values (debt-to-income rather than debt and income separately).
+And for every feature, ask the one question that catches most leakage: AT THE
+MOMENT I NEED THIS PREDICTION IN PRODUCTION, DO I HAVE THIS VALUE YET? A
+feature computed from data recorded after the label is worthless no matter how
+predictive it looks offline.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1Y:
+        _e["examples"] = _EX_P1Y[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
