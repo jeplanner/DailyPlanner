@@ -36043,69 +36043,374 @@ for _e in ENTRIES:
 _EX_P0E = {}
 
 _EX_P0E["Dynamic Programming — the 4-question method"] = [
-    """The four questions answered out loud on Coin Change.
-coins = [1,2,5], amount = 11.
-1) STATE: dp[a] = fewest coins that make exactly amount a.
-2) TRANSITION: dp[a] = min over coins c <= a of dp[a-c] + 1.
-3) BASE: dp[0] = 0; everything else starts at INF (impossible).
-4) ANSWER: dp[11], or -1 if it is still INF.
-Filling it: dp[1]=1, dp[2]=1 (one 2), dp[3]=2, dp[4]=2 (2+2), dp[5]=1 (one 5),
-dp[6]=2, dp[7]=2 (5+2), dp[8]=3, dp[9]=3, dp[10]=2 (5+5), dp[11]=3 (5+5+1).
-Answer 3. Say those four sentences BEFORE writing code and the code writes
-itself.""",
+    """1. THE GOAL, in plain English.
 
-    """The same four questions on Climbing Stairs - proof the method transfers.
-1) STATE: dp[i] = number of distinct ways to reach step i.
-2) TRANSITION: dp[i] = dp[i-1] + dp[i-2] (you arrive by a 1-step or a 2-step).
-3) BASE: dp[0]=1 (one way to stand at the bottom - do nothing), dp[1]=1.
-4) ANSWER: dp[n].
-n=5: 1,1,2,3,5,8 -> 8 ways.
-Notice the transition is an ADDITION here and a MIN in coin change. 'Count the
-ways' -> sum; 'best cost' -> min/max; 'is it reachable' -> OR of booleans. That
-one word in the problem statement tells you which operator to use.""",
+DYNAMIC PROGRAMMING (DP) sounds imposing and the idea is small: solve the tiny
+versions of a problem first, write the answers down, and build the bigger answers
+out of the ones you already wrote down.
 
-    """Why DP and not plain recursion - the overlapping-subproblems count.
-Naive recursion for Fibonacci(40) makes about 2^40 calls because fib(38) is
-recomputed by both fib(39) and fib(40), and so on all the way down. On a laptop
-that is minutes.
-Memoise it - one dict lookup - and it is 40 calls, microseconds.
-That is the whole justification for DP: the recursion tree revisits the SAME
-subproblem exponentially often, so you compute each one once and store it. If
-the subproblems never repeat (like merge sort's halves) DP buys you nothing and
-plain divide-and-conquer is the right tool.""",
+The two things that make it work are worth naming up front.
 
-    """Top-down vs bottom-up on the same problem.
-Top-down (memoised recursion) for coin change:
-    @lru_cache(None)
-    def best(a):
-        if a == 0: return 0
-        if a < 0:  return INF
-        return min(best(a - c) + 1 for c in coins)
-Bottom-up is the loop in the code above.
-Same complexity, O(amount x len(coins)). Top-down only touches the states it
-actually needs and is easier to derive from the recursion; bottom-up has no
-recursion-depth limit and lets you drop the table to O(1) rows.
-In an interview: derive it top-down (easier to explain), then say 'this converts
-to a bottom-up table' and write that if there is time.""",
+  OVERLAPPING SUBPROBLEMS - the same small question keeps coming up in different
+  branches of the work. If you solve it fresh every time, you do the same work
+  over and over.
 
-    """The impossible case, and the INF sentinel that makes it work.
-coins = [5], amount = 3. dp[1], dp[2], dp[3] all stay at INF because no coin
-fits or the sub-answer is itself INF. dp[3] != INF is false -> return -1.
-Why INF = amount + 1 rather than float('inf')? Because dp[a-c] + 1 stays a plain
-int, no float arithmetic, and amount+1 is provably larger than any real answer
-(you can never need more coins than the amount itself, since the smallest coin
-is at least 1). Small detail, but it is the kind of thing an interviewer will
-ask you to justify.""",
+  OPTIMAL SUBSTRUCTURE - the best answer to a big question can be assembled from
+  best answers to smaller ones. Without this, knowing the small answers would not
+  help.
 
-    """Space optimisation, and the loop-order trap that comes with it.
-Many 2-D DPs only ever read the previous row, so you can keep one row:
-knapsack's dp[w] = max(dp[w], dp[w - wt] + val).
-BUT the loop direction now encodes a rule. Iterating w DOWNWARD means each item
-is used at most once (0/1 knapsack); iterating UPWARD lets the same item be
-reused (unbounded knapsack - which is exactly coin change).
-Same three lines, opposite problems, decided by `range(W, wt-1, -1)` versus
-`range(wt, W+1)`. When you compress the table, state which of the two you need
-and why - that is the actual test.""",
+When both hold, DP applies. When only the first holds you can still cache results
+but cannot combine them so simply; when only the second holds, plain recursion is
+already efficient and you do not need DP.
+
+THE 4-QUESTION METHOD is a checklist for turning a problem into DP code. Answer
+these four in order, in plain words, before writing anything:
+
+  1. STATE       - what exactly does dp[i] MEAN? Write it as a full sentence.
+  2. TRANSITION  - how is dp[i] built from smaller entries?
+  3. BASE CASE   - which entries are known outright, without building?
+  4. ANSWER      - which entry (or combination) is the final answer?
+
+Get those four sentences right and the code writes itself. Get them vague and you
+will flail. The worked example throughout is Coin Change: given coin
+denominations and an amount, what is the fewest coins that make it?""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+Coins [1, 2, 5], amount 11. What is the fewest coins?
+
+THE GREEDY ATTEMPT, and why it fails. "Always take the biggest coin that fits."
+With these coins it happens to work: 5 + 5 + 1 = three coins. But change the coins
+to [1, 3, 4] and the amount to 6. Greedy takes 4, then 1, then 1 - three coins.
+The real answer is 3 + 3 - two coins. Greedy lost because taking the big coin left
+an awkward remainder, and it never reconsiders.
+
+So we need something that tries every choice.
+
+THE SLOW VERSION - recursion. To make amount a, try each coin c and recursively
+ask for the fewest coins making a - c; take the best and add one.
+
+Correct, and disastrously slow. Draw the calls for amount 11 with coins [1,2,5]:
+the branch that takes 5 then 2 reaches amount 4, and so does the branch that takes
+2 then 5, and so does 1+1+5, and so on. Each of those recomputes everything below
+amount 4 from scratch. The number of calls grows exponentially, and amount 50 will
+hang.
+
+That is OVERLAPPING SUBPROBLEMS made visible: "what is the answer for amount 4?"
+gets asked dozens of times, and it has the same answer every time.
+
+THE UPGRADE - work UPWARDS and write each answer down once. Start from the amount
+you know outright, build 1, then 2, then 3, all the way to 11, each from entries
+already finished. Every amount is solved exactly once and then simply looked up.
+
+That is the whole of dynamic programming. The 4 questions are just the discipline
+for doing it without getting confused.""",
+
+    """3. THE FOUR QUESTIONS, answered for Coin Change.
+
+Write these as sentences before touching the keyboard.
+
+QUESTION 1 - STATE. What does dp[a] mean?
+
+    dp[a] = the fewest coins needed to make exactly the amount a.
+
+Say it in full. Not "dp[a] is about amount a" - the vagueness is what kills you
+later. A good test: if you can read dp[7] aloud as a complete factual claim, the
+state is well defined.
+
+QUESTION 2 - TRANSITION. How is dp[a] built from smaller entries?
+
+Ask the question that unlocks almost every DP: WHAT WAS THE LAST MOVE? Here, what
+was the last coin handed over? It must have been one of the coins. If it was coin
+c, then before it you had to make a - c, and the cheapest way to do that is already
+written down.
+
+    dp[a] = 1 + the smallest dp[a - c] over every coin c that is not bigger than a
+
+QUESTION 3 - BASE CASE. What is known outright?
+
+    dp[0] = 0. Making nothing takes no coins.
+
+That single fact is the floor everything else stands on. Get it wrong and every
+answer is wrong in a way that is hard to spot - see case 2 in section 4.
+
+QUESTION 4 - ANSWER. Which entry is the result?
+
+    dp[amount] - or -1 if it was never reachable.
+
+Notice the answer is not always the last entry. In Longest Increasing Subsequence
+it is the MAXIMUM over all entries; in Min Cost Climbing Stairs it is the smaller
+of the last two. Asking question 4 explicitly stops you assuming.
+
+APPLY IT TO ANOTHER PROBLEM to see the checklist is general. Climbing Stairs:
+STATE - dp[i] is the number of ways to reach step i. TRANSITION - your last move
+was one step or two, so dp[i] = dp[i-1] + dp[i-2]. BASE - dp[1] = 1, dp[2] = 2.
+ANSWER - dp[n]. Four sentences, and the code is three lines.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the impossible amount, and the sentinel. Coins [2], amount 3. Every coin
+is even, so 3 cannot be made. Unreachable amounts must be marked somehow, and the
+marker has to behave correctly under the arithmetic we do.
+
+Using "infinity" works beautifully: the smallest of a real number and infinity is
+always the real number, and infinity plus one is still infinity - so an
+unreachable amount stays unreachable with no special checks anywhere. The code
+uses amount + 1 as a stand-in for infinity, which is safe because no real answer
+can ever need more coins than the amount itself (you would be using coins of size
+1, giving exactly amount coins).
+
+Using -1 as the marker instead would be a disaster: min(-1, 3) picks -1, and the
+nonsense value spreads through the whole table. You would need a guard on every
+single lookup.
+
+CASE 2 - getting the base case wrong. Seed dp[0] = 1 and every answer is one too
+many. Seed it as infinity and nothing is ever reachable, so every answer is -1.
+When a DP result is uniformly off by a constant, the base case is the first place
+to look.
+
+CASE 3 - a coin larger than the amount. The "if c <= a" guard skips it. Without
+that check, a - c goes negative and Python reads from the wrong end of the list,
+producing a confidently wrong answer rather than an error.
+
+CASE 4 - amount zero. dp[0] is 0 and the loop never runs. Answer 0. Correct.
+
+CASE 5 - assuming the loop order never matters. For THIS problem either loop order
+works, because a minimum does not care what order the coins were handed over in.
+But its sibling, Coin Change II - counting the number of WAYS - is completely
+order-sensitive: coins on the outside counts combinations, amounts on the outside
+counts permutations. Knowing which problems are order-sensitive, and why, is what
+the pairing tests.""",
+
+    """5. TOP-DOWN OR BOTTOM-UP - two ways to write the same DP.
+
+Every DP can be written in two shapes, and it is worth knowing both.
+
+BOTTOM-UP, which is what the code below does. Start from the base case and fill a
+table upwards in a loop. Every entry is computed whether or not the final answer
+needs it.
+
+TOP-DOWN, also called MEMOISATION. Keep the natural recursion from section 2, but
+add a store: before computing an answer, check whether it is already in the store;
+after computing it, save it there. The recursion then does the same work exactly
+once. In Python this is one decorator, functools.lru_cache, above the function.
+
+Which to use?
+
+  Bottom-up avoids recursion entirely, so it cannot hit the recursion limit, and it
+  tends to be a little faster because there is no function-call overhead. It also
+  makes the space optimisation below obvious.
+
+  Top-down only computes the entries actually needed, which is a genuine win when
+  the table is huge and sparse. It is also usually easier to write, because it is
+  just the recursion plus a cache - the transition is expressed directly.
+
+THE SPACE OPTIMISATION, which bottom-up makes visible. Look at which entries the
+transition ever READS. In Climbing Stairs, dp[i] reads only dp[i-1] and dp[i-2] -
+never further back - so the whole table can collapse to two variables. In Coin
+Change, dp[a] reads dp[a - c] for every coin, and the largest coin may be far
+back, so the full table is needed.
+
+Writing the table version first and THEN noticing what can be dropped is the right
+order in an interview. It shows the reasoning rather than producing a compressed
+answer as if by magic.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: answer the four questions in words first, then the
+code is a table, a loop that fills it, and a lookup.
+
+There is no recursion in the bottom-up version, so nothing piles up on the call
+stack. What takes the place of a base case is the SEEDING of the known entry
+before the loop begins.
+
+The steps:
+
+  1. Decide your stand-in for "impossible". It must be larger than any real answer
+     could be, so that taking a minimum against it always prefers the real value.
+     Here, one more than the amount is safely beyond reach.
+
+  2. Make the table with one slot for every amount from 0 up to the target
+     INCLUSIVE - so amount + 1 slots. Fill it with the impossible marker.
+
+  3. Write the BASE CASE into it: the entry for amount zero is zero coins.
+
+  4. Walk the amounts upward from 1 to the target, one per turn of the outer loop.
+
+     Upward matters. When you compute the entry for 11 you look back at 6, and 6
+     must already be finished - which it is, because it came earlier in the walk.
+
+  5. For each amount, try every coin as the LAST coin handed over:
+
+     a. Skip the coin if it is bigger than the current amount - it cannot be the
+        last coin, and subtracting it would go negative.
+     b. Otherwise the cost of that route is one coin plus whatever is written down
+        for the remaining amount. Keep it if it beats what is already recorded.
+
+  6. When the walk finishes, read the entry for the target. If it still holds the
+     impossible marker, the amount could not be made, so report -1. Otherwise
+     report the entry.
+
+Step 5b never needs an "is the remainder reachable?" check, because the impossible
+marker plus one is still bigger than any real answer, so the minimum leaves the
+entry alone. Choosing a sentinel that behaves correctly under your own arithmetic
+is what removes the guards.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code builds a small price list and fills it in from the cheapest end upwards.
+
+Each line of the list answers one question: what is the fewest coins needed to
+make exactly this amount? The first line is free - making zero costs zero coins -
+and that single fact is what everything else is built on.
+
+Then it works its way up, one amount at a time. By the time it reaches any amount,
+every smaller amount is already finished and written down in front of it.
+
+To fill in a line it asks one question: what was the last coin handed over? It
+must have been one of the available coins. So it tries each one in turn - if the
+coin fits, then before handing it over you must have made the leftover amount, and
+the cheapest way to do that is already on the list. That route therefore costs
+whatever is written for the leftover, plus this one coin. It tries every coin and
+keeps the cheapest result.
+
+That is all there is to it - no cleverness, no guessing. It simply considers every
+possible last coin at every amount and remembers the best.
+
+Amounts that cannot be made are handled without any special code. Every line
+starts out marked with a number larger than any real answer could be, and because
+that marker plus one is still too large, it never wins a comparison - so an
+unreachable amount quietly stays marked all the way to the end.
+
+Finally it reads the line for the amount it was asked about. If that line is still
+carrying its impossible marker, it reports that the amount cannot be made.""",
+
+    """8. THE CODE, line by line.
+
+Keep coins = [1, 2, 5] and amount = 11 beside you; the answer is 3.
+
+    INF = amount + 1
+The stand-in for "impossible". It must be bigger than any real answer, and
+amount + 1 safely is: the worst possible genuine answer uses coins of size 1,
+which needs exactly amount coins. Naming it INF rather than repeating the
+expression makes the intent readable.
+
+    dp = [0] + [INF] * amount
+Build the table in one line. The [0] at the front is dp[0] = 0 - QUESTION 3, the
+base case, "making zero takes zero coins". Everything after it starts impossible.
+
+The table has amount + 1 slots because it needs a line for every amount from 0 up
+to and including the target. Making it amount slots long is a classic
+off-by-one - dp[amount] would then be past the end.
+
+    for a in range(1, amount + 1):
+Walk the amounts upward, 1 through 11. Upward is essential: computing dp[11] reads
+dp[6], and dp[6] must already be final - which it is, because 6 came earlier.
+
+    for c in coins:
+QUESTION 2, the transition: try every coin as the LAST coin handed over. At a = 3
+this tries 1, then 2, then 5.
+
+    if c <= a:
+Only coins that actually fit. At a = 3 this rejects the 5. Without it, a - c would
+be negative and Python would read from the wrong end of the list - a wrong answer
+rather than an error, which is worse.
+
+    dp[a] = min(dp[a], dp[a - c] + 1)
+The heart of it. dp[a - c] is the cheapest way to make the leftover, already
+computed; + 1 is the coin being handed over now; min keeps whichever last coin
+turned out cheapest.
+
+Read it at a = 3: with c = 1 it gives min(INF, dp[2] + 1) = min(INF, 2) = 2; with
+c = 2 it gives min(2, dp[1] + 1) = min(2, 2) = 2. So dp[3] = 2, which is 2 + 1.
+
+Notice there is no "is the leftover reachable?" guard. If dp[a - c] is still INF,
+then INF + 1 is even larger, min leaves dp[a] alone, and the unreachable amount
+stays unreachable by itself. That is the sentinel from section 4 earning its keep.
+
+    return dp[amount] if dp[amount] != INF else -1
+QUESTION 4, the answer. Read the target's line; if it still carries the impossible
+marker, the amount could not be made, so report -1.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+coins = [1, 2, 5], amount = 11.  INF = 12.
+
+Start: dp = [0, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]
+       positions  0   1   2 ...                          11
+
+a = 1:  c=1 fits: min(12, dp[0]+1) = min(12, 1) = 1.  c=2, c=5 too big.
+        dp[1] = 1                       (one 1)
+a = 2:  c=1: min(12, dp[1]+1) = 2.  c=2: min(2, dp[0]+1) = min(2,1) = 1.
+        dp[2] = 1                       (one 2)
+a = 3:  c=1: min(12, dp[2]+1) = 2.  c=2: min(2, dp[1]+1) = 2.
+        dp[3] = 2                       (2 + 1)
+a = 4:  c=1: dp[3]+1 = 3.  c=2: dp[2]+1 = 2.
+        dp[4] = 2                       (2 + 2)
+a = 5:  c=1: dp[4]+1 = 3.  c=2: dp[3]+1 = 3.  c=5: dp[0]+1 = 1.
+        dp[5] = 1                       (one 5)
+a = 6:  c=1: dp[5]+1 = 2.  c=2: dp[4]+1 = 3.  c=5: dp[1]+1 = 2.
+        dp[6] = 2                       (5 + 1)
+a = 7:  best is c=5 giving dp[2]+1 = 2.
+        dp[7] = 2                       (5 + 2)
+a = 8:  best is c=5 giving dp[3]+1 = 3.
+        dp[8] = 3                       (5 + 2 + 1)
+a = 9:  best is c=5 giving dp[4]+1 = 3.
+        dp[9] = 3                       (5 + 2 + 2)
+a = 10: c=5 gives dp[5]+1 = 2.
+        dp[10] = 2                      (5 + 5)
+a = 11: c=1: dp[10]+1 = 3.  c=2: dp[9]+1 = 4.  c=5: dp[6]+1 = 3.
+        dp[11] = 3                      (5 + 5 + 1)
+
+return dp[11] = 3.  Correct.
+
+Every line was computed once, using only lines to its left. Compare that with the
+slow recursion, which would have recomputed dp[4] and dp[6] many times over in
+different branches.
+
+THE IMPOSSIBLE CASE, coins = [2], amount = 3.  INF = 4.
+  dp = [0, 4, 4, 4]
+  a = 1: c=2 is bigger than 1 -> skipped. dp[1] stays 4.
+  a = 2: c=2 fits: min(4, dp[0]+1) = 1.  dp[2] = 1.
+  a = 3: c=2 fits: min(4, dp[1]+1) = min(4, 5) = 4.  dp[3] stays 4.
+         Note dp[1] was 4 - the impossible marker - and 4 + 1 = 5 lost the
+         comparison, exactly as intended. No guard was needed.
+  dp[3] == INF -> return -1.  Correct.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(amount x number of coins). For every amount you try every coin. With
+amount 10,000 and 10 coins that is 100,000 steps - instant. Compare with the
+exponential recursion from section 2, which hangs well before amount 50.
+
+SPACE: O(amount) for the table.
+
+THE CATCH IN THE COST, and it is the part interviewers listen for. The running
+time depends on the VALUE of the amount, not on how long the input is. An amount
+of one billion is ten characters to write down but demands a billion-cell table.
+An algorithm whose cost scales with the numeric value of an input rather than the
+size of the input is called PSEUDO-POLYNOMIAL. It looks efficient and is not, once
+the numbers get large. Saying that word and explaining it is a strong signal.
+
+THE #1 MISTAKE - a vague STATE. Writing the code before you can say, in a full
+sentence, exactly what dp[i] means. Everything downstream depends on it: the
+transition, the base case and the answer are all statements ABOUT the state, so if
+it is fuzzy they will be too, and you will find yourself patching the code with
+guesses. Write the sentence first, every time.
+
+A close second: choosing a sentinel that misbehaves under your own arithmetic -
+using -1 for "impossible" and then taking a minimum, so -1 wins every comparison
+and poisons the table.
+
+THE FOUR QUESTIONS, one more time, because they are the transferable part:
+  STATE - what does dp[i] mean, as a full sentence?
+  TRANSITION - what was the last move, and what does it cost?
+  BASE CASE - what is known outright?
+  ANSWER - which entry, or combination of entries, is the result?
+
+ONE-SENTENCE TAKEAWAY: answer the four questions in plain words before writing any
+code - especially the first, because a state you cannot say aloud is a program you
+cannot debug.""",
 ]
 
 _EX_P0E["Word Ladder (shortest transformation, BFS)"] = [
@@ -36645,64 +36950,357 @@ is the WORST survivor, so you can evict it in O(log k).""",
 ]
 
 _EX_P0E["Binary Search — including 'search on the answer'"] = [
-    """The textbook search, traced.
-a = [1,3,5,7,9,11], target = 7. lo=0, hi=5.
-mid=2, a[2]=5 < 7 -> lo=3.
-mid=4, a[4]=9 > 7 -> hi=3.
-mid=3, a[3]=7 -> return 3.
-Three comparisons for six elements; for a million elements it is twenty. That
-halving is the entire value proposition - and it is why the array must be sorted
-in the first place.""",
+    """1. THE GOAL, in plain English.
 
-    """The absent target - where the loop must terminate.
-a = [1,3,5], target = 4. lo=0,hi=2.
-mid=1, a[1]=3 < 4 -> lo=2.
-mid=2, a[2]=5 > 4 -> hi=1.
-Now lo=2 > hi=1, the `while lo <= hi` condition fails, return -1.
-The pairing that matters: `lo <= hi` with `hi = len-1` and `mid +/- 1` on both
-sides. Mixing conventions - say `lo < hi` with `hi = mid - 1` - either loops
-forever or skips the last element. Pick ONE template and always write it the
-same way.""",
+You have a list of numbers already sorted from smallest to largest, and you want
+to know whether a particular number is in it - and if so, where.
 
-    """Empty array and single element.
-a = []: lo=0, hi=-1, the condition 0 <= -1 is false immediately, return -1.
-a = [5], target=5: mid=0, hit, return 0.
-a = [5], target=3: mid=0, 5 > 3 -> hi=-1, loop ends, -1.
-Trace these three every time you write binary search; they catch nearly every
-off-by-one.""",
+Think of looking up a name in a phone book. You do not start at page one and read
+every name. You open it near the middle, see whether your name comes before or
+after what you land on, and throw away half the book. Then you do it again.
 
-    """The overflow detail that is real outside Python.
-`mid = (lo + hi) // 2` can overflow a 32-bit int in Java or C++ when lo and hi
-are both near 2^31 - this was a genuine bug in the JDK's binary search for nine
-years. The fix is `mid = lo + (hi - lo) // 2`.
-Python's ints are arbitrary precision so it cannot happen here, but saying 'in
-Java I would write lo + (hi-lo)//2' is a strong signal, especially at Amazon
-where the interview may well be in Java.""",
+That is BINARY SEARCH. "Binary" means "two" - at every step you split what is left
+into two halves and discard one of them.
 
-    """Search on the ANSWER - Koko eating bananas, worked.
-piles = [3,6,7,11], h = 8 hours. Find the smallest eating speed k.
-The array is not what you search; you search the SPEED, from 1 to max(piles)=11.
-feasible(k) = sum(ceil(p/k) for p in piles) <= h.
-feasible(4): 1+2+2+3 = 8 <= 8 -> True.
-feasible(3): 1+2+3+4 = 10 > 8 -> False.
-Feasibility is MONOTONE - once a speed works, every larger speed works - so the
-true/false array looks like F,F,F,T,T,T and you binary-search the first T.
-lo=1,hi=11: mid=6 T -> hi=6; mid=3 F -> lo=4; mid=5 T -> hi=5; mid=4 T -> hi=4;
-lo==hi=4. Answer 4.""",
+Our list, with positions written underneath:
 
-    """Recognising 'search on the answer' in the wild.
-The tell is a question phrased as 'minimize the maximum' or 'maximize the
-minimum' or 'the smallest X such that it still fits', where checking a CANDIDATE
-is easy but constructing the optimum is not.
-- Koko Eating Bananas: min speed within h hours.
-- Split Array Largest Sum / Capacity to Ship Packages in D Days: minimise the
-  largest chunk.
-- Minimum days to make m bouquets.
-- Median of Two Sorted Arrays (the O(log(m+n)) version): binary-search the
-  partition point.
-Template: define feasible(x), prove it is monotone, binary-search the boundary.
-Total cost O(log(range) x cost_of_feasible) - and the range can be huge, since
-log(10^9) is only 30.""",
+    a = [ -1,  0,  3,  5,  9,  12 ]
+    pos    0   1   2   3   4    5
+
+Looking for 9. Try the middle, position 2, which holds 3. Is 3 the answer? No. Is
+9 bigger than 3? Yes - so 9 can only be to the RIGHT, because everything to the
+left is smaller still. Throw away positions 0, 1 and 2.
+
+Now search positions 3 to 5. The middle is position 4, holding 9. Found it -
+return 4.
+
+Two probes instead of five. And the saving grows dramatically: a list of a million
+items needs about twenty probes, not a million.
+
+Everything below depends on the list being SORTED. On an unsorted list, "bigger
+than the middle" tells you nothing about which half to keep, and the method is
+worthless.""",
+
+    """2. THE INTUITION - and the arithmetic that makes it worth it.
+
+THE SIMPLE VERSION. Walk the list from the front, comparing each item until you
+find the target or run out. That is a LINEAR SEARCH, it costs up to n steps, and
+it is the right answer when the list is unsorted or very short.
+
+THE UPGRADE. Because the list is sorted, one comparison tells you which half the
+target must be in - so you can discard the other half entirely, unexamined.
+
+The saving is not "a bit faster". Each probe halves what is left:
+
+    1,000,000  ->  500,000  ->  250,000  ->  125,000  ->  ...  ->  1
+
+How many halvings does it take to get from a million to one? About 20. That is
+what the notation O(log n) means: the work grows like the number of times you can
+halve n before reaching 1. Compare 20 probes against a million - and against a
+billion items, where it is still only about 30.
+
+So the practical rule: if the data is sorted and you will search it more than once
+or twice, binary search. If it is unsorted, sorting first costs O(n log n), which
+is only worth paying if you will search many times.
+
+THE SECOND USE, which is what the title's "search on the answer" means. Binary
+search is not only for finding a value in a list. It works on any question of the
+form: "the possible answers run from low to high, and there is a test that says
+yes for everything from some point onwards and no before it - find that point."
+
+The list you are searching is then IMAGINARY - it is the range of possible
+answers, and the "is this it?" comparison is replaced by a feasibility test. See
+section 5.""",
+
+    """3. THE THREE THINGS THAT GO WRONG - and why each line is written as it is.
+
+Binary search is famously easy to get subtly wrong. Three details, and every one
+of them is a single character.
+
+FIRST: "while lo <= hi", not "<". The range being searched is inclusive at both
+ends - it means positions lo through hi, INCLUDING both. When lo equals hi there
+is exactly one item left, and it might be the answer. Writing "<" stops before
+checking it, so searching for the only remaining item returns -1. Test it on a
+one-item list: lo and hi are both 0, and with "<" the loop never runs at all.
+
+SECOND: "lo = mid + 1" and "hi = mid - 1", never "lo = mid" or "hi = mid". We have
+just examined position mid and it was not the target, so it must be excluded from
+the next range. Writing "lo = mid" leaves it in, and if the range shrinks to two
+items the calculation can produce the same mid forever - an infinite loop that
+does not crash, it simply hangs.
+
+THIRD: the middle is computed as (lo + hi) // 2, using WHOLE-NUMBER division -
+the double slash throws away any fraction. With lo = 3 and hi = 5 that gives 4.
+With lo = 3 and hi = 4 it gives 3, rounding DOWN. That downward rounding is what
+guarantees mid is never equal to hi when the range has two or more items, which is
+part of why the range always shrinks.
+
+A HISTORICAL FOOTNOTE WORTH KNOWING. In languages with fixed-size integers,
+lo + hi can overflow when both are large, producing a negative number and a crash.
+The standard fix is to write lo + (hi - lo) // 2, which is the same value computed
+without ever forming the large sum. Python's integers grow as needed so it cannot
+happen here - but the question comes up, and knowing the answer is a good signal.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the target is absent. Searching for 2 in our list: mid lands on 3
+(too big, go left), then on 0 (too small, go right), and now lo is 2 while hi is
+1 - lo has passed hi, the range is empty, and the loop ends. Return -1. The range
+becoming empty IS the "not found" condition; no separate check is needed.
+
+CASE 2 - the empty list. hi starts at len(a) - 1, which is -1, so lo (0) is
+already greater than hi and the loop never runs. Return -1. Correct with no guard.
+
+CASE 3 - duplicates. If the list holds [2, 2, 2] and you search for 2, this code
+returns SOME position holding 2, not necessarily the first or the last. If the
+problem asks for the first or last occurrence, this is not the right code - you
+need the "leftmost" variant, which does not return on a match but instead records
+it and keeps searching the left half. Ask which is wanted.
+
+CASE 4 - an unsorted list. It will not crash; it will return -1 or a wrong
+position, confidently. There is no way for the code to detect this. If you are
+handed a list and asked to search it, confirm out loud that it is sorted.
+
+CASE 5 - searching for a boundary rather than a value. "The first item at least as
+big as x" is a different question from "where is x", and it is the one that turns
+up more often in real problems. It needs the leftmost variant from case 3, which
+is what Python's bisect module provides ready-made.
+
+CASE 6 - a two-item range. lo = 3, hi = 4 gives mid = 3, so the left item is
+examined and then lo becomes 4 - the range shrinks. If the rounding went upward
+instead, mid would be 4, hi would become 3, and that also shrinks. Both work; what
+must never happen is mid landing on an end that is then kept.""",
+
+    """5. "SEARCH ON THE ANSWER" - the same machine on an imaginary list.
+
+This is the idea the title flags, and it is what makes binary search a
+problem-solving technique rather than a lookup trick.
+
+The insight: you do not need a list at all. You need a RANGE of candidate answers
+and a test that behaves monotonically - meaning once it starts saying yes, it
+never goes back to saying no.
+
+    candidate:   1   2   3   4   5   6   7   8
+    test says:   N   N   N   Y   Y   Y   Y   Y
+                             ^ find this boundary
+
+Binary search finds that boundary in about log(range) tests.
+
+A CONCRETE EXAMPLE - Koko eating bananas. There are piles of bananas and h hours
+available. At a chosen speed of k bananas per hour, each pile takes ceiling(pile
+divided by k) hours. Find the smallest k that finishes within h hours.
+
+The answers run from 1 to the largest pile. The test "can she finish at speed k?"
+is monotone: if she can manage at speed 5, she can certainly manage at 6. So
+binary search the SPEED, not any list. Each test costs one pass over the piles, so
+the total is O(n log(max pile)) - trivial, where trying every speed one by one
+would be hopeless.
+
+THE RECOGNITION RULE, worth memorising: when a problem asks for the MINIMUM value
+that works, or the MAXIMUM value that still works, and you can cheaply TEST a
+single candidate, binary search the answer.
+
+Other examples of the same shape: the smallest ship capacity to ship packages in d
+days; the minimum largest sum when splitting an array into k parts; the smallest
+divisor keeping a sum under a threshold.
+
+The code is the same three lines - the only change is that "a[mid] == target"
+becomes "does mid pass the test", and instead of returning immediately you record
+mid and keep narrowing toward the boundary.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a range of positions that could still hold
+the target, look at its middle, and throw away whichever half cannot contain it.
+
+There is no recursion in this version - a single loop - so nothing piles up on the
+call stack. The loop ends when the range becomes empty, which is also the
+"not found" answer.
+
+The steps:
+
+  1. Set two markers to the two ends of the list: lo at the first position, hi at
+     the last. Read them as "the answer, if it exists, lies between these two
+     inclusive".
+
+  2. Repeat while lo has not passed hi - meaning while the range still contains at
+     least one position. It must be "not passed", allowing lo and hi to be equal,
+     because a one-item range still needs checking.
+
+  3. Work out the middle position by adding the two markers and halving, throwing
+     away any fraction.
+
+  4. Look at the item there. If it IS the target, you are done - return that
+     position.
+
+  5. If it is SMALLER than the target, then the target - if present - must be to
+     the right, because everything from the middle leftwards is smaller still. So
+     move lo to just past the middle.
+
+  6. If it is BIGGER, the target must be to the left, so move hi to just before
+     the middle.
+
+     In both cases, "just past" and "just before" matter: the middle has been
+     examined and ruled out, so it must be excluded from the next range. Leaving
+     it in can make the range stop shrinking and the loop run forever.
+
+  7. If the loop ends without a match, the range became empty and the target is
+     not in the list. Return -1.
+
+Every round either finds the answer or halves the range, which is why about twenty
+rounds suffice for a million items.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code keeps track of a stretch of the list that could still contain the number
+it is looking for. At the start that stretch is the whole list.
+
+Each round it looks at the item in the middle of that stretch and asks one
+question: is this the number I want, is it too small, or is it too big?
+
+If it is the number, the search is over.
+
+If it is too small, then the number - if it is here at all - must lie to the right,
+because the list is sorted and everything from the middle leftwards is smaller
+still. So the whole left half, and the middle itself, are discarded without ever
+being examined.
+
+If it is too big, the same reasoning discards the right half.
+
+Either way the stretch shrinks to about half its size, and the round repeats. From
+a million items that takes roughly twenty rounds to reach a single item.
+
+The moment the two markers cross - meaning the stretch has become empty - there is
+nowhere left the number could be hiding, so it is not in the list.
+
+The one thing to keep hold of while reading it: the middle item is EXAMINED and
+then EXCLUDED from the next stretch. It has been ruled out, so keeping it would be
+wasted work at best, and at worst would stop the stretch shrinking and leave the
+loop spinning forever.""",
+
+    """8. THE CODE, line by line.
+
+Keep a = [-1, 0, 3, 5, 9, 12] beside you, searching for 9 - the answer is
+position 4.
+
+    lo, hi = 0, len(a) - 1
+The two ends of the stretch being searched, INCLUSIVE at both ends. hi is the last
+valid position, which is one less than the length. On an empty list this makes hi
+equal to -1, so the loop below never runs - which is exactly the right behaviour
+and needs no special case.
+
+    while lo <= hi:
+Keep going while the stretch still holds at least one position. The "or equal" is
+essential: when lo and hi are the same there is one item left and it might be the
+answer. Writing "<" instead skips it, and a one-item list always returns -1 - see
+section 3.
+
+    mid = (lo + hi) // 2
+The middle position. The double slash is whole-number division, throwing away any
+fraction, so a stretch of two items rounds DOWN to the left one. That downward
+rounding is part of what guarantees the stretch always shrinks.
+
+In a language with fixed-size integers you would write lo + (hi - lo) // 2 to
+avoid lo + hi overflowing. Python's integers grow as needed, so it is safe here.
+
+    if a[mid] == target:
+        return mid
+Found it. Note this returns SOME position holding the target, not necessarily the
+first if there are duplicates - see case 3 in section 4.
+
+    if a[mid] < target:
+        lo = mid + 1
+The middle is too small, so the target can only be to the right - everything from
+the middle leftwards is smaller still. Move lo to just past the middle.
+
+The "+ 1" is not cosmetic. The middle has been examined and ruled out, so it must
+leave the stretch. Writing "lo = mid" keeps it in, and on a two-item stretch the
+calculation can produce the same mid again forever - a hang, not a crash.
+
+    else:
+        hi = mid - 1
+The mirror image: the middle is too big, so search the left, excluding the middle.
+
+    return -1
+The loop ended, meaning lo passed hi and the stretch became empty. There is
+nowhere left for the target to be, so it is absent. The empty stretch IS the
+not-found condition; no separate check is needed.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    a = [ -1,  0,  3,  5,  9,  12 ]
+    pos    0   1   2   3   4    5
+
+SEARCHING FOR 9:
+
+  lo = 0, hi = 5
+  ROUND 1: 0 <= 5, so run.
+    mid = (0 + 5) // 2 = 2       a[2] = 3
+    3 == 9? No.  3 < 9? Yes -> the target is to the right.
+    lo = 3.        stretch is now positions 3..5
+  ROUND 2: 3 <= 5, so run.
+    mid = (3 + 5) // 2 = 4       a[4] = 9
+    9 == 9? YES -> return 4.
+
+Two probes on a six-item list. Correct.
+
+SEARCHING FOR 2 (which is absent):
+
+  lo = 0, hi = 5
+  ROUND 1: mid = 2, a[2] = 3.  3 < 2? No -> go left.  hi = 1.
+           stretch is 0..1
+  ROUND 2: 0 <= 1, run.  mid = (0+1)//2 = 0.  a[0] = -1.
+           -1 < 2? Yes -> go right.  lo = 1.
+           stretch is 1..1 - a single item, and the "or equal" is what lets it be
+           checked at all.
+  ROUND 3: 1 <= 1, run.  mid = 1.  a[1] = 0.
+           0 < 2? Yes -> go right.  lo = 2.
+           stretch is 2..1 - lo has passed hi, so it is empty.
+  CHECK: 2 <= 1? No -> loop ends.
+  return -1.  Correct.
+
+Watch the stretch sizes: 6 items, then 2, then 1, then 0. Every round it shrank,
+which is what guarantees termination.
+
+THE ONE-ITEM LIST, a = [5], searching for 5:
+  lo = 0, hi = 0.  Is 0 <= 0? YES -> run.  mid = 0.  a[0] == 5 -> return 0.
+  Written with "<" instead of "<=", the loop would never run and this would return
+  -1 - the single most common binary-search bug, visible in three lines.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(log n). Each round halves the stretch, so the number of rounds is the
+number of times you can halve n before reaching 1 - about 20 for a million items,
+about 30 for a billion. In plain words: the work barely grows at all as the data
+gets bigger, which is why binary search is one of the highest-leverage ideas in
+the whole subject.
+
+SPACE: O(1) - constant. Two markers and a middle, regardless of the list's size.
+Note the recursive version of binary search is O(log n) space instead, because it
+stacks one paused call per round; the loop version has no such cost and is the one
+to write by default.
+
+THE #1 MISTAKE - writing "while lo < hi" instead of "<=". The stretch is inclusive
+at both ends, so when the two markers meet there is still one item to check.
+Getting this wrong makes the code return -1 for an item that is present, and it
+shows up most obviously on a one-item list. If you remember one thing about
+implementing binary search, remember that the range is inclusive and the loop
+condition must allow lo == hi.
+
+A close second: writing "lo = mid" or "hi = mid" instead of mid + 1 and mid - 1.
+The examined middle stays in the stretch, the stretch stops shrinking, and the
+program hangs rather than crashing - which makes it much harder to spot.
+
+IN PRACTICE, do not hand-write this. Python's bisect module gives you
+bisect_left and bisect_right, which are correct, fast, and answer the boundary
+questions from case 5 directly. Hand-write it in an interview to show you can;
+reach for bisect in real code.
+
+ONE-SENTENCE TAKEAWAY: keep an inclusive stretch of positions that could still
+hold the answer, examine its middle, and throw away the middle along with the half
+that cannot contain the target - and remember the same machine works on an
+imaginary list of candidate answers whenever a test flips from no to yes exactly
+once.""",
 ]
 
 _EX_P0E["Binary Tree Level Order Traversal"] = [
