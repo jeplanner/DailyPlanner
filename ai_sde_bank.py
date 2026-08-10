@@ -32227,6 +32227,118 @@ Find Peak Element. Recognising a mountain as 'two monotone runs' is what makes
 all of them approachable.""",
 ]
 
+_EX_P1M["Valid Perfect Square"] = [
+    """The search, traced.
+n = 16: lo 1, hi 16. mid 8, 64 > 16 -> hi 7. mid 4, 16 == 16 -> True.
+n = 14: mid 7, 49 > 14 -> hi 6. mid 3, 9 < 14 -> lo 4. mid 5, 25 > 14 -> hi 4.
+mid 4, 16 > 14 -> hi 3. lo 4 > hi 3 -> exit -> False.
+Note the difference from Sqrt(x): that problem returns the FLOOR of the root
+and so keeps a candidate; this one only needs a yes/no, so it can return True
+on an exact hit and False when the range empties.""",
+
+    """Why hi can start at n // 2 + 1 instead of n.
+For n >= 4 the root is at most n/2, so half the range is wasted. Starting at
+n // 2 + 1 (the +1 keeps n = 4 in range, since 4//2 = 2 is exactly the root)
+saves one iteration - trivial, but it is the kind of bound-tightening an
+interviewer may ask about.
+The guard for n < 2 still matters: 0 and 1 are perfect squares, and with hi = 0
+the loop would never run and return False for n = 1. Any tightening of the
+bounds must be paired with the matching base case.""",
+
+    """The overflow footnote, which is the practical content here.
+mid * mid overflows a 32-bit int in C++ or Java once mid exceeds about 46,341,
+and n can be up to 2^31 - 1. The result is a negative product, the comparison
+goes the wrong way, and the search returns nonsense on large inputs only.
+Fixes: use a 64-bit type, or compare `mid <= n // mid` which avoids the
+multiplication entirely. Python's arbitrary-precision integers hide the problem,
+so it is worth raising unprompted - it signals you are reasoning about the
+algorithm rather than about your interpreter.""",
+
+    """The Newton's method alternative, which is genuinely faster.
+    r = n
+    while r * r > n: r = (r + n // r) // 2
+    return r * r == n
+Converges quadratically - roughly 5 iterations for a 64-bit input against about
+31 for binary search. The loop invariant is that r is always an over-estimate
+that shrinks toward the floor of the root.
+Worth naming as the better algorithm while presenting binary search as the one
+you would write under pressure, since its correctness is easier to argue.""",
+
+    """The arithmetic-series curiosity, for completeness.
+Every perfect square is the sum of the first k odd numbers: 1 = 1, 4 = 1+3,
+9 = 1+3+5, 16 = 1+3+5+7. So subtracting successive odd numbers until you hit
+zero or go negative also decides the question - in O(sqrt n), which is worse
+than binary search but requires no multiplication at all.
+It is a nice observation rather than a practical answer; mention it only if the
+interviewer seems interested in the number theory.""",
+
+    """Edge cases and complexity.
+n = 0 -> a perfect square (0 = 0^2); the code as written starts lo at 1 and
+returns False, so 0 needs a guard if the constraints allow it.
+n = 1 -> True. n = 2, 3 -> False.
+n = 2147395600 (46340^2) -> True, and it is exactly the value where a 32-bit
+mid*mid is about to overflow.
+Time O(log n), space O(1). No preprocessing, no allocation.""",
+]
+
+_EX_P1M["Word Pattern"] = [
+    """The bijection, traced on both outcomes.
+pattern 'abba', s 'dog cat cat dog' -> pairs (a,dog), (b,cat), (b,cat), (a,dog).
+No conflict in either direction -> True.
+pattern 'abba', s 'dog cat cat fish' -> the final pair is (a,fish), but
+char_to_word already has a -> dog -> return False.
+pattern 'abba', s 'dog dog dog dog' -> pair (b,dog), but word_to_char already
+has dog -> a -> False. That REVERSE conflict is the one a single map misses,
+and it is the same failure as in Isomorphic Strings.""",
+
+    """Why this is Isomorphic Strings with words instead of characters.
+Identical structure: walk two sequences in lockstep, maintain forward and
+reverse maps, reject any inconsistency in either. The only differences are
+splitting s into tokens and the length check comparing len(pattern) against the
+WORD COUNT rather than the string length.
+Recognising the pair means you write it from memory and spend your time on the
+edge cases instead - which is the practical payoff of learning problems by
+family rather than individually.""",
+
+    """The length check, and the subtle bug it prevents.
+`if len(pattern) != len(words): return False` is mandatory because zip stops at
+the shorter sequence. Without it, pattern 'abc' with s 'dog cat' would examine
+only two pairs, find no conflict, and return True.
+Note it must compare against len(WORDS), not len(s) - comparing the pattern
+length to the character length of s is a real and easy mistake that happens to
+work on some inputs.""",
+
+    """The whitespace trap in splitting.
+`s.split()` with no argument splits on ANY run of whitespace and discards empty
+tokens, so 'dog  cat' (two spaces) gives ['dog','cat'] - almost certainly what
+you want. `s.split(' ')` gives ['dog','','cat'], introducing a phantom empty
+word that breaks the length check.
+Leading or trailing spaces have the same asymmetry. Prefer the no-argument form
+unless the prompt explicitly defines single-space separation, and say why.""",
+
+    """Edge cases.
+Both empty: pattern '' and s '' -> words is [], lengths match at 0 -> True
+vacuously.
+Single pair 'a' / 'dog' -> True.
+'a' / 'dog cat' -> length mismatch -> False.
+A letter mapping to a word that equals another letter's word - the reverse-map
+case above - is the one to test deliberately.
+A word may map to a letter identical to itself in spelling with no issue; the
+two namespaces are separate, so pattern 'a' with word 'a' is fine.""",
+
+    """Complexity and the family.
+O(n) time where n is the number of words, plus the cost of splitting the
+string. Space O(k) for k distinct words - and here it is genuinely O(k) rather
+than O(1), because words are unbounded in a way that a 26-letter alphabet is
+not.
+The family: Isomorphic Strings (characters), Find and Replace Pattern (this
+check applied across a word list), Group Anagrams and Group Shifted Strings
+(canonical form instead of a mapping). The alternative approach for all of them
+is to normalise both sides to a first-occurrence-index pattern - 'abba' and
+'dog cat cat dog' both become [0,1,1,0] - and compare. Two maps or one
+canonical form; both correct, and the maps are easier to defend.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1M:
         _e["examples"] = _EX_P1M[_e["title"]]
