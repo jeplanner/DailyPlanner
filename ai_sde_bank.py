@@ -31810,6 +31810,185 @@ This entry is the template the rest are variations of, so it is worth being
 able to write from memory without hesitation.""",
 ]
 
+_EX_P1L["Search in a Binary Search Tree"] = [
+    """The descent, traced.
+BST 4 -> (2 -> (1, 3), 7), searching for 2.
+At 4: 2 < 4 -> go left. At 2: found -> return the subtree rooted at 2, i.e.
+2 -> (1, 3).
+Searching for 5: at 4, 5 > 4 -> right. At 7, 5 < 7 -> left, which is None ->
+return None.
+Note the function returns the NODE, not a boolean - so the caller receives the
+whole subtree hanging below it, which is what makes this composable with
+further BST operations.""",
+
+    """Why this is O(h) and not O(n).
+The BST invariant means that at every node you can discard an entire subtree
+without looking at it: if the target is smaller than the current value, nothing
+in the right subtree can match, because everything there is larger. So each
+comparison halves the remaining search space in a balanced tree.
+That is the whole value of a BST over an unsorted tree, and it is the sentence
+to say: 'the ordering lets me eliminate half the tree per comparison'. A
+candidate who writes a full traversal here has produced a correct answer that
+ignores the data structure.""",
+
+    """The iterative form, and why it is preferable.
+The recursive version is three lines and costs O(h) stack. The loop above costs
+O(1) space and cannot blow the stack on a degenerate tree.
+    while root and root.val != val:
+        root = root.left if val < root.val else root.right
+    return root
+The condition does double duty: it stops on a match AND on falling off the
+bottom, so the single return handles both outcomes. Whenever a recursion is
+purely TAIL recursive - nothing happens after the recursive call - it converts
+to a loop mechanically like this, which is worth naming as the general
+transformation.""",
+
+    """Edge cases.
+Empty tree -> the while condition fails immediately -> None.
+Value at the root -> loop does not run -> the whole tree.
+Value absent -> descent runs off a leaf -> None.
+A single-node tree, matching or not -> handled by the same two cases.
+Duplicates: standard BSTs assume distinct values. If duplicates were allowed
+you would need a convention (all equal values to the left, say) and this search
+would return the first one encountered - worth asking, since the prompt usually
+guarantees uniqueness precisely to avoid the question.""",
+
+    """The degenerate-tree caveat, which applies to every BST operation.
+Insert 1,2,3,4,5 into a BST in that order and it becomes a right-leaning linked
+list: h = n, so search degrades to O(n) and the ordering buys nothing.
+This is exactly why self-balancing trees exist - AVL and red-black trees do
+rotations on insert to keep h at O(log n), and that is the answer to 'what if
+the input is sorted?'. Naming the failure mode and its fix is more valuable
+than the search itself.""",
+
+    """The family: BST-guided descent.
+Insert into a BST (descend to the null slot and attach), Delete Node in a BST
+(the hard one - three cases, the two-child case replaced by the inorder
+successor), Closest BST Value (descend while tracking the best), Lowest Common
+Ancestor of a BST (descend while both targets are on the same side, and the
+split point IS the answer), Validate BST (descend carrying min/max bounds).
+Every one is 'walk down using the ordering'. Together with the fact that
+inorder traversal of a BST yields sorted order, that covers essentially the
+whole BST question set.""",
+]
+
+_EX_P1L["Sort Array By Parity"] = [
+    """The two-pointer partition, traced.
+nums = [3,1,2,4]. left 0, right 3.
+nums[0] = 3 is odd, nums[3] = 4 is even -> neither guard fires, so SWAP ->
+[4,1,2,3]. Pointers unchanged this iteration.
+nums[0] = 4 is even -> left = 1.
+nums[1] = 1 is odd, nums[2] = 2 is even -> swap -> [4,2,1,3]. left 1, right 2.
+nums[1] = 2 even -> left = 2. Now left == right -> stop.
+Result [4,2,1,3] - all evens before all odds. Any such arrangement is accepted,
+which is what licenses the swapping.""",
+
+    """Why the swap branch does NOT advance the pointers.
+After swapping, the element now at `left` is even and the one at `right` is
+odd - so the very next iteration advances both through the first two guards.
+Advancing inside the swap branch as well would work here, but writing it as
+three separate branches keeps each condition doing exactly one job and is
+harder to get wrong. The cost is one extra loop iteration per swap, which is
+irrelevant.""",
+
+    """Why 'any relative order' is what makes O(1) space possible.
+The prompt explicitly allows any ordering within the evens and within the odds.
+That is what licenses swapping distant elements. If it demanded STABILITY -
+evens in their original relative order, then odds in theirs - the two-pointer
+swap breaks, and you need either an O(n) output array or a much fiddlier
+in-place rotation.
+Always check for the word 'stable' or 'relative order preserved'; it is the
+difference between a five-line answer and a genuinely hard one.""",
+
+    """The alternative one-liners, and their cost.
+`sorted(nums, key=lambda x: x % 2)` is correct, stable, and O(n log n) - using
+a full sort for a two-way partition.
+`[x for x in nums if x%2==0] + [x for x in nums if x%2==1]` is O(n) time but
+O(n) space and two passes.
+The two-pointer version is O(n) time and O(1) space in a single pass. Presenting
+all three and saying why you chose the last is a better answer than producing
+only one - it shows you know the trade rather than one trick.""",
+
+    """Edge cases.
+Empty or single element -> `left < right` is false immediately, returned
+unchanged.
+All even [2,4,6] -> the left guard advances all the way, no swaps.
+All odd [1,3,5] -> the right guard retreats all the way, no swaps.
+Zero is EVEN - `0 % 2 == 0` - which is correct and is the kind of thing worth
+confirming out loud since people hesitate.
+Negative odds: in Python `-3 % 2` is 1, so the parity test works for negatives;
+in C or Java it would be -1, so `% 2 == 1` FAILS there and you must write
+`% 2 != 0`. A genuinely useful cross-language footnote.""",
+
+    """Complexity and the family.
+O(n) time - each pointer moves monotonically toward the other, so the total
+work is one pass - and O(1) space.
+The family is partitioning: Move Zeroes (stable version, slow/fast pointers),
+Sort Colors (three-way Dutch National Flag, one pass), Partition Array
+According to a Pivot, and Quicksort's partition step, which is this exact
+operation and the reason it is worth being fluent in. Two-way partition with
+converging pointers, three-way when there is a middle category.""",
+]
+
+_EX_P1L["Sqrt(x) — integer square root (binary search)"] = [
+    """The search, traced on x = 8.
+lo 1, hi 4 (x//2). mid 2, 4 <= 8 -> ans 2, lo 3.
+mid 3, 9 > 8 -> hi 2. Now lo 3 > hi 2 -> exit, return 2.
+Correct: floor(sqrt(8)) = 2.
+x = 16: mid 4, 16 <= 16 -> ans 4, lo 5. mid 6, 36 > 16 -> hi 5. mid 5, 25 > 16
+-> hi 4. lo 5 > hi 4 -> return 4.
+The `ans` variable holds the best candidate seen so far, which is what makes
+this a search for a FLOOR rather than for an exact match.""",
+
+    """Why hi starts at x // 2, and why that needs the x < 2 guard.
+For x >= 4, sqrt(x) <= x/2, so half the range is a free optimisation. But for
+x = 1 that upper bound is 0, and the range [1, 0] is empty - so the function
+would return the initial ans of 1 by luck rather than by logic, and for x = 0
+it would return 1, which is wrong.
+Hence `if x < 2: return x`, handling 0 and 1 directly. Starting hi at x avoids
+the special case entirely at the cost of one extra iteration; either is fine as
+long as you know why the guard is there.""",
+
+    """The floor semantics, which is the whole problem.
+There is no integer whose square is 8, so the answer is the LARGEST integer
+whose square does not exceed 8. Two equivalent implementations: keep an `ans`
+updated whenever mid*mid <= x (as here), or drop `ans` and return `hi` after
+the loop, since hi ends on exactly that value.
+Both are correct; the `ans` version is easier to explain and the `hi` version
+is shorter. What is NOT correct is returning lo, which ends one past the
+answer.""",
+
+    """Why not float sqrt, which is the point of the exercise.
+`int(math.sqrt(x))` is right for small x and WRONG for large: doubles have 53
+bits of mantissa, so for x above about 2^52 the square root cannot be
+represented exactly and the truncation can land one below the true value.
+Concretely, int(math.sqrt(999999999999999999)) can differ from the exact
+integer root. Production code either binary-searches or computes the float root
+and then adjusts by +/-1 with an exact integer check. That precision argument
+is the real answer to 'why not just use sqrt?'.""",
+
+    """Edge cases.
+x = 0 -> guard -> 0. x = 1 -> guard -> 1. x = 2 -> lo 1, hi 1, mid 1, 1 <= 2 ->
+ans 1, lo 2 -> exit -> 1.
+x = 3 -> 1. x = 4 -> 2 exactly.
+A perfect square returns its exact root; one less returns root-1.
+Overflow: mid*mid can exceed 32-bit range in C or Java for large x - compare
+`mid <= x // mid` instead to avoid the multiplication. Python is immune, which
+is precisely why the footnote is worth making.""",
+
+    """Complexity and the family.
+O(log x) time - the range halves each step - and O(1) space.
+Newton's method converges faster in practice (quadratically): repeatedly set
+r = (r + x // r) // 2 until it stops decreasing, typically about 5 iterations
+for a 64-bit input versus ~31 for binary search. Worth naming as the
+alternative.
+The family is binary search on the ANSWER rather than on an array: Arranging
+Coins, Koko Eating Bananas, Capacity to Ship Packages Within D Days, Split
+Array Largest Sum, Valid Perfect Square. The cue is a monotonic predicate over
+a numeric answer - 'is k big enough?' - where you can test a candidate cheaply
+but cannot compute the answer directly.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1L:
         _e["examples"] = _EX_P1L[_e["title"]]
