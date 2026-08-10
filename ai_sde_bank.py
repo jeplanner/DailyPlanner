@@ -22357,55 +22357,118 @@ Two more notes:
 ]
 
 _EX_P0["Flood Fill"] = [
-    """The textbook case, traced.
-image = [[1,1,1],[1,1,0],[1,0,1]], start (1,1), new colour 2. Old colour is 1.
-DFS from (1,1): paint it 2, then visit its four neighbours.
-  (2,1) is 0 -> stop.  (0,1) is 1 -> paint, recurse.
-  (1,2) is 0 -> stop.  (1,0) is 1 -> paint, recurse.
-The fill spreads through every 1 connected orthogonally to the start.
-Result [[2,2,2],[2,2,0],[2,0,1]]. Note the bottom-right 1 is untouched - it
-touches the region only DIAGONALLY, and diagonals are not neighbours here.""",
+    """You already know this tool: the paint bucket.
 
-    """The edge case that causes infinite recursion if you skip the guard.
-image = [[0,0,0],[0,1,1]], start (0,0), new colour 0.
-The starting cell is already the target colour. Without the early return, you
-paint (0,0) with 0 - which changes nothing - then recurse to a neighbour that
-is also 0, which recurses back to (0,0), which still matches, forever.
-The two-line guard "if old == new: return image" at the top is not defensive
-padding; it is the termination condition.""",
+Open any drawing program, pick the paint-bucket icon, click inside a shape, and
+the whole connected area of that colour turns into your new colour. It stops at
+the edges. That is exactly this problem.
 
-    """A single-cell region.
-image = [[1,0],[0,1]], start (0,0), new colour 3.
-The starting cell has no orthogonal neighbour of the same colour, so the fill
-paints exactly one cell: [[3,0],[0,1]].
-Worth tracing because it confirms the recursion terminates immediately at the
-bounds and colour checks rather than relying on any region-size logic.""",
+Now on a grid of numbers, where each number is a colour:
 
-    """The case that shows why repainting IS the visited mark.
-Consider a 3x3 block of all 1s filled with 2. Cell (1,1) is reachable from all
-four of its neighbours. When the first neighbour paints it 2, every later visit
-finds a cell whose colour is 2 - not the old colour 1 - and returns
-immediately.
-Without mutation you would need a separate visited set. Because you are allowed
-to modify the grid, the recolour does both jobs. That trick reappears in
-Number of Islands (sinking land to water) and is worth carrying.""",
+        column:  0  1  2
+    row 0:       1  1  1
+    row 1:       1  1  0
+    row 2:       1  0  1
 
-    """The scale case that breaks the recursive version.
-A 1000 x 1000 image that is entirely one colour. The DFS recursion depth can
-reach a million frames, and Python's default limit is around 1,000 - you get a
-RecursionError, not a wrong answer.
-Fix: an explicit stack (same algorithm, your own list) or a BFS queue. Say this
-unprompted when the interviewer mentions large inputs; it is the standard
-follow-up and it separates people who have run this on real data.""",
+You click on row 1, column 1 - written (1,1) - and choose colour 2. The cell
+you clicked currently holds 1, so 1 is the OLD colour: every 1 connected to
+your click should become a 2.""",
 
-    """The real-world version.
-This is the paint-bucket tool in every image editor, and the same routine backs
-magic-wand selection (with a colour TOLERANCE instead of exact equality),
-region labelling in computer vision, and territory-capture logic in games.
-The tolerance variant is a good thing to mention: replace "colour equals old
-colour" with "colour is within a distance of the seed colour", and the rest of
-the algorithm is unchanged - which shows the structure is the part that
-matters.""",
+    """What 'connected' means, and doing it by hand.
+
+Connected means you can walk from one cell to the other stepping only UP, DOWN,
+LEFT or RIGHT - not diagonally. Those four are called the cell's NEIGHBOURS.
+
+Start at (1,1), which holds 1. Paint it 2. Then look at its four neighbours:
+    up    (0,1) holds 1 -> paint it, and look at ITS neighbours
+    down  (2,1) holds 0 -> different colour, stop here
+    left  (1,0) holds 1 -> paint it, and continue from there
+    right (1,2) holds 0 -> stop
+
+Keep spreading. The final grid:
+
+    row 0:       2  2  2
+    row 1:       2  2  0
+    row 2:       2  0  1
+
+Look at the bottom-right cell - it still holds 1. It touches the painted region
+only at a CORNER, and corners do not count as neighbours. That single cell is
+the thing to check in any test.""",
+
+    """The trick that saves you a whole extra grid.
+
+Normally when you explore a grid you must remember which cells you have already
+been to, or you will walk in circles forever - cell A sends you to B, and B
+sends you back to A.
+
+Here you get that for free. Once a cell is repainted from 1 to 2, it no longer
+matches the old colour, so any later visit looks at it, sees the wrong colour,
+and stops immediately. THE REPAINTING IS THE MEMORY.
+
+Picture a 3x3 block of 1s. The middle cell can be reached from all four of its
+neighbours. The first one paints it 2; the other three arrive, see a 2 rather
+than the 1 they are looking for, and turn back.
+
+This trick - change the data itself instead of keeping a separate list of
+visited places - shows up again in Number of Islands, where you 'sink' land
+into water as you count it. Worth carrying.""",
+
+    """The one input that hangs forever, and why.
+
+Try this: the grid is already all 0s, you click a 0, and you ask for the new
+colour to be... 0.
+
+Now the trick above breaks. You paint a cell 0, which changes nothing, so it
+still matches the old colour. You move to a neighbour, paint it 0, move back to
+the first cell - which STILL matches - and round you go, forever. The program
+does not crash; it just never finishes.
+
+The fix is two lines at the very top:
+
+    if old_colour == new_colour:
+        return image        # nothing to do
+
+That guard is not defensive tidying - it is the reason the program terminates
+at all. It is the single most common bug in this problem.""",
+
+    """What happens on a really big picture.
+
+Every time the function calls itself, the unfinished call is parked in memory.
+That pile of parked calls is the CALL STACK, and Python refuses to stack more
+than about 1,000 of them.
+
+Now imagine a 1000 x 1000 image that is entirely one colour - a million cells,
+all connected. The fill will try to go a million calls deep and the program
+stops with a 'RecursionError'. Note that this is not a wrong answer; it is a
+crash.
+
+The fix is to keep your own list of cells still to visit instead of relying on
+Python's call stack:
+
+    put the starting cell in a list
+    while the list is not empty:
+        take a cell out
+        if its colour is wrong, skip it
+        paint it, and add its four neighbours to the list
+
+Identical result, no depth limit. Mentioning this before you are asked is the
+thing that separates someone who has run this on a real image from someone who
+has only seen the exercise.""",
+
+    """Where this is actually used, and the one-line variant.
+
+Besides the paint bucket: the magic-wand selection tool, counting separate
+regions in a medical or satellite image, working out which territory a move
+captures in a board game, and finding connected blobs in computer vision.
+
+The magic wand is a nice variant to mention because it needs only one change.
+Instead of 'is this cell EXACTLY the old colour?', ask 'is this cell's colour
+CLOSE ENOUGH to the one I clicked?' - a tolerance. Everything else about the
+algorithm is untouched, which shows that the spreading structure, not the
+colour test, is the real content here.
+
+Speed: every cell is looked at a small fixed number of times, so the time is
+proportional to the number of cells - written O(rows x columns).""",
 ]
 
 _EX_P0["Invert a Binary Tree"] = [
