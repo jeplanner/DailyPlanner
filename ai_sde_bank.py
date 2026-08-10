@@ -27245,50 +27245,351 @@ number alone, the old best times it, or the old worst times it.""",
 ]
 
 _EX_P0C["Word Break (DP)"] = [
-    """The textbook case, traced.
-s = "leetcode", dict = {leet, code}. dp[0]=True.
-  i=4: j=0, dp[0] True and s[0:4]="leet" in dict -> dp[4]=True
-  i=8: j=4, dp[4] True and s[4:8]="code" in dict -> dp[8]=True
-Answer dp[8] = True.
-Read the array aloud: "dp[i] is true when the first i characters can be cut into
-dictionary words." Once you can say that sentence the loops write
-themselves.""",
+    """1. THE GOAL, in plain English.
 
-    """The case where greedy fails.
-s = "abcd", dict = {a, abc, b, cd}.
-Longest-match greedy takes "abc" first, leaving "d" which is not a word ->
-reports False.
-DP tries every cut: dp[1]=True ("a"), dp[2]=True ("a"+"b"), dp[4]=dp[2] and
-s[2:4]="cd" in dict -> True.
-Greedy commits to the longest first piece and cannot back out; DP considers
-every split point, so it cannot be trapped.""",
+You are given a string with no spaces in it, and a dictionary of allowed words.
+Can the string be chopped into a sequence of dictionary words, using the whole
+string and nothing else? Answer yes or no.
 
-    """A False case, to see the array stay dark.
-s = "catsandog", dict = {cats, dog, sand, and, cat}.
-dp[3]=True (cat), dp[4]=True (cats), dp[7]=True (cat+sand or cats+and).
-i=9: try every j - s[7:9]="og" not a word, s[4:9]="andog" no, s[3:9]="sandog" no.
-dp[9] stays False. Answer False.
-Notice how much of the array is True and the answer is still False - a common
-source of confusion.""",
+Imagine a sign where the spaces have worn off: LEETCODE. Given a dictionary
+containing "leet" and "code", you can read it as "leet code". So the answer is
+yes.
 
-    """Edge cases.
-Empty string -> dp[0] is True by definition, so True.
-A single-character word in the dict -> works.
-A dict word longer than s -> the slice simply never matches; no bounds error
-because j only ranges below i.""",
+Try a harder one by hand. s = "applepenapple", dictionary = {"apple", "pen"}.
 
-    """Why a set for the dictionary.
-Membership in a list is O(k) per check, and you do O(n^2) checks - so a
-1,000-character string with a 10,000-word dictionary becomes 10^10 operations.
-With a set each check is O(length of the slice). Converting the dictionary once,
-outside the loops, is the difference between passing and timing out.""",
+    apple | pen | apple
 
-    """The follow-up: Word Break II.
-That variant asks for ALL the sentences, not just whether one exists. It becomes
-backtracking with memoisation on the start index, and the output can be
-exponential - "aaaa...a" with dict {a, aa} produces a combinatorial explosion.
-Knowing that the II version cannot be polynomial because its OUTPUT is not
-polynomial is the right way to answer its complexity question.""",
+Every piece is in the dictionary and together they use the whole string. Yes.
+
+And one that fails. s = "catsandog", dictionary = {"cats","dog","sand","and",
+"cat"}.
+
+    cats | and | og    -> "og" is not a word. Dead end.
+    cat  | sand | og   -> same dead end.
+    cats | sandog?     -> not a word.
+    cat  | sandog?     -> not a word.
+
+Every route ends badly, so the answer is no. Notice something important in that
+last example: "cats and" looked promising and led nowhere, while "cat sand" also
+looked promising and led to the same dead end. Different beginnings, same
+leftover. Hold on to that - it is the key to the fast solution.
+
+Note the question asks only yes or no, not which words. That is what makes an
+efficient answer possible.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Try every way of cutting the string. At each position, for
+every dictionary word that matches starting there, chop it off and recursively
+ask whether the REST can be broken. If any choice works, the answer is yes.
+
+That is correct and easy to describe. It is also disastrously slow, and the
+reason is exactly what we noticed at the end of section 1: it re-solves the same
+leftover over and over.
+
+On "catsandog", both the route through "cats|and" and the route through
+"cat|sand" arrive at the leftover "og" and each asks, independently, "can 'og'
+be broken?" On a longer string the number of routes reaching the same leftover
+explodes, and the work becomes roughly 2 to the power of the length - O(2^n).
+
+THE UPGRADE - notice what actually matters. When you are standing partway
+through the string, the ONLY thing that affects whether the rest can be broken
+is HOW FAR ALONG YOU ARE. It makes no difference which words got you there.
+"cats|and" and "cat|sand" both leave you at position 7 facing "og", and the
+answer for position 7 is the same either way.
+
+So instead of tracking routes, track positions. Keep a row of true/false boxes,
+one per position:
+
+    box[i] = "can the first i characters be broken into dictionary words?"
+
+Box 0 is true - the empty string is trivially breakable, by using no words at
+all. Then work left to right: position i is reachable if there is some earlier
+position j that is reachable AND the chunk from j to i is a dictionary word.
+
+Each position is decided once and then reused by everyone who needs it. That is
+the whole upgrade, and it turns 2^n into roughly n-squared.""",
+
+    """3. THE TRICK - why box[0] must be true, and how truth travels.
+
+The seed box[0] = True is the load-bearing piece, and it is worth being sure why
+it is not a fudge.
+
+box[i] means "the first i characters can be broken". So box[0] means "the first
+ZERO characters can be broken" - that is the empty string, and it is breakable
+using no words at all. Vacuously true, and genuinely so.
+
+Now watch how truth spreads from it. Every other box is decided by looking
+backwards to an earlier box:
+
+    box[i] is true if some earlier box[j] is true AND s[j:i] is a word.
+
+The FIRST word of any valid breaking has to start at position 0. For that word,
+ending at position i, the earlier box being checked is box[0]. So without
+box[0] = True, no first word can ever be accepted, no box ever becomes true, and
+the answer is always no.
+
+Trace the spread on "leetcode" with {"leet","code"}:
+
+    box[0] = True                                  (seed)
+    box[4] = True  because box[0] is True and s[0:4] = "leet" is a word
+    box[8] = True  because box[4] is True and s[4:8] = "code" is a word
+
+The truth started at 0, hopped to 4 on the back of "leet", then hopped to 8 on
+the back of "code". Each hop needs a true landing point behind it - which is why
+the seed matters and why boxes are filled left to right, so that every box
+looked back at is already final.
+
+One more thing worth naming: boxes only ever go from false to true, never back.
+Once a position is known reachable it stays reachable - discovering more ways to
+reach it changes nothing.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - stopping at the first match. A tempting greedy idea: at each position
+take the first dictionary word that fits and move on. On "catsandog" that takes
+"cat", then "sand", then fails on "og", and reports no - which happens to be
+right. But on s = "aaaab" with dictionary {"a","aa","aaab"}, greedily taking "a"
+four times leaves "b" and fails, while "a" then "aaab" succeeds. Greedy has no
+way to reconsider. You must try EVERY split point, which is what the inner loop
+does.
+
+CASE 2 - the same word reused. s = "aaaa" with {"a"} is true, using "a" four
+times. Words may be reused any number of times, which is why nothing is ever
+marked as consumed. If the problem said each word could be used once, it would
+be a completely different and much harder question.
+
+CASE 3 - a word longer than the remaining string. When checking whether s[j:i]
+is a word, j never goes below 0 and i never exceeds the length, so the slice is
+always valid - Python slicing simply cannot run off the end here. No guard is
+needed.
+
+CASE 4 - the empty string. s = "" gives a row with a single box, box[0] = True,
+which is returned directly. True. Consistent with the reasoning in section 3.
+
+CASE 5 - a dictionary given as a list rather than a set. Checking "is this chunk
+a word?" against a LIST scans the whole list every time, which quietly multiplies
+the cost by the dictionary size. Convert to a set first, where the check is
+instant. On a big dictionary this is the difference between fast and unusable.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBSTRING: an unbroken run of characters taken out of the string. s[j:i] is
+Python for "the characters from position j up to but NOT including position i".
+So for s = "leetcode", s[0:4] is "leet" and s[4:8] is "code". The
+"up to but not including" convention is what makes the two slices join up
+perfectly with no overlap and no gap.
+
+DYNAMIC PROGRAMMING (DP): solving a problem by first solving smaller versions of
+it, writing the answers down, and building the bigger answers from the ones
+already written. Our row of boxes is the writing-down.
+
+The row is called dp in the code, and dp[i] means "can the first i characters be
+broken into dictionary words?"
+
+SET: a bag of items where "is this in here?" is answered instantly, no matter
+how many items it holds. The dictionary is turned into one for exactly that
+reason - see case 5.
+
+BOOLEAN: a value that is only ever true or false. Every box holds one.
+
+O(n^2 x k): the cost, where n is the length of the string and k is the average
+word length. In plain words: for each of the n positions you try up to n split
+points, and each try slices out a chunk and looks it up, which costs about k.
+For a string of a few hundred characters that is small. Section 10 explains how
+to cut it down further.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: for each position in the string, ask whether
+some earlier reachable position is joined to it by a single dictionary word -
+and the last position's answer is the answer.
+
+There is no recursion here, so nothing piles up on the call stack. What takes
+the place of a base case is the seeding of box 0, which is the one fact known
+for free.
+
+The steps:
+
+  1. Put the dictionary into a set, so that "is this chunk a word?" is instant
+     rather than a scan.
+
+  2. Make a row of true/false boxes, one for every position from 0 to the length
+     of the string INCLUSIVE - so length + 1 boxes, because you need a box for
+     "the whole string". Set them all to false.
+
+  3. Set box 0 to true: the empty prefix is breakable using no words.
+
+  4. Walk i from 1 up to the length of the string. Box i is asking "can the
+     first i characters be broken?"
+
+  5. For each i, try every split point j from 0 up to i - 1. Ask two things:
+       - Is box j true, meaning the first j characters can already be broken?
+       - Is the chunk from j to i a dictionary word?
+     If BOTH, then box i is true. Stop trying split points for this i - one way
+     is enough, since the question is only yes or no.
+
+  6. When the walk finishes, the answer is whatever the last box holds.
+
+Why left to right? Because deciding box i only ever looks at boxes to its LEFT,
+and going in this order guarantees those are already final. Any other order and
+you would be reading boxes that had not been decided yet.
+
+Why stop at the first success in step 5? Because the question is yes or no. If
+the problem asked for the actual list of words, or the number of ways, you would
+keep going and record more.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code works out, for every position in the string, whether everything up to
+that point can be chopped into dictionary words. It does this from left to
+right, so by the time it reaches any position, every earlier answer is already
+known and final.
+
+It starts by declaring position zero reachable - meaning the empty beginning of
+the string is trivially fine, since chopping nothing needs no words at all. That
+single true value is the seed everything else grows from.
+
+Then, for each position in turn, it asks a simple question: is there any earlier
+position that was already reachable, such that the chunk of text between there
+and here is a single dictionary word? If it finds one, this position is
+reachable too - the earlier part can be chopped up, and that one word finishes
+the job. It stops looking as soon as it finds one, because the question is only
+whether it is possible, not in how many ways.
+
+The clever thing about this shape is what it throws away. It never remembers
+which words were used or how it got to a position, because none of that affects
+what can be done from here. Two completely different routes that end up at the
+same position are the same situation, and get one answer between them instead of
+being explored separately.
+
+At the end it looks at the box for the very last position - "can the whole
+string be broken?" - and that is the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep s = "leetcode" with words {"leet","code"} beside you.
+
+    words = set(word_dict)
+Turn the dictionary into a set so that membership checks are instant. On a list
+each check would scan the whole dictionary - see case 5 in section 4. This one
+line can be the difference between a fast solution and a slow one.
+
+    dp = [False] * (len(s) + 1)
+The row of boxes, one for every position from 0 to the length INCLUSIVE. That
+"+1" is because you need a box for "the whole string" as well as one for each
+character boundary before it. For "leetcode" that is 9 boxes, numbered 0 to 8.
+
+    dp[0] = True
+The seed from section 3: the empty prefix is breakable using no words. Every
+true value in the finished row traces back to this one; leave it out and the row
+stays entirely false and the answer is always no.
+
+    for i in range(1, len(s) + 1):
+Walk the ending positions from 1 to the full length. dp[i] is asking "can the
+first i characters be broken?"
+
+    for j in range(i):
+Try every split point before i. j is where the LAST word would start; i is where
+it ends. Running j from 0 to i-1 covers every possible last word, from the whole
+prefix down to a single character.
+
+    if dp[j] and s[j:i] in words:
+The two-part test, and both halves are needed.
+  dp[j] - can everything before the split already be broken? If not, this split
+  is useless no matter what the chunk says.
+  s[j:i] in words - is the chunk from the split to here a single dictionary
+  word?
+If both hold, the first j characters break up AND one more word finishes the job
+to position i. Note dp[j] is checked first, which is not just tidy - Python stops
+at the first false condition, so a useless split skips the slicing work entirely.
+
+    dp[i] = True
+    break
+Record that position i is reachable, and stop trying split points. One working
+split is enough, because the question is yes or no. If the problem asked for the
+actual sentence, this is where you would record j instead of breaking, so you
+could walk back through the row afterwards.
+
+    return dp[len(s)]
+The last box: can the whole string be broken? For "leetcode", True.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+s = "leetcode"  (length 8), words = {"leet", "code"}
+
+    positions:  0  1  2  3  4  5  6  7  8
+    characters:   l  e  e  t  c  o  d  e
+
+Start: dp = [T, F, F, F, F, F, F, F, F]     (only dp[0] is true)
+
+i = 1  ("l")
+  j = 0: dp[0] is True, s[0:1] = "l" - not a word. No other j to try.
+  dp[1] stays False.
+
+i = 2  ("le")
+  j = 0: dp[0] True, s[0:2] = "le" - not a word.
+  j = 1: dp[1] is False - skip immediately, no slicing done.
+  dp[2] stays False.
+
+i = 3  ("lee")
+  j = 0: "lee" - not a word.  j = 1, 2: dp is False. dp[3] stays False.
+
+i = 4  ("leet")
+  j = 0: dp[0] is True, s[0:4] = "leet" - IS a word!
+  dp[4] = True, and break out of the j loop.
+  dp = [T, F, F, F, T, F, F, F, F]
+
+i = 5  ("leetc")
+  j = 0: "leetc" no.  j = 1,2,3: dp False.  j = 4: dp[4] is True, s[4:5] = "c" -
+  not a word. dp[5] stays False.
+
+i = 6, 7: same shape - the only true earlier box is dp[4], and s[4:6] = "co" and
+  s[4:7] = "cod" are not words. Both stay False.
+
+i = 8  ("leetcode")
+  j = 0: dp[0] True, s[0:8] = "leetcode" - not a word (only "leet" and "code"
+    are in the set).
+  j = 1, 2, 3: dp False - skipped.
+  j = 4: dp[4] is True, s[4:8] = "code" - IS a word!
+  dp[8] = True, break.
+  dp = [T, F, F, F, T, F, F, F, T]
+
+return dp[8] = True.
+
+The two true boxes at 4 and 8 are exactly the two hops described in section 3:
+truth started at 0, hopped to 4 on "leet", hopped to 8 on "code".""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n^2 x k), where n is the length of the string and k is the average word
+length. There are n ending positions, each trying up to n split points, and each
+try slices out a chunk - which costs about k to build and hash. For a string of
+300 characters that is well under a million steps.
+
+A worthwhile refinement: the inner loop does not need to try every j. The last
+word can be no longer than the longest word in the dictionary, so j only needs
+to go back that far. If the longest word is 10 characters, the inner loop runs
+10 times instead of n times, and the cost drops to O(n x L x k) where L is the
+longest word length. Mentioning that improvement is a strong signal - it shows
+you looked at what the loop is actually doing rather than just writing the
+textbook version.
+
+SPACE: O(n) for the row of boxes, plus the set holding the dictionary.
+
+THE #1 MISTAKE - using a list for the dictionary instead of a set. Every
+membership check then scans the whole dictionary, quietly multiplying the total
+work by its size. The code looks identical and runs orders of magnitude slower on
+a realistic dictionary. One call to set() fixes it.
+
+A close second: making the row n boxes long instead of n + 1, so dp[len(s)] is
+off the end. You need a box for every BOUNDARY, and a string of length n has
+n + 1 boundaries - one before each character and one after the last.
+
+ONE-SENTENCE TAKEAWAY: what matters is only how far along the string you are,
+not which words got you there - so keep one true/false answer per position, seed
+position zero as true, and let each position ask whether some earlier true
+position is joined to it by a single dictionary word.""",
 ]
 
 _EX_P0C["Word Search (backtracking)"] = [
@@ -28043,50 +28344,371 @@ you began with.""",
 ]
 
 _EX_P0C["Topological Sort (Kahn's algorithm)"] = [
-    """The textbook case, traced.
-5 nodes, edges 0->2, 0->3, 1->3, 2->4, 3->4.
-in-degrees: 0:0, 1:0, 2:1, 3:2, 4:2. Queue starts [0,1].
-  pop 0 -> order [0]; 2 drops to 0 (queue), 3 drops to 1
-  pop 1 -> order [0,1]; 3 drops to 0 (queue)
-  pop 2 -> order [0,1,2]; 4 drops to 1
-  pop 3 -> order [0,1,2,3]; 4 drops to 0 (queue)
-  pop 4 -> order [0,1,2,3,4]
-Length 5 = node count, so it is a valid order.""",
+    """1. THE GOAL, in plain English.
 
-    """The cycle case.
-3 nodes, edges 0->1, 1->2, 2->0. Every in-degree is 1, so the queue starts
-EMPTY, the loop never runs, and the order has length 0 != 3.
-Return the empty list to signal impossibility. Nodes in a cycle can never reach
-in-degree zero because each waits on another cycle member - which is why the
-length check is a complete cycle detector, not a heuristic.""",
+You have a set of tasks, and some of them must happen before others. Put them
+all in an order that never breaks a rule.
 
-    """The answer is not unique.
-For the first example, [0,1,2,3,4] and [1,0,3,2,4] are both valid.
-Whenever the queue holds more than one node, any of them may be taken. If the
-problem wants a deterministic or lexicographically smallest order, swap the
-queue for a min-heap - a one-line change worth knowing.""",
+Getting dressed is the classic example. You must put socks on before shoes, and
+trousers before shoes, but socks and trousers can go in either order relative to
+each other. "Socks, trousers, shoes" works. "Shoes, socks, trousers" does not.
 
-    """Edge cases.
-No edges at all -> every in-degree is 0, all nodes queue immediately, and any
-order is valid.
-A single node -> trivially ordered.
-A disconnected graph -> handled naturally, since the queue seeds from every
-zero-in-degree node regardless of component.""",
+A valid ordering like that is called a TOPOLOGICAL ORDER, and finding one is a
+TOPOLOGICAL SORT. Note it is usually not unique - "trousers, socks, shoes" is
+equally valid. Any order that breaks no rule is a correct answer.
 
-    """The direction bug that looks almost right.
-For an edge u -> v, it is v that gains an in-degree, because v is the one
-waiting.
-Incrementing u instead produces a REVERSED order, which passes symmetric test
-cases and fails real ones. Write one tiny example on paper before coding those
-two lines - it is the only place this algorithm goes wrong.""",
+The input is given as a list of arrows. An arrow u -> v means "u must come
+before v". Our example:
 
-    """Where it is used, and the DFS alternative.
-Course prerequisites, build systems compiling dependencies first, spreadsheet
-cell recalculation, package installation order, task scheduling with
-dependencies.
-The DFS alternative: post-order traversal, prepending each finished node, and
-detecting cycles with a recursion-stack marker. Same result; Kahn's is easier to
-reason about and naturally gives you the cycle check for free.""",
+    0 -> 2
+    1 -> 2
+    2 -> 3
+
+    0 ---\\
+          >-- 2 --> 3
+    1 ---/
+
+Read it as: task 2 needs both 0 and 1 done first, and task 3 needs 2 done first.
+So 0, 1, 2, 3 works. So does 1, 0, 2, 3. But 2, 0, 1, 3 does not, because 2
+jumped ahead of the things it depends on.
+
+And there is a case with no answer at all: if A must come before B and B must
+come before A, nothing can be first. That is a CYCLE, and the algorithm must
+detect it rather than produce nonsense.""",
+
+    """2. THE INTUITION - repeatedly take whatever is ready.
+
+The idea is exactly how you would do it by hand.
+
+Look for a task with NOTHING waiting on it - no unfinished prerequisites. Do
+that task. Cross it off. Now some other tasks may have just become ready,
+because the thing they were waiting for is done. Look again, do another. Repeat
+until everything is done.
+
+That is the whole algorithm, and it has a name: KAHN'S ALGORITHM.
+
+To make "has nothing waiting on it" cheap to check, we count arrows pointing IN
+to each task. That count is called the IN-DEGREE:
+
+    task 0:  in-degree 0    (nothing points at it)
+    task 1:  in-degree 0
+    task 2:  in-degree 2    (arrows from 0 and from 1)
+    task 3:  in-degree 1    (arrow from 2)
+
+A task is ready exactly when its in-degree is 0. So:
+
+  Start by collecting every task whose in-degree is already 0 - those are the
+  ones with no prerequisites at all. Put them in a waiting line.
+
+  Take one out, add it to the answer. For each task it points at, subtract one
+  from that task's in-degree, because one of its prerequisites has just been
+  satisfied. If a count drops to 0, that task has become ready - put it in the
+  line.
+
+  Keep going until the line is empty.
+
+No searching, no backtracking. Each task enters the line exactly once, at the
+moment it becomes ready.
+
+There is no simpler-but-slower version worth writing here. The naive
+alternative - repeatedly scan every task looking for one with no unmet
+prerequisites - is the same idea done inefficiently: it costs a full scan per
+task, so tasks times tasks, instead of just counting down as you go.""",
+
+    """3. THE TRICK - how the same algorithm detects a cycle for free.
+
+Now the impossible case. Suppose the rules say 0 -> 1, 1 -> 2, and 2 -> 0. Draw
+it and you get a ring:
+
+    0 --> 1 --> 2
+    ^           |
+    |___________|
+
+Every task has in-degree 1, so nothing is ready at the start. The waiting line
+begins empty, the loop never runs, and the answer list comes out empty.
+
+That is the detection, and it costs nothing extra. Compare the LENGTH of the
+answer with the number of tasks:
+
+  - Same length: every task made it out, so a valid order was found.
+  - Shorter: some tasks never became ready, which can only happen if they are
+    waiting on each other in a ring. There is a cycle, and no valid order
+    exists.
+
+Why is that reasoning airtight? A task only fails to appear if its in-degree
+never reached 0. Its in-degree only goes down when one of its prerequisites is
+output. So a task left behind is waiting on another task that was also left
+behind - and following that chain of "waiting on" through a finite set of tasks
+must eventually come back to a task you have already seen. That is a cycle.
+
+So one length comparison at the end distinguishes "here is your order" from
+"this is impossible", with no separate cycle-detection pass. Returning an empty
+list is the usual way to signal it; some versions return a flag instead.
+
+A graph with arrows and no cycles has a name you should use: a DAG, short for
+DIRECTED ACYCLIC GRAPH. Directed because the arrows have a direction, acyclic
+because there are no rings. Topological sort is only defined on a DAG - which is
+exactly what the length check is verifying.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - counting the wrong end of the arrow. For an arrow u -> v, it is v's
+in-degree that goes up, not u's. Getting this backwards produces an order that
+is exactly reversed, and it will pass any test where the rules happen to be
+symmetric. Say it out loud as you write it: "the arrow points AT v, so v is the
+one being waited on."
+
+CASE 2 - tasks with no rules at all. n = 4 with edges only [[0,1]] means tasks 2
+and 3 have no prerequisites and nothing depends on them. They have in-degree 0,
+so they go into the line at the start and appear in the answer. Building the
+in-degree list with one slot per task - rather than only for tasks that appear
+in the edge list - is what makes this work.
+
+CASE 3 - assuming the answer is unique. With 0 -> 2 and 1 -> 2, both "0,1,2"
+and "1,0,2" are correct. If a test compares your output against one expected
+list, it is testing an implementation detail, not correctness. The right test is
+"does every arrow point forwards in this order?"
+
+CASE 4 - decrementing more than once. Each arrow must be walked exactly once. If
+the same edge appears twice in the input, the count goes down twice and a task
+can be released before it should be. If duplicate edges are possible, remove
+them first.
+
+CASE 5 - forgetting the length check. Without it, a graph with a cycle silently
+returns a PARTIAL order, which looks like a valid answer and is not. That is the
+worst kind of bug: plausible output, quietly wrong.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+GRAPH, NODE, EDGE: a graph is things plus connections. Each thing is a node;
+each connection is an edge. Here the edges are DIRECTED - they have a direction,
+drawn as an arrow.
+
+IN-DEGREE: how many arrows point AT a node. Defined in section 2, and it is the
+whole bookkeeping of this algorithm.
+
+ADJACENCY LIST: a lookup table with one entry per node holding the nodes it
+points at. We build it because the input arrives as a flat list of pairs, and
+answering "what does 2 point at?" from a flat list would mean scanning every
+pair. One table, built in a single pass, makes it instant.
+
+QUEUE: a waiting line - join at the back, leave from the front, first in first
+out. Python's deque ("deck") is used because removing from the front of an
+ordinary list is slow: it shuffles every remaining item along. A deque does it
+in one step.
+
+BFS - BREADTH-FIRST SEARCH: exploring in rings rather than diving deep. Kahn's
+algorithm is BFS-shaped because it uses a queue; the "ring" here is "everything
+that became ready at the same time".
+
+DAG - DIRECTED ACYCLIC GRAPH: arrows, no rings. Defined in section 3.
+
+O(V + E): the cost, where V is the number of nodes (vertices) and E the number
+of edges. In plain words: the work grows in step with the size of the graph -
+each node is queued and dequeued once, each arrow is walked once. You cannot do
+better, since you must at least read the whole input.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: count how many prerequisites each task is
+waiting on, start with the ones waiting on nothing, and every time you finish a
+task, tick one off the count of everything that depended on it.
+
+No recursion here - it is a loop driven by a queue - so nothing piles up on the
+call stack. The queue empties when no task is ready, which is what ends the
+loop.
+
+The steps:
+
+  1. Build a lookup table with an empty list for EVERY task from 0 to n-1, so
+     that tasks appearing in no rule are still present.
+
+  2. Make a count for every task, all starting at zero - the number of
+     prerequisites it is waiting on.
+
+  3. For each rule "u before v": record v in u's list, and add one to v's count.
+     Note carefully which end gets the count - it is v, the one being waited on.
+
+  4. Put every task whose count is already zero into a waiting line. These are
+     the tasks with no prerequisites; if the line starts empty, every task is
+     waiting on something and you already know there is a cycle.
+
+  5. While the line is not empty:
+       a. Take the task at the front and add it to the answer.
+       b. For each task it points at, subtract one from that task's count - one
+          of its prerequisites is now done.
+       c. If a count has just reached zero, that task is now ready: put it at
+          the back of the line.
+
+  6. When the line empties, compare the length of the answer with the number of
+     tasks. Equal means a valid order was found - return it. Shorter means some
+     tasks were stuck waiting on each other, so there is a cycle and no order
+     exists - return an empty list to signal that.
+
+Step 5c is where the whole thing is powered: a task is queued at the exact
+moment its last prerequisite is satisfied, and never before, so it can never be
+output too early.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first reorganises the rules into something it can work with. The rules
+arrive as a loose list of "this before that" pairs, so it builds two things in
+one pass: a lookup table saying, for each task, which tasks depend on it, and a
+tally for each task of how many things it is still waiting on.
+
+Then it lines up every task that is waiting on nothing at all. Those are the
+tasks that can be done immediately, and they are the starting point.
+
+Now it works through that line. It takes the task at the front, writes it into
+the answer, and then goes to everything that was waiting on it and ticks one off
+each of their tallies - because a prerequisite has just been completed. Any task
+whose tally has just reached zero has nothing left to wait for, so it joins the
+back of the line.
+
+That repeats until the line is empty. Notice nothing is ever searched for: a
+task appears in the line at the precise moment it becomes ready, and never
+before, so it can never be placed too early in the order.
+
+Finally the code checks whether every task actually made it into the answer. If
+some are missing, they were waiting on each other in a ring that nothing could
+break into - an impossible set of rules - so it hands back an empty list to say
+so.""",
+
+    """8. THE CODE, line by line.
+
+Keep n = 4 with edges 0->2, 1->2, 2->3 beside you.
+
+    graph = {i: [] for i in range(num_nodes)}
+The lookup table, with an empty list for EVERY task from 0 to n-1. Creating all
+of them up front - rather than only for tasks that appear in an edge - is what
+makes case 2 in section 4 work.
+
+    indegree = [0] * num_nodes
+One tally per task, all starting at zero: how many prerequisites is this task
+waiting on?
+
+    for u, v in edges:
+        graph[u].append(v)
+        indegree[v] += 1
+Read each rule once and record both halves of it. graph[u].append(v) says "when
+u is finished, v is one step closer". indegree[v] += 1 says "v is waiting on one
+more thing". Note it is v that gets the +1, never u - the arrow points at v, so
+v is the one being waited on. Getting that backwards reverses the whole answer.
+
+After this line, for our input: graph = {0:[2], 1:[2], 2:[3], 3:[]} and
+indegree = [0, 0, 2, 1].
+
+    queue = deque(i for i in range(num_nodes) if indegree[i] == 0)
+Collect every task that is ready right now. For us that is tasks 0 and 1. A
+deque is used because we take from the front repeatedly, which is slow on an
+ordinary list.
+
+If this line produces an EMPTY queue on a graph with nodes, every task is
+waiting on something - which is a cycle, and the loop below simply never runs.
+
+    order = []
+The answer being built.
+
+    while queue:
+Keep going while some task is ready. The loop ends when nothing more can become
+ready - either because everything is done, or because what remains is stuck in a
+cycle.
+
+    node = queue.popleft()
+    order.append(node)
+Take the task at the front and commit it to the answer. It is safe to commit
+because its tally reached zero, which means every rule pointing at it has been
+satisfied.
+
+    for nbr in graph[node]:
+        indegree[nbr] -= 1
+Everything that was waiting on this task is now waiting on one thing fewer.
+
+    if indegree[nbr] == 0:
+        queue.append(nbr)
+The moment a tally hits zero, that task has nothing left to wait for, so it
+joins the back of the line. This is the line that drives the whole algorithm -
+and the reason nothing ever has to be searched for.
+
+    return order if len(order) == num_nodes else []
+The cycle check from section 3, in one line. If every task made it into the
+answer, the order is valid. If some are missing they were stuck in a ring, so
+return an empty list to signal "impossible". Leaving this check out returns a
+partial order that looks plausible and is wrong.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+n = 4, edges = [[0,2], [1,2], [2,3]]
+
+BUILDING:
+  edge 0->2:  graph[0] = [2],  indegree = [0, 0, 1, 0]
+  edge 1->2:  graph[1] = [2],  indegree = [0, 0, 2, 0]
+  edge 2->3:  graph[2] = [3],  indegree = [0, 0, 2, 1]
+
+  graph = {0:[2], 1:[2], 2:[3], 3:[]}
+  indegree = [0, 0, 2, 1]
+
+STARTING LINE: tasks with indegree 0 are 0 and 1.
+  queue = [0, 1]     order = []
+
+ROUND 1.  pop 0.  order = [0]
+  0 points at 2:  indegree[2] goes 2 -> 1.  Not zero yet, so 2 stays out of the
+    line. Correct - 2 is still waiting on task 1.
+  queue = [1]
+
+ROUND 2.  pop 1.  order = [0, 1]
+  1 points at 2:  indegree[2] goes 1 -> 0.  NOW it is ready -> queue it.
+  queue = [2]
+
+ROUND 3.  pop 2.  order = [0, 1, 2]
+  2 points at 3:  indegree[3] goes 1 -> 0.  Ready -> queue it.
+  queue = [3]
+
+ROUND 4.  pop 3.  order = [0, 1, 2, 3]
+  3 points at nothing.
+  queue = []   -> loop ends.
+
+len(order) is 4, num_nodes is 4 -> equal, so return [0, 1, 2, 3].
+
+Check it against the rules: 0 before 2 (yes), 1 before 2 (yes), 2 before 3
+(yes). Valid. Note [1, 0, 2, 3] would have been equally valid - it depends only
+on which of 0 and 1 the queue hands out first.
+
+NOW THE CYCLE, edges = [[0,1], [1,2], [2,0]]:
+  indegree = [1, 1, 1] - every task is waiting on something.
+  queue starts EMPTY.
+  The while loop never runs. order = [].
+  len(order) is 0, num_nodes is 3 -> not equal, so return [].
+  The impossible case detected, with no extra code.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(V + E) - V for the number of tasks, E for the number of rules. Building
+the table reads each rule once. Each task is put into the line at most once and
+taken out at most once. Each rule is walked exactly once, when its source task
+is output. Add it up and the work is proportional to the size of the input,
+which is the best possible.
+
+SPACE: O(V + E). The lookup table holds one entry per rule, the tally list holds
+one number per task, and the queue holds at most all the tasks at once. Note
+there is no recursion, so no call stack to worry about - this version works on
+graphs of any depth, unlike a DFS-based topological sort which can overflow the
+stack on a long chain.
+
+THE #1 MISTAKE - incrementing the in-degree of the wrong node. For u -> v it
+must be v, the node the arrow points at, because v is the one waiting. Doing
+indegree[u] += 1 produces the exactly-reversed order, which passes any test
+whose rules happen to be symmetric and fails silently everywhere else. Say the
+sentence as you type it: "the arrow points at v, so v is waiting."
+
+A close second: omitting the final length check. A graph with a cycle then
+returns a partial list that looks like a real answer. Plausible-but-wrong output
+is worse than an error.
+
+ONE-SENTENCE TAKEAWAY: count how many things each task is waiting on, start
+with the ones waiting on nothing, and each time you finish a task tick one off
+everything that depended on it - anything still waiting at the end was in a
+cycle.""",
 ]
 
 _EX_P0C["Remove Nth Node From End of List"] = [
