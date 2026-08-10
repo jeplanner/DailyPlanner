@@ -23405,198 +23405,886 @@ for _e in ENTRIES:
 _EX_P0B = {}
 
 _EX_P0B["3Sum"] = [
-    """The textbook case, traced.
-nums = [-1,0,1,2,-1,-4] -> sorted [-4,-1,-1,0,1,2]
-i=0 (-4): lo=1 hi=5 -> -4-1+2=-3 <0, lo++ ... no triplet sums to 0.
-i=1 (-1): lo=2 hi=5 -> -1-1+2=0 HIT, record [-1,-1,2]. lo=3,hi=4 -> -1+0+1=0
-          HIT, record [-1,0,1].
-i=2 (-1): equals nums[1], SKIP - otherwise [-1,0,1] is emitted twice.
-i=3 (0):  0+1+2=3 >0, hi-- ... nothing.
-Answer [[-1,-1,2],[-1,0,1]].""",
+    """First, what is actually being asked - in plain words.
 
-    """The all-zeros case, which exposes duplicate handling.
-nums = [0,0,0,0]. Sorted, i=0: lo=1 hi=3 -> 0 HIT, record [0,0,0].
-Then lo advances while nums[lo]==nums[lo-1], so lo runs to hi and the inner loop
-ends. i=1 skips (equals nums[0]), and so on.
-Correct answer is exactly one triplet. Without either skip you get up to four
-copies of [0,0,0].""",
+You are handed a list of numbers. You must find every group of THREE numbers
+from that list that add up to exactly zero. And you must not report the same
+group twice.
 
-    """No solution at all.
-nums = [1,2,3]. Sorted, i=0: 1+2+3=6 > 0, hi-- , lo meets hi, done. Empty
-result.
-Also nums with fewer than 3 elements: the outer loop range is len-2, so it never
-runs. Both handled without special cases.""",
+Our list:
 
-    """The case that shows why sorting is the whole trick.
-Unsorted, you would need a hash-set approach per pair - O(n^2) with O(n) space
-and messy deduplication, because you cannot tell which duplicates you have
-already emitted.
-Sorted, the array gives you two things at once: a DIRECTION (sum too small ->
-move lo right, because everything right is larger) and ADJACENCY of duplicates
-(so the skip is a one-line neighbour comparison). Both come from the same
-O(n log n) sort.""",
+    nums = [-1, 0, 1, 2, -1, -4]
 
-    """A larger case, to see the pruning.
-nums = [-5,-4,-3,-2,1,2,3,4,5]
-i on -5: pointers find (-5,1,4) and (-5,2,3).
-i on -4: finds (-4,-1?no) ... (-4,1,3).
-Once nums[i] > 0 you could break entirely - if the smallest of three sorted
-numbers is positive, their sum cannot be zero. That early exit is not required
-but it is a good thing to mention; it turns many real inputs from O(n^2) into
-near-linear.""",
+Try it by hand for a moment. -1 + 0 + 1 = 0, so that is one group. -1 + -1 + 2
+= 0, so that is another. Anything else? No. So the answer is those two groups.
 
-    """The generalisation interviewers move to.
-4Sum: fix two indices in nested loops and two-pointer the rest - O(n^3).
-kSum: recurse, peeling one index per level down to the two-pointer base case -
-O(n^(k-1)).
-3Sum Closest: same sweep, but instead of testing for zero you track the smallest
-|sum - target| seen.
-3Sum Smaller: on a hit, add (hi - lo) at once and advance lo, because every
-partner between them also qualifies - the bulk-count trick.""",
+The obvious way to find them is to try every possible trio: pick a first
+number, pick a second, pick a third, add, check. With 6 numbers that is only 20
+trios. But with 1,000 numbers it is about 166 million trios, and with 10,000 it
+is over a hundred billion. Written as a formula that is n x n x n steps, usually
+written O(n^3) - "roughly n-cubed work". Far too slow.
+
+So we need a better idea. The better idea starts with SORTING.""",
+
+    """The trick: sort the list first, then use TWO POINTERS.
+
+A POINTER here just means a finger. Put one finger on a position in the list,
+put another finger somewhere else, and slide them. That is all "two pointers"
+means - no special data structure, just two positions you move.
+
+Sort our list from smallest to largest:
+
+    [-4, -1, -1, 0, 1, 2]
+      0    1   2  3  4  5      <- the positions (indexes)
+
+Now here is the plan. FIX the first number - say we fix -4 at position 0. We now
+need two more numbers, from the positions to its right, that add up to +4 (so
+the total lands on zero).
+
+Put one finger LO at the left end of the remaining stretch (position 1) and one
+finger HI at the right end (position 5). Add the three numbers.
+
+- If the total is TOO SMALL, we need a bigger number. Because the list is
+  sorted, everything to the right of LO is bigger - so slide LO one step right.
+- If the total is TOO BIG, slide HI one step left, for the mirror reason.
+- If the total is exactly zero, we found a group. Record it, then move BOTH
+  fingers inward and keep going.
+
+The fingers only ever move toward each other, so for each fixed first number
+they take at most n steps. Fixing each number in turn gives n x n steps, O(n^2).
+For 10,000 numbers that is 100 million instead of a hundred billion - the
+difference between instant and impossible.
+
+Notice WHY sorting earned its keep: it is what tells us which direction to move.
+In an unsorted list "the total is too small" tells you nothing about where a
+bigger number lives.""",
+
+    """The full trace, one line at a time, with the reason attached.
+
+    sorted: [-4, -1, -1, 0, 1, 2]
+             0    1   2  3  4  5
+
+i = 0, fixed number -4. LO = 1, HI = 5.
+  -4 + (-1) + 2 = -3. Too small (we need 0), so slide LO right. LO = 2.
+  -4 + (-1) + 2 = -3. Still too small. LO = 3.
+  -4 + 0 + 2 = -2. Too small. LO = 4.
+  -4 + 1 + 2 = -1. Too small. LO = 5. Now LO and HI have met - stop.
+  Nothing found with -4. That is fine, it just means -4 has no partners.
+
+i = 1, fixed number -1. LO = 2, HI = 5.
+  -1 + (-1) + 2 = 0. HIT. Record [-1, -1, 2]. Move both fingers inward:
+  LO = 3, HI = 4.
+  -1 + 0 + 1 = 0. HIT. Record [-1, 0, 1]. Move both inward - the fingers cross,
+  so stop.
+
+i = 2, fixed number -1 again. STOP - we already did -1 at position 1, and doing
+  it again would find [-1, 0, 1] a second time. Skip it. (More on this next.)
+
+i = 3, fixed number 0. LO = 4, HI = 5.
+  0 + 1 + 2 = 3. Too big, slide HI left. HI = 4, fingers meet, stop.
+
+The outer loop stops at position 3 because a group of three needs two more
+numbers to its right.
+
+Answer: [[-1, -1, 2], [-1, 0, 1]]. Exactly what we found by hand.""",
+
+    """The duplicate problem, and the two skips that fix it.
+
+The hardest part of this problem is not finding the groups - it is not finding
+the SAME group twice. Here is the worst case:
+
+    nums = [0, 0, 0, 0]
+
+Every trio of zeros adds to zero. There are four ways to pick three of these
+positions, so a naive run reports [0,0,0] four times. But they are all the same
+group of VALUES, so the correct answer is exactly one [0,0,0].
+
+Because the list is sorted, equal numbers sit next to each other. That makes the
+fix a one-line neighbour check, in two places:
+
+SKIP 1 - the fixed number. Before fixing nums[i], check: is nums[i] the same as
+nums[i-1]? If yes, every group starting with this value has already been found,
+so skip straight to the next i.
+
+SKIP 2 - after a hit. Once you record a group, slide LO right while nums[LO] is
+the same as the value you just used. Otherwise the identical value at the next
+position produces the identical group again.
+
+Trace on [0,0,0,0]:
+  i = 0 (value 0): LO = 1, HI = 3. Sum 0. HIT, record [0,0,0]. Now SKIP 2 slides
+    LO past every remaining 0, so LO reaches HI and the inner walk ends.
+  i = 1 (value 0): equals nums[0], so SKIP 1 fires. Same for i = 2.
+  Done. One group. Correct.
+
+Both skips exist only because the list is sorted. That is the second thing
+sorting bought us: duplicates became neighbours, so "have I seen this before?"
+became "is it the same as the one next to me?" - no extra memory needed.""",
+
+    """The empty answers and the small inputs - all handled with no special code.
+
+nums = [1, 2, 3]. Sorted, i = 0: 1 + 2 + 3 = 6, too big, slide HI left; the
+fingers meet immediately. Nothing found, and the answer is an empty list. That
+is a legitimate answer, not an error.
+
+nums = [1, 2] or nums = [] or nums = [5]. The outer loop only runs while there
+are at least two positions to the right of i, so with fewer than three numbers
+the loop body never executes at all. Empty list returned. No "if len < 3" guard
+needed - the loop bounds already say it.
+
+One free speed-up worth mentioning out loud: once the fixed number nums[i] is
+POSITIVE, you can stop the whole outer loop. Why? The list is sorted, so if the
+SMALLEST of the three numbers is already above zero, the other two are bigger
+still, and three positive numbers can never add to zero. On a list that is
+mostly positive this turns the run from n-squared work into almost nothing. It
+is not required for correctness - it is the kind of observation that shows you
+understand what sorting gave you.""",
+
+    """The family of problems this one unlocks.
+
+Once the "fix one, two-finger the rest" shape clicks, four other questions
+become small edits rather than new problems:
+
+- 4Sum: find four numbers adding to a target. Fix TWO numbers with nested loops,
+  then two-finger the remainder. That is n x n x n work, O(n^3).
+- kSum in general: keep peeling off one fixed index per level of recursion until
+  only two are left, then two-finger those. O(n^(k-1)).
+- 3Sum Closest: you are no longer looking for exactly zero, but for the trio
+  whose sum lands NEAREST a target. Same sweep, same finger movement - you just
+  remember the smallest gap you have seen instead of testing for an exact match.
+- 3Sum Smaller: count trios whose sum is BELOW a target. When LO and HI give a
+  small enough sum, every position between them also works, because everything
+  between is smaller than nums[HI]. So you add (HI - LO) to the count in one go
+  and slide LO. Counting a whole block at once is what keeps it O(n^2).
+
+In plain words, the takeaway: sort the list so it tells you which way to move,
+walk two fingers inward, and skip over any value equal to the one you just used.
+Time O(n^2) after an O(n log n) sort; extra space O(1) beyond the output.""",
+
+    """Now the code, line by line, against the trace we just did by hand.
+
+Keep the traced list beside you: sorted [-4, -1, -1, 0, 1, 2].
+
+    nums.sort()
+Sorts the list in place. This is the line that turns [-1,0,1,2,-1,-4] into
+[-4,-1,-1,0,1,2] - the ordering that made "too small -> move LO right" true and
+put the two -1s next to each other.
+
+    res = []
+The answers we collect. It started empty and finished with two groups.
+
+    for i in range(len(nums) - 2):
+i is the position of the FIXED first number. The "- 2" is why the loop stopped
+at i = 3 in our trace: a group needs two more numbers to the right of i, so
+starting at the last two positions is pointless. This is also what silently
+handles a list of fewer than three numbers - the range is empty, the body never
+runs.
+
+    if i > 0 and nums[i] == nums[i-1]:
+        continue
+This is SKIP 1. In the trace it fired at i = 2, where nums[2] == nums[1] == -1,
+and jumped straight to i = 3. The "i > 0" guard is there because at i = 0 there
+is no nums[-1] to compare with - well, in Python there is, and it is the LAST
+element, which would be a silent bug. Hence the guard.
+
+    lo, hi = i + 1, len(nums) - 1
+The two fingers. LO starts just past the fixed number, HI at the far right end.
+At i = 1 in our trace that gave lo = 2, hi = 5.
+
+    while lo < hi:
+Keep going while the fingers have at least one gap between them. The moment they
+meet or cross, this fixed number is finished. In the trace at i = 0 the loop
+ended when lo reached 5 and hi was 5.
+
+    s = nums[i] + nums[lo] + nums[hi]
+The current total of the three. At i=1, lo=2, hi=5 this was -1 + -1 + 2 = 0.
+
+    if s < 0:  lo += 1
+Too small - and because the list is sorted, everything right of LO is bigger, so
+moving LO right is the only move that can help. This is the line that ran four
+times in a row at i = 0.
+
+    elif s > 0: hi -= 1
+Too big - move HI left toward smaller numbers. This fired at i = 3, where
+0 + 1 + 2 = 3.
+
+    else:
+        res.append([nums[i], nums[lo], nums[hi]])
+        lo += 1
+        hi -= 1
+Exactly zero: record the group, then move BOTH fingers inward. Why both? Because
+keeping either finger still with the other one moving can only make the total
+wrong in one direction - the current pair is used up, so both must change.
+
+    while lo < hi and nums[lo] == nums[lo-1]:
+        lo += 1
+This is SKIP 2, the line that saved us on [0,0,0,0]: after recording a group, if
+the number LO now points at is the same as the one just used, it would produce
+the identical group again, so slide past it. The "lo < hi" keeps the slide from
+running off the end.
+
+    return res
+The collected groups - [[-1,-1,2], [-1,0,1]] for our input, in the order we
+found them.""",
 ]
 
 _EX_P0B["Binary Tree Right Side View"] = [
-    """The textbook case, traced.
-      1
-    2   3
-      5   4
-Level 0: queue [1], size 1 -> last is 1, record 1. Push 2,3.
-Level 1: size 2 -> pop 2 (not last), pop 3 (last) record 3. Push 5,4.
-Level 2: size 2 -> pop 5, pop 4 (last) record 4.
-Answer [1,3,4].""",
+    """Picture the question literally - it is the whole trick.
 
-    """The case that breaks 'just follow right children'.
-      1
-    2
-  3
-Following right pointers from the root gives [1] - the right child is empty.
-Level order gives [1,2,3]: standing on the right you can see the entire left
-chain, because nothing blocks it.
-This single example is why the problem is level-order rather than a walk.""",
+Imagine the tree is drawn on a wall and you walk around to stand at the RIGHT
+edge of it, looking sideways across. Some nodes are hidden behind others. Which
+ones can you still see?
 
-    """A mixed case where visibility alternates sides.
-      1
-    2   3
-  4
-Level 0 -> 1. Level 1 -> 3 (rightmost). Level 2 -> 4, because 4 is the ONLY node
-at that level, so it is trivially the rightmost.
-Answer [1,3,4]. The visible node switches from the right subtree to the left
-subtree between levels, which no pointer-following approach can produce.""",
+Here is our tree:
 
-    """The empty tree and the single node.
-Empty -> return an empty list before the loop, or the queue-size read fails.
-Single node -> one level, one node, which is the last of its level -> [1].
-Both fall out of the standard skeleton.""",
+        1
+       / \\
+      2   3
+       \\   \\
+        5   4
 
-    """Why freezing the queue size is the critical line.
-You push children into the same queue you are popping from, so its length grows
-while you work. If the inner loop reads the CURRENT length each iteration, it
-keeps consuming into the next level and the boundary dissolves - you end up with
-one flat traversal and the wrong answer.
-Snapshot the size before the inner loop. That one line is the backbone of every
-level-order variant.""",
+Vocabulary as it appears:
+- Each circled item is a NODE. 1 sits at the top; the top node is the ROOT.
+- The nodes hanging directly below a node are its CHILDREN.
+- A LEVEL is one horizontal row: level 0 is just {1}, level 1 is {2, 3},
+  level 2 is {5, 4}.
 
-    """The variants this unlocks, all the same skeleton.
-Left side view: record index 0 instead of the last.
-Average of levels: sum and divide by the frozen size.
-Zigzag: reverse alternate levels when building the output.
-Largest value per level: max of the level.
-Minimum depth: return the depth of the first level containing a leaf.
-Learn the frozen-size loop once and six problems become three-line edits.""",
+Standing on the right and looking left, on each row you see the RIGHTMOST node
+of that row and nothing behind it. Row by row:
+- Level 0: only 1 is there, so you see 1.
+- Level 1: 2 and 3 are there; 3 is further right, so 3 blocks 2. You see 3.
+- Level 2: 5 and 4 are there; 4 is further right. You see 4.
+
+Answer: [1, 3, 4].
+
+So the question is not really about trees at all. It is: for each row, give me
+the last node in that row.""",
+
+    """How do we get "one whole row at a time"? A QUEUE.
+
+A QUEUE is a waiting line, exactly like a queue at a shop: whoever joins first
+gets served first. Two operations - push (join the back) and pop (serve the
+front).
+
+The walk is called LEVEL-ORDER traversal, or BREADTH-FIRST SEARCH (BFS). The
+idea in one sentence: serve the nodes of the current row, and as you serve each
+one, push its children onto the back of the line. By the time the current row is
+fully served, the line contains exactly the next row, in left-to-right order.
+
+Why left-to-right order is preserved: you serve the row left to right, and each
+node pushes its left child then its right child, so children enter the line in
+the same left-to-right order their parents had.
+
+Now the one detail that makes this work, and it is the line people get wrong.
+You are pushing into the same line you are popping from, so its length keeps
+growing while you work. If you ask "how long is the line?" in the middle of
+serving a row, you get a mixture of this row and the next one, the rows smear
+together, and you get one flat list instead of rows.
+
+The fix: BEFORE serving a row, write down how long the line is right now. That
+frozen number is exactly the size of this row. Serve exactly that many nodes,
+no more. Then the boundary between rows is exact.
+
+That single frozen-size line is the backbone of every level-by-level tree
+problem you will meet.""",
+
+    """The trace, one row at a time, with the reason on every line.
+
+        1
+       / \\
+      2   3
+       \\   \\
+        5   4
+
+Start: queue = [1], answer = [].
+
+ROW 0. Freeze size = 1 (the line holds one node, so this row has one node).
+  Serve 1. It is the 1st of 1, so it is the LAST of the row -> record 1.
+  Push its children: 2, then 3. queue = [2, 3].
+  answer = [1].
+
+ROW 1. Freeze size = 2.
+  Serve 2. It is the 1st of 2 - not last, so record nothing.
+    Push its children: 2 has no left child; its right child is 5. queue = [3, 5].
+  Serve 3. It is the 2nd of 2 - this IS the last -> record 3.
+    Push its child 4. queue = [5, 4].
+  answer = [1, 3].
+
+ROW 2. Freeze size = 2.
+  Serve 5. 1st of 2, not last.  Push nothing - 5 is a dead end (a LEAF, a node
+    with no children).
+  Serve 4. 2nd of 2, last -> record 4. Push nothing.
+  answer = [1, 3, 4]. queue is empty.
+
+Loop ends because the queue is empty. Answer [1, 3, 4] - matching what we saw
+by eye at the start.""",
+
+    """The case that kills the tempting shortcut.
+
+The obvious first guess is: "just start at the root and keep walking to the
+right child." It gives the right answer on the tree above, so it looks correct.
+Now try it here:
+
+        1
+       /
+      2
+     /
+    3
+
+Walking right from 1: there IS no right child. The shortcut returns just [1].
+
+But stand on the right and look: nothing is in front of 2 or 3, so you can see
+the entire left-leaning chain. The true answer is [1, 2, 3].
+
+The lesson: "visible from the right" does not mean "reached by going right". It
+means "last node in its row" - and a node is last in its row simply because
+nothing else is in that row, no matter which side of the tree it lives on.
+
+Here is a third tree where the visible node jumps sides between rows:
+
+        1
+       / \\
+      2   3
+     /
+    4
+
+Row 0 -> 1. Row 1 -> 3 (the rightmost). Row 2 -> 4, because 4 is the ONLY node
+on that row, so it is trivially the rightmost. Answer [1, 3, 4]. The visible
+node moved from the right subtree back to the left subtree - which no
+follow-the-right-pointer walk can ever produce.""",
+
+    """The two tiny inputs, and why they need no special handling.
+
+The EMPTY tree (no nodes at all). If you start the loop with an empty queue,
+there is no first row to freeze a size for - the loop body simply never runs and
+you return an empty list. The only guard you genuinely need is at the very top:
+if the root is missing, return an empty list before you try to push it, because
+pushing "nothing" onto the queue would make the first row look like it has one
+node.
+
+The SINGLE node. queue = [1], freeze size 1, serve 1, it is the last of its row,
+record it, no children to push, queue empties, loop ends. Answer [1].
+
+Both fall out of the ordinary skeleton once that one root check is in place.
+
+Cost: every node is pushed once and served once, so the time is O(n) for n
+nodes - you touch each node a constant number of times. The extra memory is the
+queue, which at its fullest holds one entire row. In a wide, bushy tree the
+widest row can hold about half the nodes, so the space is O(n) in the worst
+case; in a thin, chain-like tree it never holds more than a node or two.""",
+
+    """Learn the frozen-size loop once, get six problems for free.
+
+Every one of these is the same walk with one line changed at the point where
+you decide what to record:
+
+- Left side view: record the FIRST node of each row instead of the last.
+- Average of each level: add up the row and divide by the frozen size - which
+  is precisely why freezing the size is convenient, you already have the count.
+- Largest value in each row: take the maximum as you serve the row.
+- Zigzag / spiral order: build each row as a list and reverse every other one
+  before adding it to the answer.
+- Level order (just the rows themselves): collect each row into its own list.
+- Minimum depth: stop the moment you serve a node with no children - the row
+  number you are on is the answer, and BFS reaches it before any deeper node.
+
+In plain words, the takeaway: the right side view is "the last node of every
+row". Walk the tree row by row with a queue, freeze the row's size before you
+start serving it, and keep the last node you serve. Time O(n), space O(width of
+the widest row).""",
+
+    """Now the code, line by line, against the trace we just did by hand.
+
+Keep the traced tree beside you: 1 on top, 2 and 3 below it, then 5 and 4.
+
+    from collections import deque
+A deque ("deck") is Python's ready-made waiting line. We need to take from the
+FRONT, and a plain list is slow at that - removing the front of a list shuffles
+every remaining item along. A deque removes from the front in one step.
+
+    if not root:
+        return []
+The empty-tree guard from the previous example. Without it, we would push
+"nothing" into the queue and the first row would look like it has one node.
+
+    result = []
+Where the visible values collect. Ours ended as [1, 3, 4].
+
+    queue = deque([root])
+The line starts with just the root. That is row 0, and it is why the first
+frozen size is 1.
+
+    while queue:
+Keep going while anyone is still waiting. In the trace this ended after row 2,
+when 5 and 4 were served and neither had children to push.
+
+    n = len(queue)
+THE critical line. Freeze how many are waiting RIGHT NOW - that is exactly the
+size of the current row, before any of this row's children join the back. In the
+trace this was 1, then 2, then 2.
+
+    for i in range(n):
+Serve exactly n nodes and no more. This is what stops the rows smearing
+together. If you wrote "while queue" here instead, you would keep eating into
+the next row and get one flat traversal.
+
+    node = queue.popleft()
+Serve the front of the line. In row 1 this gave 2 first, then 3 - left to right,
+because that is the order their parent pushed them in.
+
+    if i == n - 1:
+        result.append(node.val)
+i counts 0, 1, 2, ... within the row, so i == n - 1 means "this is the last one
+of this row" - the rightmost, the one you can see. In row 1, node 2 had i = 0
+(skipped) and node 3 had i = 1 == n - 1 (recorded). This single line is what you
+change for every variant: use i == 0 for the LEFT side view.
+
+    if node.left:  queue.append(node.left)
+    if node.right: queue.append(node.right)
+Push this node's children onto the BACK of the line - left first, then right, so
+the next row keeps its left-to-right order. The "if" checks skip missing
+children: node 2 in our tree has no left child, so only 5 was pushed. Note the
+children join behind everyone still in the current row, which is exactly why the
+frozen n still describes the current row correctly.
+
+    return result
+[1, 3, 4] - the values you would see standing at the right edge of the wall.""",
 ]
 
 _EX_P0B["Clone Graph (DFS)"] = [
-    """The textbook case, traced.
-Graph: 1 -- 2, 1 -- 4, 2 -- 3, 3 -- 4 (a square).
-dfs(1): not in map -> create clone 1', REGISTER it, then loop neighbours.
-  dfs(2): create 2', register, neighbours: dfs(1) -> already in map, returns 1'.
-          dfs(3): create 3', register, neighbours dfs(2)->2', dfs(4)->new 4'...
-  Eventually every node has exactly one clone and the edges mirror the original.
-Four nodes created, each visited once.""",
+    """What "clone a graph" actually means, with a picture.
 
-    """The cycle case - what happens without early registration.
-Two nodes pointing at each other: 1 -- 2.
-Correct order: create 1', register 1->1', then dfs(2) creates 2', registers,
-then dfs(1) finds 1' in the map and returns it. Done.
-Wrong order (recurse before registering): dfs(1) creates 1', calls dfs(2), which
-creates 2', calls dfs(1) - not in the map yet - which creates ANOTHER 1', calls
-dfs(2) again... infinite recursion until the stack dies.
-Registering before descending is the entire problem.""",
+A GRAPH is a set of items with connections between them - think of four friends
+and who is friends with whom. Each item is a NODE; each connection is an EDGE.
+Unlike a tree, a graph is allowed to loop back on itself.
 
-    """The single node with no edges.
-node = 1 with an empty neighbour list. dfs creates 1', registers it, the
-neighbour loop body never runs, returns 1'. Correct.
-And the empty input: return nothing immediately, before touching the map.""",
+Our graph, four people standing in a square, each friends with the two beside
+them:
 
-    """Why the map is keyed by NODE, not by value.
-Values can repeat in a general graph - two distinct nodes may both hold 5.
-Keying by value would make them collapse into one clone, silently merging two
-parts of the graph.
-Keying by the node object (identity) is correct. In Python that means the node
-must be hashable, which it is by default. Mention this if the interviewer says
-values are not guaranteed unique.""",
+    1 --- 2
+    |     |
+    4 --- 3
 
-    """A disconnected graph, and the assumption to check.
-This solution starts from one node and reaches only its connected component. If
-the graph has several components, you would need a loop over all nodes with a
-shared map.
-The standard problem statement guarantees connectivity, so the single-entry
-version is correct - but stating that you noticed the assumption is worth
-doing.""",
+So 1's neighbours are 2 and 4; 2's are 1 and 3; 3's are 2 and 4; 4's are 1 and 3.
 
-    """The BFS alternative, for very deep graphs.
-Create the start node's clone and put the original in a queue. While the queue
-is non-empty: pop a node, and for each neighbour, create and register its clone
-if unseen (pushing it), then append the neighbour's clone to the current clone's
-list.
-Same O(V + E), no recursion, so it survives graphs deeper than the stack limit.
-The registration-before-exploration rule is identical - it just becomes
-"register when you enqueue".""",
+To CLONE it means: build a completely NEW set of four nodes, wired together in
+exactly the same pattern, sharing nothing with the original. Afterwards, if you
+change a neighbour list in the copy, the original must be untouched. This is
+sometimes called a DEEP COPY - "deep" because you copy the things inside too,
+not just the outer container.
+
+The naive attempt is to walk the graph and make a new node each time you arrive
+somewhere. Watch what goes wrong. Start at 1, make a new 1. Walk to 2, make a
+new 2. From 2 walk back to 1... and make a SECOND new 1. Then from that one walk
+to 2 again, making a second new 2. Forever.
+
+The graph loops, so a plain walk loops too. That is the entire difficulty of
+this problem, and everything below is about solving it.""",
+
+    """The fix: a MAP that remembers who has already been copied.
+
+A MAP (also called a dictionary or hash map) stores pairs: given a key, it hands
+back a value, quickly. Ours will store "this original node -> its finished
+copy".
+
+The rule, in plain words:
+
+    Before exploring a node's neighbours, put its copy in the map.
+
+Read that twice, because the ORDER is the whole solution. Two things happen:
+
+1. When the walk loops back to a node you have already started, you look it up
+   in the map, find its copy, and just return that copy - no new node, no
+   further walking. The loop is broken.
+2. The copy that comes back is the SAME object every time, so all the edges
+   point at one shared copy per original, exactly as in the original graph.
+
+The walk itself is DEPTH-FIRST SEARCH (DFS): go as deep as you can down one path
+before backing up and trying the next. In code this is usually plain recursion -
+a function that calls itself. Each nested call sits on the CALL STACK, the pile
+of paused function calls waiting for the one above to finish.
+
+So the function does exactly four things, in this order:
+  1. If this node is already in the map, return the stored copy. Stop.
+  2. Make a bare new node with the same value, no neighbours yet.
+  3. Put it in the map RIGHT NOW, before going anywhere.
+  4. For each neighbour of the original, call yourself and append whatever comes
+     back to the new node's neighbour list.""",
+
+    """The trace on the square, with the reason on every line.
+
+    1 --- 2          neighbours: 1:[2,4]  2:[1,3]  3:[2,4]  4:[1,3]
+    |     |
+    4 --- 3
+
+We write 1' for "the copy of 1". Start with an empty map.
+
+dfs(1): not in the map. Make 1'. Register 1 -> 1'. Map = {1:1'}.
+        Now walk 1's neighbours, which are 2 then 4.
+
+  dfs(2): not in the map. Make 2'. Register. Map = {1:1', 2:2'}.
+          Walk 2's neighbours: 1 then 3.
+    dfs(1): IS in the map -> return 1' at once. Append 1' to 2'. No new work -
+            this is the loop being cut.
+    dfs(3): not in the map. Make 3'. Register. Map = {1:1', 2:2', 3:3'}.
+            Walk 3's neighbours: 2 then 4.
+      dfs(2): in the map -> return 2'. Append to 3'.
+      dfs(4): not in the map. Make 4'. Register. Map now has all four.
+              Walk 4's neighbours: 1 then 3.
+        dfs(1): in the map -> return 1'. Append to 4'.
+        dfs(3): in the map -> return 3'. Append to 4'.
+              4' now has neighbours [1', 3']. Return 4'.
+            Append 4' to 3'. 3' has [2', 4']. Return 3'.
+          Append 3' to 2'. 2' has [1', 3']. Return 2'.
+        Append 2' to 1'.
+  dfs(4): in the map -> return 4'. Append to 1'.
+        1' has [2', 4']. Return 1'.
+
+Four copies made, each original visited once. Compare the neighbour lists with
+the originals at the top - they match exactly. And nothing in the copy points at
+anything in the original.""",
+
+    """What happens if you register LATE - the bug worth seeing once.
+
+Take the simplest looping graph, two nodes pointing at each other:
+
+    1 --- 2
+
+WRONG order (explore first, register afterwards):
+  dfs(1): make 1'. Walk neighbours -> dfs(2).
+    dfs(2): make 2'. Walk neighbours -> dfs(1).
+      dfs(1): 1 is NOT in the map yet, because we never registered it. So make
+              ANOTHER 1'. Walk its neighbours -> dfs(2)...
+        dfs(2): 2 is not in the map either. Make ANOTHER 2'...
+
+This never ends. It runs until the call stack fills up and the program dies with
+a stack overflow (in Python, a RecursionError).
+
+RIGHT order (register, then explore):
+  dfs(1): make 1'. REGISTER 1 -> 1'. Then dfs(2).
+    dfs(2): make 2'. REGISTER. Then dfs(1) -> found in map, returns 1' at once.
+            2' gets [1']. Return.
+  1' gets [2']. Done, two nodes, two edges.
+
+The map is doing two jobs at once and it is worth naming them separately: it is
+the "have I seen this?" marker that stops infinite walking, AND it is the lookup
+table that gives every edge the one correct copy to point at. That is why one
+map is enough - you do not also need a separate visited set.""",
+
+    """The small inputs, and one assumption worth saying out loud.
+
+A single node with no edges. dfs makes the copy, registers it, the neighbour
+loop has nothing to run, and the copy is returned. Correct, no special case.
+
+No node at all (an empty input). Return nothing immediately, before touching the
+map - otherwise you would try to read the value of something that is not there.
+
+Now the subtle one: what should the map be keyed BY?
+
+Key it by the NODE OBJECT, not by the node's value. In a general graph two
+DIFFERENT nodes are allowed to hold the same value - two people both labelled 5.
+If you key by value, both collapse into a single copy, and two separate parts of
+your graph get silently welded together. Keying by the node itself keeps them
+distinct, because two distinct objects are distinct keys even when their
+contents match. In Python this works out of the box, since objects are hashable
+by identity unless you override it.
+
+And the assumption: this solution starts from one node and reaches only the part
+of the graph connected to it. If the graph came in several disconnected pieces,
+you would need an outer loop over all nodes, sharing one map. The standard
+problem statement promises the graph is connected, so a single entry point is
+correct - but noticing the assumption and saying so is worth real credit.""",
+
+    """The BFS version, and the cost.
+
+If the graph is very deep - a chain of 100,000 nodes - the recursive version
+piles up 100,000 paused calls and blows the call stack. The cure is to keep the
+same idea but hold the pending work in a QUEUE (a waiting line) instead of on
+the call stack:
+
+  Make the start node's copy, register it, put the ORIGINAL in the queue.
+  While the queue is not empty:
+    Take a node off the front.
+    For each of its neighbours:
+      If the neighbour is not in the map: make its copy, register it, and put
+        the neighbour in the queue.
+      Append the neighbour's copy to the current node's copy's neighbour list.
+
+Notice the rule has not changed at all - it has just moved. "Register before you
+explore" becomes "register at the moment you enqueue". Same guarantee: a node is
+in the map before anything can walk back to it.
+
+The cost either way: every node is created once and every edge is looked at
+once, so the work is O(V + E) - V for the number of nodes (vertices) and E for
+the number of edges. The extra memory is the map, holding one entry per node,
+plus the stack or queue: O(V).
+
+In plain words, the takeaway: copying a looping structure needs a memory of what
+you have already copied, and that memory must be written BEFORE you follow any
+edge - otherwise the loop sends you back to a node you are still in the middle
+of copying, and you copy it again forever.""",
+
+    """Now the code, line by line, against the trace we just did by hand.
+
+Keep the square beside you: 1-2, 2-3, 3-4, 4-1.
+
+    if node is None:
+        return None
+The empty-input guard. Nothing to copy, nothing to return.
+
+    cloned = {}
+The map, and it is created ONCE, out here - not inside dfs. If it lived inside
+dfs it would be rebuilt empty on every recursive call, remember nothing, and the
+infinite loop would come straight back.
+
+    def dfs(cur):
+A function defined inside another function so it can see and share the single
+cloned map. cur is "the original node I am standing on right now". In the trace
+cur was 1, then 2, then 3, then 4.
+
+    if cur in cloned:
+        return cloned[cur]
+The loop-breaker. This is the line that fired when dfs(1) was called from inside
+dfs(2) - node 1 was already registered, so its finished copy came straight back
+and the walk stopped there instead of going round the square again. Every
+"IS in the map -> return" line in the trace is this one line.
+
+    copy = Node(cur.val)
+Make the new node, carrying the same value but with an EMPTY neighbour list. It
+is deliberately blank at birth - the edges get filled in below, after the
+neighbours have been cloned.
+
+    cloned[cur] = copy
+The most important line in the whole solution, and its position matters more
+than its content. Registering HERE - after creating the copy but BEFORE the loop
+below - is what makes the check at the top succeed when the walk comes back
+round. Move this line below the loop and you get the infinite recursion from the
+earlier example.
+
+    for nb in cur.neighbors:
+        copy.neighbors.append(dfs(nb))
+Walk the ORIGINAL node's neighbours, and for each one ask dfs for its copy. Two
+things can come back: an already-finished copy from the map (cheap, immediate),
+or a brand-new copy that dfs just built by recursing deeper. Either way you
+append the COPY, never the original - that is what keeps the two graphs
+completely separate. In the trace, this loop is where 2' collected [1', 3'].
+
+    return copy
+Hand this node's copy back to whoever asked - either the caller one level up,
+or, for the very first call, the outside world.
+
+    return dfs(node)
+Kick the whole thing off at the starting node. Everything else happens inside.
+
+One last thing to notice: the map is doing two jobs with one line of storage -
+it is the "already visited" marker AND the lookup table of finished copies. That
+is why there is no separate visited set anywhere in this code.""",
 ]
 
 _EX_P0B["Coin Change (fewest coins)"] = [
-    """The textbook case, traced.
-coins = [1,2,5], amount = 11.
-dp[0]=0. Building up:
-  dp[1]=1 (1)      dp[2]=1 (2)       dp[3]=2 (2+1)
-  dp[4]=2 (2+2)    dp[5]=1 (5)       dp[6]=2 (5+1)
-  dp[7]=2 (5+2)    dp[8]=3 (5+2+1)   dp[9]=3 (5+2+2)
-  dp[10]=2 (5+5)   dp[11]=3 (5+5+1)
-Answer 3.""",
+    """The question, as a thing that happens at a shop counter.
 
-    """The impossible case.
-coins = [2], amount = 3. dp[1] stays infinity (no coin fits), dp[2]=1,
-dp[3] = dp[1]+1 which is still infinity.
-Return -1. The infinity sentinel is what makes this fall out naturally - with a
--1 sentinel you would need a guard on every lookup.""",
+You have an unlimited supply of coins in a few denominations - say 1, 2 and 5.
+A customer needs 11 back. What is the SMALLEST number of coins you can hand
+over?
 
-    """The greedy counterexample - have this ready.
-coins = [1,3,4], amount = 6.
-Greedy takes the largest first: 4, then 1, then 1 = THREE coins.
-DP finds 3 + 3 = TWO coins.
-Greedy fails because taking the biggest coin now can leave a remainder that
-needs many small coins. DP tries every last-coin choice at every amount, so it
-cannot be misled. Interviewers ask specifically for a counterexample here.""",
+Try it yourself: 5 + 5 + 1 is three coins. Could you do it in two? The largest
+two coins are 5 + 5 = 10, which is short. So no - three is the best possible,
+and 3 is the answer.
 
-    """Amount zero, and why dp[0] = 0 matters.
-amount = 0 -> answer 0, no coins needed. The base case returns it directly.
-More importantly, dp[0]=0 is what every other cell is ultimately built from - if
-you seed it wrong, every answer is off by one or infinite.""",
+Note carefully what is being counted. Not the number of ways to make 11, and not
+which coins - just HOW MANY coins, at minimum. If the amount cannot be made at
+all, the answer is -1.
 
-    """The complexity, and when it stops being acceptable.
-O(amount x number of coins) time, O(amount) space. For amount = 10,000 and 10
-coins that is 100,000 operations - trivial.
-But the amount is a VALUE, not an input length, so this is pseudo-polynomial: an
-amount of 10^9 makes the table impossible regardless of how few coins there are.
-Saying "pseudo-polynomial" and explaining why is a strong signal.""",
+Two things make this harder than it looks:
+- Coins can be reused as often as you like.
+- The obvious "always grab the biggest coin that fits" strategy is WRONG, and
+  the next example shows exactly why.""",
 
-    """The sibling that flips the loop order.
-Coin Change II counts the number of WAYS rather than the minimum coins, and
-there the loop order decides the answer: coins outside counts combinations,
-amounts outside counts permutations.
-For THIS problem either order works, because a minimum does not care about
-ordering. Knowing which problems are order-sensitive - and why - is what the
-pairing is testing.""",
+    """Why "grab the biggest coin first" fails - keep this counterexample ready.
+
+That strategy has a name: GREEDY. A greedy method makes the choice that looks
+best right now and never reconsiders.
+
+Coins 1, 3, 4 and an amount of 6.
+
+Greedy: take 4 (the biggest that fits). 2 left. Take 1. 1 left. Take 1. Done -
+THREE coins: 4 + 1 + 1.
+
+But 3 + 3 = 6 is TWO coins. Greedy lost.
+
+Why did it lose? Because taking the 4 left a remainder of 2, and 2 happens to be
+awkward with these coins - it needs two 1s. The big coin looked good in
+isolation and was bad in context. Greedy never looks back to find out.
+
+(With everyday currencies - 1, 2, 5, 10, 20 - greedy happens to work, which is
+why the failure feels surprising. It is a property of those particular coin
+sets, not a general truth.)
+
+So we need a method that considers EVERY choice rather than guessing. That
+method is DYNAMIC PROGRAMMING, and the next example builds it from scratch.""",
+
+    """Building the answer from the bottom up.
+
+DYNAMIC PROGRAMMING sounds grand; the idea is small. Solve the tiny versions of
+the problem first, write the answers down, and build the bigger answers out of
+the ones you already wrote down. "Written down" is just a list - here we call it
+dp, where
+
+    dp[k] = the fewest coins needed to make exactly k
+
+Start with the only thing we know for certain: dp[0] = 0. Making zero takes zero
+coins. That is the BASE CASE - the fact the whole table rests on.
+
+Now the key question, asked at every amount k: what was the LAST coin I handed
+over? It has to be one of my coins. If the last coin was 5, then before it I had
+to make k - 5, and I already know the cheapest way to do that - it is sitting in
+dp[k-5]. So that route costs dp[k-5] + 1.
+
+Try every coin as the last coin and keep the smallest:
+
+    dp[k] = 1 + min( dp[k - c] ) over every coin c that is not bigger than k
+
+That is the entire algorithm. Now the trace, coins 1, 2, 5, amount 11:
+
+  dp[0] = 0   base case
+  dp[1] = 1   only coin 1 fits: 1 + dp[0] = 1
+  dp[2] = 1   coin 2 gives 1 + dp[0] = 1; coin 1 gives 1 + dp[1] = 2; take 1
+  dp[3] = 2   coin 1 -> 1+dp[2]=2; coin 2 -> 1+dp[1]=2; take 2   (2+1)
+  dp[4] = 2   coin 2 -> 1+dp[2]=2                                (2+2)
+  dp[5] = 1   coin 5 -> 1+dp[0]=1                                (5)
+  dp[6] = 2   coin 5 -> 1+dp[1]=2                                (5+1)
+  dp[7] = 2   coin 5 -> 1+dp[2]=2                                (5+2)
+  dp[8] = 3   coin 5 -> 1+dp[3]=3                                (5+2+1)
+  dp[9] = 3   coin 5 -> 1+dp[4]=3                                (5+2+2)
+  dp[10]= 2   coin 5 -> 1+dp[5]=2                                (5+5)
+  dp[11]= 3   coin 5 -> 1+dp[6]=3                                (5+5+1)
+
+Answer dp[11] = 3. Every cell was computed once, using only cells to its left,
+which is why the loop runs left to right.""",
+
+    """When the amount is impossible, and the INFINITY trick.
+
+Coins = [2] only, amount = 3. Three is odd and every coin is even, so it cannot
+be made. The answer must be -1.
+
+Watch how the table handles it if we start every unknown cell at INFINITY
+(in practice a number larger than any real answer could be, such as amount + 1):
+
+  dp[0] = 0        base case
+  dp[1] = infinity  the only coin, 2, is bigger than 1 - nothing fits, so the
+                    cell is never improved and stays at its starting value
+  dp[2] = 1         coin 2 -> 1 + dp[0] = 1
+  dp[3] = ?         coin 2 -> 1 + dp[1] = 1 + infinity, which is still
+                    effectively infinity. Nothing else fits.
+
+At the end, dp[3] is still infinity, meaning "never reached". Translate that to
+-1 on the way out and you are done.
+
+Why infinity and not -1 as the "unknown" marker? Because infinity behaves
+CORRECTLY under the operations we do. Taking the minimum with infinity always
+picks the real number, and adding 1 to infinity keeps it infinite - so an
+unreachable amount stays unreachable automatically. If you seeded unknown cells
+with -1 instead, then min(-1, 3) would pick -1, and a nonsense value would
+spread through the whole table. You would need an "if this cell is -1, skip it"
+guard on every single lookup.
+
+Choosing a sentinel value that behaves properly under your own arithmetic, so
+you need no guards, is a genuinely reusable idea.""",
+
+    """Amount zero, and why dp[0] = 0 carries everything.
+
+If the amount is 0, the answer is 0 - hand over no coins. The table gives this
+directly, since dp[0] is the base case, and the loop over amounts never has to
+run.
+
+But the more important point is what dp[0] does for every OTHER cell. Look at
+where dp[5] = 1 came from: coin 5, then dp[0]. And dp[2] = 1 came from coin 2,
+then dp[0]. Every single-coin answer traces straight back to dp[0], and every
+multi-coin answer traces back through those. The base case is the floor the
+whole tower stands on.
+
+Set it wrong and everything is wrong in a way that is hard to spot. Seed
+dp[0] = 1 and every answer is one too many. Seed dp[0] = infinity and no cell is
+ever reachable, so every answer becomes -1. When a DP answer is uniformly off by
+a constant, the base case is the first place to look.
+
+If you also want to know WHICH coins were used, keep a second list recording, at
+each amount, the coin that produced the winning value. Then walk backwards from
+the amount, subtracting the recorded coin each time, until you land on 0. The
+table already contains the answer - you are just reading it back out.""",
+
+    """The cost, the catch in the cost, and the sibling problem.
+
+Time: for each amount from 1 up to the target you try every coin, so the work is
+(amount x number of coins). Memory: one list of length amount + 1, so O(amount).
+For amount 10,000 and 10 coins that is 100,000 steps - instant.
+
+Now the catch, and it is the part interviewers listen for. The running time
+depends on the amount's VALUE, not on how long the input is. An amount of one
+billion is only ten characters to write down, but it demands a table with a
+billion cells. An algorithm whose cost scales with the numeric value of an input
+rather than the size of the input is called PSEUDO-POLYNOMIAL. It looks
+efficient and is not, once the numbers get large. Saying that phrase and being
+able to explain what it means is a strong signal.
+
+The sibling problem, Coin Change II, asks for the number of WAYS to make the
+amount rather than the fewest coins - and there the ORDER of the two loops
+decides the answer. Coins on the outside counts unordered combinations
+(5+1 and 1+5 are the same); amounts on the outside counts ordered sequences
+(they are different). For THIS problem either loop order works, because a
+minimum does not care what order you handed the coins over in. Knowing which
+problems are order-sensitive, and why, is exactly what the pairing tests.
+
+In plain words, the takeaway: do not guess with the biggest coin. Ask "what was
+the last coin?", try every possibility, and reuse the answers you already
+computed for smaller amounts. Time O(amount x coins), space O(amount).""",
+
+    """Now the code, line by line, against the table we just filled in by hand.
+
+Keep the trace beside you: coins [1, 2, 5], amount 11, answer 3.
+
+    dp = [0] + [float('inf')] * amount
+Build the table in one line. The [0] at the front is dp[0] = 0 - the base case,
+"making zero costs zero coins". Everything after it starts at float('inf'),
+Python's infinity, meaning "no way to make this amount has been found yet". The
+list has amount + 1 slots because we need positions 0 through 11 inclusive.
+
+    for a in range(1, amount + 1):
+Walk the amounts upward: 1, 2, 3, ... , 11. Upward matters. When we compute
+dp[11] we look back at dp[6], and dp[6] must already be finished - which it is,
+because 6 came earlier in this loop. This is the "build small answers first"
+promise made concrete.
+
+    for c in coins:
+For this amount, try every coin as the LAST coin handed over. At a = 3 in our
+trace this tried c = 1, then c = 2, then c = 5.
+
+    if c <= a:
+Only coins that actually fit. At a = 3 this rejected c = 5, because you cannot
+hand over a 5 as part of making 3. Without this check, a - c would go negative
+and Python would happily read from the wrong end of the list.
+
+    dp[a] = min(dp[a], dp[a - c] + 1)
+The heart of it. "dp[a - c] + 1" reads as: the cheapest way to make the leftover
+amount, plus the one coin I am handing over now. min(...) keeps whichever last
+coin turned out cheapest.
+
+Read it against a = 3 from the trace:
+  c = 1: dp[3] = min(inf, dp[2] + 1) = min(inf, 1 + 1) = 2
+  c = 2: dp[3] = min(2,   dp[1] + 1) = min(2,   1 + 1) = 2
+  c = 5: skipped, does not fit.
+So dp[3] = 2, which is the 2 + 1 we wrote down. And at a = 11:
+  c = 5: dp[11] = min(inf, dp[6] + 1) = min(inf, 2 + 1) = 3.
+
+Notice this line never needs a "have I reached this amount yet?" guard. If
+dp[a-c] is still infinity, then infinity + 1 is infinity, min leaves dp[a]
+alone, and the unreachable amount stays unreachable all by itself. That is the
+infinity sentinel earning its place.
+
+    return dp[amount] if dp[amount] != float('inf') else -1
+Read the final answer out of the table. If it is still infinity, the amount was
+never reachable - translate that to the -1 the problem asked for. This is the
+line that turns the [2]-coins-amount-3 case into -1.""",
 ]
 
 _EX_P0B["Decode Ways (DP)"] = [
