@@ -27692,6 +27692,509 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P0H[_e["title"]]
 
 
+# ══ P1 worked examples ════════════════════════════════════════════════════
+# The P1 band ("core: expected knowledge") gets the same six-example treatment
+# the P0 band already has. Appended in batches as _EX_P1* dicts, each followed
+# by its own patch loop, so a batch can be added without touching the ones
+# before it. NOTE: adding examples raises an entry's rank score, so the band
+# boundaries move as this progresses - re-query for P1 entries with fewer than
+# five examples after each batch rather than trusting an earlier list.
+_EX_P1A = {}
+
+_EX_P1A["Sum of Left Leaves"] = [
+    """The standard example, traced.
+        3
+       / \\
+      9   20
+         /  \\
+        15   7
+At node 3: root.left is 9, and 9 has no children, so 9 IS a left leaf -> add 9.
+Recurse left into 9: it has no children, so it contributes 0. (Note 9 does NOT
+add itself - a node never counts itself, only its LEFT CHILD.)
+Recurse right into 20: root.left is 15 and 15 is a leaf -> add 15. Then recurse
+into 15 (0) and into 7 (0).
+Total 9 + 15 = 24. Note 7 is a leaf and is NOT counted, because it is a RIGHT
+child - that asymmetry is the entire problem.""",
+
+    """The check that catches everyone: parent-side, not self-side.
+The natural first attempt is 'if this node is a leaf, add it' plus some flag
+saying whether we arrived from the left. That works, but the cleaner version
+looks DOWN instead of tracking where it came from:
+    if root.left and root.left.left is None and root.left.right is None
+Read it as: 'I have a left child, and that child has no children of its own.'
+The node inspects its child rather than the child inspecting its own origin,
+which is why no extra parameter is needed.""",
+
+    """The single-node tree, which is the classic wrong answer.
+Tree: just the node 5. It IS a leaf, so a careless solution returns 5.
+The correct answer is 0: a left leaf must be the LEFT CHILD of some parent, and
+the root has no parent. Trace the code - root.left is None, so nothing is
+added, and both recursive calls return 0.
+Similarly a tree of 1 -> (None, 2) returns 0: the only leaf is a right child.
+Test both of these; they are the two cases an interviewer will hand you.""",
+
+    """A left child that is NOT a leaf.
+        1
+       /
+      2
+     / \\
+    4   5
+At node 1: root.left is 2, but 2 has children, so the guard fails and nothing
+is added. We recurse into 2.
+At node 2: root.left is 4 and 4 is childless -> add 4.
+Total is 4. The value 2 is never counted despite being a left child, and 5 is
+never counted despite being a leaf. You need BOTH conditions - left child AND
+childless - which is why the guard has three parts.""",
+
+    """The iterative version, for the recursion-depth follow-up.
+A tree skewed 10,000 nodes deep blows Python's default recursion limit. The
+explicit-stack rewrite keeps the identical logic:
+    def sum_of_left_leaves(root):
+        if root is None: return 0
+        stack, total = [root], 0
+        while stack:
+            node = stack.pop()
+            if node.left:
+                if node.left.left is None and node.left.right is None:
+                    total += node.left.val     # counted; nothing below it
+                else:
+                    stack.append(node.left)    # only descend if NOT a leaf
+            if node.right:
+                stack.append(node.right)
+        return total
+Note the optimisation that falls out: a left child counted as a leaf has no
+children, so there is no reason to push it - the if/else does both jobs.""",
+
+    """Complexity, and the family this belongs to.
+Time O(n) - every node is visited once. Space O(h) for the recursion stack,
+which is O(log n) for a balanced tree and O(n) for a skewed one.
+The pattern is 'postorder recursion that combines children's results', and it
+is the same skeleton as Maximum Depth, Diameter of a Binary Tree, Path Sum and
+Count Good Nodes. Once you can write 'handle None, do something at this node,
+recurse both sides, combine', most easy tree problems differ only in what
+'something' is - here it is a three-part guard on the left child.""",
+]
+
+_EX_P1A["Valid Palindrome II (delete at most one)"] = [
+    """The core case, traced.
+s = 'abca'. left=0 ('a'), right=3 ('a') -> match, move in.
+left=1 ('b'), right=2 ('c') -> MISMATCH. This is the only decision point in the
+whole algorithm.
+Try skipping the left character: is_pal(2, 2) - a single character range, which
+is trivially a palindrome -> True. So the answer is True (delete 'b' to get
+'aca'). Skipping the right would also have worked ('aba'), which is why the two
+attempts are joined with `or`.""",
+
+    """Why you must try BOTH sides, with a string that proves it.
+s = 'ebcbbececabbacecbbcbe' is a known counterexample to the one-sided version.
+More simply: consider 'cbbcc'. First mismatch is at left=0 ('c') and right=4
+('c')... they match. Move to left=1 ('b'), right=3 ('c') -> mismatch.
+Skipping the LEFT gives 'bc' between the pointers -> not a palindrome.
+Skipping the RIGHT gives 'bb' -> palindrome -> True.
+A solution that only ever skips the left character returns False here. There is
+no rule for guessing which side to drop, so you check both - and because you do
+it at most once, the cost stays linear.""",
+
+    """Why this stays O(n) despite looking like it branches.
+The outer two-pointer walk is O(n). At the FIRST mismatch you make two helper
+calls, each of which scans at most the remaining range, so O(n) - and then you
+return immediately. There is no recursion and no second chance to branch,
+because 'at most one deletion' means the budget is spent.
+Total O(n) time, O(1) space. Contrast with allowing k deletions, which becomes
+a genuine dynamic-programming problem (longest palindromic subsequence) at
+O(n^2) - a good follow-up to raise yourself.""",
+
+    """Already a palindrome, and the empty/short cases.
+'aba': no mismatch ever occurs, the loop exits with left >= right, return True.
+Deleting zero characters is allowed - the prompt says AT MOST one, not exactly
+one, and misreading that is a real source of wrong answers.
+'' -> left=0, right=-1, loop never runs -> True.
+'a' -> left=0, right=0, `while left < right` is false -> True.
+'aa' -> match, then pointers cross -> True.
+All four fall out of the code with no special cases, which is worth pointing
+out rather than adding guards for them.""",
+
+    """The case that returns False.
+s = 'abc'. left=0 ('a'), right=2 ('c') -> mismatch immediately.
+Skip left: is_pal(1,2) checks 'b' vs 'c' -> False.
+Skip right: is_pal(0,1) checks 'a' vs 'b' -> False.
+Both fail, so return False - no single deletion can fix it, and indeed you
+would need two.
+Notice the helper is called on the RANGE, not on a new string. Writing
+`is_pal(s[left+1:right+1])` instead allocates a copy on every call, turning O(1)
+space into O(n) - a small detail interviewers do notice.""",
+
+    """The generalisation, and where the pattern appears.
+Follow-up: 'at most k deletions'. The greedy two-pointer trick no longer works
+because you can no longer prove that the first mismatch must be resolved
+locally; you switch to DP - the answer is len(s) minus the longest palindromic
+subsequence, and it is a palindrome within k deletions iff that difference is
+at most k.
+The two-pointer-with-one-exception shape itself recurs: 'is this array sorted
+after removing one element', 'can this array become non-decreasing by modifying
+one element' (Non-decreasing Array), and 'delete one character to make two
+strings equal'. In every case: scan until the first violation, then branch a
+fixed number of times and verify.""",
+]
+
+_EX_P1A["Minimum Depth of Binary Tree"] = [
+    """The standard example, level by level.
+        3
+       / \\
+      9   20
+         /  \\
+        15   7
+Queue starts [(3,1)]. Pop 3 - it has children, so push (9,2) and (20,2).
+Pop (9,2) - 9 has no left and no right, so it IS a leaf. Return 2.
+We never look at 15 or 7 at all. BFS reaches the SHALLOWEST leaf first, so the
+first leaf it dequeues is the answer by construction - no comparison across
+paths is needed.""",
+
+    """The trap that makes this harder than Maximum Depth.
+        1
+         \\
+          2
+           \\
+            3
+The tempting DFS one-liner is `1 + min(min_depth(left), min_depth(right))`.
+At node 1 the left subtree is None and returns 0, so it computes 1 + min(0, 2)
+= 1. WRONG: depth 1 would mean node 1 is a leaf, and it is not - it has a right
+child. The true answer is 3.
+Minimum depth counts paths to a LEAF, and a node with one missing child is not
+a leaf. Maximum Depth has no such problem because max(0, 2) naturally ignores
+the empty side. This asymmetry is the entire reason the question exists.""",
+
+    """The DFS version done correctly, for comparison.
+    def min_depth(root):
+        if root is None: return 0
+        if root.left is None:  return 1 + min_depth(root.right)   # only one side
+        if root.right is None: return 1 + min_depth(root.left)
+        return 1 + min(min_depth(root.left), min_depth(root.right))
+The two extra guards say 'if a child is missing, you must go down the other
+side - there is no choice'. Correct, and O(n) - but it visits EVERY node, while
+BFS stops at the first leaf. On a tree with a shallow leaf on the left and a
+million nodes on the right, BFS is dramatically faster in practice even though
+both are O(n) worst case. That is the argument for preferring BFS here.""",
+
+    """Edge cases.
+None -> 0 by the first guard. An empty tree has no root-to-leaf path, and 0 is
+the agreed convention.
+A single node 5 -> queue pops (5,1), it has no children, return 1. The root can
+itself be the leaf.
+A perfectly balanced tree of 15 nodes -> 4, and BFS confirms it after
+dequeuing at most 8 nodes, since the first leaf appears at level 4.
+Note the depth here is a count of NODES, not edges - a single node is depth 1,
+not 0. Prompts differ on this; restate the convention before coding.""",
+
+    """Why BFS wins, quantified.
+Consider a tree that is a single node with a leaf on the left and a
+1,000,000-node chain on the right. BFS dequeues the root, then the left leaf,
+and returns 2 after touching 3 nodes. DFS explores by branch, so depending on
+the order it may walk the entire million-node chain before ever reaching the
+answer. Both are O(n) in the worst case (a complete tree, where every leaf is
+at the bottom), but the EXPECTED behaviour differs enormously.
+The general rule worth stating: shallowest-first questions are BFS questions,
+deepest-first questions are DFS questions.""",
+
+    """Space, and how it relates to the shape.
+BFS holds at most one level at a time, so space is O(w) where w is the maximum
+width - for a complete tree that is about n/2, so O(n). DFS holds a path, so
+space is O(h): O(log n) balanced, O(n) skewed.
+So the two swap which shape hurts them: BFS is memory-hungry on wide bushy
+trees, DFS on deep skinny ones. If an interviewer constrains memory, that trade
+is the answer. The same reasoning drives the choice in Level Order Traversal,
+Right Side View and Word Ladder - all BFS, all bounded by width.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1A:
+        _e["examples"] = _EX_P1A[_e["title"]]
+
+
+_EX_P1B = {}
+
+_EX_P1B["Symmetric Tree"] = [
+    """The symmetric case, traced as PAIRS.
+        1
+       / \\
+      2   2
+     / \\ / \\
+    3  4 4  3
+Call mirror(left=2, right=2): values match, so check two pairs.
+  Outer pair: mirror(a.left=3, b.right=3) -> match, both childless -> True.
+  Inner pair: mirror(a.right=4, b.left=4) -> match -> True.
+Both True, so the tree is symmetric.
+The crucial detail is WHICH children are compared: a.left against b.RIGHT and
+a.right against b.LEFT. Comparing left-with-left tests whether the two subtrees
+are IDENTICAL, which is a different question entirely.""",
+
+    """The counterexample that shows identical is not mirrored.
+        1
+       / \\
+      2   2
+       \\   \\
+        3   3
+Both subtrees are the same shape (a node with a right child), so an
+identical-trees check returns True. But mirrored, the left subtree's RIGHT
+child (3) must pair with the right subtree's LEFT child (None) - one is None
+and the other is not, so mirror returns False. Correct: drawn on paper, the
+two 3s are both on the right-hand side, so the picture is not symmetric.
+This single tree is the fastest way to check whether a candidate wrote
+mirror(a.left, b.left) by mistake.""",
+
+    """The three base cases, and why the order matters.
+1. Both None -> True. Two absent subtrees mirror each other trivially.
+2. Exactly one None -> False. Shape mismatch.
+3. Values differ -> False.
+Only then do you recurse. If you test `a.val != b.val` before checking for
+None, a single-child node throws AttributeError on the missing side. Writing
+the null checks first is not defensive padding - it is what makes the value
+comparison safe.
+Also note the top-level call: `root is None or mirror(root.left, root.right)`.
+An empty tree is symmetric, and a single node is symmetric because
+mirror(None, None) is True.""",
+
+    """The iterative version, which is the standard follow-up.
+Use a queue and push PAIRS rather than nodes:
+    from collections import deque
+    def is_symmetric(root):
+        if root is None: return True
+        q = deque([(root.left, root.right)])
+        while q:
+            a, b = q.popleft()
+            if a is None and b is None: continue
+            if a is None or b is None or a.val != b.val: return False
+            q.append((a.left,  b.right))      # outer pair
+            q.append((a.right, b.left))       # inner pair
+        return True
+Same three checks, same two pairings - the recursion has simply become an
+explicit queue. This is the answer to 'what if the tree is 100,000 nodes deep?',
+which would exceed Python's recursion limit.""",
+
+    """Complexity, stated precisely.
+Time O(n): each node is visited exactly once, as half of exactly one pair.
+Space O(h) for the recursive version, where h is the height - O(log n) for a
+balanced tree, O(n) for a skewed one. The iterative version is O(w) for the
+queue, bounded by the widest level.
+A common wrong answer is O(n log n) 'because it recurses twice per call' - but
+the two recursive calls split the work rather than duplicating it, exactly as
+in a single tree traversal.""",
+
+    """The family this belongs to: lockstep two-node recursion.
+The same skeleton - handle both-None, one-None, value-mismatch, then recurse on
+a chosen pairing - solves a cluster of problems, and only the PAIRING changes:
+- Same Tree: recurse (a.left, b.left) and (a.right, b.right).
+- Symmetric Tree: recurse (a.left, b.right) and (a.right, b.left).
+- Merge Two Binary Trees: same pairing as Same Tree, but combine instead of
+  compare.
+- Invert Binary Tree: the single-tree cousin - swap the children at every node,
+  and note that a tree is symmetric exactly when it equals its own inversion.
+Recognising the skeleton means you only have to think about one line.""",
+]
+
+_EX_P1B["Tokenization and Byte-Pair Encoding (BPE)"] = [
+    """BPE training, run by hand on a tiny corpus.
+Corpus: 'low low low lower lowest'. Start from characters:
+  l o w _ l o w _ l o w _ l o w e r _ l o w e s t
+Most frequent adjacent pair is ('l','o'), appearing 5 times -> merge into 'lo'.
+Next, ('lo','w') appears 5 times -> merge into 'low'.
+Next, ('low','e') appears twice ('lower', 'lowest') -> merge into 'lowe'.
+Vocabulary now holds l, o, w, e, r, s, t, lo, low, lowe. 'low' is ONE token,
+while a word never seen in training still encodes fine as a sequence of the
+pieces that exist. That is the whole algorithm: count pairs, merge the most
+frequent, repeat until the vocabulary reaches its target size.""",
+
+    """Why subwords rather than words or characters, as a trade-off.
+WORD-level: 'the' is one token (efficient), but the vocabulary needs hundreds
+of thousands of entries, the embedding matrix becomes enormous, and any word
+not in it becomes <UNK> - so a typo, a product code or a new name is
+information the model literally cannot see.
+CHARACTER-level: a 26-entry vocabulary and nothing is ever unknown, but a
+100-word sentence becomes ~500 tokens, and since attention costs O(n^2) that is
+25x the compute of a 100-token version.
+SUBWORD: common words stay single tokens, rare words decompose, nothing is ever
+unknown, and sequences stay short. It is the engineering compromise, not a
+linguistic theory - which is worth saying, because the pieces often do not
+match real morphemes.""",
+
+    """Token counts you should be able to estimate in an interview.
+English averages roughly 0.75 words per token, so ~750 words is ~1,000 tokens
+and one page of prose is ~500 tokens.
+Whitespace matters: ' the' (with the leading space) is usually a DIFFERENT
+token from 'the', which is why prompt formatting subtly changes token counts.
+Numbers tokenize badly - '12345' may split into '123' and '45' - which is part
+of why LLMs are unreliable at arithmetic: the model does not see the digits as
+a place-value structure.
+Code tokenizes densely because indentation and punctuation are frequent, so a
+file of Python is often more tokens than the same character count of prose.""",
+
+    """The cost consequence that shows up on a real bill.
+The same paragraph in English might be 100 tokens; in Hindi or Thai, written in
+a non-Latin script the tokenizer saw far less of during training, it can be
+300-500. So the identical document costs three to five times more to process,
+and it consumes the context window three to five times faster. For a product
+serving multiple languages, that is a genuine architecture consideration -
+budget by tokens per language, not by characters - and raising it unprompted in
+an LLM system-design round is a strong signal.""",
+
+    """Why modern tokenizers work on BYTES.
+Byte-level BPE (GPT-2 onwards) starts from the 256 possible byte values rather
+than from characters, so ANY input - emoji, a corrupted file, a language the
+tokenizer never saw - is representable, and there is no <UNK> token at all. The
+cost is that a single emoji may be four bytes and therefore up to four tokens.
+SentencePiece takes a related approach and treats the text as a raw stream
+including spaces, which is why it handles languages without word boundaries
+(Chinese, Japanese, Thai) without a separate word-segmentation step.""",
+
+    """Where tokenization leaks into behaviour you will be asked about.
+- 'Why can't the model count the letters in a word?' Because it never sees
+  letters - 'strawberry' may be three tokens, so counting r's is not a lookup
+  it can perform.
+- 'Why did my JSON output break?' A rare key name split across tokens makes the
+  model likelier to mis-generate it; simpler key names are measurably safer.
+- Prompt engineering: few-shot examples cost tokens, so there is a real trade
+  between examples and remaining context.
+- RAG chunk sizing is specified in TOKENS, not characters, precisely because
+  the model's limit is a token limit.""",
+]
+
+_EX_P1B["Vector database & semantic search"] = [
+    """What semantic search finds that keyword search cannot.
+Query: 'how do I return an item?'
+Keyword (BM25) ranks documents sharing those words, and misses a document
+titled 'Refund & exchange policy' entirely - zero words in common.
+Semantic search embeds both and compares vectors; 'return' and 'refund' sit
+close in embedding space because they appeared in similar contexts during
+training, so the right document ranks first.
+The mirror-image failure is just as important: query 'policy ACME-4471-B'.
+Embeddings do not preserve exact identifiers, so vector search returns
+documents that are ABOUT policies while BM25 nails the exact token. This is
+why production systems run HYBRID search and fuse the two rankings.""",
+
+    """Why approximate, not exact, nearest neighbours.
+Exact search over 10 million 768-dimensional vectors means 10 million dot
+products of 768 multiplications each - about 7.7 billion operations per query.
+That is seconds, not milliseconds, and it does not fit a search box.
+HNSW builds a navigable small-world graph: start at an entry point and greedily
+hop to whichever neighbour is closer to the query, dropping down layers of
+decreasing coarseness. Query cost becomes roughly O(log n) - a few hundred
+comparisons instead of ten million - at the price of occasionally missing a
+true nearest neighbour. Typical recall@10 is 0.95-0.99, which is an excellent
+trade for a 1000x speed-up.""",
+
+    """The knobs, and what each one costs.
+HNSW: `M` is the number of edges per node - higher means better recall and more
+memory; `efConstruction` is the build-time search width (slower to build,
+better graph); `efSearch` is the query-time width and is the runtime
+recall-versus-latency dial you actually tune.
+IVF: cluster the vectors, then search only the `nprobe` nearest clusters.
+Cheaper memory than HNSW, but recall suffers when a true neighbour sits just
+across a cluster boundary.
+Product quantisation compresses each vector into a few bytes, cutting memory by
+an order of magnitude at a real recall cost - the standard answer to 'we cannot
+fit the index in RAM'.""",
+
+    """Sizing an index, which is a question you should be able to answer.
+10 million chunks at 768 dimensions in float32: 10e6 * 768 * 4 bytes = about
+30 GB of raw vectors, before the graph. An HNSW graph with M=16 adds roughly
+another 10-20%. So this does not fit on a small instance, and you have three
+options: shard across machines, quantise to int8 (about 7.5 GB, with a small
+recall loss), or use a smaller embedding model - 384 dimensions halves it
+outright. Being able to do this arithmetic separates 'I have used Pinecone'
+from 'I can plan a retrieval system'.""",
+
+    """Metadata filtering, and the trap inside it.
+Real queries are rarely pure similarity: 'find similar documents, but only in
+the user's own workspace, only in English, and only from the last year'. The
+naive approach - retrieve top 100 by similarity, then filter - can return
+nothing at all if the user's workspace is a tiny slice of the corpus. This is
+called PRE- versus POST-filtering, and serious vector databases implement
+filtered search inside the index traversal so the walk only visits eligible
+nodes. Access control especially must be pre-filtered: post-filtering means the
+index briefly retrieved documents the user may not see.""",
+
+    """Where it sits in a RAG system, end to end.
+OFFLINE: chunk documents, embed each chunk with the same model you will use at
+query time (mixing models is a silent, total failure), store vector plus
+metadata.
+ONLINE: embed the query (~30ms), ANN search for the top 20-50 (~50ms), apply
+metadata filters, re-rank those candidates with a cross-encoder for precision
+(~100ms), and pass the best 5 to the LLM.
+Two rules that follow: the embedding model is part of the INDEX, so changing it
+means re-embedding everything; and retrieval quality caps answer quality - if
+the right chunk is never retrieved, no model can rescue the answer, which is
+why recall@k is the metric to watch first.""",
+]
+
+_EX_P1B["Deadlock and its four necessary conditions"] = [
+    """The bank-transfer deadlock, which is the example to have ready.
+Thread 1 runs transfer(A, B): locks A, then waits for B.
+Thread 2 runs transfer(B, A): locks B, then waits for A.
+Neither can proceed and neither will ever time out - the threads are gone until
+the process restarts. Check the four conditions: locks are exclusive (mutual
+exclusion), each thread holds one while waiting for another (hold and wait),
+neither lock can be seized (no preemption), and each waits on the other
+(circular wait). All four hold, so deadlock is possible - and under load it
+WILL happen.""",
+
+    """The one-line fix, and why it is the one that ships.
+Sort the resources by a global key before locking:
+    first, second = (a, b) if a.id < b.id else (b, a)
+    with first.lock:
+        with second.lock: ...
+Now every thread acquires the lower id first, so no cycle can form - CIRCULAR
+WAIT is structurally impossible. Note what this did NOT require: no deadlock
+detector, no timeouts, no runtime cost beyond a comparison. Breaking circular
+wait through lock ordering is almost always the practical answer, which is why
+it is worth naming before the other three.""",
+
+    """Why the other three conditions are usually unbreakable.
+MUTUAL EXCLUSION: a mutex that could be shared would not be a mutex. Sometimes
+avoidable by making the resource immutable or per-thread, but not in general.
+HOLD AND WAIT: you could demand every lock up front in one atomic step - but
+you rarely know the full set in advance, and holding everything from the start
+destroys concurrency.
+NO PREEMPTION: fine for CPU and memory, which the OS can reclaim; impossible
+for a printer mid-page or a mutex protecting a half-updated structure.
+Walking through why each is impractical, then landing on ordering, is a much
+stronger answer than listing all four as equally viable.""",
+
+    """What databases actually do: detect and recover.
+Postgres and InnoDB let deadlocks happen, maintain a WAIT-FOR GRAPH of which
+transaction waits on which, and periodically run cycle detection (Postgres
+after deadlock_timeout, default 1 second). On finding a cycle they abort the
+cheapest transaction with a retryable deadlock error and let the client retry.
+The reason prevention is not used: a database cannot know in advance which rows
+a transaction will touch, so it cannot impose a lock order. Knowing that
+different layers pick different strategies for principled reasons is the
+senior-sounding half of this answer.""",
+
+    """What general-purpose kernels do: nothing (the ostrich algorithm).
+Linux and Windows do not prevent, avoid or detect application deadlocks. The
+machinery would cost performance on every lock operation, deadlocks are rare in
+correct code, and the recovery a user actually wants is to kill the process.
+Banker's algorithm, meanwhile, needs every process to declare its MAXIMUM
+resource demand up front and costs O(n^2 * m) per request - so no real
+operating system implements it, and saying so plainly (rather than presenting
+it as current practice) is a marker of understanding rather than memorisation.""",
+
+    """Deadlock's cousins, which get asked as follow-ups.
+LIVELOCK: threads keep changing state politely and make no progress - two
+people stepping aside for each other in a corridor forever. Nothing is blocked,
+so a deadlock detector never fires. Fix with randomised backoff.
+STARVATION: a low-priority thread never runs because higher-priority ones keep
+arriving. Fix with ageing.
+PRIORITY INVERSION: a low-priority thread holds a lock a high-priority thread
+needs, and a medium-priority thread preempts the low one - so the high-priority
+task waits on the medium one. Fixed by priority inheritance, and famously the
+bug that nearly ended the Mars Pathfinder mission in 1997.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1B:
+        _e["examples"] = _EX_P1B[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
