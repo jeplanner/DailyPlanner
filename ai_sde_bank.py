@@ -32344,6 +32344,200 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1M[_e["title"]]
 
 
+_EX_P1N = {}
+
+_EX_P1N["Function calling / tool use in LLMs"] = [
+    """The loop, end to end with one real call.
+You send the model a question plus a list of tool SCHEMAS - name, description,
+JSON schema of arguments. User asks 'what's the weather in Dublin?'.
+The model does not answer; it returns a structured call:
+    {"name": "get_weather", "arguments": {"city": "Dublin", "units": "celsius"}}
+YOUR CODE executes that function, gets 14 degrees and light rain, and appends
+the result to the conversation as a tool message. The model is called again and
+now writes the prose answer.
+The critical point: the model never runs anything. It emits a request; your
+code decides whether to honour it. That boundary is the whole security model.""",
+
+    """Why the tool DESCRIPTION is the prompt.
+The model chooses tools purely from their names, descriptions and parameter
+docs - so those strings are prompt engineering, not documentation. 'get_weather'
+described as 'gets weather' will be called for climate questions, historical
+averages and forecasts alike. Described as 'Current weather conditions for a
+city right now; does not support historical dates or forecasts beyond today',
+it stops being called for the wrong things.
+Most tool-selection failures are fixed in the description rather than in the
+model or the temperature, and that is the single most useful practical fact
+here.""",
+
+    """Validate every argument, because the model can and will hallucinate them.
+The model may invent a city that does not exist, pass a string where you
+declared an integer, omit a required field, or produce a plausible-looking
+account id belonging to someone else. Treat the arguments exactly as you would
+untrusted user input: validate against the schema, check authorisation for the
+SPECIFIC user in session, and never interpolate them into SQL or a shell.
+The nightmare case is a tool like `execute_sql` or `send_email` - if the model
+can be talked into calling it (see prompt injection), the model's judgement has
+become your authorisation layer. High-impact tools need a human confirmation
+step or a hard allowlist.""",
+
+    """Parallel calls, sequencing, and the loop guard.
+Modern APIs can return SEVERAL tool calls at once - 'weather in Dublin and
+Cork' yields two independent calls you can execute concurrently. But dependent
+calls must be sequential: 'book me the cheapest flight' needs search_flights to
+return before book_flight can be called with an id.
+Two production guards: cap the number of round trips (a model can loop calling
+the same tool forever when a tool keeps erroring), and set a total token or
+time budget per request. Without a cap, a single malformed tool response can
+cost real money in a retry spiral.""",
+
+    """What to do when the tool FAILS, which juniors omit entirely.
+Return the error to the model as the tool result rather than throwing - 'error:
+city not found, valid inputs are ...' lets the model correct itself and retry
+with a better argument, which is often exactly what happens. Swallow the error
+and it answers confidently from nothing.
+But distinguish RETRYABLE errors (timeout, rate limit - retry with backoff)
+from TERMINAL ones (invalid city, unauthorised - tell the model, do not retry).
+Feeding a permanent failure back repeatedly is how you build an expensive
+infinite loop.""",
+
+    """How this becomes an AGENT, and the honest limits.
+Function calling plus a loop - call the model, execute tools, feed results
+back, repeat until it stops requesting tools - is the whole mechanism behind
+'AI agents', including the ReAct pattern of interleaved reasoning and action.
+The limits worth stating: reliability degrades with the number of steps (a 95%
+per-step success rate is 60% over ten steps), the model has no memory between
+runs unless you give it some, and it cannot tell a successful tool call from a
+successful-looking one. That is why production agents are narrow, heavily
+guarded, and usually have a human in the loop for anything irreversible.""",
+]
+
+_EX_P1N["Bellman-Ford (shortest path with negative edges)"] = [
+    """Why Dijkstra fails on negative edges, with the smallest counterexample.
+Nodes A -> B weight 1, A -> C weight 4, B -> C weight -3.
+Dijkstra pops A (0), then B (1) and C (4). It FINALISES C at 4 the moment it
+pops it. But the true shortest path is A -> B -> C = 1 + (-3) = -2.
+Dijkstra's correctness rests on 'once popped, a node's distance can never
+improve' - which assumes every edge adds cost. A negative edge breaks that
+assumption, so the greedy finalisation is simply unsound. That example is the
+whole justification for Bellman-Ford's existence.""",
+
+    """Why exactly V-1 rounds.
+Any shortest path in a graph with no negative cycle visits at most V nodes, so
+it has at most V-1 edges. After round k, every shortest path using at most k
+edges has been found - one more edge is relaxed per round. So V-1 rounds
+guarantee all of them.
+Trace on a 4-node chain A->B->C->D with the edges listed in reverse order: the
+first round only fixes D's predecessor, the second propagates one hop further,
+and by round 3 (= V-1) every distance is final. Listing edges in a bad order is
+what forces the full V-1 rounds; a lucky order converges sooner, which is the
+basis of the early-exit optimisation below.""",
+
+    """The Vth pass, which is the negative-cycle detector.
+After V-1 rounds every distance should be final. So if ONE more pass still
+improves some edge, that edge lies on (or is reachable from) a cycle whose
+total weight is negative - and a negative cycle means 'shortest path' is
+undefined, because you can loop forever driving the cost to minus infinity.
+That extra pass is not an optimisation, it is a different feature: Dijkstra
+cannot detect negative cycles at all, which is a real reason to choose
+Bellman-Ford even when you suspect the weights are fine.""",
+
+    """The guard `if dist[u] != inf` and why it is required.
+Relaxing from an unreached node would compute inf + w, which in Python is inf
+(harmless) but in C++ with INT_MAX overflows to a large NEGATIVE number - and
+that phantom short distance then propagates through the whole graph.
+It also matters logically: a node you cannot reach should not be able to
+improve anyone. This is the single most common Bellman-Ford implementation bug
+and it produces answers that look plausible.""",
+
+    """The early exit, and the SPFA variant.
+If a full round changes nothing, every distance is final and you can stop -
+typically far sooner than V-1 rounds on real graphs. One flag, and it is worth
+adding.
+The queue-based refinement (SPFA) only re-relaxes edges out of nodes whose
+distance actually changed, which is much faster in practice though still
+O(V*E) worst case. Naming it shows you know the practical version, but be
+honest that its worst case is unimproved.""",
+
+    """Complexity and when to choose which.
+Bellman-Ford: O(V*E), handles negative edges, detects negative cycles, trivially
+simple to implement. Dijkstra: O(E log V), non-negative only, much faster.
+BFS: O(V+E), unweighted only.
+So the decision is purely about the weights - unweighted means BFS, non-negative
+means Dijkstra, negative means Bellman-Ford. The family: Cheapest Flights Within
+K Stops (Bellman-Ford relaxed exactly K+1 times, which is the natural fit
+because the round count IS the hop limit), Network Delay Time, and Floyd-Warshall
+for all-pairs at O(V^3).""",
+]
+
+_EX_P1N["Prim's Minimum Spanning Tree"] = [
+    """What an MST is, and the trace.
+A minimum spanning tree connects all V nodes with V-1 edges at the lowest total
+weight - no cycles, everything reachable.
+Graph: 0-1 (4), 0-2 (1), 1-2 (2), 1-3 (5), 2-3 (8).
+Start with heap [(0,0)]. Pop node 0 (cost 0), push its edges (4,1) and (1,2).
+Pop (1,2) -> add node 2, total 1; push (2,1) and (8,3).
+Pop (2,1) -> add node 1, total 3; push (5,3).
+Pop (4,1) -> node 1 already visited, SKIP.
+Pop (5,3) -> add node 3, total 8. All four nodes in -> MST weight 8.""",
+
+    """Why the skip-if-visited line is the whole correctness argument.
+The heap accumulates stale entries: the same node can be pushed several times
+with different edge weights, once per neighbour already in the tree. When
+popped, the FIRST occurrence is guaranteed cheapest (that is what the min-heap
+gives), so every later pop of the same node must be discarded.
+Without that `continue`, you add a node twice, create a cycle, and overcount
+the weight. It is the same lazy-deletion pattern as in Dijkstra, and for the
+same reason: Python's heapq has no decrease-key.""",
+
+    """Prim versus Kruskal, and when each wins.
+PRIM grows one tree from a start node using a heap of frontier edges -
+O(E log V), and it is the better fit for DENSE graphs, especially with an
+adjacency-matrix O(V^2) variant that needs no heap at all.
+KRUSKAL sorts ALL edges and adds each if it joins two different components,
+using union-find - O(E log E), better for SPARSE graphs and much easier to
+write if you already have DSU.
+Both are greedy and both are optimal, which is the interesting part: the cut
+property guarantees that the cheapest edge crossing any cut is in some MST, and
+each algorithm exploits it from a different direction.""",
+
+    """The subtle difference from Dijkstra, which is one character in practice.
+Dijkstra pushes (dist_so_far + w, neighbour) - the CUMULATIVE distance from the
+source. Prim pushes (w, neighbour) - just the single EDGE weight, because an
+MST cares about the cost of connecting a node to the tree, not about its
+distance from the start.
+The two algorithms are otherwise structurally identical, and confusing them
+gives a correct-looking program that computes a shortest-path tree instead of a
+minimum spanning tree. Being able to state that one-line difference is a strong
+signal.""",
+
+    """Edge cases.
+A disconnected graph -> the heap empties before `len(visited) < n` is satisfied,
+so the loop exits with an incomplete tree. The code returns a total for a
+FOREST, silently. If connectivity is not guaranteed, check
+`len(visited) == n` after the loop and report failure - the prompt usually
+guarantees connectivity, and noticing that it does is worth a sentence.
+Single node -> visited = {0}, total 0.
+Duplicate edge weights -> several valid MSTs exist with the same total; any is
+acceptable, which is worth confirming since the expected output may be just the
+weight.
+Self-loops are skipped by the visited check; parallel edges resolve to the
+cheaper one naturally.""",
+
+    """Complexity and where MSTs actually appear.
+O(E log V) time with a binary heap, O(V+E) space.
+Real uses worth naming: laying network cable or road at minimum cost,
+clustering (delete the k-1 most expensive MST edges and you have k clusters -
+this is single-linkage clustering), image segmentation, and approximation
+algorithms for travelling-salesman. The family: Kruskal, Union-Find, Connecting
+Cities With Minimum Cost, Min Cost to Connect All Points, and Optimize Water
+Distribution - all of which are MST problems wearing product language.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1N:
+        _e["examples"] = _EX_P1N[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
