@@ -35433,6 +35433,262 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1W[_e["title"]]
 
 
+_EX_P1X = {}
+
+_EX_P1X["Valid Parentheses"] = [
+    """Why a stack, in one sentence.
+Brackets close in LAST-OPENED-FIRST order - '([{}])' closes the brace before
+the square before the round - which is precisely last-in-first-out. The data
+structure is not a choice, it is the shape of the problem.
+Trace '([)]': push '(', push '['. Then ')' arrives and the top is '[', which
+does not match -> invalid. A counter-based solution that merely balances counts
+would call this valid, which is exactly why counting fails.""",
+
+    """Why a counter cannot work, with the two inputs that prove it.
+'(((' -> a counter ends non-zero, correctly invalid.
+'([)]' -> equal numbers of each opener and closer, so any counting scheme says
+valid. It is not: the types interleave incorrectly.
+So you need ORDER, not just balance - and only for a SINGLE bracket type does a
+counter suffice. If a prompt has one bracket type, mention that a counter gives
+O(1) space; with several, the stack is required.""",
+
+    """The three failure modes the code must catch.
+1. Wrong type on close: `stack.pop() != pairs[ch]` - the ([)] case.
+2. Closing with nothing open: `not stack` when a closer arrives - the ')(' and
+   ']' cases. Without this guard, pop() raises IndexError on an empty stack.
+3. Unclosed openers at the end: `return not stack` - the '(((' case.
+All three are genuinely distinct, and a solution missing any one passes a
+casual test. Enumerate them out loud before coding; it is the fastest way to
+get it right first time.""",
+
+    """The dictionary direction, and why closer -> opener.
+Mapping `{')': '(', ']': '[', '}': '{'}` lets a single membership test classify
+a character - `ch in pairs` means it is a CLOSER, and `pairs[ch]` gives what
+must be on top of the stack.
+Mapping the other way (opener -> closer) works too but needs the reverse lookup
+at the point of comparison, which is clumsier. Small choice, but it is the
+difference between four clean lines and six awkward ones.""",
+
+    """Edge cases.
+Empty string -> the stack is empty at the end -> True. An empty expression is
+vacuously balanced, which is the usual convention but worth confirming.
+Single character '(' -> stack non-empty -> False. ')' -> the not-stack guard ->
+False.
+Correctly nested but not alternating, '{[]}' -> valid. Adjacent groups '()[]{}'
+-> valid.
+If the string can contain OTHER characters (letters, spaces), the current code
+ignores them, since they match neither branch - which is right for the 'valid
+expression' variant and wrong if the prompt says the string is brackets only.
+Ask.""",
+
+    """Complexity and the family.
+O(n) time, O(n) space in the worst case (all openers).
+The family: Min Stack (a stack augmented with a running minimum), Generate
+Parentheses (backtracking with open/close counters), Longest Valid Parentheses
+(a stack of INDICES, so you can measure lengths), Remove Invalid Parentheses,
+Basic Calculator (a stack for nested expressions), Decode String, Asteroid
+Collision, and Simplify Path.
+The general cue for a stack: any rule of the form 'this element interacts with
+the most recent unresolved one'.""",
+]
+
+_EX_P1X["Tell me about a time you dealt with ambiguity or unclear requirements"] = [
+    """A full answer, with the beat that scores.
+SITUATION: My internship task was 'improve the recommendations' - no metric, no
+baseline, and the product owner who could define it was on leave for two weeks.
+TASK: I had six weeks total, so waiting would have left four.
+ACTION: I separated what was genuinely unknown (what 'better' means) from what
+was not (the data, the model, the serving path). I asked the two engineers who
+talk to users what people complained about - the answer was repetitive results,
+not irrelevant ones. So I made the assumption EXPLICIT: 'better means more
+diverse', wrote it at the top of a one-page doc, and messaged the product owner
+so it was on the record. Then I built the smallest thing that would test it - a
+diversity re-ranker behind a flag, measuring both diversity and click-through
+offline.
+RESULT: She confirmed the priority on return; category coverage rose 40% with
+click-through flat, and it shipped behind the flag.""",
+
+    """Why 'I asked for clarification' is only half an answer.
+Anyone can ask a question. The graded half is what you did when the answer was
+'nobody knows yet'. Stopping at the question means you were blocked for two
+weeks and produced nothing, which is the outcome the interviewer is checking
+for.
+The five-step shape that scores: identify WHAT is ambiguous (and what is not),
+ask the two or three questions whose answers would change your approach, state
+an explicit ASSUMPTION for the rest, build the smallest thing that tests it,
+and set a checkpoint to revisit.""",
+
+    """The sentence that lands, and why.
+'I decided X assuming Y; if Y turned out to be wrong the fix would cost about
+three days, so it was worth starting rather than waiting.'
+That shows you SIZED THE COST of being wrong - which is exactly what
+distinguishes a considered bet from recklessness, and it is what senior
+engineers actually do. Without the cost estimate, 'I made an assumption and
+carried on' reads as guessing.
+Writing the assumption down is the other half: a stated assumption is
+reversible and reviewable, a silent one is a landmine.""",
+
+    """Where student-scale material comes from, since this worries people.
+An open-ended capstone brief. A hackathon with a vague theme. An internship
+task whose owner was unavailable. A research question with no agreed evaluation.
+A group project where the requirements changed mid-way.
+All of these are legitimate. What is NOT legitimate is claiming ambiguity when
+the requirements were actually clear and you simply had not read them - that
+tends to come out under a follow-up.""",
+
+    """The probes, and the answers to have ready.
+'What if your assumption had been wrong?' - this IS the story, so answer with a
+COST in days and what you would have thrown away.
+'How did you decide when to stop asking and start building?' - when the next
+question's answer would not change what you built first.
+'Who did you tell?' - the record matters; an assumption nobody else knows about
+is indistinguishable from a guess.
+'What would you do differently?' - 'write the assumption down on day one rather
+than day two' is honest and specific.""",
+
+    """The Amazon and Google framings of the same story.
+AMAZON hears Bias for Action plus Are Right A Lot: lead with the decision, the
+reversibility, and the number. 'It was a two-way door - the flag meant backing
+it out was a config change.'
+GOOGLE hears dealing with ambiguity, a named Googleyness signal: lead with how
+you FRAMED the problem and who you consulted. 'I turned the ambiguity into a
+testable assumption rather than a blocker, and I checked it against the people
+who actually talk to users.'
+Same three days of work; different opening sentence.""",
+]
+
+_EX_P1X["How do you handle a group project where someone is not pulling their weight?"] = [
+    """The answer most students give, and why it fails.
+'I just did their part myself so the project wouldn't suffer.' It sounds
+responsible and it tells the interviewer three bad things: you will silently
+absorb an underperformer's work, you will hide the problem from whoever could
+help, and you will burn out doing it. None of those scale to a team.
+Doing the work is sometimes the right SHORT-TERM call for a deadline - but only
+alongside addressing the cause, and only if someone who needs to know is told.""",
+
+    """The order that scores: WHY before WHAT.
+Find out the reason before deciding what kind of problem it is. In practice the
+common causes are: stuck and embarrassed to say so, unclear what was expected,
+a genuine personal crisis - and only occasionally indifference.
+A full answer: 'Rather than assuming he had checked out, I messaged him
+directly and asked if he was okay. He was dealing with a family illness and had
+been too embarrassed to say anything in front of four people.'
+That single move changes the whole story from a complaint into a collaboration
+story, and it is the beat interviewers listen for.""",
+
+    """What to do once you know, with the concrete mechanisms.
+Talk privately and directly first - not in the group chat, not to the
+supervisor. Make the work SMALLER and VISIBLE: a shared board with named,
+small tasks so drift shows up in days rather than weeks, and so a stuck person
+has a rung to grab. Replan HONESTLY if they genuinely cannot deliver - cut
+scope rather than pretend. Escalate only after a direct attempt, and frame it
+as 'here is what we tried' rather than as a complaint.
+Every one of those is checkable by a follow-up question, which is why vague
+answers ('we communicated better') do not survive.""",
+
+    """A full worked answer.
+SITUATION: In a five-person systems project one member missed two consecutive
+integration deadlines and stopped replying, with the demo two weeks out.
+TASK: His component sat between mine and the front end, so nothing could be
+tested end to end.
+ACTION: I asked him directly and privately what was going on - family illness,
+and embarrassment about saying so. So we changed the plan rather than pretended:
+I took the integration layer since it was on my critical path anyway, we cut one
+optional feature to shrink his piece to something finishable, and I told the
+supervisor we were RESCOPING - not that someone had failed, because that framing
+would have been both unkind and inaccurate. We also moved to a shared board with
+small named tasks.
+RESULT: Demoed on time with one fewer feature; he delivered the reduced scope;
+the supervisor's feedback singled out that the rescope was made early enough to
+be useful.""",
+
+    """The probe that tests whether you are just being nice.
+'What if the reason had been that they simply did not care?' Then the process is
+IDENTICAL - ask, adjust the plan, make the work visible - and only the
+conclusion differs: you escalate with a factual record rather than
+accommodating.
+Being able to say that shows the approach is a method rather than an assumption
+of good faith. A candidate whose whole answer depends on the teammate having a
+sympathetic reason has not actually thought about the hard case.""",
+
+    """What NOT to say.
+Contempt in any form - lazy, useless, didn't care - because the interviewer is
+assessing how you talk about absent colleagues.
+Escalating to the supervisor as the first step, which reads as someone who
+creates political problems.
+A public confrontation.
+And a story with no change to how the team worked afterwards: if the same drift
+could recur unnoticed, you fixed an instance rather than the process, and the
+follow-up 'how would you prevent it next time?' will find that out.""",
+]
+
+_EX_P1X["Tell me about a time you led without authority"] = [
+    """A full worked answer.
+SITUATION: Our six-person capstone had no shared way of running experiments -
+everyone had a notebook, results were screenshots in the group chat, and we
+twice argued about numbers nobody could reproduce. Nobody owned it and there was
+no team lead.
+TASK: I was not in charge of anything, but we were losing about a day a week.
+ACTION: Instead of proposing a process, I built the smallest version in one
+evening - a script taking a config file, logging metrics to a shared CSV, and
+printing a comparison table - and re-ran two teammates' existing experiments
+through it so they saw their OWN numbers come out identical. Then I made
+adoption free by converting their two notebooks myself. When a teammate better
+at infrastructure than me offered to add proper experiment tracking, I handed
+it over and went back to my own module.
+RESULT: All six were using it within a week, the reproducibility arguments
+stopped, and the final report had a comparison table we could defend. She later
+extended it to log to a database, which was better than what I built.""",
+
+    """The four mechanisms of influence, since 'I convinced them' is not an answer.
+Do the first slice YOURSELF so the idea is concrete rather than a proposal -
+people argue with suggestions and react to artefacts.
+Bring DATA so the discussion stops being about opinions.
+Make adoption CHEAP - converting their notebooks meant nobody paid a migration
+cost to try it.
+Give CREDIT away publicly.
+Naming which of these you used is what turns a leadership claim into evidence.""",
+
+    """The step-BACK beat, which Google's rubric names explicitly.
+Emergent leadership is 'step up when your skill is needed and step BACK when
+someone else's is'. So the ending matters: handing the tool to the teammate who
+was better at it, and saying their version was better, is the part that
+distinguishes leadership from wanting to be in charge.
+Most candidates omit this entirely and their story reads as territorial. One
+sentence fixes it.""",
+
+    """Why the story must not involve actual authority.
+If you were the elected team lead, the appointed PM, or the person the
+supervisor put in charge, this is a different question - you had a mandate, and
+the interesting part (getting people to follow you without one) is missing.
+If your only leadership experience came with a title, reframe: find the moment
+within it where you had to persuade rather than direct, and tell that instead.""",
+
+    """Student-scale material that works.
+Taking over coordination of a stalled group project. Setting up CI for a class
+repo nobody had touched. Organising a study group. Running a retrospective after
+a bad hackathon. Writing the README that stopped the same question being asked
+five times. Standardising how a lab recorded results.
+The common shape: a gap nobody owned, that you noticed, that cost the group
+something measurable, and that outlived your involvement.""",
+
+    """The probes.
+'How did you get people to go along?' - the mechanisms above, named
+specifically.
+'What did it cost you?' - usually time taken from your own graded work, and
+saying so shows you weighed it.
+'What if they had ignored you?' - find one ally, shrink the ask, or accept the
+problem was not painful enough yet. NOT 'escalate', which is the opposite of
+influence.
+'What happened afterwards?' - the strongest ending is that it outlived you,
+which is why the teammate improving on it is the best possible close.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1X:
+        _e["examples"] = _EX_P1X[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
