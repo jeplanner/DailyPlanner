@@ -29165,56 +29165,372 @@ you get None. Both are worth checking on paper before you say you are done.""",
 ]
 
 _EX_P0C["Longest Increasing Subsequence (patience + binary search)"] = [
-    """The textbook case, traced.
-nums = [10,9,2,5,3,7,101,18], tails = []
-  10 -> append        tails=[10]
-  9  -> replaces 10   tails=[9]
-  2  -> replaces 9    tails=[2]
-  5  -> append        tails=[2,5]
-  3  -> replaces 5    tails=[2,3]
-  7  -> append        tails=[2,3,7]
-  101-> append        tails=[2,3,7,101]
-  18 -> replaces 101  tails=[2,3,7,18]
-Answer: len(tails) = 4. The actual LIS is [2,3,7,101] or [2,3,7,18].""",
+    """1. THE GOAL, in plain English.
 
-    """The crucial point: tails is NOT the subsequence.
-In the trace above the final tails is [2,3,7,18], which IS a valid LIS here -
-but that is a coincidence. Consider [1,10,11,2]:
-  1 -> [1];  10 -> [1,10];  11 -> [1,10,11];  2 -> replaces 10 -> [1,2,11]
-[1,2,11] is not a subsequence of the input in that order. Only the LENGTH (3) is
-meaningful. Saying this out loud is what shows you understand the algorithm
-rather than having memorised it.""",
+You are given a list of numbers. Pick out some of them - keeping their original
+left-to-right order but allowed to skip any you like - so that each number you
+pick is strictly bigger than the one before it. How many can you pick at most?
 
-    """Edge cases.
-Strictly decreasing [5,4,3,2,1]: every element replaces position 0, tails ends
-as [1], answer 1. Correct - any single element is an increasing subsequence.
-All equal [7,7,7]: with bisect_left, 7 always lands at position 0 and replaces,
-so the answer is 1 - which is right for STRICTLY increasing.
-Empty -> 0. Single element -> 1.""",
+The picked numbers are called a SUBSEQUENCE. It is different from a SUBARRAY: a
+subarray must be an unbroken run of neighbours, whereas a subsequence may skip
+freely. It just may not reorder.
 
-    """Why bisect_left and not bisect_right.
-On [7,7,7] with bisect_right, each 7 would be inserted AFTER the existing 7,
-appending each time and returning 3 - which is the answer to the NON-decreasing
-version of the problem.
-One function call decides which problem you solved. If the interviewer says
-"non-decreasing", switch to bisect_right; otherwise leave it.""",
+Our list:
 
-    """Why replacing a tail never loses anything.
-Replacing tails[i] with a smaller value does not make any existing subsequence
-shorter - it records that a chain of length i+1 can now END on a smaller number,
-which only makes it EASIER for future elements to extend it.
-That monotonic-improvement argument is why the greedy is safe, and it is the
-follow-up question. tails is always sorted for the same reason, which is what
-makes it binary-searchable.""",
+    nums = [10, 9, 2, 5, 3, 7, 101, 18]
 
-    """The complexity comparison, and recovering the actual sequence.
-The O(n^2) DP is simpler: dp[i] = 1 + max(dp[j]) over all j < i with
-nums[j] < nums[i]. Easy to write and easy to explain, and it gives you the
-sequence by backtracking.
-This version is O(n log n). To recover the actual subsequence you must record,
-for each element, the index it was placed at plus a predecessor pointer, then
-walk back from the last append. Worth mentioning - the length is cheap, the
-sequence costs bookkeeping.""",
+Try it by hand. Start at 2: then 5, then 7, then 101 - that is 2, 5, 7, 101, four
+numbers, each bigger than the last, all in their original order. Could you get
+five? Try 2, 3, 7, 101 - also four. Or 2, 3, 7, 18 - four again. There is no run
+of five.
+
+The answer is 4.
+
+Notice the question asks only HOW MANY, not which ones. That is what makes an
+efficient answer possible, and section 3 is where that pays off in a way that
+looks like cheating.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION, and it is the one to describe first because it is honest and
+easy to follow.
+
+For each position, ask: what is the longest increasing run that ENDS here? Call it
+best[i]. To work it out, look back at every earlier position j. If nums[j] is
+smaller than nums[i], then the run ending at j can be extended by nums[i], giving
+best[j] + 1. Take the largest such, or 1 if nothing earlier is smaller.
+
+    nums:  10  9  2  5  3  7  101  18
+    best:   1  1  1  2  2  3   4    4
+
+Read a couple of those. best[3] is 2 because 5 can extend the run ending at 2.
+best[5] is 3 because 7 can extend the run ending at 5, which was already 2. The
+answer is the largest value anywhere in the best row: 4.
+
+That is correct and completely comprehensible. Its cost is the looking-back: for
+each of the n positions you scan up to n earlier ones, so about n x n / 2 steps -
+written O(n^2). For 100,000 numbers that is five billion, too slow.
+
+THE UPGRADE is genuinely surprising, and it comes from a card game. It is called
+PATIENCE, and section 3 explains it properly - but the shape of it is this: deal
+the numbers into piles under one simple rule, and the ANSWER TURNS OUT TO BE THE
+NUMBER OF PILES. You never compute the runs at all.""",
+
+    """3. THE TRICK - patience piles, and what the list really holds.
+
+THE CARD GAME. Deal the numbers one at a time, left to right, into piles laid out
+in a row. The rule for each card:
+
+  Place it on the LEFTMOST pile whose top card is greater than or equal to it.
+  If there is no such pile, start a new pile on the right.
+
+Deal our list and watch:
+
+    10          piles: [10]
+     9          9 goes on the 10 (top 10 >= 9)      piles: [9]
+     2          2 goes on the 9                     piles: [2]
+     5          no pile has a top >= 5 -> new pile  piles: [2] [5]
+     3          leftmost top >= 3 is the 5          piles: [2] [3]
+     7          none >= 7 -> new pile                piles: [2] [3] [7]
+   101          none >= 101 -> new pile              piles: [2] [3] [7] [101]
+    18          leftmost top >= 18 is the 101        piles: [2] [3] [7] [18]
+
+Four piles. And the answer is 4.
+
+WHY THE NUMBER OF PILES IS THE ANSWER, in two halves:
+
+  It cannot be fewer. Any two cards in the same pile are in decreasing order - a
+  card only lands on a pile whose top is at least as big. So no two cards from the
+  same pile can both be in one increasing run. An increasing run of length L
+  therefore needs L different piles, so the number of piles is at least L.
+
+  It cannot be more. Every time a new pile is started, the card that starts it is
+  bigger than the current top of the pile to its left. Follow that chain leftwards
+  from the last pile and you construct an actual increasing run with one card per
+  pile. So a run that long really exists.
+
+Both halves hold, so piles = longest run. That is the whole proof, and it is short
+enough to say aloud.
+
+NOW THE CODE'S VERSION. We never need the piles themselves - only their TOP cards,
+and only to decide where the next card goes. So the code keeps a single list
+holding one number per pile: the current top.
+
+    tails[i] = the smallest possible value that a run of length i+1 can end with
+
+And here is the part that surprises people: that list is NOT the answer
+subsequence. Its contents may never have appeared together in the input in that
+order. Only its LENGTH is meaningful. Our final list is [2, 3, 7, 18], and 18
+never followed 7 in any valid run of length 4 - the real one ends 101. Length 4 is
+right; the contents are not a path.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - reading the list as the answer. Covered at the end of section 3, and it
+is the most important thing to say out loud. If the problem asks for the actual
+subsequence rather than its length, this method needs extra bookkeeping: record,
+for each number, which pile it landed on and which number was on top of the
+previous pile at that moment, then walk those links backwards at the end.
+
+CASE 2 - strictly increasing versus non-decreasing. Our problem says STRICTLY
+increasing, so equal values may not both be picked. That is enforced by searching
+for the leftmost position whose value is greater than OR EQUAL to the new number -
+so an equal value replaces rather than extends. If the problem allowed equal
+values, you would search for the leftmost strictly-greater position instead. It is
+a one-word change with a completely different answer on [2, 2, 2]: strictly gives
+1, non-decreasing gives 3.
+
+CASE 3 - a strictly decreasing list, [5, 4, 3, 2, 1]. Every number replaces the
+single pile's top, so there is never more than one pile. Answer 1. Correct - you
+can only ever pick one number.
+
+CASE 4 - an already increasing list, [1, 2, 3, 4]. Every number starts a new pile.
+Answer 4, the whole list. Correct.
+
+CASE 5 - the empty list. No numbers are dealt, the list of tops stays empty, and
+its length is 0. Correct with no special case.
+
+CASE 6 - scanning the tops one by one instead of searching. The tops list is
+always sorted ascending - which is why a fast search works on it. Walking it
+linearly would still be correct but would cost O(n) per number and put you back at
+O(n^2), throwing away the entire point of the upgrade.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBSEQUENCE: some of the numbers, in their original order, with skipping allowed.
+Contrast with a SUBARRAY, which must be an unbroken run.
+
+BINARY SEARCH: finding a position in a SORTED list by repeatedly halving the
+search range - look at the middle, decide whether the target is left or right of
+it, throw the other half away, repeat. About 20 steps for a million items, written
+O(log n). It only works because the list is sorted, which section 6 explains is
+guaranteed here.
+
+bisect.bisect_left(tails, num): Python's ready-made binary search. It returns the
+leftmost position where num could be inserted while keeping the list sorted -
+which, when num is already present, is the position of the FIRST copy. That
+"leftmost, and before any equal value" behaviour is exactly the strictly-increasing
+rule from case 2. Its sibling bisect_right would place num AFTER any equal values,
+which would give the non-decreasing answer instead. One character of difference,
+one word of difference in the problem statement.
+
+tails: one entry per pile, holding that pile's current top card. Defined precisely
+in section 3.
+
+O(n log n): the cost. In plain words, a bit more than proportional to the length of
+the list: n numbers, each costing a binary search of about log n steps. For
+100,000 numbers that is roughly 1.7 million steps instead of five billion.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: deal each number onto the leftmost pile whose top
+is at least as big, starting a new pile when none is, and the answer is the number
+of piles.
+
+There is no recursion here - one loop with a search inside it - so nothing piles up
+on the call stack.
+
+The steps:
+
+  1. Start with an empty list. Each entry will hold the top card of one pile, and
+     the entries are in pile order, left to right.
+
+  2. Take each number in the input, in order.
+
+  3. Binary-search the list for the leftmost position whose value is greater than
+     or equal to this number.
+
+  4. If the search comes back with a position PAST THE END of the list, this
+     number is bigger than every pile top - so it starts a brand-new pile. Add it
+     to the end.
+
+  5. Otherwise, overwrite the value at that position with this number. In card
+     terms, the number lands on that pile and becomes its new top. The pile count
+     does not change - only that pile's top gets smaller.
+
+  6. When every number has been dealt, the answer is the LENGTH of the list.
+
+Two things worth being sure about.
+
+WHY THE LIST STAYS SORTED - which is what makes the binary search valid. It starts
+empty. Adding at the end only ever happens when the number is bigger than
+everything already there, so order is preserved. Overwriting a position replaces
+its value with a SMALLER one - and it was the leftmost position at least as big as
+the new number, so everything to its left is strictly smaller and everything to
+its right was already larger than the old value. Sorted before, sorted after.
+
+WHY OVERWRITING IS SAFE - it never shortens the answer, because the list's length
+does not change. And it helps future numbers: a smaller top means more numbers
+will be able to extend that length later. You are recording "a run of this length
+can now end with a smaller number than before", which can only ever make things
+better.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code deals the numbers out like cards into piles, and then simply counts the
+piles.
+
+It keeps one list, holding the top card of each pile in left-to-right order. For
+every number in the input it asks a single question: which is the leftmost pile
+whose top card is not smaller than this one?
+
+If there is such a pile, the number goes on it and becomes its new top. The number
+of piles does not change - what changes is that this pile now ends in a smaller
+number than before, which quietly makes life easier for every number still to
+come, because more of them will be able to sit on top of it later.
+
+If no pile qualifies - meaning this number is bigger than every top card on the
+table - it starts a fresh pile at the right-hand end. That is the only thing that
+ever makes the count go up.
+
+Because the tops are always in increasing order from left to right, finding the
+right pile does not need a scan: the code halves the search range repeatedly,
+which takes about twenty steps even for a million piles.
+
+At the end it reports how many piles there are, and that count is the length of
+the longest increasing run in the original list.
+
+One thing worth being clear about: the list of top cards is not itself the answer
+sequence. Those particular numbers may never have appeared together in that order.
+Only how many there are is meaningful.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [10, 9, 2, 5, 3, 7, 101, 18] beside you; the answer is 4.
+
+    import bisect
+Python's binary-search module. It gives us a correct, fast search on a sorted list
+without writing the halving loop by hand - and hand-written binary searches are
+notoriously easy to get subtly wrong at the boundaries.
+
+    tails = []
+One entry per pile, holding that pile's current top card, in pile order. It starts
+empty because no cards have been dealt. Read the comment in the code as its
+definition: tails[i] is the smallest value that a run of length i+1 can currently
+end with.
+
+    for num in nums:
+Deal the numbers in their original order. Order matters absolutely - this is a
+subsequence problem, and reordering the input would answer a different question.
+
+    pos = bisect.bisect_left(tails, num)
+The search from section 6, step 3: the leftmost position in tails whose value is
+greater than or equal to num. Two things about this line.
+
+It is only valid because tails is always sorted - section 6 proves it stays that
+way, and that proof is the licence for using a binary search at all.
+
+bisect_LEFT is what makes this STRICTLY increasing. On an equal value it returns
+the position of the existing copy, so the number replaces it rather than starting
+a new pile. Swapping in bisect_right would place it after the equal value, start a
+new pile, and answer the non-decreasing version of the problem instead - see case
+2 in section 4.
+
+    if pos == len(tails):
+        tails.append(num)
+The search ran off the end, meaning num is bigger than every pile top. So it
+starts a new pile. This is the ONLY line that ever increases the count, and
+therefore the only line that can change the answer.
+
+    else:
+        tails[pos] = num
+The number lands on an existing pile and becomes its new top. The count is
+unchanged; that pile simply now ends in a smaller number, which makes it easier
+for later numbers to extend. Note this OVERWRITES rather than inserting - inserting
+would grow the list and give a wrong count.
+
+    return len(tails)
+The number of piles, which section 3 proved is the length of the longest
+increasing subsequence. Note it returns the LENGTH, not the list - the list's
+contents are not a valid answer sequence.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [10, 9, 2, 5, 3, 7, 101, 18].  tails starts empty.
+
+num = 10
+  bisect_left([], 10) = 0.  Is 0 == len(tails) = 0?  Yes -> append.
+  tails = [10]
+
+num = 9
+  bisect_left([10], 9) = 0    (9 belongs before 10)
+  Is 0 == 1?  No -> overwrite position 0.
+  tails = [9]
+  Meaning: a run of length 1 can now end as low as 9 rather than 10. Better.
+
+num = 2
+  bisect_left([9], 2) = 0.  Not past the end -> overwrite.
+  tails = [2]
+
+num = 5
+  bisect_left([2], 5) = 1    (5 belongs after 2)
+  Is 1 == len(tails) = 1?  Yes -> append. A NEW PILE.
+  tails = [2, 5]
+  Meaning: a run of length 2 now exists, ending at 5. Indeed 2 then 5.
+
+num = 3
+  bisect_left([2, 5], 3) = 1  (3 belongs between 2 and 5)
+  Not past the end -> overwrite position 1.
+  tails = [2, 3]
+  The count did NOT change - still 2. But a length-2 run can now end at 3 instead
+  of 5, which is what lets the next number extend it.
+
+num = 7
+  bisect_left([2, 3], 7) = 2.  Is 2 == 2?  Yes -> append. NEW PILE.
+  tails = [2, 3, 7]
+  A run of length 3 exists: 2, 3, 7.
+
+num = 101
+  bisect_left([2, 3, 7], 101) = 3.  Is 3 == 3?  Yes -> append. NEW PILE.
+  tails = [2, 3, 7, 101]
+  A run of length 4 exists: 2, 3, 7, 101.
+
+num = 18
+  bisect_left([2, 3, 7, 101], 18) = 3  (18 belongs between 7 and 101)
+  Not past the end -> overwrite position 3.
+  tails = [2, 3, 7, 18]
+  Count unchanged at 4; a length-4 run can now end at 18 rather than 101.
+
+return len(tails) = 4.  Correct.
+
+Two things to read off that trace. The count only ever grew on the four "append"
+lines - those are the new piles from section 3. And the final tails is
+[2, 3, 7, 18], which is NOT a valid increasing subsequence of the input in the
+sense of being the answer: 18 comes after 101 in the input, and the real length-4
+run ends 101. The length is right; the contents are a working record, not a
+path.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log n). Each of the n numbers costs one binary search over a list that
+is never longer than n, and a binary search is about log n steps - roughly 17 for
+100,000 items. So about 1.7 million steps, against five billion for the O(n^2)
+version from section 2. That is the difference between instant and unusable.
+
+SPACE: O(n) for the tails list, which in the worst case - an already increasing
+input - holds one entry per number.
+
+WHEN TO USE WHICH. If the problem asks only for the LENGTH, use this. If it asks
+for the actual subsequence, the O(n^2) version is far easier to adapt, because
+best[i] genuinely records the run ending at i and you can walk the choices
+backwards. This version needs extra links recorded during the deal, and getting
+them right is fiddly. Say which you would use and why, rather than reaching
+reflexively for the faster one.
+
+THE #1 MISTAKE - believing tails is the answer subsequence. It is not, and the
+trace shows exactly why: it ends [2, 3, 7, 18] while the real run ends 101. The
+list is a record of "the smallest value a run of each length can currently end
+with", which is a different thing entirely. Anyone who returns tails as the
+subsequence gets the right length and the wrong numbers.
+
+A close second: using bisect_right instead of bisect_left. That answers the
+NON-DECREASING version, where equal values may both be picked - a different
+problem. On [2, 2, 2] the two versions give 1 and 3. Check which the question
+wants.
+
+ONE-SENTENCE TAKEAWAY: deal each number onto the leftmost pile whose top is at
+least as big, start a new pile when none is, and count the piles - the piles ARE
+the answer's length, though their tops are not the answer's contents.""",
 ]
 
 _EX_P0C["Maximum Product Subarray"] = [
@@ -32405,74 +32721,388 @@ it. In the trace this fired exactly three times: at (0,0), (2,2) and (3,3).
 ]
 
 _EX_P0D["Trees — BFS vs DFS"] = [
-    """Level order on the textbook tree, traced.
-        3
-      /   \\
-     9     20
-          /  \\
-        15     7
-q = [3]. Outer loop iteration 1: len(q)=1, pop 3, level=[3], push 9 and 20.
-Iteration 2: len(q)=2 - that snapshot is what separates the levels. Pop 9 (no
-children), pop 20 (push 15, 7). level=[9,20].
-Iteration 3: len(q)=2, pop 15 and 7, level=[15,7].
-Result [[3],[9,20],[15,7]]. The `for _ in range(len(q))` is the entire trick:
-it freezes how many nodes belong to the current level BEFORE any children are
-appended.""",
+    """1. THE GOAL, in plain English.
 
-    """The three DFS orders on the same small tree.
-        1
-      /   \\
-     2     3
-    / \\
-   4   5
-Preorder (root, left, right): 1 2 4 5 3 - use when you must process a node
-before its children (copying a tree, serialising).
-Inorder (left, root, right): 4 2 5 1 3 - on a BST this comes out SORTED, which
-is why 'kth smallest in a BST' is just an inorder walk that stops at k.
-Postorder (left, right, root): 4 5 2 3 1 - use when a node's answer depends on
-its children's answers (height, diameter, deleting a tree, max path sum).
-Most tree interview problems are postorder in disguise.""",
+There are two ways to visit every node of a tree, and almost every tree question
+is really asking "which of these two, and why?" This entry is about telling them
+apart and choosing correctly.
 
-    """A skewed tree - where the two differ sharply in memory.
-1 -> 2 -> 3 -> ... -> 10000, each node having only a right child.
-BFS: every level holds exactly one node, so the queue never exceeds size 1.
-Memory O(1) in practice.
-DFS: recursion depth 10000 - a RecursionError in Python (limit 1000).
-Now flip it: a perfectly balanced tree of 10000 nodes has depth ~14 (DFS is
-cheap) but its last level holds ~5000 nodes (BFS queue is huge).
-So the honest answer to 'which uses less memory' is: it depends on the shape -
-BFS is O(width), DFS is O(height).""",
+Here is the tree we will use throughout:
 
-    """Postorder combine, worked - computing height.
-    def height(node):
-        if not node: return 0
-        return 1 + max(height(node.left), height(node.right))
-On the tree above: height(4)=1, height(5)=1 -> height(2)=2; height(3)=1 ->
-height(1) = 1 + max(2,1) = 3.
-Notice the shape: base case for None, recurse on both children, COMBINE, return.
-Diameter, balanced-check, max path sum, count-good-nodes and 'sum of left leaves'
-are all the same five lines with a different combine step. Learn the skeleton
-once.""",
+            3
+           / \\
+          9   20
+              / \\
+            15   7
 
-    """Choosing by the question's wording.
-'Level order' / 'zigzag' / 'right side view' / 'average of each level' /
-'minimum depth' -> BFS. (Minimum depth is a genuine BFS win: it stops at the
-FIRST leaf, whereas DFS must explore every branch.)
-'Path from root to leaf' / 'path sum' / 'lowest common ancestor' / 'validate a
-BST' / 'serialize' -> DFS.
-'Maximum depth' -> either; DFS is two lines.
-Right side view is a nice hybrid: BFS and take the LAST node of each level - or
-DFS visiting right-first and recording the first node seen at each new depth.""",
+Vocabulary, defined the moment it appears:
+- Each item is a NODE. There are five here.
+- 3 sits at the very top; the top node is the ROOT. (Trees in computing are drawn
+  upside down - root at the top, branches growing downwards.)
+- The nodes hanging directly below a node are its CHILDREN. 3's children are 9
+  and 20.
+- A node with no children is a dead end, called a LEAF - here 9, 15 and 7.
+- A LEVEL is one horizontal row: level 0 is {3}, level 1 is {9, 20}, level 2 is
+  {15, 7}.
 
-    """Interview framing for 'which would you use here?'
-Say the rule out loud before you code: 'the question asks for levels, so BFS with
-a queue and the len(q) snapshot' or 'this needs each node's subtree result, so
-postorder DFS'. Then state the costs: both O(n) time; BFS O(width) space, DFS
-O(height) space, worst case O(n) for either on a degenerate tree.
-Finish with the caveat you will actually be asked about: 'in Python I would
-convert the DFS to an explicit stack if the tree can be deeper than ~1000
-nodes.' That one sentence separates a candidate who has only done small
-LeetCode inputs from one who has thought about production data.""",
+The two ways of visiting:
+
+  BREADTH-FIRST SEARCH (BFS) - go across, level by level. Visit 3, then 9 and 20,
+  then 15 and 7. Like ink spreading outwards in water.
+
+  DEPTH-FIRST SEARCH (DFS) - go down one branch as far as possible, then back up
+  and try the next. Visit 3, then 9, then back up to 20, then 15, then 7. Like
+  exploring a cave by always taking the first tunnel and only retracing your steps
+  at a dead end.
+
+Both visit all five nodes. The difference is the ORDER, and the order is what
+decides which questions each can answer cheaply.""",
+
+    """2. THE INTUITION - the order comes from the container.
+
+Here is the thing that makes this click, and it is worth more than memorising two
+algorithms.
+
+BFS and DFS are the SAME procedure. Both say: "keep a container of nodes waiting
+to be visited; take one out, look at it, put its children in; repeat until the
+container is empty."
+
+The only difference is which node the container hands back.
+
+  A QUEUE hands back the OLDEST waiting node - first in, first out, like a queue
+  at a shop. Nodes go in level by level, so the oldest waiting node is always from
+  the shallowest unfinished level. That gives you BFS.
+
+  A STACK hands back the NEWEST waiting node - last in, first out, like a pile of
+  plates where you take from the top. The newest node is always the one you just
+  discovered, deepest down. That gives you DFS.
+
+Swap the container and you swap the traversal. Nothing else changes.
+
+    BFS:  3 | 9 20 | 15 7          across, then down
+    DFS:  3 | 9 | 20 | 15 | 7      down one side, then back up
+
+In practice DFS is usually written with RECURSION rather than an explicit stack -
+because when a function calls itself, the paused calls pile up on the CALL STACK,
+which is a stack. So recursive DFS is using a stack; it just isn't one you wrote.
+
+That is why recursive tree code looks so much shorter than level-order code. The
+stack is free; the queue you have to build yourself.""",
+
+    """3. WHEN TO USE WHICH - the decision, in one page.
+
+USE BFS when the question contains the words SHORTEST, FEWEST, MINIMUM STEPS, or
+LEVEL - and every step costs the same.
+
+The reason is a guarantee: because BFS finishes an entire level before touching
+the next, the FIRST time it reaches a node is by a shortest route. Nothing deeper
+can sneak in first.
+
+  Minimum depth of a tree. Right side view (last node of each level). Level order.
+  Zigzag order. Averages or maxima per level. Fewest moves for a knight. Word
+  ladder. Minutes for rot to spread through a crate of oranges.
+
+USE DFS when the question is about EXISTENCE, a WHOLE PATH, or something computed
+from the bottom up - where you do not care how far away anything is.
+
+  Maximum depth. Does a path exist with this sum. All root-to-leaf paths. Is the
+  tree balanced. Diameter. Count the islands. Detect a cycle. Topological order.
+
+A rule of thumb that catches most cases: if the answer needs information from a
+node's CHILDREN before the node itself can be decided, use DFS - you need the
+recursion to unwind upwards. If the answer is about DISTANCE FROM THE TOP, use
+BFS.
+
+THREE PRACTICAL NOTES:
+
+  DFS is shorter to write, because recursion supplies the stack. That is the
+  whole reason most tree solutions are recursive.
+
+  DFS recursion depth equals the length of the longest path. On a chain of 10,000
+  nodes Python gives up at about 1,000 nested calls. When input can be large,
+  either write DFS with your own explicit stack, or use BFS - neither touches the
+  call stack.
+
+  If steps have DIFFERENT costs, plain BFS no longer finds the cheapest route.
+  You need Dijkstra's algorithm, which is BFS with a priority queue instead of a
+  plain queue - it hands back the cheapest-so-far node rather than the oldest.""",
+
+    """4. THE CASE THAT CATCHES PEOPLE - the queue grows while you are reading it.
+
+The code below groups nodes by level, and there is exactly one line that makes
+that possible. It is the line beginners get wrong.
+
+You are taking nodes OUT of the queue while simultaneously putting their children
+IN. So the queue's length changes as you work. If you ask "how many are waiting?"
+in the middle of processing a level, the answer includes nodes from the NEXT level
+that have just been added - and the boundary between levels dissolves.
+
+The fix: BEFORE starting a level, write down how many nodes are waiting right now.
+That frozen number is exactly the size of the current level, because nothing from
+the next level has been added yet. Process exactly that many, no more.
+
+Watch it on our tree:
+
+    queue = [3]            freeze 1  ->  process exactly 1 node
+                           after processing 3, queue = [9, 20]
+    queue = [9, 20]        freeze 2  ->  process exactly 2 nodes
+                           after those, queue = [15, 7]
+    queue = [15, 7]        freeze 2  ->  process exactly 2 nodes
+                           queue empties, loop ends
+
+Now the wrong version. If the inner loop read the CURRENT length each time, then
+after processing node 3 the queue would hold 2 nodes and it would keep going,
+swallowing 9 and 20 into the same level as 3 - and then their children too. The
+result is one flat list, not levels.
+
+This single frozen-size line is the backbone of every level-by-level tree problem
+you will ever write. Learn it once here and the right side view, zigzag order,
+level averages and minimum depth all become one-line variations.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+QUEUE: a waiting line - join at the back, leave from the front, first in first
+out. This is what makes the traversal breadth-first.
+
+deque (pronounced "deck"): Python's ready-made double-ended queue. We use it
+instead of an ordinary list because removing from the FRONT of a list is slow -
+it shuffles every remaining item along - whereas a deque does it in one step.
+popleft() takes from the front; append() adds to the back.
+
+STACK: a pile - add to the top, take from the top, last in first out. Not used in
+this code, but it is what would turn the same procedure into DFS.
+
+CALL STACK: the pile of paused function calls when a function calls itself. It is
+a stack, which is why recursion gives you DFS for free.
+
+len(q): how many nodes are waiting right now. Reading this ONCE per level, before
+processing any of it, is the frozen size from section 4.
+
+for _ in range(n): repeat exactly n times. The underscore means "I do not need the
+loop counter" - we only care about the count.
+
+O(n) and O(w): the costs, where n is the number of nodes and w is the width of the
+widest level. O(n) means the work grows in step with the number of nodes - each is
+queued once and dequeued once. O(w) describes the memory: the queue at its fullest
+holds one entire level.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep a waiting line of nodes, and before starting
+each level write down how many are waiting - that count IS the level.
+
+There is no recursion here; BFS is driven by a queue, so nothing piles up on the
+call stack. The loop ends when the queue empties, which happens once every node
+has been taken out and no node has children left to add.
+
+The steps:
+
+  1. If the tree is empty, return an empty list. This guard is genuinely needed:
+     without it you would put "nothing" into the queue and the first level would
+     appear to contain one node.
+
+  2. Make a queue holding just the root. That is level 0.
+
+  3. Make an empty list for the finished levels.
+
+  4. While the queue is not empty:
+
+     a. Start an empty list for THIS level's values.
+
+     b. Write down how many nodes are waiting right now. Do this BEFORE taking
+        any out - it is the size of the current level, and it is the line the
+        whole thing depends on.
+
+     c. Repeat exactly that many times: take the node at the FRONT of the queue,
+        record its value in this level's list, and add its children to the BACK
+        of the queue - left child first, then right, so the next level keeps its
+        left-to-right order.
+
+     d. Add this level's list to the finished levels.
+
+  5. Return the finished levels.
+
+Why does step (c) preserve left-to-right order? Because you serve the level from
+left to right, and each node adds its children in left-then-right order, so
+children enter the line in exactly the order their parents had. Order in, order
+out - that is what a queue guarantees.
+
+To turn this into DFS instead, replace the queue with a stack and take from the
+back rather than the front - or, far more simply, write it recursively and let the
+call stack do the work.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks the tree one horizontal row at a time, from the top down, and
+collects each row into its own list.
+
+It manages this with a waiting line. At the start the line contains just the top
+node, which is row zero all by itself. Then it repeats the same routine until the
+line is empty.
+
+Each round begins by counting how many nodes are currently waiting. That count is
+the size of the row about to be processed - and taking the count at that exact
+moment is what makes the whole thing work, because the moment it starts serving
+nodes it will also start adding their children to the back of the same line. Count
+first, and the boundary between one row and the next is exact. Count later, and
+the rows blur into one another.
+
+Having frozen the count, it serves exactly that many nodes from the front of the
+line. As each one is served, its value is recorded in the current row's list, and
+its children are added to the back of the line - left child first, then right,
+which is what keeps the next row in left-to-right order.
+
+By the time those nodes have been served, the line holds precisely the next row,
+in order, and the routine begins again one level lower.
+
+When the line finally empties, every node has been visited exactly once, and the
+finished list holds the tree's values grouped by row.""",
+
+    """8. THE CODE, line by line.
+
+Keep the tree from section 1 beside you: 3 on top, 9 and 20 below, 15 and 7 below
+20. The answer will be [[3], [9, 20], [15, 7]].
+
+    from collections import deque
+Python's ready-made waiting line. A deque removes from the front in one step,
+whereas an ordinary list has to shuffle every remaining item along - which would
+quietly turn an O(n) traversal into something much worse on a large tree.
+
+    if not root:
+        return []
+The empty-tree guard. It is genuinely needed, not just tidy: without it the next
+line would put None into the queue, and the first level would look as though it
+contained one node.
+
+    q = deque([root])
+The queue starts holding just the root - which is level 0, and which is why the
+first frozen count comes out as 1.
+
+    out = []
+The finished levels. Ours ends as [[3], [9, 20], [15, 7]].
+
+    while q:
+Keep going while anyone is still waiting. The loop ends when the last level's
+nodes have all been served and none of them had children to add.
+
+    level = []
+The values for THIS row, started fresh each round.
+
+    for _ in range(len(q)):
+THE critical line, and the one from section 4. len(q) is read ONCE, here, before
+any node is taken out - so it is exactly the number of nodes on the current row.
+The loop then serves precisely that many.
+
+Written as "while q" instead, the inner loop would keep eating into the next row
+as children are added, and you would get one flat traversal rather than levels.
+
+The underscore says we do not need the counter; only the count matters.
+
+    n = q.popleft()
+Serve the node at the FRONT of the line. On row 1 this gives 9 first and then 20 -
+left to right, because that is the order their parent added them.
+
+    level.append(n.val)
+Record its value in the current row.
+
+    if n.left:  q.append(n.left)
+    if n.right: q.append(n.right)
+Add this node's children to the BACK of the line, left first then right, so the
+next row keeps its left-to-right order. The "if" checks skip missing children -
+node 9 has none, so it adds nothing.
+
+Because children join behind everyone still in the current row, the frozen count
+above continues to describe the current row correctly even as the queue grows.
+
+    out.append(level)
+This row is complete - add it to the answer.
+
+    return out
+The values grouped by row.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+            3
+           / \\
+          9   20
+              / \\
+            15   7
+
+Start:  q = [3],  out = []
+
+ROUND 1
+  level = []
+  freeze len(q) = 1  ->  serve exactly 1 node
+    popleft -> 3.  level = [3].
+      3.left is 9 -> append.  3.right is 20 -> append.
+      q = [9, 20]
+  out = [[3]]
+
+  Note the queue now holds 2 nodes, but the frozen 1 stopped the inner loop after
+  one node. That is the whole mechanism.
+
+ROUND 2
+  level = []
+  freeze len(q) = 2  ->  serve exactly 2 nodes
+    popleft -> 9.  level = [9].
+      9 has no children -> nothing appended.  q = [20]
+    popleft -> 20. level = [9, 20].
+      20.left is 15 -> append.  20.right is 7 -> append.
+      q = [15, 7]
+  out = [[3], [9, 20]]
+
+ROUND 3
+  level = []
+  freeze len(q) = 2  ->  serve exactly 2 nodes
+    popleft -> 15. level = [15].  15 has no children.  q = [7]
+    popleft -> 7.  level = [15, 7].  7 has no children.  q = []
+  out = [[3], [9, 20], [15, 7]]
+
+The queue is empty -> the outer loop ends.
+
+return [[3], [9, 20], [15, 7]] - the three levels, in order, each in left-to-right
+order.
+
+NOW THE BUG, to see it clearly. Suppose the inner loop had been "while q" instead
+of the frozen count:
+
+  Round 1 would pop 3, append 9 and 20, and then - since q is not empty - keep
+  going: pop 9, pop 20, append 15 and 7, pop 15, pop 7. One round, one level,
+  containing [3, 9, 20, 15, 7]. Every node visited, in the right ORDER, but with
+  no level boundaries at all. That is the difference the one frozen line makes.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n) for a tree of n nodes. Every node is added to the queue once and taken
+out once, and each visit does a fixed amount of work. That is the best possible -
+you have to look at every node to report every node. DFS is O(n) too; the choice
+between them is never about speed, only about the order you need.
+
+SPACE: O(w), where w is the width of the WIDEST level - the most the queue ever
+holds at once. In a wide bushy tree the bottom level can hold about half the
+nodes, so this is O(n) in the worst case. In a thin chain-like tree the queue
+never holds more than a node or two.
+
+That is the mirror image of DFS, whose memory is O(h), the HEIGHT of the tree. So
+the two techniques have opposite weaknesses: BFS struggles with very wide trees,
+DFS with very deep ones. On a deep chain, DFS hits Python's recursion limit of
+about 1,000 while BFS sails through on a two-item queue; on a wide tree the
+reverse. Knowing which shape your input has is how you choose.
+
+THE #1 MISTAKE - reading the queue's length inside the inner loop instead of
+freezing it before. The traversal still visits every node in the right order, so
+it looks almost right - but every node lands in one enormous level and any
+per-level logic is destroyed. It is hard to spot precisely because the ORDER is
+correct; only the grouping is wrong.
+
+A close second: using an ordinary list as the queue and calling pop(0) to take
+from the front. It works, but each removal shuffles the whole list along, turning
+an O(n) traversal into O(n squared) on a large tree. Use a deque.
+
+ONE-SENTENCE TAKEAWAY: BFS and DFS are the same procedure with a different
+container - a queue gives you level-by-level and answers "fewest steps", a stack
+(or recursion) gives you dive-deep-first and answers "does a path exist" - and if
+you want levels, freeze the queue's size before you start each one.""",
 ]
 
 _EX_P0D["Middle of the Linked List"] = [
