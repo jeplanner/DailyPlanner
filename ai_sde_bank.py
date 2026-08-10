@@ -11,6 +11,11 @@ Fields: title (the question/topic), answer (detailed reasoning), code
 tags. Optional fields are "" when unused.
 """
 
+from ai_sde_bank_lld import build as _build_lld
+from ai_sde_bank_cs import build as _build_cs
+from ai_sde_bank_ml import build as _build_ml
+from ai_sde_bank_behavioral import build as _build_behavioral
+
 CATEGORIES = {
     "mindset": "Mindset & Strategy",
     "glossary": "Key Terms & Definitions",
@@ -22,6 +27,7 @@ CATEGORIES = {
     "ai_llm": "LLMs, RAG & Modern AI",
     "ai_applied": "Practical AI Applications",
     "cs_fundamentals": "CS Fundamentals",
+    "lld": "Low-Level / OOP Design",
     "behavioral": "Behavioral (student)",
     "company": "Amazon & Google Process",
 }
@@ -30,6 +36,7 @@ _CATEGORY_TAGS = {
     "mindset": ["mindset"], "dsa": ["dsa", "coding"], "ml_concepts": ["ml"],
     "ml_coding": ["ml", "coding"], "ml_system_design": ["ml", "system-design"],
     "cs_fundamentals": ["cs"], "behavioral": ["behavioral"], "company": ["process"],
+    "lld": ["lld", "oop", "design"],
     "glossary": ["glossary", "definition"], "conceptual": ["concept", "why"],
     "ai_llm": ["ai", "llm", "genai"], "ai_applied": ["ai", "applied", "genai"],
 }
@@ -5921,6 +5928,17 @@ ENTRIES = [
 
 ]
 
+# ── Expansion packs ───────────────────────────────────────────────────────
+# The bank outgrew a single readable file, so the newer sections live in
+# sibling modules that hand back plain Q(...) dicts. They are appended BEFORE
+# any of the backfill passes below, so extra entries pick up tags, difficulty,
+# frequency, mnemonics, prep_minutes and the stack rank exactly like the
+# originals - nothing downstream needs to know where an entry came from.
+ENTRIES += _build_lld(Q)            # Section 5 - low-level / OOP design
+ENTRIES += _build_cs(Q)             # Section 3 - OS, DBMS, networks, OOP
+ENTRIES += _build_ml(Q)             # Section 4 - classical ML depth
+ENTRIES += _build_behavioral(Q)     # Section 6 - Googleyness & collaboration
+
 # Fill tags: explicit + category-derived.
 for _e in ENTRIES:
     _e["tags"] = sorted(set([t.lower() for t in _e.get("tags", [])] + _CATEGORY_TAGS.get(_e["cat"], [])))
@@ -6067,7 +6085,7 @@ _CAT_DIFFICULTY = {
     "glossary": "Easy", "mindset": "Easy", "conceptual": "Medium",
     "ml_concepts": "Medium", "ml_coding": "Medium", "cs_fundamentals": "Medium",
     "behavioral": "Easy", "company": "Easy", "ml_system_design": "Hard",
-    "ai_llm": "Medium", "ai_applied": "Medium",
+    "ai_llm": "Medium", "ai_applied": "Medium", "lld": "Medium",
 }
 
 # Per-category default interview-frequency phrasing.
@@ -6081,6 +6099,7 @@ _CAT_FREQUENCY = {
     "ai_llm": "Increasingly asked (2024+) - LLM/RAG/transformer questions now appear in ML, applied-scientist and even general SDE loops at Google, Meta, NVIDIA, OpenAI, Anthropic and startups.",
     "ai_applied": "Hot area - GenAI product and RAG/agent design questions are rising fast across product companies building AI features.",
     "cs_fundamentals": "Frequently asked - OS/DB/networking basics are staple screening questions everywhere.",
+    "lld": "Very commonly asked - Amazon runs an explicit OOD/LLD round for SDE-1, and Google folds class design into the coding rounds.",
     "behavioral": "Always asked - every loop has behavioral rounds (Amazon's are Leadership-Principle driven).",
     "company": "Process context - not a question itself, but shapes how every round is scored.",
     "mindset": "Meta-skill - not asked directly, but drives how well every other answer lands.",
@@ -6264,6 +6283,10 @@ _CAT_MNEMONIC = {
                "Generate the answer. For anything LLM, ask 'what's in the context window?'"),
     "ai_applied": ("Think product: what does the user need, what data/knowledge feeds the model, and how "
                    "do you keep it grounded (RAG), safe, cheap, and fast? Ground it, guard it, cache it."),
+    "lld": ("Same 5 moves every time: (1) clarify scope, (2) list the NOUNS - they become classes, "
+            "(3) list the VERBS - they become methods, (4) draw the relationships (has-a beats is-a), "
+            "(5) name the ONE thing likely to change and put an interface there. Nouns, verbs, "
+            "relationships, extension point."),
 }
 for _e in ENTRIES:
     if not _e.get("mnemonic"):
@@ -27419,6 +27442,256 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P0H[_e["title"]]
 
 
+# The expansion packs grew the bank, which moved the P0 cut (top 10%) down and
+# promoted these four easies into it. P0 carries a five-worked-examples bar, so
+# they get the same treatment as the rest of the band.
+_EX_P0H["Merge Similar Items"] = [
+    """The given example, traced through the map.
+items1 = [[1,1],[4,5],[3,8]], items2 = [[3,1],[1,5]]
+Walk both lists into one dictionary, adding as you go:
+  [1,1] -> {1:1}          [4,5] -> {1:1, 4:5}     [3,8] -> {1:1, 4:5, 3:8}
+  [3,1] -> 3 already present, 8+1 = 9
+  [1,5] -> 1 already present, 1+5 = 6
+Dictionary is {1:6, 4:5, 3:9}. Sort the KEYS -> [1,3,4] and emit
+[[1,6],[3,9],[4,5]]. Note the output is sorted by value, not by weight - read
+the required order back off the prompt before you write the return line.""",
+
+    """Why a dictionary rather than a merge of two sorted lists.
+The two-pointer merge people reach for first works only if both inputs are
+already sorted by value, and the prompt does not promise that. The dictionary
+version does not care about input order at all, which is why it is the safer
+answer under time pressure.
+Costs: the map pass is O(n+m) and the final sort is O(k log k) over the k
+distinct values, so O(n log n) overall. If the inputs WERE guaranteed sorted,
+a two-pointer merge would be O(n+m) with no sort - worth saying out loud as
+the follow-up optimisation.""",
+
+    """No overlap at all.
+items1 = [[1,3],[2,2]], items2 = [[7,1],[2,2],[10,3]]
+Map: {1:3, 2:2} then 7 is new -> {7:1}, 2 collides -> 2+2 = 4, 10 is new.
+Result [[1,3],[2,4],[7,1],[10,3]].
+Two things to notice: values present in only one list pass through untouched,
+and the single collision on value 2 is handled by exactly the same line of code
+as the non-collisions. There is no special case, which is the sign the data
+structure was the right choice.""",
+
+    """Everything collides.
+items1 = [[5,1],[5,2]] - note the DUPLICATE value inside ONE list.
+items2 = [[5,3]]
+Map: 5 -> 1, then 5 -> 1+2 = 3, then 5 -> 3+3 = 6. Result [[5,6]].
+A solution that assumed values are unique within a list (say, by building a
+dict per list with plain assignment rather than accumulation) silently drops
+the [5,1] and returns [[5,5]]. Always accumulate with `get(value, 0) + weight`
+rather than assigning, and test a within-list duplicate.""",
+
+    """Empty inputs and the single-element case.
+merge_similar_items([], []) -> {} -> [] . The loop body never executes and the
+sort of an empty key set is empty, so no guard is needed.
+merge_similar_items([], [[3,4]]) -> [[3,4]]: concatenating the lists means an
+empty side costs nothing.
+merge_similar_items([[2,0]], [[2,0]]) -> [[2,0]]: a zero total weight is still
+a legitimate entry, so do NOT filter zeros out unless the prompt says to. That
+is a plausible-sounding assumption that changes the answer.""",
+
+    """Where this pattern shows up beyond the puzzle.
+This is a GROUP BY with a SUM, which is why the shape is so common:
+- Shopping baskets: merge two carts, adding quantities of the same SKU.
+- Inventory: combine stock counts for the same product across two warehouses.
+- Analytics: fold per-shard event counts into one total per event type.
+- Sparse vectors: adding two sparse vectors stored as (index, value) pairs is
+  exactly this function.
+In SQL it is one line, and recognising 'this is a group-by-and-sum' is what
+lets you write the map version in thirty seconds instead of reasoning about
+pointers.""",
+]
+
+_EX_P0H["Merge Two Binary Trees"] = [
+    """The overlap case, node by node.
+t1 =    1          t2 =    2
+       / \\                / \\
+      3   2              1   3
+Root: both exist -> 1+2 = 3.
+Left: both exist -> 3+1 = 4.
+Right: both exist -> 2+3 = 5.
+Result preorder [3,4,5]. Every node overlapped, so every value is a sum - the
+easy case, and the one that hides the interesting behaviour below.""",
+
+    """The case that carries the whole idea: one side is missing.
+t1 =    1          t2 =    2
+       /                    \\
+      3                      7
+                            /
+                           9
+Root: 1+2 = 3.
+Left: t2 has no left child, so `if t2 is None: return t1` returns t1's ENTIRE
+left subtree unchanged - not a copy, the subtree itself.
+Right: t1 has no right child, so the whole [7 with child 9] subtree comes
+across in one step.
+This is why the base cases return the surviving NODE rather than recursing
+further: an absent subtree means there is nothing left to merge, so you stop.""",
+
+    """Both empty, and one tree entirely empty.
+merge_trees(None, None) -> the first check returns t2, which is None. Correct
+and needs no special case.
+merge_trees(None, t2) -> returns t2: merging with nothing is identity.
+merge_trees(t1, None) -> returns t1.
+Note the ORDER of the two guards matters for readability but not correctness
+here; what does matter is that both are checked BEFORE dereferencing .val, or
+a single-child tree throws AttributeError on the first missing node.""",
+
+    """In-place versus a new tree - the follow-up that always comes.
+The version above allocates a new node per overlap, using O(min(n1,n2)) extra
+space for the merged spine while REUSING whole subtrees from the inputs.
+The in-place variant mutates t1: `t1.val += t2.val; t1.left = merge(t1.left,
+t2.left); ...; return t1`, using only O(h) recursion stack.
+The trade to state: in-place is cheaper but destroys the input, and the result
+SHARES subtrees with t2 - so a later mutation through one tree is visible
+through the other. If the caller keeps using the originals, that aliasing is a
+real bug, and it is exactly what the interviewer is probing.""",
+
+    """Complexity, said precisely.
+Time is O(min(n1, n2)), NOT O(n1 + n2): recursion stops the moment one side is
+None, so nodes that exist in only one tree are attached in a single step
+without being visited. That is a genuinely non-obvious bound and stating it
+correctly is worth marks.
+Space is O(h) for the recursion stack, where h is the height of the OVERLAP.
+For a skewed tree of 10,000 nodes that is 10,000 frames, which will exceed
+Python's default limit - the follow-up fix is an explicit stack holding pairs
+of nodes, pushing (t1.left, t2.left) and (t1.right, t2.right) when BOTH
+children exist and attaching the survivor directly when only one does.""",
+
+    """Why this is a template, not a one-off.
+'Walk two trees in lockstep' solves a family of problems with one skeleton:
+- Same Tree: recurse both, return False the moment structure or values differ.
+- Symmetric Tree: recurse (left.left, right.right) and (left.right, right.left).
+- Subtree of Another Tree: at each node of the big tree, run Same Tree.
+- Merge Two Sorted Lists: the identical base-case shape in one dimension.
+Recognise the shape and the base cases write themselves: if one side is None,
+return the other; otherwise combine and recurse on the matching children.""",
+]
+
+_EX_P0H["N-th Tribonacci Number"] = [
+    """The sequence, computed by hand.
+T0 = 0, T1 = 1, T2 = 1 (the three seeds).
+T3 = 0+1+1 = 2      T4 = 1+1+2 = 4      T5 = 1+2+4 = 7
+T6 = 2+4+7 = 13     T7 = 4+7+13 = 24    T8 = 7+13+24 = 44
+So tribonacci(4) = 4 and tribonacci(8) = 44. Write these out on the whiteboard
+before coding - it catches an off-by-one in the seeds immediately, which is the
+single most common bug here.""",
+
+    """The rolling update, traced through the tuple assignment.
+Start a,b,c = 0,1,1 (representing T0,T1,T2).
+n = 4, so the loop runs for i = 3 and i = 4.
+  i=3: a,b,c = 1, 1, 0+1+1 = 2   -> now (T1,T2,T3)
+  i=4: a,b,c = 1, 2, 1+1+2 = 4   -> now (T2,T3,T4)
+Return c = 4. Correct.
+The tuple assignment is doing real work: the right-hand side is fully evaluated
+FIRST, so `a+b+c` uses the OLD values. Writing it as three separate statements
+(a = b; b = c; c = a+b+c) uses the already-overwritten a and b and silently
+computes the wrong sequence - a classic and hard-to-spot bug.""",
+
+    """The three seeds, and why they need explicit guards.
+n = 0 -> 0, n = 1 -> 1, n = 2 -> 1. The loop `range(3, n+1)` is empty for all
+three, so without the guards the function would return c = 1 for n = 0, which
+is wrong.
+Test all three boundaries every time. Note also that T1 = T2 = 1 makes an
+off-by-one invisible in the small cases: a solution seeded 0,1,1 and one seeded
+1,1,2 both look plausible until n = 4, where they give 4 and 7. Always verify
+against a value at least four steps in.""",
+
+    """Why not recursion, in numbers.
+Naive `trib(n) = trib(n-1)+trib(n-2)+trib(n-3)` re-computes the same subproblems
+exponentially: about 1.84^n calls, so trib(30) is roughly a million calls and
+trib(40) is hundreds of millions.
+Memoising it drops that to O(n) time but costs O(n) space and O(n) stack depth,
+which blows Python's recursion limit around n = 1000.
+The rolling three-variable loop is O(n) time and O(1) space with no stack at
+all. Say the progression out loud - naive, memoised, iterative - because
+showing you know all three is what the question is for.""",
+
+    """Growth and overflow.
+Tribonacci grows by a factor of about 1.839 per step, so T37 = 1,132,436,852
+just fits in a signed 32-bit integer and T38 overflows it.
+In Python this does not matter - integers are arbitrary precision, so
+tribonacci(100) is exact. In Java or C++ it very much does, and the standard
+LeetCode constraint n <= 37 exists precisely so the answer fits in an int.
+Mentioning the language difference unprompted is a nice signal.""",
+
+    """The generalisation the interviewer will ask for.
+'Now do k-bonacci - each term sums the previous k.' The answer keeps a deque of
+the last k values plus a RUNNING SUM: append the sum, then subtract the value
+that falls out of the window. That is O(n) total instead of O(n*k) from
+re-adding k numbers each step - the same sliding-window-with-running-total
+trick used for subarray sums.
+The second follow-up is 'compute T(10^18) mod p', which needs matrix
+exponentiation of the k x k companion matrix in O(k^3 log n) - worth naming
+even if you do not implement it.""",
+]
+
+_EX_P0H["Rank Transform of an Array"] = [
+    """The base case, traced.
+arr = [40,10,20,30]
+set -> {40,10,20,30}; sorted -> [10,20,30,40]
+enumerate gives (0,10),(1,20),(2,30),(3,40), so rank = {10:1, 20:2, 30:3, 40:4}
+after the +1 that makes ranks 1-based.
+Map the ORIGINAL array through it, preserving position: [4,1,2,3].
+Note the output keeps the input's order - you are relabelling elements in
+place, not sorting them.""",
+
+    """Ties, which is the entire point of the problem.
+arr = [100,100,100]
+set collapses to {100}, sorted [100], rank = {100:1}.
+Output [1,1,1] - equal values share a rank.
+Contrast with what happens if you forget the set: sorted([100,100,100]) is
+[100,100,100] and enumerating gives {100:3} (the last write wins), so the
+output is [3,3,3]. It looks almost right, which is what makes it dangerous.
+Deduplicating BEFORE ranking is the whole algorithm.""",
+
+    """Ties in the middle, where the difference is visible.
+arr = [37,12,28,9,100,56,80,5,12]
+distinct sorted -> [5,9,12,28,37,56,80,100] -> ranks 1..8
+Output: [5,3,4,2,8,6,7,1,3]
+Both 12s get rank 3, and 28 gets rank 4 - NOT 5. This is dense ranking
+(SQL's DENSE_RANK): ties share a rank and the next value does not skip.
+If the prompt had wanted competition ranking (1,2,2,4 - RANK, skipping after a
+tie), the algorithm changes: you would rank by index in the FULL sorted array
+of the first occurrence. Ask which one is meant; the two differ on every
+tie.""",
+
+    """Edge cases.
+[] -> set is empty, sorted is empty, the comprehension yields [] . No guard
+needed.
+[7] -> {7:1} -> [1] . A single element is always rank 1.
+[-5, 0, -5, 3] -> distinct sorted [-5,0,3] -> {-5:1, 0:2, 3:3} -> [1,2,1,3].
+Negatives need no special handling because sorting already orders them; a
+solution that assumed non-negative values and used the value as an index into
+an array breaks here.""",
+
+    """Complexity, and the trade being made.
+Time O(n log n), dominated by sorting the k distinct values (k <= n). The set
+build and the final mapping pass are both O(n). Space O(k) for the set and the
+dictionary, plus O(n) for the output.
+Could you do better? Not comparison-based - you must know the relative order of
+the distinct values, which is a sorting problem, so O(n log n) is the floor.
+If the values are small bounded integers, counting sort makes it O(n + range),
+which is the correct answer to 'can you beat n log n?'.""",
+
+    """Where dense ranking actually appears.
+- Leaderboards: two players on the same score share a place, and the next
+  player takes the following place.
+- Percentile and quantile bucketing: rank first, then divide by the count.
+- Feature engineering: replacing a skewed numeric column with its rank makes it
+  robust to outliers and monotone-invariant, which is exactly what rank
+  correlation (Spearman) does.
+- SQL: this function IS `DENSE_RANK() OVER (ORDER BY value)`, and saying so is
+  the fastest way to prove you understand the tie semantics.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0H:
+        _e["examples"] = _EX_P0H[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
@@ -27447,6 +27720,7 @@ _CAT_BASE_MIN = {
     "ai_llm": 13,
     "behavioral": 15,
     "ml_concepts": 16,
+    "lld": 30,
     "ai_applied": 20,
     "dsa": 25,
     "ml_coding": 35,
@@ -27512,6 +27786,7 @@ _CAT_RANK_WEIGHT = {
     "glossary": 2.1,
     "cs_fundamentals": 2.4,
     "ml_system_design": 1.9,
+    "lld": 2.5,
     "behavioral": 1.9,
     "company": 1.3,
     "mindset": 1.1,
@@ -27638,6 +27913,47 @@ _MARQUEE = {
     "Recursion", "Dynamic programming", "Garbage collection vs manual memory management",
     "IEEE 754 floating point (and why 0.1 + 0.2 != 0.3)",
     "CPU cache, cache lines and locality of reference",
+    # OS / DBMS / networks / OOP that every screen reaches for
+    "The four pillars of OOP, with one running example",
+    "Abstract class vs interface - and which to reach for",
+    "Overloading vs overriding (compile-time vs runtime polymorphism)",
+    "Python's GIL - what it actually stops, and what it does not",
+    "CPU scheduling algorithms (FCFS, SJF, SRTF, Round Robin, Priority)",
+    "Database keys: super, candidate, primary, composite, foreign, surrogate",
+    "SQL JOINs - all of them, with one worked example",
+    "Normalisation worked: taking one messy table to 3NF (and when to stop)",
+    "Transaction isolation levels and the anomalies they prevent",
+    "SQL: WHERE vs GROUP BY vs HAVING, and window functions",
+    "The SQL queries you will actually be asked to write",
+    "OSI and TCP/IP models - what each layer actually does",
+    "HTTP in depth: methods, status codes, idempotency and REST",
+    # Low-level design - Amazon runs an explicit round on this
+    "How to drive a low-level design (LLD) interview",
+    "SOLID principles - all five, each with the bug it prevents",
+    "Composition over inheritance - why 'is-a' keeps failing",
+    "Pattern: Strategy - swap an algorithm at runtime",
+    "Pattern: Factory and Factory Method - centralise object creation",
+    "Pattern: Observer - publish/subscribe inside one process",
+    "Pattern: State - when an object's behaviour depends on its mode",
+    "LLD: Design a Parking Lot",
+    "LLD: Design a Vending Machine (the state-machine question)",
+    "Writing thread-safe classes for an LLD round",
+    # Classical ML depth an AI/DS candidate must be able to explain cold
+    "Supervised vs unsupervised vs semi-supervised vs self-supervised vs reinforcement learning",
+    "Linear regression from first principles (and its assumptions)",
+    "Logistic regression - why not just use linear regression for classification?",
+    "How a decision tree actually picks a split (Gini, entropy, information gain)",
+    "k-means clustering: how it works, how to pick k, and where it fails",
+    "Neural network basics: from a perceptron to a multi-layer network",
+    "Backpropagation worked by hand on a tiny network",
+    "Activation functions - which one, and why",
+    "Data leakage - the bug that makes a terrible model look excellent",
+    "Evaluation metrics: the complete map, and how to choose",
+    # Behavioural: the ones that open and close every loop
+    "Tell me about yourself / walk me through your resume (the two-minute answer)",
+    "What 'Googleyness' actually means, and how to show it",
+    "Building a story bank: six stories that cover thirty questions",
+    "Tell me about your most challenging technical project (and how to go deep)",
 }
 
 
