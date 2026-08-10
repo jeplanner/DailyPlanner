@@ -41045,64 +41045,355 @@ the losers are never sorted against each other at all.""",
 ]
 
 _EX_P0F["Intervals — merge, insert, overlap"] = [
-    """Merging, traced.
-[[1,3],[2,6],[8,10],[15,18]]. Already sorted by start.
-merged = [[1,3]]. Next [2,6]: 2 <= 3, so they overlap -> extend the end to
-max(3,6)=6. merged = [[1,6]].
-Next [8,10]: 8 > 6, no overlap -> append. merged = [[1,6],[8,10]].
-Next [15,18]: 15 > 10 -> append.
-Answer [[1,6],[8,10],[15,18]].
-The sort is what makes one pass sufficient: after sorting by start, anything
-that overlaps the running interval must be the very next one.""",
+    """1. THE GOAL, in plain English.
 
-    """The case that proves you need max(), not just end.
-[[1,10],[2,3],[4,5]]. Sorted by start already.
-merged = [[1,10]]. [2,3] overlaps -> end = max(10,3) = 10, unchanged.
-[4,5] overlaps -> end = max(10,5) = 10.
-Answer [[1,10]].
-Write `last[1] = end` instead of the max and you get [[1,5]] - you SHRANK the
-interval by swallowing a small one nested inside a big one. Nested intervals are
-the standard hidden test case here, and this one line is what they check.""",
+An INTERVAL is just a start and an end, written [start, end] - a meeting from 1 to
+3, a booking from 2 to 6, a stretch of road from 8 to 10.
 
-    """Touching endpoints - the ambiguity you must ask about.
-[[1,4],[4,5]]. With `start <= last[1]` these merge into [[1,5]], treating the
-intervals as CLOSED (a meeting ending at 4 and one starting at 4 conflict).
-With `start < last[1]` they stay separate - HALF-OPEN, which is what you want
-for meetings: a 3-4pm and a 4-5pm meeting can use the same room.
-Neither is more correct; it depends on the domain. Ask 'is the end inclusive?'
-and state which convention your code uses. Merge Intervals wants <= ; Meeting
-Rooms wants < .""",
+This entry is about the family of problems built on them, using MERGE OVERLAPPING
+INTERVALS as the worked example: given a list of intervals, squash every group that
+overlaps into a single interval covering the whole group.
 
-    """Insert Interval - the same sweep in three phases.
-Insert [4,8] into [[1,2],[3,5],[6,7],[8,10],[12,16]] (already sorted, no
-insertion sort needed):
-Phase 1 - everything ending BEFORE 4 goes straight through: [1,2].
-Phase 2 - everything overlapping gets absorbed: [3,5],[6,7],[8,10] merge with
-[4,8] into [3,10].
-Phase 3 - everything starting AFTER 10 goes through: [12,16].
-Answer [[1,2],[3,10],[12,16]]. Since the input is pre-sorted this is O(n) with
-no sort at all - which is the whole point of that problem being separate from
-Merge Intervals.""",
+Our example: [[1,3], [2,6], [8,10]].
 
-    """Edge cases: empty input, one interval, all identical.
-[]: the code indexes intervals[0] and crashes - guard it. `if not intervals:
-return []` is one line and it is a real bug otherwise.
-[[1,5]] -> [[1,5]], the loop body never runs.
-[[1,2],[1,2],[1,2]] -> [[1,2]]; identical intervals overlap by any definition.
-[[5,6],[1,2]] unsorted -> the sort fixes it to [[1,2],[5,6]]; forgetting to sort
-would report them merged or not depending on input order, which is the classic
-'works on the example, fails the hidden tests' failure.""",
+Draw them on a line:
 
-    """The three interval questions and their three different sorts.
-- MERGE overlapping -> sort by START, sweep, extend.
-- MINIMUM ROOMS / max concurrent -> sort by START with a min-heap of ends, or
-  the sweep-line: +1 at each start, -1 at each end, track the running max.
-- MAXIMUM non-overlapping kept (equivalently minimum removed) -> sort by END and
-  greedily keep the earliest finisher.
-Getting the sort key wrong is the single biggest source of wrong answers in this
-family - sorting by start for the activity-selection problem gives a
-provably-wrong greedy. Decide what the answer is 'about' (coverage, concurrency,
-or count) and the key follows.""",
+    1     2     3     4     5     6     7     8     9    10
+    |-----|-----|-----|-----|-----|-----|-----|-----|-----|
+    A: 1---------3
+    B:       2---------------6
+    C:                                   8---------------10
+
+A runs 1 to 3 and B runs 2 to 6. They share the stretch from 2 to 3, so together
+they cover 1 all the way to 6 with no gap - one continuous block. C sits apart, with
+a gap between 6 and 8.
+
+So the answer is [[1,6], [8,10]].
+
+Two definitions to pin down.
+
+OVERLAP: two intervals overlap if they share any point at all. [1,5] and [4,9]
+overlap; [1,5] and [6,9] do not.
+
+TOUCHING: what about [1,5] and [5,9], which share exactly the single point 5? For
+merging, they are almost always treated as overlapping and combined into [1,9] -
+there is no gap between them. Say which you assume; it shows up as one "less than or
+equal" in the code.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Compare every pair of intervals. Whenever a pair overlaps,
+replace the two with their combined span - and then start over, because the new
+larger interval may now overlap something it did not touch before. Repeat until a
+full pass changes nothing.
+
+That is correct and it is how most people first think about it. It is also slow:
+each pass compares every interval with every other, and you may need many passes.
+
+THE UPGRADE - sort by start time, and the problem nearly solves itself.
+
+Sort the intervals by their START value. Now walk through them left to right,
+holding one interval in your hand - the one you are currently building up.
+
+For each new interval, there are only two possibilities:
+
+    Its start is at or before the end of the one in your hand. They overlap, so
+    stretch the one in your hand to reach whichever end is further along.
+
+    Its start is after the end of the one in your hand. There is a genuine gap. Put
+    the held interval down as finished, and pick up this new one.
+
+Why is one pass enough? Because after sorting, every interval you have not looked at
+yet starts at or after the current one. So once you find a gap, nothing later can
+reach back across it - the finished interval is genuinely finished and will never
+need revisiting.
+
+That is the payoff of sorting, and it is the same payoff as in 3Sum: sorting turns
+"compare everything with everything" into "compare each thing with its neighbour".
+
+Cost: O(n log n) for the sort, then one O(n) pass.""",
+
+    """3. WHY "start <= last end" IS THE WHOLE OVERLAP TEST.
+
+This deserves a moment, because the test looks too simple to be complete.
+
+You might expect an overlap check to need several comparisons - does A start inside
+B, does B start inside A, does one contain the other entirely, and so on. After
+sorting, all of that collapses into one question.
+
+Because the list is sorted by start, the new interval's start is guaranteed to be at
+or after the held interval's start. So the only thing left to ask is: does the new
+one begin before the held one has ended?
+
+    held:    [1 ................. 6]
+    new:          [4 ......... 9]        start 4 <= end 6  -> overlap
+    new:                          [8 ...] start 8 > end 6  -> gap
+
+And when they do overlap, why take the LARGER of the two ends rather than simply the
+new one? Because of the SWALLOWING case:
+
+    held:    [1 ......................... 10]
+    new:          [4 ..... 6]
+
+Here the new interval sits entirely inside the held one. Its start, 4, is before 10,
+so they overlap - but blindly setting the end to 6 would SHRINK the merged interval
+and lose everything from 6 to 10. Taking the larger of 10 and 6 keeps it correct.
+
+That is the single most common bug in this problem, and it only shows up when a
+short interval is fully contained in a long one - a shape that many casual test
+cases do not include.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - the swallowed interval, from section 3. [[1,10], [2,3], [4,5]] must come
+out as [[1,10]]. Assigning the end instead of taking the maximum gives [[1,5]] -
+silently wrong.
+
+CASE 2 - input that looks sorted but is not. [[8,10], [1,3], [2,6], [15,18]].
+Without the sort, the walk compares 1-3 against 8-10, sees a "gap", and starts a new
+interval - producing four separate blocks instead of the correct
+[[1,6], [8,10], [15,18]]. The sort is not tidying up; it is what makes the one-pass
+logic valid at all.
+
+CASE 3 - touching but not really overlapping. [[1,4], [4,5]]. They share exactly the
+point 4. With "start <= end" they merge into [1,5]; with strict "start < end" they
+stay separate. Both are defensible and the problem decides. State which you assumed.
+
+CASE 4 - the empty list. Nothing in, nothing out. The code as written would fail on
+the line that reads the first interval, so an empty-input guard belongs at the top if
+the problem allows one.
+
+CASE 5 - modifying the caller's data. The sort happens in place, so the caller's
+list is reordered. Worse, this version puts the FIRST interval object itself into the
+output and then modifies its end - so the caller's own interval is scribbled on. If
+that matters, copy it: use intervals[0][:] rather than intervals[0]. Mention this out
+loud; "does your solution modify the input?" is a question interviewers like.
+
+CASE 6 - assuming the output needs sorting. It comes out sorted for free, because the
+input was sorted and intervals are only ever appended to the end.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+INTERVAL, OVERLAP, TOUCHING: defined in section 1.
+
+SORT BY A KEY: sorting by something other than the whole item.
+"key=lambda x: x[0]" tells Python "when comparing two intervals, compare their
+position-0 values" - that is, their starts. A LAMBDA is a tiny unnamed function;
+that expression means "given x, hand back x[0]".
+
+merged[-1]: Python's way of writing "the last item in the list called merged".
+Negative indexing counts from the end. In this code that last item is the interval
+currently being built - the one "in your hand".
+
+last[1]: the END of that interval, since each interval is [start, end]. So last[0]
+is its start and last[1] is its end.
+
+TUPLE UNPACKING: "for start, end in intervals[1:]" pulls each interval's two values
+straight into two named variables, rather than writing interval[0] and interval[1]
+throughout.
+
+O(n log n): the cost of a good sort. In plain words, a little more than proportional
+to the size of the list. The "log n" part is roughly how many times you can halve n
+before reaching 1 - about 20 for a million items. So sorting a million intervals is
+around twenty million steps, not a million times a million.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: sort by start time, then walk through holding one
+interval - stretch it whenever the next one overlaps, and put it down and pick up a
+new one whenever there is a gap.
+
+There is no recursion here - a sort and one loop - so nothing piles up on the call
+stack. What takes the place of a base case is the SEEDING: the output starts holding
+the first interval, so there is always something in your hand when the loop begins.
+
+The steps:
+
+  1. Sort the intervals by their start value. Everything below depends on this.
+
+  2. Start an output list containing the first interval. That is the one currently
+     being built.
+
+  3. Walk through the remaining intervals in order.
+
+  4. For each, compare its start with the END of the last interval in the output -
+     the one in your hand.
+
+  5. If the new start is at or before that end, they overlap. Stretch the held
+     interval: set its end to the LARGER of its current end and the new end.
+
+     Larger, not simply the new one - otherwise a swallowed interval shrinks it.
+
+  6. Otherwise there is a real gap, so the held interval is finished. Append the new
+     one to the output. It automatically becomes "the one in your hand" for the next
+     comparison, because it is now the last item.
+
+  7. When the walk ends, the output list is the answer, already in sorted order.
+
+Step 6 needs no extra bookkeeping precisely because "in your hand" was defined as
+"the last item of the output" all along - appending is what changes which interval
+that is.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code first puts the intervals in order of when they start. That single step is
+what makes everything afterwards easy, because it guarantees that as the walk moves
+forward, it never meets an interval that begins earlier than one already dealt with.
+
+Then it walks the sorted list holding one interval at a time - the one it is
+currently building up. It keeps that interval as the last item of the output list,
+which is a neat trick: it never needs a separate variable for "the one I am working
+on", because the last item of the output IS the one it is working on.
+
+For each interval it meets, it asks one question: does this one start before the one
+I am holding has finished? If yes, the two are part of the same continuous block, so
+it stretches the held interval's end - taking whichever end reaches further along, so
+that a short interval sitting entirely inside a long one cannot shrink it. If no,
+there is a real gap, so the held interval is complete; it appends the new one to the
+output, which automatically becomes the new held interval.
+
+When it reaches the end of the list, the output already contains exactly the merged
+intervals, in order, with nothing left to do - they come out sorted for free, because
+the input was sorted and intervals were only ever added to the end.""",
+
+    """8. THE CODE, line by line.
+
+Keep [[1,3], [2,6], [8,10]] beside you; the answer is [[1,6], [8,10]].
+
+    intervals.sort(key=lambda x: x[0])
+Sort by start value. lambda x: x[0] means "compare intervals by their first number".
+Everything below is only correct BECAUSE of this line - see case 2 in section 4.
+
+Note this sorts the caller's list in place; if that matters, sort a copy instead.
+
+    merged = [intervals[0]]
+Start the output holding the first interval - the seed that makes the loop's
+comparison always have something to look at.
+
+Note this puts the caller's own interval OBJECT into the output, and the line below
+will modify its end. If the caller looks at their data afterwards it will have been
+changed. Writing intervals[0][:] instead would insert a copy and leave the input
+untouched - see case 5 in section 4.
+
+    for start, end in intervals[1:]:
+Walk the rest of the sorted list, unpacking each interval into two named variables.
+intervals[1:] skips the first one, which is already in the output.
+
+    last = merged[-1]
+The interval currently being built - the last item of the output, which is "the one
+in your hand". Naming it makes the two lines below read more clearly.
+
+    if start <= last[1]:
+The overlap test from section 3, in full. last[1] is the held interval's end. So this
+asks: "does the new one start at or before the held one ends?" Because the list is
+sorted, that single comparison is the entire overlap check.
+
+The "or equal" is the touching convention - [1,4] and [4,5] merge into [1,5]. Strict
+"less than" would keep them separate.
+
+    last[1] = max(last[1], end)
+Stretch the held interval. The max() is what handles a swallowed interval: for
+[1,10] followed by [2,3], this computes max(10, 3) = 10 and correctly leaves the end
+alone. Writing "= end" instead is the most common bug in this problem.
+
+    else:
+        merged.append([start, end])
+A genuine gap, so the held interval is finished. Append the new one - and because
+merged[-1] means "the last item", this new interval automatically becomes the one in
+hand for the next comparison. No extra bookkeeping needed.
+
+    return merged
+The merged list, already in sorted order because the input was sorted and we only
+ever appended to the end.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Input: [[1,3], [2,6], [8,10]] - already sorted by start, so the sort changes nothing.
+
+merged = [[1,3]]
+
+interval [2,6]:  start = 2, end = 6
+  last = merged[-1] = [1,3], whose end is 3.
+  Is 2 <= 3?  YES -> overlap.
+  last[1] = max(3, 6) = 6
+  merged = [[1,6]]
+
+interval [8,10]: start = 8, end = 10
+  last = merged[-1] = [1,6], whose end is 6.
+  Is 8 <= 6?  NO -> gap.
+  append [8,10].
+  merged = [[1,6], [8,10]]
+
+return [[1,6], [8,10]].  Correct.
+
+THE SWALLOWING CASE, input [[1,10], [2,3], [4,5]]:
+
+merged = [[1,10]]
+
+[2,3]:  last = [1,10], end 10.  Is 2 <= 10?  YES.
+        last[1] = max(10, 3) = 10.  merged = [[1,10]]
+[4,5]:  last = [1,10], end 10.  Is 4 <= 10?  YES.
+        last[1] = max(10, 5) = 10.  merged = [[1,10]]
+
+return [[1,10]].  Correct.
+
+Written with "= end" instead of max(), this would have returned [[1,5]] - a silently
+wrong answer that most simple test cases would never expose, because they tend to
+use intervals that step forward neatly rather than nesting.
+
+THE UNSORTED CASE, input [[8,10], [1,3], [2,6], [15,18]]:
+
+  After sorting: [[1,3], [2,6], [8,10], [15,18]]
+  [2,6]:   2 <= 3 -> merge to [1,6]
+  [8,10]:  8 <= 6? No -> append
+  [15,18]: 15 <= 10? No -> append
+  return [[1,6], [8,10], [15,18]].  Correct.
+
+Without the sort, the first comparison would be 1 <= 10 on the held [8,10], merging
+two intervals that do not belong together.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log n), and the sort is the whole cost. The walk afterwards touches each
+interval exactly once, which is O(n) - and when adding two costs you keep the bigger
+one, because for large n it dominates. If the input arrived already sorted, the whole
+thing would be O(n).
+
+SPACE: O(n) for the output list, which has to exist. Not counting the output, the
+extra working space is O(1) - the only thing tracked is "the last item of the list I
+am already building".
+
+THE FAMILY OF PROBLEMS this pattern covers, all built on the same sort-then-sweep:
+
+  Insert Interval - add one new interval into an already-sorted list. Walk through,
+  emitting everything that ends before the new one starts, merging everything that
+  overlaps it, then emitting the rest.
+
+  Non-overlapping Intervals - the minimum number to remove so none overlap. Sort by
+  END time here, not start, and greedily keep whichever finishes earliest.
+
+  Meeting Rooms - can one person attend all meetings? Sort by start and check whether
+  any interval begins before the previous one ends.
+
+  Meeting Rooms II - how many rooms are needed. Sort by start and track end times in
+  a min-heap.
+
+Notice two of those sort by START and one by END. Which key to sort by is the real
+decision in interval problems, and it follows from what you are greedily choosing.
+
+THE #1 MISTAKE - writing last[1] = end instead of max(last[1], end). It gives the
+right answer on every example where intervals step forward neatly, and the wrong
+answer the moment one interval sits entirely inside another. Because common test
+cases rarely contain that shape, it often survives until someone tries
+[[1,10],[2,3]].
+
+A close second: forgetting to sort, or sorting by end when the algorithm needs
+start. That breaks the guarantee in section 3 and the one-pass logic stops being
+valid.
+
+ONE-SENTENCE TAKEAWAY: sort by start time, then sweep once holding a single interval -
+stretch its end to whichever reaches further whenever the next one starts before it
+finishes, and put it down and pick up a new one whenever it does not.""",
 ]
 
 _EX_P0F["Kth Largest Element"] = [
@@ -41924,70 +42215,371 @@ too far.""",
 ]
 
 _EX_P0F["Longest Repeating Character Replacement"] = [
-    """The textbook case, traced.
-s = "AABABBA", k = 1.
-right=0 'A': counts A=1, max_freq=1, window "A" size 1, 1-1=0 <= 1, best=1.
-right=1 'A': A=2, max_freq=2, size 2, 2-2=0 <= 1, best=2.
-right=2 'B': B=1, max_freq stays 2, size 3, 3-2=1 <= 1, best=3 ("AAB" -> replace
-the B).
-right=3 'A': A=3, max_freq=3, size 4, 4-3=1 <= 1, best=4 ("AABA").
-right=4 'B': B=2, max_freq 3, size 5, 5-3=2 > 1 -> shrink: drop s[0]='A' (A=2),
-left=1, size 4, 4-3=1 <= 1. best stays 4.
-right=5 'B': B=3, max_freq=3, size 5 (left=1), 5-3=2 > 1 -> shrink, left=2, size
-4. best 4.
-right=6 'A': A=3, size 5, 5-3=2 > 1 -> shrink, left=3, size 4.
-Answer 4.""",
+    """1. THE GOAL, in plain English.
 
-    """The key insight, stated plainly.
-window_size - max_freq = the number of characters you would have to replace to
-make the whole window one letter.
-So the window is VALID exactly when that number is <= k. Everything else is
-bookkeeping.
-Say that sentence before writing code and the loop practically writes itself:
-grow right always, shrink left while invalid, record the best valid size.""",
+You are given a string and a number k. You may change up to k characters into
+anything you like. After doing so, what is the longest unbroken run of the SAME
+character you can end up with?
 
-    """Why max_freq is never decreased - the part that looks like a bug.
-When the window shrinks, the code decrements the count but leaves max_freq
-alone, so max_freq can be STALE (larger than any current count).
-That is deliberate and safe. A stale max_freq only makes the validity test more
-permissive, so the window may not shrink when it 'should' - but `best` is only
-ever updated with a size that is at least as large as a genuinely valid window
-found earlier. The answer is a MAXIMUM, and it can never exceed the true best,
-because a window that big was actually achieved at some point.
-Recomputing max_freq properly (max(counts.values()) each step) is also correct
-and costs O(26) per step. If the stale version makes you uneasy in an interview,
-write the honest one and say why the cheaper one still works.""",
+An unbroken run of characters taken from the string is a SUBSTRING - the characters
+must sit next to each other in the original.
 
-    """Edge cases: k = 0, k >= len(s), and a single character.
-k=0 on "ABAB": no replacements allowed, so the answer is the longest run of one
-character = 1.
-k=4 on "ABAB": every window is valid (4-1=3 <= 4), so the answer is the whole
-string, 4.
-s="A", k=0 -> 1. s="" -> the loop never runs, best=0.
-These four pin the boundaries of the formula; run them mentally before you
-submit.""",
+Our example: s = "AABABBA", k = 1.
 
-    """A case where the naive approach explodes.
-Brute force checks every substring and, for each, counts the most frequent
-character: O(n^2) substrings x O(n) counting = O(n^3), or O(n^2) with
-incremental counts.
-On n = 10^5 that is 10^10 operations - hours.
-The sliding window is O(n): right advances n times, and left advances at most n
-times TOTAL across the whole run (it never moves backwards). Two pointers, each
-monotone, is the entire reason the window pattern is linear.""",
+    A A B A B B A
+    0 1 2 3 4 5 6
 
-    """The sliding-window family and which flavour this is.
-Fixed-size window: 'maximum sum of any 5 consecutive elements' - the window
-never changes size.
-Variable window, shrink while INVALID (this problem, Longest Substring Without
-Repeating Characters, Max Consecutive Ones III): grow right, shrink left until
-valid again, record the max size.
-Variable window, shrink while VALID (Minimum Window Substring, Minimum Size
-Subarray Sum): grow until valid, then shrink as far as you can, record the min
-size.
-Deciding which of the three you are in - and therefore whether you record on
-grow or on shrink - is the recognition step. Everything else is the same four
-lines.""",
+Try some stretches by hand.
+
+    Positions 0 to 2, "AAB". Two A's and one B. Change that one B into an A and you
+    have "AAA" - one change, which is within our budget of 1. Length 3.
+
+    Positions 3 to 5, "ABB". Two B's and one A. Change the A into a B - one change.
+    Length 3.
+
+    Positions 0 to 3, "AABA". Three A's and one B. One change gives "AAAA". Also
+    length 4? Count again: A, A, B, A - that is three A's and one B, so one change.
+    Length 4.
+
+So 4 is achievable. Can we do 5? Positions 0 to 4 are "AABAB" - three A's and two
+B's, needing two changes, which exceeds k = 1. Any other stretch of 5 also needs
+two or more. So the answer is 4.
+
+Notice what you never have to decide: WHICH character to keep. For any stretch, the
+best choice is obviously the one that already appears most often there - every
+other character has to be changed anyway.""",
+
+    """2. THE INTUITION - the rule that tells you if a stretch is affordable.
+
+Take any stretch of the string. How many changes does it cost to make it all one
+character?
+
+Count how many times the commonest character appears in it. Those you keep.
+Everything else must be changed. So:
+
+    changes needed = (length of the stretch) - (count of its commonest character)
+
+Check it on "AABA": length 4, commonest character is A appearing 3 times, so
+changes needed = 4 - 3 = 1. Which matches what we worked out by hand.
+
+A stretch is AFFORDABLE when that number is at most k.
+
+Now the algorithm. THE SLOW VERSION would be: try every stretch, count its
+characters, check affordability, keep the longest affordable one. That is about
+n x n / 2 stretches each costing up to n to count - O(n^3), or O(n^2) if you count
+incrementally. Correct but wasteful.
+
+THE UPGRADE - a SLIDING WINDOW. Keep a stretch with a left edge and a right edge:
+
+    A A B A B B A
+    [       ]           the window currently covers positions 0 to 3
+
+Move the right edge along, taking in one character at a time. After each step, ask
+whether the window is still affordable. If it is not, drag the left edge rightwards
+until it is again. Record the widest window you ever achieve.
+
+Both edges only ever move right, so the right edge takes n steps and the left edge
+takes at most n across the whole run. That is O(n) - one pass, no re-counting.
+
+The only thing left is to keep track of the commonest character's count cheaply as
+the window changes, and section 3 is about a surprising shortcut there.""",
+
+    """3. THE TRICK - why the "commonest count" is never reduced.
+
+Here is the line that looks like a bug and is not.
+
+The code keeps a running max_freq - the count of the commonest character seen in
+any window so far. When the left edge moves and a character leaves the window,
+max_freq is NOT recalculated. It can be stale - larger than the true commonest
+count in the current window.
+
+That looks wrong. It is safe, and the reason is worth understanding.
+
+We only ever care about finding a LONGER window than the best so far. The window
+only grows when it is affordable, and affordability is judged as
+(window length) - max_freq <= k.
+
+If max_freq is stale and too large, the affordability test is too GENEROUS - it
+might let a window stay open that should have been shrunk. But that window's length
+can only equal or exceed the best if max_freq were genuinely that large - which it
+was, at some earlier moment, for a window of that size. So a longer answer is never
+reported than was genuinely achievable.
+
+Put more simply: the window never SHRINKS below its best-ever size, because the
+"while" loop moves the left edge at most one step per new character. So the recorded
+answer is always a size that was genuinely achieved with a genuinely valid
+max_freq.
+
+This is the standard, accepted version of this solution. Recomputing the true
+maximum on every shrink would also be correct and would cost an extra pass over the
+alphabet each time - a constant factor, so still O(n), just slower.
+
+If it makes you uncomfortable, say so out loud and explain the argument. An
+interviewer asking "isn't max_freq stale?" is testing exactly this, and "yes, and
+here is why that is safe" is the answer they want.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - shrinking with "if" instead of "while". In this particular solution a
+single "if" would actually suffice, because the window grows by one character at a
+time so it can never become more than one character too wide. But "while" is the
+safe habit for sliding windows in general, and it costs nothing. Do not switch to
+"if" to look clever unless you can explain why it is safe here.
+
+CASE 2 - measuring the window as (right - left) instead of (right - left + 1). Both
+edges are INSIDE the window, so a window from position 3 to position 3 holds one
+character, and 3 - 3 + 1 = 1. Dropping the "+ 1" reports every window as one
+character too short.
+
+CASE 3 - k larger than the string. Then every window is affordable, the left edge
+never moves, and the answer is the whole string's length. Correct.
+
+CASE 4 - k equal to zero. No changes allowed, so the answer is the longest run of
+identical characters already present. The formula still works: a window is
+affordable only when its length equals its commonest count, which means every
+character in it is the same.
+
+CASE 5 - the empty string. The loop never runs and best stays 0. Correct.
+
+CASE 6 - trying to decide which character to "target". A natural instinct is to run
+the whole algorithm 26 times, once per possible letter. That works and is a
+legitimate alternative, but it is unnecessary: for any window the best target is
+always its commonest character, so tracking that one count covers every choice at
+once.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBSTRING: an unbroken run of characters. Defined in section 1.
+
+SLIDING WINDOW: a stretch of the string defined by a left and a right edge, where
+both edges only ever move rightwards. The technique that makes this O(n).
+
+counts: a table recording how many times each character appears in the CURRENT
+window. It is updated as characters enter and leave.
+
+defaultdict(int): a dictionary that invents a zero the first time you touch a
+missing key, so you can add to a count without first checking whether the key
+exists.
+
+max_freq: the largest count seen in any window so far - deliberately never
+decreased. Section 3 explains why that is safe.
+
+(right - left + 1): the window's length. The "+ 1" is because both edges are inside
+it - see case 2 in section 4.
+
+The affordability test, (right - left + 1) - max_freq > k, reads as "the number of
+characters that would need changing exceeds our budget".
+
+O(n) and O(1): the costs, where n is the length of the string. O(n) means the work
+grows in step with the string - each edge crosses it once. O(1) means the extra
+memory does not grow with the input: the counts table holds at most one entry per
+distinct character, which for letters is at most 26 regardless of how long the
+string is.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: slide a window along the string, and whenever the
+number of characters that would need changing exceeds the budget, pull the left edge
+in until it does not.
+
+There is no recursion here - one loop with an inner shrink - so nothing piles up on
+the call stack.
+
+The steps:
+
+  1. Keep a table of how many times each character appears in the current window,
+     starting empty. Keep a left edge at the start, a record of the largest
+     character-count seen so far, and a record of the widest window achieved.
+
+  2. Move the right edge along the string one character at a time.
+
+  3. Add the new character to the counts table.
+
+  4. Update the record of the largest count if this character's count now beats it.
+     Note this record is never DECREASED, even when characters leave the window -
+     section 3 explains why that is safe rather than sloppy.
+
+  5. While the window is unaffordable - that is, while its length minus the largest
+     count exceeds the budget - drag the left edge rightwards: remove the character
+     it was on from the counts table, then step it right.
+
+  6. Record the window's current length if it beats the best so far.
+
+  7. When the right edge runs off the end, the best recorded length is the answer.
+
+The affordability rule in step 5 is the heart of it: the characters you keep are the
+commonest one, and every other character in the window has to be changed, so the
+cost is the window's length minus that commonest count.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code drags a window along the string, always trying to make it as wide as
+possible while keeping it affordable.
+
+A window is affordable if you could turn all of it into a single repeated character
+without spending more than your budget of changes. Working out that cost is easy:
+whatever character already appears most often in the window is the one you would
+keep, and every other character in there has to be changed. So the cost is simply
+the window's width minus how many times that commonest character appears.
+
+The right edge moves forward one character at a time, and each new character is
+added to a running tally of what the window contains. If taking it in has made the
+window too expensive, the left edge is pulled inward - dropping characters off the
+back, and updating the tally as they go - until the window is affordable again.
+
+After every step, the code checks whether the current window is the widest it has
+ever managed, and remembers it if so.
+
+There is one deliberate piece of laziness. The code keeps track of the highest
+character-count it has ever seen, and it never lowers that figure when characters
+leave the window. That can leave it slightly optimistic about the current window -
+but it can only ever cause the window to stay open when it might have been
+shrunk, and it can never report a width that was not genuinely achieved at some
+point with an honest count. So the answer stays correct while the bookkeeping stays
+cheap.
+
+Since both edges only ever move rightwards, each crosses the string just once.""",
+
+    """8. THE CODE, line by line.
+
+Keep s = "AABABBA" and k = 1 beside you; the answer is 4.
+
+    from collections import defaultdict
+A dictionary that invents a zero for a missing key, so counts can be incremented
+without first checking whether the character has been seen.
+
+    counts = defaultdict(int)
+How many times each character appears in the CURRENT window. It is kept in step as
+characters enter on the right and leave on the left.
+
+    left = 0
+The window's left edge.
+
+    max_freq = 0
+The largest character-count seen in any window so far. Deliberately never decreased -
+section 3 explains why that is safe.
+
+    best = 0
+The widest affordable window found so far. Starting at 0 is correct for an empty
+string.
+
+    for right in range(len(s)):
+Move the right edge along, one character per turn. This is the only thing driving
+the process forward.
+
+    counts[s[right]] += 1
+Take the new character into the window by adding it to the tally.
+
+    max_freq = max(max_freq, counts[s[right]])
+Update the record if this character is now the commonest ever seen. Only the
+character just added can have increased, so only it needs checking.
+
+Note what is NOT here: any recalculation when characters leave. That omission is the
+deliberate trick, not an oversight.
+
+    while (right - left + 1) - max_freq > k:
+The affordability test. (right - left + 1) is the window's width - the "+ 1" because
+both edges are inside it. Subtracting the commonest count gives how many characters
+would need changing. If that exceeds the budget k, the window is too expensive.
+
+    counts[s[left]] -= 1
+    left += 1
+Shrink from the left: drop the character the left edge is on out of the tally, then
+step the edge rightwards.
+
+    best = max(best, right - left + 1)
+Record the window's width if it beats the best so far. This must happen every step,
+not just at the end, because the widest window usually appears in the middle of the
+run.
+
+    return best
+The widest affordable window found anywhere.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    s = "A A B A B B A",  k = 1
+    pos   0 1 2 3 4 5 6
+
+Start: counts = {}, left = 0, max_freq = 0, best = 0
+
+right=0, 'A'  counts = {A:1}.  max_freq = 1.
+              width = 0-0+1 = 1.  1 - 1 = 0, not > 1 -> affordable.
+              best = 1.
+
+right=1, 'A'  counts = {A:2}.  max_freq = 2.
+              width = 2.  2 - 2 = 0, affordable.
+              best = 2.
+
+right=2, 'B'  counts = {A:2, B:1}.  max_freq stays 2.
+              width = 3.  3 - 2 = 1, not > 1 -> affordable.
+              (One B to change, budget 1. "AAB" -> "AAA".)
+              best = 3.
+
+right=3, 'A'  counts = {A:3, B:1}.  max_freq = 3.
+              width = 4.  4 - 3 = 1, affordable.
+              (One B to change. "AABA" -> "AAAA".)
+              best = 4.
+
+right=4, 'B'  counts = {A:3, B:2}.  max_freq stays 3.
+              width = 5.  5 - 3 = 2, which IS > 1 -> too expensive.
+              Shrink: drop s[0]='A' -> counts = {A:2, B:2}, left = 1.
+              Re-check: width = 4-1+1 = 4.  4 - 3 = 1, not > 1 -> stop shrinking.
+              Note max_freq is still 3 although no character now appears 3 times in
+              the window - this is the deliberate staleness from section 3.
+              best = max(4, 4) = 4.
+
+right=5, 'B'  counts = {A:2, B:3}.  max_freq = max(3, 3) = 3.
+              width = 5-1+1 = 5.  5 - 3 = 2 > 1 -> shrink.
+              Drop s[1]='A' -> counts = {A:1, B:3}, left = 2.
+              width = 4.  4 - 3 = 1, stop.
+              best = max(4, 4) = 4.
+
+right=6, 'A'  counts = {A:2, B:3}.  max_freq stays 3.
+              width = 6-2+1 = 5.  5 - 3 = 2 > 1 -> shrink.
+              Drop s[2]='B' -> counts = {A:2, B:2}, left = 3.
+              width = 4.  4 - 3 = 1, stop.
+              best = max(4, 4) = 4.
+
+return best = 4.  Correct.
+
+Two things to read off that trace. best reached 4 at right=3 with an entirely honest
+max_freq of 3 - the answer was earned before any staleness appeared. And after that
+the window never widened beyond 4, so the stale max_freq never inflated the result;
+it only ever kept the window from shrinking further than necessary.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). The right edge takes exactly n steps. The left edge only ever moves
+rightwards, so across the whole run it also takes at most n steps in total - not n
+per character. Everything inside the loop is a fixed amount of work: a dictionary
+update, a comparison, a subtraction.
+
+SPACE: O(1) in practice. The counts table holds one entry per DISTINCT character,
+which for uppercase letters is at most 26 no matter whether the string is a hundred
+characters or a million. Some people write O(k) where k is the alphabet size, which
+is the same statement.
+
+THE #1 MISTAKE - trying to "fix" the stale max_freq by recomputing it on every
+shrink. It is not wrong to do so, and the answer stays correct, but it signals that
+you have not understood why the lazy version is safe. The argument is short: a
+recorded width is only ever one that was genuinely achieved at a moment when
+max_freq was honest, and a stale max_freq can only keep a window open, never widen
+it beyond what was truly reached. Being able to say that is the point of the
+problem.
+
+A close second: measuring the window as (right - left) instead of
+(right - left + 1). Both edges are inside the window, so every answer comes out one
+too small - and it passes no test at all, which at least makes it easy to catch.
+
+A third, more conceptual: running the algorithm once per letter of the alphabet to
+decide which character to target. It works and it is a defensible answer, but it is
+26 times the work for no gain, because the commonest character in a window is always
+the best one to keep.
+
+ONE-SENTENCE TAKEAWAY: a stretch costs its own width minus the count of its
+commonest character, so slide a window rightwards and pull the left edge in whenever
+that cost exceeds the budget - and the commonest-count need never be lowered,
+because a stale one can only hold a window open, never inflate the answer.""",
 ]
 
 _EX_P0F["Meeting Rooms II (minimum rooms)"] = [
