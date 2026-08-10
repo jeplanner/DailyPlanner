@@ -34226,6 +34226,302 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1S[_e["title"]]
 
 
+_EX_P1T = {}
+
+_EX_P1T["Capacity to Ship Packages Within D Days"] = [
+    """Binary search on the ANSWER, not on the array.
+There is nothing sorted to search here. What is monotonic is FEASIBILITY: if
+capacity C can ship everything in time, so can C+1. That monotonic predicate is
+what binary search actually needs - the array itself is irrelevant.
+So search the capacity range, and for each candidate ask 'how many days does
+this need?' via a greedy simulation. Recognising that the search space is the
+answer rather than the input is the whole move, and it unlocks a large family
+of problems.""",
+
+    """Why the bounds are max(weights) and sum(weights).
+LOWER: the ship must carry the single heaviest package in one day, so any
+capacity below max(weights) is infeasible - packages cannot be split.
+UPPER: with capacity equal to the total, everything ships in one day, so the
+answer never exceeds it.
+Starting at lo = 1 still works but wastes iterations and, worse, the greedy
+`needed()` would loop forever on a capacity smaller than some package (load + w
+> cap forever, never fitting). So the lower bound is not an optimisation - it
+is what keeps the feasibility check well-defined.""",
+
+    """The trace.
+weights = [1,2,3,4,5,6,7,8,9,10], days = 5. lo = 10, hi = 55.
+mid 32 -> greedy packs [1..7]=28, then [8,9,10]=27 -> 2 days <= 5 -> feasible,
+so hi = 32.
+mid 21 -> [1..6]=21, [7,8]=15, [9,10]=19 -> 3 days -> feasible, hi = 21.
+mid 15 -> [1,2,3,4,5]=15, [6,7]=13, [8]=8... -> 5 days -> feasible, hi = 15.
+mid 12 -> needs 6 days -> infeasible, lo = 13.
+Converges to 15. Correct.""",
+
+    """Why the greedy inside is optimal.
+For a FIXED capacity, loading each package onto the current day until it will
+not fit uses the fewest days - there is no benefit to leaving space early,
+because the order is fixed and a package deferred still has to go somewhere
+later.
+That matters: the binary search is only valid if `needed(cap)` returns the TRUE
+minimum days for that capacity. A suboptimal inner routine would make the
+predicate non-monotonic and the whole search unsound. Stating that the inner
+greedy is optimal is part of the correctness argument, not a detail.""",
+
+    """The template, and the `hi = mid` detail.
+This is the lower-bound shape: `while lo < hi`, feasible -> `hi = mid`
+(mid might BE the answer, keep it), infeasible -> `lo = mid + 1`. Return lo.
+Using `hi = mid - 1` discards a feasible candidate and can return one too
+large; mixing this with a `lo <= hi` loop gives an infinite loop when
+`hi = mid`. Pick the half-open template and keep it - the same one as Search
+Insert Position.""",
+
+    """Edge cases and the family.
+days = 1 -> the answer is sum(weights). days >= len(weights) -> the answer is
+max(weights), one package per day.
+A single package -> its own weight.
+All equal weights -> ceil arithmetic falls out naturally.
+Time O(n log(sum - max)), space O(1).
+The family: Koko Eating Bananas (search the eating speed), Split Array Largest
+Sum (identical problem, different wording), Minimum Number of Days to Make m
+Bouquets, Arranging Coins, Sqrt(x), and Minimise Maximum of Array. The cue is
+'minimise the maximum' or 'maximise the minimum' plus a cheap feasibility
+test.""",
+]
+
+_EX_P1T["Construct Binary Tree from Preorder and Inorder"] = [
+    """Why these two traversals determine the tree uniquely.
+PREORDER visits root, then left, then right - so its first element is always
+the ROOT of the current subtree.
+INORDER visits left, root, right - so once you know the root's value, its
+position in inorder splits everything before it (the left subtree) from
+everything after it (the right subtree).
+Together: preorder tells you WHO the root is, inorder tells you HOW BIG each
+side is. Neither alone suffices - and notably preorder + POSTORDER does NOT
+determine a tree uniquely, because you cannot tell an only-child apart from
+its mirror.""",
+
+    """The split, traced.
+preorder = [3,9,20,15,7], inorder = [9,3,15,20,7].
+Root is 3 (first in preorder). In inorder, 3 sits at index 1 -> left subtree is
+[9] (one node), right subtree is [15,20,7] (three nodes).
+Consume 3, advance the preorder pointer. Next preorder value is 9 -> root of
+the left subtree, and its inorder range is just [9] -> a leaf.
+Next is 20 -> root of the right subtree; in inorder it sits between 15 and 7,
+so left = [15], right = [7].
+Result: 3 with children 9 and 20, and 20 with children 15 and 7.""",
+
+    """Why the preorder pointer is a single shared cursor.
+`pos` advances once per node created, and it is shared across the whole
+recursion rather than recomputed per subtree. That works because preorder
+visits nodes in exactly the order the recursion creates them - root, then the
+entire left subtree, then the entire right.
+So the code must build the LEFT child before the RIGHT one. Swap those two
+lines and the cursor hands the right subtree values that belong to the left,
+producing a valid-looking but wrong tree. It is a one-line ordering dependency
+and the most common bug here.""",
+
+    """Why the index map matters - O(n) instead of O(n^2).
+Finding the root's position with `inorder.index(root)` is an O(n) scan, and
+doing it once per node makes the whole build O(n^2) - which on a skewed tree of
+10,000 nodes is 100 million operations.
+Precomputing `{value: index}` once makes each lookup O(1). This assumes values
+are DISTINCT, which the problem guarantees; with duplicates the split is
+ambiguous and the tree is not uniquely determined at all. Worth stating, since
+it explains why the guarantee exists.""",
+
+    """Edge cases.
+Empty traversals -> lo > hi immediately -> None.
+Single node -> root with an empty range on both sides.
+A left-skewed chain: preorder [3,2,1], inorder [1,2,3] -> each root's inorder
+index is at the far right, so the right range is always empty.
+Right-skewed is the mirror.
+The two arrays must be the same length and contain the same multiset of values;
+in an interview it is fair to note you would validate that rather than assume
+it.""",
+
+    """Complexity and the family.
+O(n) time with the map, O(n) space for the map plus O(h) recursion.
+The family: Construct Binary Tree from Inorder and Postorder (same idea, but
+take the LAST postorder element as the root and build the RIGHT subtree first),
+Construct BST from Preorder (easier - the BST ordering means you do not need
+inorder at all, since sorting preorder GIVES you inorder), and Serialize and
+Deserialize Binary Tree.
+The unifying insight: each traversal contributes one piece of information -
+who the root is, or where the boundary falls - and you need both.""",
+]
+
+_EX_P1T["Edit Distance (Levenshtein)"] = [
+    """What dp[i][j] means, stated precisely before anything else.
+dp[i][j] = the minimum edits to turn the FIRST i characters of a into the FIRST
+j characters of b. Not 'the answer so far', not 'the edits at position i' - the
+answer for two PREFIXES. Getting that sentence right is most of the problem;
+every transition follows from it.
+The answer is dp[m][n], the full strings.""",
+
+    """The three transitions, each named as an operation.
+If a[i-1] == b[j-1]: the characters already agree, so dp[i][j] = dp[i-1][j-1] -
+FREE, no edit consumed.
+Otherwise 1 + the cheapest of:
+  dp[i-1][j-1]  SUBSTITUTE a's character for b's
+  dp[i-1][j]    DELETE a's character (shrink a, b unchanged)
+  dp[i][j-1]    INSERT b's character (a unchanged, b consumed)
+The direction of the deletion/insertion pair is the part people mix up: moving
+back in i means consuming a character of A, which is a deletion FROM a.""",
+
+    """The base cases, which encode the trivial answers.
+dp[i][0] = i: turning i characters into the empty string costs i deletions.
+dp[0][j] = j: turning nothing into j characters costs j insertions.
+Skip these and the first row and column stay 0, which quietly claims that
+'abc' -> '' is free, and every answer comes out too small. They are not
+boilerplate; they are the only place the cost of length differences enters.""",
+
+    """A worked cell, on horse -> ros (answer 3).
+Consider dp[1][1]: 'h' vs 'r', not equal -> 1 + min(dp[0][0]=0, dp[0][1]=1,
+dp[1][0]=1) = 1. Substitute h for r.
+dp[5][3] ends at 3, via: substitute h->r, substitute o->o (free, so really
+r-o-s alignment), delete r, delete s, delete e... traced fully, the cheapest
+script is substitute h->r, keep o, substitute r->s, delete s, delete e = 3
+edits.
+Working ONE non-trivial cell by hand in the interview is worth more than
+narrating the whole table - it proves you understand the recurrence.""",
+
+    """The space reduction, and the extra variable it needs.
+dp[i][j] depends only on row i-1 and the current row, so two rows suffice -
+O(n) instead of O(m*n).
+Down to ONE row is possible but needs care: dp[i-1][j-1] (the diagonal) is
+overwritten the moment you compute dp[i][j-1], so you must stash it in a
+temporary before each write. That saved-diagonal detail is exactly the same
+trick as in Maximal Square, and it is the standard follow-up when the
+interviewer asks about space.""",
+
+    """Edge cases, complexity and where it is used.
+Either string empty -> the other's length. Identical strings -> 0. Completely
+disjoint strings of equal length -> that length, all substitutions.
+Time O(m*n), space O(m*n) or O(min(m,n)) reduced. There is no known
+subquadratic algorithm for the general case (and there is a conditional lower
+bound saying there probably is not).
+Uses: spell checkers and 'did you mean', DNA sequence alignment, diff tools,
+fuzzy record matching for deduplication, and OCR post-correction. The family:
+Longest Common Subsequence (the same table shape, maximising instead of
+minimising), Delete Operation for Two Strings, One Edit Distance, and
+Distinct Subsequences.""",
+]
+
+_EX_P1T["House Robber"] = [
+    """The recurrence, and why two variables suffice.
+At each house you choose: SKIP it and keep the best total up to the previous
+house, or ROB it and add its value to the best total up to TWO houses back
+(since adjacency is forbidden).
+dp[i] = max(dp[i-1], dp[i-2] + nums[i]). Because it reaches back exactly two
+steps, you never need an array - two rolling scalars hold everything.
+nums = [2,7,9,3,1]: dp goes 2, 7, 11, 11, 12. Answer 12 = houses 0, 2 and 4.""",
+
+    """The tuple assignment, and the bug that splitting it causes.
+`prev, curr = curr, max(curr, prev + x)` evaluates the entire right-hand side
+FIRST, so `prev` in the expression is still the OLD prev - which is exactly what
+the recurrence requires.
+Writing it as two statements - `prev = curr` then `curr = max(curr, prev + x)` -
+uses the ALREADY-UPDATED prev, which is really dp[i-1], and silently computes
+'rob every house' instead. On [2,7,9] that gives 18 rather than 11: a wrong
+answer that is still plausible. Same hazard as the Fibonacci-style updates.""",
+
+    """Why greedy fails, with the counterexample.
+'Rob every other house' seems reasonable: on [2,7,9,3,1] that gives 2+9+1 = 12,
+which happens to be right. But on [2,1,1,2] it gives 2+1 = 3, while the optimum
+is 2+2 = 4 (rob the ends and skip BOTH middles).
+Skipping two in a row is sometimes optimal, and no fixed pattern captures that -
+which is precisely why this needs DP rather than a rule. Have [2,1,1,2] ready;
+it is the shortest input that kills the greedy.""",
+
+    """Why initialising both to 0 is correct.
+prev = curr = 0 represents 'no houses considered yet, zero loot'. Since all
+values are non-negative, robbing nothing is the correct floor.
+If values could be NEGATIVE the initialisation would be wrong - you would need
+to allow an empty selection explicitly or the max would be forced to include a
+loss. The constraint says nums[i] >= 0, which is what licenses the simple
+start; worth stating rather than assuming.""",
+
+    """Edge cases.
+Empty -> the loop never runs -> 0.
+Single house -> max(0, 0 + x) = x.
+Two houses [2,7] -> after the first, prev=0 curr=2; after the second, curr =
+max(2, 0+7) = 7. Correct: take the larger, never both.
+All zeros -> 0. Adjacent equal values [5,5] -> 5.
+No guards are needed for any of these, which is worth pointing out - the
+scalars handle the short inputs naturally.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space - and the O(n)-space table version is worth mentioning
+first, then reducing, since the reduction is the follow-up.
+The family: House Robber II (circular street - run this twice, excluding the
+first house then the last), House Robber III (on a TREE, so postorder returning
+a (rob, skip) pair per node), Delete and Earn (which is House Robber in
+disguise after bucketing by value), Maximum Alternating Subsequence Sum, and
+Best Time to Buy and Sell Stock with Cooldown - all 'take it or skip it with a
+constraint on what you took last'.""",
+]
+
+_EX_P1T["Jump Game"] = [
+    """The single-variable greedy, traced.
+nums = [2,3,1,1,4]. reach = 0.
+i=0: 0 <= 0 ok; reach = max(0, 0+2) = 2.
+i=1: 1 <= 2 ok; reach = max(2, 1+3) = 4.
+i=2: 2 <= 4 ok; reach = 4. i=3: reach 4. i=4: 4 <= 4 ok.
+Loop finishes -> True.
+Failing case [3,2,1,0,4]: reach becomes 3 after i=0 and never exceeds 3, so at
+i=4, 4 > 3 -> return False. The zero at index 3 is the wall, and reach stalls
+before it.""",
+
+    """Why `if i > reach` is the whole check.
+`reach` is the furthest index reachable from everything seen so far. If the
+scan arrives at an index BEYOND that, no earlier position could jump here - so
+the array is severed and the end is unreachable.
+That single comparison replaces any explicit search for gaps. Note it must be
+checked BEFORE extending reach from i, since standing on i is a precondition
+for jumping from it.""",
+
+    """Why greedy is safe here, as an argument.
+Reachability is monotone: if index i is reachable then so is every index below
+i + nums[i], and reachable positions form a contiguous PREFIX. So there is
+never a decision to make - you do not choose which jump to take, you only track
+how far the prefix extends.
+That is why no DP or BFS is needed. The moment the problem asks for the FEWEST
+jumps (Jump Game II) rather than mere reachability, you need the level-scan
+version - and it is worth naming that as the sibling.""",
+
+    """The DP everyone writes first, and its cost.
+`dp[i] = can I reach i` computed by scanning all j < i with j + nums[j] >= i is
+O(n^2) and correct. On n = 10,000 that is 100 million operations versus 10,000
+for the greedy.
+Backwards greedy is another correct O(n) variant: track the leftmost index from
+which the end is reachable, and walk right to left updating it. Some find that
+easier to justify. Either is fine; the O(n^2) DP is the one to improve on.""",
+
+    """Edge cases.
+Single element [0] -> True. You are already at the last index, and the loop's
+only check (0 > 0) is false.
+A zero at the END, [2,0] -> reach 2 from index 0, so index 1 is fine -> True. A
+trailing zero never blocks you, which surprises people.
+A zero in the MIDDLE only blocks if nothing can jump OVER it: [1,0,1] -> False,
+but [2,0,1] -> True.
+All zeros of length > 1 -> False. Empty array is usually excluded.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space, one pass.
+The family: Jump Game II (fewest jumps - the level-by-level greedy that is BFS
+with two integers), Jump Game III (arbitrary +/- jumps, which needs a real BFS
+because reachability is no longer a contiguous prefix), Minimum Number of Taps
+to Water a Garden and Video Stitching (interval covering, same extend-the-reach
+shape).
+Cue: 'can I reach' with a contiguous reachable range means one greedy scan;
+'fewest steps' means the level scan; scattered reachability means BFS.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1T:
+        _e["examples"] = _EX_P1T[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
