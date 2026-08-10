@@ -8393,59 +8393,374 @@ does not guarantee any element qualifies.""",
 ]
 
 _EXAMPLES["Container With Most Water"] = [
-    """The textbook case, fully traced.
-height = [1,8,6,2,5,4,8,3,7]  ->  answer 49
-  l=0(h1), r=8(h7): min(1,7) x 8 = 8    best 8   left is shorter  -> l=1
-  l=1(h8), r=8(h7): min(8,7) x 7 = 49   best 49  right is shorter -> r=7
-  l=1(h8), r=7(h3): min(8,3) x 6 = 18   best 49  right is shorter -> r=6
-  l=1(h8), r=6(h8): min(8,8) x 5 = 40   best 49  tie, move either -> r=5
-  nothing after this beats 49 and the pointers close.
-The winning pair is the wall of height 8 at index 1 and the wall of height 7
-at index 8 - not the two tallest walls, and not the widest pair.""",
+    """1. THE GOAL, in plain English.
 
-    """The smallest case, and equal heights.
-height = [1,1]  ->  answer 1.  min(1,1) x 1 = 1. Two walls, one unit apart.
-height = [3,3,3,3] -> answer 9. The outermost pair wins: min(3,3) x 3 = 9.
-When all walls are equal, width is the only thing that varies, so the widest
-pair always wins - which is why the algorithm starting at the two ends already
-has the answer on its very first measurement.""",
+Picture a row of vertical walls standing on a flat floor, each a different height.
+Choose any TWO of them and pour water between them. How much water can you hold,
+and which pair holds the most?
 
-    """A staircase, where the answer is NOT the outermost pair.
-height = [1,2,3,4,5]  ->  answer 6
-  l=0(h1), r=4(h5): min(1,5) x 4 = 4   -> left shorter, l=1
-  l=1(h2), r=4(h5): min(2,5) x 3 = 6   -> left shorter, l=2
-  l=2(h3), r=4(h5): min(3,5) x 2 = 6   -> left shorter, l=3
-  l=3(h4), r=4(h5): min(4,5) x 1 = 4   -> pointers meet
-Best is 6. Here the widest container is one of the WORST, because its left
-wall is only 1 tall. Depth beat width.""",
+You are given the heights as a list. The walls are one unit apart, so the distance
+between two walls is the difference in their positions.
 
-    """Why you must move the SHORTER wall - a case that breaks the wrong rule.
-height = [1,2,4,3]  ->  answer 4
-Correct rule (move the shorter): l=0(h1),r=3(h3) area 3, move l. l=1(h2),
-r=3(h3) area min(2,3)x2 = 4, move l. l=2(h4),r=3(h3) area 3, move r. Best 4.
-Now suppose you moved the TALLER wall instead. From l=0(h1), r=3(h3) you would
-move r to 2, then to 1, dragging the useless wall of height 1 along the whole
-way and never measuring the pair (1,3) that actually wins. Moving the taller
-wall loses width while keeping the same depth cap, so it can destroy the
-answer. Moving the shorter one never can.""",
+Our example:
 
-    """The contrast with Trapping Rain Water - same input, different answers.
-height = [5,1,1,1,5]
-  Container With Most Water -> 20. Pick the two walls of height 5. The bars
-  between them are treated as glass and ignored: min(5,5) x 4 = 20.
-  Trapping Rain Water -> 12. Now the middle bars are solid and displace water:
-  each holds min(5,5) - 1 = 4 units, and 4 x 3 = 12.
-If you find yourself computing 12 for this problem, you have solved the wrong
-one. Read the question for whether the bars in between matter.""",
+    height = [1, 8, 6, 2, 5, 4, 8, 3, 7]
+    position 0  1  2  3  4  5  6  7  8
 
-    """A tall wall that is useless because of where it sits.
-height = [2,10,2]  ->  answer 4
-  l=0(h2), r=2(h2): min(2,2) x 2 = 4. Both equal, move either, and the
-  pointers meet immediately. Best 4.
-The wall of height 10 is never part of the answer - it can only ever pair with
-a neighbour one unit away, giving min(2,10) x 1 = 2. A very tall wall stuck
-between short ones contributes nothing, because the SHORTER wall always sets
-the depth.""",
+Drawn roughly, with the winning pair marked:
+
+    8 |  #                 #
+    7 |  #                 #        #
+    6 |  #  #              #        #
+    5 |  #  #     #        #        #
+    4 |  #  #     #  #     #        #
+    3 |  #  #     #  #     #  #     #
+    2 |  #  #  #  #  #     #  #     #
+    1 |# #  #  #  #  #     #  #     #
+      +--------------------------------
+       0  1  2  3  4  5  6  7  8
+
+Take walls at positions 1 and 8, heights 8 and 7. The water level is set by the
+SHORTER of the two - 7, because anything above that pours out over the shorter
+wall. The width is 8 - 1 = 7. So the area is 7 x 7 = 49.
+
+Try another pair to see the trade-off. Positions 1 and 6, heights 8 and 8: the
+level is 8, but the width is only 5, giving 40. Taller, narrower, worse.
+
+The answer is 49.
+
+Two things to be clear about. The walls themselves take up no width - only the gap
+between them counts. And the walls in between are ignored entirely; water is held
+by the two you chose, not spilled by the ones between them. (That is a different
+problem, Trapping Rain Water, and confusing the two is common.)""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Try every pair. For each pair work out the area - the shorter
+height times the distance - and keep the largest. Two nested loops.
+
+That is obviously correct, and for a list of n walls it is about n x n / 2 pairs,
+written O(n^2). For 100,000 walls that is five billion pairs. Too slow, but it is
+the right thing to describe first.
+
+THE UPGRADE - start with the WIDEST possible pair and squeeze inwards.
+
+Put one finger on the leftmost wall and one on the rightmost. That pair has the
+greatest possible width. Any other pair is narrower, so to beat it, a pair must
+make up in height what it loses in width.
+
+Now the key decision: to move inwards, which finger do you move?
+
+Move the SHORTER wall. Always.
+
+Section 3 proves why, but the intuition is this: the water level is set by the
+shorter wall, so the taller one is not the thing limiting you. Moving the taller
+one inwards throws away width and cannot raise the level, since the shorter wall
+still caps it. Moving the shorter one at least gives you a chance of finding a
+taller wall and lifting the level.
+
+Each move discards one wall from consideration, so the two fingers meet after n
+moves. One pass, O(n), instead of five billion comparisons.
+
+    [1, 8, 6, 2, 5, 4, 8, 3, 7]
+     ^                       ^
+     lo                      hi     width 8, level min(1,7)=1, area 8
+
+The left wall is shorter, so it moves. And so on, until the fingers meet.""",
+
+    """3. WHY MOVING THE SHORTER WALL IS SAFE - the proof.
+
+This is the part worth being able to say aloud, because "move the shorter one"
+sounds like a guess until you see why nothing is lost.
+
+Suppose the left wall is the shorter of the pair. Claim: no pair that still uses
+this left wall can beat what we have just computed.
+
+Take any other pair that keeps this same left wall. Its partner must be somewhere
+strictly INSIDE the current right finger, so:
+
+  Its WIDTH is smaller - the partner is closer.
+
+  Its LEVEL is no larger - the level is the shorter of the two walls, and the left
+  wall is already the shorter one, so the level is capped at the left wall's height
+  no matter how tall the new partner is.
+
+Smaller width, no greater level, so the area cannot be bigger. Every pair using
+this left wall has therefore been settled by the one we just measured, and the
+left wall can be discarded.
+
+That is the whole argument. Note where it would break: if you moved the TALLER
+wall instead, the remaining pairs using it could still have a higher level (the
+new partner might be taller than the old shorter wall), so you would be discarding
+pairs you had not settled - and you could miss the answer.
+
+WHAT ABOUT A TIE? If the two walls are the same height, either may be moved. The
+argument works from both sides: with equal heights, any pair keeping either wall
+is narrower and capped at the same level. So a tie is genuinely free, and the code
+can break it however it likes.
+
+This style of reasoning - "I can safely throw away this option because nothing it
+could still produce beats what I already have" - is what makes two-pointer
+solutions correct rather than merely plausible.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - confusing this with Trapping Rain Water. That problem asks how much water
+the whole landscape holds in its dips, where every bar matters and the bars between
+two walls block water. Here the bars in between are ignored completely: you choose
+two walls and the water spans the gap. Different problem, different solution. If
+you find yourself worrying about the wall at position 3 being short, you are
+solving the wrong one.
+
+CASE 2 - moving the taller wall. Covered in section 3. It discards pairs that have
+not been settled, so it can miss the answer. On our example it gives a smaller
+result.
+
+CASE 3 - moving both fingers at once. Tempting when the heights are equal, and it
+is actually safe there for the reason in section 3 - but it is an optimisation that
+buys almost nothing and gives you an extra branch to get wrong. Move one.
+
+CASE 4 - fewer than two walls. With one wall or none there is no pair, so the
+answer is 0. The loop condition "lo < hi" is false immediately and best stays 0.
+Correct, with no special case.
+
+CASE 5 - using "lo <= hi" instead of "lo < hi". A wall paired with itself has width
+zero and area zero, so it cannot change the answer - but the condition should still
+be strict, because the pair must be two DIFFERENT walls. Harmless here, wrong in
+principle.
+
+CASE 6 - forgetting that the level is the SHORTER wall. Using the taller one, or
+the average, gives water that would pour out over the low side. min() is the whole
+physics of the problem.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+TWO POINTERS: two positions in the same list, moved under a rule. Here the rule is
+"start at both ends and move inwards", which is the same shape used in 3Sum and in
+Squares of a Sorted Array. Other problems use "different speeds" or "keep a fixed
+gap". Recognising which rule a problem wants is most of the skill.
+
+lo and hi: the positions of the two walls currently being considered - the left and
+right ends of the stretch still under consideration.
+
+min(a, b): the smaller of two values. Here it is the water level, because the
+shorter wall is what the water pours over.
+
+hi - lo: the width between the two walls. Since the walls sit one unit apart, the
+difference in positions IS the distance. Note this is not hi - lo + 1: we want the
+GAP between them, not the number of walls covered. Check it on adjacent walls at
+positions 3 and 4 - the gap is 1, and 4 - 3 = 1. Correct.
+
+That is a genuine difference from problems like Longest Substring, where the "+ 1"
+is needed because you are counting items rather than measuring a gap. Knowing which
+you want is what stops the off-by-one.
+
+max(a, b): keep the larger - used to remember the best area seen so far.
+
+O(n) and O(1): the costs, where n is the number of walls. O(n) means the work grows
+in step with the list - each wall is discarded exactly once, so there are n moves.
+O(1) means the extra memory does not grow at all: three variables, whatever the
+size of the input.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: start with the widest possible pair and repeatedly
+discard the shorter wall, because no pair keeping it can beat what you have just
+measured.
+
+There is no recursion here - a single loop - so nothing piles up on the call stack.
+The loop ends when the two fingers meet, which happens after exactly n - 1 moves
+because each move discards one wall.
+
+The steps:
+
+  1. Put one finger on the first wall and one on the last. This is the widest pair
+     available.
+
+  2. Keep a running best area, starting at zero. Zero is correct for a list with
+     fewer than two walls, since no pair exists.
+
+  3. Repeat while the two fingers have not met:
+
+     a. Work out the water level: the height of the SHORTER of the two walls. Water
+        above that pours out over the low side.
+
+     b. Work out the width: the difference between the two positions.
+
+     c. Multiply them for this pair's area, and keep it if it beats the best so
+        far.
+
+     d. Move the finger on the SHORTER wall one step inwards. If they are the same
+        height, either may move.
+
+  4. When the fingers meet, return the best area found.
+
+Step (d) is the whole algorithm, and it is worth restating why it is safe rather
+than merely convenient: every remaining pair that would keep the shorter wall is
+narrower AND capped at the same level, so it cannot beat the area just measured.
+The wall has nothing left to offer and can be discarded.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code starts with the two walls furthest apart - the very first and the very
+last - because that pair has the greatest possible width, and then works inwards.
+
+For the pair it is currently looking at, it works out how much water they would
+hold. The water level is set by the shorter of the two walls, because anything
+higher simply pours out over the low side. Multiply that level by the distance
+between them and you have the area. If it beats anything seen so far, it is
+remembered.
+
+Then it has to give up one of the two walls in order to move inwards, and it always
+gives up the shorter one.
+
+That choice is the heart of it. The shorter wall is what is limiting the water, and
+every other pair that keeps it would be narrower - closer together - while still
+being capped at that same low level. So none of them could hold more than the
+amount just measured. The wall has nothing further to offer and can be discarded
+with nothing lost.
+
+The taller wall, by contrast, might still pair with something even taller further
+in, so it stays.
+
+Each round throws away exactly one wall, so the two markers march toward each other
+and meet after one pass through the list. At that point every pair worth
+considering has been either measured or provably ruled out, and the largest area
+seen is the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep height = [1, 8, 6, 2, 5, 4, 8, 3, 7] beside you; the answer is 49.
+
+    lo, hi = 0, len(height) - 1
+The two fingers, on the first and last walls. This is the widest possible pair,
+which is why the search starts here - width can only shrink from now on, so any
+later pair has to win on height.
+
+    best = 0
+The largest area seen so far. Starting at zero is also the right answer for a list
+with fewer than two walls, so no special case is needed.
+
+    while lo < hi:
+Keep going while the fingers have not met. Strictly less than, because a pair must
+be two DIFFERENT walls - a wall paired with itself has zero width.
+
+    area = min(height[lo], height[hi]) * (hi - lo)
+The whole physics in one line.
+
+  min(...) is the water level - the SHORTER wall, because water above it pours out
+  over the low side. Using the taller wall, or an average, would be water that
+  cannot actually be held.
+
+  (hi - lo) is the width. Note there is no "+ 1": we want the GAP between the
+  walls, not the count of walls covered. Adjacent walls at positions 3 and 4 have
+  a gap of 1, and 4 - 3 = 1.
+
+    best = max(best, area)
+Keep the largest seen. This has to happen every round, not just at the end,
+because the winning pair usually turns up in the middle of the sweep.
+
+    if height[lo] < height[hi]:
+        lo += 1
+    else:
+        hi -= 1
+The move, and the reason the whole thing works. Discard whichever wall is SHORTER,
+because - by the argument in section 3 - every remaining pair that keeps it is
+narrower and capped at the same level, so none can beat the area just measured.
+
+On a tie the else branch runs and the right finger moves. Either would do; equal
+heights make the choice genuinely free.
+
+Exactly one finger moves per round, so the gap shrinks by one each time and the
+loop is guaranteed to end.
+
+    return best
+The largest area found anywhere during the sweep.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+height = [1, 8, 6, 2, 5, 4, 8, 3, 7]
+position  0  1  2  3  4  5  6  7  8
+
+Start: lo = 0, hi = 8, best = 0
+
+ROUND 1.  heights 1 and 7.  level = min(1,7) = 1.  width = 8 - 0 = 8.
+          area = 8.  best = 8.
+          Is 1 < 7?  Yes -> move lo.  lo = 1.
+
+ROUND 2.  heights 8 and 7.  level = 7.  width = 8 - 1 = 7.
+          area = 49.  best = 49.          <- the answer, found here
+          Is 8 < 7?  No -> move hi.  hi = 7.
+
+ROUND 3.  heights 8 and 3.  level = 3.  width = 6.
+          area = 18.  best stays 49.
+          Is 8 < 3?  No -> move hi.  hi = 6.
+
+ROUND 4.  heights 8 and 8.  level = 8.  width = 5.
+          area = 40.  best stays 49.
+          Is 8 < 8?  No -> move hi.  hi = 5.   (a tie; either finger would do)
+
+ROUND 5.  heights 8 and 4.  level = 4.  width = 4.
+          area = 16.  best stays 49.
+          Move hi.  hi = 4.
+
+ROUND 6.  heights 8 and 5.  level = 5.  width = 3.
+          area = 15.  best stays 49.
+          Move hi.  hi = 3.
+
+ROUND 7.  heights 8 and 2.  level = 2.  width = 2.
+          area = 4.  Move hi.  hi = 2.
+
+ROUND 8.  heights 8 and 6.  level = 6.  width = 1.
+          area = 6.  Move hi.  hi = 1.
+
+CHECK: lo = 1, hi = 1 - the fingers have met, so the loop ends.
+
+return best = 49.  Correct, from the pair at positions 1 and 8.
+
+Two things to read off that trace. Eight rounds for nine walls - one wall discarded
+per round, which is the O(n) claim made concrete. And the widths went 8, 7, 6, 5,
+4, 3, 2, 1: strictly shrinking, which is why a later pair has to be much taller to
+compete, and usually is not.
+
+NOW THE MISTAKE, moving the TALLER wall instead, from the same start:
+  Round 1: heights 1 and 7, area 8. Move the taller (hi) -> hi = 7.
+  Round 2: heights 1 and 3, area 7. Move the taller -> hi = 6.
+  Round 3: heights 1 and 8, area 6. Move the taller -> hi = 5.
+  ... the left wall of height 1 is never discarded, every area is tiny, and the
+  pair at positions 1 and 8 is never even examined. The answer comes out as 8.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n). Each round discards exactly one wall, so the fingers meet after n - 1
+rounds, and each round does a fixed amount of work - a min, a multiply, a max and a
+comparison. Compare with the brute-force O(n^2): on 100,000 walls that is 100,000
+steps instead of five billion.
+
+SPACE: O(1) - constant. Three variables, regardless of how many walls there are.
+Nothing is copied and nothing is stored per wall.
+
+THE #1 MISTAKE - moving the taller wall, or moving whichever finger feels
+convenient. It is not an optimisation detail, it is the correctness of the whole
+method: moving the shorter wall is safe precisely because every pair keeping it is
+both narrower and capped at the same level, so nothing is lost. Move the taller one
+and you discard pairs you have not settled, and the trace above shows it returning
+8 instead of 49.
+
+If you can state the reason in one sentence - "every remaining pair with the
+shorter wall is narrower and no taller, so it cannot beat what I just measured" -
+you understand the problem rather than remembering it.
+
+A close second: computing the width as hi - lo + 1. That counts the walls covered
+rather than the gap between them, and inflates every area by one wall's worth of
+width. Check it on two adjacent walls: the gap is 1, not 2.
+
+A third: solving Trapping Rain Water by mistake, worrying about the short bars in
+between. Here they are irrelevant.
+
+ONE-SENTENCE TAKEAWAY: start with the widest pair and always discard the shorter
+wall, because any pair that keeps it would be narrower and capped at the same
+level - so one sweep settles every pair worth considering.""",
 ]
 
 _EXAMPLES["Find the Duplicate Number (Floyd's cycle)"] = [
@@ -39251,67 +39566,378 @@ do not reach for DSU just because you know it.""",
 ]
 
 _EX_P0G["Design an LRU Cache"] = [
-    """The textbook sequence, traced.
-LRUCache(2).
-put(1,1) -> cache {1:1}. put(2,2) -> {1:1, 2:2} (1 is the oldest).
-get(1) -> hit; move_to_end(1) makes the order {2:2, 1:1}; returns 1.
-put(3,3) -> size becomes 3 > 2, so popitem(last=False) evicts the FRONT, which
-is key 2 - the least recently used. Cache {1:1, 3:3}.
-get(2) -> -1, it was evicted.
-get(3) -> 3. get(1) -> 1.
-Note that the get(1) is what saved key 1: without it, 1 would have been the
-victim.""",
+    """1. THE GOAL, in plain English.
 
-    """Why put() must also refresh recency.
-put(1,1); put(2,2); put(1,10); put(3,3) with capacity 2.
-If put did NOT call move_to_end on an existing key, the order would still think
-1 is oldest and evict it - even though it was just written.
-With the refresh, the order after put(1,10) is {2:2, 1:10}, so put(3,3) evicts
-2. Final cache {1:10, 3:3}.
-A WRITE is a use. Interviewers check this specific case because it is the most
-common omission.""",
+Build a small store that holds a fixed number of items and, when it is full and
+something new arrives, throws out whatever has gone longest without being used.
 
-    """The hash-map + doubly-linked-list design, spelled out.
-OrderedDict hides the mechanism, and the interviewer usually wants it explained:
-- dict: key -> node, giving O(1) lookup.
-- doubly linked list ordered by recency, with sentinel head and tail nodes.
-  get: find the node via the dict, unlink it, re-insert just after head.
-  put: same, plus if size > capacity, unlink the node before tail and delete its
-  key from the dict.
-It must be DOUBLY linked: unlinking a node in O(1) needs its predecessor, and a
-singly linked list would force an O(n) scan to find it. Sentinels remove every
-null check at the two ends - that is the entire reason they exist.""",
+LRU stands for LEAST RECENTLY USED - the thing you have not touched for the longest
+time. It is how a browser decides which cached pages to drop, how a database
+decides which rows to keep in memory, and how your phone decides which apps to
+kill.
 
-    """Capacity edge cases.
-capacity = 1: put(1,1); put(2,2) evicts 1 immediately; get(1) -> -1.
-capacity = 0: every put immediately exceeds the limit and evicts the key it just
-inserted, so every get returns -1. Ask whether 0 is legal; LeetCode says
-capacity >= 1.
-Updating an existing key never grows the size, so it can never trigger an
-eviction - trace put(1,1); put(1,2) on capacity 1 to confirm the size check
-happens after the assignment.""",
+Two operations are required:
 
-    """Why -1 for a miss, and what production would do instead.
-LeetCode's API returns -1 for a miss, which silently collides with a legitimately
-cached value of -1. Real caches return a (value, found) pair, raise KeyError, or
-use a sentinel object.
-Mentioning this unprompted is a small, cheap signal that you think about API
-design and not just the data structure. Then implement -1 as specified, because
-that is the contract you were given.""",
+    get(key)         - return the stored value, or -1 if it is not there.
+    put(key, value)  - store the value, evicting the least recently used item if
+                       the store is now over capacity.
 
-    """LRU in the wild, and its cousins.
-Used by: CPU and page caches, database buffer pools, CDN edge caches, browser
-caches, and `functools.lru_cache` in Python.
-The variants worth naming:
-- LFU (least FREQUENTLY used): keeps a count per key; better when a few items are
-  permanently hot, worse when popularity shifts.
-- TTL caches: evict by age, not by use - the right choice when staleness, not
-  memory, is the concern.
-- ARC / 2Q / SLRU: adaptive policies that resist a single large scan flushing the
-  whole cache, which is precisely LRU's weakness (a one-off scan of cold data
-  evicts everything hot).
-That last sentence is the follow-up question on this problem more often than
-not.""",
+BOTH operations count as "using" a key. That is the detail people miss: a get
+refreshes an item just as much as a put does.
+
+Work an example by hand, capacity 2:
+
+    put(1, 1)     store holds {1}                  order, oldest first: 1
+    put(2, 2)     store holds {1, 2}               order: 1, 2
+    get(1)        returns 1, and REFRESHES key 1   order: 2, 1
+    put(3, 3)     full, so evict the oldest - which is now 2, not 1
+                  store holds {1, 3}               order: 1, 3
+    get(2)        returns -1 - it was evicted
+    get(1)        returns 1 - it survived because the get above refreshed it
+
+That third line is the whole problem. Without it, key 1 would have been the oldest
+and would have been evicted instead.
+
+And there is a hard requirement: both operations must be FAST - constant time,
+whatever the capacity.""",
+
+    """2. THE INTUITION - and why the obvious structures fail.
+
+The requirement is constant time for both operations. Try the obvious approaches
+and watch each one fail on exactly one of them.
+
+A PLAIN DICTIONARY (hash map): looking a key up is instant, which handles get
+beautifully. But it does not remember the order things were used, so finding the
+least recently used item means scanning everything - and that costs as much as the
+capacity, every eviction.
+
+A PLAIN LIST in use-order: the order is right there, and evicting the oldest is
+just removing the front. But finding a key means scanning the list, so get is slow.
+Worse, refreshing an item means removing it from the middle and putting it at the
+back - and removing from the middle of a list shuffles everything after it along.
+
+So one structure gives fast lookup and no order; the other gives order and slow
+lookup.
+
+THE ANSWER IS TO USE BOTH AT ONCE. Keep a dictionary from key to item for instant
+lookup, AND keep the items threaded together in use-order so the oldest is
+immediately at hand.
+
+The classic way to write this from scratch is a hash map plus a DOUBLY LINKED LIST
+- a chain where each item knows both the item before it and the item after it.
+Knowing both neighbours is what lets you unhook an item from the middle in constant
+time: you simply join its two neighbours to each other. A singly linked list, where
+each item knows only the next one, cannot do this, because you have no way to reach
+the item in front to re-point it.
+
+Python already has that combination built in, and section 3 is about using it.""",
+
+    """3. THE SHORTCUT - OrderedDict is exactly this structure.
+
+Python's OrderedDict is a dictionary that also remembers the order its keys were
+inserted. Internally it IS a hash map plus a doubly linked list - the same design
+you would build by hand - which is why it gives constant time for everything we
+need:
+
+    move_to_end(key)      - unhook the key and re-attach it at the back.
+    popitem(last=False)   - remove and return the item at the FRONT.
+    ordinary lookup       - instant, as with any dictionary.
+
+So the design becomes simple: keep the keys in order from LEAST recently used at
+the front to MOST recently used at the back.
+
+    get(key)  - if absent, return -1. Otherwise move the key to the back, because
+                using it makes it the most recent, and return its value.
+
+    put(key, value) - if the key is already there, move it to the back. Store the
+                value. Then, if the store is now over capacity, remove the item at
+                the front - that is the least recently used one.
+
+Two details worth pinning down.
+
+WHY move_to_end BEFORE the assignment in put? If the key already exists, assigning
+to it does NOT change its position in an OrderedDict - a plain reassignment leaves
+the order alone. So an existing key would keep its old, stale position and could be
+evicted despite having just been written. Moving it first fixes that. For a brand
+new key the move is unnecessary, which is why it sits inside the "if key in cache"
+check.
+
+WHY last=False in popitem? By default popitem removes from the BACK - the most
+recently used, which is exactly the wrong end. last=False takes from the front
+instead. That single argument is the difference between an LRU cache and something
+that throws away whatever you just asked for.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - forgetting that get refreshes. The most common wrong implementation
+updates the order only on put. Then a key that is read constantly but never written
+looks ancient and gets evicted - which defeats the entire purpose of a cache. The
+worked example in section 1 turns on exactly this.
+
+CASE 2 - popping from the wrong end. popitem() with no argument removes the
+most-recently-used item. The cache then throws away whatever you just touched, so
+it behaves almost exactly backwards while still looking like it works - it holds
+the right number of items and returns plausible values.
+
+CASE 3 - updating an existing key without refreshing it. Covered in section 3.
+Assigning to an existing key does not move it, so without the explicit move it
+keeps a stale position.
+
+CASE 4 - checking capacity before inserting rather than after. This code inserts
+first and then evicts if it has gone one over. That is simpler and handles the
+update case correctly: overwriting an existing key does not change the size, so no
+eviction happens. Checking before inserting would need an extra condition to avoid
+evicting when the key is merely being updated.
+
+CASE 5 - a capacity of zero. Every put inserts and then immediately evicts, so
+nothing is ever stored and every get returns -1. Arguably correct, arguably a case
+the problem should exclude. Worth mentioning rather than assuming.
+
+CASE 6 - storing a value that is legitimately -1. The get method uses -1 to mean
+"not found", so a genuine stored -1 is indistinguishable from a miss. That is the
+problem statement's convention rather than a bug, but say it out loud - in real
+code you would raise an error or return a sentinel object instead.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+CACHE: a small, fast store holding a subset of a larger, slower collection. The
+whole point is that it cannot hold everything, so it needs a rule for what to
+discard - the EVICTION POLICY. LRU is one such policy.
+
+CAPACITY: the maximum number of items. Fixed at construction.
+
+HASH MAP / DICTIONARY: a structure where looking up a key takes the same tiny
+amount of time however many keys there are. That is what "constant time" or O(1)
+means here.
+
+DOUBLY LINKED LIST: a chain where every item knows both its neighbours. Knowing the
+one BEFORE is what allows an item to be unhooked from the middle without scanning -
+you join its two neighbours to each other. Explained in section 2.
+
+OrderedDict: Python's dictionary that also remembers insertion order, implemented
+as exactly that hash-map-plus-doubly-linked-list combination.
+
+move_to_end(key): unhook a key and re-attach it at the back, in constant time.
+
+popitem(last=False): remove and return the item at the FRONT. With last=True, or
+omitted, it takes from the back instead.
+
+O(1): constant time - the operation costs the same whether the cache holds ten
+items or ten million. Both get and put achieve this, which is the entire design
+requirement.
+
+O(capacity): the memory - one entry per stored item, and nothing more.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: keep the items in an order-remembering dictionary
+running from least recently used at the front to most recently used at the back,
+move a key to the back whenever it is touched, and evict from the front when full.
+
+There is no recursion here - this is a small class with two short methods - so
+nothing piles up on the call stack.
+
+SETTING UP:
+
+  1. Remember the capacity.
+  2. Make an empty order-remembering dictionary. Fix the convention now and stick
+     to it: FRONT is the least recently used, BACK is the most recently used.
+
+GET:
+
+  3. If the key is not present, return -1 - the agreed signal for a miss.
+  4. Otherwise move the key to the back, because reading it counts as using it and
+     therefore makes it the most recent.
+  5. Return its value.
+
+PUT:
+
+  6. If the key is ALREADY present, move it to the back first. This matters
+     because simply assigning to an existing key does not change its position, so
+     without this it would keep a stale one.
+  7. Store the value. A brand new key is added at the back automatically, which is
+     correct - it is the most recently used thing there is.
+  8. If the dictionary is now LARGER than the capacity, remove the item at the
+     front. That is the least recently used one.
+
+     Inserting first and then checking is deliberate: overwriting an existing key
+     does not change the size, so no eviction fires, and no extra condition is
+     needed to prevent one.
+
+Every step is a constant-time operation on the dictionary, which is how both
+methods stay fast regardless of how much is stored.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The cache keeps its items in a line, arranged from the one that has gone longest
+without being touched at the front, to the one touched most recently at the back.
+It also has instant lookup by key, so it never has to walk the line to find
+something.
+
+When you ask for a key, it first checks whether the key is there at all; if not it
+reports a miss. If it is there, it moves that item to the back of the line before
+handing the value over - because asking for something counts as using it, and the
+thing you just used is by definition the most recent. That single move is what
+stops a frequently-read item from looking stale and being thrown away.
+
+When you store a key, it does much the same. If the key was already present it
+moves it to the back first, because merely overwriting a value does not change
+where the item sits in the line, and it would otherwise keep an old position. Then
+it writes the value; a brand-new key naturally lands at the back, which is right.
+
+Finally it checks whether it has gone over capacity. It deliberately inserts first
+and checks afterwards, because overwriting an existing key does not change how many
+items there are, so no eviction happens in that case without needing a special
+condition. If it really is one over, it removes the item at the FRONT of the line -
+the one nobody has touched for the longest.
+
+Every one of those operations - lookup, move to the back, remove from the front -
+takes the same small amount of time no matter how much the cache is holding.""",
+
+    """8. THE CODE, line by line.
+
+Keep the capacity-2 example from section 1 beside you.
+
+    from collections import OrderedDict
+A dictionary that also remembers order. Internally it is a hash map plus a doubly
+linked list - exactly the structure section 2 argued for - which is why the moves
+below are constant time rather than requiring a scan.
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.cache = OrderedDict()
+Set up. The convention to hold in your head, and it is fixed here for the rest of
+the class: FRONT of the cache is the least recently used, BACK is the most recently
+used.
+
+    def get(self, key):
+        if key not in self.cache:
+            return -1
+A miss. The problem defines -1 as the signal, which does mean a genuinely stored
+-1 cannot be distinguished from a miss - see case 6 in section 4.
+
+    self.cache.move_to_end(key)
+THE LINE PEOPLE FORGET. Reading a key counts as using it, so it becomes the most
+recent and moves to the back. Without this, a key that is read constantly but never
+written drifts to the front and gets evicted - which defeats the purpose of a
+cache entirely.
+
+    return self.cache[key]
+Hand back the value.
+
+    def put(self, key, value):
+        if key in self.cache:
+            self.cache.move_to_end(key)
+Refresh an EXISTING key's position before overwriting it. Necessary because
+assigning to a key already in an OrderedDict does NOT move it - the order is set by
+insertion, and a plain reassignment is not an insertion. Without this line an
+updated key keeps a stale position and can be evicted despite having just been
+written.
+
+The check is needed because move_to_end fails on a key that is not there, and a
+brand new key does not need moving anyway - it will land at the back on its own.
+
+    self.cache[key] = value
+Store it. A new key is appended at the back, which is correct: it is the most
+recently used thing in the cache.
+
+    if len(self.cache) > self.capacity:
+        self.cache.popitem(last=False)
+Evict if we have gone one over. Two deliberate choices here.
+
+  Inserting FIRST and checking afterwards means an update - overwriting an existing
+  key - does not change the size, so this condition is false and nothing is
+  evicted. Checking before inserting would need an extra condition to get that
+  right.
+
+  last=False takes from the FRONT, the least recently used. The default, last=True,
+  takes from the back - the item you just touched. That one argument is the
+  difference between a working LRU cache and one that discards exactly the wrong
+  thing while still looking plausible.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+capacity = 2. I write the cache front-to-back, so the leftmost is the least
+recently used.
+
+    cache = {}                                (empty)
+
+put(1, 1)
+    1 in cache? No -> no move.
+    cache[1] = 1                              cache = {1:1}
+    len 1 > 2? No -> no eviction.
+
+put(2, 2)
+    2 in cache? No.
+    cache[2] = 2                              cache = {1:1, 2:2}
+    len 2 > 2? No.
+    Front is key 1 - the least recently used.
+
+get(1)
+    1 in cache? Yes.
+    move_to_end(1)                            cache = {2:2, 1:1}
+    return 1.
+    THE ORDER HAS FLIPPED. Key 2 is now at the front, so key 2 is now the
+    least recently used - even though key 1 was inserted first.
+
+put(3, 3)
+    3 in cache? No -> no move.
+    cache[3] = 3                              cache = {2:2, 1:1, 3:3}
+    len 3 > 2? YES -> popitem(last=False) removes the FRONT, which is key 2.
+                                              cache = {1:1, 3:3}
+
+get(2)
+    2 in cache? No -> return -1.              (it was evicted)
+
+get(1)
+    1 in cache? Yes.
+    move_to_end(1)                            cache = {3:3, 1:1}
+    return 1.                                 (it survived, because the earlier
+                                               get refreshed it)
+
+Every result matches the hand-worked example in section 1.
+
+NOW THE BUG, with the move_to_end removed from get:
+
+put(1,1) -> {1:1};  put(2,2) -> {1:1, 2:2}
+get(1)   -> returns 1 but does NOT move it.  cache stays {1:1, 2:2}
+put(3,3) -> {1:1, 2:2, 3:3}, over capacity, evict the FRONT which is key 1.
+                                             cache = {2:2, 3:3}
+get(1)   -> -1.   WRONG - key 1 was used more recently than key 2.
+
+One missing line, and the cache evicts exactly the item it should have kept.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(1) for both get and put - constant, regardless of how much is stored.
+Looking a key up is a hash lookup; moving a key to the back is unhooking it from
+its two neighbours and re-attaching at the end; removing the front is the same
+work. None of them scans anything. That constant-time requirement is the entire
+reason the problem is interesting - a correct-but-slow cache is easy.
+
+SPACE: O(capacity) - one entry per stored item.
+
+BUILDING IT WITHOUT OrderedDict. Interviewers often ask for this, since using the
+built-in skips the design. You keep a dictionary from key to node, plus a doubly
+linked list of nodes with dummy head and tail nodes at each end so that inserting
+and removing never need a special case for the first or last item. get finds the
+node in the dictionary, unlinks it, and re-inserts it just before the tail. put
+does the same, then removes the node just after the head if over capacity. It is
+about thirty lines and the ideas are identical - the dummy nodes are the same
+sentinel trick used in Remove Nth Node From End.
+
+THE #1 MISTAKE - not refreshing on get. It is the single line that separates a
+real LRU cache from a first-in-first-out queue, and leaving it out produces
+something that still compiles, still holds the right number of items, and evicts
+exactly the wrong ones. The trace above shows it discarding the key that was used
+most recently.
+
+A close second: popitem() without last=False, which removes the most recently used
+item instead of the least. Same symptom - plausible behaviour, backwards policy.
+
+ONE-SENTENCE TAKEAWAY: keep the items ordered from least to most recently used and
+move a key to the back EVERY time it is touched - reads included - so that evicting
+is always just removing whatever sits at the front.""",
 ]
 
 _EX_P0G["Find Median from Data Stream (two heaps)"] = [
