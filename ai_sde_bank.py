@@ -29857,7 +29857,8 @@ up being what the next engineer used.' Amazon wants learned-under-pressure-and-
 delivered; Google wants curious-and-made-others-better. Same week of work.""",
 ]
 
-_EX_P0LP["STAR: Raising the bar on hiring or quality (Hire and Develop the Best)"] = [
+_EX_P0LP["STAR: Raising the bar on hiring or quality "
+         "(Hire and Develop the Best / Insist on Highest Standards)"] = [
     """A student-scale answer, since you will not have hired anyone.
 SITUATION: A second-year joined our robotics team and was assigned sensor
 calibration. After a week he had committed nothing and had stopped coming to

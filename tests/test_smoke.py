@@ -256,3 +256,39 @@ def test_encryption_handles_empty():
     assert encrypt("") == ""
     assert decrypt("") == ""
     assert decrypt(None) is None
+
+
+# ── AI SDE prep bank content invariants ────────────────────────────────────
+# The bank patches worked examples onto entries by TITLE, through the _EX_*
+# dicts in ai_sde_bank.py. A typo in a key fails silently — the entry simply
+# never receives its examples — which is how "Raising the bar on hiring or
+# quality" sat empty while the batch was reported as complete. These turn both
+# content invariants into failing tests instead of something you notice later.
+
+def test_ai_sde_example_keys_all_match_a_real_entry():
+    import ai_sde_bank as bank
+    titles = {e["title"] for e in bank.ENTRIES}
+    orphans = []
+    for name in dir(bank):
+        if not name.startswith("_EX_"):
+            continue
+        table = getattr(bank, name)
+        if isinstance(table, dict):
+            orphans += [(name, key) for key in table if key not in titles]
+    assert not orphans, (
+        "these worked-example keys match no entry title, so their examples are "
+        f"silently dropped: {orphans}"
+    )
+
+
+def test_ai_sde_p0_entries_all_carry_worked_examples():
+    """P0 is the 'do these first' band, and the standing bar is 5+ varied
+    worked examples per entry. Adding entries moves the P0 percentile cut, so
+    this can regress without anyone touching the band deliberately."""
+    import ai_sde_bank as bank
+    short = [e["title"] for e in bank.ENTRIES
+             if e["priority"] == "P0" and len(e.get("examples") or []) < 5]
+    assert not short, (
+        f"{len(short)} P0 entries have fewer than 5 worked examples: "
+        f"{short[:5]}{'...' if len(short) > 5 else ''}"
+    )
