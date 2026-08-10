@@ -34821,6 +34821,316 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1U[_e["title"]]
 
 
+_EX_P1V = {}
+
+_EX_P1V["Unique Paths (grid DP)"] = [
+    """The recurrence, and why the first row and column are all 1.
+Every cell is reachable only from ABOVE or from the LEFT, so
+dp[r][c] = dp[r-1][c] + dp[r][c-1].
+The top row can only be reached by moving right the whole way - exactly one
+path - and likewise the left column. Initialising them to 1 is not a
+convention, it is the base case.
+3x3 grid: row 0 is [1,1,1], column 0 is [1,1,1], then dp[1][1] = 1+1 = 2,
+dp[1][2] = 2+1 = 3, dp[2][1] = 1+2 = 3, dp[2][2] = 3+3 = 6. Answer 6.""",
+
+    """The closed form, which is the answer that impresses.
+Every path is a sequence of exactly (m-1) downs and (n-1) rights in some order -
+so the count is the number of ways to choose which of the (m+n-2) moves are
+downs: C(m+n-2, m-1).
+For 3x3: C(4,2) = 6, matching the table.
+That is O(min(m,n)) time and O(1) space with a multiplicative loop, versus
+O(m*n) for the DP. Offer the DP first (it generalises to obstacles and costs),
+then the combinatorial formula - and note the formula BREAKS the moment
+obstacles or weights appear, which is why the DP is the more useful tool.""",
+
+    """The space reduction to one row.
+dp depends only on the previous row and the cell to the left, so a single array
+suffices: `dp[c] += dp[c-1]` scanning left to right, where dp[c] still holds
+the row above and dp[c-1] already holds this row.
+Start with a row of all 1s and repeat m-1 times. O(n) space instead of O(m*n) -
+and the same rolling-row argument as Minimum Path Sum and Unique Paths II. The
+one-liner `dp[c] += dp[c-1]` is worth memorising; it is the whole inner loop.""",
+
+    """Edge cases.
+1 x n or m x 1 -> exactly 1 path (only one direction is available), which the
+all-1s initialisation gives without a special case.
+1 x 1 -> 1 path: standing still is the path.
+Large grids: the counts grow combinatorially - a 20x20 grid has about 35
+billion paths, which overflows 32-bit. Python is fine; in Java or C++ this
+needs long, and it is a legitimate detail to raise.
+There is no zero-path case here since the grid is always traversable - that
+only appears in Unique Paths II with obstacles.""",
+
+    """Complexity and the family.
+DP: O(m*n) time, O(n) space reduced. Formula: O(min(m,n)) time, O(1) space.
+The family: Unique Paths II (obstacles - the formula dies, the DP survives with
+one extra line), Minimum Path Sum (min instead of sum), Triangle, Dungeon Game
+(solved BACKWARDS because the constraint is on a running minimum), Cherry
+Pickup (two simultaneous paths, so the state gains a dimension), and Count
+Square Submatrices.
+This is the simplest member and therefore the one to derive the others from.""",
+]
+
+_EX_P1V["Validate Binary Search Tree"] = [
+    """The trap this problem exists to catch.
+Checking only `node.left.val < node.val < node.right.val` at each node is
+WRONG. Counterexample:
+        5
+       / \\
+      1   6
+         / \\
+        3   7
+Every parent-child pair is locally valid, but 3 sits in 5's RIGHT subtree while
+being less than 5 - so it is not a BST.
+The BST property is global: every node in the left subtree must be less than an
+ancestor, not merely less than its parent. That is why bounds must be carried
+DOWN the recursion.""",
+
+    """How the bounds narrow, traced.
+valid(root=5, -inf, +inf) -> 5 is in range.
+  Left: valid(1, -inf, 5) - everything left of 5 must stay below 5.
+  Right: valid(6, 5, +inf) - everything right of 5 must stay above 5.
+    valid(3, 5, +inf) -> 3 is NOT > 5 -> False. Caught.
+Each step narrows one side: going left tightens the HIGH bound to the current
+value, going right tightens the LOW bound. The other bound is inherited
+unchanged, which is what propagates the ancestor constraint arbitrarily far
+down.""",
+
+    """The in-order alternative, and why some prefer it.
+In-order traversal of a valid BST produces a STRICTLY INCREASING sequence. So
+walk in-order tracking only the previous value, and fail the moment
+prev >= current.
+    def is_valid(root):
+        prev = [None]
+        def walk(n):
+            if not n: return True
+            if not walk(n.left): return False
+            if prev[0] is not None and prev[0] >= n.val: return False
+            prev[0] = n.val
+            return walk(n.right)
+        return walk(root)
+Same O(n) time, and it reuses the single most useful BST fact. The bounds
+version is easier to reason about; the in-order version is easier to remember.""",
+
+    """Duplicates, and the convention question to ask.
+The code uses STRICT inequalities, so equal values are rejected. Most
+definitions of a BST disallow duplicates entirely, but some allow them on one
+side by convention.
+[2,2] as root and left child: strict rejects it. If the prompt's definition
+permits duplicates on the left, you would use `low < val <= high` on that side.
+Ask - it changes the answer on a two-node tree, and the interviewer usually has
+a specific definition in mind.""",
+
+    """Edge cases, including the overflow one.
+Empty tree -> valid.
+Single node -> valid, whatever its value.
+A node holding INT_MIN or INT_MAX: using those as the initial sentinels breaks,
+because the comparison against the root becomes non-strict. That is why
+float('-inf') and float('inf') are the right sentinels in Python, and why the
+Java version uses Long or nullable Integer bounds.
+A left-skewed tree of 10,000 nodes -> exceeds Python's recursion limit, so the
+iterative in-order version (with a stack) is the answer to 'what if it is very
+deep?'.""",
+
+    """Complexity and the family.
+O(n) time - every node visited once - and O(h) space for the recursion stack:
+O(log n) balanced, O(n) skewed.
+The family: Kth Smallest Element in a BST (in-order, stop at k), Recover Binary
+Search Tree (find the two nodes that break the in-order ordering and swap them),
+Binary Search Tree Iterator, Convert Sorted Array to BST, and Range Sum of BST
+(which uses the bounds to PRUNE whole subtrees).
+The two techniques - carry bounds down, or walk in-order - between them cover
+essentially every BST validation or traversal question.""",
+]
+
+_EX_P1V["Big-O notation"] = [
+    """What the notation actually claims.
+O(f(n)) is an UPPER BOUND on growth, ignoring constants and lower-order terms:
+3n^2 + 5n + 100 is O(n^2), because for large n the n^2 term dominates and the
+constant 3 does not change the shape of the curve.
+Why drop constants? Because they depend on the machine, the language and the
+compiler, while the GROWTH RATE is a property of the algorithm. An O(n)
+algorithm in Python beats an O(n^2) one in C for large enough n - and 'large
+enough' arrives sooner than people expect.""",
+
+    """The growth rates, with real numbers so they stop being abstract.
+At n = 1,000,000 and roughly a billion simple operations per second:
+O(1) - instant. O(log n) - 20 steps, instant. O(n) - a million steps, about a
+millisecond. O(n log n) - 20 million, about 20ms.
+O(n^2) - a trillion, about 17 minutes. O(2^n) - beyond the age of the universe.
+This is why the n log n / n^2 boundary is the one that decides whether a
+solution passes: at n = 100,000 it is the difference between 1.7 million
+operations and 10 billion.""",
+
+    """Reading complexity off code.
+A single loop over n -> O(n). Nested loops over n -> O(n^2). A loop that HALVES
+the range each step -> O(log n). A loop over n containing a binary search ->
+O(n log n). Recursion that splits in half and does linear work per level ->
+O(n log n) by the master theorem (merge sort).
+The trap: `for i in range(n): for j in range(i)` looks quadratic and IS -
+n(n-1)/2 is still O(n^2), because constants drop. Another trap: string
+concatenation in a loop is O(n^2) in Python, because each concatenation copies
+the whole string - invisible unless you know the primitive's cost.""",
+
+    """AMORTISED analysis, which is the concept people miss.
+Appending to a Python list is O(1) AMORTISED, not O(1) worst case: occasionally
+the list is full and must be reallocated and copied, which is O(n). But because
+capacity doubles, those copies happen rarely enough that n appends cost O(n)
+TOTAL - so O(1) each on average.
+Same for hash tables: O(1) average, O(n) worst case when every key collides.
+The distinction matters in interviews - saying 'O(1) amortised' rather than
+'O(1)' is precisely the kind of precision that gets noticed.""",
+
+    """Best, average and worst case - three different questions.
+Quicksort: O(n log n) average, O(n^2) worst (already-sorted input with a fixed
+pivot). Hash lookup: O(1) average, O(n) worst. Binary search: O(log n) always.
+Merge sort: O(n log n) always.
+Big-O describes a bound, not automatically the worst case - so state WHICH case
+you mean. 'Quicksort is O(n log n)' is a claim about the average; it is also
+O(n^2), and both statements are true.
+Related: Theta is a tight bound (both upper and lower), Omega is a lower bound.
+Interviews say Big-O and usually mean Theta.""",
+
+    """SPACE complexity, and the two things people forget.
+Count only AUXILIARY space - extra memory beyond the input - unless the prompt
+says otherwise. Merge sort is O(n) auxiliary; quicksort is O(log n) for its
+recursion stack.
+The two omissions: recursion stack depth IS space (a recursive tree traversal
+is O(h), which is O(n) on a skewed tree), and the OUTPUT is usually excluded
+but should be mentioned - 'O(1) extra space, plus the O(n) output array' is the
+honest phrasing. Saying an algorithm that builds an n-element list is O(1)
+space without that clause is the kind of thing an interviewer will probe.""",
+]
+
+_EX_P1V["Kruskal's Minimum Spanning Tree"] = [
+    """The algorithm, traced.
+Edges sorted by weight: (1, 0-2), (2, 1-2), (4, 0-1), (5, 1-3), (8, 2-3).
+Take (1, 0-2): 0 and 2 are in different components -> union, total 1, used 1.
+Take (2, 1-2): different -> union, total 3, used 2.
+Take (4, 0-1): find(0) and find(1) are now the SAME root -> skip, it would
+create a cycle.
+Take (5, 1-3): different -> union, total 8, used 3 = n-1 -> stop.
+MST weight 8, using edges 0-2, 1-2, 1-3.""",
+
+    """Why 'add if it joins two different components' is the whole algorithm.
+An edge whose endpoints already share a root would close a cycle, and a
+spanning TREE has none. Union-find answers 'same component?' in near-constant
+time, which is what makes the greedy cheap.
+The correctness rests on the CUT PROPERTY: for any partition of the nodes, the
+cheapest edge crossing it belongs to some MST. Kruskal exploits it by
+considering edges cheapest-first, so whenever it takes an edge, that edge is
+the cheapest crossing the cut between the two components it joins.""",
+
+    """Kruskal versus Prim, as a decision.
+KRUSKAL sorts ALL edges globally and grows a FOREST that gradually merges -
+O(E log E), and it needs union-find. Better on SPARSE graphs, and much easier
+to write if you already have DSU. It also works naturally on a disconnected
+graph, producing a minimum spanning FOREST.
+PRIM grows ONE tree from a start node using a heap of frontier edges -
+O(E log V). Better on DENSE graphs, especially with the O(V^2) adjacency-matrix
+variant that needs no heap at all.
+Both are greedy, both optimal, both justified by the cut property.""",
+
+    """The early exit, and the disconnected case.
+Once `used == n - 1` the tree is complete and the remaining (more expensive)
+edges cannot help - stop. On a dense graph that can skip most of the edge list.
+If the loop finishes with used < n - 1, the graph is DISCONNECTED and no
+spanning tree exists. Kruskal's output is then a spanning forest, and returning
+the total silently would be wrong if the caller expected a tree. Check
+`used == n - 1` after the loop and say what you do otherwise - the prompt
+usually guarantees connectivity, and noticing that it does is worth a
+sentence.""",
+
+    """Edge cases.
+A single node -> zero edges needed, total 0, and the used counter is already at
+n-1 = 0.
+Duplicate weights -> several distinct MSTs may exist with the same total;
+any is correct, which is worth confirming since the expected output is usually
+just the weight.
+Self-loops -> always skipped, since both endpoints share a root.
+Parallel edges -> the cheaper is taken first and the other skipped naturally.
+Negative weights are FINE for an MST (unlike shortest paths), because there are
+no cycles to exploit - a nice point of contrast with Dijkstra.""",
+
+    """Complexity and where MSTs actually appear.
+O(E log E) dominated by the sort, plus O(E * alpha) for the union-find - so
+effectively O(E log E). Space O(V).
+Real uses: minimum-cost network or road layout, clustering (removing the k-1
+most expensive MST edges yields k clusters - this IS single-linkage
+clustering), image segmentation, and TSP approximation.
+The family: Prim's MST, Number of Provinces, Redundant Connection, Connecting
+Cities With Minimum Cost, Min Cost to Connect All Points, and Optimize Water
+Distribution in a Village - the last three being MST problems in product
+language, which is how they usually arrive.""",
+]
+
+_EX_P1V["What is fine-tuning with LoRA (parameter-efficient tuning)?"] = [
+    """The core trick, with the arithmetic that explains the appeal.
+Full fine-tuning updates every weight - for a 7-billion-parameter model that is
+7B trainable parameters, plus optimiser state (Adam keeps two extra values per
+parameter), so roughly 80-100GB of GPU memory.
+LoRA FREEZES the original weights and, for each target layer, learns a small
+update expressed as a product of two thin matrices: instead of a full d x d
+update, learn A (d x r) and B (r x d) with r typically 8-64. For d = 4096 and
+r = 8, that is 4096*8*2 = 65,536 parameters instead of 16.7 million - about
+0.4%.
+Total trainable parameters drop to a fraction of a percent, and the job fits on
+a single consumer GPU.""",
+
+    """Why a LOW-RANK update is enough.
+The hypothesis (and the empirical finding) is that adapting a pretrained model
+to a new task requires a change with low intrinsic RANK - the model already
+knows language, and the task-specific adjustment lives in a small subspace. So
+a rank-8 approximation captures most of what full fine-tuning would do.
+This is why r is the main knob: too small and the adapter cannot express the
+task, too large and you lose the efficiency without much gain. r = 8-16 is a
+common starting point, with r = 64 for harder domain shifts.""",
+
+    """The deployment property that makes LoRA genuinely useful.
+At inference you can MERGE the adapter back: W_final = W_frozen + B*A, giving a
+model with the same shape and speed as the original - zero added latency.
+Or keep it separate and swap adapters per request: one 7B base model in memory
+serving twenty customers, each with their own 20MB adapter. That is impossible
+with full fine-tuning, where each customer needs a full 14GB copy.
+That multi-tenant story is the strongest practical argument and the thing to
+lead with in a system-design context.""",
+
+    """What LoRA does NOT fix.
+It teaches STYLE, FORMAT and TASK BEHAVIOUR well - JSON output, a support
+tone, a classification decision boundary. It is a poor way to install FACTS:
+the knowledge is diffuse, it goes stale, and the model still cannot cite a
+source.
+So the decision rule: new FACTS -> RAG. New BEHAVIOUR or format -> fine-tune
+(LoRA). Both -> LoRA for the format plus RAG for the content. Saying that
+cleanly is usually the point of the question, because candidates reach for
+fine-tuning when retrieval is what they need.""",
+
+    """QLoRA and the rest of the PEFT family.
+QLoRA quantises the frozen base model to 4-bit while training the adapters in
+higher precision - which is what allows fine-tuning a 65B model on a single
+48GB GPU. The quality loss is small and the memory saving is enormous.
+Also in the family: prefix tuning and prompt tuning (learn soft prompt vectors,
+even fewer parameters, generally weaker), adapters (small bottleneck layers
+inserted between blocks, which DO add inference latency because they cannot be
+merged), and IA3.
+LoRA won on the merge property plus the quality-per-parameter trade.""",
+
+    """The practical knobs and the failure modes.
+Knobs: r (rank), alpha (a scaling factor, commonly set to 2r), dropout, and
+WHICH modules to target - attention query and value projections by default,
+though targeting all linear layers usually helps at some cost.
+Failure modes: too few examples (a few hundred to a few thousand good ones
+beats a hundred thousand mediocre ones), catastrophic forgetting of general
+ability if the learning rate is too high, and evaluating only on the
+fine-tuning distribution so you do not notice the model got worse at everything
+else. Always keep a general-capability eval alongside the task one.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1V:
+        _e["examples"] = _EX_P1V[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
