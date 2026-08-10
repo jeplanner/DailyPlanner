@@ -22835,59 +22835,119 @@ predecessors), both problems become one.""",
 ]
 
 _EX_P0["Path Sum (root-to-leaf boolean)"] = [
-    """The textbook case, traced.
-      5
-    4   8
-  11      13  4
- 7  2         1
-target 22. Path 5 -> 4 -> 11 -> 2 sums to 22.
-At 5: remaining becomes 17. At 4: remaining 13. At 11: remaining 2.
-At leaf 7: is 7 == 2? No. At leaf 2: is 2 == 2? Yes -> true propagates up.""",
+    """The question, drawn out.
 
-    """The empty tree, which must be false and not zero.
-root = empty, target = 0. Answer false.
-It is tempting to think an empty tree has a path summing to 0, but the problem
-asks for a root-to-LEAF path and there is no leaf. The base case returns false
-before any arithmetic happens - if yours returns true here, the base case is
-wrong.""",
+Here is our tree. (The words, as they appear: each circle is a NODE. The one at
+the top is the ROOT. The ones hanging directly below a node are its CHILDREN. A
+node with nothing below it is a LEAF - a dead end.)
 
-    """The trap: a node with one child is not a leaf.
-      1
-    2
-target 1. The correct answer is FALSE.
-At node 1, remaining becomes 0. Recursing left to node 2: 2 != 0, and 2 has no
-children so it is a leaf and returns false. Recursing right: empty, returns
-false.
-The bug is checking "remaining == 0" at any node rather than at a leaf. That
-version returns true at node 1's empty right child, which is not a path at
-all.""",
+              5
+            /   \\
+           4     8
+          /     / \\
+        11    13   4
+       /  \\        \\
+      7    2        1
 
-    """Negative values break the tempting early exit.
-      5
-   -3     8
+The question: is there a path from the ROOT all the way down to a LEAF whose
+numbers add up to 22?
+
+Two things to be careful about. The path must START at the top, and it must END
+at a leaf - you cannot stop halfway down and declare victory.
+
+Try one by hand: 5 -> 4 -> 11 -> 2 gives 5 + 4 + 11 + 2 = 22. Yes. Answer:
+true.""",
+
+    """The neat trick: count DOWN instead of adding up.
+
+The obvious approach is to carry a running total as you walk down, and compare
+it to 22 when you reach a leaf. That works, but it means carrying two numbers
+around - the total so far AND the original target.
+
+Instead, carry ONE number: how much is still left to find. Start with 22 and
+subtract each node's value as you pass through it.
+
+    at 5:   22 - 5  = 17 still needed
+    at 4:   17 - 4  = 13 still needed
+    at 11:  13 - 11 = 2  still needed
+    at leaf 7:  is 7 equal to 2?  No.
+    at leaf 2:  is 2 equal to 2?  YES -> found it
+
+That 'yes' then travels back up and the whole answer becomes true. One number
+carried instead of two, and the test at the leaf is a single comparison.""",
+
+    """The mistake almost everyone makes: stopping too early.
+
+Look at this tiny tree and target 1:
+
+    1
+     \\
+      2
+
+Node 1 has a right child, so it is NOT a leaf. The correct answer is FALSE -
+the only complete root-to-leaf path is 1 -> 2, which sums to 3.
+
+But watch what a careless check does. Arriving at node 1 and subtracting, the
+remaining amount becomes 0. If your code asks 'is the remaining amount 0?' at
+EVERY node, it says yes right there and returns true - which is wrong, because
+you have not reached the bottom.
+
+The test must be BOTH conditions at once: 'am I at a leaf?' AND 'is the
+remaining amount exactly my value?'. And 'am I at a leaf' means BOTH children
+are missing, not just one. That two-part check is the whole problem.""",
+
+    """The empty tree, and why it is false.
+
+If there is no tree at all, the answer is false - even when the target is 0.
+
+It feels like it should be true ('nothing adds up to nothing'), but re-read the
+question: it asks for a path ending at a LEAF, and an empty tree has no leaves.
+No leaf means no valid path means false.
+
+This is the BASE CASE - the simplest situation, answered outright, which also
+stops the function calling itself forever. If your code returns true here, the
+base case is written wrongly and several other answers will be wrong too.""",
+
+    """Why you cannot 'optimise' by giving up when the number goes negative.
+
+A tempting speed-up: if the remaining amount drops below zero, stop exploring -
+we have overshot.
+
+That is only safe if every node holds a POSITIVE number. Watch it fail:
+
+        5
+       / \\
+     -3    8
+     /
    10
-target 12. Path 5 -> -3 -> 10 = 12.
-If you added a pruning rule "stop when remaining goes below zero", you would
-abandon this branch at -3 (remaining 7, then at 10 it works). More sharply, with
-target 2 and path 5 -> -3, remaining hits 0 mid-tree and then rises again.
-With negatives allowed, no monotonic pruning is valid - ask whether values can
-be negative before optimising.""",
 
-    """Why subtracting beats accumulating.
-Carrying a running sum means passing two numbers down (the sum so far and the
-original target) and comparing them at each leaf. Subtracting carries one
-number, and the leaf test is a single equality.
-Same answer, half the state. Whenever a recursion threads two values that are
-only ever compared, check whether one derived value replaces both.""",
+with target 12. The path is 5 -> -3 -> 10 = 12. Going down: 12 - 5 = 7, then
+7 - (-3) = 10 - the remaining amount went UP, because subtracting a negative
+adds. A rule that abandons branches on the way down would have thrown away
+perfectly good paths.
 
-    """The variants that build on it.
-Path Sum II asks for ALL such paths - add a path list, append and pop around the
-recursion, and record a COPY at each success.
-Path Sum III drops the root-to-leaf requirement and counts any downward path -
-which becomes the prefix-sum-with-a-hashmap technique, the tree version of
-Subarray Sum Equals K.
-Knowing that the three are a family, and that the third changes technique
-entirely, is the useful thing here.""",
+So before adding any shortcut like this, ask whether the values can be negative.
+This is a good habit generally: shortcuts usually rest on an assumption nobody
+stated.""",
+
+    """The three versions of this problem, and why the third is different.
+
+PATH SUM (this one): does ANY root-to-leaf path hit the target? Answer
+true/false. You can stop at the first success.
+
+PATH SUM II: give me ALL such paths. Same walk, but you carry a list of the
+nodes visited, add on the way down and remove on the way back up, and save a
+COPY of the list each time you succeed. (Saving the list itself rather than a
+copy is a classic bug - the list keeps changing, so every saved answer ends up
+identical.)
+
+PATH SUM III: count paths that may start and end ANYWHERE, not just root to
+leaf. This one is not a small variation - the whole technique changes, to
+running totals stored in a lookup table. Knowing that the third is a different
+animal is more useful than memorising all three.
+
+Speed for this problem: each node is visited at most once, so the time is
+proportional to the number of nodes - written O(n).""",
 ]
 
 _EX_P0["Balanced Binary Tree"] = [
@@ -23229,49 +23289,111 @@ from.""",
 ]
 
 _EX_P0["Subtree of Another Tree"] = [
-    """The textbook match.
-root = 3(4(1,2),5), sub = 4(1,2).
-At node 3: same(3, 4)? Values differ -> false. Recurse.
-At node 4: same(4, 4)? Values match; same(1,1) true; same(2,2) true -> true.
-Answer true.""",
+    """The question, with both trees drawn.
 
-    """The near-miss that must return false.
-root = 3(4(1,2(0)),5), sub = 4(1,2).
-At node 4 the values match and the left children match, but the right child 2 in
-the root tree has an extra child 0 while sub's 2 has none.
-same(2, 2) recurses: same(0, empty) -> one empty and one not -> false.
-So the whole comparison fails, correctly. Structure must match exactly, not just
-the values encountered.""",
+You are given a BIG tree and a SMALL tree, and asked: does the small one appear
+inside the big one, exactly as it is?
 
-    """Empty cases.
-sub empty -> conventionally true (an empty tree is a subtree of anything), but
-CONFIRM this with the interviewer; some versions guarantee sub is non-empty.
-root empty and sub non-empty -> false, which the base case returns immediately.
-Both empty -> true.
-These three lines are where a sloppy implementation crashes.""",
+(Words as they appear: each circle is a NODE, the top one is the ROOT, the ones
+hanging below a node are its CHILDREN, and a node with nothing below it is a
+LEAF.)
 
-    """Why two separate recursions rather than one clever function.
-One recursion walks DOWN the big tree choosing a candidate start position. The
-other walks ACROSS both trees checking an exact match.
-Trying to do both in a single function is what makes this problem feel hard -
-you end up with a flag parameter and confusing logic. Two small functions, each
-with one job, and the solution writes itself.""",
+    BIG tree:            SMALL tree:
+          3                    4
+         / \\                  / \\
+        4   5                1    2
+       / \\
+      1   2
 
-    """The complexity, and the faster alternative.
-Worst case O(n x m): a root tree of 1,000 nodes all with the same value, and a
-sub of 500 nodes, forces a deep comparison at nearly every position.
-The O(n + m) approach: serialise both trees to strings with explicit null
-markers and delimiters, then do a substring search. The null markers are
-essential - without them, 1(2) and 12 can serialise identically and you get
-false positives.""",
+Look at the big tree's node 4. Below it sits exactly 4 with children 1 and 2 -
+which is the small tree. So the answer is TRUE.
 
-    """The family resemblance worth naming.
-same() here is exactly the Same Tree problem.
-Symmetric Tree is the same two-node recursion with the calls CROSSED.
-Merge Two Binary Trees walks the identical pair-wise structure but combines
-instead of comparing.
-Four questions, one two-argument recursion. Recognising that means you write the
-helper without thinking and spend your time on the outer logic.""",
+The important word is EXACTLY. It is not enough for the values to appear
+somewhere; the shape below must match too, and nothing extra may hang off it.""",
+
+    """Two separate jobs - and keeping them separate is the whole trick.
+
+This problem feels hard until you notice it is really two simple problems
+stacked:
+
+JOB 1 - 'are these two trees identical?' Compare two trees node for node: same
+value here, and identical on the left, and identical on the right.
+
+JOB 2 - 'does the small tree appear anywhere?' Walk the big tree, and at every
+node ask job 1: starting from HERE, are the two trees identical?
+
+Write them as two small functions, each doing one thing. People who try to do
+both in a single function end up passing flags around and tie themselves in
+knots. Two functions, and the solution almost writes itself.""",
+
+    """Job 1 in detail, because it has three cases.
+
+Comparing two trees, at each pair of positions:
+  - BOTH empty -> identical so far, return true.
+  - ONE empty and the other not -> different shapes, return false.
+  - Both present but different values -> return false.
+  - Otherwise: same value, so check the left pair AND the right pair, and both
+    must come back true.
+
+Notice the second case. That is what stops 'the values matched but the shape did
+not' from slipping through, and it is the case people forget - which produces a
+program that says yes far too often.""",
+
+    """The near-miss that catches sloppy code.
+
+Change the big tree so its 2 has an extra child hanging below it:
+
+    BIG:                 SMALL:
+          3                    4
+         / \\                  / \\
+        4   5                1    2
+       / \\
+      1   2
+           \\
+            0
+
+Now start comparing at node 4. Values match. The 1s match. Then compare the two
+2s: values match, so look at their children - the big tree's 2 has a child 0,
+while the small tree's 2 has nothing. One empty, one not, so FALSE.
+
+Correctly, the answer is now false. The small tree is not present exactly; it is
+present with something extra glued on. If your code says true here, you are
+comparing values without comparing shape.""",
+
+    """The empty cases, which are worth asking about.
+
+SMALL tree empty: conventionally true - 'nothing' fits inside anything. But
+confirm it, because some versions of the question promise the small tree is
+never empty and others expect false. Ten seconds of asking, and it changes the
+answer.
+
+BIG tree empty, small tree not: false. There is nowhere for it to be.
+
+BOTH empty: true.
+
+These three lines are exactly where a rushed implementation crashes rather than
+returning a wrong answer, so they are worth writing first.""",
+
+    """How slow it can get, and the faster idea.
+
+In the worst case you compare the small tree at nearly every position of the
+big one. If the big tree has n nodes and the small one has m, that is about
+n x m work - written O(n x m). It really happens: imagine a big tree of 1,000
+nodes that all hold the same value, so every position looks promising and every
+comparison runs deep before failing.
+
+The faster approach: write each tree out as a single line of text, then ask
+whether the small tree's text appears inside the big tree's text - a plain
+substring search, which is about O(n + m).
+
+One catch, and it is a real one. You must write out the empty spots too, using
+a marker like '#'. Without markers, two different trees can produce the same
+text and you get false matches. With them, the text is unambiguous.
+
+The family: 'are these two trees identical?' is itself the Same Tree problem.
+Symmetric Tree is the same two-tree comparison with the sides CROSSED. Merge Two
+Binary Trees walks two trees together but combines instead of comparing. One
+two-argument recursion underneath all four.""",
 ]
 
 
