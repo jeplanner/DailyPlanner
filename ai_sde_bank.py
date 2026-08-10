@@ -33902,6 +33902,330 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1R[_e["title"]]
 
 
+_EX_P1S = {}
+
+_EX_P1S["Attention Mechanism Intuition"] = [
+    """The party analogy, then the mechanics.
+In a noisy room you tune in to the one voice that matters and tune out the
+rest. Attention gives every word that ability: for each position, decide how
+much to listen to every other position.
+Mechanically, each position emits three vectors. QUERY = what am I looking for.
+KEY = what do I offer. VALUE = what I actually contribute if you attend to me.
+Score every (query, key) pair with a dot product, softmax the scores into
+weights summing to 1, and take the weighted sum of the VALUES. That weighted
+sum is the position's new representation.""",
+
+    """A worked example on one sentence.
+'The animal didn't cross the street because IT was too tired.'
+When computing the representation of 'it', its query is compared against every
+key. The key for 'animal' matches strongly (both are noun-ish, and training has
+taught the model that 'tired' associates with animate subjects), so the softmax
+puts most weight there - perhaps 0.6 on 'animal', 0.1 on 'street', the rest
+spread thinly.
+The new vector for 'it' is therefore mostly 'animal'. Change the last word to
+'wide' and the weights shift toward 'street'. That is coreference resolved by
+learned weighting rather than by a rule - and it is the standard example
+because you can see the answer change.""",
+
+    """Why divide by sqrt(d_k) - the 'scaled' in scaled dot-product attention.
+Dot products of two random d-dimensional vectors have variance proportional to
+d. With d = 512, raw scores can reach into the tens or hundreds, and softmax of
+large numbers saturates - one weight goes to ~1.0 and the rest to ~0, which
+makes the gradient vanish and training stall.
+Dividing by sqrt(d_k) normalises the variance back to about 1, keeping the
+softmax in its responsive range. It is a one-line fix for a real optimisation
+problem, and it is the detail interviewers use to check whether you have read
+the paper or only the summary.""",
+
+    """Why MULTI-head, and what each head does.
+One attention pattern must serve every relationship at once - syntax,
+coreference, topic. Splitting the representation into h heads (say 8), each
+with its own smaller Q/K/V projections, lets each head learn a different
+relation and the outputs are concatenated.
+Empirically some heads track syntactic dependencies, some track positional
+offsets, some attend to delimiters. The cost is unchanged because each head
+works in d/h dimensions - it is a reallocation of the same compute, not extra
+compute, which is the elegant part.""",
+
+    """Self-attention versus cross-attention, and masking.
+SELF-attention: Q, K and V all come from the same sequence - how words in a
+sentence relate to each other. CROSS-attention: Q comes from the decoder and
+K/V from the encoder - how an output token relates to the input, which is how
+translation aligns words.
+CAUSAL masking: in a decoder, position i must not see positions after it, or
+the model could cheat by reading the answer. Implemented by setting those
+scores to negative infinity BEFORE the softmax so their weights become exactly
+zero. That mask is the difference between BERT (bidirectional) and GPT
+(left-to-right).""",
+
+    """The cost, which is the reason for everything that came after.
+Attention compares every position with every other, so it is O(n^2) in sequence
+length - both in compute and in the memory for the score matrix. Doubling the
+context quadruples the work, which is precisely why context windows were small
+for years and why the field produced FlashAttention (same maths, tiled to fit
+in fast SRAM), sparse and sliding-window attention, and linear-attention
+approximations.
+And why attention replaced RNNs despite that cost: an RNN's path between two
+distant tokens is O(n) sequential steps, so the signal degrades and nothing
+parallelises. Attention connects any two positions in ONE step and computes all
+positions simultaneously - the parallelism is what made training at scale
+possible.""",
+]
+
+_EX_P1S["Bias-Variance Decomposition"] = [
+    """The decomposition, and what each term means concretely.
+Expected test error = BIAS^2 + VARIANCE + IRREDUCIBLE NOISE.
+BIAS is error from wrong assumptions - your model is too simple to represent
+the truth. Fitting a straight line to a curve: no amount of data helps, because
+the line cannot bend.
+VARIANCE is sensitivity to the particular training set - retrain on a different
+sample and you get a very different model. A depth-30 decision tree memorises
+its sample.
+NOISE is irreducible: measurement error, genuine randomness, missing features.
+It sets the floor - no model beats it, so an error target below the noise level
+is a target you cannot hit.""",
+
+    """The dartboard picture, which is the one to have ready.
+Low bias, low variance: darts tightly clustered on the bullseye - the goal.
+High bias, low variance: tightly clustered but off to one side - consistently
+wrong in the same way, which is underfitting.
+Low bias, high variance: scattered all around the bullseye, averaging out right
+but individually unreliable - overfitting.
+High bias, high variance: scattered and off-centre - a badly chosen model,
+badly trained.
+Ten seconds to draw, and it makes the two terms independent in a listener's
+head rather than a spectrum.""",
+
+    """How you TELL them apart in practice, which is the useful skill.
+Compare training error with validation error, both against the irreducible
+level (human performance is a decent proxy).
+High training error AND high validation error, close together -> BIAS. The
+model cannot even fit what it has seen; more data will not help.
+Low training error, much higher validation error -> VARIANCE. It fits the
+sample and not the pattern; more data WILL help.
+Concrete: training RMSE 12.0, validation 12.4, human 3.0 -> bias, and
+collecting another million rows changes nothing. That diagnosis is what the
+decomposition is FOR.""",
+
+    """The fixes, which are opposites - so misdiagnosing costs you weeks.
+For BIAS: a more complex model, more or better features, interaction terms,
+LESS regularisation, train longer.
+For VARIANCE: more training data, MORE regularisation (L1/L2, dropout), a
+simpler model, feature selection, early stopping, ensembling (bagging averages
+away variance).
+Note that 'add regularisation' fixes one and worsens the other, which is why
+the diagnosis has to come first. Applying the variance cure to a bias problem
+makes it strictly worse.""",
+
+    """Why the trade-off is a trade-off, and where modern models break it.
+Classically, increasing model complexity lowers bias and raises variance, so
+test error is U-shaped and you pick the bottom. That is the picture the
+decomposition teaches.
+But very large neural networks show DOUBLE DESCENT: past the interpolation
+threshold, test error falls again even though the model fits the training data
+perfectly. Implicit regularisation from SGD and over-parameterisation are the
+usual explanations. So the classical U-curve is the right mental model for
+classical models and an incomplete one for deep learning - saying that
+distinguishes someone who understands the theory from someone reciting it.""",
+
+    """Bagging versus boosting, read through this lens.
+BAGGING (random forest) trains many high-variance models on bootstrap samples
+and averages them - averaging cancels variance while leaving bias roughly
+unchanged. That is why the base learner is a deep, unpruned tree: you WANT high
+variance and low bias.
+BOOSTING (gradient boosting) fits each new model to the previous ensemble's
+errors, reducing BIAS - which is why the base learner is a shallow stump and
+why boosting overfits more readily and needs early stopping.
+Same ensemble idea, opposite targets. If you can say which term each method
+attacks, you understand both.""",
+]
+
+_EX_P1S["ROC-AUC vs Precision-Recall Curves"] = [
+    """What each curve actually plots.
+ROC: true positive rate (recall) on the y-axis against FALSE POSITIVE RATE
+(FP / all actual negatives) on the x-axis, as the threshold sweeps from 1 to 0.
+AUC-ROC has a clean interpretation - it is the probability that a randomly
+chosen positive is ranked above a randomly chosen negative. 0.5 is coin-flip,
+1.0 is perfect ranking.
+PR: precision (TP / all predicted positive) against recall, same sweep. Its
+baseline is not 0.5 - it is the POSITIVE RATE, so on 1% positives a useless
+model scores about 0.01, and 0.30 might be excellent.""",
+
+    """The imbalance failure, in numbers - which is the whole question.
+1,000 transactions, 10 fraudulent. A model flags 100 and catches 8 of them.
+FPR = 92 / 990 = 0.093 -> the ROC point looks excellent, because the
+denominator (990 negatives) is huge and 92 barely dents it.
+Precision = 8 / 100 = 0.08 -> the PR curve reports the truth: 92% of the alerts
+are wasted analyst time.
+So ROC-AUC can sit at 0.95 while the system is operationally useless. The rule:
+when positives are rare AND you care about the alerts you generate, PR-AUC is
+the honest curve.""",
+
+    """The deciding question: which denominator matters to you?
+FPR divides by all NEGATIVES - so it answers 'what fraction of the innocent did
+we bother?', which is the right question when negatives are the population you
+must protect (screening a whole population, spam filtering where false
+positives annoy everyone).
+Precision divides by all PREDICTED POSITIVES - 'of the alerts we raised, how
+many were real?', which is the right question when someone must ACT on each
+alert and their time is the constraint.
+Pick the curve whose denominator matches the cost you are actually paying.""",
+
+    """Why ROC-AUC is still worth reporting.
+It is threshold-independent and INSENSITIVE TO CLASS BALANCE, which makes it
+comparable across datasets with different positive rates - useful when you are
+comparing models rather than choosing an operating point.
+PR-AUC changes when the positive rate changes, so a PR-AUC of 0.4 on a 1%
+dataset and 0.4 on a 20% dataset are not comparable at all. Report both: ROC
+for model comparison, PR for deciding whether the thing is deployable.""",
+
+    """Neither replaces choosing a THRESHOLD from costs.
+Both curves summarise performance across ALL thresholds, and you deploy exactly
+one. So after picking a model by AUC, compute the expected cost at each
+threshold: cost = FP * cost_per_false_alarm + FN * cost_per_miss, and take the
+minimum.
+With a missed fraud at 500 euro and a review at 5 euro, the optimal threshold
+is far below 0.5 - and no AUC number tells you that. Saying 'AUC picks the
+model, costs pick the threshold' is the sentence that closes this topic.""",
+
+    """The related metrics worth naming.
+Precision@k, when only the top k alerts get reviewed - a call centre that can
+handle 100 cases a day does not care about the rest of the curve.
+Average Precision, which is the standard summary of the PR curve.
+Calibration: AUC only measures RANKING, so a model can have AUC 0.95 and
+wildly miscalibrated probabilities. If you use the score in an
+expected-value calculation rather than just to sort, check calibration with a
+reliability plot and fix it with Platt scaling or isotonic regression.
+That distinction - ranking quality versus probability quality - catches a lot
+of people.""",
+]
+
+_EX_P1S["What questions should you ask the interviewer?"] = [
+    """Why this is scored rather than politeness.
+'I have no questions' reads as no curiosity - and at Google curiosity is a
+named rubric item, not a nicety. It is also often your last few minutes with
+the person writing your feedback, so it is worth using well.
+The interviewer is learning two things: whether you are evaluating THEM (which
+signals you have options and standards), and what you actually care about -
+because the questions you choose reveal your priorities more honestly than any
+answer you gave earlier.""",
+
+    """Four categories, and one or two from each is plenty.
+THE WORK: 'what does a typical week look like for a new grad here?', 'what
+would I most likely start on?', 'how much is new development versus maintaining
+what exists?'
+THE TEAM AND YOU: 'how does the team decide what to work on?', 'what does
+onboarding look like?', 'how do new engineers get feedback in the first six
+months?'
+THEIR EXPERIENCE: 'what surprised you most in your first year?', 'what is the
+hardest problem the team is working on right now?' - people enjoy answering
+these and you learn a great deal.
+THE HONEST ONE, below.""",
+
+    """The best single question, and why it works.
+'What is the most frustrating part of working on this team?'
+A candid answer tells you more than everything else combined - build system,
+on-call load, a legacy service nobody wants to touch, slow decision-making. A
+non-answer ('honestly nothing!') tells you something too.
+It is also disarming in a good way: it signals you are making a real decision
+rather than performing gratitude, and interviewers generally respect it. Ask it
+of the engineer, not the recruiter.""",
+
+    """The one that proves you were listening.
+Adapt at least one question to something they SAID: 'you mentioned you're
+moving the feature pipeline off the nightly batch job - what is driving that,
+latency or cost? And would a new grad be working on the migration or on what
+sits on top of it?'
+That is technically specific, impossible to prepare in advance, and its answer
+tells you exactly what your first year looks like. Prepare six questions
+knowing two will be answered during the interview, and leave room for one that
+is invented on the spot.""",
+
+    """What not to ask, and why each fails.
+Anything on the careers page or in the job description - it shows you did not
+look.
+Compensation, holidays, promotion timelines - legitimate questions, wrong
+audience; those go to the recruiter, and raising them with your future
+teammate reads as misjudging the room.
+'How did I do?' - puts them in an awkward position and they cannot answer
+honestly anyway.
+And the transparently engineered question designed to show off rather than to
+learn; interviewers can tell, and it costs more than it gains.""",
+
+    """When they have already answered everything.
+Say so honestly and pivot rather than inventing something: 'you covered my main
+ones - can I ask instead what you'd want someone joining to be good at on day
+one?' or 'what separates someone who does well here in their first year from
+someone who struggles?'
+Both are genuine, neither can be pre-answered, and the second doubles as useful
+information if you get the offer. Having one fallback in your pocket removes
+the risk of the awkward silence entirely.""",
+]
+
+_EX_P1S["Best Time to Buy and Sell Stock II (greedy)"] = [
+    """Why summing every upswing is optimal - the telescoping argument.
+prices = [1,2,3,4,5]. The greedy captures 1+1+1+1 = 4. Buying at 1 and selling
+at 5 also gives 4. They are equal because consecutive differences TELESCOPE:
+(2-1) + (3-2) + (4-3) + (5-4) = 5 - 1.
+So any profitable run can be decomposed into its daily steps without loss, and
+any DOWN step can be skipped entirely - which is exactly what taking only the
+positive differences does. There is no configuration the greedy misses,
+because every real transaction is a sum of daily moves and every negative move
+is optional.""",
+
+    """The trace where it matters.
+prices = [7,1,5,3,6,4].
+Day 1->2: 1 < 7, skip. 2->3: 5 > 1 -> +4. 3->4: 3 < 5, skip. 4->5: 6 > 3 -> +3.
+5->6: 4 < 6, skip.
+Total 7 = buy at 1 sell at 5 (profit 4), buy at 3 sell at 6 (profit 3). The
+greedy found both transactions without ever explicitly identifying a buy day or
+a sell day - it just accumulated the ups.
+That is the elegance and the thing to point out: you never track state, because
+the answer decomposes into independent daily decisions.""",
+
+    """Why this differs from Stock I, and why the answer is so much simpler.
+Stock I allows ONE transaction, so you must remember the minimum price seen so
+far and the best profit against it - a state machine, however small. Unlimited
+transactions removes that coupling: every day is independent, so no state is
+needed at all.
+The general lesson: a constraint on the NUMBER of actions is what forces state.
+Remove the constraint and greedy usually becomes available; add a tighter one
+(at most k transactions, or a cooldown) and you are back to DP. That is the
+axis the whole Stock family varies along.""",
+
+    """Edge cases.
+Empty or single-element -> the loop never runs -> 0.
+Monotonically decreasing [5,4,3,2,1] -> no positive difference -> 0. Doing
+nothing is always permitted, which is why 0 rather than a loss.
+Monotonically increasing -> the full range, last minus first.
+All equal [3,3,3] -> 0.
+Two elements is the smallest interesting case: [1,2] -> 1, [2,1] -> 0.""",
+
+    """The transaction-fee variant, which breaks the greedy.
+Add a fee per transaction and the telescoping argument collapses: splitting one
+long run into many small trades now pays the fee repeatedly, so the greedy
+overcounts. [1,3,2,8] with fee 2 - the greedy takes 2 + 6 = 8 minus two fees =
+4, while holding from 1 to 8 gives 7 - 2 = 5.
+That variant needs the hold/cash DP. Knowing WHICH added constraint kills the
+greedy is more valuable than the greedy itself, and it is the natural
+follow-up.""",
+
+    """The family, ordered by how much state each needs.
+Stock I (one transaction): track the running minimum - O(1) state.
+Stock II (unlimited): no state, sum the ups - this problem.
+Stock with Cooldown: three states (hold / sold / rest).
+Stock with Transaction Fee: two states (hold / cash).
+Stock III (at most 2) and IV (at most k): 2k states, or a DP over (day,
+transactions used, holding).
+Reading the family this way - each constraint adds a dimension - makes all six
+one problem rather than six.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1S:
+        _e["examples"] = _EX_P1S[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
