@@ -33292,6 +33292,302 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1P[_e["title"]]
 
 
+_EX_P1Q = {}
+
+_EX_P1Q["Permutation in String"] = [
+    """Why a permutation check is a frequency check.
+Any rearrangement of s1 has exactly the same character counts as s1. So a
+window of s2 contains a permutation of s1 precisely when their count maps are
+EQUAL - order inside the window is irrelevant, which is what turns a
+combinatorial-sounding question into a counting one.
+s1 = 'ab', s2 = 'eidbaooo': the window 'ba' has counts {b:1, a:1} = counts of
+'ab' -> True. The window 'ei' does not.
+Never generate permutations; there are len(s1)! of them and the counts capture
+all of them at once.""",
+
+    """The fixed-size slide, traced.
+s1 = 'ab' (need {a:1,b:1}), s2 = 'eidbaooo'. First window 'ei' -> {e:1,i:1},
+not equal.
+i=2 ('d'): add d, remove 'e' -> window 'id'. Not equal.
+i=3 ('b'): add b, remove 'i' -> 'db'. Not equal.
+i=4 ('a'): add a, remove 'd' -> 'ba' -> {b:1,a:1} == need -> True.
+The window size never changes - this is the fixed-size family, so there is no
+inner while loop, just add-one and remove-one per step.""",
+
+    """The deletion that Counter equality depends on.
+When a character's count drops to zero you must DELETE the key, not leave it at
+0 - because `Counter({'a':1,'b':0}) == Counter({'a':1})` is False in a plain
+dict comparison. Python's Counter actually ignores zero-valued keys for
+equality, but a hand-rolled dict does not, and neither does a naive
+implementation in another language.
+Writing it explicitly - `if window[left] == 0: del window[left]` - makes the
+code correct regardless of the container's equality semantics, which is the
+safer habit.""",
+
+    """The O(1) refinement, for the follow-up.
+Comparing two Counters costs up to 26 comparisons per step, so the loop is
+really O(26n). You can make each step genuinely O(1) by maintaining a MATCHES
+counter: track how many of the 26 letters currently have the exact required
+count, and update it as characters enter and leave. The window is a permutation
+when matches == 26.
+Same asymptotics either way since 26 is a constant - but it is the standard
+'can you do better?' answer, and the technique transfers directly to Minimum
+Window Substring, where it matters much more.""",
+
+    """Edge cases.
+len(s1) > len(s2) -> guarded, False.
+s1 == s2 -> the first window matches -> True.
+s1 = 'a', s2 = 'a' -> True. Single-character windows work with no special case.
+Repeated characters, s1 = 'aab' with s2 = 'aba' -> counts {a:2,b:1} vs {a:2,b:1}
+-> True. This is the case a SET-based solution gets wrong, which is why it must
+be counts.
+Empty s1 -> vacuously true, though usually excluded by the constraints.""",
+
+    """Complexity and the family.
+O(len(s2)) time with a bounded alphabet, O(1) space (26 slots).
+The family: Find All Anagrams in a String (identical, but collect every match
+instead of returning on the first), Minimum Window Substring (the hard one -
+the window is VARIABLE size, growing until valid then shrinking to minimise),
+Longest Repeating Character Replacement, and Substring with Concatenation of
+All Words.
+The distinction that decides the loop shape: is the window FIXED (given length,
+one add and one remove per step) or VARIABLE (grow until a condition holds,
+then shrink)? Naming which one you have is the first move.""",
+]
+
+_EX_P1Q["Redundant Connection (Union-Find)"] = [
+    """The insight, stated plainly.
+A tree on n nodes has exactly n-1 edges and no cycles. Given n edges, exactly
+one closes a cycle. Union-find detects that instantly: process edges in order,
+and the FIRST edge whose two endpoints already share a root is the one that
+creates the cycle.
+edges = [[1,2],[1,3],[2,3]]: union(1,2) merges. union(1,3) merges. For [2,3],
+find(2) and find(3) both return the same root -> that edge is redundant ->
+return [2,3].""",
+
+    """Why 'the LAST edge that closes a cycle' and returning on the first hit are the
+same thing here. The prompt asks for the answer that appears last in the input
+if several are valid - but because exactly ONE extra edge exists, only one edge
+can ever be found already-connected. So the first detection is also the only
+one, and returning immediately is correct.
+Worth stating explicitly: the uniqueness guarantee is what makes the early
+return safe. In a variant with several extra edges you would collect them all
+and return the last.""",
+
+    """Why union-find rather than DFS cycle detection.
+DFS works: for each edge, check whether a path already exists between its
+endpoints before adding it - but that is an O(n) search per edge, so O(n^2)
+overall.
+Union-find answers 'are these already connected?' in near-constant amortised
+time, giving O(n * alpha). More importantly it is INCREMENTAL - the structure
+is built as edges arrive, which is exactly the shape of this problem. That is
+the general signal for union-find: connectivity queries interleaved with edge
+additions.""",
+
+    """Path compression, and the line that does it.
+`parent[x] = parent[parent[x]]` inside the find loop is path HALVING - it
+points each node at its grandparent as you walk up, flattening the tree
+progressively. Combined with union by size or rank, the amortised cost is the
+inverse Ackermann function, which is below 5 for any input that exists.
+Without it, adversarial union order builds a chain and each find degrades to
+O(n). One line, and it is the difference between O(n) and O(n^2).""",
+
+    """Edge cases.
+The redundant edge appearing first, [[1,2],[2,3],[1,3]] -> the first two merge,
+the third is detected -> [1,3]. The answer is not positionally first or last in
+general; it is whichever edge closes the cycle.
+A self-loop [u,u] would be detected immediately (find(u) == find(u)) - not
+present in this problem's inputs, but it is what the code does.
+Nodes are 1-INDEXED, so the parent array needs len(edges) + 1 slots. Sizing it
+at len(edges) throws on the highest-numbered node, and only on inputs that use
+it.
+n = 3 is the smallest case: three nodes, three edges, one cycle.""",
+
+    """Complexity and the family.
+O(n * alpha(n)), effectively O(n), with O(n) space.
+The family: Number of Provinces (count roots instead of detecting), Number of
+Connected Components, Accounts Merge (union by shared email), Most Stones
+Removed with Same Row or Column, Satisfiability of Equality Equations (union
+the equalities, then check the inequalities), Kruskal's MST, and Redundant
+Connection II - the directed version, which is genuinely harder because a
+directed graph can fail by having a node with two parents OR by a cycle, and
+you must handle both.""",
+]
+
+_EX_P1Q["Rotate List"] = [
+    """The circle trick, traced.
+list 1 -> 2 -> 3 -> 4 -> 5, k = 2. Walk to find length 5 and tail 5.
+k %= 5 -> 2. Join tail to head, making a ring.
+The new tail is at position length - k = 3 steps from the head, i.e. node 3.
+Walk three nodes: 1, 2, 3. New head is 3.next = 4. Break: 3.next = None.
+Result 4 -> 5 -> 1 -> 2 -> 3.
+Forming the ring means you never have to reason about two separate pieces -
+one walk and one cut does the whole rotation.""",
+
+    """Why `k %= length` is mandatory.
+k can far exceed the list length - k = 1,000,000 on a 5-node list. Rotating by
+the length returns the original, so only k mod length matters. Without the
+modulo the walk runs a million steps around the ring, which is correct but
+absurdly slow, or overruns entirely if you did not form the ring.
+And after the modulo, `k == 0` means no rotation at all - so the early return
+is needed, otherwise you would walk `length` steps and cut in exactly the place
+you started, which happens to work but only by luck.""",
+
+    """Why the new tail is at length - k, not at k.
+Rotating RIGHT by k moves the last k nodes to the front. So the break must
+happen k nodes from the END, which is length - k nodes from the head.
+k = 2 on a 5-node list: the last two (4, 5) move to the front, so the new tail
+is node 3 = position 5 - 2. Getting this backwards rotates LEFT instead, and
+the result looks superficially plausible - it is a rotation, just the wrong
+one. Trace one small example to confirm the direction before committing.""",
+
+    """Edge cases.
+Empty list or single node -> guarded, returned unchanged.
+k = 0 -> returned unchanged by the first guard.
+k equal to the length -> after the modulo k becomes 0 -> unchanged. This is the
+case the second guard catches, and it is easy to miss.
+k a multiple of the length, k = 10 on 5 nodes -> same.
+Two nodes with k = 1 -> length 2, k = 1, new tail at position 1 (node 1), new
+head node 2 -> 2 -> 1. Correct.""",
+
+    """Complexity and the alternative.
+O(n) time - one pass to measure, at most one more to reach the cut point - and
+O(1) space.
+The two-pointer alternative avoids computing the length explicitly: advance a
+fast pointer k steps, then move both until fast reaches the tail; slow is then
+the new tail. But you still need the length to reduce k modulo it, so you
+either measure first anyway or handle k > n separately. The ring version is
+cleaner precisely because it makes the modulo natural.""",
+
+    """The family: linked-list pointer surgery.
+Rotate List, Reverse Linked List, Reorder List (find the middle, reverse the
+second half, interleave), Swap Nodes in Pairs, Odd Even Linked List, Remove Nth
+Node From End (two pointers k apart), and Split Linked List in Parts.
+Two habits that make all of them tractable: DRAW the pointers before coding -
+three arrows is where people lose these - and ask whether the head can change,
+because that is what decides whether you need a dummy node.""",
+]
+
+_EX_P1Q["Shortest Path in Binary Matrix (8-directional BFS)"] = [
+    """Why BFS and not DFS or Dijkstra.
+Every move costs the same (one cell), so this is an UNWEIGHTED shortest path -
+and BFS explores in strictly increasing distance order, so the first time it
+reaches the destination it has done so by a shortest route. DFS would find a
+path but not necessarily the shortest; Dijkstra would work but its heap is
+pointless overhead when all weights are equal.
+The rule: unweighted -> BFS, non-negative weights -> Dijkstra, negative ->
+Bellman-Ford. Naming which one applies and why is the first thing to say.""",
+
+    """The 8 directions, and why the count is CELLS not steps.
+Neighbours include the four diagonals, so the offsets are all combinations of
+-1, 0, +1 excluding (0,0) - eight of them.
+The answer counts CELLS on the path, so the starting cell is 1, not 0. That is
+why the queue is seeded with (0, 0, 1). A 1x1 grid of [[0]] therefore answers 1,
+not 0 - which is the fastest check that you got the convention right.
+Off-by-one here is the most common wrong answer on this problem.""",
+
+    """Marking visited at ENQUEUE, not at dequeue.
+`seen.add((nr,nc))` must happen when you push, not when you pop. Otherwise the
+same cell can be enqueued many times by different neighbours before any of them
+is processed, and the queue blows up exponentially on open grids while still
+producing the right answer - so it passes small tests and times out on large
+ones.
+The invariant: a cell enters the queue exactly once, at the moment the first
+(and therefore shortest) wave reaches it.""",
+
+    """The guards, and the one that is easy to forget.
+Blocked START or END -> return -1 immediately. The end check is the one people
+omit: BFS would simply never reach it and the loop would exhaust, so the answer
+is still correct - but returning early is cheaper and clearer.
+Bounds checks on every neighbour are mandatory since diagonals can step off two
+edges at once from a corner.
+Also note the cell value must be 0 to be passable; 1 is an obstacle, which is
+the reverse of some similar problems - read the prompt rather than assuming.""",
+
+    """Edge cases.
+[[0]] -> start is also the end -> 1.
+[[1]] -> blocked start -> -1.
+[[0,1],[1,0]] -> the diagonal move from (0,0) to (1,1) is legal, so the answer
+is 2 even though both orthogonal routes are blocked. This is THE case that
+distinguishes 8-directional from 4-directional, and it is worth trying
+deliberately.
+A fully blocked grid -> -1 after the queue empties.
+An n x n grid of all zeros -> the answer is n (walk the diagonal), not 2n-1,
+which is another consequence of diagonal movement.""",
+
+    """Complexity and the family.
+O(n^2) time and space - every cell is enqueued at most once.
+The family: Rotting Oranges and 01 Matrix (multi-source BFS - seed all sources
+at once), Word Ladder (BFS over word transformations rather than a grid), Open
+the Lock, Number of Islands (connectivity, so DFS is fine), and Path with
+Minimum Effort - which is Dijkstra, because there the cost of a path is the
+maximum edge rather than the count, so the moves are no longer uniform.
+The deciding question is always whether every move costs the same.""",
+]
+
+_EX_P1Q["String Compression (in place)"] = [
+    """The two-pointer scheme, traced.
+chars = ['a','a','b','b','c','c','c'].
+read counts the run of 'a' (2), write puts 'a' then '2' -> positions 0,1.
+Run of 'b' (2): write 'b','2' -> positions 2,3.
+Run of 'c' (3): write 'c','3' -> positions 4,5.
+Return 6, with chars[:6] = ['a','2','b','2','c','3'].
+The two pointers never collide because the compressed form is never longer than
+what has already been read - which is the property that makes in-place
+possible.""",
+
+    """Why counts must be written DIGIT BY DIGIT.
+A run of 12 becomes the two characters '1' and '2', not the single value 12 -
+the array holds characters, so a multi-digit count occupies multiple slots.
+`for digit in str(count): chars[write] = digit; write += 1` handles any length.
+Writing `chars[write] = count` stores an integer into a character array, which
+either raises or silently corrupts depending on the language. And a run of 100
+occupies three slots, which is why the 'never longer than the input' argument
+below needs checking rather than assuming.""",
+
+    """Why a run of 1 writes NO count.
+'a' alone compresses to 'a', not 'a1' - the count is omitted when it is 1. That
+is what keeps the output no longer than the input: a single character costs one
+slot either way.
+Check the worst case: 'ab' -> 'ab', same length, no saving but no growth. A run
+of 2 -> two slots ('a','2'), same as before. A run of 3 -> two slots, a saving.
+So the compressed form is never longer, which is the invariant that lets write
+safely trail read.""",
+
+    """Why in-place is the whole point.
+Building a new list and returning it is trivial and O(n) space. The constraint
+here is O(1) extra space, which forces the write pointer to overwrite cells
+that read has already consumed.
+The safety argument is the one above: write never overtakes read because the
+compressed prefix is never longer than the scanned prefix. State that invariant
+explicitly - it is what makes the mutation obviously safe rather than
+apparently lucky.""",
+
+    """Edge cases.
+Single character ['a'] -> run of 1, no count -> length 1.
+All identical ['a']*10 -> 'a','1','0' -> length 3, and this is the multi-digit
+case that catches naive implementations.
+No repeats ['a','b','c'] -> 'abc', length 3, no compression achieved.
+Empty input -> 0.
+A run of exactly 9 vs 10 is the boundary worth testing: 9 writes one digit, 10
+writes two.""",
+
+    """Complexity and the family.
+O(n) time - read advances monotonically through the array - and O(1) extra
+space beyond the output, which is written in place.
+The family is the read/write two-pointer: Remove Duplicates from Sorted Array,
+Remove Element, Move Zeroes, and Sort Colors. All share the shape of one
+pointer scanning and another marking where the next kept value goes.
+The distinguishing skill here is the invariant argument - being able to say WHY
+write can never overtake read, rather than just observing that it does not on
+the examples.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1Q:
+        _e["examples"] = _EX_P1Q[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
