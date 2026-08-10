@@ -30936,6 +30936,192 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1J[_e["title"]]
 
 
+_EX_P1K = {}
+
+_EX_P1K["Kth Distinct String in an Array"] = [
+    """The two meanings of 'distinct', and which one this is.
+Here 'distinct' means appears EXACTLY ONCE in the whole array - not 'the kth
+different value'. arr = ['d','b','c','b','c','a'], k = 2: counts are d:1, b:2,
+c:2, a:1, so the strings appearing once are 'd' and 'a', in that order. The 2nd
+is 'a'.
+Under the other reading - kth different value - the answer would be 'b'.
+Restate which one you are solving before writing code; the titles of these
+problems are genuinely ambiguous and the interviewer will confirm.""",
+
+    """Why the second loop walks the ARRAY, not the counter.
+The answer must be in ORIGINAL order, and iterating the Counter gives insertion
+order - which happens to match first-appearance order in modern Python, but by
+implementation detail rather than by contract, and it breaks outright in a
+language with unordered maps.
+Scanning arr makes 'in original order' explicit. Same reasoning as First Unique
+Character, and it is the single most reusable habit from these frequency
+problems: count with the map, ORDER with the original sequence.""",
+
+    """The countdown, and why `k -= 1` before the check.
+Decrementing first and testing `== 0` means the kth match returns on its own
+iteration. The alternative - testing `k == 1` then decrementing - is equivalent
+but reads worse and is easier to get off by one under pressure.
+Trace k = 1 on ['a','b','a']: counts a:2, b:1. 'a' has count 2, skipped. 'b'
+has count 1 -> k becomes 0 -> return 'b'. Correct: the 1st (and only) distinct
+string.""",
+
+    """Edge cases.
+Fewer than k distinct strings -> the loop finishes and returns '' - the
+sentinel the prompt specifies. Do not return None; the empty string is the
+contract.
+No distinct strings at all, e.g. ['a','a','b','b'] -> ''.
+k larger than the array length -> ''.
+Every string distinct, ['a','b','c'] with k = 3 -> 'c'.
+k = 0 is normally excluded by the constraints; if allowed, the countdown would
+never fire since it starts by going negative, so guard it or state the
+assumption.""",
+
+    """Complexity.
+Two passes: O(n) time, O(n) space for the counter (O(total characters) if you
+count the string comparisons, since hashing a string is proportional to its
+length - a pedantic but correct refinement worth mentioning if asked).
+There is no way to do it in one pass for the same reason as First Unique
+Character: whether a string is distinct depends on occurrences you have not
+reached yet.""",
+
+    """The family.
+First Unique Character (k = 1 on characters instead of strings), Find All
+Duplicates in an Array, Single Number (the XOR trick works only when everything
+else appears exactly twice), Top K Frequent Elements, and Sort Characters By
+Frequency.
+The shared recipe is count-then-select, and the only decisions are what you
+count and in which order you then select. Recognising that means these all take
+two minutes rather than being remembered individually.""",
+]
+
+_EX_P1K["Kth Largest Element in a Stream"] = [
+    """Why a MIN-heap of size k gives the kth LARGEST - the inversion that confuses
+everyone. Keep exactly the k largest elements seen so far. The SMALLEST of
+those k is, by definition, the kth largest overall - and a min-heap puts
+precisely that element at its root, readable in O(1).
+k = 3, stream 4, 5, 8, 2: after 4, 5, 8 the heap holds {4,5,8} with root 4 -
+the 3rd largest. Add 2: push -> {2,4,5,8}, size 4 > 3, pop the smallest (2) ->
+{4,5,8}, root still 4. Correct - 2 was never in the top 3.
+Add 10: push -> {4,5,8,10}, pop 4 -> {5,8,10}, root 5. The answer rose because
+a bigger element displaced the old floor.""",
+
+    """Why not a max-heap, which is the instinct.
+A max-heap of everything gives the LARGEST in O(1) but reaching the kth
+requires popping k-1 elements and pushing them back - O(k log n) per query, and
+it stores every element ever seen. The min-heap of size k stores only k
+elements forever, regardless of stream length, and answers in O(1).
+The general principle: to track the top k, keep a MIN-heap of size k; to track
+the bottom k, keep a MAX-heap of size k. The heap type is the opposite of the
+extreme you care about, because the root must be the element you are willing to
+evict.""",
+
+    """Memory is the real point in a STREAM.
+The stream may be unbounded - millions of scores arriving forever - and this
+structure holds exactly k of them. Sorting is impossible (you cannot sort what
+has not arrived); storing everything is impossible (unbounded memory).
+That is why the problem is framed as a stream rather than an array, and saying
+'O(k) space regardless of how many numbers arrive' is the sentence that shows
+you understood the framing rather than just the heap.""",
+
+    """The constructor detail.
+`nums` may be longer than k, so the constructor heapifies (O(n)) and then pops
+down to k. It may also be SHORTER than k - which is legal, because the problem
+guarantees that by the time add() is called there will be at least k elements.
+Heap size below k means self.heap[0] would not be the kth largest, so if the
+guarantee were removed you would need to return None or raise until the heap
+fills. Worth asking about; it is the one precondition this design depends on.""",
+
+    """Edge cases.
+k = 1 -> the heap holds one element, the maximum, and add() returns the running
+max.
+Duplicates: k = 2 with stream 5, 5 -> heap {5,5}, root 5. The kth largest
+counts positions, not distinct values, so duplicates legitimately occupy
+separate slots. If the prompt wanted the kth distinct value the structure would
+have to change - another ambiguity to confirm.
+Negative numbers work unchanged.
+Empty initial nums with k = 3 -> the first two add() calls have an
+under-filled heap, which is the precondition case above.""",
+
+    """Complexity and the family.
+add() is O(log k) - one push and at most one pop on a heap of size k. Space
+O(k). Reading the answer is O(1).
+The family: Kth Largest Element in an Array (one-shot - Quickselect gives O(n)
+average, better than a heap when there is no stream), Top K Frequent Elements
+(heap of size k keyed by count), K Closest Points to Origin, Find Median from
+Data Stream (TWO heaps, a max-heap for the lower half and a min-heap for the
+upper). The cue is 'kth' or 'top k' plus streaming or a large n - and the
+follow-up is nearly always the median variant.""",
+]
+
+_EX_P1K["Kth Missing Positive Number"] = [
+    """The linear walk, traced.
+arr = [2,3,4,7,11], k = 5. Walk the positive integers.
+current 1: arr[0] is 2, not 1 -> missing 1 (count 1).
+2, 3, 4 are present -> i advances to 3.
+current 5: arr[3] is 7 -> missing 2. current 6 -> missing 3.
+current 7 present -> i = 4. current 8, 9, 10 -> missing 4, 5, 6... wait, at
+current 9 the count reaches 5 -> return 9.
+Answer 9. Sanity check: the missing positives are 1, 5, 6, 8, 9, 10, ... and
+the 5th is indeed 9.""",
+
+    """The counting identity that makes binary search possible.
+At index i, the number of missing positives BELOW arr[i] is exactly
+arr[i] - (i + 1). Reason: if nothing were missing, arr[i] would be i+1; the
+excess is the count of gaps.
+arr = [2,3,4,7,11]: at i=0, 2-1 = 1 missing before it. At i=3, 7-4 = 3. At i=4,
+11-5 = 6.
+That expression is monotonic in i, so you can binary-search for the first index
+where it is >= k. This is the whole reason the problem is rated the way it is -
+the linear scan is obvious, the O(log n) version is the point.""",
+
+    """The binary search, and the formula for the answer.
+    lo, hi = 0, len(arr) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if arr[mid] - (mid + 1) < k: lo = mid + 1
+        else:                        hi = mid - 1
+    return lo + k
+After the loop, lo is the count of array elements sitting BELOW the answer, so
+the kth missing number is lo + k. On the example: the search lands at lo = 4,
+and 4 + 5 = 9. Correct.
+Deriving `lo + k` rather than memorising it: you need the kth missing positive,
+and lo array values are interleaved below it, so it is shifted up by exactly
+lo.""",
+
+    """Edge cases.
+All missing at the start, arr = [5,6,7] with k = 2 -> the missing are 1,2,3,4
+-> answer 2. Binary search gives lo = 0, and 0 + 2 = 2.
+k beyond the array's range, arr = [1,2,3] with k = 2 -> nothing is missing
+below 3, so the answer is 5. lo ends at 3, and 3 + 2 = 5. The formula handles
+'past the end' with no special case, which is worth checking explicitly since
+it looks like it should need one.
+arr = [1] with k = 1 -> answer 2.
+Single missing before the first element, arr = [2] with k = 1 -> answer 1.""",
+
+    """Why the array must be sorted and distinct.
+The identity arr[i] - (i+1) assumes each position would hold i+1 if nothing
+were missing - which requires strictly increasing distinct positives. With
+duplicates or unsorted input the count is meaningless and the binary search
+searches a non-monotonic function, silently returning nonsense.
+Check the constraints for 'sorted' and 'distinct' before reaching for this; if
+they are absent, you are back to a set plus a linear walk.""",
+
+    """Complexity and the family.
+Linear walk: O(n + k) time, O(1) space - simple, and fine when k is small.
+Binary search: O(log n) time, O(1) space - the expected answer when the array
+is large.
+The family is 'binary search on a derived monotonic quantity' rather than on
+the values themselves: Missing Element in Sorted Array, Find the Duplicate
+Number, Search Insert Position, and Koko Eating Bananas (search the answer, not
+the array). The unifying move is spotting a function of the index that is
+monotonic even though the raw data does not look searchable.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1K:
+        _e["examples"] = _EX_P1K[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
