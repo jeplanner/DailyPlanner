@@ -34522,6 +34522,305 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1T[_e["title"]]
 
 
+_EX_P1U = {}
+
+_EX_P1U["Kth Smallest Element in a BST"] = [
+    """The one fact this problem exists to test.
+IN-ORDER traversal of a BST visits values in SORTED order. So 'kth smallest'
+becomes 'stop the in-order walk after k visits' - no sorting, no collecting.
+BST 5 -> (3 -> (2,4), 6), k = 3. In-order emits 2, 3, 4, 5, 6. The third is 4.
+That single fact also solves Validate BST (the in-order sequence must be
+strictly increasing), Convert BST to Sorted List, and Two Sum IV. If you
+remember one thing about BSTs, it is this.""",
+
+    """Why the ITERATIVE walk, not the recursive one.
+Recursion visits every node before you can stop, or needs a mutable counter and
+an early-exit flag threaded through - awkward and easy to get wrong.
+The explicit stack lets you stop exactly when the counter hits k, so the cost
+is O(h + k) rather than O(n). On a tree of a million nodes with k = 3, that is
+a handful of operations instead of a million.
+The pattern: push left as far as possible, pop and visit, then move to the
+right child and repeat. Three lines, and it is worth being able to write from
+memory.""",
+
+    """The trace, showing the stack.
+Tree 5 -> (3 -> (2,4), 6), k = 3.
+Push 5, push 3, push 2 (no more left). Pop 2 -> visit (count 1). No right
+child.
+Pop 3 -> visit (count 2). Move to its right child 4: push 4. Pop 4 -> visit
+(count 3) -> RETURN 4.
+Nodes 5 and 6 are never visited. The stack held at most 3 entries - the height,
+not the size.""",
+
+    """The follow-up that changes the data structure.
+'What if the BST is modified often and you need the kth smallest frequently?'
+An O(h + k) walk per query is fine occasionally and wasteful at high frequency.
+The answer is to AUGMENT each node with the size of its left subtree. Then
+finding the kth smallest is a descent: if left_size == k-1 this node is the
+answer; if k <= left_size go left; otherwise go right with k reduced by
+left_size + 1. That is O(h) per query, and insert/delete maintain the counts in
+O(h).
+This is the intended answer for the follow-up, and it is worth naming even
+without coding it.""",
+
+    """Edge cases.
+k = 1 -> the leftmost node, the minimum.
+k = n -> the rightmost, the maximum, and the walk degenerates to a full
+traversal.
+A single node with k = 1 -> that node.
+The problem guarantees 1 <= k <= n; without it you would fall off the end of
+the traversal and need to decide what to return.
+A left-skewed tree makes the initial descent push all n nodes, so the space is
+O(h) = O(n) there - which is the honest bound rather than O(log n).""",
+
+    """Complexity and the family.
+Time O(h + k) - descend to the leftmost node, then k visits. Space O(h) for the
+stack.
+The family: Validate Binary Search Tree (in-order must be strictly increasing,
+or carry (min,max) bounds down), Binary Search Tree Iterator (this exact stack,
+exposed as next()/hasNext()), Two Sum IV (two such iterators from both ends),
+Convert Sorted Array to BST (the inverse), and Recover Binary Search Tree
+(find the two nodes that break the in-order ordering).""",
+]
+
+_EX_P1U["Longest Common Subsequence"] = [
+    """The two cases, and why they are exhaustive.
+Comparing a[i-1] with b[j-1]:
+MATCH -> this pair can be part of the LCS, and nothing is lost by taking it, so
+dp[i][j] = 1 + dp[i-1][j-1].
+NO MATCH -> at least one of the two characters cannot be in the LCS, so try
+dropping each and keep the better: max(dp[i-1][j], dp[i][j-1]).
+That is genuinely all the cases. The subtle claim is the first one - that
+taking a matching pair is never worse than skipping it - which holds because
+any LCS not using this pair can be rewritten to use it without getting
+shorter.""",
+
+    """A trace on 'abcde' and 'ace' (answer 3).
+Filling row by row, the interesting cells: dp[1][1] ('a' vs 'a') -> match ->
+1 + dp[0][0] = 1. dp[3][2] ('c' vs 'c') -> match -> 1 + dp[2][1] = 1 + 1 = 2.
+dp[5][3] ('e' vs 'e') -> match -> 1 + dp[4][2] = 1 + 2 = 3.
+Answer 3, the subsequence 'ace'. Note it is not contiguous in 'abcde' - the 'b'
+and 'd' are skipped, which is exactly what distinguishes a subsequence from a
+substring.""",
+
+    """Subsequence versus SUBSTRING, since the algorithms differ completely.
+LCS allows gaps and is O(m*n) DP. Longest Common SUBSTRING requires contiguity
+and uses a different recurrence - dp[i][j] = 1 + dp[i-1][j-1] on a match and 0
+otherwise, with the answer being the maximum cell rather than the last one.
+On 'abcde' and 'ace': LCS is 3, longest common substring is 1. Same inputs,
+very different answers - so read the prompt's word carefully before choosing a
+recurrence.""",
+
+    """Reconstructing the actual subsequence, which is the usual follow-up.
+Walk BACKWARDS from dp[m][n]. If a[i-1] == b[j-1], that character is in the
+LCS - prepend it and move diagonally. Otherwise move toward the larger of
+dp[i-1][j] and dp[i][j-1].
+O(m + n) after the table is built. The catch: this needs the FULL table, so it
+is incompatible with the O(n) space reduction - a real trade to state. If you
+only need the length, reduce the space; if you need the string, keep the
+table.""",
+
+    """Edge cases and space.
+Either string empty -> 0, handled by the zero-initialised first row and column
+with no explicit base case needed.
+Identical strings -> the full length. No common characters -> 0.
+One string a subsequence of the other -> the shorter one's length.
+Space: dp[i] depends only on dp[i-1], so two rows give O(min(m,n)) - and swap
+the arguments so the shorter string drives the row width.""",
+
+    """Complexity and the family.
+O(m*n) time and space, reducible to O(min(m,n)) space for the length alone.
+The family: Edit Distance (same table, minimising operations instead of
+maximising matches), Longest Palindromic Subsequence (which IS the LCS of s
+with reverse(s)), Delete Operation for Two Strings (m + n - 2*LCS), Shortest
+Common Supersequence (m + n - LCS), Distinct Subsequences, and Uncrossed Lines -
+which is LCS with the story changed and nothing else.
+Recognising a problem as 'LCS in disguise' turns several Mediums into a
+five-minute answer.""",
+]
+
+_EX_P1U["Merge Sort"] = [
+    """The two phases, traced on [5,2,4,1].
+SPLIT: [5,2,4,1] -> [5,2] and [4,1] -> [5],[2],[4],[1].
+MERGE: [5]+[2] -> [2,5]. [4]+[1] -> [1,4]. Then [2,5]+[1,4]: compare 2 vs 1 ->
+take 1; 2 vs 4 -> take 2; 5 vs 4 -> take 4; left with 5 -> take 5. Result
+[1,2,4,5].
+The recursion tree has log n levels and each level merges a total of n elements,
+which is where O(n log n) comes from - and it is worth stating exactly that
+way rather than quoting the result.""",
+
+    """The `<=` that makes it STABLE, and why stability matters.
+`if left[i] <= right[j]` takes from the LEFT half on a tie, preserving the
+original relative order of equal elements. Change it to `<` and equal elements
+from the right half jump ahead - the sort is still correct but no longer
+stable.
+Stability matters when you sort by one key after another: sort employees by
+name, then by department, and a stable sort leaves each department's names in
+order. With an unstable sort the first pass is destroyed. That is why Python's
+sorted() and Java's Arrays.sort for objects are stable (both use variants of
+merge sort) while C++'s std::sort is not.""",
+
+    """Why O(n log n) ALWAYS, unlike quicksort.
+The split is always exactly in half, so the recursion depth is log n regardless
+of the input - there is no adversarial ordering that degrades it. Quicksort's
+O(n^2) worst case comes from unbalanced partitions, which merge sort structurally
+cannot have.
+The price is O(n) auxiliary space for the merge buffer, which quicksort avoids.
+That is the whole trade: guaranteed time versus in-place memory, and it is the
+answer to 'which sort would you use?'.""",
+
+    """Where merge sort is the RIGHT choice in practice.
+EXTERNAL sorting - a file too large for memory. You sort chunks that fit, write
+them out, then k-way merge the sorted runs streaming from disk. Merging is
+sequential access, which is exactly what disks and network transfers want; a
+quicksort's random access is disastrous there.
+LINKED LISTS - merging needs only pointer rewiring, so merge sort on a list is
+O(1) extra space, while quicksort's random access makes it awkward. This is why
+'sort a linked list in O(n log n) with O(1) space' has merge sort as the
+intended answer.
+And it is the basis of TimSort (Python, Java), which exploits existing runs.""",
+
+    """Edge cases and the common implementation bug.
+Empty or single element -> returned as-is by the base case.
+Already sorted -> still O(n log n); merge sort does not adapt (TimSort does,
+which is its main improvement).
+All equal -> stable and correct.
+The bug to avoid: forgetting to append the REMAINDER of whichever half is left
+after the main while loop. One side always has leftovers, and dropping them
+silently truncates the output - producing a sorted but short array, which is a
+distinctive symptom.""",
+
+    """Complexity and the family.
+Time O(n log n) best, average and worst. Space O(n) for arrays, O(log n) stack
+for the recursion.
+The family: Merge Two Sorted Lists (the merge step alone), Merge k Sorted Lists
+(k-way merge with a heap), Sort List (merge sort on a linked list), Count of
+Smaller Numbers After Self and Reverse Pairs (both solved by counting during
+the merge - a genuinely clever use worth knowing), and Merge Sorted Array.
+The merge step is the reusable primitive; the sort is just what you get by
+applying it recursively.""",
+]
+
+_EX_P1U["Quick Sort"] = [
+    """The Lomuto partition, traced.
+a = [3,7,8,5,2,1,9,5], pivot = 5 (the last element). p marks where the next
+'smaller than pivot' element goes.
+i=0: 3 < 5 -> swap a[0] with a[0], p=1. i=1: 7 not < 5. i=2: 8 no. i=3: 5 not <
+5 (strict). i=4: 2 < 5 -> swap a[4] with a[1] -> [3,2,8,5,7,1,9,5], p=2.
+i=5: 1 < 5 -> swap a[5] with a[2] -> [3,2,1,5,7,8,9,5], p=3.
+Finally swap the pivot into place: a[3] <-> a[7] -> [3,2,1,5,7,8,9,5].
+Pivot 5 is now at index 3 and everything left of it is smaller. That index is
+its FINAL sorted position - which is the invariant the recursion relies on.""",
+
+    """Why the worst case is O(n^2), and the input that causes it.
+If every partition splits off just one element, the recursion depth is n and
+each level costs O(n) -> O(n^2). With Lomuto taking the LAST element as pivot,
+an ALREADY SORTED array does exactly that: the pivot is always the maximum, so
+one side is empty every time.
+That is the cruel irony worth stating - the naive quicksort is worst on the
+input you would most expect to be easy. It is also a real denial-of-service
+vector if an attacker controls the input order.""",
+
+    """The fix, and why randomisation is enough.
+Choose the pivot RANDOMLY (or median-of-three: first, middle, last). Randomising
+makes the O(n^2) case depend on luck rather than on input order, so no
+adversary can force it and the expected time is O(n log n) for every input.
+Median-of-three additionally handles the common near-sorted case well.
+Introsort - what C++'s std::sort actually uses - goes further: run quicksort,
+but if the recursion depth exceeds ~2 log n, switch to heapsort to guarantee
+O(n log n). Naming that shows you know what production sorts do.""",
+
+    """Quicksort versus merge sort, as a real decision.
+QUICKSORT: in-place (O(log n) stack only), excellent cache locality because it
+works on contiguous ranges, faster in practice by a constant factor - but
+O(n^2) worst case and NOT stable.
+MERGE SORT: guaranteed O(n log n), stable, works well on linked lists and
+external data - but needs O(n) auxiliary space.
+So: arrays in memory where average speed matters -> quicksort. Need stability
+or a worst-case guarantee, or sorting a list or a file -> merge sort.""",
+
+    """The duplicates weakness, and three-way partitioning.
+On an array of many equal elements, Lomuto puts all the equals on one side and
+degrades toward O(n^2). The fix is DUTCH NATIONAL FLAG (three-way) partitioning:
+split into less-than, equal-to and greater-than, and recurse only on the outer
+two. Arrays with few distinct values then sort in nearly linear time.
+That is the same three-pointer partition as Sort Colors, which is worth
+connecting - it is not a separate trick, it is quicksort's partition
+generalised.""",
+
+    """Edge cases, complexity and the family.
+Empty or single element -> the recursion's base case.
+All equal -> the pathological case above unless three-way partitioning is used.
+Already sorted or reverse sorted -> pathological with a fixed pivot, fine with
+a random one.
+Time O(n log n) average, O(n^2) worst; space O(log n) expected stack.
+The family: Quickselect (partition but recurse into ONE side - O(n) average for
+the kth largest), Sort Colors (three-way partition), Kth Largest Element, and
+Wiggle Sort II. The partition step is the reusable primitive here, exactly as
+merge is for merge sort.""",
+]
+
+_EX_P1U["Task Scheduler (cooldown)"] = [
+    """The frame picture, which makes the formula obvious.
+Take the most frequent task A with count m. It must appear m times, and between
+consecutive As there must be n other slots. So the schedule looks like
+m-1 frames of width (n+1), plus a final A:
+    [A _ _] [A _ _] [A _ _] A     for m = 4, n = 2
+That skeleton has length (m-1)*(n+1) + 1. Every other task fills the blanks.
+If several tasks tie at count m, each of them must also appear in the final
+group, so the tail is num_max wide rather than 1 - giving
+(m-1)*(n+1) + num_max.""",
+
+    """The trace.
+tasks = A,A,A,B,B,B, n = 2. counts A:3, B:3. max_count = 3, num_max = 2.
+intervals = (3-1)*(2+1) + 2 = 6 + 2 = 8.
+len(tasks) = 6, so the answer is max(8, 6) = 8: A B _ A B _ A B.
+Now n = 0: intervals = (3-1)*1 + 2 = 4, but len(tasks) = 6, so the answer is 6 -
+no idling is needed at all when there is no cooldown.""",
+
+    """Why `max(intervals, len(tasks))` is essential.
+The frame formula counts IDLE slots, which is right only when there are not
+enough other tasks to fill them. With many distinct tasks the blanks all get
+filled and the schedule is simply len(tasks) long - no idling.
+tasks = A,A,A,B,B,B,C,C,C,D,D,E with n = 2: the formula gives (3-1)*3 + 3 = 9,
+but there are 12 tasks, so the answer is 12. Omit the max and you UNDERCOUNT,
+returning a schedule shorter than the number of tasks - which is obviously
+impossible and is the tell that this line is missing.""",
+
+    """Why only the most frequent task matters.
+The bottleneck is whichever task needs the most spacing. Once you have laid out
+its frames, every other task has count <= m, so it can be distributed one per
+frame without ever violating its own cooldown - there is always room.
+That argument is why a counting formula works at all and why you do not need to
+simulate. If you cannot make it, the greedy-heap simulation (always run the
+most frequent available task, hold the others on cooldown) is the fallback and
+gives the same answer in O(t log 26).""",
+
+    """Edge cases.
+n = 0 -> no cooldown -> len(tasks), which the max() delivers.
+All tasks distinct -> len(tasks).
+One task type, A x 4 with n = 2 -> (4-1)*3 + 1 = 10: A _ _ A _ _ A _ _ A.
+Correct, and it is the case where idling dominates.
+Every task tied at the max count -> num_max equals the number of distinct
+tasks, and the tail is that wide.
+Empty input -> 0.""",
+
+    """Complexity and the family.
+O(t) time to count (O(26) for the max), O(1) space bounded by the alphabet.
+The simulation alternative is O(t log 26) with a heap and is worth knowing
+because it also produces the actual SCHEDULE, which the formula does not - if
+the interviewer asks for the ordering rather than the length, the formula is
+insufficient.
+The family: Reorganize String (the same 'most frequent task is the bottleneck'
+greedy with n = 1), Rearrange String k Distance Apart (the general version),
+Distant Barcodes, and Maximum Frequency Stack.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1U:
+        _e["examples"] = _EX_P1U[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
