@@ -29252,6 +29252,249 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1F[_e["title"]]
 
 
+_EX_P1G = {}
+
+_EX_P1G["Minimum Number of Coins for Fruits"] = [
+    """The offer, restated so the DP makes sense.
+Buying the i-th fruit (1-indexed) at price[i] grants the NEXT i fruits free.
+So buying fruit 1 covers fruit 2. Buying fruit 3 covers fruits 4, 5 and 6.
+Crucially you MAY still pay for a free fruit, because doing so buys its own
+offer - a cheap fruit deep in the list can unlock a long free run.
+That last sentence is the whole difficulty: a greedy 'always take the free
+fruit' is wrong, because paying for something you could have had free can be
+cheaper overall.""",
+
+    """A trace on prices = [3,1,2].
+dp has size n+2 with dp[4] = 0 (nothing left).
+i=3: buying fruit 3 covers 4..6, all past the end. upper = min(4, 7) = 4, so
+     j ranges over {4}: dp[3] = 2 + dp[4] = 2.
+i=2: buying fruit 2 covers fruit 3. upper = min(4, 5) = 4, j in {3,4}:
+     dp[2] = 1 + min(dp[3], dp[4]) = 1 + min(2, 0) = 1.
+     (Choosing j=4 means fruit 3 came free.)
+i=1: buying fruit 1 covers fruit 2. upper = min(4, 3) = 3, j in {2,3}:
+     dp[1] = 3 + min(dp[2], dp[3]) = 3 + min(1, 2) = 4.
+Answer 4: buy fruit 1 for 3 (fruit 2 free), then pay 1 for fruit 2 anyway to
+get fruit 3 free... which costs 4 total. Tracing this by hand is the only way
+to be sure the index arithmetic is right.""",
+
+    """Why the inner range ends at 2i+1, which is the index detail that sinks people.
+Buying fruit i covers i+1 through 2i. So the next fruit you might PAY for is
+anywhere from i+1 (you decline the offer immediately) up to 2i+1 (you take
+every free fruit and resume paying just past the covered block).
+Hence `for j in range(i+1, min(n+1, 2*i+1) + 1)`. Off by one in either
+direction gives a wrong answer that still looks plausible on small inputs -
+which is exactly why the three-element trace above is worth doing out loud.""",
+
+    """Why iterate BACKWARDS.
+dp[i] depends on dp[j] for j > i - states to its RIGHT. So the table must be
+filled from n down to 1, and dp[n+1] = 0 is the base case meaning 'nothing
+remains to buy'. Fill forwards and every dp[j] you read is still the
+uninitialised zero, so the answer collapses to price[1].
+The general rule: look at which direction the recurrence reaches, and iterate
+against it. Forward-reaching recurrences fill backwards.""",
+
+    """Edge cases.
+[1] -> i=1, upper = min(2,3) = 2, j in {2}: dp[1] = 1 + dp[2] = 1. One fruit,
+you must buy it.
+[1,1,1] -> buying fruit 1 (cost 1) covers fruit 2; then fruit 3 must be paid or
+covered - dp works out to 2. Verify by hand that taking the free fruit is not
+always right.
+All-expensive-then-cheap like [10,1,1,1] -> buying fruit 1 for 10 covers only
+fruit 2, so paying 1 for fruit 2 to cover 3 and 4 is better than it looks.
+That is the case that defeats greedy.""",
+
+    """Complexity, and the optimisation.
+As written it is O(n^2): for each i the inner min scans up to i+1 positions.
+For n <= 1000 that is fine.
+The follow-up is to notice the inner operation is 'minimum of dp over a sliding
+window', which a monotonic deque computes in O(1) amortised - giving O(n)
+overall. Naming that reduction (the same technique as Sliding Window Maximum
+and Jump Game VI) is the strong finish, even if you do not implement it.""",
+]
+
+_EX_P1G["Network Delay Time (Dijkstra application)"] = [
+    """The example, traced.
+times = [[2,1,1],[2,3,1],[3,4,1]], n = 4, k = 2.
+heap [(0,2)]. Pop (0,2) -> dist[2] = 0; push (1,1) and (1,3).
+Pop (1,1) -> dist[1] = 1; node 1 has no outgoing edges.
+Pop (1,3) -> dist[3] = 1; push (2,4).
+Pop (2,4) -> dist[4] = 2.
+All four nodes reached, so the answer is max(0,1,1,2) = 2.
+The MAX is the point: the signal has reached everyone only when the slowest
+recipient has it, so the answer is the largest shortest-path, not the sum and
+not the average.""",
+
+    """Why the answer is a max of shortest paths, which is the modelling step.
+Two things are happening at once. Each node receives the signal at its SHORTEST
+distance from k, because the signal propagates along every edge simultaneously.
+And 'all nodes have received it' happens at the LAST of those times.
+So the problem is single-source shortest paths followed by a max - and
+recognising that a word problem about signals is Dijkstra underneath is most of
+what is being tested. If any node is unreachable, no finite time exists, hence
+the -1.""",
+
+    """The lazy-deletion pattern, which is the implementation detail worth knowing.
+`if node in dist: continue` is doing real work. A node can be pushed onto the
+heap several times with different tentative distances, from different
+predecessors. The FIRST time it is popped, the heap guarantees that is its
+smallest distance, so it is finalised; every later pop of the same node is
+stale and must be skipped.
+The alternative - a decrease-key operation - needs an indexed priority queue
+that Python's heapq does not provide. Pushing duplicates and skipping stale
+pops is the standard workaround, and it costs at most O(E) heap entries.""",
+
+    """Why Dijkstra and not BFS - and when it would break.
+BFS finds shortest paths only when every edge has the SAME weight, because it
+explores in order of hop count. Here edges have different delays, so a two-hop
+path can be faster than a one-hop path, and BFS would return the wrong answer.
+Dijkstra handles arbitrary NON-NEGATIVE weights.
+The limit to state: with negative edges Dijkstra is wrong - it finalises a node
+on first pop, and a later negative edge could have improved it. That needs
+Bellman-Ford at O(V*E), which also detects negative cycles.""",
+
+    """Edge cases.
+n = 1, k = 1, no edges -> dist = {1: 0}, len(dist) == n, answer 0. The signal
+is already there.
+An unreachable node -> len(dist) < n -> -1. This is why the check is on the
+COUNT of reached nodes rather than on whether the heap emptied.
+Self-loops and parallel edges are harmless: a self-loop is skipped by the
+`in dist` guard, and among parallel edges the cheaper one simply pops first.
+A disconnected graph where k is isolated -> dist has one entry -> -1.""",
+
+    """Complexity and the family.
+O(E log V) time - every edge can push one heap entry, and each heap operation
+is log of the heap size. O(V + E) space for the graph plus the heap.
+The family: Cheapest Flights Within K Stops (Dijkstra with a hop constraint, or
+Bellman-Ford relaxed exactly K+1 times), Path With Minimum Effort (Dijkstra
+where the path cost is a max rather than a sum), Swim in Rising Water, and
+Minimum Cost to Reach Destination in Time. The recognition cue is a shortest or
+cheapest path over WEIGHTED edges - unweighted means BFS, weighted and
+non-negative means Dijkstra, negative means Bellman-Ford.""",
+]
+
+_EX_P1G["Palindrome Partitioning (backtracking)"] = [
+    """The example, traced as a decision tree.
+s = 'aab'. backtrack(0, []):
+  end=1: 'a' is a palindrome -> path ['a'], recurse from 1
+    end=2: 'a' -> path ['a','a'], recurse from 2
+      end=3: 'b' -> path ['a','a','b'], start == 3 -> RECORD
+    end=3: 'ab' not a palindrome -> skip
+  end=2: 'aa' is a palindrome -> path ['aa'], recurse from 2
+    end=3: 'b' -> ['aa','b'], start == 3 -> RECORD
+  end=3: 'aab' not a palindrome -> skip
+Result [['a','a','b'], ['aa','b']].
+Every branch either extends with a palindromic piece or is pruned immediately -
+the palindrome check IS the pruning.""",
+
+    """The three lines that make it backtracking rather than recursion.
+    path.append(piece)      # choose
+    backtrack(end, path)    # explore
+    path.pop()              # UN-choose
+That pop is what lets one list be reused across the whole search instead of
+allocating a new one per branch. Forget it and pieces from a finished branch
+leak into the next one, producing partitions that were never valid.
+And `result.append(path[:])` must COPY - appending path itself stores a
+reference to a list that keeps mutating, so every recorded answer ends up
+identical (and usually empty). Those two lines are where this problem is
+actually lost.""",
+
+    """Why the palindrome check goes BEFORE the recursion.
+Checking first prunes the entire subtree under a non-palindromic piece. On
+'aab', the branch for 'ab' dies immediately instead of exploring everything
+beneath it.
+Generate-then-filter - enumerate all 2^(n-1) cuts and keep the valid ones -
+gives the same answer and explores exponentially more. The lesson generalises
+to every backtracking problem: push the constraint as early as possible, which
+is the difference between N-Queens finishing and N-Queens hanging.""",
+
+    """Complexity, and why it is exponential no matter what.
+A string of n characters has n-1 possible cut positions, so 2^(n-1) partitions
+in the worst case - and for 'aaaa...' EVERY partition is valid, so the output
+alone is exponential. Time O(n * 2^n) counting the palindrome checks and the
+copies; space O(n) for the recursion and the path, excluding the output.
+You cannot beat exponential when the OUTPUT is exponential. That distinction -
+between an algorithm being slow and the answer being large - is worth stating,
+because it tells the interviewer you know optimisation is pointless here.""",
+
+    """The optimisation that IS available: memoise the palindrome test.
+`is_pal` is called repeatedly on overlapping substrings. Precompute a table
+pal[i][j] with the standard interval DP - pal[i][j] is true when s[i] == s[j]
+and pal[i+1][j-1] - in O(n^2) time and space. The search then does O(1) checks
+instead of O(n) string comparisons and slices.
+This does not change the exponential class, but it is the right answer to 'can
+you speed it up?' and it reuses the Longest Palindromic Subsequence table
+shape.""",
+
+    """Edge cases and the family.
+'' -> start == 0 == len(s) immediately, so the result is [[]] - one empty
+partition. Check whether the prompt wants that or [].
+'a' -> [['a']]. 'abc' with no repeats -> [['a','b','c']], the only partition.
+'aaaa' -> 8 partitions, the exponential worst case.
+The family: Palindrome Partitioning II asks for the MINIMUM cuts, which is DP
+not backtracking, because you want one number rather than all answers - a very
+common follow-up and a genuinely different algorithm. Word Break II has the
+identical shape with a dictionary check replacing the palindrome check.""",
+]
+
+_EX_P1G["Path Sum II (all root-to-leaf paths)"] = [
+    """The example, traced.
+Tree 5 -> (4 -> (11 -> (7, 2)), 8 -> (13, 4 -> (5, 1))), target 22.
+Path 5,4,11,7: at 7, remaining is 22-5-4-11 = 2, and 7 != 2 -> not recorded.
+Path 5,4,11,2: remaining at 2 is 2, and it is a leaf -> RECORD [5,4,11,2].
+Path 5,8,13: remaining 9 != 13 -> no. Path 5,8,4,5: remaining at 5 is 5 ->
+RECORD [5,8,4,5]. Path 5,8,4,1: remaining 5 != 1 -> no.
+Result [[5,4,11,2],[5,8,4,5]].
+Note the leaf test and the sum test must BOTH hold - a node whose remaining
+equals its value but which has children is not an answer.""",
+
+    """Why the leaf check is `left is None and right is None`.
+A node with one child is NOT a leaf, and this is the classic trap. If you test
+only `node.left is None`, then a node with only a right child is wrongly
+treated as a leaf and you record a path that does not reach the bottom.
+Same asymmetry as Minimum Depth. Any problem containing the words 'root-to-leaf'
+needs this two-sided check, and interviewers construct single-child trees
+specifically to catch it.""",
+
+    """The copy, which is the other half of the problem.
+`result.append(path[:])` must copy. `path` is one list mutated throughout the
+whole traversal, so appending it directly stores a reference - and by the time
+the traversal finishes, every recorded 'path' is the same empty list.
+The symptom is distinctive: the right NUMBER of answers, all of them wrong and
+identical. If you ever see that, the missing copy is the cause.""",
+
+    """The backtracking pop, and where it must sit.
+`path.pop()` runs on the way OUT of every node, including the recorded ones -
+which is why it sits after the if/else rather than inside the else. Miss it on
+the recording branch and the leaf stays on the path while the sibling subtree
+is explored, corrupting every later answer.
+A cleaner formulation some prefer passes `path + [node.val]` down instead,
+which needs no pop at all - at the cost of allocating a new list per node. Say
+which you chose and why; the trade is clarity versus allocations.""",
+
+    """Complexity, stated carefully.
+Time is O(n^2) in the worst case, NOT O(n). Traversal is O(n), but COPYING a
+path costs O(height), and there can be O(n) qualifying leaves - a balanced tree
+with many matches gives O(n log n), and a pathological tree gives O(n^2).
+Space is O(h) for the recursion and the path, plus O(number of paths * length)
+for the output. Getting the copy cost into the complexity statement is a detail
+that distinguishes a careful answer.""",
+
+    """The family, and the sibling that needs a different technique.
+Path Sum I (does ANY root-to-leaf path sum to target) is the boolean version -
+same recursion, return early on the first hit. Binary Tree Paths is this
+problem without the sum condition. Sum Root to Leaf Numbers accumulates digits
+instead.
+Path Sum III is the one that changes technique entirely: paths may start and
+end anywhere, so backtracking over root-to-leaf paths no longer applies and you
+switch to a prefix-sum hash map for O(n). Knowing which sibling needs which
+tool is the point of studying them together.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1G:
+        _e["examples"] = _EX_P1G[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
