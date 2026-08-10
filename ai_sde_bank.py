@@ -29591,6 +29591,407 @@ commitment as distinct beats; Google wants to hear that you updated and that
 the team functioned. Same events, different emphasis.""",
 ]
 
+_EX_P0LP["STAR: Diving deep to find a root cause others missed (Dive Deep)"] = [
+    """A full student-scale answer.
+SITUATION: Our group's model scored 0.91 on validation and about 0.62 on the
+held-out test set the supervisor kept. The team's read was 'overfitting, add
+dropout'.
+TASK: Nobody had checked WHY, and dropout was a guess.
+ACTION: Rather than tuning, I went down a level. I plotted the score by data
+source and found the gap was almost entirely in rows that came from one of the
+three CSVs we had concatenated. Opening that file, the label column had been
+exported with a different encoding, so roughly 8% of its labels were shifted by
+one row. It was not overfitting at all - a third of our training labels for
+that source were simply wrong, and the model had faithfully learned the noise.
+RESULT: Fixing the join took an afternoon; the test score went to 0.88 with no
+model change. We added a row-count and label-distribution assertion to the
+loader so a silent mis-join could not recur.""",
+
+    """What 'dive deep' is actually testing.
+The LP is 'leaders operate at all levels, stay connected to the details, audit
+frequently, and are sceptical when metrics and anecdote differ'. So the graded
+behaviour is that you did not accept the first plausible explanation. In the
+example, the tell is 'the team's read was overfitting' followed by measurement
+that contradicted it - a hypothesis that was reasonable and wrong, disproved
+with evidence rather than argument.
+A story where you dug into details that everyone already agreed on does not
+demonstrate the LP. There must be a prevailing assumption that your digging
+overturned.""",
+
+    """The weak version.
+'The model wasn't performing well so I tried several hyperparameter
+combinations and eventually found one that worked better.' That is search, not
+diagnosis - you never learned WHY, so you cannot prevent it and cannot explain
+it. Interviewers hear this constantly from students because it is what tuning
+scripts encourage.
+Also weak: 'I read through all the code carefully.' Diving deep is not
+thoroughness for its own sake; it is following a specific signal to a specific
+root cause. Name the signal you followed.""",
+
+    """The five-whys shape, which is a good structure to narrate.
+Test score is low -> WHY? Because errors concentrate in one data source ->
+WHY? Because its labels disagree with the features -> WHY? Because the label
+column is offset by one row -> WHY? Because the CSV had a different encoding
+and our join silently mismatched -> WHY? Because the loader never asserted that
+row counts matched after the join.
+Notice the last why is the one that produces the systemic fix. Stopping at
+'the labels were wrong' fixes today; stopping at 'the loader had no assertion'
+fixes the class. Interviewers listen for whether you got to the last one.""",
+
+    """The probe that separates real dives from tidy narratives.
+'How did you know to look at the data source rather than the model?' The honest
+answer usually involves a cheap diagnostic step - plotting error by segment,
+looking at the worst-scoring examples by hand, checking the label distribution
+- and 'I looked at fifty of the misclassified rows' is a very strong sentence
+because almost nobody does it.
+Second probe: 'what else could it have been, and how did you rule that out?'
+Have two alternatives you eliminated with evidence. A root cause with no
+discarded hypotheses sounds reverse-engineered.""",
+
+    """Where Dive Deep becomes a negative signal.
+The LP is not licence to micromanage or to rebuild something from scratch
+because you do not trust it. If your story is 'I rewrote my teammate's module
+because I wanted to understand it', that reads as poor collaboration.
+Similarly, diving deep into something that did not matter - a two-day
+investigation of a 0.2% discrepancy under deadline - shows poor judgement about
+where detail pays. The strong version always includes why the detail was worth
+the time: 'a third of one source's labels were wrong' justifies an afternoon;
+a rounding difference does not.""",
+]
+
+_EX_P0LP["STAR: Earning trust after a mistake / owning an incident (Earn Trust / Ownership)"] = [
+    """A full student-scale answer.
+SITUATION: During my internship I ran a backfill script against what I believed
+was staging. It was production, and it overwrote a column for about 12,000
+rows with a default value.
+TASK: Contain it and be honest, in that order, fast.
+ACTION: I noticed within about two minutes because the output row count did not
+match staging's size. I told my mentor immediately, and because it was late
+afternoon I also said it in the team channel so nobody built on the bad data
+while she and I worked. We restored from the previous night's backup within the
+hour, and I wrote the reconciliation query that proved every affected row
+matched the backup. Then the part I care about more: the root cause was that my
+shell prompt did not show the environment and the migration tool took a
+connection string with no confirmation. I added an environment banner to the
+shared setup script and a required --confirm-production flag.
+RESULT: About a 50-minute window, no downstream impact. Two other interns later
+told me the banner had stopped them making the same mistake.""",
+
+    """Speed of disclosure is the graded behaviour.
+Earn Trust is 'leaders listen attentively, speak candidly, and treat others
+respectfully; they are vocally self-critical, even when doing so is awkward'.
+The single most important sentence in this story is that the candidate told
+people within minutes, in public, before the damage was contained. That is the
+thing being tested - not the technical recovery, which anyone can do.
+A story where you fixed it quietly and mentioned it later fails the LP even if
+the outcome was identical, and interviewers will ask 'who did you tell, and
+when?' precisely to find out.""",
+
+    """Owning it in the first person, without theatre.
+'That was my mistake' is a sentence to practise saying cleanly, because
+interviewers notice candidates who cannot. Two failure modes bracket it.
+Deflection: 'the staging and production configs were confusingly named' - true,
+and it reads as blaming the environment. Wallowing: two minutes of
+self-criticism, which reads as fragile rather than accountable.
+The calibrated version states the error plainly in one sentence, spends the
+rest on containment and the systemic fix, and mentions the contributing factor
+only as the thing you then FIXED - which is what the environment banner does
+here.""",
+
+    """The systemic fix is what converts a confession into an engineering story.
+Anyone can apologise. What Amazon wants is the sentence 'and I made it
+impossible for anyone to do that again' - a test, a guard, a required flag, a
+CI check, a runbook. In this story the banner and the --confirm-production flag
+are worth more than the backup restore, because they persist after you leave.
+If your mistake genuinely admits no systemic fix, say what you changed about
+your own process instead ('I now dry-run every migration against a row count
+first') - weaker, but honest.""",
+
+    """Choosing the story, since the stakes have to be real.
+It must be a genuine mistake with genuine consequences - 'I once worked too
+hard' or 'I was too detail-oriented' is transparent and mildly insulting. But
+it should not be an integrity failure or a judgement catastrophe: data loss, a
+broken shared build, a bug that cost a teammate a day, a wrong number in a
+report someone presented are all ideal. Student-scale is fine - force-pushing
+over a teammate's branch is a perfectly good version of this story.""",
+
+    """The probes.
+'What did your manager say?' - real feedback makes it credible; a story where
+nobody reacted sounds invented. 'Has it happened again?' - the answer should be
+no, because of the systemic fix, and if a related thing did happen, say what
+you learned the second time. 'Why did you tell the whole channel rather than
+just your mentor?' - because others were about to build on the data, which
+shows you thought about blast radius rather than about your own embarrassment.
+That last one is the answer that earns the LP its name.""",
+]
+
+_EX_P0LP["STAR: Insisting on the right long-term solution over a quick hack (Are Right, A Lot / Insist on Highest Standards)"] = [
+    """A full student-scale answer.
+SITUATION: Our capstone's data loader broke whenever the university API
+returned a null field, which was roughly weekly. The team's fix was a
+try/except that skipped the failing row.
+TASK: With four weeks left, the quick fix was genuinely tempting.
+ACTION: I argued for spending a day on it instead, and made the case with
+evidence rather than principle: I counted the skipped rows over the previous
+fortnight - about 3% of the dataset, and NOT at random, because the nulls
+concentrated in one department's records. So the hack was silently biasing our
+training data, which would have shown up as an unexplainable evaluation result
+later. I proposed explicit schema validation with typed defaults and a logged
+counter for anything rejected.
+RESULT: A day of work; the 3% came back, the department skew disappeared, and
+when the API changed again in week three the validation error named the field
+instead of silently dropping rows.""",
+
+    """The evidence is what makes it 'Are Right, A Lot' rather than pedantry.
+The LP is about having good judgement and seeking diverse perspectives to
+disconfirm your own beliefs - it is not about being stubborn. So the story must
+show WHY the long-term solution was right in this instance, with something
+measured: 3% of rows, non-randomly distributed. Without that, the same story is
+'I insisted on doing it properly', which an interviewer hears as someone who
+will over-engineer under deadline.
+The strongest versions also acknowledge the cost you were asking the team to
+pay - a day, with four weeks left - because insisting on standards while
+pretending it is free is not a trade-off, it is a preference.""",
+
+    """When the hack is the RIGHT answer, which you must be able to say.
+If you cannot name a situation where you would take the quick fix, the LP
+becomes a red flag. The honest framing: a hack is right when the cost of being
+wrong is low and reversible, when the deadline is genuinely fixed and external,
+and when you write down the debt. 'We shipped the try/except for the demo, with
+a TODO and a ticket, and fixed it properly the week after' is a perfectly good
+answer - what makes it good is that the debt was VISIBLE rather than forgotten.
+Interviewers probe this directly: 'when would you have taken the shortcut?'""",
+
+    """The weak version.
+'I always do things properly and I refused to cut corners.' No evidence, no
+cost acknowledged, no judgement demonstrated - and it implies you would do this
+under any deadline, which is a hiring risk rather than a virtue.
+Also weak: a story where insisting cost nothing. If the right solution was also
+the fast one, the LP was never tested. There has to be a real trade you argued
+for and won, and ideally something you gave up elsewhere to pay for it.""",
+
+    """Insist on the Highest Standards, stated as Amazon means it.
+'Leaders have relentlessly high standards - many people may think these
+standards are unreasonably high. They continually raise the bar and drive their
+teams to deliver high-quality products, services and processes. Leaders ensure
+that defects do not get sent down the line and that problems are fixed so they
+stay fixed.'
+That last clause is the one to hit: FIXED SO THEY STAY FIXED. The schema
+validation in the story qualifies because the next API change produced a named
+error rather than silent data loss. A fix that merely handles today's instance
+does not clear the bar.""",
+
+    """The probes.
+'How did you convince the team?' - data plus a bounded cost ('one day') beats
+argument; say who pushed back and what changed their mind. 'What if they had
+said no?' - you disagree and commit, and you make the risk visible in writing
+so the decision is informed rather than accidental. 'What did it cost?' - name
+the day, and what did not get done because of it. 'How did you know 3% mattered
+but 0.1% would not?' - this is the judgement question underneath the whole LP,
+and the answer is about whether the loss is RANDOM or SYSTEMATIC, not about
+the size.""",
+]
+
+_EX_P0LP["STAR: Learning something hard and outside your expertise fast (Learn and Be Curious)"] = [
+    """A full student-scale answer.
+SITUATION: My internship task needed the recommendations served under 100ms,
+and the existing path recomputed embeddings per request. I had never used a
+vector index and had a week.
+TASK: Nobody on the team had time to teach me.
+ACTION: I gave myself a day of reading with a deliverable attached rather than
+open-ended study - I read the HNSW paper and wrote a one-page summary of what M
+and efSearch actually control, because forcing myself to explain it is how I
+find out what I have not understood. Then I built the smallest possible test:
+10,000 vectors, brute force versus HNSW, measuring recall and latency for
+myself instead of trusting the README. That surfaced the thing the docs
+underplayed - recall drops sharply below efSearch 40 on our data.
+RESULT: Shipped at p95 of 45ms with recall@10 of 0.97. I left the one-pager in
+the repo, and the engineer who took over the service after me used it.""",
+
+    """Learning is not the story - APPLYING under pressure is.
+Learn and Be Curious is 'leaders are never done learning and always seek to
+improve themselves; they are curious about new possibilities and act to explore
+them'. The operative word is ACT. A story that is only 'I took a course' or 'I
+read a lot about X' scores poorly because there is no outcome and no pressure.
+The shape that scores: I did not know X -> I needed it for a real deadline -> I
+learned it in a specific, bounded way -> I shipped something -> here is the
+evidence I actually understood it (a measurement, a decision, a thing I taught
+someone else).""",
+
+    """Naming your METHOD is what makes this answer distinctive.
+Everyone learns things; few can describe how. Concrete methods that read well:
+attach a deliverable to the reading (the one-pager), build the smallest
+possible experiment rather than trusting documentation, deliberately measure
+the claim you are relying on, find the one person who knows and prepare three
+specific questions rather than asking for a tutorial, and teach it to someone
+as a comprehension test.
+'I read the paper and wrote a summary so I would find out what I had not
+understood' is the sentence interviewers remember, because it shows a system
+rather than diligence.""",
+
+    """The weak version.
+'I taught myself PyTorch by doing an online course over the summer.' No
+pressure, no application, no outcome, and nothing that distinguishes you from
+every other candidate who lists a course. If a course is genuinely your only
+material, anchor it to something you then BUILT and a problem you then solved -
+the course is the setup, not the story.
+Also weak: 'I learn quickly.' The LP asks for evidence, and the evidence is
+always a deadline plus a shipped thing.""",
+
+    """The probe that finds bluffers, and how to survive it.
+'Explain HNSW to me.' If your story claims you learned something, expect to be
+tested on it right there - so never choose a topic you cannot still explain two
+levels down. Have ready: what problem it solves, the core mechanism in one
+sentence, the main knob and what it trades, and one thing you got wrong at
+first.
+That last part is unusually valuable: 'I initially assumed higher M would fix
+recall, and measuring showed efSearch mattered far more on our data' proves the
+learning was real rather than recited.""",
+
+    """The Google version, which weights it differently.
+Google treats intellectual curiosity as a core Googleyness signal but cares
+less about the deadline framing. Lead instead with the curiosity and the
+sharing: 'I wanted to know why the index was fast rather than just that it was,
+so I read the paper and benchmarked it myself - and the one-pager I wrote ended
+up being what the next engineer used.' Amazon wants learned-under-pressure-and-
+delivered; Google wants curious-and-made-others-better. Same week of work.""",
+]
+
+_EX_P0LP["STAR: Raising the bar on hiring or quality (Hire and Develop the Best)"] = [
+    """A student-scale answer, since you will not have hired anyone.
+SITUATION: A second-year joined our robotics team and was assigned sensor
+calibration. After a week he had committed nothing and had stopped coming to
+stand-ups; the group's assumption was that he was not up to it.
+TASK: His module blocked my part of the pipeline, and nobody had actually asked
+him what was wrong.
+ACTION: I paired with him for an hour and found the problem was not the maths -
+our repo had no setup instructions and he had spent five days fighting the
+build, too embarrassed to say so in front of four people. So I did two things
+deliberately: I sat with him while HE fixed the build on his own machine,
+narrating what I was checking rather than typing, and I wrote a ten-line
+SETUP.md so the next person would not lose a week. I did not touch his module.
+RESULT: He shipped calibration that week and went on to own the entire sensor
+stack, including two modules nobody helped with. Onboarding for the two who
+joined later went from days to about an hour.""",
+
+    """What the LP means when you have no hiring authority.
+'Hire and Develop the Best' is 'leaders raise the performance bar with every
+hire and promotion; they recognise exceptional talent and willingly move them
+throughout the organisation; leaders develop leaders and take seriously their
+role in coaching others'. For a new grad the accessible half is DEVELOP, and
+the graded behaviour is making someone else more capable - not doing their work
+for them.
+The proof sentence is what they did AFTERWARDS without you: 'he went on to own
+the entire sensor stack'. Candidates almost always omit that, and it is the
+only evidence that you taught rather than rescued.""",
+
+    """The anti-pattern, which is the most common answer to this question.
+'My teammate was struggling so I took over their part and finished it.' That is
+absorbing, not developing: the person learned nothing, you now own two jobs, and
+the team's capacity is unchanged. It also reads as someone who will silently
+carry underperformers rather than address the cause - the opposite of raising a
+bar.
+The distinguishing question to ask yourself about your story: is the other
+person MORE capable at the end than at the start? If not, pick a different
+story.""",
+
+    """The 'raising the bar' half, which also has a student version.
+You can demonstrate this through process rather than people: introducing code
+review to a group project that had none, adding CI so broken code could not
+merge, insisting on a test for the bug class that had bitten twice, writing the
+README that stopped the same question recurring. Each raises the floor for
+everyone who comes after, which is the same idea as raising a hiring bar
+applied to a codebase.
+Pair it with a number if you can - 'onboarding went from days to an hour' -
+because bar-raising claims without evidence sound like opinion.""",
+
+    """The probes.
+'How did you know he needed help?' - you noticed a signal (stopped committing,
+stopped attending), which shows attentiveness; being asked is weaker than
+noticing. 'Why didn't you just do it?' - the deadline maths, and the fact that
+his module was one of four he would own. 'How did you avoid undermining him?' -
+asked before offering, let him type, let him own the commit and the credit.
+'What if he still had not improved?' - then you adjust the plan honestly and
+escalate with facts, which is a different LP but a fair question.""",
+
+    """Where interviewers push hardest on this one.
+They will test whether you can assess talent honestly, because the LP is about
+a BAR. Expect 'have you ever worked with someone who was not good enough?' The
+answer that works is specific and non-contemptuous: describe what the gap was
+in terms of behaviour rather than character, what you tried, and what the
+outcome was - including if it did not resolve. Refusing to say anyone ever
+underperformed reads as either inexperience or evasion, and contempt reads far
+worse.""",
+]
+
+_EX_P0LP["STAR: Simplifying/inventing to remove a bottleneck (Invent and Simplify)"] = [
+    """A full student-scale answer.
+SITUATION: Our six-person capstone had no shared way of running experiments -
+everyone had a notebook, results were screenshots pasted into the group chat,
+and we twice spent a meeting arguing about numbers nobody could reproduce.
+TASK: Nobody owned the problem and we were losing most of a day a week to it.
+ACTION: Rather than proposing a process, I built the smallest thing that would
+prove it: one evening, a script that took a YAML config, logged metrics to a
+shared CSV, and printed a comparison table. Then I re-ran two teammates'
+existing experiments through it so they saw their own numbers come out
+identical - which made it concrete rather than a suggestion. I also converted
+their two notebooks myself, so adopting it cost them nothing.
+RESULT: All six of us were using it within a week and the reproducibility
+arguments stopped. The final report had a comparison table we could defend to
+the examiners. A teammate later replaced the CSV with proper experiment
+tracking, which was better than what I built.""",
+
+    """'Simplify' is the half people forget.
+The LP is 'leaders expect and require innovation and invention from their teams
+and always find ways to simplify - they are externally aware, look for new
+ideas from everywhere, and are not limited by not invented here'. Interviewers
+see plenty of invention stories and very few simplification ones, so a story
+about REMOVING something is often more distinctive: deleting a service, merging
+three scripts into one, replacing a config system with a convention, cutting a
+feature nobody used.
+'I replaced 200 lines of branching with a lookup table' is a perfectly good
+answer to this LP and reads as more mature than building something new.""",
+
+    """Why building the smallest version beats proposing it.
+The action that made the story work was shipping a rough script in one evening
+and running someone else's data through it. A proposal invites debate about a
+thing nobody can see; a working sliver moves the conversation to 'should we
+extend this', which is a much easier argument to win with no authority.
+This is the same idea as a two-way door: a one-evening script is cheap to throw
+away, so it needs no permission. Saying that explicitly - 'it was an evening,
+so it was cheaper to build than to argue about' - lands well.""",
+
+    """The weak version.
+'I suggested we should standardise how we ran experiments and eventually
+everyone agreed.' No artefact, no adoption mechanism, no measurable change, and
+the passive 'eventually everyone agreed' hides whether anything actually
+happened.
+Also weak: an invention nobody used. If your story ends with 'but the team kept
+doing it the old way', it needs a reflective ending about WHY - usually that
+you solved a problem people did not feel, or made adoption expensive. That
+version can still score, as a learning story, if you own the diagnosis.""",
+
+    """Not-invented-here, which the LP calls out by name.
+The principle explicitly says leaders are 'not limited by not invented here'.
+So an equally valid story is the one where you did NOT build: 'I was about to
+write a config loader and found the department already had one, so I used it
+and contributed the two fixes we needed.' Interviewers like this because most
+candidates only tell build stories, and choosing not to build is usually the
+more senior decision.
+If both are available, the story where you deleted or reused something tends to
+be more memorable than the one where you added.""",
+
+    """The probes.
+'How did you get people to adopt it?' - the mechanism matters more than the
+idea: you converted their notebooks so adoption was free. 'What did it replace,
+and what did that cost?' - name the before state in time or errors. 'What would
+you do differently?' - here the honest answer is often 'I'd have asked whether
+a tool already existed before writing one', which pairs neatly with the
+not-invented-here point. 'What happened to it afterwards?' - 'someone replaced
+it with something better and I handed it over' is a strong ending, because it
+shows the goal was the outcome rather than the ownership.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P0LP:
         _e["examples"] = _EX_P0LP[_e["title"]]
