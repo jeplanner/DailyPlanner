@@ -31519,6 +31519,18 @@ for _e in ENTRIES:
 # question phrasing survives as a searchable alias, and the duplicate entry is
 # dropped. Net: 13 fewer entries, no content lost, and the surviving entry
 # reads rubric -> model answer -> probes in one place.
+# Two entries that are genuinely the SAME topic under two titles, found by a
+# normalised-title scan. Everything else that scan flagged - House Robber vs
+# House Robber II, Path Sum I/II/III, Single Number I/II/III - are legitimate
+# sequels with different algorithms, so only these two are folded. Keyed
+# duplicate -> canonical (the richer entry survives).
+_TITLE_DUPLICATES = {
+    "How Many Numbers Are Smaller Than the Current Number":
+        "How Many Numbers Are Smaller Than the Current",
+    "Reverse proxy vs forward proxy":
+        "Forward proxy vs reverse proxy",
+}
+
 _LP_DUPLICATES = {
     "Tell me about a time you put the user first (LP: Customer Obsession)":
         "STAR: Customer obsession -- starting from the customer and working backward",
@@ -31841,6 +31853,22 @@ for _dup_title, _canon_title in _LP_DUPLICATES.items():
 if _folded:
     _drop = set(_folded)
     ENTRIES[:] = [_e for _e in ENTRIES if _e["title"] not in _drop]
+
+# Same treatment for the two same-topic-different-title pairs. Here there is no
+# script to fold in - the surviving entry already covers the topic - so the
+# duplicate's title is kept only as a searchable alias.
+_by_title = {_e["title"]: _e for _e in ENTRIES}
+_dropped_titles = []
+for _dup_title, _canon_title in _TITLE_DUPLICATES.items():
+    _dup, _canon = _by_title.get(_dup_title), _by_title.get(_canon_title)
+    if _dup is None or _canon is None:
+        continue
+    _canon["tags"] = sorted(set(_canon.get("tags", [])) | set(_dup.get("tags", [])))
+    _canon.setdefault("aliases", []).append(_dup_title)
+    _dropped_titles.append(_dup_title)
+if _dropped_titles:
+    _drop2 = set(_dropped_titles)
+    ENTRIES[:] = [_e for _e in ENTRIES if _e["title"] not in _drop2]
 
 
 # ══ Prep time & stack rank ════════════════════════════════════════════════
