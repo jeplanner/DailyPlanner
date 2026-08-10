@@ -255,7 +255,9 @@
         <div class="q-body">
           ${fld("plan","Prep time & priority",
                 `${e.prep_label||""} to learn properly · stack rank #${e.rank} of ${BANK.total}`
-                + (e.cat_rank ? ` (#${e.cat_rank} within ${catLabel[e.cat]||e.cat})` : "")
+                + (e.priority_label ? ` · ${e.priority_label} in its band` : "")
+                + (e.priority_minutes_total ? ` (${Math.round((e.priority_minutes_cumulative||0)/60)}h of ${Math.round(e.priority_minutes_total/60)}h into ${e.priority})` : "")
+                + (e.cat_rank ? ` · #${e.cat_rank} within ${catLabel[e.cat]||e.cat}` : "")
                 + (e.priority_note ? ` · ${e.priority_note}` : ""))}
           ${fld("freq","Asked in interviews?",e.frequency)}
           ${fld("answer","Answer / reasoning",e.answer)}

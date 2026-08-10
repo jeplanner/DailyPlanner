@@ -284,6 +284,11 @@ def ai_sde_pdf():
         _plan = " | ".join(x for x in [
             (f"Prep time: {it['prep_label']}" if it.get("prep_label") else ""),
             (f"Stack rank #{it['rank']} of {len(items)}" if it.get("rank") else ""),
+            # Rank within the band is the number you actually work from once
+            # you have committed to finishing a priority level.
+            (f"{it['priority_label']} in its band" if it.get("priority_label") else ""),
+            (f"#{it['cat_rank']} within {AI_SDE_CATEGORIES.get(it.get('cat'), '')}"
+             if it.get("cat_rank") else ""),
             (it.get("priority_note") or "")] if x)
         fields = [("Prep time & priority", _plan or None),
                   ("Difficulty & interview frequency", _diff_freq or None),

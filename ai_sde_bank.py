@@ -29321,6 +29321,31 @@ for _e in _ordered:
     _percat[_e["cat"]] = _percat.get(_e["cat"], 0) + 1
     _e["cat_rank"] = _percat[_e["cat"]]
 
+# Rank inside the entry's own PRIORITY BAND. The global rank answers "where
+# does this sit in the whole bank", which is not the question you ask while
+# working a band: once you have committed to finishing P1, what you want is
+# "which of the 285 P1 topics comes next?". Because _ordered is already in
+# score order, counting per band gives exactly that sequence.
+_perpri = {}
+for _e in _ordered:
+    _perpri[_e["priority"]] = _perpri.get(_e["priority"], 0) + 1
+    _e["priority_rank"] = _perpri[_e["priority"]]
+#: How many entries each band holds - the denominator for "P1 #12 of 285".
+PRIORITY_TOTALS = dict(_perpri)
+for _e in _ordered:
+    _e["priority_total"] = PRIORITY_TOTALS[_e["priority"]]
+
+# Cumulative prep minutes within the band, so the study page can answer "how
+# much of P1 is behind me?" without re-summing the whole bank client-side.
+_pri_elapsed = {}
+for _e in _ordered:
+    _pri_elapsed[_e["priority"]] = _pri_elapsed.get(_e["priority"], 0) + _e["prep_minutes"]
+    _e["priority_minutes_cumulative"] = _pri_elapsed[_e["priority"]]
+#: Total prep minutes per band, for the same readout.
+PRIORITY_MINUTES = dict(_pri_elapsed)
+for _e in _ordered:
+    _e["priority_minutes_total"] = PRIORITY_MINUTES[_e["priority"]]
+
 # Human-readable planning labels used by the UI and the PDF export.
 _PRIORITY_NOTE = {
     "P0": "P0 - do these first: highest-yield topics, asked in almost every loop.",
@@ -29333,6 +29358,9 @@ for _e in ENTRIES:
     _e["prep_label"] = (f"{_m} min" if _m < 60 else
                         f"{_m // 60}h" if _m % 60 == 0 else f"{_m // 60}h {_m % 60}m")
     _e["priority_note"] = _PRIORITY_NOTE[_e["priority"]]
+    # The one-line planning string the UI and PDF both show.
+    _e["priority_label"] = (f"{_e['priority']} #{_e['priority_rank']} "
+                            f"of {_e['priority_total']}")
 
 #: Total study time for the whole bank, in minutes - the denominator for the
 #: "effort left" readout on the study page.
