@@ -36078,6 +36078,307 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1Z[_e["title"]]
 
 
+_EX_P1AA = {}
+
+_EX_P1AA["Asteroid Collision (stack)"] = [
+    """When a collision can happen at all - the condition that IS the algorithm.
+Only a RIGHT-mover already on the stack meeting a LEFT-mover arriving can
+collide: `a < 0 and stack and stack[-1] > 0`. Two right-movers never meet (both
+travelling the same way), two left-movers never meet, and a left-mover followed
+by a right-mover diverge.
+So the entire simulation reduces to that one guard. [5,10,-5]: 5 and 10 are both
+positive, no collisions. Then -5 arrives, top is 10 > 0 -> collide, 10 survives
+because 10 > 5. Result [5,10].""",
+
+    """The three collision outcomes, each with different bookkeeping.
+stack[-1] < -a (the incoming left-mover is bigger): pop the top and KEEP
+LOOPING - the incoming asteroid may destroy several in a row.
+stack[-1] == -a (equal): pop the top AND mark the incoming one dead. Both
+explode.
+stack[-1] > -a: the incoming one dies, the top survives, stop.
+The middle case is the one people miss - it destroys two asteroids, not one -
+and the first case's `while` rather than `if` is what lets one large asteroid
+clear a run of smaller ones.""",
+
+    """A trace where one asteroid clears several.
+[10, 2, -5]: push 10, push 2. Then -5 arrives. Top is 2 > 0, and 2 < 5 -> pop
+2, keep looping. Top is now 10 > 0, and 10 > 5 -> the incoming -5 dies, stop.
+Result [10].
+[8, -8]: push 8, then -8. Top 8 > 0 and 8 == 8 -> pop 8 and kill the incoming.
+Result []. That empty result is worth testing; a solution that only pops the
+stack leaves -8 alive.""",
+
+    """Why a stack rather than repeated passes.
+The naive simulation scans the array repeatedly resolving collisions until
+nothing changes - O(n^2) worst case. The stack works because after an asteroid
+survives all collisions with things to its left, it can never collide with them
+again: everything on the stack is either moving left (and away) or moving right
+(and the survivor is also moving right). So one pass suffices.
+That 'once resolved, never revisited' invariant is what makes the amortised
+cost O(n) even though the inner while loop looks nested.""",
+
+    """Edge cases.
+All positive [1,2,3] -> no collisions, everything survives.
+All negative [-1,-2,-3] -> the guard `stack[-1] > 0` never fires, everything
+survives.
+Negatives first then positives [-2,-1,1,2] -> they diverge, all four survive.
+Equal sizes [1,-1] -> both destroyed, result [].
+Empty input -> [].
+The subtle one: [-2,-2,1,-2] -> the 1 is destroyed by the final -2, leaving
+[-2,-2,-2]. Left-movers already on the stack are never touched.""",
+
+    """Complexity and the family.
+O(n) time amortised - each asteroid is pushed once and popped at most once -
+and O(n) space.
+The family is stack simulation where an arriving element resolves against
+recent ones: Remove All Adjacent Duplicates, Backspace String Compare,
+Simplify Path, Valid Parentheses, Baseball Game, and Removing Stars From a
+String.
+Cue: 'elements interact with the most recent unresolved one and may cancel' -
+that is a stack, and the only design decisions are what you push and what the
+collision rule is.""",
+]
+
+_EX_P1AA["Count Primes (Sieve of Eratosthenes)"] = [
+    """The sieve, traced for n = 30.
+Start with everything marked prime except 0 and 1.
+p = 2: cross off 4, 6, 8, ... 28.
+p = 3: cross off 9, 15, 21, 27 (6, 12, 18, 24 were already crossed by 2).
+p = 4: already crossed, skip.
+p = 5: cross off 25 (10, 15, 20 already gone).
+p*p = 36 > 30, stop. What remains: 2,3,5,7,11,13,17,19,23,29 -> 10 primes.
+The pattern to notice: each pass crosses off fewer numbers than the last,
+because the earlier primes already removed most composites.""",
+
+    """Why start crossing at p*p, not at 2p.
+Every multiple of p below p*p has a factor SMALLER than p, so it was already
+crossed off by that smaller prime. For p = 5: 10 was crossed by 2, 15 by 3, 20
+by 2 - the first multiple of 5 with no smaller prime factor is 25 = 5*5.
+Starting at 2p is correct but does redundant work. This single optimisation is
+what takes the sieve from O(n log n) to O(n log log n), and being able to
+explain WHY rather than just doing it is the point.""",
+
+    """Why the outer loop stops at sqrt(n).
+If a number below n is composite, it must have a factor at or below sqrt(n) -
+because if both factors exceeded sqrt(n), their product would exceed n. So once
+p*p >= n, every composite has already been crossed off by some smaller prime
+and there is nothing left to do.
+The condition `while p * p < n` is that argument in code. Looping to n instead
+still works and wastes the entire second half of the range.""",
+
+    """Where O(n log log n) comes from, roughly.
+The work is n/2 + n/3 + n/5 + n/7 + ... summed over primes up to sqrt(n). The
+sum of reciprocals of primes up to n grows like log log n (Mertens), so the
+total is about n log log n.
+For n = 1,000,000 that is roughly 3 million operations - effectively linear.
+Compare trial division on each number, which is O(n sqrt(n)) = a billion
+operations for the same n. That gap is why the sieve exists.""",
+
+    """Edge cases.
+n < 3 -> 0. There are no primes strictly below 2, and 2 itself is excluded when
+n = 2 because the count is of primes LESS THAN n.
+n = 3 -> 1 (just 2). n = 10 -> 4 (2,3,5,7).
+Setting is_prime[0] and is_prime[1] to False explicitly matters - 1 is not
+prime, and forgetting it inflates every count by one.
+Memory: for n = 10^8 a boolean list is ~100MB in Python (each bool is an object
+pointer in a list) - use a bytearray or bitarray, which is the standard answer
+to 'what if n is huge?'.""",
+
+    """The variants worth knowing.
+SEGMENTED sieve: to find primes in [L, R] with R up to 10^12, sieve up to
+sqrt(R) first, then use those primes to sieve the segment - the only way when
+the full range does not fit in memory.
+LINEAR sieve (Euler's): each composite is crossed exactly once, giving true
+O(n), and it also yields the smallest prime factor of every number, which
+enables O(log n) factorisation afterwards.
+The family: Ugly Number II, Perfect Squares, and any problem needing many
+primality tests - where the answer is nearly always 'sieve once, then look
+up'.""",
+]
+
+_EX_P1AA["TCP three-way handshake"] = [
+    """The three messages, and what each one proves.
+1. SYN: client -> server, carrying the client's initial sequence number (ISN_c).
+2. SYN-ACK: server -> client, carrying ISN_s and acknowledging ISN_c + 1.
+3. ACK: client -> server, acknowledging ISN_s + 1.
+After message 2 the CLIENT knows the server can hear it. After message 3 the
+SERVER knows the client can hear it. Both directions are now proven, which is
+why it takes three and not two - each side needs its own sequence number
+acknowledged.""",
+
+    """Why sequence numbers are RANDOM rather than starting at 0.
+If ISNs were predictable, an off-path attacker could forge a packet that lands
+in the window and inject data into someone else's connection - the classic TCP
+sequence-prediction attack. Randomising the ISN makes guessing the window
+impractical.
+It also prevents confusion from a previous incarnation of the same
+(ip, port, ip, port) four-tuple: a delayed packet from an old connection has
+sequence numbers far outside the new one's window and is discarded.""",
+
+    """The cost, and why it matters for latency.
+The handshake costs one full round trip before ANY data can flow. On a 100ms
+RTT link that is 100ms of dead time; add a TLS 1.2 handshake (two more round
+trips) and you are 300ms in before the first byte of HTTP.
+That is why TLS 1.3 cut its handshake to one round trip, why HTTP keep-alive
+matters so much (reuse the connection and pay nothing), why TCP Fast Open
+exists (data in the SYN), and why QUIC folds the transport and crypto
+handshakes into a single round trip. The whole modern protocol stack is shaped
+by wanting these round trips back.""",
+
+    """The SYN flood, which is the security question that follows.
+An attacker sends many SYNs with spoofed source addresses and never sends the
+final ACK. Each one makes the server allocate a half-open connection entry, and
+the backlog queue fills - legitimate connections are then refused.
+The defence is SYN COOKIES: instead of storing state, the server encodes the
+connection parameters into ISN_s cryptographically and allocates nothing. If a
+valid ACK comes back, the cookie is decoded and the connection is created then.
+No state, nothing to exhaust.""",
+
+    """The teardown, which is FOUR messages and asymmetric.
+Closing uses FIN, ACK, FIN, ACK - four, not three, because TCP is
+full-duplex and each direction closes independently. One side can finish
+sending (half-close) while still receiving.
+The side that closes first then sits in TIME_WAIT for twice the maximum segment
+lifetime (typically 60s), to absorb any delayed duplicate and to guarantee the
+final ACK arrives. That is why a busy server that initiates closes accumulates
+thousands of TIME_WAIT sockets - a real operational issue, and the reason
+protocols prefer to let the CLIENT close.""",
+
+    """The states worth naming, since interviewers ask for them.
+Client: SYN_SENT -> ESTABLISHED. Server: LISTEN -> SYN_RECEIVED ->
+ESTABLISHED. Closing walks FIN_WAIT_1 -> FIN_WAIT_2 -> TIME_WAIT on the
+initiator and CLOSE_WAIT -> LAST_ACK on the other side.
+Practical connection: `netstat` or `ss` showing many CLOSE_WAIT entries means
+YOUR application is not calling close() after the peer went away - a file
+descriptor leak in your code, not a network problem. That diagnosis is the most
+useful thing this state machine gives you day to day.""",
+]
+
+_EX_P1AA["Daily Temperatures (monotonic stack)"] = [
+    """The trace, and what the stack holds.
+temps = [73,74,75,71,69,72,76,73].
+i=0 (73): stack empty -> push 0. Stack holds INDICES of days still waiting.
+i=1 (74): 73 < 74 -> pop 0, result[0] = 1-0 = 1. Push 1.
+i=2 (75): 74 < 75 -> pop 1, result[1] = 1. Push 2.
+i=3 (71), i=4 (69): each colder than the top -> just push. Stack [2,3,4].
+i=5 (72): 69 < 72 -> pop 4, result[4] = 1. 71 < 72 -> pop 3, result[3] = 2.
+75 > 72 -> stop, push 5.
+i=6 (76): pops 5 (result 1) then 2 (result 4). Push 6.
+i=7 (73): push. Stack [6,7] left over -> those results stay 0.
+Answer [1,1,4,2,1,1,0,0].""",
+
+    """Why store INDICES rather than temperatures.
+The answer is a DISTANCE - how many days to wait - so you need i - prev_index.
+Storing temperatures alone loses the position and you cannot compute it.
+This is the general habit for monotonic stacks: store indices, and index back
+into the array when you need the value (`temps[stack[-1]]`). It costs nothing
+and it makes distance-based variants free.""",
+
+    """Why the stack is DECREASING, and what that invariant buys.
+Every index on the stack is waiting for a warmer day, and they are stacked in
+decreasing temperature order - because any day warmer than the one below it
+would have popped it on arrival.
+So when a new temperature arrives, it resolves a CONTIGUOUS RUN from the top,
+and the moment it hits something warmer it can stop: everything deeper is
+warmer still. That early stop is what makes the whole thing linear rather than
+quadratic.""",
+
+    """Why O(n) despite the nested while loop.
+Each index is PUSHED exactly once and POPPED at most once, so the total number
+of inner-loop iterations across the whole run is at most n. The while loop can
+be long on one step and empty on the next, but the amortised cost per element
+is O(1).
+Stating it that way - 'pushed once, popped once' - is the correct complexity
+argument, and it is what distinguishes this from a genuinely nested O(n^2)
+loop.""",
+
+    """Edge cases.
+Strictly increasing [1,2,3] -> every day resolves on the next -> [1,1,0].
+Strictly decreasing [3,2,1] -> nothing ever pops -> [0,0,0], and the stack ends
+holding every index.
+All equal [5,5,5] -> the comparison is STRICT (`<`), so equal temperatures do
+not resolve each other -> [0,0,0]. If the prompt said 'warmer or equal' the
+operator changes and so does the answer.
+Single element -> [0]. Empty -> [].
+The leftover stack at the end needs no cleanup because result was
+zero-initialised - a small but deliberate choice.""",
+
+    """Complexity and the family.
+O(n) time, O(n) space.
+The monotonic stack family: Next Greater Element I and II (II is circular -
+iterate twice modulo n), Largest Rectangle in Histogram (an INCREASING stack,
+popping when a shorter bar arrives), Trapping Rain Water, Sum of Subarray
+Minimums, Remove K Digits, and Online Stock Span.
+The cue: 'for each element, find the next/previous element that is
+greater/smaller'. Decreasing stack for next-greater, increasing for
+next-smaller - and the answer for anything still on the stack at the end is the
+default.""",
+]
+
+_EX_P1AA["Decode String (stack)"] = [
+    """The trace on the nested example.
+s = '3[a2[c]]'.
+'3' -> num = 3. '[' -> push ("", 3), reset current = "" and num = 0.
+'a' -> current = "a". '2' -> num = 2. '[' -> push ("a", 2), reset.
+'c' -> current = "c".
+']' -> pop ("a", 2) -> current = "a" + "c"*2 = "acc".
+']' -> pop ("", 3) -> current = "" + "acc"*3 = "accaccacc".
+Answer 'accaccacc'. The stack depth tracks the nesting depth, which is why it
+handles arbitrary nesting with no special cases.""",
+
+    """What gets pushed, which is the design decision.
+You push the string built SO FAR at this level, plus the repeat count that
+applies to what comes next. On ']' you pop them and combine:
+current = previous_string + current * count.
+Pushing only the count would lose the prefix - '2[a]3[b]' would produce 'bbb'
+instead of 'aabbb', because the 'aa' was never saved. Pushing only the string
+would lose the multiplier. Both halves are required, and saying that explicitly
+is the cleanest way to explain the algorithm.""",
+
+    """Why multi-digit numbers need `num = num * 10 + int(ch)`.
+'10[a]' has two digit characters. Reading each digit separately would treat it
+as 1 then 0, producing 'a' repeated 0 times.
+The accumulate-as-you-go idiom builds 10 correctly and resets num to 0 at each
+'[', so consecutive bracket groups do not contaminate each other. Any parsing
+problem with numbers embedded in a string needs this - it is the same pattern
+as string-to-integer conversion.""",
+
+    """Edge cases.
+No brackets at all, 'abc' -> the digit and bracket branches never fire ->
+'abc'.
+Adjacent groups '2[a]3[b]' -> 'aabbb'. The first ']' sets current = 'aa', and
+the second push saves that prefix.
+Deep nesting '2[2[2[a]]]' -> 'aaaaaaaa' (8 a's), with stack depth 3.
+Count of 1, '1[a]' -> 'a'.
+Letters before a bracket, 'ab3[c]' -> 'abccc' - the 'ab' is the saved prefix.
+The problem guarantees well-formed input; if it did not, you would need to
+handle an unmatched ']' with an empty stack.""",
+
+    """Why a stack rather than recursion.
+Recursion works and mirrors the structure - parse until ']', return the decoded
+piece - but it costs O(depth) stack frames and the index bookkeeping is
+fiddlier.
+The explicit stack makes the state visible and is easier to debug. Both are
+O(output length) in time. The general rule: nested structures can always be
+done either way, and the explicit stack is preferable when the recursion would
+be deep or when you want to inspect the intermediate state.""",
+
+    """Complexity and the family.
+Time O(output length) - the work is dominated by building the result, which can
+be exponentially larger than the input ('10[10[10[a]]]' is a thousand
+characters from twelve). Space O(depth) for the stack plus the output.
+The family: Basic Calculator I/II/III (a stack for nested parentheses and
+operator precedence), Valid Parentheses, Simplify Path, Flatten Nested List
+Iterator, Number of Atoms (chemical formulae - the same nested-multiplier
+shape), and Tag Validator.
+Cue: brackets that nest and modify what is inside them.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1AA:
+        _e["examples"] = _EX_P1AA[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
