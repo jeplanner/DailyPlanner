@@ -30175,7 +30175,137 @@ that day. What matters is that the story has a decision you made and an outcome
 you can measure, not that it happened at a company.""",
 ]
 
-# Second pass: the two keys above were appended AFTER the loop that consumes
+_EX_P0LP["Tell me about a time you received difficult feedback (behavioral: feedback)"] = [
+    """A full student-scale answer.
+SITUATION: A mentor reviewing my internship PR said the code worked but was
+unreadable - nobody could review or reuse it - and that if it shipped he would
+end up owning it.
+TASK: Take it properly rather than defensively, with three weeks left.
+ACTION: My first instinct was to explain why it was written that way, and I
+deliberately did not. Instead I asked for specifics: which function, what would
+he have expected. He picked one 120-line function and said he could not tell
+what it returned. So I picked a well-structured module in our own codebase as a
+reference, split that function into four named pieces, added docstrings stating
+the contract, and then - the part that mattered - asked him to re-review rather
+than assuming I had fixed it.
+RESULT: The next PR was approved with no readability comments, and I kept the
+'would a reviewer understand this in 60 seconds' check. He later asked me to
+review a junior's PR, which is the outcome I am proudest of.""",
+
+    """The beat being graded is the first ten seconds.
+Interviewers are listening for what you did BEFORE improving: did you argue,
+go quiet, or get curious? 'My first instinct was to explain why it was written
+that way, and I deliberately did not' is worth more than the entire fix,
+because it shows self-awareness in the moment rather than in hindsight.
+The second graded beat is ASKING FOR SPECIFICS. Vague feedback is the norm
+('it's a bit messy'), and converting it into one concrete example you can act
+on is a skill; candidates who accept vague feedback gracefully and then change
+nothing have not demonstrated anything.""",
+
+    """The closing loop most answers omit.
+Going back to the person and asking them to re-review is what turns 'I took
+feedback' into 'I closed the loop'. It also serves you: it converts a critic
+into someone invested in your improvement, which is exactly what happened when
+he later handed you a review to do.
+Say it explicitly - 'I asked him to look again' - because without it the story
+ends with your own assessment of your own improvement, which is not evidence.""",
+
+    """The weak versions, in both directions.
+Defensive: 'The feedback wasn't really fair because I was under time pressure,
+but I made some changes anyway.' The justification lands before the learning
+and the interviewer stops listening.
+Hollow: 'I was told to write cleaner code, so I did.' No specifics, no method,
+no verification, no lasting change - it could be said by someone who did
+nothing.
+And avoid the humblebrag - 'I was told I work too hard' - which is transparent
+and reads as an unwillingness to be criticised at all.""",
+
+    """Choosing the feedback, since the stakes matter.
+It should be feedback you genuinely did not want to hear, about something real:
+readability, communication, over-engineering, missing deadlines, not asking for
+help, dominating discussions. Technical-skill feedback is the safest and most
+common; behavioural feedback ('you talk over people in stand-ups') is riskier
+but far more memorable if you handled it well, because almost nobody offers
+one.
+What to avoid: feedback that was simply wrong and that you correctly rejected -
+that is a different story (backbone), and told here it reads as not taking
+feedback.""",
+
+    """The probes.
+'How did you feel?' - a little stung is the honest and correct answer; claiming
+you felt nothing reads as either dishonest or disengaged. 'Did you agree with
+it?' - if you did not fully, say which part and how you tested whether you were
+right, which is far stronger than pretending total agreement. 'What did you
+change permanently?' - the durable habit is the payoff of the whole story.
+'Have you ever GIVEN difficult feedback?' - a very common paired follow-up, so
+have one ready: private, specific, about behaviour rather than character, and
+with a concrete suggestion.""",
+]
+
+_EX_P0LP["Tell me about your biggest failure and what you learned (behavioral: failure)"] = [
+    """A full student-scale answer.
+SITUATION: I led the modelling on a team project and, confident the approach
+was right, skipped a proper validation split and any tests to save time.
+TASK: Deliver a working classifier by a fixed submission date.
+ACTION / WHAT WENT WRONG: Two days before the deadline we discovered our 95%
+accuracy was inflated by data leakage - an ID column correlated with the label,
+because the export had been sorted by class. The real number was far lower. I
+told the team the same afternoon rather than hoping the examiners would not
+probe it. We scrapped the result, rebuilt with a grouped split, and reported
+the honest figure with the leakage documented as a finding.
+RESULT: We submitted at 79% instead of a fictional 95%, and the write-up of the
+leakage was singled out in the feedback. Since then I build the evaluation
+harness BEFORE the model, and I check feature importances for anything
+implausibly dominant.""",
+
+    """A real failure with real consequences is the price of entry.
+The disqualifying answer is a disguised strength - 'I care too much', 'I take
+on too much work'. Interviewers hear these constantly and read them as an
+unwillingness to be honest, which is worse than the failure would have been.
+It should also be YOUR failure. A story where the root cause was a teammate,
+a supervisor or bad luck is not a failure story; it is a complaint. In the
+example the candidate owns the specific decision - skipping validation to save
+time - rather than blaming the export.""",
+
+    """The learning has to be structural, not emotional.
+'I learned to be more careful' is worth nothing - it is a resolution, not a
+change. 'I now build the evaluation harness before the model, and I check for
+any feature carrying implausible importance' is a process you adopted that
+would PREVENT the same class of failure. That distinction is the whole second
+half of the question.
+The strongest version has evidence the change stuck: a later project where the
+new habit caught something. If you have that, add one sentence about it.""",
+
+    """Choosing the failure, calibrated.
+Too small: 'I once mislabelled a variable.' No stakes, so nothing is revealed.
+Too catastrophic or ethical: anything involving dishonesty, or a judgement
+failure so severe it raises a hiring risk. The sweet spot is a real technical or
+planning failure with visible consequences that you owned and recovered from -
+a missed deadline, a wrong result reported, a design you had to throw away, a
+bug that cost someone else time.
+For an ML candidate, data leakage is close to ideal: it is a genuine failure,
+it is common enough to be credible, and the fix is a permanent process.""",
+
+    """How it differs from 'a mistake that affected other people'.
+This question is about JUDGEMENT and learning - what you got wrong and how your
+process changed. The mistake question is about CHARACTER - how fast you
+disclosed, whether you hid it, how you rebuilt trust. Same event can serve
+both, but the emphasis moves: here, spend your time on the wrong decision and
+the structural fix; there, spend it on who you told and how quickly.
+Prepare which of your stories serves which, because being asked both in one
+loop is common and reusing the identical telling is noticeable.""",
+
+    """The probes.
+'What would you do differently?' - answer with the specific decision point, not
+the outcome: 'I'd have spent the first afternoon on the split rather than the
+model.' 'Whose fault was it?' - a trap; own your part cleanly without
+scapegoating and without theatrical self-blame. 'How did the team react?' -
+tells them whether you actually disclosed. 'Has it happened again?' - the
+answer should be no BECAUSE of the process change, and if a related thing did
+happen, say what the second lesson was.""",
+]
+
+# Second pass: the keys above were appended AFTER the loop that consumes
 # _EX_P0LP, so they need their own. (Adding a key below its patch loop is a
 # silent no-op - the entry simply keeps its empty examples list.)
 for _e in ENTRIES:
