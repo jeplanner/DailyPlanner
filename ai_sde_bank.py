@@ -29011,6 +29011,247 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1E[_e["title"]]
 
 
+_EX_P1F = {}
+
+_EX_P1F["Divide Players Into Teams of Equal Skill"] = [
+    """The example, traced.
+skill = [3,2,5,1,3,4] -> sorted [1,2,3,3,4,5].
+target = skill[0] + skill[-1] = 1 + 5 = 6.
+Pair (1,5): sum 6 = target, product 5. total = 5.
+Pair (2,4): sum 6, product 8. total = 13.
+Pair (3,3): sum 6, product 9. total = 22.
+Answer 22. Every pair had to hit 6 - the first pair DEFINES the target, and
+every subsequent pair is a validation of it.""",
+
+    """Why smallest-with-largest is the only possible pairing.
+If all teams must have the same total, the smallest player MUST partner the
+largest. Suppose not: the smallest pairs with someone smaller than the max,
+giving a total below target, while the max pairs with someone above the min,
+giving a total above it - so the two totals differ and no valid arrangement
+exists.
+That argument means there is no search here at all: the pairing is forced, so
+the algorithm is 'construct the only candidate, then verify it'. Recognising
+that a problem has a UNIQUE candidate solution is what turns a
+combinatorial-looking prompt into a linear scan.""",
+
+    """The failure case.
+skill = [1,1,2,3] -> sorted [1,1,2,3]. target = 1 + 3 = 4.
+Pair (1,3): sum 4, ok, product 3.
+Pair (1,2): sum 3 != 4 -> return -1.
+Correct: no arrangement gives two equal-skill teams here. Note the failure is
+detected on the SECOND pair, not the first - the first pair can never fail,
+because it defines the target. A solution that only checks the first pair
+always returns a number and is silently wrong.""",
+
+    """Why the target comes from the sorted ends, not from the average.
+You could compute target = 2 * sum(skill) / n, which is the same value when a
+solution exists. But when no solution exists that expression can be a
+non-integer or simply wrong, and you would then need a divisibility check.
+Taking skill[0] + skill[-1] sidesteps that: it is by construction the total of
+the only pair that can possibly be forced, and the loop verifies the rest.
+Fewer edge cases, and it makes the reasoning above explicit in the code.""",
+
+    """Edge cases.
+Two players [3,5] -> target 8, one pair, product 15. The minimum valid input.
+All identical [4,4,4,4] -> target 8, both pairs match, total 16 + 16 = 32.
+Odd length -> the problem guarantees 2n players; if it did not, you would
+return -1 immediately, and asking about that guarantee is worth ten seconds.
+Overflow: products of large skills summed over n/2 pairs can exceed a 32-bit
+int in Java or C++, though Python is immune - worth naming.""",
+
+    """Complexity and the family.
+Sorting dominates at O(n log n); the scan is O(n) with O(1) extra space.
+This is the 'sorted two-pointer, forced pairing' family: Two Sum on a sorted
+array, Boats to Save People, Assign Cookies, and Array Partition. The tell is a
+constraint linking the EXTREMES of the sorted order - either the smallest must
+go with the largest (equal sums, as here) or the largest must be handled first
+(boats). When you spot that, sort and close in from both ends.""",
+]
+
+_EX_P1F["Maximal Square (DP)"] = [
+    """Why the recurrence is a MIN of three neighbours.
+dp[r][c] is the side of the largest all-1s square whose BOTTOM-RIGHT corner is
+(r,c). For a square of side k to end here, three squares of side k-1 must
+already exist - one ending above, one ending to the left, and one ending
+diagonally up-left. Any one of them being smaller caps you.
+So dp[r][c] = min(top, left, diagonal) + 1. Taking max instead, or omitting the
+diagonal, produces squares with a hole in them - and the bug only shows on
+inputs where the three neighbours disagree, which small tests often miss.""",
+
+    """A trace on a matrix where the min bites.
+matrix = [[1,1,1],
+          [1,1,1],
+          [1,1,1]]
+Row 1 (padded indices): dp = 1,1,1. Row 2: dp[2][2] = min(1,1,1)+1 = 2;
+dp[2][3] = min(1,2,1)+1 = 2. Row 3: dp[3][2] = min(1,2,1)+1 = 2;
+dp[3][3] = min(2,2,2)+1 = 3.
+best = 3, area 9 - the whole matrix.
+Now flip one cell: matrix[0][0] = 0. Then dp[3][3] = min(2,2,1)+1 = 2, area 4.
+One zero in the far corner caps the square, which is exactly what the diagonal
+term is there to notice.""",
+
+    """The padded border, and why it removes every boundary check.
+dp is (rows+1) x (cols+1) with an all-zero first row and column, and the matrix
+is read as matrix[r-1][c-1]. That means row 1 and column 1 can reference
+dp[0][*] and dp[*][0] without an if - they read 0, which is exactly right,
+since a square ending on the top edge can have side at most 1.
+Without the pad you need `if r == 0 or c == 0: dp[r][c] = matrix[r][c]`, which
+is where off-by-one bugs live. Padding a DP table with a neutral border is a
+general trick worth carrying to Edit Distance and grid-path problems.""",
+
+    """Area versus side, which is the trap in the return line.
+dp holds SIDE lengths, and the problem asks for AREA. Returning best instead of
+best*best is the most common wrong answer on this problem, and it passes any
+test case where the answer happens to be 1 or 0 - so it survives casual
+testing. Say 'dp is the side, the answer is the square of it' out loud when you
+write the return statement.""",
+
+    """Edge cases.
+Empty matrix or empty first row -> 0 by the guard.
+All zeros -> dp stays 0 everywhere, best 0, area 0.
+A single 1 -> dp = 1, area 1.
+A 1xN strip of 1s -> every dp is 1 (no row above), area 1. Correct: a square
+needs height as well as width, and a strip has none. That case catches
+solutions that accidentally compute the largest RECTANGLE.""",
+
+    """Complexity, the space reduction, and the harder sibling.
+Time O(rows * cols), one pass. Space O(rows * cols), reducible to O(cols) with
+a rolling row plus one saved variable for the diagonal (because dp[r-1][c-1] is
+overwritten the moment you compute dp[r][c-1]) - that saved-diagonal detail is
+the follow-up.
+Maximal RECTANGLE is the genuinely harder cousin: the min-of-three trick does
+not extend, and the standard solution treats each row as a histogram and runs
+Largest Rectangle in Histogram with a monotonic stack, O(rows * cols) overall.
+Knowing that square and rectangle need different techniques is the point.""",
+]
+
+_EX_P1F["Minimum Number of Arrows to Burst Balloons"] = [
+    """The example, traced.
+points = [[10,16],[2,8],[1,6],[7,12]] -> sorted by END:
+[[1,6],[2,8],[7,12],[10,16]]
+Arrow 1 at x = 6 (the first balloon's end). [2,8] starts at 2 <= 6, so it is
+already burst. [7,12] starts at 7 > 6, so it survives -> arrow 2 at x = 12.
+[10,16] starts at 10 <= 12, already burst.
+Answer 2. Shooting at the EARLIEST END is what maximises the number of later
+balloons each arrow catches.""",
+
+    """Why sort by end rather than start.
+points = [[1,100],[2,3],[4,5]]
+Sorted by START: shoot at the end of [1,100], i.e. x = 100. That happens to
+burst everything here - but change it to [[1,2],[3,100],[4,5]] and sorting by
+start shoots at 2, then at 100, and misses nothing... until you construct the
+case where an early-starting, late-ending balloon forces a wasted arrow.
+Sorted by END the greedy is provably optimal by the same exchange argument as
+activity selection: the balloon that finishes first must be burst by some
+arrow, and placing that arrow at its end is never worse, since it covers a
+superset of what any earlier position covers.""",
+
+    """The strict-versus-inclusive comparison, which decides the answer.
+The condition is `start > end` - so a balloon starting exactly where the last
+arrow flew is already burst. On [[1,2],[2,3]]: 2 > 2 is false, so one arrow at
+x = 2 bursts both. That is correct here, because the balloons TOUCH and an
+arrow at the shared point hits both.
+Contrast Maximum Length of Pair Chain, where the chain condition is also strict
+but means the opposite - touching pairs cannot chain. Same operator, opposite
+intent, because one problem wants overlap and the other wants separation.
+Always restate which one the prompt means.""",
+
+    """Edge cases.
+[] -> 0 by the guard.
+One balloon [[1,2]] -> arrows starts at 1 and the loop body never runs -> 1.
+All identical [[1,2],[1,2],[1,2]] -> one arrow at 2 bursts all -> 1.
+All disjoint [[1,2],[3,4],[5,6]] -> 3 > 2 and 5 > 4, so three arrows.
+Huge coordinates near the 32-bit limit: sorting by end and comparing is safe,
+but computing a midpoint as (start+end)/2 would overflow in Java - a real
+LeetCode gotcha on this problem, and a reason the code never computes one.""",
+
+    """Complexity.
+O(n log n) for the sort, O(n) for the scan, O(1) extra space. The sort is the
+whole cost, and there is no way below it in the comparison model - you must
+know the relative order of the ends.
+Note the code sorts in place, mutating the caller's list. In an interview,
+saying 'I'm sorting the input in place; if the caller needs it preserved I'd
+copy first' is a small remark that reads as production experience.""",
+
+    """The identical problem in four disguises.
+- Non-overlapping Intervals: minimum removals = n minus the max non-overlapping
+  count, the same greedy.
+- Maximum Length of Pair Chain: the same sort and scan, with a strict gap.
+- Meeting Rooms: 'can one room serve all' is this count equalling 1.
+- Erase Overlapping Intervals, Maximum Number of Events That Can Be Attended.
+The unifying recipe: sort by END, sweep, and take greedily. If the prompt asks
+for a MINIMUM number of points/arrows/removals covering intervals, this is the
+algorithm - and it takes twenty seconds once you recognise it.""",
+]
+
+_EX_P1F["Minimum Path Sum"] = [
+    """A full trace on the classic grid.
+grid = [[1,3,1],
+        [1,5,1],
+        [4,2,1]]
+First row: dp = [1, 4, 5] (only reachable from the left).
+Row 1: dp[0] += 1 -> 2. dp[1] = min(4, 2) + 5 = 7. dp[2] = min(5, 7) + 1 = 6.
+       dp = [2, 7, 6]
+Row 2: dp[0] += 4 -> 6. dp[1] = min(7, 6) + 2 = 8. dp[2] = min(6, 8) + 1 = 7.
+Answer dp[-1] = 7, the path 1 -> 3 -> 1 -> 1 -> 1.
+The subtlety is that when computing dp[j], dp[j] still holds the value from the
+row ABOVE while dp[j-1] already holds this row's - which is exactly the two
+neighbours the recurrence needs.""",
+
+    """Why the rolling row works, spelled out.
+The recurrence is dp[i][j] = grid[i][j] + min(dp[i-1][j], dp[i][j-1]) - it
+reaches back exactly one row and one column. Iterating left to right within a
+row means dp[j-1] has already been updated for THIS row while dp[j] has not,
+so the single array holds both neighbours simultaneously.
+This only works because the scan direction matches the dependency direction.
+Iterate right to left and dp[j-1] would still hold the previous row's value,
+silently computing something else. Space drops from O(rows*cols) to O(cols).""",
+
+    """The two boundary lines, and why they are separate.
+The first row can only be reached from the left, so it is a running prefix sum.
+The first COLUMN can only be reached from above, which is why the inner loop
+starts at j = 1 and the line `dp[0] += grid[i][0]` handles column 0 on its own.
+Fold those into the main loop and dp[j-1] wraps around to the previous row's
+last cell - a wrong answer that looks plausible. Alternatively, pad the table
+with an infinity border, which trades two lines of special-casing for a
+slightly larger table.""",
+
+    """Why greedy fails, with the counterexample.
+grid = [[1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9]]
+A greedy 'always step to the smaller neighbour' from (0,0) goes right to 2,
+right to 3, then down 6, down 9: total 21. The optimum is 1+2+3+6+9 = 21 here -
+but change the last row to [7,8,1] and greedy still commits early while DP
+finds the cheaper route. The general reason is that a locally cheap step can
+commit you to an expensive remainder, so every cell must consider both
+predecessors. Same argument as Triangle.""",
+
+    """Edge cases.
+A 1x1 grid [[5]] -> dp = [5], both loops skip, answer 5.
+A single row [[1,2,3]] -> prefix sums -> 6. A single column -> the dp[0] += line
+runs each iteration -> the column sum.
+Negative values work: the recurrence never assumes positivity. (If moves were
+allowed in all four directions AND values could be negative, greedy and this DP
+both break, and you would need Dijkstra - which is the interesting follow-up.)
+An empty grid would crash on grid[0]; guard it if the constraints allow it.""",
+
+    """Complexity and the family.
+Time O(rows * cols) - every cell computed once. Space O(cols) with the rolling
+row, or O(1) if you are allowed to mutate the input grid (say the trade-off:
+it destroys the caller's data).
+The family: Unique Paths (count instead of minimise, same shape), Unique Paths
+II (obstacles set cells to 0/infinity), Triangle, Dungeon Game (which must be
+solved BACKWARDS from the destination because the constraint is on the running
+minimum, not the sum - a genuinely instructive variant), and Cherry Pickup
+(two simultaneous paths, so the state gains a dimension).""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1F:
+        _e["examples"] = _EX_P1F[_e["title"]]
+
+
 # ══ Prep time & stack rank ════════════════════════════════════════════════
 # Two planning fields on every entry so you can answer "how much effort is
 # this, and how much is left?" without guessing:
