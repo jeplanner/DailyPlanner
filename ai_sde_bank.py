@@ -32975,6 +32975,323 @@ for _e in ENTRIES:
         _e["examples"] = _EX_P1O[_e["title"]]
 
 
+_EX_P1P = {}
+
+_EX_P1P["Kth Largest Element in an Array"] = [
+    """The heap version, traced.
+nums = [3,2,1,5,6,4], k = 2. Push 3 -> [3]. Push 2 -> [2,3]. Push 1, size 3 > 2
+-> pop the smallest (1) -> [2,3]. Push 5, pop 2 -> [3,5]. Push 6, pop 3 ->
+[5,6]. Push 4, pop 4 -> [5,6].
+Root is 5 = the 2nd largest. Correct.
+The invariant throughout: the heap holds exactly the k largest elements seen so
+far, and its root - the smallest of those k - is the kth largest. Same
+inversion as the streaming version: to track the top k, keep a MIN-heap.""",
+
+    """Quickselect, which is the answer the question actually wants.
+Partition around a pivot as in quicksort, but recurse into ONLY the side
+containing the kth position. Average O(n): the work is n + n/2 + n/4 + ... = 2n.
+    def quickselect(nums, k):
+        target = len(nums) - k          # kth largest = this index when sorted
+        lo, hi = 0, len(nums) - 1
+        while True:
+            p = partition(nums, lo, hi)
+            if p == target: return nums[p]
+            if p < target:  lo = p + 1
+            else:           hi = p - 1
+Worst case O(n^2) on adversarial pivots - fixed in practice by choosing a
+RANDOM pivot, which is the detail to state. Median-of-medians gives a
+guaranteed O(n) but nobody implements it in an interview.""",
+
+    """Choosing between them, which is a real trade rather than a preference.
+Heap: O(n log k) time, O(k) space, works on a STREAM, does not mutate the
+input, and is trivially correct. Quickselect: O(n) average, O(1) extra space,
+but mutates the array and has a quadratic worst case.
+So: k small relative to n, or data arriving as a stream -> heap. Whole array in
+memory and k possibly large -> quickselect. If k = n/2 (the median), the heap
+degenerates to O(n log n) and quickselect is clearly better.
+Saying that sentence - with the k vs n comparison - is the answer; producing
+only one solution is not.""",
+
+    """The duplicates subtlety.
+'kth largest' means the kth position in SORTED ORDER, not the kth distinct
+value. On [3,3,3,3] with k = 3 the answer is 3, not an error - the third
+largest element is a 3. Both the heap and quickselect handle this naturally
+because they order positions, not values.
+If the prompt wanted the kth distinct value the algorithm changes (deduplicate
+first), and it is worth confirming which is meant - the two differ on any input
+with repeats.""",
+
+    """Edge cases.
+k = 1 -> the maximum. k = len(nums) -> the minimum, and the heap holds
+everything.
+Single element with k = 1 -> that element.
+Negative numbers work unchanged in both approaches.
+The problem guarantees 1 <= k <= len(nums); without that guarantee the heap
+version would return the root of an under-filled heap, which is wrong, so guard
+it if the constraint is absent.
+Note `sorted(nums)[-k]` is O(n log n) and perfectly correct - say it first as
+the baseline, then improve on it. Jumping straight to quickselect without
+acknowledging the one-liner can read as rehearsed.""",
+
+    """Complexity summary and the family.
+Sorting: O(n log n). Heap: O(n log k). Quickselect: O(n) average, O(n^2) worst.
+The family: Kth Largest Element in a Stream (heap, because there is no array to
+partition), Top K Frequent Elements (heap or bucket sort by count), K Closest
+Points to Origin (heap or quickselect on distance), Median of Two Sorted Arrays
+(binary search on the partition), and Find Median from Data Stream (two heaps).
+The cue 'kth' or 'top k' should immediately raise heap-versus-quickselect, and
+the deciding question is always whether the data is a stream and how k compares
+to n.""",
+]
+
+_EX_P1P["Number of Provinces"] = [
+    """What the problem is underneath the wording.
+'Provinces' are connected components of an undirected graph given as an
+adjacency MATRIX. is_connected[i][j] == 1 means a direct road; a province is a
+maximal set of mutually reachable cities.
+[[1,1,0],[1,1,0],[0,0,1]] -> cities 0 and 1 are joined, city 2 is alone -> 2
+provinces.
+[[1,0,0],[0,1,0],[0,0,1]] -> no roads at all -> 3 provinces.
+Recognising 'count connected components' behind the story is most of the work;
+after that it is any of three standard algorithms.""",
+
+    """The union-find version, and why path compression matters.
+`find` walks to the root, and the line `parent[x] = parent[parent[x]]` is path
+HALVING - it flattens the tree while walking, so repeated finds get cheaper.
+Combined with union by rank or size, the amortised cost per operation is
+effectively constant (inverse Ackermann, written alpha, which is under 5 for
+any input that fits in the universe).
+Without compression, a chain of unions can build a linked list and each find
+becomes O(n) - turning the whole thing into O(n^3) on a dense matrix. The one
+line is the difference.""",
+
+    """The count at the end - two ways, one of them subtly wrong.
+Correct: count how many i satisfy `find(i) == i` - the number of distinct
+roots. Note you must call find(i), not read parent[i] directly, because a node's
+parent may point somewhere mid-tree rather than at the root until compressed.
+Alternative and often cleaner: initialise a counter to n and DECREMENT it every
+time a union actually merges two different sets. That avoids the final pass and
+makes the invariant obvious - each real merge reduces the component count by
+exactly one.""",
+
+    """The DFS/BFS alternative, which is simpler to write.
+Loop over cities; when you find an unvisited one, increment the count and
+flood-fill everything reachable from it. O(n^2) for the matrix scan, O(n)
+space for the visited set - the same asymptotics as union-find here, and less
+code.
+So why learn union-find? Because it handles INCREMENTAL connectivity - edges
+arriving over time, with queries interleaved - which DFS cannot do without
+re-running. That is the honest answer to 'which would you use': DFS for a
+static snapshot, union-find when the graph changes or when the problem is
+really about merging sets.""",
+
+    """Edge cases.
+n = 1 -> one province.
+Fully connected matrix -> 1.
+Identity matrix (only self-loops) -> n provinces.
+The diagonal is always 1 (a city is connected to itself) and must be IGNORED -
+which the loop does by starting j at i+1. Including the diagonal would union
+each city with itself, harmless here but a real bug in variants that count
+edges.
+The matrix is symmetric, so scanning only the upper triangle halves the work
+and avoids redundant unions.""",
+
+    """Complexity and the family.
+O(n^2 * alpha) time - dominated by scanning the matrix, since alpha is
+effectively constant - and O(n) space for the parent array.
+The union-find family: Number of Connected Components in an Undirected Graph
+(the same problem with an edge list), Redundant Connection (the edge that
+creates a cycle is the first union that finds both endpoints already joined),
+Accounts Merge, Most Stones Removed, and Kruskal's MST - which is union-find
+plus a sort. Number of Islands is the grid version, usually done with DFS but
+solvable either way.""",
+]
+
+_EX_P1P["Odd Even Linked List"] = [
+    """POSITION, not value - the first thing to confirm.
+'Odd' and 'even' refer to the node's 1-based POSITION in the list, not to
+whether its value is odd. 1 -> 2 -> 3 -> 4 -> 5 becomes 1 -> 3 -> 5 -> 2 -> 4:
+positions 1, 3, 5 first, then 2, 4, with relative order preserved inside each
+group.
+Values are irrelevant, which is why 2 -> 1 -> 4 -> 3 becomes 2 -> 4 -> 1 -> 3.
+Misreading this gives a completely different (and much easier) problem, so
+restate it before coding.""",
+
+    """The weave, traced.
+list 1 -> 2 -> 3 -> 4 -> 5. odd = 1, even = 2, even_head = 2.
+Iteration 1: odd.next = even.next (1 -> 3), odd = 3. even.next = odd.next
+(2 -> 4), even = 4.
+Iteration 2: even.next is 5, so continue. odd.next = 5, odd = 5.
+even.next = odd.next = None, even = None.
+Loop ends (even is None). Finally odd.next = even_head joins 5 -> 2.
+Result 1 -> 3 -> 5 -> 2 -> 4.
+The two chains are built simultaneously in one pass, each stepping over the
+other.""",
+
+    """Why `even_head` must be saved before the loop.
+The odd chain's tail has to be connected to the START of the even chain, but by
+the time the loop ends `even` points at the END (or at None). Capturing
+`even_head = head.next` up front is the only way to find it again.
+Forgetting it is the classic bug and it produces a TRUNCATED list - just the
+odd-position nodes - because the tail is left pointing at None. If your output
+is exactly half the input, this is why.""",
+
+    """Why the loop condition is `even and even.next`.
+`even` guards the even-length case (the even chain runs out first); `even.next`
+guards the odd-length case (there is no further odd node to attach).
+Both are needed. With only `even`, an odd-length list dereferences even.next
+when it is None. With only `even.next`, an even-length list dereferences a None
+even.
+Test both parities explicitly - four nodes and five nodes - because each
+condition is exercised by only one of them.""",
+
+    """Edge cases.
+Empty list -> guarded, return None.
+One node -> even is None, loop never runs, odd.next = even_head = None ->
+unchanged.
+Two nodes 1 -> 2 -> even is 2, even.next is None -> loop does not run ->
+odd.next = even_head, which re-links 1 -> 2. Unchanged, correctly.
+Three nodes 1 -> 2 -> 3 -> becomes 1 -> 3 -> 2.
+The final `odd.next = even_head` runs unconditionally and is safe in every one
+of these cases, which is worth checking rather than assuming.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space - the constraint that makes this interesting, since
+collecting the two groups into lists and rebuilding is trivial but O(n) space.
+The family is in-place pointer surgery: Partition List (same weave, but
+partitioned by value against a pivot rather than by position), Reverse Linked
+List, Reorder List (split at the middle, reverse the second half, interleave),
+Swap Nodes in Pairs, and Rotate List.
+The shared technique: build one or more chains with separate tail pointers
+while walking once, then join them at the end. Draw the pointers on paper before
+coding - three arrows is where most people lose this problem.""",
+]
+
+_EX_P1P["Pairs of Songs Divisible by 60"] = [
+    """The modular pairing rule.
+(a + b) % 60 == 0 means the remainders must sum to 60 - or both be 0. So for a
+song with remainder r, the partner remainder is (60 - r) % 60. The outer %60 is
+what maps r = 0 to 0 rather than to 60.
+time = [30,20,150,100,40]: remainders 30, 20, 30, 40, 40.
+30 pairs with 30, 20 pairs with 40, 40 pairs with 20, 0 pairs with 0.
+Answer 3: (30,150), (20,40) at indices 1&4, and (30,150)... traced properly
+below.""",
+
+    """The one-pass count, traced.
+remainders array of 60 zeros, count 0.
+t=30, r=30, complement 30 -> remainders[30] is 0 -> add 0. Record: rem[30] = 1.
+t=20, r=20, complement 40 -> 0. rem[20] = 1.
+t=150, r=30, complement 30 -> rem[30] is 1 -> add 1 (pairs with the first song).
+rem[30] = 2.
+t=100, r=40, complement 20 -> rem[20] is 1 -> add 1. rem[40] = 1.
+t=40, r=40, complement 20 -> rem[20] is 1 -> add 1. rem[40] = 2.
+Total 3.
+Counting against only what has ALREADY been recorded is what enforces i < j
+without ever comparing indices - the same trick as Two Sum.""",
+
+    """The two self-pairing remainders, which are where the bugs live.
+r = 0: the complement is (60-0)%60 = 0, so zero-remainder songs pair with each
+other. Without the outer %60 you would look up remainders[60], which is out of
+bounds.
+r = 30: the complement is 30 - also itself, since 30 + 30 = 60.
+Both are handled correctly by the incremental approach because you look up the
+count BEFORE recording the current song, so a song never pairs with itself. A
+solution that builds the full frequency table first must special-case these two
+with c*(c-1)/2 and halve everything else - much easier to get wrong.""",
+
+    """Why 60 and not the raw durations.
+Durations can be up to 500, but only the remainder mod 60 determines
+divisibility - so a fixed 60-slot array suffices regardless of how large the
+values are. That is what makes the space O(1) rather than O(n).
+The generalisation: for 'pairs divisible by k', use a k-slot array of
+remainders. The technique is identical for k = 60, k = 7 or k = 1000 - only the
+array size changes.""",
+
+    """Edge cases.
+Fewer than two songs -> 0 pairs.
+All the same remainder, [30,30,30] -> pairs (0,1), (0,2), (1,2) -> 3, which the
+incremental count produces as 0 + 1 + 2.
+All zero-remainder, [60,120,180] -> same, 3.
+No valid pairs, [10,20] -> 10 needs 50, 20 needs 40, neither present -> 0.
+Large inputs: the count can exceed 32-bit range with ~100,000 songs sharing a
+remainder (about 5 billion pairs); Python is immune but it is worth naming.""",
+
+    """Complexity and the family.
+O(n) time, O(1) space (60 slots). Brute force is O(n^2) - fine at n = 100 and
+fatal at n = 60,000, which is the actual constraint.
+The family is complement counting: Two Sum, Count Number of Pairs With Absolute
+Difference K, Subarray Sums Divisible by K (prefix sums mod k, with the same
+'count what you have already seen' structure), Continuous Subarray Sum, and
+4Sum II. Whenever the condition can be rearranged so one element determines
+what its partner must be, a frequency map turns quadratic into linear.""",
+]
+
+_EX_P1P["Partition Labels (greedy)"] = [
+    """The algorithm, traced.
+s = 'ababcbacadefegdehijhklij'. Last index of each character: a -> 8, b -> 5,
+c -> 7, d -> 14, e -> 15, f -> 11, g -> 13, h -> 19, i -> 22, j -> 23, k -> 20,
+l -> 21.
+Sweep: at i=0 ('a') end becomes 8. At i=1 ('b') end = max(8,5) = 8. Continue
+until i = 8, where i == end -> emit a partition of length 9.
+Restart: at i=9 ('d') end = 14; 'e' pushes it to 15; at i=15 -> partition of
+length 7.
+Then 'h' -> 19, 'i' -> 22, 'j' -> 23, 'k','l' inside -> at i=23 -> length 8.
+Answer [9,7,8].""",
+
+    """Why `i == end` is the correct closing condition.
+`end` is the furthest last-occurrence of any character seen so far in this
+partition. Reaching it means every character used in the partition has had ALL
+its occurrences consumed - nothing inside will reappear later. That is exactly
+the property required.
+Closing earlier would split a letter across two parts; closing later would make
+partitions unnecessarily large, and the problem asks for as MANY parts as
+possible. The condition is simultaneously the correctness check and the
+greedy's stopping rule.""",
+
+    """Why the greedy is optimal, as an argument.
+At the moment i == end, the partition cannot be shorter - every character in it
+forced the boundary at least this far. And it need not be longer, since nothing
+inside recurs beyond i. So the first valid cut point is the unique earliest
+one, and taking it can never hurt the remainder because the remaining string is
+independent.
+That 'earliest valid cut is always safe' shape is the standard exchange
+argument for interval-greedy problems, and it is the same reasoning as in
+Minimum Number of Arrows and Maximum Length of Pair Chain.""",
+
+    """Why building `last` as a dict comprehension works.
+`{ch: i for i, ch in enumerate(s)}` overwrites the entry each time a character
+recurs, so after the pass every key holds its LAST index - exactly what is
+wanted, and it happens by accident of the overwrite rather than by explicit
+max(). Neat, and worth pointing out so a reader does not think it is a bug.
+The first-occurrence version would need setdefault instead, which is the same
+trick inverted - a small idiom worth having both directions of.""",
+
+    """Edge cases.
+Single character 'a' -> last = {a:0}, at i=0 i == end -> [1].
+All distinct 'abc' -> each character's last index is its own, so every position
+closes a partition -> [1,1,1], the maximum possible number of parts.
+All identical 'aaaa' -> end is 3 from the first step -> one partition [4].
+Two interleaved letters 'abab' -> a's last is 2, b's last is 3, so the boundary
+extends to 3 -> [4], one partition. That is the case that shows why the
+partition cannot always be split even when characters repeat early.
+Empty string -> [].""",
+
+    """Complexity and the family.
+Two passes: O(n) time, O(1) space bounded by the 26-letter alphabet.
+The family: Merge Intervals (this is effectively interval merging where each
+letter's interval is first-to-last occurrence), Degree of an Array (same
+first-to-last idea, minimised instead of partitioned), Maximum Number of
+Non-Overlapping Substrings, and Jump Game II - which uses the identical
+'extend the reach, and when i hits the boundary, commit' structure.
+Cue: any problem about containing ALL copies of something makes the
+first-to-last interval the relevant object.""",
+]
+
+for _e in ENTRIES:
+    if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1P:
+        _e["examples"] = _EX_P1P[_e["title"]]
+
+
 # ══ Amazon LP / STAR worked examples ══════════════════════════════════════
 # Correcting _freq_tier (see the note there) moved 19 behavioural entries into
 # P0, where they hit the five-worked-examples bar. These are the STAR prompts:
