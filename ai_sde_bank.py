@@ -29490,6 +29490,126 @@ switch to a prefix-sum hash map for O(n). Knowing which sibling needs which
 tool is the point of studying them together.""",
 ]
 
+_EX_P1G["Path Sum III (prefix sum)"] = [
+    """Why the naive answer is O(n^2) and this is O(n).
+The obvious solution runs a downward-sum DFS from EVERY node - n starting
+points, each walking its subtree - which is O(n^2), or O(n log n) balanced.
+The prefix-sum trick counts every qualifying path in a single traversal by
+reusing the array technique: on a path from the root, the sum of the segment
+between two ancestors is (running sum here) minus (running sum there). So a
+path ending at the current node sums to target exactly when some ancestor had
+running sum equal to (running - target). Keep a count of the running sums seen
+ON THE CURRENT PATH and the lookup is O(1).""",
+
+    """A trace. Tree 10 -> (5 -> (3, 2 -> (None, 1)), -3 -> (None, 11)), target 8.
+prefix starts {0: 1}.
+At 10: running 10, look up 10-8 = 2 -> 0 paths. prefix {0:1, 10:1}.
+At 5: running 15, look up 7 -> 0. prefix {0:1, 10:1, 15:1}.
+At 3: running 18, look up 10 -> found once (the ancestor 10) -> 1 path, namely
+5 -> 3. Correct.
+At 2: running 17, look up 9 -> 0. At 1: running 18, look up 10 -> 1 path,
+namely 5 -> 2 -> 1. Correct.
+At -3: running 7, look up -1 -> 0. At 11: running 18, look up 10 -> 1 path,
+namely -3 -> 11. Total 3.""",
+
+    """Why prefix[0] = 1 must be seeded.
+It represents the empty prefix BEFORE the root, and it is what lets a path
+starting AT the root count. Without it, a tree of a single node 8 with target 8
+gives running = 8, looks up 8-8 = 0, finds nothing, and returns 0 - wrong.
+This is the identical seed used in Subarray Sum Equals K on an array, and
+forgetting it there produces the same class of bug. If your answer is right
+except that it misses paths beginning at the root, this is why.""",
+
+    """The un-counting on the way out, which is what makes it a TREE algorithm.
+    prefix[running] += 1
+    count += dfs(left) + dfs(right)
+    prefix[running] -= 1        # <- backtrack
+That decrement removes the current node's running sum as you leave it, so a
+node in the LEFT subtree can never be paired with an ancestor that only exists
+on the RIGHT branch. Omit it and you count paths that are not paths at all -
+they zig-zag across the tree, which is not a downward path.
+This is the tree version of backtracking state, exactly like path.pop() in Path
+Sum II, and it is where this problem is usually lost.""",
+
+    """Edge cases.
+Negative values are the reason this problem is interesting - with only positive
+values a sliding window would work, but negatives mean the running sum is not
+monotonic, so you genuinely need the hash map.
+target = 0 with a node value of 0 -> a single-node path counts; check the
+prompt's intent. Empty tree -> 0. A path of length 1 (a node equal to target)
+must count, which the prefix[0] = 1 seed guarantees.
+Large sums can exceed 32-bit range in other languages; Python is immune.""",
+
+    """Complexity and the family.
+Time O(n) - one traversal, O(1) hash work per node. Space O(h) for the
+recursion plus O(h) for the prefix map, since it only ever holds the sums along
+the current path.
+The family is the prefix-sum-plus-hash-map pattern: Subarray Sum Equals K (the
+array original), Continuous Subarray Sum (store running mod k), Contiguous
+Array (map +1/-1 running counts), and Binary Tree Maximum Path Sum (different -
+postorder, because the path may bend rather than run downward). Recognising
+'sum of a segment = difference of two prefixes' is what unlocks all of them.""",
+]
+
+_EX_P1G["Perfect Squares (DP)"] = [
+    """The DP, traced for small n.
+dp[0] = 0. dp[1] = dp[0]+1 = 1 (just 1). dp[2] = dp[1]+1 = 2 (1+1).
+dp[3] = dp[2]+1 = 3. dp[4] = min(dp[3]+1, dp[0]+1) = 1 (4 itself).
+dp[5] = min(dp[4]+1, dp[1]+1) = 2 (4+1). dp[12] = min over j*j in {1,4,9}:
+dp[11]+1, dp[8]+1, dp[3]+1 = min(4, 3, 4) = 3, namely 4+4+4.
+dp[13] = min(dp[12]+1, dp[9]+1, dp[4]+1) = min(4, 2, 3)... dp[9]+1 = 2, so 2 -
+namely 9+4. Doing 12 and 13 by hand is worth it: 13 is the case where the
+greedy 'take the largest square' would give 9+1+1+1+1 = 5.""",
+
+    """Why greedy fails, which is the first thing to establish.
+Greedy 'subtract the largest square that fits' gives, for 12: 9 + 1 + 1 + 1 =
+four squares. The optimum is 4 + 4 + 4 = three. For 13, greedy gives 9+4 = two,
+which happens to be right - so a single test case can convince you greedy
+works. 12 is the counterexample to keep.
+The reason greedy breaks is the same as in Coin Change: taking the largest
+piece can leave a remainder that is expensive to fill, and there is no exchange
+argument to rule that out.""",
+
+    """This IS Coin Change with a computed coin set.
+The recurrence dp[i] = min(dp[i - c] + 1) over available pieces c is identical;
+the only difference is that the 'coins' are 1, 4, 9, 16, ... generated on the
+fly rather than given. Saying that out loud is worth marks, because it shows
+you are recognising a pattern rather than inventing one.
+It also tells you the follow-ups for free: 'return the actual squares' (keep a
+parent pointer per state), and 'count the number of ways' (sum instead of min,
+with the loop order swapped so combinations are not double-counted).""",
+
+    """The mathematical shortcut, which is a legitimate second answer.
+Lagrange's four-square theorem says every natural number is the sum of at most
+FOUR squares, so the answer is always 1, 2, 3 or 4. Legendre's three-square
+theorem says it is 4 exactly when n has the form 4^a * (8b + 7). So:
+check if n is a perfect square -> 1; check the 4^a(8b+7) form -> 4; check
+whether n = i*i + j*j for some i -> 2; otherwise 3. That is O(sqrt(n)) with no
+table at all.
+Offer the DP first (safe, and clearly your own reasoning) and this second. Do
+not lead with it unless you are certain of the conditions - a half-remembered
+number-theory rule is worse than a correct DP.""",
+
+    """Edge cases and complexity.
+n = 1 -> 1. n = 4 -> 1 (a perfect square is one square). n = 0 -> dp[0] = 0,
+though most versions constrain n >= 1.
+Time O(n * sqrt(n)): for each of n values you try up to sqrt(n) squares -
+about 1.2 million operations at n = 10,000, comfortably fast. Space O(n).
+The BFS alternative is worth mentioning: treat each number as a node with edges
+to n - j*j, and the answer is the shortest path from n to 0. Same complexity,
+and it finds the answer without filling the whole table, which is faster in
+practice when the answer is small.""",
+
+    """The family, and the recognition cue.
+Coin Change (fewest coins), Coin Change II (number of ways), Perfect Squares,
+Minimum Cost For Tickets, Word Break (boolean version), and Integer Break (a
+product instead of a count). All are unbounded-knapsack shaped: an outer loop
+over the target value, an inner loop over the pieces, and a min/sum/or combine.
+Cue: 'fewest / how many ways to make N from a set of pieces, reusable'. Once
+you see it, the two nested loops and the base case write themselves, and the
+only thinking left is the combine step.""",
+]
+
 for _e in ENTRIES:
     if len(_e.get("examples") or []) < 5 and _e["title"] in _EX_P1G:
         _e["examples"] = _EX_P1G[_e["title"]]
