@@ -41522,64 +41522,405 @@ backtracking with pruning.""",
 ]
 
 _EX_P0F["Longest Palindromic Substring (expand around center)"] = [
-    """The textbook case, traced center by center.
-s = "babad".
-i=0: odd center 'b' -> expand, s[-1] out of bounds, palindrome "b" (0,0). Even
-center between 'b' and 'a' -> mismatch, empty.
-i=1: odd center 'a' -> s[0]='b' == s[2]='b' -> expand to (0,2) = "bab"; next
-would be s[-1], stop. Best so far "bab", length 3.
-i=2: odd center 'b' -> s[1]='a' == s[3]='a' -> "aba" (1,3), also length 3, not
-STRICTLY longer, so the earlier one is kept.
-i=3, i=4: nothing longer.
-Answer "bab". "aba" is equally valid - the problem accepts either, which is
-worth saying.""",
+    """1. THE GOAL, in plain English.
 
-    """The even-length case - why there are 2n-1 centers.
-s = "cbbd". The answer "bb" has NO middle character; its center sits in the GAP
-between index 1 and index 2.
-i=1: odd center gives "b"; even center expand(1,2) sees s[1]='b' == s[2]='b' ->
-palindrome (1,2), length 2. Best.
-If you only tried the n character-centers you would return "c" and never find
-"bb". That is why every i tries two centers: n characters plus n-1 gaps = 2n-1
-centers total.""",
+You are given a string. Find the longest unbroken run of characters inside it that
+reads the same forwards and backwards.
 
-    """Edge cases: empty, single char, all identical.
-"" -> the guard returns "". Without it, `start,end = 0,0` and `s[0:1]` raises.
-"a" -> one center, answer "a".
-"aaaa" -> the center at the gap between index 1 and 2 expands all the way to
-(0,3), answer "aaaa". Note this is the WORST case for this algorithm: every
-expansion runs the full width, so it really is Theta(n^2).
-"abcd" (no palindrome longer than 1) -> every expansion stops immediately,
-answer "a".""",
+A sequence that reads the same both ways is a PALINDROME - "racecar", "noon",
+"aba". A SUBSTRING is an unbroken run taken out of the string; the characters must
+sit next to each other in the original.
 
-    """Reading the return values of expand() - the off-by-one that bites.
-expand returns `left + 1, right - 1`, not `left, right`. The while loop exits
-only AFTER stepping one position too far in each direction (either out of bounds
-or on a mismatch), so the last VALID palindrome is one step back on both sides.
-Check it on "aba" with center i=1: the loop runs until left=-1, right=3, then
-returns (0,2) - exactly the bounds of "aba", and s[0:3] is the substring.
-Return the raw left,right and every answer is two characters too wide and
-usually an IndexError.""",
+Our example: s = "babad".
 
-    """The DP alternative, and why nobody writes it.
-dp[i][j] = True if s[i:j+1] is a palindrome, built from dp[i+1][j-1] and
-s[i]==s[j]. Also O(n^2) TIME but O(n^2) SPACE, versus O(1) space for
-expand-around-center.
-The expansion version is shorter, faster in practice (no table allocation), and
-easier to explain. Mention DP exists, then write the expansion.
-For completeness: Manacher's algorithm solves it in O(n) by reusing previously
-computed radii. Nobody expects you to write it; NAMING it when asked 'can you do
-better than n^2?' is the correct move.""",
+    b a b a d
+    0 1 2 3 4
 
-    """The palindrome family, and how the centers idea transfers.
-- Count all palindromic substrings (LeetCode 647): identical loop, but instead
-  of tracking the longest you add 1 for every successful expansion step.
-- Longest Palindromic SUBSEQUENCE: NOT this algorithm - subsequences are not
-  contiguous, so it is a 2-D DP (or LCS of s and reversed s).
-- Palindrome Partitioning: backtracking that uses a palindrome check at each cut.
-The distinction between SUBSTRING (contiguous) and SUBSEQUENCE (not) decides the
-whole approach, and interviewers deliberately use whichever word you are less
-likely to notice.""",
+Look for palindromes inside it:
+
+    "bab"  - positions 0 to 2.  Reads b-a-b forwards, b-a-b backwards. Yes.
+    "aba"  - positions 1 to 3.  Also a palindrome, also length 3.
+    "bad"  - not a palindrome.
+    "b", "a", "d" - every single character is trivially a palindrome of length 1.
+
+The longest is length 3, and there are two of them. Most versions of this problem
+accept either, so "bab" and "aba" are both correct answers.
+
+Two things worth pinning down.
+
+EVERY SINGLE CHARACTER IS A PALINDROME. So the answer is never empty for a
+non-empty string - the worst case is length 1.
+
+AND IT MUST BE UNBROKEN. "bb" is not a substring of "babad", because the two b's
+are not adjacent. Picking characters out with gaps would be a subsequence, which is
+a different and harder problem.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. Try every substring: pick a start, pick an end, then check
+whether that run reads the same both ways. There are about n x n / 2 substrings and
+checking each costs up to n, so the total is roughly n cubed - O(n^3). For a
+thousand characters that is a billion steps.
+
+THE FIRST IMPROVEMENT is to notice that a palindrome is symmetric, so instead of
+picking two ends, pick a CENTRE and grow outwards.
+
+Stand at some position, compare the character on the left with the character on the
+right, and if they match, step both outwards and compare again. Keep going while
+they match. The moment they differ - or you fall off either end of the string - the
+palindrome stops, and you know exactly how long it was.
+
+    "babad", centre at position 2 (the second b):
+
+        b a b a d
+            ^         start with just "b"
+          a b a       left is 'a', right is 'a' - match, so "aba"
+        b a b a d     left is 'b', right is 'd' - no match, stop
+
+    So the palindrome centred at position 2 is "aba", length 3.
+
+Do that from every possible centre and keep the longest. Each expansion costs at
+most n, and there are about 2n centres, so the whole thing is O(n^2). For a
+thousand characters that is a million steps rather than a billion.
+
+Section 3 explains why there are 2n centres rather than n, which is the part
+everyone gets wrong first.""",
+
+    """3. THE TRICK - there are TWO kinds of centre, and you must try both.
+
+Here is the detail that catches everyone.
+
+An ODD-length palindrome has a single character at its centre:
+
+    "aba"     centre is the 'b'
+    "racecar" centre is the 'e'
+
+An EVEN-length palindrome has no middle character at all. Its centre is the GAP
+between two characters:
+
+    "abba"    centre is the gap between the two b's
+    "bb"      centre is the gap between them
+
+If you only ever expand from single characters, you will never find "abba" or even
+"bb" - and a string like "cbbd" would wrongly return a single character.
+
+So each position needs TWO attempts:
+
+    expand from (i, i)      - an odd-length palindrome centred ON character i
+    expand from (i, i + 1)  - an even-length palindrome centred BETWEEN i and i + 1
+
+The first starts with left and right on the same character, which always matches
+itself, so it grows from a seed of length 1. The second starts with them on
+neighbouring characters, which grow from a seed of length 2 only if those two
+characters happen to be equal - and if they are not, the expansion stops
+immediately with an empty result, which is harmless.
+
+That is why there are 2n centres for a string of length n: n characters and n gaps
+after them.
+
+The second call reaches for position i + 1, which is off the end when i is the last
+character. That is safe because the expansion checks its bounds before reading
+anything - covered in section 8.
+
+WHY THE EXPANSION RETURNS left + 1 AND right - 1: the loop stops when the
+characters no longer match or an edge is passed, so at that moment left and right
+have already stepped one too far. Backing each off by one gives the LAST positions
+that did match. Forgetting that adjustment reports a palindrome two characters
+longer than it really is.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - only trying odd centres. Covered in section 3, and it is the classic error.
+"cbbd" would return "c" instead of "bb". Test with an even-length palindrome
+specifically.
+
+CASE 2 - forgetting the + 1 and - 1 when the expansion returns. The loop always
+exits one step past the last match, so the raw left and right are too wide by one on
+each side. Reporting them gives a string that is not a palindrome at all.
+
+CASE 3 - comparing lengths as (right - left) rather than (right - left + 1). Either
+is fine for CHOOSING the longest, because the same constant is being ignored on both
+sides. But if you print the length itself, the "+ 1" matters: positions 0 to 2 hold
+three characters, not two.
+
+CASE 4 - the empty string. Guarded at the top, returning an empty string. Without
+the guard the code would still work, but the final slice would be built from
+uninitialised bounds.
+
+CASE 5 - a string with no palindrome longer than one character, like "abcd". Every
+odd expansion gives length 1, every even expansion gives length 0, and the answer is
+a single character - correct, since single characters are palindromes.
+
+CASE 6 - an all-same string, like "aaaa". Every expansion runs to the string's
+edges, so each of the 2n centres costs O(n) and the total really is O(n^2). This is
+the input that shows the quadratic behaviour is real, not just theoretical.
+
+CASE 7 - assuming the answer is unique. "babad" has two answers of length 3. Any
+test comparing against one specific string is testing an implementation detail; the
+right check is that the returned string is a palindrome, is a substring, and has the
+right length.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+PALINDROME, SUBSTRING: defined in section 1. The unbroken requirement is what makes
+this different from the subsequence version.
+
+CENTRE: the position a palindrome is symmetric about - either a character (odd
+length) or a gap between two characters (even length). Section 3.
+
+EXPAND AROUND CENTRE: the technique of growing outwards from a centre while the
+characters match.
+
+left and right: the two positions currently being compared. They start together (or
+adjacent) and move apart.
+
+s[left] == s[right]: the match test. The loop continues only while both positions
+are inside the string AND the characters agree.
+
+s[start:end + 1]: Python slicing. A slice runs up to but NOT including its second
+number, so to include the character at position end you must write end + 1. That
+"+ 1" is the same off-by-one that appears in the length comparison, from the same
+cause.
+
+A NESTED FUNCTION: expand is defined inside longest_palindrome so it can see s
+without being passed it. It returns a PAIR of positions, which the caller unpacks
+into two variables.
+
+O(n^2) and O(1): the costs, where n is the length of the string. O(n^2) means the
+work grows with the square of the length - double the string and the work goes up
+four times. O(1) means the extra memory does not grow at all: a handful of
+positions, whatever the input size.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: try every possible centre, grow outwards from each
+while the characters keep matching, and remember the longest run you ever managed.
+
+There is no recursion here - loops only - so nothing piles up on the call stack.
+
+The steps:
+
+  1. If the string is empty, return an empty string.
+
+  2. Keep two positions recording the best palindrome found so far - its start and
+     its end. Start them both at 0, which describes the single first character, so
+     there is always a valid answer even if nothing longer is ever found.
+
+  3. Write a small helper that takes two starting positions and grows them apart:
+
+     a. While BOTH positions are still inside the string AND the characters at
+        them are equal, step the left one further left and the right one further
+        right.
+     b. When that stops, the two positions have gone one step too far - the loop
+        only exits when something failed. So step each back by one and return
+        those as the last positions that genuinely matched.
+
+  4. Walk through every position in the string. At each one, run the helper twice:
+
+     a. Once starting with both positions ON that character - this finds the best
+        ODD-length palindrome centred there.
+     b. Once starting with them on that character and the NEXT one - this finds the
+        best EVEN-length palindrome centred in the gap. If those two characters
+        differ, the helper returns an empty range, which is harmless.
+
+  5. After each run, if the palindrome found is longer than the best so far, record
+     its two positions as the new best.
+
+  6. At the end, return the piece of the string between the recorded positions,
+     remembering that a slice needs one more than the end position to include that
+     character.
+
+Step 4b is the one people leave out, and without it no even-length palindrome can
+ever be found.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code works on the observation that every palindrome is symmetric about some
+centre, so rather than examining every possible run of characters, it examines every
+possible centre and grows outwards from it.
+
+Growing is simple. Put a finger on each side of the centre, compare the two
+characters, and if they are the same, move both fingers one step further apart and
+compare again. The moment the characters disagree, or a finger falls off the end of
+the string, the palindrome has ended - and the fingers have gone exactly one step
+too far, so each is stepped back to give the true edges.
+
+The subtlety is that there are two kinds of centre. Some palindromes have a middle
+character, like the b in "aba". Others have no middle character at all - the two
+halves meet in the gap between two letters, as in "abba" or "bb". So at every
+position the code grows twice: once starting with both fingers on the same
+character, and once starting with them on neighbouring characters. Skipping the
+second kind would make every even-length palindrome invisible.
+
+Each time it finishes growing, it compares the run it found against the best it has
+seen so far, and keeps whichever is longer. It starts the record at the very first
+character, so there is always a valid answer - single characters count as
+palindromes.
+
+When every centre has been tried, it cuts out the piece of the string between the
+recorded edges and returns it.""",
+
+    """8. THE CODE, line by line.
+
+Keep s = "babad" beside you; the answer is "bab" or "aba", both length 3.
+
+    if not s:
+        return ""
+The empty-string guard.
+
+    start, end = 0, 0
+The best palindrome found so far, recorded as its two edge positions. Starting both
+at 0 describes the single first character, which is a valid palindrome - so there is
+always an answer even if nothing longer is found.
+
+    def expand(left, right):
+The helper that grows outwards from a centre. Defined inside so it can see s
+directly. It returns a PAIR of positions.
+
+    while left >= 0 and right < len(s) and s[left] == s[right]:
+The growing loop, with three conditions checked in this order.
+
+  "left >= 0" - the left finger has not fallen off the front.
+  "right < len(s)" - the right finger has not fallen off the back.
+  "s[left] == s[right]" - the characters still match.
+
+The bounds are tested BEFORE the characters are read, and Python stops evaluating
+"and" at the first false condition - which is what makes the read safe. It is also
+what lets the caller pass i + 1 when i is the last character: right is then off the
+end, the second condition is false, and nothing is read.
+
+    left -= 1; right += 1
+Step both fingers outwards and compare again.
+
+    return left + 1, right - 1
+The adjustment from section 3, and the line people forget. The loop only exits when
+something FAILED, so at that moment left and right have each gone one step too far.
+Backing each off by one gives the last positions that genuinely matched.
+
+Note what this returns when even the first comparison fails - for instance
+expand(1, 2) on "babad", where 'a' and 'b' differ. left stays 1 and right stays 2,
+so it returns (2, 1) - an empty range, since the start is past the end. The length
+comparison below then computes 1 - 2 = -1, which loses to everything. Harmless, and
+no special case needed.
+
+    for i in range(len(s)):
+Try every position as a centre.
+
+    l1, r1 = expand(i, i)
+The ODD case: both fingers start on the same character, which always matches
+itself, so this grows from a seed of length 1.
+
+    l2, r2 = expand(i, i + 1)
+The EVEN case: the fingers start on neighbouring characters, growing from a seed of
+length 2 only if those two match. This is the line whose absence makes every
+even-length palindrome invisible - see case 1 in section 4.
+
+    if r1 - l1 > end - start:
+        start, end = l1, r1
+    if r2 - l2 > end - start:
+        start, end = l2, r2
+Keep whichever is longer. Note both comparisons use (right - left) rather than
+(right - left + 1) - the "+ 1" is omitted on both sides, so it cancels out and the
+comparison is still correct. It would matter only if the length itself were being
+reported.
+
+    return s[start:end + 1]
+Cut out the winning piece. The "+ 1" is required because a Python slice stops
+BEFORE its second number, so including the character at position end needs end + 1.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+    s = "b a b a d"
+    pos   0 1 2 3 4
+
+Start: start = 0, end = 0  (the single "b", length 1)
+
+i = 0
+  expand(0, 0):  left=0, right=0.  s[0]=='b'==s[0] -> match, so left=-1, right=1.
+                 left >= 0 is false -> stop.  return (0, 0).
+                 That is "b", length 1.
+  r1 - l1 = 0.  end - start = 0.  Is 0 > 0?  No.
+  expand(0, 1):  left=0, right=1.  s[0]='b', s[1]='a' -> differ, loop never runs.
+                 return (1, 0) - an empty range.
+  r2 - l2 = -1.  Is -1 > 0?  No.
+
+i = 1
+  expand(1, 1):  s[1]='a' matches itself -> left=0, right=2.
+                 s[0]='b', s[2]='b' -> match -> left=-1, right=3.
+                 left >= 0 false -> stop.  return (0, 2).
+                 That is "bab", length 3.
+  r1 - l1 = 2.  end - start = 0.  Is 2 > 0?  YES -> start=0, end=2.
+  expand(1, 2):  s[1]='a', s[2]='b' -> differ.  return (2, 1).
+  r2 - l2 = -1.  No.
+
+i = 2
+  expand(2, 2):  s[2]='b' matches itself -> left=1, right=3.
+                 s[1]='a', s[3]='a' -> match -> left=0, right=4.
+                 s[0]='b', s[4]='d' -> differ -> stop.  return (1, 3).
+                 That is "aba", length 3.
+  r1 - l1 = 2.  end - start = 2.  Is 2 > 2?  No - so the earlier "bab" is kept.
+  expand(2, 3):  s[2]='b', s[3]='a' -> differ.  return (3, 2).  No.
+
+i = 3
+  expand(3, 3):  s[3]='a' matches itself -> left=2, right=4.
+                 s[2]='b', s[4]='d' -> differ -> stop.  return (3, 3), length 1.
+  Not longer.  expand(3, 4): s[3]='a', s[4]='d' -> differ.  No.
+
+i = 4
+  expand(4, 4):  s[4]='d' matches itself -> left=3, right=5.
+                 right < len(s) is false -> stop.  return (4, 4), length 1.
+  Not longer.  expand(4, 5): right=5 is off the end, loop never runs.  return (5,4).
+                 Note this is the case where i + 1 goes past the string - handled
+                 by the bounds check with no crash.
+
+return s[0:3] = "bab".  Correct.
+
+Note "aba" was found at i = 2 and was equally long, but the strict ">" kept the
+first one. Either is a valid answer.
+
+AN EVEN-LENGTH CASE, s = "cbbd":
+  i = 1: expand(1,1) gives "b", length 1.
+         expand(1,2): s[1]='b', s[2]='b' -> match -> left=0, right=3.
+                      s[0]='c', s[3]='d' -> differ -> stop.  return (1, 2).
+         r2 - l2 = 1 > 0 -> start=1, end=2.
+  return s[1:3] = "bb".  Correct - and impossible to find without the even case.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n^2). There are about 2n centres, and each expansion can run up to n steps
+before it stops. The worst case is a string of identical characters like "aaaa",
+where every expansion runs to the edges - which is exactly the input to test with if
+you want to see the quadratic behaviour rather than assume it.
+
+Compare with the brute-force O(n^3): on a thousand characters that is a million
+steps against a billion.
+
+SPACE: O(1) - constant. A few positions, whatever the length of the string. That is
+a genuine advantage over the dynamic-programming solution to this problem, which
+fills an n by n table and therefore costs O(n^2) memory for the same O(n^2) time.
+Same speed, far more memory, and harder to write - so expand-around-centre is the
+one to reach for.
+
+THERE IS A FASTER ALGORITHM: Manacher's, which solves this in O(n) by reusing
+information from palindromes already found. It is genuinely clever and genuinely
+fiddly, and almost nobody is expected to produce it in an interview. Knowing it
+exists, and that expand-around-centre is the expected answer, is the right amount to
+know.
+
+THE #1 MISTAKE - only expanding from single-character centres. Every even-length
+palindrome then becomes invisible, so "cbbd" returns "c" instead of "bb". The code
+still runs, still returns a palindrome, and is still wrong. Every position needs two
+expansions, and the test case that exposes it is any string whose answer has even
+length.
+
+A close second: forgetting the + 1 and - 1 when the expansion returns. The loop
+always exits one step past the last match, so returning the raw positions reports a
+run that is two characters too wide and is not a palindrome at all.
+
+ONE-SENTENCE TAKEAWAY: every palindrome is symmetric about a centre, so grow
+outwards from all 2n of them - n characters for odd lengths and n gaps for even -
+and back off by one when the growing stops, because the loop always ends one step
+too far.""",
 ]
 
 _EX_P0F["Longest Repeating Character Replacement"] = [
@@ -41650,62 +41991,356 @@ lines.""",
 ]
 
 _EX_P0F["Meeting Rooms II (minimum rooms)"] = [
-    """The textbook case, traced.
-intervals = [[0,30],[5,10],[15,20]], sorted by start already.
-[0,30]: heap empty -> open a room, heap = [30].
-[5,10]: heap[0]=30 > 5, so the earliest-ending room is still busy -> open a
-second room, heap = [10,30].
-[15,20]: heap[0]=10 <= 15, that room is free -> reuse it (heapreplace) ->
-heap = [20,30].
-len(heap) = 2. Answer 2 rooms.""",
+    """1. THE GOAL, in plain English.
 
-    """Why the heap holds END times and is keyed by the EARLIEST end.
-At each new meeting the only question is 'is ANY room free?' - and if any room is
-free, the one that freed up first certainly is. So you only ever need to inspect
-the minimum end time, which is exactly what a min-heap root gives you in O(1).
-If the earliest-ending room is still busy, every other room is too, so a new one
-is unavoidable.
-That last sentence is the greedy correctness proof, and it is what makes the
-answer optimal rather than merely feasible.""",
+You are given a list of meetings, each with a start time and an end time. How many
+rooms do you need so that no two meetings ever share a room at the same moment?
 
-    """No overlap at all, and total overlap.
-[[1,2],[3,4],[5,6]]: each meeting finds the single room free (2 <= 3, 4 <= 5) and
-reuses it. heap never grows past 1. Answer 1.
-[[1,10],[2,10],[3,10]]: nothing ever frees in time, so each meeting opens a room.
-Answer 3.
-Empty input -> the guard returns 0.
-One meeting -> 1. These four bound the answer between 1 and n and confirm the
-heap size is doing the counting.""",
+Our example: [[0, 30], [5, 10], [15, 20]]. Read those as "0 to 30", "5 to 10" and
+"15 to 20".
 
-    """Touching endpoints - the convention question again.
-[[1,4],[4,5]]: the test is `heap[0] <= start`, i.e. 4 <= 4 is true, so the room
-is reused and the answer is 1.
-That treats intervals as half-open - a meeting ending at 4pm and one starting at
-4pm can share a room, which matches how calendars actually work.
-Change it to `<` and you get 2. Ask which the problem wants; Meeting Rooms II
-wants the reuse, whereas Merge Intervals treats the same touch as an overlap.
-Same numbers, opposite convention, because the QUESTIONS differ.""",
+Draw them on a timeline:
 
-    """The sweep-line alternative - often cleaner, same answer.
-Build two sorted arrays: all starts, and all ends. Walk them with two pointers;
-every start increments a counter, every end decrements it; the answer is the
-maximum the counter ever reaches.
-[[0,30],[5,10],[15,20]] -> starts [0,5,15], ends [10,20,30].
-0 -> 1; 5 -> 2; 10(end) -> 1; 15 -> 2; 20(end) -> 1; 30(end) -> 0. Peak 2.
-Same O(n log n) from the sorts, no heap needed, and it generalises immediately to
-'how many are concurrent at time T?'.
-Know both: the heap version also tells you WHICH room each meeting used, which
-the sweep-line does not.""",
+    0         5    10        15   20              30
+    |---------|----|---------|----|---------------|
+    A: 0---------------------------------------- 30
+    B:           5----10
+    C:                        15---20
 
-    """Where this exact question appears in system design.
-- Server capacity: each request occupies a worker for a duration; the peak
-  concurrency is how many workers you must provision.
-- Database connection pool sizing from a query trace.
-- CDN or video-streaming concurrent-viewer peaks for bandwidth planning.
-- Car-park / hotel-room / seat allocation.
-The mapping is always the same: intervals of occupancy -> maximum concurrent
-count -> the resource you must buy. When an interviewer asks 'how many instances
-do we need?', this is the algorithm behind the estimate.""",
+Meeting A runs the whole time. B happens inside it, so at 5 o'clock two meetings
+are running at once - two rooms needed. B finishes at 10, so at 15 o'clock only A
+and C are running - again two.
+
+The most that ever run at the same time is two. So the answer is 2.
+
+That last sentence is the real question in disguise. You are not counting meetings
+or gaps - you are finding the PEAK number running simultaneously, because that peak
+is exactly how many rooms you must have.
+
+One convention to settle: if one meeting ends at 10 and another starts at 10, do
+they clash? Almost always no - the room is handed over. So an end time of 10 and a
+start time of 10 can share a room. That decision shows up as a single "less than or
+equal" in the code, and section 4 covers what changes if the problem says
+otherwise.""",
+
+    """2. THE INTUITION - and first, the simple-but-slow version.
+
+THE SLOW VERSION. For every meeting, count how many other meetings overlap it, and
+take the largest count. That is a loop inside a loop - about n x n / 2 comparisons,
+written O(n^2). Correct, easy to explain, and hopeless on ten thousand meetings.
+
+THE UPGRADE - handle the meetings in time order and keep track of rooms in use.
+
+Sort the meetings by start time and walk through them in that order. Keep a
+collection of the rooms currently occupied, where each room is represented by the
+time it becomes free - its meeting's end time.
+
+For each meeting that starts, ask one question: has any room already become free?
+
+  If yes, move into it. No new room needed.
+  If no, every room is still busy, so open a new one.
+
+The number of rooms you ever had to open is the answer.
+
+Now the key efficiency point. To answer "has any room become free?", you do not
+need to check every room. You only need the room that becomes free EARLIEST - if
+even that one is still busy, every other room certainly is too.
+
+So the collection should give instant access to its smallest end time. That is
+exactly what a MIN-HEAP does: a container whose only promise is that its smallest
+item is always on top.
+
+Sorting costs O(n log n), and each meeting costs about log n for a heap operation.
+So the whole thing is O(n log n) - fine for millions of meetings.""",
+
+    """3. WHY SORTING BY START TIME IS WHAT MAKES IT WORK.
+
+The sort is not tidiness; it is what licenses the whole method.
+
+Walking in start order means that when you handle a meeting, every meeting that
+began earlier has already been placed. So the heap genuinely reflects "the rooms in
+use at this moment" - nothing that starts later can retroactively occupy a room now.
+
+If the meetings were processed in any other order, a meeting starting at time 5
+might be handled after one starting at time 20, and the heap would contain end
+times for meetings that have not started yet. The comparison would be meaningless.
+
+Sort by START, not by end. Sorting by end time would mean handling a short late
+meeting before a long early one, and the same problem appears.
+
+AND WHY IS THE PEAK EQUAL TO THE HEAP'S FINAL SIZE?
+
+Each time a new room is opened, the heap grows by one. Rooms are never removed -
+when a meeting reuses a room, the heap's size stays the same, because one end time
+is swapped for another. So the heap only ever grows, and its final size is the
+total number of rooms ever opened.
+
+And a room was only ever opened when every existing room was busy - meaning at that
+moment, that many meetings were running simultaneously. So the final size equals the
+highest simultaneous count, which is the answer.
+
+That is worth being able to state: the heap never shrinks, so its size at the end is
+the peak it ever reached.
+
+THE HANDOVER RULE. The comparison is "the earliest free time is less than or equal
+to this start time". The "or equal" is the decision that a meeting ending at 10 and
+one starting at 10 can share a room. Using strict "less than" instead would demand
+a separate room for them, which most versions of this problem do not want.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - sorting by end time instead of start. Breaks the reasoning in section 3
+and gives wrong answers on inputs where a long meeting starts early.
+
+CASE 2 - the handover boundary. [[0,10],[10,20]] gives 1 room with "less than or
+equal" and 2 rooms with strict "less than". Neither is wrong in the abstract; the
+problem decides. State which you assumed - it is exactly the kind of thing an
+interviewer asks about.
+
+CASE 3 - forgetting that only the EARLIEST free room matters. Scanning all rooms
+for a free one is correct but turns each step into O(n), losing the whole gain. The
+heap exists precisely so that one lookup answers the question.
+
+CASE 4 - the empty list. No meetings, no rooms. Guarded at the top, and also
+handled naturally since the heap would stay empty.
+
+CASE 5 - meetings that are entirely contained in another, like [[0,30],[5,10]]. The
+short one starts while the long one is still running, so a second room opens. It
+never frees the first room early - the long meeting still runs to 30. Handled
+correctly with no special case.
+
+CASE 6 - expecting the heap to hold the rooms in some meaningful order. It does
+not. The only promise is that the earliest free time is on top; the rest are in no
+order at all. That is fine, because the top is the only one ever consulted.
+
+CASE 7 - assuming you must track WHICH room each meeting uses. The question asks
+only how many, so the heap stores end times and nothing else. If you needed the
+assignment, you would store room identifiers alongside.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+INTERVAL: a start and an end, written [start, end].
+
+OVERLAP: two intervals overlap if one starts before the other ends. With the
+handover convention, touching at a single point does not count as overlapping.
+
+MIN-HEAP: a container whose only promise is that the smallest item is instantly
+available at the top. Adding and removing cost about log of its size; peeking is
+free. It does NOT keep everything sorted.
+
+heapq: Python's heap module, providing a min-heap over an ordinary list.
+
+heap[0]: the smallest item, read as a plain list index - the earliest time any room
+becomes free.
+
+heapq.heappush(heap, end): open a new room, recorded by when it will free up.
+
+heapq.heapreplace(heap, end): pop the smallest AND push a new value in ONE
+operation - here, "this room's old meeting is over, and it is now busy until this
+new end time". Cheaper than a separate pop and push because the heap rearranges
+once instead of twice.
+
+intervals.sort(key=lambda x: x[0]): sort by the first element of each pair - the
+start time. A lambda is a tiny unnamed function; this one says "given x, hand back
+x[0]".
+
+O(n log n) and O(n): the costs, where n is the number of meetings. The sort
+dominates the time; the heap holds at most one entry per room, so at most n.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: go through the meetings in start order, keeping a
+collection of end times for rooms in use, and open a new room only when even the
+earliest-freeing room is still busy.
+
+There is no recursion here - a sort and a single loop - so nothing piles up on the
+call stack.
+
+The steps:
+
+  1. If there are no meetings, the answer is zero.
+
+  2. Sort the meetings by START time. This is what makes everything below valid -
+     see section 3.
+
+  3. Make an empty collection that will hold the end times of rooms currently in
+     use, arranged so the EARLIEST end time is instantly available.
+
+  4. Take each meeting in turn, in the sorted order.
+
+  5. Look at the earliest end time in the collection - the room that frees up
+     soonest.
+
+     a. If that room frees up at or before this meeting starts, the meeting can
+        reuse it. Replace that end time with this meeting's end time. The number of
+        rooms does not change.
+
+     b. Otherwise every room is still occupied, so open a new one: add this
+        meeting's end time to the collection.
+
+  6. When every meeting has been placed, the answer is how many entries the
+     collection holds - because entries are only ever added, never removed, so its
+     size is the number of rooms ever opened.
+
+Two things to hold on to. Only the earliest-freeing room is ever checked, because if
+that one is busy they all are. And step 5a swaps one end time for another rather
+than adding, which is what keeps the count from growing when a room is reused.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code walks through the meetings in the order they begin, and keeps a running
+picture of which rooms are currently occupied. Each occupied room is represented
+simply by the moment it will next be free - the end time of whatever is happening
+in it.
+
+The picture is arranged so that the room freeing up soonest is always immediately
+to hand. That is the only room worth asking about: if even the earliest-freeing
+room is still busy when the next meeting begins, then every other room certainly is
+too, and there is no point checking them.
+
+So for each meeting the code asks one question. Has the soonest-freeing room become
+available by the time this meeting starts? If it has, the meeting moves in, and
+that room's free-up time is updated to this meeting's end - the total number of
+rooms is unchanged. If it has not, every room is occupied, so a new room is opened
+and added to the picture.
+
+Because rooms are only ever added and never taken away, the size of the picture
+only grows. And a room was added only at a moment when every existing room was
+busy, meaning that many meetings were genuinely running at once. So when the last
+meeting has been handled, the number of rooms in the picture is the highest number
+that were ever needed simultaneously - which is the answer.
+
+The sort at the start is what makes all of this trustworthy: handling meetings in
+start order guarantees the picture always describes the present moment, never a
+mixture of times.""",
+
+    """8. THE CODE, line by line.
+
+Keep intervals = [[0,30], [5,10], [15,20]] beside you; the answer is 2.
+
+    import heapq
+Python's heap module - a min-heap, which is what puts the earliest end time on top.
+
+    if not intervals:
+        return 0
+No meetings, no rooms.
+
+    intervals.sort(key=lambda x: x[0])
+Sort by START time. This is the line the whole method rests on: processing in start
+order is what makes the heap a truthful picture of the rooms in use at the moment
+each meeting begins - see section 3. Sorting by end time instead breaks it.
+
+Note this sorts the caller's list in place; if that matters, sort a copy.
+
+    heap = []
+The rooms currently in use, each recorded by the time it frees up. The heap's
+promise is that heap[0] is always the earliest of those.
+
+    for start, end in intervals:
+Take each meeting in start order, unpacking its two times into named variables.
+
+    if heap and heap[0] <= start:
+The one question that decides everything.
+
+  "heap" - is any room in use at all? On the first meeting the heap is empty, so
+  this is false and the else branch opens the first room.
+
+  "heap[0] <= start" - does the earliest-freeing room become free at or before this
+  meeting begins? Only the earliest needs checking: if it is still busy, every other
+  room is too.
+
+  The "or equal" is the handover convention - a meeting ending at 10 and one
+  starting at 10 share a room. Strict "less than" would demand two - see case 2 in
+  section 4.
+
+    heapq.heapreplace(heap, end)
+Reuse that room: its old end time comes out and this meeting's end time goes in, in
+a single operation. Crucially the heap's SIZE does not change, which is what stops
+the room count growing when a room is recycled.
+
+    else:
+        heapq.heappush(heap, end)
+Every room is busy, so open a new one. This is the ONLY line that increases the
+count, and it fires exactly when a new simultaneous meeting appears.
+
+    return len(heap)
+The number of rooms ever opened. Because entries are only added and never removed,
+the final size is the peak number of meetings running at once - see section 3.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+intervals = [[0,30], [5,10], [15,20]]. Already sorted by start time.
+
+    heap = []   (rooms in use, recorded by when they free up)
+
+MEETING [0, 30]:
+    Is the heap non-empty?  No -> the condition is false, so open a new room.
+    heappush(30).  heap = {30}.  Rooms so far: 1.
+    Meaning: one room, busy until 30.
+
+MEETING [5, 10]:
+    heap is non-empty.  heap[0] = 30 - the earliest any room frees up.
+    Is 30 <= 5?  No - the room is busy until 30, and this meeting starts at 5.
+    So open a new room.  heappush(10).  heap = {10, 30}.  Rooms so far: 2.
+    Meaning: two rooms, freeing at 10 and 30. At this instant two meetings run.
+
+MEETING [15, 20]:
+    heap[0] = 10 - the earliest free time, from the meeting that ended at 10.
+    Is 10 <= 15?  YES - that room has been free since 10, and this starts at 15.
+    So reuse it.  heapreplace(20): the 10 comes out, the 20 goes in.
+    heap = {20, 30}.  Rooms so far: still 2.
+
+Loop ends.  return len(heap) = 2.  Correct.
+
+Read the room count down the trace: 1, 2, 2. It rose only when a genuinely new
+simultaneous meeting appeared, and stayed put when a room was recycled.
+
+A CASE WHERE THREE ROOMS ARE NEEDED, intervals = [[0,10], [1,9], [2,8]]:
+
+    [0,10]: heap empty -> open a room.  heap = {10}.  Rooms: 1.
+    [1,9]:  heap[0] = 10.  Is 10 <= 1?  No -> open another.  heap = {9, 10}. Rooms: 2.
+    [2,8]:  heap[0] = 9.   Is 9 <= 2?   No -> open another.  heap = {8, 9, 10}. Rooms: 3.
+
+    return 3.  Correct - all three meetings overlap around time 2 to 8.
+
+THE HANDOVER CASE, intervals = [[0,10], [10,20]]:
+
+    [0,10]:  heap empty -> open a room.  heap = {10}.
+    [10,20]: heap[0] = 10.  Is 10 <= 10?  YES -> reuse.  heapreplace(20).
+             heap = {20}.
+    return 1.  One room, handed over at 10 - which is the convention this code
+    assumes.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(n log n), where n is the number of meetings. The sort dominates at
+O(n log n); the loop then does one heap operation per meeting, each about log n
+because the heap holds at most n entries. Compare with the brute-force O(n^2): on
+ten thousand meetings that is roughly 130,000 steps against fifty million.
+
+SPACE: O(n) for the heap, which in the worst case - every meeting overlapping every
+other - holds one entry per meeting.
+
+AN ALTERNATIVE WORTH KNOWING, often called the SWEEP LINE or "chronological
+ordering". Split every meeting into two events: a start and an end. Sort all the
+events by time. Sweep through them keeping a running count - add one at a start,
+subtract one at an end - and report the highest count reached. Same O(n log n), no
+heap needed, and some people find it more intuitive because it literally counts
+what is running. The subtlety is that ties must put ends before starts, or a
+handover is counted as an overlap. Mentioning both approaches is a stronger answer
+than either alone.
+
+THE #1 MISTAKE - checking every room for one that is free, rather than only the
+earliest-freeing one. It is not wrong, but it makes each meeting cost O(n) and puts
+you back at quadratic time - which throws away the entire reason for using a heap.
+The insight to state is: if the soonest-freeing room is still busy, they all are.
+
+A close second: sorting by end time instead of start time, which makes the heap
+describe a jumble of moments rather than the present one.
+
+ONE-SENTENCE TAKEAWAY: walk the meetings in start order keeping the rooms' free-up
+times with the earliest on top - reuse that room if it is free, otherwise open a new
+one, and the number of rooms you ended up opening is the peak overlap.""",
 ]
 
 _EX_P0F["Non-overlapping Intervals (min removals)"] = [
