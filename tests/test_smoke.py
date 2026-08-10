@@ -292,3 +292,20 @@ def test_ai_sde_p0_entries_all_carry_worked_examples():
         f"{len(short)} P0 entries have fewer than 5 worked examples: "
         f"{short[:5]}{'...' if len(short) > 5 else ''}"
     )
+
+
+def test_ai_sde_list_payload_excludes_the_heavy_examples():
+    """The list endpoint must stay light. A fully written-up topic carries
+    ~16k characters of worked examples; shipping every topic's examples on
+    every page load put the payload on course for ~10MB. The list sends a
+    count instead, and the bodies come from /api/ai-sde/entry/<id>."""
+    import json
+    import ai_sde_bank as bank
+    items = [{k: v for k, v in e.items() if k != "examples"}
+             for e in bank.ENTRIES]
+    assert all("examples" not in it for it in items)
+    size_mb = len(json.dumps(items)) / 1e6
+    assert size_mb < 6, (
+        f"the AI SDE list payload is {size_mb:.1f}MB even without examples; "
+        "another field has grown and needs the same lazy-load treatment"
+    )

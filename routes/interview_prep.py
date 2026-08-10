@@ -248,11 +248,35 @@ def ai_sde_bank():
     """The AI SDE prep bank: DSA patterns (with worked code), ML/AI
     concepts, ML coding, ML system design, CS fundamentals, behavioral and
     company process — each explained in depth. Static reference content."""
-    items = [{"id": f"ai{i}", **e} for i, e in enumerate(AI_SDE_ENTRIES)]
+    # The worked examples are by far the heaviest field - a fully written-up
+    # topic runs to ~16k characters - and nothing on the list screen needs them
+    # until a card is actually opened. Ship every other field, plus a count so
+    # the "Worked examples (N)" heading can render, and let the page fetch the
+    # bodies one entry at a time from /api/ai-sde/entry/<id>.
+    items = []
+    for i, e in enumerate(AI_SDE_ENTRIES):
+        item = {k: v for k, v in e.items() if k != "examples"}
+        item["id"] = f"ai{i}"
+        item["example_count"] = len(e.get("examples") or [])
+        items.append(item)
     return jsonify({
         "categories": [{"key": k, "label": v} for k, v in AI_SDE_CATEGORIES.items()],
         "entries": items, "total": len(items),
     })
+
+
+@interview_prep_bp.route("/api/ai-sde/entry/<entry_id>", methods=["GET"])
+@login_required
+def ai_sde_entry(entry_id):
+    """The worked examples for one topic, fetched when its card is opened."""
+    try:
+        idx = int(entry_id[2:]) if entry_id.startswith("ai") else -1
+    except ValueError:
+        idx = -1
+    if not 0 <= idx < len(AI_SDE_ENTRIES):
+        return jsonify({"error": "unknown entry"}), 404
+    return jsonify({"id": entry_id,
+                    "examples": AI_SDE_ENTRIES[idx].get("examples") or []})
 
 
 @interview_prep_bp.route("/ai-sde/pdf", methods=["GET"])

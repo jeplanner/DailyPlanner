@@ -27221,50 +27221,340 @@ the recognition step.""",
 ]
 
 _EX_P0C["Number of Connected Components"] = [
-    """The textbook case, traced.
-n=5, edges [[0,1],[1,2],[3,4]].
-Adjacency: 0:[1], 1:[0,2], 2:[1], 3:[4], 4:[3].
-  i=0 not seen -> count=1, DFS marks 0,1,2.
-  i=1,2 already seen -> skip.
-  i=3 not seen -> count=2, DFS marks 3,4.
-  i=4 seen -> skip.
-Answer 2.""",
+    """1. THE GOAL, in plain English.
 
-    """Isolated nodes count as components.
-n=4, edges = []. No node has a neighbour, so each outer-loop iteration finds an
-unseen node and the DFS marks only that node.
-Answer 4. This is why the outer loop runs over ALL nodes rather than only over
-nodes appearing in edges - forgetting that undercounts.""",
+You are given some people and a list of who is friends with whom. Count how many
+separate FRIEND GROUPS there are - groups where everyone can reach everyone else
+through a chain of friendships, and where nobody in one group knows anybody in
+another.
 
-    """A single component covering everything.
-n=4, edges [[0,1],[1,2],[2,3]]. The first DFS from 0 reaches every node, so the
-remaining three iterations all skip.
-Answer 1.""",
+In the language of the problem: you are given n items numbered 0 to n-1, and a
+list of pairs saying which items are connected. Count the separate clumps.
 
-    """The undirected-edge bug.
-Adding only one direction - graph[u].append(v) without graph[v].append(u) - on
-edges [[0,1]] makes node 1 unreachable from... actually it makes 0 reach 1 but
-not 1 reach 0. Starting the outer loop at 0 still finds both, so the answer
-looks right.
-Now try edges [[1,0]]: DFS from 0 finds nothing, count becomes 1; then node 1 is
-unseen, count becomes 2. Wrong.
-The bug depends on edge ORDER, which is why it survives casual testing.""",
+That structure - items plus connections - is called a GRAPH. Each item is a NODE
+(or vertex); each connection is an EDGE. A clump where everyone can reach
+everyone else, and which is not part of any bigger such clump, is called a
+CONNECTED COMPONENT. That phrase is the answer to "what am I counting?"
 
-    """The Union-Find alternative, and when it is better.
-Start count at n. For each edge, union the endpoints; if their roots differed,
-decrement the count.
-Same answer in O(E x alpha). This wins when edges ARRIVE OVER TIME and you must
-report the count after each one - DFS would have to re-run from scratch every
-time. It is also the natural fit if you later need "are these two connected?"
-queries.""",
+Try it by hand. n = 5, edges = [[0,1], [1,2], [3,4]].
 
-    """Where this shows up.
-Counting islands in a grid (cells as nodes), friend circles / provinces
-(adjacency matrix), detecting whether a network has split, clustering records
-that share an identifier, and checking whether a graph is a valid tree
-(connected AND exactly n-1 edges).
-That last one is a nice two-line extension: run this, and require both count==1
-and len(edges)==n-1.""",
+    0 --- 1 --- 2         3 --- 4
+
+Starting from 0 you can reach 1, and from 1 you can reach 2. So {0,1,2} is one
+group. Node 3 reaches 4 and nothing else, so {3,4} is another. Nothing links the
+two. Answer: 2.
+
+Note that a node with no edges at all still counts as its own group of one.""",
+
+    """2. THE INTUITION - and the shape of the answer.
+
+Here is the idea in a sentence, and it is almost embarrassingly simple:
+
+  Walk through every node. If you have not visited it yet, it must be the first
+  node of a group you have never seen - so add one to the count, and then visit
+  everything reachable from it so you never count that group again.
+
+Think of it as a field of scattered coins joined by strings. You put a finger on
+any coin you have not touched, say "that's one pile", and then follow every
+string outwards, marking each coin as touched. When you can go no further, that
+whole pile is marked. Move on. The number of times you had to start fresh IS the
+number of piles.
+
+Why does starting fresh always mean a NEW group? Because if the node you are
+standing on belonged to a group you had already counted, the sweep for that
+group would have reached it and marked it. It is unmarked, therefore no earlier
+sweep could reach it, therefore it is in a group of its own that has not been
+counted yet. That one sentence is the entire correctness argument.
+
+The two pieces of machinery we need:
+- A way to look up "who is connected to this node?" quickly.
+- A way to remember which nodes have already been visited.
+
+There is no slower version worth showing here - the naive approach and the good
+approach are the same walk. What the next section is about is making the
+"who is connected to this node?" lookup fast, because the input does not arrive
+in a helpful shape.""",
+
+    """3. WHY WE BUILD AN ADJACENCY LIST FIRST.
+
+The edges arrive as a flat list of pairs: [[0,1], [1,2], [3,4]]. That is a fine
+way to WRITE the graph down, but a terrible way to WALK it.
+
+Standing on node 1, you want to ask "who are my neighbours?" With a flat list of
+edges you would have to scan every single pair looking for a 1. Do that at every
+node and the cost becomes the number of nodes times the number of edges - far
+more work than necessary.
+
+So the first thing the code does is reorganise the same information into an
+ADJACENCY LIST: a lookup table with one entry per node, holding that node's
+neighbours.
+
+    edges [[0,1],[1,2],[3,4]]   becomes   0: [1]
+                                          1: [0, 2]
+                                          2: [1]
+                                          3: [4]
+                                          4: [3]
+
+Now "who are my neighbours?" is one instant lookup.
+
+Notice that each edge is written down TWICE - once in each direction. [0,1]
+becomes "1 is a neighbour of 0" AND "0 is a neighbour of 1". That is because the
+graph is UNDIRECTED: friendship goes both ways, so you must be able to walk the
+edge from either end. Forget one direction and the walk can enter a node but
+never leave it, and you will over-count groups.
+
+The lookup table itself is a DICTIONARY (or hash map): a set of key-value pairs
+where looking up a key takes the same tiny amount of time no matter how many
+entries there are. Building it costs one pass over the edges.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - lone nodes. n = 5, edges = [[0,1]]. The picture is:
+
+    0 --- 1      2      3      4
+
+Nodes 2, 3 and 4 have no edges at all. Each is still a component - a group of
+one. The answer is 4, not 1. This is why the outer loop runs over ALL n nodes,
+using the count n that was given to us, rather than only over the nodes that
+appear in the edge list. Looping over the edges alone would report 1 and miss
+three groups entirely.
+
+CASE 2 - only recording edges in one direction. If the adjacency list said
+0: [1] but left 1's entry empty, then a walk starting at 1 would find no
+neighbours, mark only 1, and stop - and 0 would later be counted as a separate
+group. The answer would come out too high. Both directions, always, for an
+undirected graph.
+
+CASE 3 - no edges at all. edges = []. Every node is its own group, so the answer
+is n. The code handles it with no special case: the adjacency list is built with
+an empty list for every node, and each node in the outer loop is unvisited when
+reached.
+
+CASE 4 - forgetting to mark before exploring. If the walk explored a neighbour
+before marking the current node, then walking 0 -> 1 -> back to 0 -> 1 would
+loop forever, because the graph has no direction and every edge can be walked
+back along. Mark first, then explore. That single ordering is what makes the
+walk finish at all.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+DFS - DEPTH-FIRST SEARCH. A way of exploring: go as far as you can down one
+path before backing up and trying another. Like exploring a cave by always
+taking the first tunnel you see, and only retracing your steps at a dead end.
+The alternative, BFS, explores in rings instead. For counting components either
+works perfectly - we do not care about distances, only about what is reachable -
+so DFS is used because recursion makes it shorter to write.
+
+RECURSION. A function that solves a problem by calling itself on smaller pieces.
+Here, "visit everything reachable from node X" is done by visiting X and then
+saying "visit everything reachable from each of X's neighbours". Same question,
+smaller remaining territory each time.
+
+CALL STACK. When the function calls itself, the outer call PAUSES exactly where
+it is and the inner one runs. These paused calls pile up, each waiting for the
+one below to finish. That pile is the call stack, and it is what lets the walk
+"back up" to where it was when a path dead-ends.
+
+BASE CASE. The situation where the function stops instead of calling itself
+again. Here it is implicit rather than a written line: a node whose neighbours
+have all been visited makes no further calls, so that branch ends. Since every
+node gets marked the first time it is reached, and there are only n nodes, the
+walk must run out of new nodes and finish.
+
+SET. A bag of items where "is this in here?" is answered instantly and where
+adding something already present changes nothing. Perfect for "have I visited
+this node?"
+
+O(V + E). The cost of this algorithm, where V is the number of nodes (vertices)
+and E is the number of edges. In plain words: the work grows in step with the
+size of the graph - each node is visited once, each edge is looked at twice
+(once from each end). It cannot be beaten, because you have to look at the whole
+graph to know how it is connected.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: sweep through every node, and each time you find
+one you have not visited, count a new group and then walk outwards marking
+everything reachable from it.
+
+The steps:
+
+  1. Build the neighbour lookup table. Start with an empty list for EVERY node
+     from 0 to n-1 - including nodes that appear in no edge, or they will be
+     missing when the sweep reaches them.
+
+  2. For each edge joining u and v, add v to u's list AND add u to v's list.
+     Both directions, because the graph is undirected.
+
+  3. Make an empty set called seen, to record which nodes have been visited.
+
+  4. Write a small walk function that takes a node and does two things:
+       a. Mark this node as seen. FIRST - before anything else. This is what
+          stops the walk bouncing back and forth along an edge forever.
+       b. For each of this node's neighbours, if it has not been seen, call the
+          walk function on it.
+
+  5. Set the count to 0.
+
+  6. Sweep through every node from 0 to n-1. For each one, ask: has it been
+     seen? If yes, skip it - it belongs to a group already counted. If no, add
+     one to the count and run the walk function on it, which marks that entire
+     group as seen.
+
+  7. When the sweep finishes, the count is the answer.
+
+The subtle thing worth stating: step 6 does the counting, and step 4 does the
+marking, and neither would work without the other. The walk never counts
+anything; the sweep never explores anything. Keeping those two jobs separate is
+what makes this so short.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code does its work in two stages.
+
+First it reorganises the input. The edges arrive as a loose list of pairs, which
+is awkward to walk, so the code turns them into a lookup table with one entry
+per node listing that node's neighbours. Every edge goes in twice, once from
+each end, because a friendship is readable from both sides. It deliberately
+creates an entry for every node, even ones with no friends at all, so nothing is
+missing later.
+
+Then it sweeps. It walks through the nodes in order, and for each one asks a
+single question: have I been here before? If it has, it moves on - that node is
+part of a group already counted. If it has not, then this node cannot belong to
+anything counted so far, so it adds one to the running total and then sets off
+exploring from that node: marking it, then moving to each unmarked neighbour,
+then each of theirs, and so on, until the whole clump has been marked.
+
+Marking happens the instant a node is reached, before any of its neighbours are
+looked at. That ordering is what keeps the exploration from walking back along
+the edge it just came down and looping forever.
+
+By the time the sweep reaches the end, the number of times it had to set off
+exploring is exactly the number of separate groups.""",
+
+    """8. THE CODE, line by line.
+
+Keep n = 5, edges = [[0,1], [1,2], [3,4]] beside you, answer 2.
+
+    graph = {i: [] for i in range(n)}
+Build the lookup table with an empty neighbour list for EVERY node 0 to n-1.
+Creating all n entries up front - rather than only for nodes that appear in
+edges - is what makes lone nodes work; see case 1 in section 4. For our input
+this starts as {0:[], 1:[], 2:[], 3:[], 4:[]}.
+
+    for u, v in edges:
+        graph[u].append(v)
+        graph[v].append(u)
+Record each edge in BOTH directions, because the graph is undirected. After
+this, graph is {0:[1], 1:[0,2], 2:[1], 3:[4], 4:[3]}. Dropping either line makes
+the walk one-way and over-counts groups.
+
+    seen = set()
+The record of visited nodes. A set because "is this in here?" is instant.
+
+    def dfs(node):
+The walk. Its job is only to mark - it returns nothing and counts nothing.
+Defined inside so it can see graph and seen directly.
+
+    seen.add(node)
+Mark FIRST, before looking at any neighbour. This is the line that prevents the
+walk from bouncing 0 -> 1 -> 0 -> 1 forever. It also doubles as the reason the
+recursion terminates: there are only n nodes, each can be added once, so the
+walk cannot run more than n levels deep.
+
+    for nbr in graph[node]:
+        if nbr not in seen:
+            dfs(nbr)
+Visit each unmarked neighbour, which recursively marks its whole neighbourhood
+too. The "if not in seen" check is what stops repeated work; without it the
+first line would still prevent infinite looping in most cases, but you would
+re-enter nodes needlessly.
+
+    count = 0
+The number of groups found.
+
+    for i in range(n):
+        if i not in seen:
+            count += 1
+            dfs(i)
+The sweep, and the heart of the counting. Reaching an unmarked node means no
+earlier walk could get to it, so it starts a new group: add one, then mark the
+whole group so the rest of the sweep walks past it. For our input this fires at
+i = 0 (marking 0, 1, 2) and at i = 3 (marking 3, 4), and does nothing at i = 1,
+2 or 4.
+
+    return count
+2 for our input.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+n = 5, edges = [[0,1], [1,2], [3,4]]
+
+After building:  graph = {0:[1], 1:[0,2], 2:[1], 3:[4], 4:[3]}
+                 seen = {}, count = 0
+
+SWEEP i = 0.  0 not in seen -> new group. count = 1. dfs(0):
+    dfs(0): seen = {0}
+      neighbour 1, not seen -> dfs(1)
+        dfs(1): seen = {0,1}
+          neighbour 0, already seen -> skip. (Without the marking in
+            dfs(0), this is where it would loop back forever.)
+          neighbour 2, not seen -> dfs(2)
+            dfs(2): seen = {0,1,2}
+              neighbour 1, already seen -> skip
+              no more neighbours -> return
+          return
+      no more neighbours of 0 -> return
+  seen = {0,1,2}
+
+SWEEP i = 1.  1 IS in seen -> skip. count stays 1.
+SWEEP i = 2.  2 IS in seen -> skip. count stays 1.
+
+SWEEP i = 3.  3 not in seen -> new group. count = 2. dfs(3):
+    dfs(3): seen = {0,1,2,3}
+      neighbour 4, not seen -> dfs(4)
+        dfs(4): seen = {0,1,2,3,4}
+          neighbour 3, already seen -> skip
+          return
+      return
+
+SWEEP i = 4.  4 IS in seen -> skip. count stays 2.
+
+return count = 2. Matches the two groups we found by eye: {0,1,2} and {3,4}.
+
+Read the sweep column on its own: it fired the walk exactly twice, at 0 and at
+3, and those two moments are the two groups.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(V + E) - V for the number of nodes, E for the number of edges. Building
+the lookup table looks at each edge once. The sweep looks at each node once. The
+walks visit each node once and travel each edge twice, once from each end. Add
+all that together and it is still proportional to the size of the graph. You
+cannot do better, because you have to look at the whole graph to know how it is
+connected.
+
+SPACE: O(V + E). The adjacency list holds two entries per edge, the seen set
+holds one entry per node, and the call stack can get as deep as the largest
+group - which for a graph that is one long chain is all n nodes. On a very large
+chain-shaped graph, Python's recursion limit (about 1,000) would be hit, and you
+would rewrite the walk with an explicit stack or use BFS with a queue.
+
+THE #1 MISTAKE - recording each edge in only one direction. graph[u].append(v)
+without graph[v].append(u). The graph is undirected, so a walk that enters a
+node must be able to leave it the way it came. With one direction only, walks
+stop short and the count comes out too high - and it passes any test where the
+edges happen to be listed in a convenient order, which makes it maddening to
+find.
+
+A close second: looping the sweep over the edges instead of over range(n), which
+silently drops every node that has no edges - answering 1 instead of 4 in
+case 1 of section 4.
+
+ONE-SENTENCE TAKEAWAY: every time the sweep meets a node nothing has reached
+yet, that is a brand-new group - so count it and then mark everything reachable
+from it, and the number of fresh starts is the number of components.""",
 ]
 
 

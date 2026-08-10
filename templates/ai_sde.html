@@ -191,6 +191,33 @@
   const esc = (s) => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const api = async (p) => { const r = await fetch(p,{credentials:"same-origin"}); if(!r.ok) throw new Error("load failed"); return r.json(); };
   let BANK = null, shown = []; const catLabel = {};
+
+  // A fully written-up topic runs to ~16k characters of worked examples, and
+  // the bank holds over a thousand topics - shipping them all on every page
+  // load would mean a ~10MB download and a ~10MB innerHTML to parse. So the
+  // list arrives without them and each topic's examples are fetched the first
+  // time its card is opened, then kept for the rest of the session.
+  const EXS = new Map();
+  async function loadExamples(card){
+    const box = card.querySelector("[data-exs]");
+    if (!box || box.dataset.loaded) return;
+    const slot = box.querySelector(".ex-slot");
+    const id = box.dataset.exs;
+    const paint = (list) => {
+      slot.innerHTML = list.map((x,i)=>`<div class="ex"><span class="n">${i+1}</span><span class="body">${esc(x)}</span></div>`).join("");
+      box.dataset.loaded = "1";
+    };
+    if (EXS.has(id)) { paint(EXS.get(id)); return; }
+    slot.innerHTML = '<div class="ex"><span class="body">Loading…</span></div>';
+    try {
+      const data = await api(`/api/ai-sde/entry/${encodeURIComponent(id)}`);
+      EXS.set(id, data.examples || []);
+      paint(EXS.get(id));
+    } catch(_) {
+      slot.innerHTML = '<div class="ex"><span class="body">Could not load the worked examples — reload the page.</span></div>';
+    }
+  }
+
   const PKEY = "ai_sde_studied"; const studied = new Set();
   try { (JSON.parse(localStorage.getItem(PKEY)||"[]")||[]).forEach(x=>studied.add(x)); } catch(_){}
   const saveP = () => { try { localStorage.setItem(PKEY, JSON.stringify([...studied])); } catch(_){} };
@@ -265,10 +292,8 @@
           ${fld("recipe","How to code it — plain English, step by step",e.plain_algo)}
           ${e.code ? `<div class="fld"><span class="lbl">Code</span></div><div class="code">${esc(e.code)}</div>` : ""}
           ${e.diagram ? `<div class="fld"><span class="lbl">Diagram</span></div><div class="code diagram">${esc(e.diagram)}</div>` : ""}
-          ${(e.examples&&e.examples.length)
-              ? `<div class="exs"><span class="lbl">Worked examples (${e.examples.length})</span>${
-                  e.examples.map((x,i)=>`<div class="ex"><span class="n">${i+1}</span><span class="body">${esc(x)}</span></div>`).join("")
-                }</div>`
+          ${e.example_count
+              ? `<div class="exs" data-exs="${e.id}"><span class="lbl">Worked examples (${e.example_count})</span><div class="ex-slot"></div></div>`
               : fld("","Example",e.example)}
           ${fld("mnem","How to remember",e.mnemonic)}
           ${fld("cx","Complexity",e.complexity)}
@@ -296,7 +321,10 @@
     const tag = e.target.closest("[data-tag]");
     if (tag) { $("search").value = tag.dataset.tag; $("cat").value=""; render(); window.scrollTo({top:0,behavior:"smooth"}); return; }
     if (e.target.closest("a")) return;               // let PDF link navigate
-    if (e.target.closest(".q-head")) card.classList.toggle("open");
+    if (e.target.closest(".q-head")) {
+      card.classList.toggle("open");
+      if (card.classList.contains("open")) loadExamples(card);
+    }
   });
 
   $("cat").addEventListener("change", render);
