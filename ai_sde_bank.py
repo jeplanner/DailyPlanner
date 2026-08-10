@@ -34845,76 +34845,382 @@ and fill the answer from the back forwards.""",
 ]
 
 _EX_P0D["Backtracking — subsets, permutations, combinations"] = [
-    """Subsets of [1,2,3] - the decision tree, traced.
-backtrack(0) records [] first, because every state is a valid subset.
-  pick 1 -> path=[1], record [1]
-    pick 2 -> [1,2], record
-      pick 3 -> [1,2,3], record; pop 3
-    pop 2
-    pick 3 -> [1,3], record; pop 3
-  pop 1
-  pick 2 -> [2], record; pick 3 -> [2,3], record; pop, pop
-  pick 3 -> [3], record; pop
-Result: [],[1],[1,2],[1,2,3],[1,3],[2],[2,3],[3] - 8 = 2^3 subsets.
-The `start` parameter is what stops [2,1] from appearing: each choice may only
-look FORWARD, so every subset is generated in index order exactly once.""",
+    """1. THE GOAL, in plain English.
 
-    """Permutations of [1,2,3] - what changes.
-Permutations care about order, so you drop `start` and instead track which
-elements are already used:
-    def backtrack(path, used):
-        if len(path) == len(nums): result.append(path[:]); return
-        for i in range(len(nums)):
-            if used[i]: continue
-            used[i] = True; path.append(nums[i])
-            backtrack(path, used)
-            path.pop(); used[i] = False
-Now the loop restarts from 0 every level, so 1 then 2 and 2 then 1 are both
-generated: 6 = 3! results.
-One-line summary: `start` = combinations (order does not matter), `used` =
-permutations (order matters).""",
+Three questions that look different and are the same machine underneath. This
+entry teaches the machine, using SUBSETS as the worked example.
 
-    """Combinations C(4,2) - adding a base case and a prune.
-Choose 2 from [1,2,3,4]:
+Given nums = [1, 2, 3]:
+
+  SUBSETS - every possible selection, including taking none and taking all.
+      [], [1], [2], [3], [1,2], [1,3], [2,3], [1,2,3]      -> 8 of them
+
+  PERMUTATIONS - every possible ORDERING of all three.
+      [1,2,3], [1,3,2], [2,1,3], [2,3,1], [3,1,2], [3,2,1]  -> 6 of them
+
+  COMBINATIONS - every selection of a fixed size, say 2.
+      [1,2], [1,3], [2,3]                                    -> 3 of them
+
+The counts tell you something. Subsets: each number is either in or out, so
+2 x 2 x 2 = 8. Permutations: 3 choices then 2 then 1, so 3 x 2 x 1 = 6, written
+3! and read "three factorial". Combinations of size 2 out of 3: 3.
+
+Two things to notice about subsets in particular. ORDER DOES NOT MATTER - [1,2]
+and [2,1] are the same selection, so only one of them appears. And the EMPTY
+selection counts: [] is a genuine subset.
+
+The code below produces subsets. Sections 3 and 10 show the two small edits that
+turn the same machine into permutations and combinations.""",
+
+    """2. THE INTUITION - draw the choices as a tree.
+
+Every one of these problems is: build an answer one piece at a time, and at each
+step try every legal next piece.
+
+For subsets, walk the numbers left to right and at each one decide "take it or
+skip it". Draw it:
+
+                            []
+                    /                \\
+                  [1]                  []          <- decide about 1
+              /        \\           /       \\
+          [1,2]        [1]       [2]       []      <- decide about 2
+          /   \\       /   \\     /   \\     /   \\
+    [1,2,3] [1,2] [1,3] [1] [2,3] [2] [3]  []      <- decide about 3
+
+Eight leaves, and they are exactly the eight subsets.
+
+The method has a name: BACKTRACKING. Build a partial answer; at each step try
+every legal next piece; when you have explored everything that follows from a
+choice, UNDO it and try the next one. It is exploring a maze with chalk - walk
+down a corridor, and when you have seen where it leads, walk back and take a
+different one.
+
+The code below draws the same eight answers with a slightly different shape of
+tree. Rather than "take it or skip it" at each level, it says: from where I am,
+try each REMAINING number as the next thing to add. That way every node of the
+tree is itself a valid subset, so answers are recorded at every node rather than
+only at the leaves.
+
+    []
+     |-- [1]
+     |     |-- [1,2]
+     |     |     |-- [1,2,3]
+     |     |-- [1,3]
+     |-- [2]
+     |     |-- [2,3]
+     |-- [3]
+
+Count them: 8 again, same set. This shape is the one that generalises most easily
+to combinations, which is why it is the one to learn.""",
+
+    """3. THE THREE BEATS, and the one line that separates the three problems.
+
+Every backtracking solution is three beats around the recursive call:
+
+    CHOOSE     add a piece to the partial answer
+    EXPLORE    recurse to build the rest
+    UN-CHOOSE  remove that piece again, restoring the state exactly
+
+The un-choose beat is not optional and it is not tidying up. The partial answer
+lives in ONE list shared by every level of the walk. If you add 2 and then finish
+exploring below it, you must remove it again before trying 3 - otherwise you would
+be building [1,2,3] when you meant [1,3].
+
+Where does the undo happen? On the line immediately after the recursive call.
+When that call returns, execution resumes there, which is exactly the moment the
+subtree beneath the choice has been fully explored. You never have to arrange the
+timing; the call stack does it for you.
+
+NOW THE PART WORTH MEMORISING. The three problems differ by ONE LINE - what the
+loop is allowed to choose from:
+
+  SUBSETS:       for i in range(start, len(nums))   - only numbers AFTER the last
+                 one taken. That is what stops [1,2] and [2,1] both appearing:
+                 selections are always built in increasing index order, so each
+                 selection is generated exactly once.
+
+  PERMUTATIONS:  for i in range(len(nums)) with a "used" marker per number - ANY
+                 number not already in the path. Order matters here, so [1,2] and
+                 [2,1] are both wanted.
+
+  COMBINATIONS:  the same as subsets, but only record the answer when the path has
+                 reached the required size, and stop descending once it has.
+
+Same three beats, same shape, one line changed. Learn it once here.""",
+
+    """4. THE CASES THAT CATCH PEOPLE.
+
+CASE 1 - recording the list instead of a copy. The path list keeps changing after
+you record it, so storing the list itself stores a reference to something that
+will be emptied on the way back up. The result is eight entries that are all the
+same empty list. The count is right, which is what makes it so confusing. Record a
+COPY.
+
+CASE 2 - forgetting to un-choose. Without the undo, the path only ever grows, and
+you get a handful of ever-longer wrong answers instead of the full set.
+
+CASE 3 - passing i instead of i + 1 to the recursive call. That allows a number to
+be chosen again, which generates [1,1], [1,1,1] and so on - the "combinations with
+repetition" problem, not subsets. It is a real problem, just not this one.
+
+CASE 4 - passing start + 1 instead of i + 1. Subtle and wrong: after choosing
+nums[i], the next choice must come after position i, not after the position the
+loop started from. With start + 1 you would generate duplicates and miss others.
+The rule is "continue from just past the number I actually took".
+
+CASE 5 - the empty input. nums = []. The very first call records a copy of the
+empty path and the loop body never runs. The answer is [[]] - a list containing
+one empty subset. That is correct: there is exactly one way to select nothing.
+
+CASE 6 - expecting the answers in a particular order. This walk produces them in
+the order the tree is explored, which is not sorted by size. If a test compares
+against a fixed list, it is testing an implementation detail; the right test is
+whether the two collections contain the same subsets.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+SUBSET: some of the items, order irrelevant. POWER SET: the collection of ALL
+subsets, which is what this code produces. For n items there are 2^n of them.
+
+BACKTRACKING: build, try, undo, try the next. Defined in section 2.
+
+RECURSION: a function that solves a problem by calling itself on a smaller piece.
+Here "fill the rest of the path using numbers from position start onwards" is
+solved by taking one number and asking the same function to fill the rest using
+numbers after it.
+
+CALL STACK: when the function calls itself, the outer call PAUSES exactly where it
+is and the inner one runs. Those paused calls pile up, each waiting on the one
+below. That pile is the call stack, and it is what makes the undo happen at the
+right moment - the line after the call runs precisely when the call returns.
+
+BASE CASE: the situation where the function stops recursing. This one has no
+written base case: the loop simply has nothing left to iterate over once start
+reaches the end of the list, so the recursion runs out naturally. That is worth
+noticing - a base case does not always look like an "if" at the top.
+
+path[:] - Python for "a copy of this list". The colon with nothing either side
+means "from the start to the end".
+
+O(2^n x n) - the cost. In plain words: there are 2^n subsets and each costs about
+n steps to build and copy, so the work is dominated by the sheer size of the
+output. No algorithm can beat that, because it has to produce them all.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: record the partial answer at every step, then try
+each remaining number in turn - adding it, exploring everything that follows, and
+removing it again before trying the next.
+
+The mechanism, since this is recursion. The function's job is "given that the path
+so far is fixed, produce every answer that can be built by adding numbers from
+position start onwards". It records the current path, then picks a number, adds
+it, and calls ITSELF to continue from just past that number. That inner call
+pauses the outer one. When the inner call has produced everything below that
+choice, it returns - and the outer call wakes on the very next line, which is the
+undo. So the removal happens at exactly the right moment without any bookkeeping.
+
+It stops because start only ever increases; once it passes the end of the list the
+loop has nothing to iterate over and that branch ends.
+
+The steps:
+
+  1. Make an empty list for the results and an empty list for the path being
+     built.
+
+  2. Write a function that takes one number, start, meaning "the earliest position
+     I am still allowed to choose from".
+
+  3. FIRST, record a COPY of the current path in the results. Every state of the
+     path is itself a valid subset - including the empty one at the very
+     beginning - so this line runs at every node of the tree, not just at the
+     leaves.
+
+     A copy, not the path itself: the path is about to change again.
+
+  4. Then loop over the positions from start to the end of the list. For each:
+
+     a. CHOOSE: append that number to the path.
+     b. EXPLORE: call the function again, starting from the position just AFTER
+        the one you took. Just after the one you took - not just after start.
+     c. UN-CHOOSE: remove the last item from the path, restoring it exactly.
+
+  5. Start the whole thing with start = 0, and return the results.
+
+Step 4b is what makes the selections come out in increasing index order, which is
+what stops the same subset appearing twice in a different arrangement.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code builds selections one number at a time, using a single working list that
+it keeps adding to and taking back from.
+
+The first thing it does at every stage is write down whatever it currently holds.
+That is the unusual part compared with most backtracking problems: it does not
+wait until the selection is finished, because there is no such thing as finished
+here - every state of the working list is already a valid subset. At the very
+start the list is empty, and the empty selection is recorded immediately, which is
+exactly right.
+
+Then it looks at the numbers it is still allowed to use. It is not allowed to use
+all of them: it may only take numbers that come AFTER the last one it took. That
+single restriction is what keeps [1,2] and [2,1] from both appearing - selections
+are always assembled left to right, so each one can be reached by exactly one
+route.
+
+For each allowed number it does three things in strict order. It adds the number
+to the working list. It calls itself to carry on from just past that number,
+which produces every selection that begins with what it is currently holding. And
+then - crucially - it removes the number again, putting the working list back
+exactly as it was before, so the next number starts from a clean slate.
+
+That removal is what lets one list produce every subset in turn. Without it the
+list would keep growing and almost all the answers would never be reached.
+
+When there are no numbers left to try, that branch simply ends, and the walk
+unwinds back to wherever it still has options.""",
+
+    """8. THE CODE, line by line.
+
+Keep nums = [1, 2, 3] and the tree from section 2 beside you.
+
+    result = []
+Where finished subsets are collected. Ours ends with eight of them.
+
+    path = []
+The subset being built right now. There is only ONE of these, shared by every
+level of the recursion - which is exactly why the undo below is necessary.
+
     def backtrack(start):
-        if len(path) == k: result.append(path[:]); return
-        for i in range(start, len(nums)):
-            path.append(nums[i]); backtrack(i+1); path.pop()
-Yields [1,2],[1,3],[1,4],[2,3],[2,4],[3,4] - 6 results.
-The prune: once fewer than k - len(path) candidates remain, no completion is
-possible, so cap the loop at `len(nums) - (k - len(path)) + 1`. On C(20,3) that
-cuts the explored nodes by more than half without changing the output.""",
+The recursive worker. start means "the earliest position I am still allowed to
+choose from". It is the only thing that changes between calls, and it is what
+enforces increasing order.
 
-    """The bug that ruins every backtracking solution: appending path, not path[:].
-Write `result.append(path)` instead of `result.append(path[:])` and you append a
-REFERENCE to the same list object every time. The recursion then pops elements
-out of it, and at the end every entry in `result` is the same empty list:
-[[],[],[],[],[],[],[],[]].
-The symptom is unmistakable - all your answers are identical, usually all empty.
-The fix is one slice. This is the single most common backtracking bug, and
-interviewers watch for whether you write the copy without prompting.""",
+    result.append(path[:])
+Record the current path - and note this is the FIRST line, before any looping. It
+runs at every node of the tree, because every state of the path is a valid subset.
+The very first call records the empty path, which is why [] appears in the answer.
 
-    """Duplicates - [1,2,2] and why you sort first.
-Plain subsets on [1,2,2] gives [2] twice and [1,2] twice.
-Fix: sort the input, then inside the loop skip a candidate that repeats its
-immediate predecessor at the same level:
-    if i > start and nums[i] == nums[i-1]: continue
-Trace: at level 0, i=1 picks the first 2; i=2 has nums[2]==nums[1] and i>start,
-so it is skipped - killing the duplicate branch at its root.
-`i > start` matters: within a single branch (i == start) the repeat is a
-legitimate second copy, as in [2,2].""",
+The [:] is the COPY from case 1 in section 4. Without it, result would fill up
+with eight references to the same list, which is emptied on the way back up, and
+the final answer would be eight empty lists.
 
-    """Complexity, and the pruning that makes hard instances tractable.
-Subsets: 2^n states, each copied in O(n) -> O(n x 2^n).
-Permutations: n! states -> O(n x n!). n=10 is 3.6 million, still fine; n=12 is
-479 million and will time out.
-That is why real backtracking problems are about the PRUNE, not the enumeration:
-N-Queens rejects a placement the moment a column or diagonal conflicts;
-Combination Sum stops a branch as soon as the running total exceeds the target;
-Word Search abandons a cell the moment the letter mismatches;
-Sudoku picks the most-constrained cell first.
-In an interview, write the generator, then say where you would prune and what it
-saves.""",
+    for i in range(start, len(nums)):
+The choices available here: every position from start to the end. Starting at
+start rather than 0 is what stops the same subset being built in a different
+order - see section 3.
+
+    path.append(nums[i])
+CHOOSE. Add this number to the working subset.
+
+    backtrack(i + 1)
+EXPLORE. Continue from just past the number we actually took. It must be i + 1,
+not start + 1: the next choice has to come after the position we chose, not after
+where the loop happened to begin - see case 4 in section 4. And it must be i + 1,
+not i, or the same number could be chosen again.
+
+This call produces every subset that starts with what path currently holds.
+
+    path.pop()
+UN-CHOOSE, and this is the heart of backtracking. Remove the number just added,
+restoring path exactly to what it was before the choose. Its POSITION matters as
+much as its existence: sitting immediately after the recursive call means it runs
+at precisely the moment the subtree below has been fully explored.
+
+    backtrack(0)
+    return result
+Start with no restriction - every position is allowed - and hand back everything
+collected.
+
+Notice there is no explicit base case. When start reaches len(nums) the loop has
+nothing to iterate over, the function records its path and returns. The recursion
+runs out on its own.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+nums = [1, 2, 3]. Indentation shows the depth of the call stack.
+
+backtrack(0)
+  record [] -> result = [[]]
+  i = 0: path = [1]
+    backtrack(1)
+      record [1] -> result = [[], [1]]
+      i = 1: path = [1,2]
+        backtrack(2)
+          record [1,2] -> result = [[], [1], [1,2]]
+          i = 2: path = [1,2,3]
+            backtrack(3)
+              record [1,2,3] -> result = [..., [1,2,3]]
+              loop range(3,3) is empty -> return
+            UNDO -> path = [1,2]
+          loop ends -> return
+        UNDO -> path = [1]
+      i = 2: path = [1,3]
+        backtrack(3)
+          record [1,3]
+          loop empty -> return
+        UNDO -> path = [1]
+      loop ends -> return
+    UNDO -> path = []
+  i = 1: path = [2]
+    backtrack(2)
+      record [2]
+      i = 2: path = [2,3]
+        backtrack(3): record [2,3]; loop empty; return
+        UNDO -> path = [2]
+      return
+    UNDO -> path = []
+  i = 2: path = [3]
+    backtrack(3): record [3]; loop empty; return
+    UNDO -> path = []
+  loop ends -> return
+
+result = [[], [1], [1,2], [1,2,3], [1,3], [2], [2,3], [3]]
+
+Eight subsets, matching section 1. Read the UNDO lines down the left margin -
+every one of them returns path to exactly what it held before the matching choose.
+That is the mechanism, visible.
+
+And notice why [2,1] never appears. When the walk chose 2 at the top level, it
+called backtrack(3), so position 0 - where the 1 lives - was already out of reach.
+Every selection is assembled in increasing position order, so each one has exactly
+one route through the tree.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O(2^n x n). There are 2^n subsets and each costs about n steps to copy into
+the results. This is optimal, because the output itself contains that many
+numbers - any algorithm must at minimum write them all down. Say that out loud:
+"the cost is dominated by the size of the output, so this is as good as it gets."
+
+To feel the scale: n = 20 gives about a million subsets, n = 30 gives a billion.
+Anything past about 20 is impractical, so if an interviewer gives you a large n
+they are asking for something else - a count, or the k-th subset, or a random one.
+
+SPACE: O(n) for the working path and the call stack, which goes n levels deep. The
+results themselves are O(2^n x n), but those are the answer rather than working
+space.
+
+THE #1 MISTAKE - appending path instead of path[:]. You get the right NUMBER of
+results, all of them empty, because they are all references to the one list that
+gets dismantled on the way back up. The count being correct is what makes this so
+easy to miss.
+
+A close second: passing start + 1 instead of i + 1 to the recursive call. It looks
+almost identical and quietly produces duplicates while missing other subsets.
+
+THE THREE PROBLEMS, one machine:
+  Subsets      - loop from start; record at every node.
+  Combinations - loop from start; record only when the path reaches size k, and
+                 stop descending then. A useful extra: stop the loop early when
+                 there are fewer numbers left than the path still needs.
+  Permutations - loop from 0 over ALL positions with a used-marker per number;
+                 record only when the path is full length.
+
+ONE-SENTENCE TAKEAWAY: choose, explore, un-choose - and let the starting position
+carry the rule, because "only pick numbers after the one you just took" is the
+single line that turns a permutation machine into a subset machine.""",
 ]
 
 _EX_P0D["Binary Tree Maximum Path Sum"] = [
@@ -35332,70 +35638,399 @@ because that is all a parent can extend.""",
 ]
 
 _EX_P0D["Dijkstra's Shortest Path (min-heap)"] = [
-    """The textbook graph, traced heap-pop by heap-pop.
-graph = {A:[(B,1),(C,4)], B:[(C,2)], C:[]}, source A.
-dist={A:0}, heap=[(0,A)].
-Pop (0,A). Relax A->B: 1 < inf, dist[B]=1, push (1,B). Relax A->C: 4 < inf,
-dist[C]=4, push (4,C). heap=[(1,B),(4,C)].
-Pop (1,B). Relax B->C: 1+2 = 3 < 4, so dist[C]=3, push (3,C).
-heap=[(3,C),(4,C)] - note there are now TWO entries for C.
-Pop (3,C). d=3 equals dist[C], so it is fresh; C has no outgoing edges.
-Pop (4,C). d=4 > dist[C]=3 -> STALE, skipped by the guard.
-Answer {A:0, B:1, C:3}.""",
+    """1. THE GOAL, in plain English.
 
-    """Why the stale check exists, and what happens without it.
-Python's heapq has no decrease-key, so when a shorter path to C is found you
-cannot edit the old (4,C) entry - you push a new one and leave the old one to be
-popped later. This is called lazy deletion.
-Without `if d > dist.get(node, inf): continue`, popping (4,C) would re-relax all
-of C's neighbours using the wrong distance 4. On this graph C has no neighbours
-so nothing breaks; on a larger graph it silently inflates distances downstream,
-and in the worst case each stale pop cascades into more pushes.
-Heap size is bounded by O(E) because you push at most once per successful
-relaxation.""",
+You have a map of towns joined by roads, and every road has a length. Starting
+from one town, find the shortest total distance to every other town.
 
-    """A graph where greedy order matters - the long-edge shortcut.
-S->A weight 10, S->B weight 1, B->A weight 2, A->T weight 1.
-Pop (0,S): dist A=10, B=1. Pop (1,B): relax B->A gives 3 < 10, so dist[A]=3,
-push (3,A). Pop (3,A): relax A->T gives 4, dist[T]=4. Pop (4,T). Pop the stale
-(10,A) -> skipped.
-Answer dist[T]=4, not 11. A plain BFS would have said 'S->A->T is 2 hops, done'
-and returned 11 - BFS counts EDGES, Dijkstra counts WEIGHT. When all weights are
-equal the two coincide, which is why BFS is the right (and faster) tool on
-unweighted graphs.""",
+The map is a GRAPH: each town is a NODE, each road an EDGE, and each edge has a
+WEIGHT - here the road's length. A graph whose edges carry weights is called a
+WEIGHTED graph.
 
-    """Negative weights - the case Dijkstra gets WRONG.
-S->A = 1, S->B = 4, A->B = -3? Then the true dist[B] = 1 + (-3) = -2.
-Dijkstra pops (0,S), sets A=1, B=4; pops (1,A), relaxes A->B to -2, pushes.
-Here it happens to recover. But make it S->A=5, S->B=2, B->C=1, A->C=-10:
-Dijkstra pops B (2) then C (3) and FINALISES C at 3, before ever popping A. The
-true answer via A is 5-10 = -5.
-The correctness argument requires that once a node is popped, no cheaper path can
-appear later - which is only true when every edge is non-negative. With negative
-edges use Bellman-Ford (O(V x E), and it detects negative cycles).""",
+Our map:
 
-    """Unreachable nodes, and reconstructing the actual path.
-Add an isolated node D. It is never pushed, so `dist` simply has no key for it -
-callers should treat a missing key as infinity, or you can pre-fill dist with
-inf for every node so the output shape is uniform. Decide which and say so; a
-KeyError in the caller is a real bug.
-To return the path and not just the length, keep `parent[nbr] = node` on every
-successful relaxation, then walk parents backwards from the target and reverse.
-That is the version an interviewer asks for when the question is 'cheapest
-flight route', not 'cheapest price'.""",
+           4          1
+      A --------- B ----- C
+       \\          |      /
+      2 \\       5 |     / 3
+         \\        |    /
+           D -----+---'
+              (D-B is 5, D-C is 3, A-D is 2)
 
-    """Cost, and the variants you should be able to name.
-O((V + E) log V) with a binary heap - each edge can cause one push, each push
-costs log of the heap size. With a Fibonacci heap it is O(E + V log V), which is
-theory-interesting and never what you implement.
-Variants worth naming in an interview:
-- All weights equal -> plain BFS, O(V+E).
-- Weights only 0 or 1 -> 0-1 BFS with a deque (push-front for 0, push-back for
-  1), also O(V+E).
-- Negative edges -> Bellman-Ford; negative cycles -> Bellman-Ford detects them.
-- All-pairs on a small dense graph -> Floyd-Warshall, O(V^3).
-- Need to reach a single target fast with a good heuristic -> A*, which is
-  Dijkstra with the priority h(n) added to the key.""",
+Written out: A-B is 4, A-D is 2, B-C is 1, B-D is 5, D-C is 3.
+
+Starting at A, work out the shortest distances by hand:
+
+    to A: 0        you are already there
+    to D: 2        the direct road
+    to B: 4        the direct road - but check: A to D to B is 2 + 5 = 7. Worse.
+    to C: 5        two routes to compare:
+                     A -> B -> C  is 4 + 1 = 5
+                     A -> D -> C  is 2 + 3 = 5
+                   both 5, so 5 it is.
+
+Answer: {A: 0, D: 2, B: 4, C: 5}.
+
+Notice what makes this harder than counting steps. If every road were the same
+length you could just count roads and a simple level-by-level sweep would do. With
+different lengths, a route with MORE roads can be SHORTER, so the number of roads
+tells you nothing.""",
+
+    """2. THE INTUITION - and why plain BFS is not enough.
+
+BREADTH-FIRST SEARCH (BFS) explores a graph in rings: everything one step away,
+then everything two steps away. Its guarantee is that the first time it reaches a
+node is by the FEWEST STEPS.
+
+That guarantee is worth exactly nothing here, because we want the fewest MILES,
+not the fewest roads. On our map, A to C via B is two roads and 5 miles; if there
+were a single road A to C of length 100 it would be one road and far worse. BFS
+would announce the one-road route first and be wrong.
+
+THE FIX - stop serving the OLDEST waiting node, and serve the CLOSEST one instead.
+
+That single change is Dijkstra's algorithm. Keep a collection of "places I know how
+to reach, and how far", and repeatedly take out the CLOSEST one that has not been
+settled yet. When you take a node out that way, its distance is final - and
+section 3 explains why that is guaranteed.
+
+Having taken a node out, look at each road leading from it and ask: does going
+through this node give a shorter route to the neighbour than anything I knew
+before? If so, write down the better distance and put that neighbour into the
+collection.
+
+Improving a neighbour's distance this way is called RELAXING the edge. The name is
+odd and universal: think of it as letting a stretched estimate relax down to a
+smaller value.
+
+So the whole algorithm is: repeatedly take the closest unsettled node, and relax
+its edges. The only question left is how to find "the closest" quickly - and that
+is what the heap is for.""",
+
+    """3. WHY THE CLOSEST NODE IS ALWAYS FINAL - and where it breaks.
+
+This is the guarantee the whole method rests on, and it is worth being able to
+state.
+
+Suppose you take out node X, and its recorded distance is d - the smallest among
+everything currently waiting. Could there be a shorter route to X that you have not
+found yet?
+
+Such a route would have to leave the settled region at some point and travel on
+through unsettled nodes to X. But the first unsettled node it reaches is in the
+waiting collection, and its recorded distance is at least d - because d was the
+smallest. Every road after that only ADDS more length. So the whole route is at
+least d.
+
+Therefore no shorter route exists, and d is final.
+
+Read that argument again and notice the load-bearing phrase: "every road after
+that only ADDS more length". That is true only when weights are NON-NEGATIVE.
+
+WHERE IT BREAKS. If a road could have a negative length, a longer-looking route
+could dip below later and come out cheaper, and the guarantee collapses. Dijkstra
+gives wrong answers on graphs with negative weights - it does not merely run
+slowly, it confidently reports the wrong number. For those you need the
+Bellman-Ford algorithm, which is slower but tolerates negatives.
+
+That is the single most important sentence to say out loud when you present this:
+"this requires non-negative weights, and here is why."
+
+THE HEAP. Finding the closest waiting node by scanning them all would cost as much
+as the collection is big, every time. A MIN-HEAP is a structure that hands you its
+smallest item in about log n steps and lets you add an item in about log n too.
+Python's heapq gives us one, and that is the only reason this algorithm is fast
+rather than merely correct.""",
+
+    """4. THE TRICK - stale entries, and why we do not remove them.
+
+Here is a wrinkle that surprises people reading the code.
+
+When we find a better route to a node, we push a new entry into the heap. But the
+OLD entry, with the worse distance, is still sitting in there. A heap does not
+support "find that old item and update it" cheaply.
+
+So we leave it. The heap accumulates out-of-date entries, and the same node can
+appear in it several times with different distances.
+
+Does that break anything? No, and here is why. Because the heap always hands back
+the smallest, the BEST entry for a node always comes out first. By the time a
+stale, larger entry surfaces, that node has already been settled with a smaller
+distance.
+
+So we just need to recognise a stale entry and ignore it. The test is one line:
+
+    if the distance in this entry is bigger than the best distance we have
+    recorded for this node, skip it
+
+That is called LAZY DELETION - instead of removing bad entries when they go bad,
+you leave them and discard them when they surface. It trades a little extra space
+for much simpler code, and it is the standard way to write Dijkstra.
+
+Without that check the algorithm still produces correct distances, but it wastes
+work re-relaxing every edge of an already-settled node. With it, each node's edges
+are relaxed once for real.
+
+One consequence worth knowing: the heap can hold more entries than there are
+nodes - up to one per edge. That is where the E in the complexity comes from.""",
+
+    """5. DEFINING THE TERMS the code uses.
+
+WEIGHTED GRAPH, NODE, EDGE, WEIGHT: defined in section 1.
+
+ADJACENCY LIST: the input format here - a dictionary mapping each node to a list
+of (neighbour, weight) pairs. So graph['A'] might be [('B', 4), ('D', 2)]. It
+answers "what leads out of here, and how far?" instantly.
+
+MIN-HEAP: a structure that always hands back its smallest item. Adding and
+removing each cost about log n steps, where n is how many items it holds.
+Crucially it does NOT keep everything sorted - it only guarantees the smallest is
+available, which is all we need and is why it is cheap.
+
+heapq: Python's built-in min-heap, operating on an ordinary list.
+  heappush(heap, item) - add an item.
+  heappop(heap) - remove and return the smallest.
+
+TUPLE (d, node): the heap holds pairs, and Python compares tuples element by
+element - so it compares the distances first. That is why distance is written
+FIRST in the pair. Reverse the order and the heap would sort by node name and the
+algorithm would be wrong.
+
+dist: a dictionary recording the best distance found so far to each node. A node
+missing from it means "not reached yet".
+
+dist.get(node, float('inf')): look up a node's best distance, and if it is not
+there, treat it as infinity. That is what makes "any real distance is better than
+not-yet-reached" fall out with no special case - infinity loses every comparison.
+
+RELAX: improve a neighbour's recorded distance by routing through the current
+node. Defined in section 2.
+
+O((V + E) log V): the cost, where V is the number of nodes and E the number of
+edges. In plain words: every edge can cause one heap push, and each heap operation
+costs about log V.""",
+
+    """6. HOW TO CODE IT - the steps in plain English, no code yet.
+
+The whole idea in one sentence: repeatedly take the closest place you know how to
+reach, mark its distance final, and use it to improve the distances of everywhere
+it connects to.
+
+There is no recursion here - a loop driven by a heap - so nothing piles up on the
+call stack. The loop ends when the heap empties, which happens once every reachable
+node has been taken out and no improvement remains to be pushed.
+
+The steps:
+
+  1. Make a record of best-known distances, holding just the source at distance
+     zero. Every other node is implicitly at infinity - not reached yet.
+
+  2. Make a min-heap holding one entry: the source, at distance zero. Write each
+     entry as (distance, node) in that order, so the heap compares distances.
+
+  3. While the heap is not empty:
+
+     a. Take out the entry with the smallest distance. Call them d and node.
+
+     b. STALE CHECK. If d is bigger than the best distance already recorded for
+        this node, this entry is out of date - skip it and go round again. See
+        section 4.
+
+     c. Otherwise this is the closest unsettled node, so d is its final distance.
+        Look at each road leading out of it.
+
+     d. For each neighbour, work out the distance through this node: d plus the
+        road's length. If that beats the neighbour's best-known distance, record
+        the better value and push the neighbour into the heap with it.
+
+  4. When the heap empties, the record holds the shortest distance to every node
+     reachable from the source. Nodes never reached simply do not appear.
+
+Two things worth being clear about. Step (d) does not check whether the neighbour
+has already been settled - it does not need to, because a settled node's recorded
+distance is already the smallest possible, so the comparison fails and nothing is
+pushed. And nodes unreachable from the source never enter the heap at all, which
+is why they are absent from the answer rather than present with infinity.""",
+
+    """7. WHAT THE CODE DOES, in plain language.
+
+The code keeps a running record of the best distance it has found so far to every
+place it has heard of, and a waiting collection of places it could go next.
+
+The waiting collection is special: it always hands back the CLOSEST place, not the
+one that has been waiting longest. That is the single difference from an ordinary
+level-by-level search, and it is what makes the algorithm work on a map where
+roads have different lengths.
+
+Each round it takes the closest waiting place. Because that place is closer than
+anything else still waiting, and because no road can have a negative length, there
+is no possible shorter route to it that has not been found yet - so its distance
+is now final.
+
+Having settled it, the code looks along each road leading out of it and asks a
+simple question: is going through here better than the best I already knew for
+that neighbour? If it is, it writes down the improved distance and drops the
+neighbour into the waiting collection with its new figure.
+
+One wrinkle. When a neighbour's distance improves, the old worse figure is still
+sitting in the waiting collection - the structure has no cheap way to reach in and
+correct it. So the code leaves it there and simply recognises it when it
+eventually surfaces: if the distance on the entry is worse than what has since
+been recorded, it is out of date and gets thrown away. Since the collection always
+hands back the smallest, the good entry always arrives first, so nothing is lost.
+
+When the collection empties, every place reachable from the start has its final
+distance recorded. Places with no route at all never entered the collection, so
+they simply do not appear in the answer.""",
+
+    """8. THE CODE, line by line.
+
+Keep the map from section 1 beside you, starting at A. The answer is
+{A: 0, D: 2, B: 4, C: 5}.
+
+    dist = {source: 0}
+Best-known distances. Only the source is known at the start, at distance zero.
+Every other node is ABSENT, which the lookups below treat as infinity - so
+"not reached yet" needs no special value written into the dictionary.
+
+    heap = [(0, source)]
+The waiting collection, holding the source at distance zero. Each entry is
+(distance, node) IN THAT ORDER, because Python compares tuples element by element
+- so the heap orders by distance. Writing (node, distance) instead would make the
+heap order by node name and quietly destroy the algorithm.
+
+    while heap:
+Keep going while somewhere is still waiting. The loop ends when everything
+reachable has been settled and no improvements remain.
+
+    d, node = heapq.heappop(heap)
+Take out the entry with the SMALLEST distance - this is the line that makes it
+Dijkstra rather than BFS. d is the distance on that entry, node is where it leads.
+
+    if d > dist.get(node, float('inf')):
+        continue
+The stale check from section 4. If a better distance to this node has been
+recorded since this entry was pushed, the entry is out of date - discard it and go
+round again. Without this the algorithm still gets the right answer but wastes
+work re-processing settled nodes.
+
+Reaching past this line means d is the final, shortest distance to node.
+
+    for nbr, w in graph.get(node, []):
+Each road leading out: nbr is the neighbouring node, w the road's length. The
+.get(node, []) guards against a node that appears as a destination but has no
+outgoing roads listed - it yields an empty list rather than failing.
+
+    nd = d + w
+The distance to that neighbour if we travel through this node.
+
+    if nd < dist.get(nbr, float('inf')):
+Is that better than the best we already knew? The default of infinity is what
+makes a first-time reach always count as an improvement - infinity loses every
+comparison, so no separate "have I seen this node?" check is needed.
+
+This same line also silently skips already-settled nodes: their recorded distance
+is already the smallest possible, so nd can never beat it.
+
+    dist[nbr] = nd
+    heapq.heappush(heap, (nd, nbr))
+RELAX the edge: record the better distance, and put the neighbour into the waiting
+collection with its new figure so its own roads get examined in turn.
+
+    return dist
+The shortest distance to every reachable node. Unreachable nodes never entered the
+heap and so are simply absent - which is a meaningful answer in itself, and worth
+mentioning rather than silently returning infinity for them.""",
+
+    """9. TRACING THE CODE, variable by variable.
+
+Map: A-B 4, A-D 2, B-C 1, B-D 5, D-C 3. Source A.
+
+    graph = {A: [(B,4), (D,2)],
+             B: [(A,4), (C,1), (D,5)],
+             C: [(B,1), (D,3)],
+             D: [(A,2), (B,5), (C,3)]}
+
+Start:  dist = {A: 0}      heap = [(0, A)]
+
+ROUND 1.  pop (0, A).  Is 0 > dist[A] = 0?  No -> process.
+  A's roads:
+    to B, length 4: nd = 0 + 4 = 4.  dist has no B -> infinity.  4 < inf -> yes.
+        dist[B] = 4.  push (4, B).
+    to D, length 2: nd = 2.  2 < inf -> yes.  dist[D] = 2.  push (2, D).
+  dist = {A:0, B:4, D:2}      heap holds (2,D) and (4,B)
+
+ROUND 2.  pop the SMALLEST, which is (2, D) - not (4, B), even though B was
+  pushed first. That ordering is the whole algorithm.
+  Is 2 > dist[D] = 2?  No -> process.  D's distance is now FINAL.
+  D's roads:
+    to A, length 2: nd = 4.  Is 4 < dist[A] = 0?  No -> skip. (A is settled; its
+        recorded 0 can never be beaten.)
+    to B, length 5: nd = 7.  Is 7 < dist[B] = 4?  No -> skip. Going A->D->B is
+        worse than the direct road, exactly as we found by hand.
+    to C, length 3: nd = 5.  C not in dist -> infinity.  5 < inf -> yes.
+        dist[C] = 5.  push (5, C).
+  dist = {A:0, B:4, D:2, C:5}     heap holds (4,B) and (5,C)
+
+ROUND 3.  pop (4, B).  Is 4 > dist[B] = 4?  No -> process.
+  B's roads:
+    to A, length 4: nd = 8.  Not better than 0 -> skip.
+    to C, length 1: nd = 5.  Is 5 < dist[C] = 5?  No - equal is not better -> skip.
+        (Both routes to C are 5 miles, as we found by hand. Either would do.)
+    to D, length 5: nd = 9.  Not better than 2 -> skip.
+  heap holds (5, C)
+
+ROUND 4.  pop (5, C).  Is 5 > dist[C] = 5?  No -> process.
+  C's roads: to B gives 6, not better than 4. To D gives 8, not better than 2.
+  Nothing pushed.  heap is now empty.
+
+Loop ends.  return {A:0, B:4, D:2, C:5}.  Matches the hand-worked answer.
+
+NOW A STALE ENTRY, to see the check fire. Add a road A-C of length 20:
+  Round 1 would also push (20, C).
+  Round 2 finds C at 5 and pushes (5, C). The heap now holds (4,B), (5,C), (20,C)
+    - node C twice, with different distances.
+  Round 4 pops (5, C) and processes it, setting nothing new.
+  A later round pops (20, C).  Is 20 > dist[C] = 5?  YES -> continue, skip it.
+  That is lazy deletion doing its job: the good entry surfaced first, and the bad
+  one was recognised and discarded.""",
+
+    """10. COMPLEXITY, THE #1 MISTAKE, and the takeaway.
+
+TIME: O((V + E) log V), where V is the number of nodes and E the number of edges.
+Each edge can cause at most one push, so the heap holds at most E entries, and each
+push or pop costs about log of that. In plain words: a bit more than proportional
+to the size of the map. On a map with a million roads that is around 20 million
+steps - fast.
+
+SPACE: O(V + E). The distance record holds one entry per reached node; the heap can
+hold up to one entry per edge because of the stale entries we deliberately leave
+in.
+
+THE #1 MISTAKE - using this on a graph with NEGATIVE weights. It does not crash and
+it does not run slowly; it returns confidently wrong numbers. The guarantee in
+section 3 depends on every further road only adding length, which is false the
+moment a road can subtract. Use Bellman-Ford there. Saying this unprompted is one
+of the strongest signals you can give on this question.
+
+A close second: putting the node before the distance in the heap entries. The heap
+then orders by node name and the algorithm degenerates into an arbitrary walk that
+happens to return plausible-looking numbers. Distance first, always.
+
+A third: adding a separate "visited" set and skipping visited nodes when relaxing.
+It is harmless but unnecessary - a settled node's recorded distance is already
+minimal, so the comparison rejects it anyway. Extra state that can go out of step
+with the rest is worth avoiding.
+
+WHERE IT SITS among the others: BFS answers "fewest steps" on an unweighted graph
+in O(V + E). Dijkstra answers "shortest distance" on non-negative weights. Notice
+Dijkstra with every weight equal to 1 behaves exactly like BFS - which is a nice
+way to remember that it is BFS with the queue replaced by a min-heap.
+
+ONE-SENTENCE TAKEAWAY: always take the CLOSEST unsettled place rather than the
+oldest, because with no negative roads nothing can undercut it - then use it to
+improve its neighbours, and throw away any waiting entry whose distance has since
+been beaten.""",
 ]
 
 
